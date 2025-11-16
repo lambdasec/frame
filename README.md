@@ -6,268 +6,116 @@ A fast, practical separation logic solver combining heap reasoning, string const
 
 ## Features
 
-**Unique Capabilities** - The only solver combining:
-- **Separation Logic**: Heap structure reasoning (points-to, predicates, entailments)
-- **String Theory** (QF_S): SMT-LIB string operations with 90.6% accuracy
-- **Incorrectness Logic**: Under-approximate reasoning for bug detection
-- **Taint Analysis**: Source-to-sink tracking for security vulnerabilities
+The only solver combining:
+- **Separation Logic**: Heap structure reasoning with inductive predicates
+- **String Theory** (QF_S): SMT-LIB string operations (90.6% accuracy)
+- **Incorrectness Logic**: Under-approximate bug detection
+- **Taint Analysis**: Security vulnerability detection
 
-**Performance**:
-- 10-50x faster than Z3/CVC5 on string benchmarks (2.8ms avg vs 50-100ms)
-- <1ms reflexivity fast path
-- Parallel heuristic checking before Z3
-
-**Benchmarks**:
-- 1,147 unit tests (100% passing)
-- 19,854 total benchmarks across multiple suites
-- 90.6% accuracy on QF_S string benchmarks
-- 66.7% accuracy on SL-COMP separation logic benchmarks
+**Performance**: 10-50x faster than Z3/CVC5 on string constraints, <1ms reflexivity checks
 
 ## Installation
 
 ```bash
-# Clone repository
 git clone https://github.com/codelion/proofs.git
 cd proofs
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Run all tests
+# Run tests (1,147 tests, ~47s)
 python -m pytest tests/ -q
 ```
 
-**Requirements**: Python 3.7+, Z3, zstandard (see requirements.txt)
-
-### Quick Test
-
-```bash
-# Download sample benchmarks (optional)
-python -m benchmarks download --suite qf_s
-
-# Run string benchmarks
-python -m benchmarks run --suite qf_s
-
-# Or test directly with Python
-python -c "from frame import EntailmentChecker; print(EntailmentChecker().check_entailment('x |-> 5 |- x |-> 5').valid)"
-```
+**Requirements**: Python 3.7+, Z3, requests, zstandard
 
 ## Quick Start
 
-### Separation Logic
-
 ```python
-from frame import EntailmentChecker
+from frame import EntailmentChecker, IncorrectnessChecker, parse, Var
 
+# Separation Logic
 checker = EntailmentChecker()
-
-# Entailment checking
 result = checker.check_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
 print(result.valid)  # True
 
-# Predicate unfolding
-result = checker.check_entailment("x |-> y * list(y) |- list(x)")
-print(result.valid)  # True
-```
-
-### String Constraints
-
-```python
-from frame import parse
-
-# String operations
+# String Constraints
 formula = parse('x = "hello" & y = (str.++ x " world")')
 print(checker.is_satisfiable(formula))  # True
 
-# Complex constraints
-formula = parse('x = "testing" & y = (str.substr x 0 4) & (str.len y) = 4')
-print(checker.is_satisfiable(formula))  # True
-```
-
-### Bug Detection
-
-```python
-from frame import IncorrectnessChecker, Var
-
-checker = IncorrectnessChecker()
-
-# Null pointer dereference
+# Bug Detection
+bug_checker = IncorrectnessChecker()
 state = parse('ptr = nil & Allocated(buffer)')
-bug = checker.find_null_deref(state, Var("ptr"))
-print(bug.found)  # True
-
-# Use-after-free
-state = parse('Allocated(ptr) & Freed(ptr)')
-bug = checker.find_use_after_free(state, Var("ptr"))
-print(bug.found)  # True
-
-# SQL injection
-state = parse('TaintedInput(user_input) & query = (str.++ "SELECT * FROM users WHERE id=" user_input)')
-bug = checker.find_sql_injection(state, Var("query"))
+bug = bug_checker.find_null_deref(state, Var("ptr"))
 print(bug.found)  # True
 ```
 
 ## Supported Theories
 
-### Separation Logic
-- **Spatial**: Points-to (`x |-> 5`), empty heap (`emp`), separating conjunction (`*`), magic wand (`-*`)
-- **Pure**: Equality, boolean logic, linear integer arithmetic
-- **Predicates**: Lists (`ls`, `list`), trees (`tree`), doubly-linked lists (`dll`)
+**Separation Logic**: Points-to, empty heap, separating conjunction (`*`), magic wand (`-*`), inductive predicates (lists, trees, DLLs)
 
-### String Theory (QF_S)
-- **Concatenation**: `str.++`, `str.len`
-- **Substring**: `str.substr`, `str.at`, `str.contains`, `str.prefixof`, `str.suffixof`
-- **Searching**: `str.indexof`, `str.replace`
-- **Coverage**: 10/10 operation categories, 90.6% accuracy
+**String Theory (QF_S)**: Concatenation, substring operations, contains, indexof, replace (10/10 operation categories)
 
-### Security & Lifecycle
-- **Heap Lifecycle**: `Allocated`, `Freed`, `ArrayBounds`, `ArrayPointsTo`
-- **Taint Analysis**: `TaintedInput`, `Sanitized`, `TaintFlow`
+**Security & Lifecycle**: Heap lifecycle predicates (`Allocated`, `Freed`), taint analysis (`TaintedInput`, `Sanitized`)
 
 ## Benchmarks
 
-Frame includes 19,854 benchmarks across multiple suites with a unified interface.
-
-### Usage
+Frame includes 19,854 benchmarks: 861 SL-COMP (separation logic) + 53 QF_S samples + 18,940 full QF_S from SMT-LIB.
 
 ```bash
-# Download benchmarks (one-time, 2.9MB compressed)
+# Download and run benchmarks
 python -m benchmarks download --all
-
-# Run benchmarks
-python -m benchmarks run --suite qf_s          # String theory benchmarks
-python -m benchmarks run --suite slcomp        # Separation logic benchmarks
-
-# Analyze results
-python -m benchmarks analyze --failures
-python -m benchmarks visualize <file.smt2>
+python -m benchmarks run --suite qf_s
+python -m benchmarks run --suite slcomp
 ```
 
-### Results Summary
-
-**String Theory (QF_S)**: 90.6% accuracy (48/53 samples, 2.8ms avg)
-- Kaluza: 90.0% (40 tests) - Concatenation, contains, substr, indexof, replace
-- Woorpje: 100% (5 tests) - Word equations
-- PISA: 80.0% (5 tests) - Path-sensitive analysis
-- **Full Set**: 18,940 tests from SMT-LIB 2024 available
-
-**Separation Logic (SL-COMP)**: 66.7% accuracy (574/861 tests)
-- Best: `shidlia_entl` (100%, 50/50), `shid_entl` (94%, 47/50)
-- Largest: `qf_shls_entl` (77%, 228/296) - List segments
-
-**Performance**: 10-50x faster than Z3/CVC5 on string constraints
-
-See `benchmarks/README.md` for detailed results and `docs/QF_S_BENCHMARK_REPORT.md` for analysis.
+**Results**: 90.6% on QF_S string theory, 66.7% on SL-COMP. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
 
 ## Architecture
-
-Frame uses a modular architecture with specialized components:
 
 ```
 frame/
 ├── core/          # AST, parser
-├── encoding/      # Z3 SMT encoding
-├── checking/      # Entailment checking and heuristics
-├── analysis/      # Formula analysis and reasoning
-├── heap/          # Heap graph and pattern detection
+├── encoding/      # Z3 encoding
+├── checking/      # Entailment checking
 ├── folding/       # Predicate folding/unfolding
-├── predicates/    # Inductive predicate definitions
-├── lemmas/        # Lemma library
-└── utils/         # Utilities and proof management
+├── predicates/    # Inductive predicates
+└── lemmas/        # Lemma library
 ```
 
-**Algorithm**: Parse → Preprocess → Fold → Unfold → Encode → Solve
+**Algorithm**: Parse → Fold → Unfold → Encode → Z3 Solve
 
-**Key Optimizations**: Reflexivity fast path (<1ms), goal-directed folding, heuristic checks, lemma library
+See [`CLAUDE.md`](CLAUDE.md) for detailed architecture and development guide.
 
-## Testing
-
-```bash
-# Run all tests (1,147 tests, ~47s)
-python -m pytest tests/ -q
-
-# Run specific tests
-python -m pytest tests/test_string_theory.py
-python -m pytest tests/ -k "incorrectness"
-```
-
-**Coverage**: Separation logic, string theory, incorrectness logic, taint analysis, 21 legacy SL-COMP suites
-
-## API Reference
-
-### EntailmentChecker
+## API
 
 ```python
+# Entailment checking
 from frame import EntailmentChecker
+checker = EntailmentChecker(timeout=10000)
+result = checker.check_entailment("P |- Q")  # Returns: EntailmentResult(valid, model, reason)
 
-checker = EntailmentChecker(timeout=10000, use_folding=True, verbose=False)
-
-# Check entailment: P |- Q
-result = checker.check_entailment("P |- Q")
-# Returns: EntailmentResult(valid, model, reason)
-
-# Check satisfiability
-is_sat = checker.is_satisfiable(formula)
-
-# Check equivalence
-equiv = checker.check_equiv(formula1, formula2)
-```
-
-### IncorrectnessChecker
-
-```python
+# Bug detection
 from frame import IncorrectnessChecker, Var
-
-checker = IncorrectnessChecker()
-
-# Memory bugs
-bug = checker.find_null_deref(state, Var("ptr"))
-bug = checker.find_use_after_free(state, Var("ptr"))
-bug = checker.find_buffer_overflow(state, Var("array"), Var("index"))
-bug = checker.find_double_free(state, Var("ptr"))
-
-# Security vulnerabilities
-bug = checker.find_sql_injection(state, Var("query"))
-bug = checker.find_xss(state, Var("output"))
-bug = checker.find_command_injection(state, Var("cmd"))
-
+bug_checker = IncorrectnessChecker()
+bug = bug_checker.find_null_deref(state, Var("ptr"))      # Memory safety
+bug = bug_checker.find_sql_injection(state, Var("query")) # Security
 # Returns: BugReport(found, type, location, trace)
 ```
 
 ## Custom Predicates
 
-Define your own recursive predicates:
-
 ```python
 from frame import PredicateRegistry, EntailmentChecker
 
 registry = PredicateRegistry()
+registry.register_from_smt2("bst", """
+(bst ?x ?lo ?hi) := ((= ?x nil) * emp) |
+  (exists ?v ?l ?r. (?x |-> (?v, ?l, ?r)) * (?lo < ?v) * (?v < ?hi) *
+   (bst ?l ?lo ?v) * (bst ?r ?v ?hi))
+""")
 
-bst_def = """
-(bst ?x ?lo ?hi) :=
-  ((= ?x nil) * emp) |
-  (exists ?v ?l ?r.
-    (?x |-> (?v, ?l, ?r)) *
-    (?lo < ?v) * (?v < ?hi) *
-    (bst ?l ?lo ?v) * (bst ?r ?v ?hi))
-"""
-
-registry.register_from_smt2("bst", bst_def)
 checker = EntailmentChecker(predicate_registry=registry)
-
 result = checker.check_entailment("x |-> (5, l, r) * bst(l, 0, 5) * bst(r, 5, 10) |- bst(x, 0, 10)")
-print(result.valid)  # True
 ```
-
-## Known Limitations
-
-- **String Theory**: Missing some advanced axioms (length non-negativity, regex support)
-- **Bounded Unfolding**: Default depth 10 (increase with `registry.max_unfold_depth = 15`)
-- **Predicate Synthesis**: Heuristic-based, may miss some valid foldings
-
-## Contributing
-
-Contributions welcome! Areas: string theory axiomatization, regex support, security patterns, performance optimizations.
 
 ## Citation
 
