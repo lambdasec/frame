@@ -1,0 +1,5 @@
+# Core dependencies for Frame separation logic solver
+z3-solver>=4.8.0
+
+# For downloading benchmark sets
+zstandard>=0.22.0  # For extracting SMT-LIB .tar.zst archives
