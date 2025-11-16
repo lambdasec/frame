@@ -124,9 +124,9 @@ If you use Frame in academic work, please cite:
 ```bibtex
 @software{frame_solver,
   title = {Frame: Separation Logic Solver with String Theory and Bug Detection},
-  author = {Frame Contributors},
+  author = {Asankhaya Sharma},
   year = {2025},
-  url = {https://github.com/codelion/proofs}
+  url = {https://github.com/lambdasec/frame}
 }
 ```
 
@@ -134,18 +134,14 @@ If you use Frame in academic work, please cite:
 
 **Separation Logic**:
 - Reynolds, O'Hearn (2002). [Separation Logic: A Logic for Shared Mutable Data Structures](https://doi.org/10.1109/LICS.2002.1029817)
-- Piskac, Wies, Zufferey (2013). [Automating Separation Logic with Trees and Data](https://doi.org/10.1007/978-3-642-39799-8_53)
+- Piskac, Wies, Zufferey (2013). [Automating Separation Logic with Trees and Data](https://dl.acm.org/doi/10.1007/978-3-319-08867-9_47)
 
 **String Constraint Solving**:
 - Saxena et al. (2010). [A Symbolic Execution Framework for JavaScript](https://doi.org/10.1109/SP.2010.38) (Kaluza)
-- Zheng et al. (2013). [Z3-str: A Z3-based String Solver](https://doi.org/10.1007/978-3-642-45221-5_55)
+- Zheng et al. (2013). [Z3-str: A Z3-based String Solver](https://dl.acm.org/doi/10.1145/2491411.2491456)
 
 **Incorrectness Logic**:
 - O'Hearn (2020). [Incorrectness Logic](https://doi.org/10.1145/3371078)
-
-## License
-
-Apache License 2.0 - see LICENSE file for details.
 
 ## Acknowledgments
 
