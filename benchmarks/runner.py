@@ -229,11 +229,19 @@ class UnifiedBenchmarkRunner:
         print("=" * 80)
 
         results = []
+        total = len(files)
+
         for i, filename in enumerate(files, 1):
             result = self.run_slcomp_benchmark(division, filename)
             results.append(result)
             status = "✓" if result.correct else "✗"
-            print(f"[{i}/{len(files)}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+
+            # Progress indicator with percentage for large divisions
+            if total > 100:
+                progress_pct = (i / total) * 100
+                print(f"[{i}/{total} {progress_pct:5.1f}%] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+            else:
+                print(f"[{i}/{total}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
 
         self.results.extend(results)
         return results
@@ -1052,12 +1060,22 @@ class UnifiedBenchmarkRunner:
 
     # ========== QF_S Benchmark Running ==========
 
-    def run_qf_s_benchmark(self, source: str, filename: str) -> BenchmarkResult:
-        """Run a single QF_S benchmark"""
+    def run_qf_s_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
+        """Run a single QF_S benchmark
+
+        Args:
+            source: Source name (kaluza, pisa, etc. or qf_s_full)
+            filename: Display filename
+            full_path: Optional full path to file (used for qf_s_full)
+        """
         start_time = time.time()
 
         try:
-            cache_path = os.path.join(self.cache_dir, 'qf_s', source, filename)
+            if full_path:
+                cache_path = full_path
+            else:
+                cache_path = os.path.join(self.cache_dir, 'qf_s', source, filename)
+
             with open(cache_path, 'r') as f:
                 content = f.read()
 
@@ -1090,6 +1108,49 @@ class UnifiedBenchmarkRunner:
 
     def run_qf_s_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
         """Run all QF_S benchmarks in a source"""
+        # Special handling for qf_s_full (recursive search in different directory)
+        if source == 'qf_s_full':
+            qf_s_full_dir = os.path.join(self.cache_dir, 'qf_s_full')
+
+            if not os.path.exists(qf_s_full_dir):
+                print(f"\n{source} benchmarks not found. Downloading...")
+                count = self.download_full_kaluza()
+                if count == 0:
+                    print(f"ERROR: Failed to download {source}")
+                    return []
+
+            # Recursively find all .smt2 files
+            file_paths = sorted(list(Path(qf_s_full_dir).rglob('*.smt2')))
+            if max_tests:
+                file_paths = file_paths[:max_tests]
+
+            print(f"\nRunning QF_S/{source}: {len(file_paths)} benchmarks")
+            print("=" * 80)
+
+            results = []
+            total = len(file_paths)
+
+            for i, file_path in enumerate(file_paths, 1):
+                # Get relative path for display
+                rel_path = file_path.relative_to(qf_s_full_dir)
+                display_name = str(rel_path)
+
+                result = self.run_qf_s_benchmark(source, display_name, full_path=str(file_path))
+                results.append(result)
+
+                status = "✓" if result.correct else "✗"
+
+                # Progress indicator with percentage for large sets
+                if total > 100:
+                    progress_pct = (i / total) * 100
+                    print(f"[{i}/{total} {progress_pct:5.1f}%] {status} {display_name[:50]:<50} {result.time_ms:>6.1f}ms")
+                else:
+                    print(f"[{i}/{total}] {status} {display_name[:50]:<50} {result.time_ms:>6.1f}ms")
+
+            self.results.extend(results)
+            return results
+
+        # Normal handling for samples (flat directory structure)
         source_dir = os.path.join(self.cache_dir, 'qf_s', source)
 
         if not os.path.exists(source_dir):
@@ -1239,7 +1300,7 @@ def cmd_run(args):
         'qf_shls_sat',       # 110 tests
     ]
 
-    qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje']
+    qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje', 'qf_s_full']
 
     if args.suite in ['slcomp', 'all']:
         divisions = [args.division] if args.division else slcomp_divisions
