@@ -58,16 +58,20 @@ print(bug.found)  # True
 
 ## Benchmarks
 
-Frame includes 19,854 benchmarks: 861 SL-COMP (separation logic) + 53 QF_S samples + 18,940 full QF_S from SMT-LIB.
+Frame includes 19,854 benchmarks with curated sets for efficient testing:
+- **Curated**: 650 tests (500 QF_S + 150 SL-COMP) - stratified samples, recommended for benchmarking
+- **Full**: 19,854 tests (18,940 QF_S + 861 SL-COMP + 53 samples) - comprehensive testing
 
 ```bash
-# Download and run benchmarks
+# Download and run curated benchmarks (recommended, ~10 minutes)
 python -m benchmarks download --all
-python -m benchmarks run --suite qf_s
-python -m benchmarks run --suite slcomp
+python -m benchmarks run --curated
+
+# Run full benchmark suite (~2+ hours)
+python -m benchmarks run --suite all
 ```
 
-**Results**: 90.6% on QF_S string theory, 66.7% on SL-COMP. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
+**Results**: 90.6% on QF_S curated samples, 66.7% on SL-COMP. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
 
 ## Architecture
 
