@@ -3,12 +3,12 @@
 Frame Benchmark Suite - Unified CLI
 
 Usage:
-    python benchmarks.py run --suite slcomp --division qf_shls_entl
-    python benchmarks.py run --suite qf_s
-    python benchmarks.py download --suite slcomp
-    python benchmarks.py download --suite qf_s --source kaluza
-    python benchmarks.py analyze --failures
-    python benchmarks.py visualize <file.smt2>
+    python -m benchmarks run --suite slcomp --division qf_shls_entl
+    python -m benchmarks run --suite qf_s
+    python -m benchmarks download --suite slcomp
+    python -m benchmarks download --suite qf_s --source kaluza
+    python -m benchmarks analyze --failures
+    python -m benchmarks visualize <file.smt2>
 """
 
 import os
@@ -1295,10 +1295,10 @@ def cmd_download(args):
         print("  - QF_S Samples: 53 benchmarks")
         print(f"  - Total: ~{861 + qf_s_count + 53:,} benchmarks ready to run")
         print("\nTo run all benchmarks:")
-        print("  python benchmarks.py run --suite all")
+        print("  python -m benchmarks run --suite all")
         print("\nTo run specific suites:")
-        print("  python benchmarks.py run --suite slcomp")
-        print("  python benchmarks.py run --suite qf_s")
+        print("  python -m benchmarks run --suite slcomp")
+        print("  python -m benchmarks run --suite qf_s")
         return
 
     if args.suite == 'slcomp':
@@ -1349,7 +1349,7 @@ def cmd_analyze(args):
 
     if not os.path.exists(results_file):
         print(f"Results file not found: {results_file}")
-        print("Run benchmarks first: python benchmarks.py run --suite slcomp")
+        print("Run benchmarks first: python -m benchmarks run --suite slcomp")
         return
 
     with open(results_file, 'r') as f:
@@ -1502,24 +1502,24 @@ def main():
         epilog="""
 Examples:
   # Download ALL uncached benchmarks (SL-COMP + QF_S)
-  python benchmarks.py download --all
+  python -m benchmarks download --all
 
   # Download specific suite
-  python benchmarks.py download --suite qf_s --division kaluza
-  python benchmarks.py download --suite slcomp --division qf_shls_entl
+  python -m benchmarks download --suite qf_s --division kaluza
+  python -m benchmarks download --suite slcomp --division qf_shls_entl
 
   # Run all benchmarks
-  python benchmarks.py run --suite all
+  python -m benchmarks run --suite all
 
   # Run specific suite
-  python benchmarks.py run --suite slcomp --division qf_shls_entl
-  python benchmarks.py run --suite qf_s
+  python -m benchmarks run --suite slcomp --division qf_shls_entl
+  python -m benchmarks run --suite qf_s
 
   # Analyze failures
-  python benchmarks.py analyze --failures
+  python -m benchmarks analyze --failures
 
   # Visualize heap structure
-  python benchmarks.py visualize bolognesa-10-e01.tptp.smt2
+  python -m benchmarks visualize bolognesa-10-e01.tptp.smt2
         """
     )
 
