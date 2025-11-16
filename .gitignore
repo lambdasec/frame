@@ -45,6 +45,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+coverage.json
 *.cover
 *.py.cover
 .hypothesis/
@@ -205,3 +206,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+**/.DS_Store
+benchmarks/benchmarks/
+benchmark_results.txt
+full_benchmark_results.txt
+benchmark_output.txt
+failure_analysis.txt
+failure_analysis_results.json
+**/benchmark_results.json
+**/comprehensive_results.json
+benchmarks/cache/

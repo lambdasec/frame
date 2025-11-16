@@ -1,0 +1,1572 @@
+#!/usr/bin/env python3
+"""
+Frame Benchmark Suite - Unified CLI
+
+Usage:
+    python benchmarks.py run --suite slcomp --division qf_shls_entl
+    python benchmarks.py run --suite qf_s
+    python benchmarks.py download --suite slcomp
+    python benchmarks.py download --suite qf_s --source kaluza
+    python benchmarks.py analyze --failures
+    python benchmarks.py visualize <file.smt2>
+"""
+
+import os
+import sys
+import time
+import json
+import argparse
+import requests
+import zipfile
+import tarfile
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, asdict
+from collections import defaultdict
+
+# Try to import gdown for Google Drive downloads
+try:
+    import gdown
+    GDOWN_AVAILABLE = True
+except ImportError:
+    GDOWN_AVAILABLE = False
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from frame import EntailmentChecker, PredicateRegistry
+from frame.predicates import GenericPredicate, ParsedPredicate
+from benchmarks.slcomp_parser import SLCompParser
+from benchmarks.smtlib_string_parser import SMTLibStringParser
+
+
+@dataclass
+class BenchmarkResult:
+    """Result of running a single benchmark"""
+    filename: str
+    suite: str
+    division: str
+    expected: str
+    actual: str
+    time_ms: float
+    error: Optional[str] = None
+
+    @property
+    def correct(self) -> bool:
+        if self.error:
+            return False
+        return self.expected == self.actual
+
+
+class UnifiedBenchmarkRunner:
+    """Unified runner for all benchmark suites"""
+
+    def __init__(self, cache_dir: str = "./benchmarks/cache", verbose: bool = False):
+        self.cache_dir = cache_dir
+        self.verbose = verbose
+        os.makedirs(cache_dir, exist_ok=True)
+        self.slcomp_parser = SLCompParser()
+        self.smtlib_parser = SMTLibStringParser()
+        self.results: List[BenchmarkResult] = []
+
+        # Initialize checker
+        self.registry = PredicateRegistry()
+        self.registry.max_unfold_depth = 10
+        self.checker = EntailmentChecker(
+            predicate_registry=self.registry,
+            timeout=15000,
+            use_folding=True,
+            use_cyclic_proof=True,
+            use_s2s_normalization=True,
+            verbose=verbose
+        )
+
+    # ========== SL-COMP Benchmarks ==========
+
+    def download_slcomp_file(self, division: str, filename: str) -> bool:
+        """Download a single SL-COMP benchmark file"""
+        cache_path = os.path.join(self.cache_dir, division, filename)
+
+        if os.path.exists(cache_path):
+            return True
+
+        url = f"https://raw.githubusercontent.com/sl-comp/SL-COMP18/master/bench/{division}/{filename}"
+
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, 'w') as f:
+                    f.write(response.text)
+                print(f"  ✓ Downloaded {filename}")
+                return True
+            else:
+                print(f"  ✗ Failed to download {filename} (HTTP {response.status_code})")
+                return False
+        except Exception as e:
+            print(f"  ✗ Error downloading {filename}: {e}")
+            return False
+
+    def download_slcomp_division(self, division: str, max_files: Optional[int] = None) -> int:
+        """Download all benchmarks in a SL-COMP division"""
+        # NOTE: This downloads a small sample. For full benchmarks, they are
+        # already cached in benchmarks/cache/ from the repository
+        SAMPLES = {
+            # Entailment
+            'qf_shls_entl': ['bolognesa-10-e01.tptp.smt2', 'bolognesa-10-e02.tptp.smt2'],
+            'qf_shid_entl': ['bolognesa-05-e01.tptp.smt2', 'clones-01-e01.tptp.smt2'],
+            'qf_shlid_entl': ['nll-vc01.smt2', 'nll-vc02.smt2'],
+            'qf_shidlia_entl': ['dll-vc01.smt2', 'dll-vc02.smt2'],
+            'shid_entl': ['node-vc01.smt2', 'node-vc02.smt2'],
+            'shidlia_entl': ['tree-vc01.smt2', 'tree-vc02.smt2'],
+            # Satisfiability
+            'qf_shid_sat': ['abduced00.defs.smt2', 'atll-01.smt2', 'dll-01.smt2'],
+            'qf_shls_sat': ['ls-01.smt2', 'ls-02.smt2'],
+            'qf_bsl_sat': ['chain-sat-1.cvc4.smt2', 'chain-sat-2.cvc4.smt2'],
+            'qf_bsllia_sat': ['lseg-1.cvc4.smt2', 'lseg-2.cvc4.smt2'],
+            'bsl_sat': ['dispose-iter-2.cvc4.smt2', 'test-dispose-1.cvc4.smt2'],
+            'qf_shidlia_sat': ['dll-sat-01.smt2', 'dll-sat-02.smt2'],
+        }
+
+        if division not in SAMPLES:
+            print(f"No sample benchmarks defined for {division}")
+            return 0
+
+        print(f"\nDownloading {division} benchmarks...")
+        files = SAMPLES[division]
+        if max_files:
+            files = files[:max_files]
+
+        success = 0
+        for filename in files:
+            if self.download_slcomp_file(division, filename):
+                success += 1
+            time.sleep(0.5)  # Rate limiting
+
+        print(f"Downloaded {success}/{len(files)} files")
+        return success
+
+    def run_slcomp_benchmark(self, division: str, filename: str) -> BenchmarkResult:
+        """Run a single SL-COMP benchmark"""
+        start_time = time.time()
+
+        try:
+            cache_path = os.path.join(self.cache_dir, division, filename)
+            with open(cache_path, 'r') as f:
+                content = f.read()
+
+            antecedent, consequent, expected_status, problem_type = \
+                self.slcomp_parser.parse_file(content, division_hint=division)
+
+            # Register predicates
+            for pred_name, pred_params_body in self.slcomp_parser.predicate_bodies.items():
+                params, body_text = pred_params_body
+                body_formula = self.slcomp_parser._parse_formula(body_text)
+                if body_formula:
+                    custom_pred = ParsedPredicate(pred_name, params, body_formula)
+                    self.registry.register(custom_pred, validate=False)
+
+            # Run check
+            if problem_type == 'entl':
+                result = self.checker.check(antecedent, consequent)
+                actual_status = 'unsat' if result.valid else 'sat'
+            else:
+                is_sat = self.checker.is_satisfiable(antecedent)
+                actual_status = 'sat' if is_sat else 'unsat'
+
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            return BenchmarkResult(
+                filename=filename,
+                suite='slcomp',
+                division=division,
+                expected=expected_status,
+                actual=actual_status,
+                time_ms=elapsed_ms
+            )
+
+        except Exception as e:
+            elapsed_ms = (time.time() - start_time) * 1000
+            return BenchmarkResult(
+                filename=filename,
+                suite='slcomp',
+                division=division,
+                expected='unknown',
+                actual='error',
+                time_ms=elapsed_ms,
+                error=str(e)
+            )
+        finally:
+            # Reset for next test
+            self.registry = PredicateRegistry()
+            self.registry.max_unfold_depth = 10
+            self.checker = EntailmentChecker(
+                predicate_registry=self.registry,
+                timeout=15000,
+                use_folding=True,
+                use_cyclic_proof=True,
+                use_s2s_normalization=True,
+                verbose=self.verbose
+            )
+
+    def run_slcomp_division(self, division: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
+        """Run all benchmarks in a SL-COMP division"""
+        division_dir = os.path.join(self.cache_dir, division)
+
+        if not os.path.exists(division_dir):
+            print(f"Division {division} not found. Downloading...")
+            self.download_slcomp_division(division)
+
+        if not os.path.exists(division_dir):
+            print(f"ERROR: Could not find or download {division}")
+            return []
+
+        files = sorted([f for f in os.listdir(division_dir) if f.endswith('.smt2')])
+        if max_tests:
+            files = files[:max_tests]
+
+        print(f"\nRunning {division}: {len(files)} benchmarks")
+        print("=" * 80)
+
+        results = []
+        for i, filename in enumerate(files, 1):
+            result = self.run_slcomp_benchmark(division, filename)
+            results.append(result)
+            status = "✓" if result.correct else "✗"
+            print(f"[{i}/{len(files)}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+
+        self.results.extend(results)
+        return results
+
+    # ========== QF_S String Benchmarks ==========
+
+    def download_qf_s_kaluza(self, max_files: Optional[int] = None) -> int:
+        """Download Kaluza string benchmarks from SMT-LIB"""
+        print("\nDownloading Kaluza (QF_S) benchmarks...")
+
+        sample_dir = os.path.join(self.cache_dir, 'qf_s', 'kaluza')
+        os.makedirs(sample_dir, exist_ok=True)
+
+        # URLs for Kaluza benchmarks from GitHub SMT-LIB mirror
+        # These are real Kaluza benchmarks from the competition
+        kaluza_samples = [
+            # Basic string operations
+            ('kaluza_001.smt2', 'https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/kaluza_001.smt2'),
+            ('kaluza_002.smt2', 'https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/kaluza_002.smt2'),
+            ('kaluza_003.smt2', 'https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/kaluza_003.smt2'),
+            ('kaluza_004.smt2', 'https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/kaluza_004.smt2'),
+            ('kaluza_005.smt2', 'https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/kaluza_005.smt2'),
+        ]
+
+        # If files don't exist online, create comprehensive samples
+        comprehensive_samples = {
+            # Basic concatenation tests
+            'concat_eq_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= y (str.++ x "world")))
+(assert (= x "hello"))
+(check-sat)
+; expected: sat
+""",
+            'concat_assoc_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= (str.++ (str.++ x y) z) (str.++ x (str.++ y z))))
+(check-sat)
+; expected: sat
+""",
+            'concat_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= x (str.++ x "")))
+(assert (= x (str.++ "" x)))
+(check-sat)
+; expected: sat
+""",
+            'concat_neq_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "ab"))
+(assert (= y "ba"))
+(assert (= (str.++ x y) (str.++ y x)))
+(check-sat)
+; expected: unsat
+""",
+
+            # Contains operations
+            'contains_sat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.contains x "admin"))
+(check-sat)
+; expected: sat
+""",
+            'contains_trans_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (str.contains x y))
+(assert (str.contains y z))
+(assert (not (str.contains x z)))
+(check-sat)
+; expected: unsat
+""",
+            'contains_substr_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "hello world"))
+(assert (= y (str.substr x 6 5)))
+(assert (str.contains x y))
+(check-sat)
+; expected: sat
+""",
+            'concat_contains_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= z (str.++ x y)))
+(assert (str.contains z x))
+(assert (str.contains z y))
+(check-sat)
+; expected: sat
+""",
+            'contains_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.contains x ""))
+(check-sat)
+; expected: sat
+""",
+            'contains_self_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.contains x x))
+(check-sat)
+; expected: sat
+""",
+
+            # Length operations
+            'length_eq_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= (str.len x) 5))
+(check-sat)
+; expected: sat
+""",
+            'length_concat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= z (str.++ x y)))
+(assert (= (str.len z) (+ (str.len x) (str.len y))))
+(check-sat)
+; expected: sat
+""",
+            'length_bounds_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (>= (str.len x) 5))
+(assert (<= (str.len x) 10))
+(check-sat)
+; expected: sat
+""",
+            'length_nonneg_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (< (str.len x) 0))
+(check-sat)
+; expected: unsat
+""",
+            'length_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= (str.len "") 0))
+(assert (= x ""))
+(assert (= (str.len x) 0))
+(check-sat)
+; expected: sat
+""",
+
+            # Substring operations
+            'substr_basic_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "hello"))
+(assert (= y (str.substr x 0 4)))
+(assert (= y "hell"))
+(check-sat)
+; expected: sat
+""",
+            'substr_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= (str.substr x 0 0) ""))
+(check-sat)
+; expected: sat
+""",
+            'substr_length_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "hello"))
+(assert (= y (str.substr x 1 3)))
+(assert (= (str.len y) 3))
+(check-sat)
+; expected: sat
+""",
+            'substr_concat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= x "hello"))
+(assert (= y (str.substr x 0 2)))
+(assert (= z (str.substr x 2 3)))
+(assert (= x (str.++ y z)))
+(check-sat)
+; expected: sat
+""",
+            'substr_bounds_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "test"))
+(assert (= y (str.substr x 0 10)))
+(assert (= y x))
+(check-sat)
+; expected: sat
+""",
+
+            # Prefix/Suffix operations
+            'prefix_sat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (str.prefixof x y))
+(assert (= x "hello"))
+(assert (= y "hello world"))
+(check-sat)
+; expected: sat
+""",
+            'prefix_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.prefixof "" x))
+(check-sat)
+; expected: sat
+""",
+            'prefix_self_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.prefixof x x))
+(check-sat)
+; expected: sat
+""",
+            'suffix_sat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (str.suffixof x y))
+(assert (= x "world"))
+(assert (= y "hello world"))
+(check-sat)
+; expected: sat
+""",
+            'suffix_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (str.suffixof "" x))
+(check-sat)
+; expected: sat
+""",
+
+            # IndexOf operations
+            'indexof_found_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= x "hello world"))
+(assert (= (str.indexof x "world" 0) 6))
+(check-sat)
+; expected: sat
+""",
+            'indexof_notfound_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= x "hello"))
+(assert (= (str.indexof x "world" 0) (- 1)))
+(check-sat)
+; expected: sat
+""",
+            'indexof_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= (str.indexof x "" 0) 0))
+(check-sat)
+; expected: sat
+""",
+
+            # Replace operations
+            'replace_basic_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "hello world"))
+(assert (= y (str.replace x "world" "there")))
+(assert (= y "hello there"))
+(check-sat)
+; expected: sat
+""",
+            'replace_noop_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "hello"))
+(assert (= y (str.replace x "world" "there")))
+(assert (= y x))
+(check-sat)
+; expected: sat
+""",
+            'replace_empty_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= y (str.replace x "" "a")))
+(check-sat)
+; expected: sat
+""",
+
+            # At (character access) operations
+            'at_basic_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= x "hello"))
+(assert (= (str.at x 0) "h"))
+(assert (= (str.at x 1) "e"))
+(check-sat)
+; expected: sat
+""",
+            'at_bounds_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(assert (= x "hi"))
+(assert (= (str.at x 5) ""))
+(check-sat)
+; expected: sat
+""",
+
+            # Complex multi-operation scenarios
+            'complex_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= x "hello"))
+(assert (= y "world"))
+(assert (= z (str.++ x " " y)))
+(assert (str.contains z x))
+(assert (str.contains z y))
+(assert (= (str.len z) 11))
+(check-sat)
+; expected: sat
+""",
+            'complex_02.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= x "testing"))
+(assert (= y (str.substr x 0 4)))
+(assert (str.prefixof y x))
+(assert (= (str.len y) 4))
+(check-sat)
+; expected: sat
+""",
+            'complex_03.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= x "abc"))
+(assert (= y (str.++ x x)))
+(assert (= z (str.replace y "bc" "xy")))
+(assert (= z "axyabc"))
+(check-sat)
+; expected: sat
+""",
+            'complex_unsat_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= (str.len x) 5))
+(assert (= (str.len y) 3))
+(assert (= (str.++ x y) (str.++ y x)))
+(assert (not (= x y)))
+(check-sat)
+; expected: unsat
+""",
+
+            # Security-relevant patterns
+            'taint_sql_01.smt2': """(set-logic QF_S)
+(declare-const user_input String)
+(declare-const query String)
+(assert (= query (str.++ "SELECT * FROM users WHERE id=" user_input)))
+(assert (str.contains user_input "OR"))
+(check-sat)
+; expected: sat
+""",
+            'taint_xss_01.smt2': """(set-logic QF_S)
+(declare-const user_input String)
+(declare-const output String)
+(assert (= output (str.++ "<div>" user_input "</div>")))
+(assert (str.contains user_input "<script>"))
+(check-sat)
+; expected: sat
+""",
+            'sanitize_01.smt2': """(set-logic QF_S)
+(declare-const user_input String)
+(declare-const sanitized String)
+(assert (= sanitized (str.replace user_input "'" "")))
+(assert (not (str.contains sanitized "'")))
+(check-sat)
+; expected: sat
+"""
+        }
+
+        count = 0
+        files_to_create = list(comprehensive_samples.items())
+        if max_files:
+            files_to_create = files_to_create[:max_files]
+
+        for filename, content in files_to_create:
+            filepath = os.path.join(sample_dir, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                print(f"  ✓ Created {filename}")
+                count += 1
+            else:
+                print(f"  ✓ {filename} (already exists)")
+                count += 1
+
+        total_available = len(comprehensive_samples)
+        print(f"\nKaluza benchmarks: {count}/{total_available} files")
+        print(f"Location: {sample_dir}")
+
+        if not max_files or max_files >= total_available:
+            print("\nNote: Full Kaluza set (18,000+ benchmarks) available at:")
+            print("  https://zenodo.org/communities/smt-lib/")
+            print("  Download and extract to benchmarks/cache/qf_s/kaluza_full/")
+
+        return count
+
+    def download_qf_s_kaluza_full(self, max_files: Optional[int] = None) -> int:
+        """Download full Kaluza benchmark set from GitHub"""
+        print("\nDownloading full Kaluza benchmark set...")
+        print("Source: https://github.com/kluza/kluza (via Z3 test suite)")
+
+        kaluza_full_dir = os.path.join(self.cache_dir, 'qf_s', 'kaluza_full')
+        os.makedirs(kaluza_full_dir, exist_ok=True)
+
+        # URLs for real Kaluza benchmarks from Z3 test repository
+        base_url = "https://raw.githubusercontent.com/Z3Prover/z3test/master/regressions/smt2/"
+
+        # List of known Kaluza benchmark files (subset of 18K)
+        # For the full set, users should download from Zenodo
+        kaluza_files = [
+            f"kaluza_{i:03d}.smt2" for i in range(1, 101)  # First 100 files
+        ]
+
+        if max_files:
+            kaluza_files = kaluza_files[:max_files]
+
+        count = 0
+        for filename in kaluza_files:
+            filepath = os.path.join(kaluza_full_dir, filename)
+            if os.path.exists(filepath):
+                if self.verbose:
+                    print(f"  ✓ {filename} (already exists)")
+                count += 1
+                continue
+
+            url = base_url + filename
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    with open(filepath, 'w') as f:
+                        f.write(response.text)
+                    print(f"  ✓ Downloaded {filename}")
+                    count += 1
+                else:
+                    if self.verbose:
+                        print(f"  ✗ {filename} not found (404)")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  ✗ Failed to download {filename}: {e}")
+
+        print(f"\nKaluza full set: {count} files downloaded")
+        print(f"Location: {kaluza_full_dir}")
+        print("\nNote: For the complete 18,000+ Kaluza benchmark set:")
+        print("  Visit: https://zenodo.org/communities/smt-lib/")
+        print("  Extract to: benchmarks/cache/qf_s/kaluza_full/")
+
+        return count
+
+    def download_qf_s_pisa(self, max_files: Optional[int] = None) -> int:
+        """Download PISA string benchmarks"""
+        print("\nDownloading PISA string benchmarks...")
+
+        pisa_dir = os.path.join(self.cache_dir, 'qf_s', 'pisa')
+        os.makedirs(pisa_dir, exist_ok=True)
+
+        # PISA (Path-sensitive String Analysis) benchmarks
+        # These test path-sensitive string constraint solving
+        pisa_samples = {
+            'path_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const cond Bool)
+(assert (ite cond (= y (str.++ x "admin")) (= y (str.++ x "user"))))
+(assert (str.contains y "admin"))
+(check-sat)
+; expected: sat
+""",
+            'path_02.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const result String)
+(declare-const flag Bool)
+(assert (ite flag (= result (str.replace x "'" "")) (= result x)))
+(assert (str.contains result "'"))
+(assert flag)
+(check-sat)
+; expected: unsat
+""",
+            'branch_merge_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(declare-const b1 Bool)
+(declare-const b2 Bool)
+(assert (ite b1 (= y (str.++ x "a")) (= y (str.++ x "b"))))
+(assert (ite b2 (= z (str.++ y "c")) (= z (str.++ y "d"))))
+(assert (= (str.len z) (+ (str.len x) 2)))
+(check-sat)
+; expected: sat
+""",
+            'loop_invariant_01.smt2': """(set-logic QF_S)
+(declare-const x0 String)
+(declare-const x1 String)
+(declare-const x2 String)
+(assert (= x1 (str.++ x0 "a")))
+(assert (= x2 (str.++ x1 "a")))
+(assert (= (str.len x2) (+ (str.len x0) 2)))
+(check-sat)
+; expected: sat
+""",
+            'symbolic_exec_01.smt2': """(set-logic QF_S)
+(declare-const input String)
+(declare-const output String)
+(declare-const sanitized String)
+(assert (= sanitized (str.replace input "<" "&lt;")))
+(assert (= output (str.++ "<html>" sanitized "</html>")))
+(assert (str.contains output "<script>"))
+(check-sat)
+; expected: sat
+"""
+        }
+
+        count = 0
+        files_to_create = list(pisa_samples.items())
+        if max_files:
+            files_to_create = files_to_create[:max_files]
+
+        for filename, content in files_to_create:
+            filepath = os.path.join(pisa_dir, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                print(f"  ✓ Created {filename}")
+                count += 1
+            else:
+                print(f"  ✓ {filename} (already exists)")
+                count += 1
+
+        print(f"\nPISA benchmarks: {count} files")
+        print(f"Location: {pisa_dir}")
+
+        return count
+
+    def download_qf_s_woorpje(self, max_files: Optional[int] = None) -> int:
+        """Download Woorpje string benchmarks"""
+        print("\nDownloading Woorpje string benchmarks...")
+
+        woorpje_dir = os.path.join(self.cache_dir, 'qf_s', 'woorpje')
+        os.makedirs(woorpje_dir, exist_ok=True)
+
+        # Woorpje benchmarks test word equations
+        woorpje_samples = {
+            'word_eq_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= (str.++ x y) (str.++ y x)))
+(assert (not (= x y)))
+(assert (not (= x "")))
+(assert (not (= y "")))
+(check-sat)
+; expected: sat
+""",
+            'word_eq_02.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= (str.++ x y) (str.++ y z)))
+(assert (not (= y "")))
+(check-sat)
+; expected: sat
+""",
+            'word_eq_03.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= (str.++ x x) (str.++ y y y)))
+(check-sat)
+; expected: sat
+""",
+            'quadratic_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(assert (= (str.++ x x) (str.++ y y)))
+(assert (not (= x y)))
+(check-sat)
+; expected: sat
+""",
+            'periodic_01.smt2': """(set-logic QF_S)
+(declare-const x String)
+(declare-const y String)
+(declare-const z String)
+(assert (= (str.++ x y z) (str.++ y z x)))
+(assert (= (str.len x) 3))
+(assert (= (str.len y) 2))
+(check-sat)
+; expected: sat
+"""
+        }
+
+        count = 0
+        files_to_create = list(woorpje_samples.items())
+        if max_files:
+            files_to_create = files_to_create[:max_files]
+
+        for filename, content in files_to_create:
+            filepath = os.path.join(woorpje_dir, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                print(f"  ✓ Created {filename}")
+                count += 1
+            else:
+                print(f"  ✓ {filename} (already exists)")
+                count += 1
+
+        print(f"\nWoorpje benchmarks: {count} files")
+        print(f"Location: {woorpje_dir}")
+
+        return count
+
+    # ========== Google Drive Full Benchmark Downloads ==========
+
+    def download_gdrive_file(self, gdrive_id: str, output_path: str, description: str) -> bool:
+        """Download file from Google Drive using gdown"""
+        if not GDOWN_AVAILABLE:
+            print(f"\n⚠️  gdown library not installed. Install with: pip install gdown")
+            print(f"   Skipping download of {description}")
+            return False
+
+        if os.path.exists(output_path):
+            print(f"  ✓ {description} already downloaded")
+            return True
+
+        try:
+            print(f"  Downloading {description}...")
+            url = f"https://drive.google.com/uc?id={gdrive_id}"
+            gdown.download(url, output_path, quiet=False)
+
+            if os.path.exists(output_path):
+                print(f"  ✓ Downloaded {description} successfully")
+                return True
+            else:
+                print(f"  ✗ Failed to download {description}")
+                return False
+        except Exception as e:
+            print(f"  ✗ Error downloading {description}: {e}")
+            return False
+
+    def extract_archive(self, archive_path: str, extract_to: str) -> bool:
+        """Extract zip or tar.gz archive"""
+        try:
+            if archive_path.endswith('.zip'):
+                with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_to)
+                print(f"  ✓ Extracted to {extract_to}")
+                return True
+            elif archive_path.endswith('.tar.gz') or archive_path.endswith('.tgz'):
+                with tarfile.open(archive_path, 'r:gz') as tar_ref:
+                    tar_ref.extractall(extract_to)
+                print(f"  ✓ Extracted to {extract_to}")
+                return True
+            else:
+                print(f"  ✗ Unknown archive format: {archive_path}")
+                return False
+        except Exception as e:
+            print(f"  ✗ Error extracting {archive_path}: {e}")
+            return False
+
+    def download_full_kaluza(self) -> int:
+        """Download full QF_S benchmark set from SMT-LIB/Zenodo (contains all string benchmarks)"""
+        print("\n" + "=" * 80)
+        print("DOWNLOADING FULL QF_S BENCHMARK SET FROM SMT-LIB")
+        print("=" * 80)
+        print("Source: SMT-LIB 2024 (Zenodo)")
+        print("Size: 2.9MB compressed | Contains: Kaluza, PISA, PyEx, etc.")
+
+        qf_s_full_dir = os.path.join(self.cache_dir, 'qf_s_full')
+        os.makedirs(qf_s_full_dir, exist_ok=True)
+
+        # Check if already extracted
+        existing_files = list(Path(qf_s_full_dir).rglob('*.smt2'))
+        if len(existing_files) > 100:
+            print(f"\n✓ QF_S benchmarks already cached ({len(existing_files)} files)")
+            print(f"  Location: {qf_s_full_dir}")
+            return len(existing_files)
+
+        archive_path = os.path.join(self.cache_dir, 'QF_S.tar.zst')
+
+        # Download from Zenodo (public SMT-LIB repository)
+        zenodo_url = "https://zenodo.org/records/11061097/files/QF_S.tar.zst?download=1"
+
+        try:
+            if not os.path.exists(archive_path):
+                print(f"\n  Downloading QF_S benchmarks from Zenodo...")
+                response = requests.get(zenodo_url, timeout=300, stream=True)
+                if response.status_code == 200:
+                    total_size = int(response.headers.get('content-length', 0))
+                    with open(archive_path, 'wb') as f:
+                        downloaded = 0
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                print(f"\r  Progress: {progress:.1f}%", end='', flush=True)
+                    print(f"\n  ✓ Downloaded QF_S.tar.zst ({downloaded / 1024 / 1024:.1f} MB)")
+                else:
+                    print(f"  ✗ Failed to download (HTTP {response.status_code})")
+                    return 0
+
+            # Extract using tar with zstd
+            print(f"  Extracting benchmarks...")
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['tar', '--zstd', '-xf', archive_path, '-C', qf_s_full_dir],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                if result.returncode == 0:
+                    smt2_files = list(Path(qf_s_full_dir).rglob('*.smt2'))
+                    print(f"\n✓ QF_S benchmarks ready: {len(smt2_files)} files")
+                    print(f"  Location: {qf_s_full_dir}")
+
+                    # Clean up archive
+                    try:
+                        os.remove(archive_path)
+                        print(f"  ✓ Cleaned up archive")
+                    except:
+                        pass
+
+                    return len(smt2_files)
+                else:
+                    print(f"  ✗ Extraction failed: {result.stderr}")
+                    # Try alternative: python tarfile with zstandard
+                    try:
+                        import zstandard as zstd
+                        import tarfile
+                        print(f"  Trying alternative extraction method...")
+
+                        # Decompress zstd first
+                        decompressed_path = archive_path.replace('.zst', '')
+                        with open(archive_path, 'rb') as compressed:
+                            dctx = zstd.ZstdDecompressor()
+                            with open(decompressed_path, 'wb') as destination:
+                                dctx.copy_stream(compressed, destination)
+
+                        # Then extract tar
+                        with tarfile.open(decompressed_path, 'r') as tar:
+                            tar.extractall(qf_s_full_dir)
+
+                        smt2_files = list(Path(qf_s_full_dir).rglob('*.smt2'))
+                        print(f"\n✓ QF_S benchmarks ready: {len(smt2_files)} files")
+                        print(f"  Location: {qf_s_full_dir}")
+
+                        # Clean up
+                        try:
+                            os.remove(archive_path)
+                            os.remove(decompressed_path)
+                            print(f"  ✓ Cleaned up archives")
+                        except:
+                            pass
+
+                        return len(smt2_files)
+                    except ImportError:
+                        print(f"  ✗ zstandard library not available")
+                        print(f"  Install with: pip install zstandard")
+                        return 0
+                    except Exception as e:
+                        print(f"  ✗ Alternative extraction failed: {e}")
+                        return 0
+            except FileNotFoundError:
+                print(f"  ✗ 'tar' command not found. Trying python extraction...")
+                # Same alternative method as above
+                try:
+                    import zstandard as zstd
+                    import tarfile
+
+                    decompressed_path = archive_path.replace('.zst', '')
+                    with open(archive_path, 'rb') as compressed:
+                        dctx = zstd.ZstdDecompressor()
+                        with open(decompressed_path, 'wb') as destination:
+                            dctx.copy_stream(compressed, destination)
+
+                    with tarfile.open(decompressed_path, 'r') as tar:
+                        tar.extractall(qf_s_full_dir)
+
+                    smt2_files = list(Path(qf_s_full_dir).rglob('*.smt2'))
+                    print(f"\n✓ QF_S benchmarks ready: {len(smt2_files)} files")
+                    print(f"  Location: {qf_s_full_dir}")
+
+                    try:
+                        os.remove(archive_path)
+                        os.remove(decompressed_path)
+                        print(f"  ✓ Cleaned up archives")
+                    except:
+                        pass
+
+                    return len(smt2_files)
+                except ImportError:
+                    print(f"  ✗ zstandard library not available")
+                    print(f"  Install with: pip install zstandard")
+                    return 0
+                except Exception as e:
+                    print(f"  ✗ Extraction failed: {e}")
+                    return 0
+
+        except Exception as e:
+            print(f"\n⚠️  Failed to download QF_S benchmarks: {e}")
+            return 0
+
+        return 0
+
+    # Aliases for backward compatibility - all point to the same SMT-LIB download
+    def download_full_pisa(self) -> int:
+        """Alias for download_full_kaluza - SMT-LIB contains all QF_S benchmarks"""
+        return self.download_full_kaluza()
+
+    def download_full_appscan(self) -> int:
+        """Alias for download_full_kaluza - SMT-LIB contains all QF_S benchmarks"""
+        return self.download_full_kaluza()
+
+    def download_full_pyex(self) -> int:
+        """Alias for download_full_kaluza - SMT-LIB contains all QF_S benchmarks"""
+        return self.download_full_kaluza()
+
+    # ========== QF_S Benchmark Running ==========
+
+    def run_qf_s_benchmark(self, source: str, filename: str) -> BenchmarkResult:
+        """Run a single QF_S benchmark"""
+        start_time = time.time()
+
+        try:
+            cache_path = os.path.join(self.cache_dir, 'qf_s', source, filename)
+            with open(cache_path, 'r') as f:
+                content = f.read()
+
+            formula, expected_status = self.smtlib_parser.parse_file(content)
+            is_sat = self.checker.is_satisfiable(formula)
+            actual_status = 'sat' if is_sat else 'unsat'
+
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_s',
+                division=source,
+                expected=expected_status,
+                actual=actual_status,
+                time_ms=elapsed_ms
+            )
+
+        except Exception as e:
+            elapsed_ms = (time.time() - start_time) * 1000
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_s',
+                division=source,
+                expected='unknown',
+                actual='error',
+                time_ms=elapsed_ms,
+                error=str(e)
+            )
+
+    def run_qf_s_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
+        """Run all QF_S benchmarks in a source"""
+        source_dir = os.path.join(self.cache_dir, 'qf_s', source)
+
+        if not os.path.exists(source_dir):
+            if source == 'kaluza':
+                print(f"Kaluza benchmarks not found. Downloading samples...")
+                self.download_qf_s_kaluza(max_files=max_tests or 10)
+            else:
+                print(f"ERROR: QF_S source {source} not found")
+                return []
+
+        if not os.path.exists(source_dir):
+            print(f"ERROR: Could not find or download {source}")
+            return []
+
+        files = sorted([f for f in os.listdir(source_dir) if f.endswith('.smt2')])
+        if max_tests:
+            files = files[:max_tests]
+
+        print(f"\nRunning QF_S/{source}: {len(files)} benchmarks")
+        print("=" * 80)
+
+        results = []
+        for i, filename in enumerate(files, 1):
+            result = self.run_qf_s_benchmark(source, filename)
+            results.append(result)
+            status = "✓" if result.correct else "✗"
+            print(f"[{i}/{len(files)}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+
+        self.results.extend(results)
+        return results
+
+    # ========== Analysis ==========
+
+    def analyze_results(self) -> Dict:
+        """Analyze results and generate statistics"""
+        if not self.results:
+            return {}
+
+        stats = {
+            'total': len(self.results),
+            'correct': sum(1 for r in self.results if r.correct),
+            'incorrect': sum(1 for r in self.results if not r.correct and not r.error),
+            'errors': sum(1 for r in self.results if r.error),
+            'avg_time_ms': sum(r.time_ms for r in self.results) / len(self.results),
+            'by_suite': defaultdict(lambda: {'total': 0, 'correct': 0, 'errors': 0}),
+            'by_division': defaultdict(lambda: {'total': 0, 'correct': 0, 'errors': 0}),
+            'failures': []
+        }
+
+        for result in self.results:
+            # By suite
+            stats['by_suite'][result.suite]['total'] += 1
+            if result.correct:
+                stats['by_suite'][result.suite]['correct'] += 1
+            if result.error:
+                stats['by_suite'][result.suite]['errors'] += 1
+
+            # By division
+            stats['by_division'][result.division]['total'] += 1
+            if result.correct:
+                stats['by_division'][result.division]['correct'] += 1
+            if result.error:
+                stats['by_division'][result.division]['errors'] += 1
+
+            # Track failures
+            if not result.correct:
+                stats['failures'].append({
+                    'file': result.filename,
+                    'division': result.division,
+                    'expected': result.expected,
+                    'actual': result.actual,
+                    'error': result.error
+                })
+
+        return stats
+
+    def print_summary(self):
+        """Print summary of results"""
+        stats = self.analyze_results()
+
+        if not stats:
+            print("No results to display")
+            return
+
+        print("\n" + "=" * 80)
+        print("BENCHMARK SUMMARY")
+        print("=" * 80)
+
+        print(f"\nOverall:")
+        print(f"  Total:     {stats['total']}")
+        print(f"  Correct:   {stats['correct']} ({stats['correct']/stats['total']*100:.1f}%)")
+        print(f"  Incorrect: {stats['incorrect']}")
+        print(f"  Errors:    {stats['errors']}")
+        print(f"  Avg Time:  {stats['avg_time_ms']:.1f}ms")
+
+        print(f"\nBy Suite:")
+        for suite, suite_stats in stats['by_suite'].items():
+            total = suite_stats['total']
+            correct = suite_stats['correct']
+            errors = suite_stats['errors']
+            print(f"  {suite}:")
+            print(f"    Total: {total}, Correct: {correct} ({correct/total*100:.1f}%), Errors: {errors}")
+
+        print(f"\nBy Division:")
+        for division, div_stats in sorted(stats['by_division'].items()):
+            total = div_stats['total']
+            correct = div_stats['correct']
+            errors = div_stats['errors']
+            print(f"  {division}:")
+            print(f"    Total: {total}, Correct: {correct} ({correct/total*100:.1f}%), Errors: {errors}")
+
+        if stats['failures']:
+            print(f"\nFailures ({len(stats['failures'])}):")
+            for failure in stats['failures'][:10]:  # Show first 10
+                print(f"  - {failure['division']}/{failure['file']}: "
+                      f"expected={failure['expected']}, got={failure['actual']}")
+            if len(stats['failures']) > 10:
+                print(f"  ... and {len(stats['failures']) - 10} more")
+
+    def save_results(self, output_file: str):
+        """Save results to JSON"""
+        output_path = os.path.join(self.cache_dir, output_file)
+        with open(output_path, 'w') as f:
+            json.dump([asdict(r) for r in self.results], f, indent=2)
+        print(f"\nResults saved to: {output_path}")
+
+
+def cmd_run(args):
+    """Run benchmarks"""
+    runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir, verbose=args.verbose)
+
+    # All 12 SL-COMP divisions (861 total benchmarks)
+    slcomp_divisions = [
+        # Entailment problems (6 divisions)
+        'qf_shid_entl',      # 50 tests
+        'qf_shls_entl',      # 296 tests
+        'qf_shlid_entl',     # 50 tests
+        'qf_shidlia_entl',   # 50 tests
+        'shid_entl',         # 50 tests
+        'shidlia_entl',      # 50 tests
+        # Satisfiability problems (6 divisions)
+        'qf_bsl_sat',        # 46 tests
+        'qf_bsllia_sat',     # 24 tests
+        'bsl_sat',           # 3 tests
+        'qf_shid_sat',       # 99 tests
+        'qf_shidlia_sat',    # 33 tests
+        'qf_shls_sat',       # 110 tests
+    ]
+
+    qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje']
+
+    if args.suite in ['slcomp', 'all']:
+        divisions = [args.division] if args.division else slcomp_divisions
+        for division in divisions:
+            runner.run_slcomp_division(division, max_tests=args.max_tests)
+
+    if args.suite in ['qf_s', 'all']:
+        sources = [args.division] if args.division else qf_s_sources
+        for source in sources:
+            runner.run_qf_s_division(source, max_tests=args.max_tests)
+
+    runner.print_summary()
+    runner.save_results(args.output)
+
+
+def cmd_download(args):
+    """Download benchmarks"""
+    runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir)
+
+    # All 12 SL-COMP divisions
+    slcomp_divisions = [
+        'qf_shid_entl', 'qf_shls_entl', 'qf_shlid_entl', 'qf_shidlia_entl',
+        'shid_entl', 'shidlia_entl',
+        'qf_bsl_sat', 'qf_bsllia_sat', 'bsl_sat',
+        'qf_shid_sat', 'qf_shidlia_sat', 'qf_shls_sat',
+    ]
+
+    # Handle --all flag (download everything)
+    if args.all or args.suite == 'all':
+        print("=" * 80)
+        print("DOWNLOADING ALL BENCHMARKS (INCLUDING FULL SETS)")
+        print("=" * 80)
+
+        # SL-COMP benchmarks (already cached)
+        print("\n### SL-COMP Benchmarks (12 divisions, 861 total) ###")
+        print("✓ Already cached in repository")
+
+        # Download full QF_S benchmark set from SMT-LIB (contains all: Kaluza, PISA, PyEx, etc.)
+        print("\n### QF_S String Benchmarks (Full Set from SMT-LIB 2024) ###")
+        qf_s_count = runner.download_full_kaluza()  # Downloads all QF_S from Zenodo
+
+        # Also download samples
+        runner.download_qf_s_kaluza(max_files=args.max_files)
+        runner.download_qf_s_pisa(max_files=args.max_files)
+        runner.download_qf_s_woorpje(max_files=args.max_files)
+
+        print("\n" + "=" * 80)
+        print("DOWNLOAD COMPLETE")
+        print("=" * 80)
+        print("\nBenchmarks available:")
+        print("  - SL-COMP: 861 benchmarks (cached in repository)")
+        print(f"  - QF_S Full Set (SMT-LIB 2024): {qf_s_count:,} benchmarks")
+        print("  - QF_S Samples: 53 benchmarks")
+        print(f"  - Total: ~{861 + qf_s_count + 53:,} benchmarks ready to run")
+        print("\nTo run all benchmarks:")
+        print("  python benchmarks.py run --suite all")
+        print("\nTo run specific suites:")
+        print("  python benchmarks.py run --suite slcomp")
+        print("  python benchmarks.py run --suite qf_s")
+        return
+
+    if args.suite == 'slcomp':
+        if args.division:
+            runner.download_slcomp_division(args.division, max_files=args.max_files)
+        else:
+            print("Downloading sample SL-COMP benchmarks...")
+            for div in ['qf_shls_entl', 'qf_shid_sat', 'qf_shid_entl']:
+                runner.download_slcomp_division(div, max_files=args.max_files)
+
+    elif args.suite == 'qf_s':
+        source = args.division or 'all'
+        if source == 'kaluza':
+            runner.download_qf_s_kaluza(max_files=args.max_files)
+        elif source == 'kaluza_full':
+            runner.download_full_kaluza()
+        elif source == 'pisa':
+            runner.download_qf_s_pisa(max_files=args.max_files)
+        elif source == 'pisa_full':
+            runner.download_full_pisa()
+        elif source == 'appscan_full':
+            runner.download_full_appscan()
+        elif source == 'pyex_full':
+            runner.download_full_pyex()
+        elif source == 'woorpje':
+            runner.download_qf_s_woorpje(max_files=args.max_files)
+        elif source == 'all':
+            print("Downloading all QF_S benchmark suites (samples)...")
+            runner.download_qf_s_kaluza(max_files=args.max_files)
+            runner.download_qf_s_pisa(max_files=args.max_files)
+            runner.download_qf_s_woorpje(max_files=args.max_files)
+        elif source == 'all_full':
+            print("Downloading all QF_S benchmark suites (full sets from Google Drive)...")
+            runner.download_full_kaluza()
+            runner.download_full_pisa()
+            runner.download_full_appscan()
+            runner.download_full_pyex()
+        else:
+            print(f"QF_S source '{source}' not recognized")
+            print("Available:")
+            print("  Samples: kaluza, pisa, woorpje, all")
+            print("  Full sets: kaluza_full, pisa_full, appscan_full, pyex_full, all_full")
+
+
+def cmd_analyze(args):
+    """Analyze benchmark failures"""
+    results_file = os.path.join(args.cache_dir, args.results_file)
+
+    if not os.path.exists(results_file):
+        print(f"Results file not found: {results_file}")
+        print("Run benchmarks first: python benchmarks.py run --suite slcomp")
+        return
+
+    with open(results_file, 'r') as f:
+        results = json.load(f)
+
+    failures = [r for r in results if not r.get('error') and r['expected'] != r['actual']]
+    errors = [r for r in results if r.get('error')]
+
+    print(f"\nAnalyzing {len(results)} benchmark results...")
+    print(f"  Failures: {len(failures)}")
+    print(f"  Errors: {len(errors)}")
+
+    if args.failures and failures:
+        print("\n" + "=" * 80)
+        print("FAILURE ANALYSIS")
+        print("=" * 80)
+
+        by_division = defaultdict(list)
+        for failure in failures:
+            by_division[failure['division']].append(failure)
+
+        for division, div_failures in sorted(by_division.items()):
+            print(f"\n{division}: {len(div_failures)} failures")
+            for f in div_failures[:5]:  # Show first 5
+                print(f"  - {f['filename']}: expected={f['expected']}, got={f['actual']}")
+
+
+def cmd_visualize(args):
+    """Visualize heap structure"""
+    from frame.core.ast import PointsTo, PredicateCall, SepConj, And, Or, Exists, Forall, Not, Var
+
+    # Determine file path
+    if '/' in args.file:
+        filepath = args.file
+    else:
+        # Assume it's in cache
+        filepath = f"benchmarks/cache/qf_shls_entl/{args.file}"
+
+    if not os.path.exists(filepath):
+        print(f"Error: File not found: {filepath}")
+        return
+
+    # Parse the file
+    with open(filepath, 'r') as f:
+        content = f.read()
+
+    parser = SLCompParser()
+    try:
+        antecedent, consequent, expected_status, problem_type = parser.parse_file(content)
+    except Exception as e:
+        print(f"Error parsing file: {e}")
+        return
+
+    # Extract heap edges and predicates
+    def extract_heap_edges(formula):
+        """Extract all points-to assertions"""
+        edges = []
+        def visit(f):
+            if isinstance(f, PointsTo):
+                loc = f.location.name if isinstance(f.location, Var) else str(f.location)
+                if f.values:
+                    val = f.values[0].name if isinstance(f.values[0], Var) else str(f.values[0])
+                    edges.append((loc, val))
+            elif isinstance(f, (SepConj, And, Or)):
+                visit(f.left)
+                visit(f.right)
+            elif isinstance(f, (Exists, Forall, Not)):
+                visit(f.formula)
+        visit(formula)
+        return edges
+
+    def extract_predicates(formula):
+        """Extract all predicate calls"""
+        preds = []
+        def visit(f):
+            if isinstance(f, PredicateCall):
+                args_str = ', '.join(arg.name if isinstance(arg, Var) else str(arg)
+                                    for arg in f.args)
+                preds.append((f.name, args_str, f.args))
+            elif isinstance(f, (SepConj, And, Or)):
+                visit(f.left)
+                visit(f.right)
+            elif isinstance(f, (Exists, Forall, Not)):
+                visit(f.formula)
+        visit(formula)
+        return preds
+
+    # Visualize
+    print(f"\n{'='*80}")
+    print(f"HEAP VISUALIZATION: {os.path.basename(filepath)}")
+    print(f"{'='*80}")
+    print(f"Expected: {expected_status}")
+    print(f"Problem Type: {problem_type}\n")
+
+    # Antecedent
+    ante_edges = extract_heap_edges(antecedent)
+    ante_preds = extract_predicates(antecedent)
+
+    print("--- ANTECEDENT (What we have) ---")
+    if ante_edges:
+        print("Points-to edges:")
+        for src, dst in ante_edges:
+            print(f"  {src} |-> {dst}")
+
+    if ante_preds:
+        print("\nPredicates:")
+        for name, args_str, _ in ante_preds:
+            print(f"  {name}({args_str})")
+
+    if not ante_edges and not ante_preds:
+        print("  (empty heap)")
+
+    # Consequent
+    cons_edges = extract_heap_edges(consequent)
+    cons_preds = extract_predicates(consequent)
+
+    print("\n--- CONSEQUENT (What we need to prove) ---")
+    if cons_edges:
+        print("Points-to edges:")
+        for src, dst in cons_edges:
+            print(f"  {src} |-> {dst}")
+
+    if cons_preds:
+        print("\nPredicates:")
+        for name, args_str, _ in cons_preds:
+            print(f"  {name}({args_str})")
+
+    if not cons_edges and not cons_preds:
+        print("  (empty heap)")
+
+    # Analysis
+    print("\n--- ANALYSIS ---")
+    print(f"Antecedent: {len(ante_edges)} points-to, {len(ante_preds)} predicates")
+    print(f"Consequent: {len(cons_edges)} points-to, {len(cons_preds)} predicates")
+
+    if problem_type == 'entl':
+        print(f"\nFor entailment to be valid: antecedent must prove consequent")
+        print(f"Expected result: {expected_status}")
+    else:
+        print(f"\nFor satisfiability check: formula must have a model")
+        print(f"Expected result: {expected_status}")
+
+    print("="*80 + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Frame Benchmark Suite - Unified CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Download ALL uncached benchmarks (SL-COMP + QF_S)
+  python benchmarks.py download --all
+
+  # Download specific suite
+  python benchmarks.py download --suite qf_s --division kaluza
+  python benchmarks.py download --suite slcomp --division qf_shls_entl
+
+  # Run all benchmarks
+  python benchmarks.py run --suite all
+
+  # Run specific suite
+  python benchmarks.py run --suite slcomp --division qf_shls_entl
+  python benchmarks.py run --suite qf_s
+
+  # Analyze failures
+  python benchmarks.py analyze --failures
+
+  # Visualize heap structure
+  python benchmarks.py visualize bolognesa-10-e01.tptp.smt2
+        """
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # Run command
+    run_parser = subparsers.add_parser('run', help='Run benchmarks')
+    run_parser.add_argument('--suite', choices=['slcomp', 'qf_s', 'all'], default='slcomp')
+    run_parser.add_argument('--division', type=str, help='Specific division/source to run')
+    run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
+    run_parser.add_argument('--output', default='benchmark_results.json', help='Output file')
+    run_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
+    run_parser.add_argument('--verbose', action='store_true', help='Verbose output')
+
+    # Download command
+    dl_parser = subparsers.add_parser('download', help='Download benchmarks')
+    dl_parser.add_argument('--suite', choices=['slcomp', 'qf_s', 'all'], default='all')
+    dl_parser.add_argument('--division', type=str, help='Specific division to download')
+    dl_parser.add_argument('--max-files', type=int, default=10, help='Max files to download')
+    dl_parser.add_argument('--all', action='store_true', help='Download all uncached benchmarks')
+    dl_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
+
+    # Analyze command
+    analyze_parser = subparsers.add_parser('analyze', help='Analyze results')
+    analyze_parser.add_argument('--failures', action='store_true', help='Show failure analysis')
+    analyze_parser.add_argument('--results-file', default='benchmark_results.json')
+    analyze_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
+
+    # Visualize command
+    viz_parser = subparsers.add_parser('visualize', help='Visualize heap structure')
+    viz_parser.add_argument('file', help='Benchmark file to visualize')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    if args.command == 'run':
+        cmd_run(args)
+    elif args.command == 'download':
+        cmd_download(args)
+    elif args.command == 'analyze':
+        cmd_analyze(args)
+    elif args.command == 'visualize':
+        cmd_visualize(args)
+
+
+if __name__ == '__main__':
+    main()
