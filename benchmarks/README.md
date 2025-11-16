@@ -4,17 +4,31 @@ Unified benchmark infrastructure for evaluating Frame against industry-standard 
 
 ## Quick Start
 
+### Curated Benchmarks (Recommended)
+
 ```bash
-# Download ALL benchmarks INCLUDING FULL QF_S SET (recommended - automatic caching)
-# This downloads 18,940 QF_S benchmarks from SMT-LIB 2024 (2.9MB compressed)
+# Download and create curated benchmark sets (650 tests - stratified samples)
 python -m benchmarks download --all
 
-# Run all benchmarks (SL-COMP + QF_S)
-python -m benchmarks run --suite all
+# Run curated benchmarks (~10 minutes, representative)
+python -m benchmarks run --curated
 
-# Run specific suite
-python -m benchmarks run --suite qf_s      # String theory
-python -m benchmarks run --suite slcomp    # Separation logic
+# Run specific curated suite
+python -m benchmarks run --suite qf_s --curated      # 500 QF_S tests
+python -m benchmarks run --suite slcomp --curated    # 150 SL-COMP tests
+```
+
+**Curated sets provide:**
+- ✅ **Representative sampling:** Stratified across all sources/divisions
+- ✅ **Fast iteration:** ~10 minutes vs. 2+ hours for full set
+- ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
+- ✅ **Better coverage:** 650 tests vs. 53 manual samples (12x more representative)
+
+### Full Benchmarks (Comprehensive)
+
+```bash
+# Run all 19,854 benchmarks (~2+ hours)
+python -m benchmarks run --suite all
 
 # Analyze failures
 python -m benchmarks analyze --failures
@@ -23,9 +37,24 @@ python -m benchmarks analyze --failures
 python -m benchmarks visualize benchmarks/cache/qf_shls_entl/test.smt2
 ```
 
-**Note**: First run of `download --all` downloads 2.9MB of QF_S benchmarks from SMT-LIB/Zenodo. Subsequent runs use cached files. Requires `zstandard` library: `pip install zstandard`
+**Note**: First run of `download --all` downloads 2.9MB of QF_S benchmarks from SMT-LIB/Zenodo and creates curated sets. Requires `zstandard` library: `pip install zstandard`
 
 ## Benchmark Suites
+
+### 0. Curated Sets (Recommended for Benchmarking)
+
+**QF_S Curated: 500 tests** (stratified sample from 18,940 full set)
+- **Sampling**: Proportional stratified sampling across all sources
+- **Coverage**: Kaluza, PISA, PyEx, AppScan, slog_stranger, and more
+- **Reproducible**: Fixed seed (42) ensures same tests every run
+- **Representative**: 2.6% coverage (vs. 0.28% for manual 53 samples)
+
+**SL-COMP Curated: 150 tests** (stratified sample from 861 tests)
+- **Sampling**: Ensures all 12 divisions represented (min 5 per division)
+- **Balanced**: Proportional allocation across entailment/SAT problems
+- **Coverage**: qf_shls_entl (largest), shidlia_entl (100% acc), etc.
+
+**Total Curated: 650 tests** - Fast benchmarking in ~10 minutes
 
 ### 1. SL-COMP (Separation Logic Competition)
 **861 benchmarks across 12 divisions**
