@@ -67,8 +67,11 @@ python -m benchmarks visualize benchmarks/cache/qf_shls_entl/test.smt2
 **Full QF_S Benchmark Set** (Downloaded automatically with `download --all`):
 - **18,940 tests** from SMT-LIB 2024 (Zenodo)
 - **2.9MB compressed** (~20MB uncompressed)
-- **Includes**: Kaluza, PISA, PyEx, AppScan, and more
+- **Includes**: Kaluza, PISA, PyEx, AppScan, slog_stranger, and more
 - **Source**: Official SMT-LIB benchmark repository
+- **Status**: Contains many edge cases including tests with `expected=unknown`
+- **Usage**: Run with `python -m benchmarks run --suite qf_s --division qf_s_full`
+- **Note**: Curated samples (above) are recommended for benchmarking accuracy; full set for comprehensive testing
 
 **Operation Coverage** (Kaluza benchmarks):
 - Concatenation: 100% (4/4) ✅
@@ -361,10 +364,18 @@ python -m benchmarks run --suite qf_s
 ### Full Benchmark Run
 
 ```bash
-# All 914 benchmarks (861 SL-COMP + 53 QF_S)
+# All curated benchmarks (861 SL-COMP + 53 QF_S samples = 914 tests)
+python -m benchmarks run --suite slcomp
+python -m benchmarks run --suite qf_s --division kaluza
+python -m benchmarks run --suite qf_s --division woorpje
+python -m benchmarks run --suite qf_s --division pisa
+
+# Full benchmark set including 18,940 QF_S tests (19,854 total)
+# WARNING: Takes 2+ hours!
 python -m benchmarks run --suite all
 
-# Takes ~90-120 minutes for full suite
+# Test with subset of full QF_S set (recommended)
+python -m benchmarks run --suite qf_s --division qf_s_full --max-tests 100
 ```
 
 ### Comparing Results
