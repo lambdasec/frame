@@ -64,6 +64,14 @@ class SMTLibStringParser:
                         self.expected_result = 'sat'
                 continue
 
+            # Parse (set-info :status sat/unsat)
+            if line.startswith('(set-info') and ':status' in line:
+                if 'unsat' in line.lower():
+                    self.expected_result = 'unsat'
+                elif 'sat' in line.lower():
+                    self.expected_result = 'sat'
+                continue
+
             # Parse commands
             if line.startswith('(declare-const'):
                 self._parse_declare_const(line)
