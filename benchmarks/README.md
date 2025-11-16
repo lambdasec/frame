@@ -7,20 +7,20 @@ Unified benchmark infrastructure for evaluating Frame against industry-standard 
 ```bash
 # Download ALL benchmarks INCLUDING FULL QF_S SET (recommended - automatic caching)
 # This downloads 18,940 QF_S benchmarks from SMT-LIB 2024 (2.9MB compressed)
-python benchmarks.py download --all
+python -m benchmarks download --all
 
 # Run all benchmarks (SL-COMP + QF_S)
-python benchmarks.py run --suite all
+python -m benchmarks run --suite all
 
 # Run specific suite
-python benchmarks.py run --suite qf_s      # String theory
-python benchmarks.py run --suite slcomp    # Separation logic
+python -m benchmarks run --suite qf_s      # String theory
+python -m benchmarks run --suite slcomp    # Separation logic
 
 # Analyze failures
-python benchmarks.py analyze --failures
+python -m benchmarks analyze --failures
 
 # Visualize heap structures
-python benchmarks.py visualize benchmarks/cache/qf_shls_entl/test.smt2
+python -m benchmarks visualize benchmarks/cache/qf_shls_entl/test.smt2
 ```
 
 **Note**: First run of `download --all` downloads 2.9MB of QF_S benchmarks from SMT-LIB/Zenodo. Subsequent runs use cached files. Requires `zstandard` library: `pip install zstandard`
@@ -84,12 +84,12 @@ python benchmarks.py visualize benchmarks/cache/qf_shls_entl/test.smt2
 
 ## Unified CLI
 
-### Main Entry Point: `benchmarks.py`
+### Main Entry Point: `python -m benchmarks`
 
 Single command for all benchmark operations:
 
 ```
-python benchmarks.py <command> [options]
+python -m benchmarks <command> [options]
 
 Commands:
   run        Run benchmarks (auto-downloads if missing)
@@ -102,24 +102,24 @@ Commands:
 
 ```bash
 # Download EVERYTHING including full QF_S benchmark set (recommended)
-python benchmarks.py download --all
+python -m benchmarks download --all
 # Downloads: 861 SL-COMP + 53 QF_S samples + 18,940 full QF_S from SMT-LIB
 # Total: 19,854 benchmarks (2.9MB compressed download, one-time)
 
 # Download specific QF_S samples
-python benchmarks.py download --suite qf_s --division all          # All samples (53 tests)
-python benchmarks.py download --suite qf_s --division kaluza        # Kaluza samples (40 tests)
-python benchmarks.py download --suite qf_s --division woorpje       # Woorpje samples (5 tests)
-python benchmarks.py download --suite qf_s --division pisa          # PISA samples (5 tests)
+python -m benchmarks download --suite qf_s --division all          # All samples (53 tests)
+python -m benchmarks download --suite qf_s --division kaluza        # Kaluza samples (40 tests)
+python -m benchmarks download --suite qf_s --division woorpje       # Woorpje samples (5 tests)
+python -m benchmarks download --suite qf_s --division pisa          # PISA samples (5 tests)
 
 # Download full QF_S benchmark set from SMT-LIB
-python benchmarks.py download --suite qf_s --division kaluza_full   # 18,940 tests from SMT-LIB 2024
+python -m benchmarks download --suite qf_s --division kaluza_full   # 18,940 tests from SMT-LIB 2024
 
 # Download specific SL-COMP division
-python benchmarks.py download --suite slcomp --division qf_shls_entl
+python -m benchmarks download --suite slcomp --division qf_shls_entl
 
 # Download with file limit (for testing samples)
-python benchmarks.py download --all --max-files 5
+python -m benchmarks download --all --max-files 5
 ```
 
 **Requirements**: `pip install zstandard` for .tar.zst extraction. Falls back gracefully to cached samples if not available.
@@ -130,25 +130,25 @@ Benchmarks are **automatically downloaded** if missing!
 
 ```bash
 # Run everything (auto-downloads if needed)
-python benchmarks.py run --suite all
+python -m benchmarks run --suite all
 
 # Run SL-COMP benchmarks
-python benchmarks.py run --suite slcomp
+python -m benchmarks run --suite slcomp
 
 # Run specific division
-python benchmarks.py run --suite slcomp --division qf_shls_entl
+python -m benchmarks run --suite slcomp --division qf_shls_entl
 
 # Run QF_S string benchmarks
-python benchmarks.py run --suite qf_s
+python -m benchmarks run --suite qf_s
 
 # Run specific QF_S suite
-python benchmarks.py run --suite qf_s --division woorpje
+python -m benchmarks run --suite qf_s --division woorpje
 
 # Limit number of tests per division
-python benchmarks.py run --suite slcomp --max-tests 10
+python -m benchmarks run --suite slcomp --max-tests 10
 
 # Run with verbose output
-python benchmarks.py run --suite slcomp --verbose
+python -m benchmarks run --suite slcomp --verbose
 ```
 
 **Output**: Results printed to terminal + saved to `benchmarks/cache/benchmark_results.json`
@@ -157,10 +157,10 @@ python benchmarks.py run --suite slcomp --verbose
 
 ```bash
 # Analyze benchmark failures
-python benchmarks.py analyze --failures
+python -m benchmarks analyze --failures
 
 # Specify results file
-python benchmarks.py analyze --failures --results-file benchmark_results.json
+python -m benchmarks analyze --failures --results-file benchmark_results.json
 ```
 
 **Shows**:
@@ -172,10 +172,10 @@ python benchmarks.py analyze --failures --results-file benchmark_results.json
 
 ```bash
 # Visualize heap from benchmark file
-python benchmarks.py visualize benchmarks/cache/qf_shls_entl/bolognesa-10-e01.tptp.smt2
+python -m benchmarks visualize benchmarks/cache/qf_shls_entl/bolognesa-10-e01.tptp.smt2
 
 # Works with any .smt2 file
-python benchmarks.py visualize path/to/test.smt2
+python -m benchmarks visualize path/to/test.smt2
 ```
 
 **Shows**:
@@ -187,13 +187,13 @@ python benchmarks.py visualize path/to/test.smt2
 
 ```bash
 # Custom cache directory
-python benchmarks.py run --suite slcomp --cache-dir /path/to/cache
+python -m benchmarks run --suite slcomp --cache-dir /path/to/cache
 
 # Custom output file
-python benchmarks.py run --suite slcomp --output my_results.json
+python -m benchmarks run --suite slcomp --output my_results.json
 
 # Limit downloads
-python benchmarks.py download --suite slcomp --max-files 5
+python -m benchmarks download --suite slcomp --max-files 5
 ```
 
 ## Directory Structure
@@ -219,7 +219,7 @@ benchmarks/
 
 Root-level entry point:
 ```
-benchmarks.py                  # ⭐ Unified CLI wrapper
+benchmarks/__main__.py         # ⭐ Unified CLI wrapper (run with: python -m benchmarks)
 ```
 
 **Note**: The `qf_s_full/` directory is downloaded automatically from SMT-LIB/Zenodo when you run `download --all`.
@@ -290,10 +290,10 @@ The full Kaluza benchmark set (18,000+ tests) is available:
 
 ```bash
 # Download first 100 real Kaluza benchmarks from GitHub
-python benchmarks.py download --suite qf_s --division kaluza_full --max-files 100
+python -m benchmarks download --suite qf_s --division kaluza_full --max-files 100
 
 # Run them
-python benchmarks.py run --suite qf_s --division kaluza_full
+python -m benchmarks run --suite qf_s --division kaluza_full
 ```
 
 ### Adding Custom Benchmarks
@@ -312,7 +312,7 @@ python benchmarks.py run --suite qf_s --division kaluza_full
 
 3. **Run**:
    ```bash
-   python benchmarks.py run --suite qf_s --division my_suite
+   python -m benchmarks run --suite qf_s --division my_suite
    ```
 
 ## Troubleshooting
@@ -323,7 +323,7 @@ python benchmarks.py run --suite qf_s --division kaluza_full
 
 **Solution**: Benchmarks auto-download on run, or manually download:
 ```bash
-python benchmarks.py download --all
+python -m benchmarks download --all
 ```
 
 ### Slow Performance
@@ -333,7 +333,7 @@ python benchmarks.py download --all
 **Solutions**:
 1. Limit tests: `--max-tests 10`
 2. Run specific division instead of all
-3. Test with QF_S first (much faster): `python benchmarks.py run --suite qf_s`
+3. Test with QF_S first (much faster): `python -m benchmarks run --suite qf_s`
 
 ### Import Errors
 
@@ -343,7 +343,7 @@ python benchmarks.py download --all
 ```bash
 # Run from repository root
 cd /path/to/proofs
-python benchmarks.py run --suite slcomp
+python -m benchmarks run --suite slcomp
 ```
 
 ## Development Workflow
@@ -352,17 +352,17 @@ python benchmarks.py run --suite slcomp
 
 ```bash
 # Run small sample from each division (~5 min)
-python benchmarks.py run --suite slcomp --max-tests 5
+python -m benchmarks run --suite slcomp --max-tests 5
 
 # Run just string benchmarks (~1 min)
-python benchmarks.py run --suite qf_s
+python -m benchmarks run --suite qf_s
 ```
 
 ### Full Benchmark Run
 
 ```bash
 # All 914 benchmarks (861 SL-COMP + 53 QF_S)
-python benchmarks.py run --suite all
+python -m benchmarks run --suite all
 
 # Takes ~90-120 minutes for full suite
 ```
@@ -371,10 +371,10 @@ python benchmarks.py run --suite all
 
 ```bash
 # Before changes
-python benchmarks.py run --suite all --output before.json
+python -m benchmarks run --suite all --output before.json
 
 # After changes
-python benchmarks.py run --suite all --output after.json
+python -m benchmarks run --suite all --output after.json
 
 # Compare
 python -c "
@@ -437,7 +437,7 @@ If you use Frame's benchmark infrastructure:
 Frame's unified benchmark infrastructure provides:
 
 ✅ **914 total benchmarks** (861 SL-COMP + 53 QF_S)
-✅ **Single entry point** (`benchmarks.py`) for all operations
+✅ **Single entry point** (`python -m benchmarks`) for all operations
 ✅ **Automatic download** - benchmarks cached locally
 ✅ **Comprehensive analysis** - failure analysis and visualization
 ✅ **Fast string solving** - 10-50x faster than Z3/CVC5
@@ -445,6 +445,6 @@ Frame's unified benchmark infrastructure provides:
 
 **Get started**:
 ```bash
-python benchmarks.py download --all    # Download everything
-python benchmarks.py run --suite all   # Run everything
+python -m benchmarks download --all    # Download everything
+python -m benchmarks run --suite all   # Run everything
 ```
