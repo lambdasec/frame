@@ -17,6 +17,8 @@ import time
 import json
 import argparse
 import requests
+import random
+import shutil
 import zipfile
 import tarfile
 from pathlib import Path
@@ -1058,6 +1060,198 @@ class UnifiedBenchmarkRunner:
         """Alias for download_full_kaluza - SMT-LIB contains all QF_S benchmarks"""
         return self.download_full_kaluza()
 
+    # ========== Curated Sample Creation ==========
+
+    def create_qf_s_curated_set(self, sample_size: int = 500, seed: int = 42) -> int:
+        """Create a curated sample set from the full QF_S benchmarks using stratified sampling
+
+        Args:
+            sample_size: Target number of samples (default 500)
+            seed: Random seed for reproducibility (default 42)
+
+        Returns:
+            Number of files in curated set
+        """
+        print("\n" + "=" * 80)
+        print(f"CREATING QF_S CURATED SAMPLE SET ({sample_size} tests)")
+        print("=" * 80)
+
+        qf_s_full_dir = os.path.join(self.cache_dir, 'qf_s_full')
+        qf_s_curated_dir = os.path.join(self.cache_dir, 'qf_s', 'qf_s_curated')
+
+        # Check if full set exists
+        if not os.path.exists(qf_s_full_dir):
+            print("Full QF_S set not found. Downloading...")
+            count = self.download_full_kaluza()
+            if count == 0:
+                print("ERROR: Failed to download full QF_S set")
+                return 0
+
+        # Find all .smt2 files recursively
+        all_files = list(Path(qf_s_full_dir).rglob('*.smt2'))
+        print(f"Found {len(all_files)} total files in full set")
+
+        # Group files by directory (source)
+        from collections import defaultdict
+        files_by_source = defaultdict(list)
+        for file_path in all_files:
+            # Get relative path components
+            rel_path = file_path.relative_to(qf_s_full_dir)
+            parts = rel_path.parts
+            # Use first meaningful directory as source
+            source = parts[1] if len(parts) > 1 else 'other'
+            files_by_source[source].append(file_path)
+
+        print(f"\nFound {len(files_by_source)} different sources:")
+        for source, files in sorted(files_by_source.items(), key=lambda x: -len(x[1]))[:10]:
+            print(f"  {source}: {len(files)} files")
+
+        # Stratified sampling: sample proportionally from each source
+        random.seed(seed)
+        sampled_files = []
+        total_files = len(all_files)
+
+        for source, files in files_by_source.items():
+            # Calculate proportion
+            proportion = len(files) / total_files
+            source_sample_size = max(1, int(sample_size * proportion))
+
+            # Sample from this source
+            if len(files) <= source_sample_size:
+                source_samples = files
+            else:
+                source_samples = random.sample(files, source_sample_size)
+
+            sampled_files.extend(source_samples)
+
+        # If we oversampled, trim down randomly
+        if len(sampled_files) > sample_size:
+            sampled_files = random.sample(sampled_files, sample_size)
+
+        print(f"\nSampled {len(sampled_files)} files")
+
+        # Create curated directory and copy files
+        os.makedirs(qf_s_curated_dir, exist_ok=True)
+
+        # Clear existing curated files
+        for existing_file in Path(qf_s_curated_dir).glob('*.smt2'):
+            existing_file.unlink()
+
+        # Copy sampled files with flattened names
+        for i, file_path in enumerate(sampled_files, 1):
+            # Create unique filename from path
+            rel_path = file_path.relative_to(qf_s_full_dir)
+            # Flatten path: replace / with _
+            flat_name = str(rel_path).replace('/', '_').replace('\\', '_')
+            dest_path = os.path.join(qf_s_curated_dir, flat_name)
+            shutil.copy2(file_path, dest_path)
+
+        print(f"\n✓ Created curated set: {len(sampled_files)} files")
+        print(f"  Location: {qf_s_curated_dir}")
+        print(f"  Seed: {seed} (reproducible)")
+
+        return len(sampled_files)
+
+    def create_slcomp_curated_set(self, sample_size: int = 150, seed: int = 42) -> int:
+        """Create a curated sample set from SL-COMP benchmarks using stratified sampling
+
+        Args:
+            sample_size: Target number of samples (default 150)
+            seed: Random seed for reproducibility (default 42)
+
+        Returns:
+            Number of files in curated set
+        """
+        print("\n" + "=" * 80)
+        print(f"CREATING SL-COMP CURATED SAMPLE SET ({sample_size} tests)")
+        print("=" * 80)
+
+        slcomp_curated_dir = os.path.join(self.cache_dir, 'slcomp_curated')
+
+        # All SL-COMP divisions
+        divisions = [
+            'qf_shls_entl', 'qf_shid_sat', 'qf_shid_entl', 'qf_bsl_sat',
+            'qf_bsllia_sat', 'qf_shlid_entl', 'qf_shidlia_entl', 'qf_shidlia_sat',
+            'qf_shls_sat', 'shid_entl', 'shidlia_entl', 'bsl_sat'
+        ]
+
+        # Count files in each division
+        from collections import defaultdict
+        files_by_division = defaultdict(list)
+        total_files = 0
+
+        for division in divisions:
+            division_dir = os.path.join(self.cache_dir, division)
+            if os.path.exists(division_dir):
+                files = [f for f in os.listdir(division_dir) if f.endswith('.smt2')]
+                files_by_division[division] = files
+                total_files += len(files)
+
+        if total_files == 0:
+            print("ERROR: No SL-COMP benchmarks found. Run download first.")
+            return 0
+
+        print(f"Found {total_files} total files across {len(files_by_division)} divisions")
+
+        # Stratified sampling: ensure all divisions are represented
+        random.seed(seed)
+        sampled_files = []
+
+        # Minimum 5 samples per division, rest proportional
+        min_per_division = 5
+        reserved = min_per_division * len(files_by_division)
+        remaining_budget = sample_size - reserved
+
+        for division, files in files_by_division.items():
+            # Minimum samples
+            division_sample_size = min_per_division
+
+            # Add proportional samples from remaining budget
+            if remaining_budget > 0:
+                proportion = len(files) / total_files
+                additional = int(remaining_budget * proportion)
+                division_sample_size += additional
+
+            # Sample
+            if len(files) <= division_sample_size:
+                division_samples = files
+            else:
+                division_samples = random.sample(files, division_sample_size)
+
+            for filename in division_samples:
+                sampled_files.append((division, filename))
+
+        print(f"\nSampled {len(sampled_files)} files across divisions")
+
+        # Create curated directory and copy files
+        os.makedirs(slcomp_curated_dir, exist_ok=True)
+
+        # Clear existing curated files
+        for existing_file in Path(slcomp_curated_dir).glob('*.smt2'):
+            existing_file.unlink()
+
+        # Copy sampled files with division prefix
+        for division, filename in sampled_files:
+            src_path = os.path.join(self.cache_dir, division, filename)
+            # Prefix with division name to avoid conflicts
+            dest_filename = f"{division}_{filename}"
+            dest_path = os.path.join(slcomp_curated_dir, dest_filename)
+            shutil.copy2(src_path, dest_path)
+
+        print(f"\n✓ Created curated set: {len(sampled_files)} files")
+        print(f"  Location: {slcomp_curated_dir}")
+        print(f"  Seed: {seed} (reproducible)")
+
+        # Print breakdown by division
+        print("\n  Breakdown by division:")
+        division_counts = defaultdict(int)
+        for division, _ in sampled_files:
+            division_counts[division] += 1
+        for division, count in sorted(division_counts.items(), key=lambda x: -x[1]):
+            print(f"    {division}: {count} tests")
+
+        return len(sampled_files)
+
     # ========== QF_S Benchmark Running ==========
 
     def run_qf_s_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
@@ -1282,35 +1476,62 @@ def cmd_run(args):
     """Run benchmarks"""
     runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir, verbose=args.verbose)
 
-    # All 12 SL-COMP divisions (861 total benchmarks)
-    slcomp_divisions = [
-        # Entailment problems (6 divisions)
-        'qf_shid_entl',      # 50 tests
-        'qf_shls_entl',      # 296 tests
-        'qf_shlid_entl',     # 50 tests
-        'qf_shidlia_entl',   # 50 tests
-        'shid_entl',         # 50 tests
-        'shidlia_entl',      # 50 tests
-        # Satisfiability problems (6 divisions)
-        'qf_bsl_sat',        # 46 tests
-        'qf_bsllia_sat',     # 24 tests
-        'bsl_sat',           # 3 tests
-        'qf_shid_sat',       # 99 tests
-        'qf_shidlia_sat',    # 33 tests
-        'qf_shls_sat',       # 110 tests
-    ]
+    # Determine which benchmarks to run based on --curated flag
+    if args.curated:
+        # Curated sets: 150 SL-COMP + 500 QF_S = 650 total
+        print("Running CURATED benchmark sets (650 total: 150 SL-COMP + 500 QF_S)")
+        print("=" * 80)
 
-    qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje', 'qf_s_full']
+        # Ensure curated sets exist
+        slcomp_curated_dir = os.path.join(args.cache_dir, 'slcomp_curated')
+        qf_s_curated_dir = os.path.join(args.cache_dir, 'qf_s', 'qf_s_curated')
 
-    if args.suite in ['slcomp', 'all']:
-        divisions = [args.division] if args.division else slcomp_divisions
-        for division in divisions:
-            runner.run_slcomp_division(division, max_tests=args.max_tests)
+        if not os.path.exists(slcomp_curated_dir):
+            print("\nSL-COMP curated set not found. Creating...")
+            runner.create_slcomp_curated_set()
 
-    if args.suite in ['qf_s', 'all']:
-        sources = [args.division] if args.division else qf_s_sources
-        for source in sources:
-            runner.run_qf_s_division(source, max_tests=args.max_tests)
+        if not os.path.exists(qf_s_curated_dir):
+            print("\nQF_S curated set not found. Creating...")
+            runner.create_qf_s_curated_set()
+
+        # Run curated sets
+        if args.suite in ['slcomp', 'all']:
+            runner.run_slcomp_division('slcomp_curated', max_tests=args.max_tests)
+
+        if args.suite in ['qf_s', 'all']:
+            runner.run_qf_s_division('qf_s_curated', max_tests=args.max_tests)
+
+    else:
+        # Full benchmark sets
+        # All 12 SL-COMP divisions (861 total benchmarks)
+        slcomp_divisions = [
+            # Entailment problems (6 divisions)
+            'qf_shid_entl',      # 50 tests
+            'qf_shls_entl',      # 296 tests
+            'qf_shlid_entl',     # 50 tests
+            'qf_shidlia_entl',   # 50 tests
+            'shid_entl',         # 50 tests
+            'shidlia_entl',      # 50 tests
+            # Satisfiability problems (6 divisions)
+            'qf_bsl_sat',        # 46 tests
+            'qf_bsllia_sat',     # 24 tests
+            'bsl_sat',           # 3 tests
+            'qf_shid_sat',       # 99 tests
+            'qf_shidlia_sat',    # 33 tests
+            'qf_shls_sat',       # 110 tests
+        ]
+
+        qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje', 'qf_s_full']
+
+        if args.suite in ['slcomp', 'all']:
+            divisions = [args.division] if args.division else slcomp_divisions
+            for division in divisions:
+                runner.run_slcomp_division(division, max_tests=args.max_tests)
+
+        if args.suite in ['qf_s', 'all']:
+            sources = [args.division] if args.division else qf_s_sources
+            for source in sources:
+                runner.run_qf_s_division(source, max_tests=args.max_tests)
 
     runner.print_summary()
     runner.save_results(args.output)
@@ -1327,6 +1548,30 @@ def cmd_download(args):
         'qf_bsl_sat', 'qf_bsllia_sat', 'bsl_sat',
         'qf_shid_sat', 'qf_shidlia_sat', 'qf_shls_sat',
     ]
+
+    # Handle --curated flag (create curated sample sets)
+    if args.curated:
+        print("=" * 80)
+        print("CREATING CURATED BENCHMARK SETS")
+        print("=" * 80)
+
+        # Create QF_S curated set (500 tests)
+        qf_s_curated_count = runner.create_qf_s_curated_set()
+
+        # Create SL-COMP curated set (150 tests)
+        slcomp_curated_count = runner.create_slcomp_curated_set()
+
+        print("\n" + "=" * 80)
+        print("CURATED SETS CREATED")
+        print("=" * 80)
+        print(f"\nTotal curated benchmarks: {qf_s_curated_count + slcomp_curated_count}")
+        print(f"  - QF_S curated: {qf_s_curated_count} tests")
+        print(f"  - SL-COMP curated: {slcomp_curated_count} tests")
+        print("\nTo run curated benchmarks:")
+        print("  python -m benchmarks run --curated")
+        print("  python -m benchmarks run --suite qf_s --curated")
+        print("  python -m benchmarks run --suite slcomp --curated")
+        return
 
     # Handle --all flag (download everything)
     if args.all or args.suite == 'all':
@@ -1347,16 +1592,25 @@ def cmd_download(args):
         runner.download_qf_s_pisa(max_files=args.max_files)
         runner.download_qf_s_woorpje(max_files=args.max_files)
 
+        # Create curated sets automatically when downloading --all
+        print("\n### Creating Curated Sample Sets ###")
+        qf_s_curated_count = runner.create_qf_s_curated_set()
+        slcomp_curated_count = runner.create_slcomp_curated_set()
+
         print("\n" + "=" * 80)
         print("DOWNLOAD COMPLETE")
         print("=" * 80)
         print("\nBenchmarks available:")
         print("  - SL-COMP: 861 benchmarks (cached in repository)")
+        print(f"  - SL-COMP curated: {slcomp_curated_count} benchmarks (stratified sample)")
         print(f"  - QF_S Full Set (SMT-LIB 2024): {qf_s_count:,} benchmarks")
         print("  - QF_S Samples: 53 benchmarks")
+        print(f"  - QF_S curated: {qf_s_curated_count} benchmarks (stratified sample)")
         print(f"  - Total: ~{861 + qf_s_count + 53:,} benchmarks ready to run")
         print("\nTo run all benchmarks:")
         print("  python -m benchmarks run --suite all")
+        print("\nTo run curated benchmarks (recommended for benchmarking):")
+        print("  python -m benchmarks run --curated")
         print("\nTo run specific suites:")
         print("  python -m benchmarks run --suite slcomp")
         print("  python -m benchmarks run --suite qf_s")
@@ -1591,6 +1845,7 @@ Examples:
     run_parser.add_argument('--suite', choices=['slcomp', 'qf_s', 'all'], default='slcomp')
     run_parser.add_argument('--division', type=str, help='Specific division/source to run')
     run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
+    run_parser.add_argument('--curated', action='store_true', help='Run only curated sample sets (500 QF_S + 150 SL-COMP)')
     run_parser.add_argument('--output', default='benchmark_results.json', help='Output file')
     run_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
     run_parser.add_argument('--verbose', action='store_true', help='Verbose output')
@@ -1601,6 +1856,7 @@ Examples:
     dl_parser.add_argument('--division', type=str, help='Specific division to download')
     dl_parser.add_argument('--max-files', type=int, default=10, help='Max files to download')
     dl_parser.add_argument('--all', action='store_true', help='Download all uncached benchmarks')
+    dl_parser.add_argument('--curated', action='store_true', help='Create curated sample sets (500 QF_S + 150 SL-COMP)')
     dl_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
 
     # Analyze command
