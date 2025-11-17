@@ -149,39 +149,46 @@ class WandEncoder:
         ]
         extension_domain = set(extension_locs)
 
-        # Step 3: Create extension heap variable
-        ext_heap_var = z3.Array(f"ext_heap_{prefix}_{id(P)}",
-                                self.encoder.LocSort, self.encoder.ValSort)
+        # Step 3: Create extension heap ID (using heap-ID based encoding)
+        ext_heap_id = self.encoder.fresh_heap_id(f"ext_{prefix}")
 
         # Step 4: Encode P on extension heap
         # CRITICAL: Use the SAME prefix as the surrounding context to ensure
         # variables like 'u' in the wand match variables 'u' in the main formula
         p_constraints, p_domain = self.encoder._spatial_encoder.encode_heap_assertion(
-            P, ext_heap_var, set(), forbidden_domain=domain_set, prefix=prefix
+            P, ext_heap_id, set(), forbidden_domain=domain_set, prefix=prefix
         )
 
         # Step 5: Encode disjointness: domain(h) ∩ domain(h') = ∅
         disjointness = self._encode_disjointness(domain_set, p_domain)
 
-        # Step 6: Create union heap: h ∪ h'
-        union_heap_var = z3.Array(f"union_heap_{prefix}_{id(P)}",
-                                  self.encoder.LocSort, self.encoder.ValSort)
+        # Step 6: Create union heap ID: h ∪ h'
+        union_heap_id = self.encoder.fresh_heap_id(f"union_{prefix}")
         union_domain = domain_set | p_domain
 
-        # Encode heap union: union_heap[l] = if l ∈ domain(h) then h[l] else h'[l]
+        # Encode heap union semantics: for each location in union domain,
+        # the value comes from either h or h' (depending on which owns it)
         union_constraints = []
         for loc in union_domain:
             if loc in domain_set:
-                # Location from original heap
-                union_constraints.append(union_heap_var[loc] == heap_var[loc])
+                # Location from original heap: alloc(union, loc) <-> alloc(h, loc)
+                #                               hval(union, loc) = hval(h, loc)
+                union_constraints.append(
+                    z3.Implies(self.encoder.alloc(heap_var, loc),
+                               z3.And(self.encoder.alloc(union_heap_id, loc),
+                                      self.encoder.hval(union_heap_id, loc) == self.encoder.hval(heap_var, loc))))
             else:
-                # Location from extension heap
-                union_constraints.append(union_heap_var[loc] == ext_heap_var[loc])
+                # Location from extension heap: alloc(union, loc) <-> alloc(h', loc)
+                #                                hval(union, loc) = hval(h', loc)
+                union_constraints.append(
+                    z3.Implies(self.encoder.alloc(ext_heap_id, loc),
+                               z3.And(self.encoder.alloc(union_heap_id, loc),
+                                      self.encoder.hval(union_heap_id, loc) == self.encoder.hval(ext_heap_id, loc))))
 
         # Step 7: Encode Q on union heap
         # CRITICAL: Use the SAME prefix to ensure variable consistency
         q_constraints, q_domain = self.encoder._spatial_encoder.encode_heap_assertion(
-            Q, union_heap_var, union_domain, prefix=prefix
+            Q, union_heap_id, union_domain, prefix=prefix
         )
 
         # Step 8: Encode wand semantics: (disjoint ∧ P(h')) → Q(h ∪ h')
