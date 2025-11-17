@@ -50,7 +50,7 @@ def test_nll_nested_folding():
         content = f.read()
 
     parser = SLCompParser()
-    antecedent, consequent, expected_status, problem_type = parser.parse_file(
+    antecedent, consequent, expected_status, problem_type, logic = parser.parse_file(
         content, division_hint="qf_shlid_entl"
     )
 
@@ -116,7 +116,7 @@ def test_lasso_sat():
         content = f.read()
 
     parser = SLCompParser()
-    antecedent, consequent, expected_status, problem_type = parser.parse_file(
+    antecedent, consequent, expected_status, problem_type, logic = parser.parse_file(
         content, division_hint="qf_shid_sat"
     )
 
@@ -175,7 +175,7 @@ def test_dll_valid_entailment():
         content = f.read()
 
     parser = SLCompParser()
-    antecedent, consequent, expected_status, problem_type = parser.parse_file(
+    antecedent, consequent, expected_status, problem_type, logic = parser.parse_file(
         content, division_hint="qf_shlid_entl"
     )
 

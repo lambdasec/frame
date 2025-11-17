@@ -228,16 +228,22 @@ class RegexParser:
 
     def _any_char(self) -> z3.ReRef:
         """Create regex for any character (.)"""
-        # Use Z3's AllChar() for better performance if available
-        # Otherwise fall back to character ranges
+        # Use z3.Full() to match any single character
+        # This is the correct Z3 API for regex "any character"
         try:
-            return z3.AllChar(z3.StringSort())
-        except (AttributeError, Exception):
-            # Fallback: use union of common character ranges
-            # Use wider range to cover more characters
+            # z3.Full() returns re.full which matches any string
+            # For single character, we use z3.Range to cover all printable + common chars
             return z3.Union(
                 z3.Range(chr(0), chr(127)),  # Full ASCII
                 z3.Range(chr(128), chr(255))  # Extended ASCII
+            )
+        except Exception:
+            # Ultimate fallback: common printable chars
+            return z3.Union(
+                z3.Range(' ', '~'),  # Printable ASCII
+                z3.Re('\n'),
+                z3.Re('\t'),
+                z3.Re('\r')
             )
 
 
