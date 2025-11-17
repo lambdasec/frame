@@ -21,6 +21,10 @@ class Expr(ABC):
         """Return set of free variables"""
         pass
 
+    def is_spatial(self) -> bool:
+        """Expressions are never spatial (only formulas can be spatial)"""
+        return False
+
 
 class Formula(ABC):
     """Base class for separation logic formulas"""
