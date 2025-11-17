@@ -12,6 +12,9 @@ from frame.core.ast import *
 class SLCompParser:
     """Parser for SL-COMP SMT-LIB format"""
 
+    # Maximum recursion depth for function expansion to prevent infinite recursion
+    MAX_RECURSION_DEPTH = 3
+
     def __init__(self):
         self.variables: Dict[str, Var] = {}
         self.predicates: Dict[str, str] = {}  # name -> 'custom' or 'builtin' or 'parsed'
@@ -534,6 +537,10 @@ class SLCompParser:
             # Store the function definition
             self.function_defs[func_name] = (param_names, body_text)
 
+            # Also register as a predicate so it can be used when recursion limit is reached
+            self.predicates[func_name] = 'custom'
+            self.predicate_arities[func_name] = len(param_names)
+
             idx = start_idx + 12
 
     def _expand_function_call(self, func_name: str, args: List[str]) -> str:
@@ -566,8 +573,13 @@ class SLCompParser:
 
         return result
 
-    def _parse_formula(self, text: str) -> Optional[Formula]:
-        """Parse a formula from SMT-LIB format"""
+    def _parse_formula(self, text: str, depth: int = 0) -> Optional[Formula]:
+        """Parse a formula from SMT-LIB format
+
+        Args:
+            text: Formula text to parse
+            depth: Current recursion depth for function expansion (prevents infinite recursion)
+        """
         text = text.strip()
 
         if not text:
@@ -579,27 +591,27 @@ class SLCompParser:
 
         # Handle (and ...)
         if text.startswith('(and'):
-            return self._parse_and(text)
+            return self._parse_and(text, depth)
 
         # Handle (or ...)
         if text.startswith('(or'):
-            return self._parse_or(text)
+            return self._parse_or(text, depth)
 
         # Handle (not ...)
         if text.startswith('(not'):
-            return self._parse_not(text)
+            return self._parse_not(text, depth)
 
         # Handle (exists ...)
         if text.startswith('(exists'):
-            return self._parse_exists(text)
+            return self._parse_exists(text, depth)
 
         # Handle (sep ...) - separating conjunction
         if text.startswith('(sep'):
-            return self._parse_sep(text)
+            return self._parse_sep(text, depth)
 
         # Handle (wand ...) - magic wand
         if text.startswith('(wand'):
-            return self._parse_wand(text)
+            return self._parse_wand(text, depth)
 
         # Handle comparison operators (check <= and >= before = to avoid misparsing)
         if text.startswith('(<='):
@@ -629,6 +641,12 @@ class SLCompParser:
             if func_match:
                 func_name = func_match.group(1)
                 if func_name in self.function_defs:
+                    # Check recursion depth to prevent infinite recursion
+                    if depth >= self.MAX_RECURSION_DEPTH:
+                        # Reached max depth - treat as predicate call instead of expanding
+                        # This handles recursive define-fun functions
+                        return self._parse_predicate_call(text)
+
                     # Extract arguments and expand the function
                     args_text = text[len(func_name)+1:].strip()
                     if args_text.endswith(')'):
@@ -636,8 +654,8 @@ class SLCompParser:
                     args = self._split_top_level(args_text)
                     expanded = self._expand_function_call(func_name, args)
                     if expanded:
-                        # Recursively parse the expanded body
-                        return self._parse_formula(expanded)
+                        # Recursively parse the expanded body with incremented depth
+                        return self._parse_formula(expanded, depth + 1)
 
         # Handle predicate calls like (ls x y), (RList x y), etc.
         # Check if this matches any known predicate
@@ -654,7 +672,7 @@ class SLCompParser:
 
         return None
 
-    def _parse_and(self, text: str) -> Formula:
+    def _parse_and(self, text: str, depth: int = 0) -> Formula:
         """Parse (and ...) into And formula"""
         # Extract arguments
         args_text = text[4:].strip()  # Remove '(and'
@@ -666,12 +684,12 @@ class SLCompParser:
         if len(args) == 0:
             return Emp()  # Empty and
         elif len(args) == 1:
-            return self._parse_formula(args[0])
+            return self._parse_formula(args[0], depth)
         else:
             # Build nested And, filtering out None values
             result = None
             for arg in args:
-                parsed = self._parse_formula(arg)
+                parsed = self._parse_formula(arg, depth)
                 if parsed:
                     if result is None:
                         result = parsed
@@ -679,7 +697,7 @@ class SLCompParser:
                         result = And(result, parsed)
             return result if result is not None else Emp()
 
-    def _parse_sep(self, text: str) -> Formula:
+    def _parse_sep(self, text: str, depth: int = 0) -> Formula:
         """Parse (sep ...) into SepConj formula"""
         # Extract arguments
         args_text = text[4:].strip()  # Remove '(sep'
@@ -691,12 +709,12 @@ class SLCompParser:
         if len(args) == 0:
             return Emp()
         elif len(args) == 1:
-            return self._parse_formula(args[0])
+            return self._parse_formula(args[0], depth)
         else:
             # Parse all arguments first
             parsed_args = []
             for arg in args:
-                parsed = self._parse_formula(arg)
+                parsed = self._parse_formula(arg, depth)
                 if parsed:
                     parsed_args.append(parsed)
 
@@ -707,7 +725,7 @@ class SLCompParser:
             # This improves Z3 performance and formula analysis
             return self._build_balanced_sepconj(parsed_args)
 
-    def _parse_wand(self, text: str) -> Formula:
+    def _parse_wand(self, text: str, depth: int = 0) -> Formula:
         """Parse (wand P Q) into Wand formula"""
         # Extract arguments
         args_text = text[5:].strip()  # Remove '(wand'
@@ -721,15 +739,15 @@ class SLCompParser:
             return None
 
         # Parse left and right formulas
-        left = self._parse_formula(args[0])
-        right = self._parse_formula(args[1])
+        left = self._parse_formula(args[0], depth)
+        right = self._parse_formula(args[1], depth)
 
         if left and right:
             return Wand(left, right)
 
         return None
 
-    def _parse_or(self, text: str) -> Formula:
+    def _parse_or(self, text: str, depth: int = 0) -> Formula:
         """Parse (or ...) into Or formula"""
         # Extract arguments
         args_text = text[3:].strip()  # Remove '(or'
@@ -741,12 +759,12 @@ class SLCompParser:
         if len(args) == 0:
             return Emp()
         elif len(args) == 1:
-            return self._parse_formula(args[0])
+            return self._parse_formula(args[0], depth)
         else:
             # Build nested Or, filtering out None values
             result = None
             for arg in args:
-                parsed = self._parse_formula(arg)
+                parsed = self._parse_formula(arg, depth)
                 if parsed:
                     if result is None:
                         result = parsed
@@ -754,7 +772,7 @@ class SLCompParser:
                         result = Or(result, parsed)
             return result if result is not None else Emp()
 
-    def _parse_not(self, text: str) -> Formula:
+    def _parse_not(self, text: str, depth: int = 0) -> Formula:
         """Parse (not ...) into Not formula"""
         # Extract argument
         args_text = text[4:].strip()  # Remove '(not'
@@ -762,14 +780,14 @@ class SLCompParser:
             args_text = args_text[:-1]  # Remove trailing )
 
         # Parse the inner formula
-        inner = self._parse_formula(args_text.strip())
+        inner = self._parse_formula(args_text.strip(), depth)
 
         if inner:
             return Not(inner)
 
         return None
 
-    def _parse_exists(self, text: str) -> Formula:
+    def _parse_exists(self, text: str, depth: int = 0) -> Formula:
         """
         Parse (exists ((var1 Type1)(var2 Type2)...) body) into Exists formula.
 
@@ -808,13 +826,13 @@ class SLCompParser:
         # Extract the body - everything until the final closing paren
         body_start = idx
         # Find the matching closing paren for the outermost '(exists'
-        depth = 1  # We're inside (exists already
+        depth_counter = 1  # We're inside (exists already (renamed to avoid parameter collision)
         idx = 7  # Start from after '(exists'
-        while idx < len(text) and depth > 0:
+        while idx < len(text) and depth_counter > 0:
             if text[idx] == '(':
-                depth += 1
+                depth_counter += 1
             elif text[idx] == ')':
-                depth -= 1
+                depth_counter -= 1
             idx += 1
 
         body_text = text[body_start:idx-1].strip()  # -1 to exclude the final ')'
@@ -838,7 +856,7 @@ class SLCompParser:
                 var_names.append(var_name)
 
         # Parse body
-        body_formula = self._parse_formula(body_text)
+        body_formula = self._parse_formula(body_text, depth)
         if not body_formula:
             return None
 
