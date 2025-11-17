@@ -157,8 +157,11 @@ class UnifiedBenchmarkRunner:
             with open(cache_path, 'r') as f:
                 content = f.read()
 
-            antecedent, consequent, expected_status, problem_type = \
+            antecedent, consequent, expected_status, problem_type, logic = \
                 self.slcomp_parser.parse_file(content, division_hint=division)
+
+            # Detect BSL mode
+            is_bsl_mode = logic and ('BSL' in logic.upper() or 'BSLLIA' in logic.upper())
 
             # Register predicates
             for pred_name, pred_params_body in self.slcomp_parser.predicate_bodies.items():
@@ -1713,7 +1716,7 @@ def cmd_visualize(args):
 
     parser = SLCompParser()
     try:
-        antecedent, consequent, expected_status, problem_type = parser.parse_file(content)
+        antecedent, consequent, expected_status, problem_type, logic = parser.parse_file(content)
     except Exception as e:
         print(f"Error parsing file: {e}")
         return
