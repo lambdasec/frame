@@ -424,8 +424,8 @@ class SpatialEncoder:
 
                     negated_pto = z3.Or(disjuncts) if disjuncts else z3.BoolVal(False)
 
-                    # Return empty domain for negations
-                    # The semantic gap is now FIXED by including the third disjunct
+                    # Return empty domain for negations - BSL semantics require different handling
+                    # TODO: Proper BSL support needs semantic check for (pto x y) * (not (pto x y))
                     return (negated_pto, set())
                 else:
                     # Multi-field case: NOT(x |-> (y1, y2, ...))
