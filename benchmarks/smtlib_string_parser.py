@@ -35,6 +35,64 @@ class SMTLibStringParser:
         self.assertions: List[Formula] = []
         self.expected_result = None  # sat/unsat/unknown
 
+    def _decode_string_literal(self, s: str) -> str:
+        """Decode SMT-LIB string literal with Unicode escapes
+
+        Supports:
+        - \\u{XXXX} format (SMT-LIB 2.6)
+        - Standard escape sequences: \\n, \\t, \\r, \\\\, \\"
+        """
+        result = []
+        i = 0
+        while i < len(s):
+            if s[i] == '\\' and i + 1 < len(s):
+                next_char = s[i + 1]
+                # Unicode escape: \u{XXXX}
+                if next_char == 'u' and i + 2 < len(s) and s[i + 2] == '{':
+                    # Find closing }
+                    close_idx = s.find('}', i + 3)
+                    if close_idx != -1:
+                        hex_code = s[i + 3:close_idx]
+                        try:
+                            char_code = int(hex_code, 16)
+                            result.append(chr(char_code))
+                            i = close_idx + 1
+                            continue
+                        except ValueError:
+                            # Invalid hex, treat as literal
+                            result.append(s[i])
+                            i += 1
+                            continue
+                # Standard escapes
+                elif next_char == 'n':
+                    result.append('\n')
+                    i += 2
+                    continue
+                elif next_char == 't':
+                    result.append('\t')
+                    i += 2
+                    continue
+                elif next_char == 'r':
+                    result.append('\r')
+                    i += 2
+                    continue
+                elif next_char == '\\':
+                    result.append('\\')
+                    i += 2
+                    continue
+                elif next_char == '"':
+                    result.append('"')
+                    i += 2
+                    continue
+                else:
+                    # Unknown escape, keep backslash
+                    result.append(s[i])
+                    i += 1
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+
     def parse_file(self, content: str) -> Tuple[Formula, str]:
         """
         Parse SMT-LIB file and return (formula, expected_result)
@@ -170,7 +228,8 @@ class SMTLibStringParser:
 
         # String literal
         if text.startswith('"') and text.endswith('"'):
-            return StrLiteral(text[1:-1])
+            decoded = self._decode_string_literal(text[1:-1])
+            return StrLiteral(decoded)
 
         # Fallback: treat as True for now (TODO: complete implementation)
         return True_()
@@ -241,7 +300,8 @@ class SMTLibStringParser:
 
         # String literal
         if text.startswith('"') and text.endswith('"'):
-            return StrLiteral(text[1:-1])
+            decoded = self._decode_string_literal(text[1:-1])
+            return StrLiteral(decoded)
 
         # Variable
         if text in self.variables:
@@ -327,9 +387,9 @@ class SMTLibStringParser:
         if text.startswith('(str.to_re '):
             inner = text[11:-1].strip()
             if inner.startswith('"') and inner.endswith('"'):
+                # Decode Unicode escapes first
+                literal = self._decode_string_literal(inner[1:-1])
                 # Escape special regex characters in the literal
-                literal = inner[1:-1]
-                # Escape regex special chars
                 for char in r'\.^$*+?{}[]()':
                     literal = literal.replace(char, '\\' + char)
                 return literal

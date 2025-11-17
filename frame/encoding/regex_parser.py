@@ -228,14 +228,17 @@ class RegexParser:
 
     def _any_char(self) -> z3.ReRef:
         """Create regex for any character (.)"""
-        # In Z3, we can use a union of common character ranges
-        # For simplicity, use printable ASCII
-        return z3.Union(
-            z3.Range(' ', '~'),  # Printable ASCII
-            z3.Re('\n'),
-            z3.Re('\t'),
-            z3.Re('\r')
-        )
+        # Use Z3's AllChar() for better performance if available
+        # Otherwise fall back to character ranges
+        try:
+            return z3.AllChar(z3.StringSort())
+        except (AttributeError, Exception):
+            # Fallback: use union of common character ranges
+            # Use wider range to cover more characters
+            return z3.Union(
+                z3.Range(chr(0), chr(127)),  # Full ASCII
+                z3.Range(chr(128), chr(255))  # Extended ASCII
+            )
 
 
 def parse_regex(pattern: str) -> z3.ReRef:
