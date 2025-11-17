@@ -1141,7 +1141,7 @@ class SLCompParser:
         return result
 
     def _build_balanced_sepconj(self, formulas: List[Formula]) -> Formula:
-        """
+        r"""
         Build a balanced binary tree of SepConj nodes from a list of formulas.
 
         This creates a balanced tree instead of a left-associative chain, which
