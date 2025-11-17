@@ -868,12 +868,13 @@ class SLCompParser:
         return result
 
     def _parse_pto(self, text: str) -> PointsTo:
-        """Parse (pto x (c_Sll_t y)) or (pto x y) into PointsTo"""
+        """Parse (pto x (c_Sll_t y)) or (pto x (node y1 y2)) or (pto x y) into PointsTo"""
         text = text.strip()
 
-        # Try structured format: (pto x (c_Type y1 y2 ...))
+        # Try structured format: (pto x (Constructor y1 y2 ...))
+        # Constructor can be: c_Type (old format) or just a name like 'node' (BSL format)
         # Handle values that can be: variable names, or (as nil Type)
-        match = re.match(r'\(pto\s+(\w+)\s+\(c_\w+\s+(.+)\)\s*\)', text, re.DOTALL)
+        match = re.match(r'\(pto\s+(\w+)\s+\((?:c_)?(?:\w+)\s+(.+)\)\s*\)', text, re.DOTALL)
         if match:
             var_name = match.group(1)
             vals_text = match.group(2).strip()
