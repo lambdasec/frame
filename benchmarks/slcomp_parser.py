@@ -24,7 +24,7 @@ class SLCompParser:
         self.logic = None
         self.status = None
 
-    def parse_file(self, content: str, division_hint: str = None) -> Tuple[Optional[Formula], Optional[Formula], str, str]:
+    def parse_file(self, content: str, division_hint: str = None) -> Tuple[Optional[Formula], Optional[Formula], str, str, str]:
         """
         Parse SL-COMP benchmark file
 
@@ -33,7 +33,7 @@ class SLCompParser:
             division_hint: Optional division name to help determine problem type (e.g., 'qf_shls_sat')
 
         Returns:
-            (antecedent, consequent, expected_status, problem_type)
+            (antecedent, consequent, expected_status, problem_type, logic)
 
         For entailment P |- Q, the file has:
             (assert P)
@@ -43,6 +43,8 @@ class SLCompParser:
         For satisfiability, the file has:
             (assert P)
             problem_type = 'sat'
+
+        Logic is the SMT-LIB logic (e.g., 'QF_BSL', 'BSL', 'QF_SHLS')
         """
         lines = content.split('\n')
 
@@ -185,7 +187,7 @@ class SLCompParser:
                     for formula in antecedent_formulas[1:]:
                         antecedent = And(antecedent, formula)
 
-        return antecedent, consequent, self.status, problem_type
+        return antecedent, consequent, self.status, problem_type, self.logic
 
     def _parse_predicates(self, content: str):
         """Extract predicate definitions from define-fun-rec and define-funs-rec"""
