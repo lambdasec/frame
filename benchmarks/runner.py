@@ -2312,12 +2312,12 @@ def cmd_download(args):
         runner.download_qf_s_pisa(max_files=args.max_files)
         runner.download_qf_s_woorpje(max_files=args.max_files)
 
-        # Download QF_AX and QF_BV samples
-        print("\n### QF_AX Array Theory Benchmarks ###")
-        qf_ax_count = runner.download_qf_ax_samples()
+        # Download QF_AX and QF_BV full sets from SMT-LIB 2024
+        print("\n### QF_AX Array Theory Benchmarks (Full Set from SMT-LIB 2024) ###")
+        qf_ax_count = runner.download_qf_ax_full()
 
-        print("\n### QF_BV Bitvector Theory Benchmarks ###")
-        qf_bv_count = runner.download_qf_bv_samples()
+        print("\n### QF_BV Bitvector Theory Benchmarks (Full Set from SMT-LIB 2024) ###")
+        qf_bv_count = runner.download_qf_bv_full()
 
         # Create curated sets automatically when downloading --all
         print("\n### Creating Curated Sample Sets ###")
@@ -2333,8 +2333,8 @@ def cmd_download(args):
         print(f"  - QF_S Full Set (SMT-LIB 2024): {qf_s_count:,} benchmarks")
         print("  - QF_S Samples: 53 benchmarks")
         print(f"  - QF_S curated: {qf_s_curated_count} benchmarks (stratified sample)")
-        print(f"  - QF_AX (Array Theory) Samples: {qf_ax_count} benchmarks")
-        print(f"  - QF_BV (Bitvector Theory) Samples: {qf_bv_count} benchmarks")
+        print(f"  - QF_AX Full Set (SMT-LIB 2024): {qf_ax_count} benchmarks")
+        print(f"  - QF_BV Full Set (SMT-LIB 2024): {qf_bv_count} benchmarks")
         print(f"  - Total: ~{861 + qf_s_count + 53 + qf_ax_count + qf_bv_count:,} benchmarks ready to run")
         print("\nTo run all benchmarks:")
         print("  python -m benchmarks run --suite all")
