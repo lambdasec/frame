@@ -1615,23 +1615,27 @@ class UnifiedBenchmarkRunner:
             Number of files in curated set
         """
         print("\n" + "=" * 80)
-        print(f"CREATING QF_AX CURATED SAMPLE SET ({sample_size} tests)")
+        print(f"CREATING QF_AX CURATED SAMPLE SET")
         print("=" * 80)
 
         qf_ax_full_dir = os.path.join(self.cache_dir, 'qf_ax_full')
+        qf_ax_samples_dir = os.path.join(self.cache_dir, 'qf_ax', 'samples')
         qf_ax_curated_dir = os.path.join(self.cache_dir, 'qf_ax', 'qf_ax_curated')
 
-        # Check if full set exists
-        if not os.path.exists(qf_ax_full_dir):
-            print("Full QF_AX set not found. Downloading...")
-            count = self.download_qf_ax_full()
-            if count == 0:
-                print("ERROR: Failed to download full QF_AX set")
-                return 0
+        # Try full set first
+        all_files = []
+        if os.path.exists(qf_ax_full_dir):
+            all_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
 
-        # Find all .smt2 files
-        all_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
-        print(f"Found {len(all_files)} total files in full set")
+        # Fall back to samples if full set doesn't exist or is too small
+        if len(all_files) < 10:
+            print("Full QF_AX set not available, using sample benchmarks...")
+            if not os.path.exists(qf_ax_samples_dir):
+                print("Downloading QF_AX samples...")
+                self.download_qf_ax_samples()
+            all_files = list(Path(qf_ax_samples_dir).rglob('*.smt2'))
+
+        print(f"Found {len(all_files)} total files")
 
         if len(all_files) == 0:
             print("ERROR: No QF_AX benchmarks found")
@@ -1679,18 +1683,30 @@ class UnifiedBenchmarkRunner:
         print("=" * 80)
 
         qf_bv_full_dir = os.path.join(self.cache_dir, 'qf_bv_full')
+        qf_bv_samples_dir = os.path.join(self.cache_dir, 'qf_bv', 'samples')
         qf_bv_curated_dir = os.path.join(self.cache_dir, 'qf_bv', 'qf_bv_curated')
 
-        # Check if full set exists
-        if not os.path.exists(qf_bv_full_dir):
-            print("Full QF_BV set not found. Downloading...")
-            count = self.download_qf_bv_full()
-            if count == 0:
-                print("ERROR: Failed to download full QF_BV set")
-                return 0
+        # Try full set first
+        all_files = []
+        if os.path.exists(qf_bv_full_dir):
+            all_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
 
-        # Find all .smt2 files
-        all_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
+        # Fall back to samples if full set doesn't exist or is too small
+        if len(all_files) < 10:
+            if len(all_files) == 0:
+                print("Full QF_BV set not found. Downloading...")
+                self.download_qf_bv_full()
+                if os.path.exists(qf_bv_full_dir):
+                    all_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
+
+            # If still no files, fall back to samples
+            if len(all_files) < 10:
+                print("Full QF_BV set not available, using sample benchmarks...")
+                if not os.path.exists(qf_bv_samples_dir):
+                    print("Downloading QF_BV samples...")
+                    self.download_qf_bv_samples()
+                all_files = list(Path(qf_bv_samples_dir).rglob('*.smt2'))
+
         print(f"Found {len(all_files)} total files in full set")
 
         if len(all_files) == 0:
@@ -2263,6 +2279,13 @@ def cmd_download(args):
         runner.download_qf_s_kaluza(max_files=args.max_files)
         runner.download_qf_s_pisa(max_files=args.max_files)
         runner.download_qf_s_woorpje(max_files=args.max_files)
+
+        # Download QF_AX and QF_BV samples
+        print("\n### QF_AX Array Theory Benchmarks ###")
+        qf_ax_count = runner.download_qf_ax_samples()
+
+        print("\n### QF_BV Bitvector Theory Benchmarks ###")
+        qf_bv_count = runner.download_qf_bv_samples()
 
         # Create curated sets automatically when downloading --all
         print("\n### Creating Curated Sample Sets ###")
