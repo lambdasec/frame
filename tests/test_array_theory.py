@@ -202,8 +202,10 @@ class TestArrayTaint:
         # Safe if: user_index is sanitized OR in bounds check passes
         # Vulnerable if: user_index is tainted AND out of bounds
         formula = And(
-            TaintedArray(Var("inputs"), [Const(0)]),  # inputs[0] is tainted
-            Eq(user_index, ArraySelect(Var("inputs"), Const(0))),  # user_index = inputs[0]
+            And(
+                TaintedArray(Var("inputs"), [Const(0)]),  # inputs[0] is tainted
+                Eq(user_index, ArraySelect(Var("inputs"), Const(0)))  # user_index = inputs[0]
+            ),
             BufferOverflowCheck(arr, user_index, size)  # Check if in bounds
         )
 

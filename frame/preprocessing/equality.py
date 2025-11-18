@@ -233,6 +233,36 @@ class EqualityPreprocessor:
                 self._substitute_formula(formula.formula)
             )
 
+        # Array and bitvector security predicates
+        from frame.core.ast import IntegerOverflow, TaintedArray, BufferOverflowCheck, ArrayBounds
+
+        if isinstance(formula, IntegerOverflow):
+            return IntegerOverflow(
+                formula.op,
+                [self._substitute_expr(op) for op in formula.operands],
+                formula.width,
+                formula.signed
+            )
+
+        if isinstance(formula, TaintedArray):
+            return TaintedArray(
+                self._substitute_expr(formula.array),
+                [self._substitute_expr(idx) for idx in formula.tainted_indices] if formula.tainted_indices else None
+            )
+
+        if isinstance(formula, BufferOverflowCheck):
+            return BufferOverflowCheck(
+                self._substitute_expr(formula.array),
+                self._substitute_expr(formula.index),
+                self._substitute_expr(formula.size)
+            )
+
+        if isinstance(formula, ArrayBounds):
+            return ArrayBounds(
+                self._substitute_expr(formula.array),
+                self._substitute_expr(formula.size)
+            )
+
         # Return unchanged for unknown types
         return formula
 

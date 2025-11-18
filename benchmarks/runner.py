@@ -1560,6 +1560,182 @@ class UnifiedBenchmarkRunner:
         self.results.extend(results)
         return results
 
+    # ========== QF_AX and QF_BV Benchmark Running ==========
+
+    def run_qf_ax_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
+        """Run a single QF_AX benchmark"""
+        if full_path:
+            filepath = full_path
+        else:
+            filepath = os.path.join(self.cache_dir, 'qf_ax', source, filename)
+
+        if not os.path.exists(filepath):
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_ax',
+                division=source,
+                expected='unknown',
+                actual='error',
+                time_ms=0.0,
+                error='File not found'
+            )
+
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read()
+
+            # Parse using SMTLibParser
+            from benchmarks.smtlib_parser import SMTLibParser
+            parser = SMTLibParser()
+            formula, expected, logic = parser.parse_file(content)
+
+            start_time = time.time()
+            result = self.checker.is_satisfiable(formula)
+            time_ms = (time.time() - start_time) * 1000
+
+            actual = 'sat' if result else 'unsat'
+
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_ax',
+                division=source,
+                expected=expected,
+                actual=actual,
+                time_ms=time_ms
+            )
+        except Exception as e:
+            if self.verbose:
+                print(f"  ERROR in {filename}: {e}")
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_ax',
+                division=source,
+                expected='unknown',
+                actual='error',
+                time_ms=0.0,
+                error=str(e)
+            )
+
+    def run_qf_ax_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
+        """Run all QF_AX benchmarks in a source"""
+        source_dir = os.path.join(self.cache_dir, 'qf_ax', source)
+
+        if not os.path.exists(source_dir):
+            print(f"{source} benchmarks not found. Creating samples...")
+            if source == 'samples':
+                self.download_qf_ax_samples(max_files=max_tests or 10)
+            else:
+                print(f"ERROR: QF_AX source {source} not found")
+                return []
+
+        if not os.path.exists(source_dir):
+            print(f"ERROR: Could not find or create {source}")
+            return []
+
+        files = sorted([f for f in os.listdir(source_dir) if f.endswith('.smt2')])
+        if max_tests:
+            files = files[:max_tests]
+
+        print(f"\nRunning QF_AX/{source}: {len(files)} benchmarks")
+        print("=" * 80)
+
+        results = []
+        for i, filename in enumerate(files, 1):
+            result = self.run_qf_ax_benchmark(source, filename)
+            results.append(result)
+            status = "✓" if result.correct else "✗"
+            print(f"[{i}/{len(files)}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+
+        self.results.extend(results)
+        return results
+
+    def run_qf_bv_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
+        """Run a single QF_BV benchmark"""
+        if full_path:
+            filepath = full_path
+        else:
+            filepath = os.path.join(self.cache_dir, 'qf_bv', source, filename)
+
+        if not os.path.exists(filepath):
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_bv',
+                division=source,
+                expected='unknown',
+                actual='error',
+                time_ms=0.0,
+                error='File not found'
+            )
+
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read()
+
+            # Parse using SMTLibParser
+            from benchmarks.smtlib_parser import SMTLibParser
+            parser = SMTLibParser()
+            formula, expected, logic = parser.parse_file(content)
+
+            start_time = time.time()
+            result = self.checker.is_satisfiable(formula)
+            time_ms = (time.time() - start_time) * 1000
+
+            actual = 'sat' if result else 'unsat'
+
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_bv',
+                division=source,
+                expected=expected,
+                actual=actual,
+                time_ms=time_ms
+            )
+        except Exception as e:
+            if self.verbose:
+                print(f"  ERROR in {filename}: {e}")
+            return BenchmarkResult(
+                filename=filename,
+                suite='qf_bv',
+                division=source,
+                expected='unknown',
+                actual='error',
+                time_ms=0.0,
+                error=str(e)
+            )
+
+    def run_qf_bv_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
+        """Run all QF_BV benchmarks in a source"""
+        source_dir = os.path.join(self.cache_dir, 'qf_bv', source)
+
+        if not os.path.exists(source_dir):
+            print(f"{source} benchmarks not found. Creating samples...")
+            if source == 'samples':
+                self.download_qf_bv_samples(max_files=max_tests or 10)
+            else:
+                print(f"ERROR: QF_BV source {source} not found")
+                return []
+
+        if not os.path.exists(source_dir):
+            print(f"ERROR: Could not find or create {source}")
+            return []
+
+        files = sorted([f for f in os.listdir(source_dir) if f.endswith('.smt2')])
+        if max_tests:
+            files = files[:max_tests]
+
+        print(f"\nRunning QF_BV/{source}: {len(files)} benchmarks")
+        print("=" * 80)
+
+        results = []
+        for i, filename in enumerate(files, 1):
+            result = self.run_qf_bv_benchmark(source, filename)
+            results.append(result)
+            status = "✓" if result.correct else "✗"
+            print(f"[{i}/{len(files)}] {status} {filename[:50]:<50} {result.time_ms:>6.1f}ms")
+
+        self.results.extend(results)
+        return results
+
     # ========== Analysis ==========
 
     def analyze_results(self) -> Dict:
