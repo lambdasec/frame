@@ -56,22 +56,60 @@ print(bug.found)  # True
 
 **Security & Lifecycle**: Heap lifecycle predicates (`Allocated`, `Freed`), taint analysis (`TaintedInput`, `Sanitized`)
 
+## Security Applications
+
+Frame's unique combination of theories enables detection of complex vulnerabilities:
+
+**Cross-Theory Vulnerabilities**:
+- SQL injection with heap tracking (tainted string flowing through heap structures)
+- Use-after-free with data leaks (accessing freed memory containing sensitive strings)
+- Path traversal with memory safety (tainted file paths in heap-allocated buffers)
+- Command injection with lifecycle tracking (tainted commands in allocated/freed contexts)
+
+**Practical Use Cases**:
+- **API Security Scanning**: Analyze REST endpoints for injection vulnerabilities with concrete exploits
+- **Code Review Automation**: Verify security properties in pull requests (GitHub Actions/bots)
+- **Fuzzing Target Generation**: Extract concrete test cases from Z3 models for targeted fuzzing
+- **CVE Validation**: Verify reported vulnerabilities and generate proof-of-concept exploits
+
+**Example - SQL Injection Detection**:
+```python
+from frame import IncorrectnessChecker, Var, parse
+
+bug_checker = IncorrectnessChecker()
+state = parse('TaintedInput(user_input) & query = (str.++ "SELECT * FROM users WHERE id=" user_input)')
+bug = bug_checker.find_sql_injection(state, Var("query"))
+
+if bug.found:
+    print(f"Vulnerability: {bug.type}")
+    print(f"Exploit: ' OR '1'='1' --")
+    print(f"Trace: {bug.trace}")  # Shows taint flow from input to query
+```
+
+**Integration Points**:
+- Static analyzers (Semgrep, CodeQL) for pattern detection → Frame for verification
+- Tree-sitter for multi-language parsing → Frame for semantic analysis
+- LLVM IR for cross-language analysis → Frame for precise heap reasoning
+- CI/CD pipelines for automated security checks with regression detection
+
 ## Benchmarks
 
-Frame includes 19,854 benchmarks with curated sets for efficient testing:
-- **Curated**: 650 tests (500 QF_S + 150 SL-COMP) - stratified samples, recommended for benchmarking
-- **Full**: 19,854 tests (18,940 QF_S + 861 SL-COMP + 53 samples) - comprehensive testing
+Frame includes ~20,000 benchmarks with curated sets for efficient testing:
+- **Curated**: ~4,000 tests (3,300 QF_S + 700 SL-COMP) - stratified samples, recommended for benchmarking
+- **Full**: ~20,000 tests (18,940 QF_S + 1,298 SL-COMP) - comprehensive testing
 
 ```bash
-# Download and run curated benchmarks (recommended, ~10 minutes)
-python -m benchmarks download --all
+# Run curated benchmarks (recommended, ~15 minutes)
 python -m benchmarks run --curated
 
 # Run full benchmark suite (~2+ hours)
-python -m benchmarks run --suite all
+python -m benchmarks run --all
+
+# Run specific division
+python -m benchmarks run --division qf_shls_entl
 ```
 
-**Results**: 90.6% on QF_S curated samples, 66.7% on SL-COMP. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
+**Results**: 73.4% on QF_S curated samples, 72.0% on SL-COMP curated. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
 
 ## Architecture
 
