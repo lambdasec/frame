@@ -52,3 +52,23 @@ jobs:
         assert result.valid, 'Basic entailment check failed'
         print('✓ Basic functionality test passed')
         "
+
+    - name: Run curated benchmarks (sample)
+      run: |
+        # Run small sample from curated set (~100 tests, representative)
+        python -m benchmarks run --curated --max-tests 25 --output ci_results.json
+
+    - name: Check benchmark results
+      run: |
+        python -c "
+        import json
+        with open('ci_results.json') as f:
+            results = json.load(f)
+        correct = sum(1 for r in results if r['expected'] == r['actual'])
+        total = len(results)
+        accuracy = correct / total * 100 if total > 0 else 0
+        print(f'Benchmark Results: {correct}/{total} correct ({accuracy:.1f}%)')
+        # Fail if accuracy drops below 60% (regression detection)
+        assert accuracy >= 60, f'Accuracy too low: {accuracy:.1f}% < 60%'
+        print('✓ Benchmark accuracy check passed')
+        "
