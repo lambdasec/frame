@@ -21,6 +21,7 @@ import random
 import shutil
 import zipfile
 import tarfile
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, asdict
@@ -82,6 +83,54 @@ class UnifiedBenchmarkRunner:
             use_s2s_normalization=True,
             verbose=verbose
         )
+
+    # ========== SMT-LIB 2.6 Direct Z3 Execution ==========
+
+    def run_smt2_with_z3(self, filepath: str, timeout: int = 10) -> Tuple[str, Optional[str]]:
+        """
+        Run an SMT-LIB 2.6 file directly with Z3
+
+        Returns: (result, error) where result is 'sat', 'unsat', 'unknown', or 'timeout'
+        """
+        try:
+            result = subprocess.run(
+                ['z3', filepath, f'-T:{timeout}'],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 1
+            )
+
+            output = result.stdout.strip()
+
+            if 'sat' in output and 'unsat' not in output:
+                return 'sat', None
+            elif 'unsat' in output:
+                return 'unsat', None
+            else:
+                return 'unknown', None
+
+        except subprocess.TimeoutExpired:
+            return 'timeout', 'Z3 timeout'
+        except FileNotFoundError:
+            return 'error', 'Z3 not found in PATH'
+        except Exception as e:
+            return 'error', str(e)
+
+    def parse_smt2_expected(self, filepath: str) -> Optional[str]:
+        """Parse expected result from SMT2 file"""
+        try:
+            with open(filepath, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('(set-info :status'):
+                        # Extract status: (set-info :status sat) -> 'sat'
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            status = parts[2].rstrip(')')
+                            return status.lower()
+            return None
+        except Exception:
+            return None
 
     # ========== SL-COMP Benchmarks ==========
 
@@ -1898,7 +1947,7 @@ class UnifiedBenchmarkRunner:
     # ========== QF_AX and QF_BV Benchmark Running ==========
 
     def run_qf_ax_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
-        """Run a single QF_AX benchmark"""
+        """Run a single QF_AX benchmark via Z3 directly"""
         if full_path:
             filepath = full_path
         else:
@@ -1915,41 +1964,23 @@ class UnifiedBenchmarkRunner:
                 error='File not found'
             )
 
-        try:
-            with open(filepath, 'r') as f:
-                content = f.read()
+        # Parse expected result
+        expected = self.parse_smt2_expected(filepath) or 'unknown'
 
-            # Parse using SMTLibParser
-            from benchmarks.smtlib_parser import SMTLibParser
-            parser = SMTLibParser()
-            formula, expected, logic = parser.parse_file(content)
+        # Run via Z3 directly (QF_AX is pure SMT-LIB 2.6 format)
+        start_time = time.time()
+        actual, error = self.run_smt2_with_z3(filepath, timeout=10)
+        time_ms = (time.time() - start_time) * 1000
 
-            start_time = time.time()
-            result = self.checker.is_satisfiable(formula)
-            time_ms = (time.time() - start_time) * 1000
-
-            actual = 'sat' if result else 'unsat'
-
-            return BenchmarkResult(
-                filename=filename,
-                suite='qf_ax',
-                division=source,
-                expected=expected,
-                actual=actual,
-                time_ms=time_ms
-            )
-        except Exception as e:
-            if self.verbose:
-                print(f"  ERROR in {filename}: {e}")
-            return BenchmarkResult(
-                filename=filename,
-                suite='qf_ax',
-                division=source,
-                expected='unknown',
-                actual='error',
-                time_ms=0.0,
-                error=str(e)
-            )
+        return BenchmarkResult(
+            filename=filename,
+            suite='qf_ax',
+            division=source,
+            expected=expected,
+            actual=actual,
+            time_ms=time_ms,
+            error=error
+        )
 
     def run_qf_ax_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
         """Run all QF_AX benchmarks in a source"""
@@ -1985,7 +2016,7 @@ class UnifiedBenchmarkRunner:
         return results
 
     def run_qf_bv_benchmark(self, source: str, filename: str, full_path: Optional[str] = None) -> BenchmarkResult:
-        """Run a single QF_BV benchmark"""
+        """Run a single QF_BV benchmark via Z3 directly"""
         if full_path:
             filepath = full_path
         else:
@@ -2002,41 +2033,23 @@ class UnifiedBenchmarkRunner:
                 error='File not found'
             )
 
-        try:
-            with open(filepath, 'r') as f:
-                content = f.read()
+        # Parse expected result
+        expected = self.parse_smt2_expected(filepath) or 'unknown'
 
-            # Parse using SMTLibParser
-            from benchmarks.smtlib_parser import SMTLibParser
-            parser = SMTLibParser()
-            formula, expected, logic = parser.parse_file(content)
+        # Run via Z3 directly (QF_BV is pure SMT-LIB 2.6 format)
+        start_time = time.time()
+        actual, error = self.run_smt2_with_z3(filepath, timeout=10)
+        time_ms = (time.time() - start_time) * 1000
 
-            start_time = time.time()
-            result = self.checker.is_satisfiable(formula)
-            time_ms = (time.time() - start_time) * 1000
-
-            actual = 'sat' if result else 'unsat'
-
-            return BenchmarkResult(
-                filename=filename,
-                suite='qf_bv',
-                division=source,
-                expected=expected,
-                actual=actual,
-                time_ms=time_ms
-            )
-        except Exception as e:
-            if self.verbose:
-                print(f"  ERROR in {filename}: {e}")
-            return BenchmarkResult(
-                filename=filename,
-                suite='qf_bv',
-                division=source,
-                expected='unknown',
-                actual='error',
-                time_ms=0.0,
-                error=str(e)
-            )
+        return BenchmarkResult(
+            filename=filename,
+            suite='qf_bv',
+            division=source,
+            expected=expected,
+            actual=actual,
+            time_ms=time_ms,
+            error=error
+        )
 
     def run_qf_bv_division(self, source: str, max_tests: Optional[int] = None) -> List[BenchmarkResult]:
         """Run all QF_BV benchmarks in a source"""
@@ -2210,17 +2223,23 @@ def cmd_run(args):
         print(f"Running specific division: {args.division}")
         print("=" * 80)
 
-        # Determine if it's SL-COMP or QF_S division
-        if args.division in ['slcomp_curated'] or args.division.startswith('qf_') or \
+        # Determine division type (check QF_S, QF_AX, QF_BV first before SL-COMP)
+        if 'qf_s' in args.division.lower():
+            runner.run_qf_s_division(args.division, max_tests=args.max_tests)
+        elif 'qf_ax' in args.division.lower():
+            runner.run_qf_ax_division(args.division, max_tests=args.max_tests)
+        elif 'qf_bv' in args.division.lower():
+            runner.run_qf_bv_division(args.division, max_tests=args.max_tests)
+        elif args.division in ['slcomp_curated'] or args.division.startswith('qf_') or \
            args.division.startswith('bsl_') or args.division.startswith('shid'):
             runner.run_slcomp_division(args.division, max_tests=args.max_tests)
-        elif 'qf_s' in args.division.lower():
-            runner.run_qf_s_division(args.division, max_tests=args.max_tests)
         else:
             print(f"ERROR: Unknown division '{args.division}'")
             print("Available divisions:")
             print("  SL-COMP: qf_shid_entl, qf_shls_entl, qf_bsl_sat, etc.")
             print("  QF_S: qf_s_curated, or subdirectories in qf_s_full/")
+            print("  QF_AX: qf_ax_curated, samples")
+            print("  QF_BV: qf_bv_curated, samples")
             return
 
     # --all: Run ALL benchmarks (full suites, ~20k total)
