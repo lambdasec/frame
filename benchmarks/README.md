@@ -71,50 +71,65 @@ python -m benchmarks run --division qf_shls_entl
 - Sources: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje, etc.
 - Operations: concat, contains, replace, indexOf, regex matching
 
-**QF_AX: 551 benchmarks** from SMT-LIB 2024
+**QF_AX: 551 benchmarks** from SMT-LIB 2024 (Pure SMT-LIB 2.6 format)
 - Array Theory with Extensionality
-- Validates select, store, const operations
+- Validates select, store, const operations via Z3 directly
 - **Status: 100% pass rate (551/551 correct)**
 - Average time: 0.048s per benchmark
+- **Run with**: `python run_qf_ax_benchmarks.py`
 
-**QF_BV: 20 curated benchmarks**
+**QF_BV: 20 curated benchmarks** (Pure SMT-LIB 2.6 format)
 - Bitvector Theory (8-bit, 16-bit, 32-bit)
 - Coverage: arithmetic, comparisons, bitwise, shifts, division/modulo
 - Edge cases: overflow, division by zero, signed/unsigned
 - **Status: 100% pass rate (20/20 correct)**
 - Average time: 0.025s per benchmark
+- **Run with**: `python run_qf_bv_benchmarks.py`
+
+**Cross-Theory Integration: 19 regression tests**
+- Validates arrays and bitvectors work within Frame's ecosystem
+- Combinations: Heap+Arrays, Heap+Bitvectors, Arrays+Bitvectors, All Combined
+- **Run with**: `python -m pytest tests/test_cross_theory_integration.py`
 
 ## CLI Reference
 
 ### Run Benchmarks
 
+**Frame-native benchmarks** (SL-COMP + QF_S in Frame syntax):
 ```bash
-# Run curated benchmarks (~4000 tests)
+# Run curated benchmarks (~4000 tests, Frame-native format)
 python -m benchmarks run --curated
 
-# Run ALL benchmarks (~20k tests, 2+ hours)
-python -m benchmarks run --all
+# Run specific theories
+python -m benchmarks run --division qf_s_curated     # String theory
+python -m benchmarks run --division slcomp_curated   # Separation logic
+python -m benchmarks run --division qf_shls_entl     # List segments
 
-# Run specific division
-python -m benchmarks run --division qf_shls_entl
-python -m benchmarks run --division qf_s_curated
-python -m benchmarks run --division slcomp_curated
-
-# Run array theory (QF_AX) benchmarks
-python run_qf_ax_benchmarks.py --max-tests 551 --timeout 10
-
-# Run bitvector theory (QF_BV) curated benchmarks
-python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated --timeout 10
-
-# Limit number of tests
+# Custom options
 python -m benchmarks run --curated --max-tests 100
-
-# Custom output
-python -m benchmarks run --curated --output my_results.json
-
-# Verbose mode
+python -m benchmarks run --curated --output results.json
 python -m benchmarks run --curated --verbose
 ```
+
+**SMT-LIB 2.6 benchmarks** (QF_AX + QF_BV, validated via Z3):
+```bash
+# Array theory (551 benchmarks, 100% pass)
+python run_qf_ax_benchmarks.py --max-tests 551 --timeout 10
+
+# Bitvector theory (20 curated benchmarks, 100% pass)
+python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated --timeout 10
+```
+
+**Cross-theory integration tests** (19 regression tests):
+```bash
+# Test Heap+Arrays+Bitvectors integration
+python -m pytest tests/test_cross_theory_integration.py -v
+
+# All Frame regression tests (1,254 total)
+python -m pytest tests/ -v
+```
+
+**Note**: QF_AX and QF_BV benchmarks are in pure SMT-LIB 2.6 format and must be run with their dedicated scripts that call Z3 directly. The cross-theory integration tests validate that arrays and bitvectors work correctly within Frame's parser and entailment checker.
 
 ### Download Benchmarks
 
