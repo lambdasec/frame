@@ -54,7 +54,11 @@ print(bug.found)  # True
 
 **String Theory (QF_S)**: Concatenation, substring operations, contains, indexof, replace (10/10 operation categories)
 
-**Security & Lifecycle**: Heap lifecycle predicates (`Allocated`, `Freed`), taint analysis (`TaintedInput`, `Sanitized`)
+**Array Theory (QF_AX)**: Select/store operations, constant arrays, extensionality, buffer overflow detection
+
+**Bitvector Theory (QF_BV)**: Arithmetic (add, sub, mul, div), bitwise (and, or, xor, not, shift), overflow detection (signed/unsigned)
+
+**Security & Lifecycle**: Heap lifecycle predicates (`Allocated`, `Freed`), taint analysis (`TaintedInput`, `Sanitized`), array taint tracking, integer overflow detection
 
 ## Security Applications
 
