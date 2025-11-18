@@ -856,6 +856,187 @@ class UnifiedBenchmarkRunner:
 
         return count
 
+    # ========== QF_AX Array Theory Benchmarks ==========
+
+    def download_qf_ax_samples(self, max_files: Optional[int] = None) -> int:
+        """Download QF_AX (Array Theory) sample benchmarks"""
+        print("\nDownloading QF_AX (Array Theory) benchmarks...")
+
+        qf_ax_dir = os.path.join(self.cache_dir, 'qf_ax', 'samples')
+        os.makedirs(qf_ax_dir, exist_ok=True)
+
+        # QF_AX benchmarks test array operations with select/store axioms
+        qf_ax_samples = {
+            'select_store_01.smt2': """(set-logic QF_AX)
+(declare-const arr1 (Array Int Int))
+(declare-const arr2 (Array Int Int))
+(assert (= arr2 (store arr1 0 42)))
+(assert (= (select arr2 0) 42))
+(check-sat)
+; expected: sat
+""",
+            'select_store_diff_index.smt2': """(set-logic QF_AX)
+(declare-const arr1 (Array Int Int))
+(declare-const arr2 (Array Int Int))
+(assert (= arr2 (store arr1 0 42)))
+(assert (= (select arr1 5) 10))
+(assert (= (select arr2 5) 10))
+(check-sat)
+; expected: sat
+""",
+            'array_equality_01.smt2': """(set-logic QF_AX)
+(declare-const arr1 (Array Int Int))
+(declare-const arr2 (Array Int Int))
+(assert (= (select arr1 0) (select arr2 0)))
+(assert (= (select arr1 1) (select arr2 1)))
+(assert (not (= arr1 arr2)))
+(check-sat)
+; expected: sat
+""",
+            'const_array_01.smt2': """(set-logic QF_AX)
+(declare-const arr (Array Int Int))
+(assert (= arr ((as const (Array Int Int)) 0)))
+(assert (= (select arr 5) 0))
+(assert (= (select arr 100) 0))
+(check-sat)
+; expected: sat
+""",
+            'buffer_overflow_01.smt2': """(set-logic QF_AX)
+(declare-const arr (Array Int Int))
+(declare-const size Int)
+(declare-const index Int)
+(assert (= size 10))
+(assert (>= index size))
+(check-sat)
+; expected: sat (buffer overflow possible)
+""",
+            'in_bounds_01.smt2': """(set-logic QF_AX)
+(declare-const arr (Array Int Int))
+(declare-const size Int)
+(declare-const index Int)
+(assert (= size 10))
+(assert (< index size))
+(assert (>= index 0))
+(check-sat)
+; expected: sat (in bounds access)
+""",
+        }
+
+        count = 0
+        files_to_create = list(qf_ax_samples.items())
+        if max_files:
+            files_to_create = files_to_create[:max_files]
+
+        for filename, content in files_to_create:
+            filepath = os.path.join(qf_ax_dir, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                print(f"  ✓ Created {filename}")
+                count += 1
+            else:
+                print(f"  ✓ {filename} (already exists)")
+                count += 1
+
+        print(f"\nQF_AX benchmarks: {count} files")
+        print(f"Location: {qf_ax_dir}")
+
+        return count
+
+    # ========== QF_BV Bitvector Theory Benchmarks ==========
+
+    def download_qf_bv_samples(self, max_files: Optional[int] = None) -> int:
+        """Download QF_BV (Bitvector Theory) sample benchmarks"""
+        print("\nDownloading QF_BV (Bitvector Theory) benchmarks...")
+
+        qf_bv_dir = os.path.join(self.cache_dir, 'qf_bv', 'samples')
+        os.makedirs(qf_bv_dir, exist_ok=True)
+
+        # QF_BV benchmarks test bitvector operations and overflow detection
+        qf_bv_samples = {
+            'bvadd_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
+(assert (= x #x05))
+(assert (= y #x03))
+(assert (= (bvadd x y) #x08))
+(check-sat)
+; expected: sat
+""",
+            'bvand_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(assert (= (bvand x #xFF) x))
+(check-sat)
+; expected: sat
+""",
+            'bvor_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(assert (= (bvor #xF0 #x0F) #xFF))
+(check-sat)
+; expected: sat
+""",
+            'bvxor_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(assert (= x #xFF))
+(assert (= (bvxor x x) #x00))
+(check-sat)
+; expected: sat
+""",
+            'overflow_unsigned_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
+(assert (= x #xFF))
+(assert (= y #x01))
+(assert (= (bvadd x y) #x00))
+(check-sat)
+; expected: sat (unsigned overflow)
+""",
+            'overflow_signed_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(assert (= x #x7F))
+(assert (bvsgt (bvadd x #x01) x))
+(check-sat)
+; expected: unsat (signed overflow wraps negative)
+""",
+            'shift_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(assert (= x #x01))
+(assert (= (bvshl x #x03) #x08))
+(check-sat)
+; expected: sat
+""",
+            'comparison_unsigned_01.smt2': """(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
+(assert (= x #x05))
+(assert (= y #x0A))
+(assert (bvult x y))
+(check-sat)
+; expected: sat
+""",
+        }
+
+        count = 0
+        files_to_create = list(qf_bv_samples.items())
+        if max_files:
+            files_to_create = files_to_create[:max_files]
+
+        for filename, content in files_to_create:
+            filepath = os.path.join(qf_bv_dir, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                print(f"  ✓ Created {filename}")
+                count += 1
+            else:
+                print(f"  ✓ {filename} (already exists)")
+                count += 1
+
+        print(f"\nQF_BV benchmarks: {count} files")
+        print(f"Location: {qf_bv_dir}")
+
+        return count
+
     # ========== Google Drive Full Benchmark Downloads ==========
 
     def download_gdrive_file(self, gdrive_id: str, output_path: str, description: str) -> bool:
