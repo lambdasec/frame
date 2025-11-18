@@ -2,7 +2,7 @@
 
 A fast, practical separation logic solver combining heap reasoning, string constraint solving, and automated bug detection.
 
-[![Tests](https://img.shields.io/badge/tests-1235%2F1235-green)]() [![Python](https://img.shields.io/badge/python-3.7%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-1254%2F1254-green)]() [![Python](https://img.shields.io/badge/python-3.7%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
 
 ## Features
 
@@ -23,7 +23,7 @@ git clone https://github.com/codelion/proofs.git
 cd proofs
 pip install -r requirements.txt
 
-# Run tests (1,235 tests, ~50s)
+# Run tests (1,254 tests, ~52s)
 python -m pytest tests/ -q
 ```
 
@@ -186,26 +186,26 @@ Frame includes **~20,000+ benchmarks** across 4 SMT theories from industry-stand
 ### Running Benchmarks
 
 ```bash
-# Curated benchmarks (recommended, ~20 minutes)
-python -m benchmarks run --curated
-
-# Full benchmark suite (~2+ hours)
-python -m benchmarks run --all
-
-# Theory-specific benchmarks
+# Frame-native benchmarks (SL-COMP + QF_S)
+python -m benchmarks run --curated                   # ~4000 tests, ~20 min
 python -m benchmarks run --division qf_s_curated     # String theory
 python -m benchmarks run --division slcomp_curated   # Separation logic
-python run_qf_ax_benchmarks.py --max-tests 551       # Array theory (100% ✓)
-python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated  # Bitvector (100% ✓)
 
-# Quick validation
-python -m benchmarks run --curated --max-tests 100
+# SMT-LIB 2.6 benchmarks (validated via Z3 directly)
+python run_qf_ax_benchmarks.py --max-tests 551       # Array theory: 100% ✓ (551/551)
+python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated  # Bitvector: 100% ✓ (20/20)
+
+# Regression tests (cross-theory integration)
+python -m pytest tests/ -v                           # 1,254 tests including 19 cross-theory
+python -m pytest tests/test_cross_theory_integration.py -v  # Heap+Arrays+Bitvectors integration
 ```
 
 **Benchmark Sources**:
 - SL-COMP 2024: Official separation logic competition benchmarks
 - SMT-LIB 2024: QF_S (Kaluza, PISA, PyEx), QF_AX, QF_BV from Zenodo release
 - Custom: Security-focused regression tests for cross-theory vulnerabilities
+
+**Note**: QF_AX and QF_BV benchmarks use pure SMT-LIB 2.6 format and are validated against Z3 directly. Frame's 19 cross-theory integration tests validate that arrays and bitvectors work correctly within Frame's ecosystem combining heap reasoning, strings, arrays, and bitvectors.
 
 See [`benchmarks/README.md`](benchmarks/README.md) for detailed results and methodology.
 
