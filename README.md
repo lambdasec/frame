@@ -99,8 +99,8 @@ if bug.found:
 ## Benchmarks
 
 Frame includes ~20,000+ benchmarks across 4 theories with curated sets for efficient testing:
-- **Curated**: ~5,000 tests (3,300 QF_S + 700 SL-COMP + 500 QF_AX + 500 QF_BV) - stratified samples, recommended for benchmarking
-- **Full**: ~20,000+ tests (18,940 QF_S + 1,298 SL-COMP + QF_AX/QF_BV from SMT-LIB) - comprehensive testing
+- **Curated**: ~4,500 tests (3,300 QF_S + 700 SL-COMP + 250 QF_AX + 250 QF_BV) - stratified samples, recommended for benchmarking
+- **Full**: ~21,000+ tests (18,940 QF_S + 1,298 SL-COMP + 551 QF_AX + QF_BV from SMT-LIB 2024) - comprehensive testing
 
 ```bash
 # Run curated benchmarks (recommended, ~20 minutes)
