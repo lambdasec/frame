@@ -2301,7 +2301,9 @@ def cmd_download(args):
         print(f"  - QF_S Full Set (SMT-LIB 2024): {qf_s_count:,} benchmarks")
         print("  - QF_S Samples: 53 benchmarks")
         print(f"  - QF_S curated: {qf_s_curated_count} benchmarks (stratified sample)")
-        print(f"  - Total: ~{861 + qf_s_count + 53:,} benchmarks ready to run")
+        print(f"  - QF_AX (Array Theory) Samples: {qf_ax_count} benchmarks")
+        print(f"  - QF_BV (Bitvector Theory) Samples: {qf_bv_count} benchmarks")
+        print(f"  - Total: ~{861 + qf_s_count + 53 + qf_ax_count + qf_bv_count:,} benchmarks ready to run")
         print("\nTo run all benchmarks:")
         print("  python -m benchmarks run --suite all")
         print("\nTo run curated benchmarks (recommended for benchmarking):")
@@ -2309,6 +2311,8 @@ def cmd_download(args):
         print("\nTo run specific suites:")
         print("  python -m benchmarks run --suite slcomp")
         print("  python -m benchmarks run --suite qf_s")
+        print("  python -m benchmarks run --division qf_ax_curated")
+        print("  python -m benchmarks run --division qf_bv_curated")
         return
 
     if args.suite == 'slcomp':
