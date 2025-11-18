@@ -1293,16 +1293,18 @@ class UnifiedBenchmarkRunner:
             extract_dir = os.path.join(self.cache_dir, 'qf_ax_extract_tmp')
             os.makedirs(extract_dir, exist_ok=True)
 
-            # Use tar command to extract .tar.zst
-            import subprocess
-            result = subprocess.run(
-                ['tar', '--zstd', '-xf', archive_path, '-C', extract_dir],
-                capture_output=True,
-                text=True
-            )
+            # Use Python's zstandard library to extract .tar.zst
+            try:
+                import zstandard
+                import tarfile
 
-            if result.returncode != 0:
-                print(f"  ✗ Extraction failed: {result.stderr}")
+                dctx = zstandard.ZstdDecompressor()
+                with open(archive_path, 'rb') as compressed:
+                    with dctx.stream_reader(compressed) as reader:
+                        with tarfile.open(fileobj=reader, mode='r|') as tar:
+                            tar.extractall(path=extract_dir)
+            except Exception as e:
+                print(f"  ✗ Extraction failed: {e}")
                 print(f"  Using local samples instead...")
                 shutil.rmtree(extract_dir, ignore_errors=True)
                 return self.download_qf_ax_samples()
@@ -1391,16 +1393,18 @@ class UnifiedBenchmarkRunner:
             extract_dir = os.path.join(self.cache_dir, 'qf_bv_extract_tmp')
             os.makedirs(extract_dir, exist_ok=True)
 
-            # Use tar command to extract .tar.zst
-            import subprocess
-            result = subprocess.run(
-                ['tar', '--zstd', '-xf', archive_path, '-C', extract_dir],
-                capture_output=True,
-                text=True
-            )
+            # Use Python's zstandard library to extract .tar.zst
+            try:
+                import zstandard
+                import tarfile
 
-            if result.returncode != 0:
-                print(f"  ✗ Extraction failed: {result.stderr}")
+                dctx = zstandard.ZstdDecompressor()
+                with open(archive_path, 'rb') as compressed:
+                    with dctx.stream_reader(compressed) as reader:
+                        with tarfile.open(fileobj=reader, mode='r|') as tar:
+                            tar.extractall(path=extract_dir)
+            except Exception as e:
+                print(f"  ✗ Extraction failed: {e}")
                 print(f"  Using local samples instead...")
                 shutil.rmtree(extract_dir, ignore_errors=True)
                 return self.download_qf_bv_samples()
