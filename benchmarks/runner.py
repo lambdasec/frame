@@ -1249,7 +1249,7 @@ class UnifiedBenchmarkRunner:
         print("\n" + "=" * 80)
         print("DOWNLOADING FULL QF_AX BENCHMARK SET FROM SMT-LIB")
         print("=" * 80)
-        print("Source: SMT-LIB GitHub repository")
+        print("Source: SMT-LIB 2024 Release (Zenodo)")
         print("Theory: QF_AX (Quantifier-Free Array Theory with Extensionality)")
 
         qf_ax_full_dir = os.path.join(self.cache_dir, 'qf_ax_full')
@@ -1262,14 +1262,14 @@ class UnifiedBenchmarkRunner:
             print(f"  Location: {qf_ax_full_dir}")
             return len(existing_files)
 
-        # Try GitHub repository for SMT-LIB benchmarks
-        github_url = "https://github.com/SMT-LIB/SMT-LIB-benchmarks-tmp/archive/refs/heads/main.zip"
-        archive_path = os.path.join(self.cache_dir, 'smtlib_qf_ax.zip')
+        # Official SMT-LIB 2024 release on Zenodo
+        zenodo_url = "https://zenodo.org/records/11061097/files/QF_AX.tar.zst?download=1"
+        archive_path = os.path.join(self.cache_dir, 'QF_AX.tar.zst')
 
         try:
             if not os.path.exists(archive_path):
-                print(f"\n  Downloading QF_AX benchmarks from GitHub...")
-                response = requests.get(github_url, timeout=300, stream=True)
+                print(f"\n  Downloading QF_AX benchmarks from Zenodo (131.5 KB compressed)...")
+                response = requests.get(zenodo_url, timeout=300, stream=True)
                 if response.status_code == 200:
                     total_size = int(response.headers.get('content-length', 0))
                     with open(archive_path, 'wb') as f:
@@ -1282,22 +1282,38 @@ class UnifiedBenchmarkRunner:
                                 print(f"\r  Progress: {progress:.1f}%", end='', flush=True)
                     print(f"\n  ✓ Downloaded ({downloaded / 1024 / 1024:.1f} MB)")
                 else:
-                    print(f"  ✗ GitHub download failed (HTTP {response.status_code})")
+                    print(f"  ✗ Zenodo download failed (HTTP {response.status_code})")
                     print(f"  Using local samples instead...")
                     return self.download_qf_ax_samples()
 
-            # Extract QF_AX benchmarks
-            print(f"  Extracting QF_AX benchmarks...")
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                # Extract only QF_AX directory
-                for member in zip_ref.namelist():
-                    if '/QF_AX/' in member and member.endswith('.smt2'):
-                        zip_ref.extract(member, self.cache_dir)
-                        # Move to qf_ax_full directory
-                        src = os.path.join(self.cache_dir, member)
-                        dst = os.path.join(qf_ax_full_dir, os.path.basename(member))
-                        if os.path.exists(src):
-                            shutil.move(src, dst)
+            # Extract QF_AX benchmarks using tar with zstd
+            print(f"  Extracting QF_AX benchmarks from .tar.zst archive...")
+
+            # Extract to a temporary directory first
+            extract_dir = os.path.join(self.cache_dir, 'qf_ax_extract_tmp')
+            os.makedirs(extract_dir, exist_ok=True)
+
+            # Use tar command to extract .tar.zst
+            import subprocess
+            result = subprocess.run(
+                ['tar', '--zstd', '-xf', archive_path, '-C', extract_dir],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                print(f"  ✗ Extraction failed: {result.stderr}")
+                print(f"  Using local samples instead...")
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return self.download_qf_ax_samples()
+
+            # Move all .smt2 files to qf_ax_full_dir
+            for root, dirs, files in os.walk(extract_dir):
+                for file in files:
+                    if file.endswith('.smt2'):
+                        src = os.path.join(root, file)
+                        dst = os.path.join(qf_ax_full_dir, file)
+                        shutil.move(src, dst)
 
             smt2_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
 
@@ -1313,11 +1329,7 @@ class UnifiedBenchmarkRunner:
             # Clean up
             try:
                 os.remove(archive_path)
-                # Clean up extracted directory structure
-                for root, dirs, files in os.walk(self.cache_dir):
-                    if 'SMT-LIB-benchmarks' in root:
-                        shutil.rmtree(root)
-                        break
+                shutil.rmtree(extract_dir, ignore_errors=True)
             except:
                 pass
 
@@ -1333,7 +1345,7 @@ class UnifiedBenchmarkRunner:
         print("\n" + "=" * 80)
         print("DOWNLOADING FULL QF_BV BENCHMARK SET FROM SMT-LIB")
         print("=" * 80)
-        print("Source: SMT-LIB GitHub repository")
+        print("Source: SMT-LIB 2024 Release (Zenodo)")
         print("Theory: QF_BV (Quantifier-Free Bitvector Theory)")
 
         qf_bv_full_dir = os.path.join(self.cache_dir, 'qf_bv_full')
@@ -1346,14 +1358,15 @@ class UnifiedBenchmarkRunner:
             print(f"  Location: {qf_bv_full_dir}")
             return len(existing_files)
 
-        # Try GitHub repository for SMT-LIB benchmarks
-        github_url = "https://github.com/SMT-LIB/SMT-LIB-benchmarks-tmp/archive/refs/heads/main.zip"
-        archive_path = os.path.join(self.cache_dir, 'smtlib_qf_bv.zip')
+        # Official SMT-LIB 2024 release on Zenodo
+        zenodo_url = "https://zenodo.org/records/11061097/files/QF_BV.tar.zst?download=1"
+        archive_path = os.path.join(self.cache_dir, 'QF_BV.tar.zst')
 
         try:
             if not os.path.exists(archive_path):
-                print(f"\n  Downloading QF_BV benchmarks from GitHub...")
-                response = requests.get(github_url, timeout=300, stream=True)
+                print(f"\n  Downloading QF_BV benchmarks from Zenodo (1.7 GB compressed)...")
+                print(f"  This may take several minutes...")
+                response = requests.get(zenodo_url, timeout=600, stream=True)
                 if response.status_code == 200:
                     total_size = int(response.headers.get('content-length', 0))
                     with open(archive_path, 'wb') as f:
@@ -1366,22 +1379,40 @@ class UnifiedBenchmarkRunner:
                                 print(f"\r  Progress: {progress:.1f}%", end='', flush=True)
                     print(f"\n  ✓ Downloaded ({downloaded / 1024 / 1024:.1f} MB)")
                 else:
-                    print(f"  ✗ GitHub download failed (HTTP {response.status_code})")
+                    print(f"  ✗ Zenodo download failed (HTTP {response.status_code})")
                     print(f"  Using local samples instead...")
                     return self.download_qf_bv_samples()
 
-            # Extract QF_BV benchmarks
-            print(f"  Extracting QF_BV benchmarks...")
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                # Extract only QF_BV directory
-                for member in zip_ref.namelist():
-                    if '/QF_BV/' in member and member.endswith('.smt2'):
-                        zip_ref.extract(member, self.cache_dir)
-                        # Move to qf_bv_full directory
-                        src = os.path.join(self.cache_dir, member)
-                        dst = os.path.join(qf_bv_full_dir, os.path.basename(member))
-                        if os.path.exists(src):
-                            shutil.move(src, dst)
+            # Extract QF_BV benchmarks using tar with zstd
+            print(f"  Extracting QF_BV benchmarks from .tar.zst archive...")
+            print(f"  This may take several minutes due to large file size...")
+
+            # Extract to a temporary directory first
+            extract_dir = os.path.join(self.cache_dir, 'qf_bv_extract_tmp')
+            os.makedirs(extract_dir, exist_ok=True)
+
+            # Use tar command to extract .tar.zst
+            import subprocess
+            result = subprocess.run(
+                ['tar', '--zstd', '-xf', archive_path, '-C', extract_dir],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                print(f"  ✗ Extraction failed: {result.stderr}")
+                print(f"  Using local samples instead...")
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return self.download_qf_bv_samples()
+
+            # Move all .smt2 files to qf_bv_full_dir
+            print(f"  Moving extracted files...")
+            for root, dirs, files in os.walk(extract_dir):
+                for file in files:
+                    if file.endswith('.smt2'):
+                        src = os.path.join(root, file)
+                        dst = os.path.join(qf_bv_full_dir, file)
+                        shutil.move(src, dst)
 
             smt2_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
 
@@ -1397,11 +1428,7 @@ class UnifiedBenchmarkRunner:
             # Clean up
             try:
                 os.remove(archive_path)
-                # Clean up extracted directory structure
-                for root, dirs, files in os.walk(self.cache_dir):
-                    if 'SMT-LIB-benchmarks' in root:
-                        shutil.rmtree(root)
-                        break
+                shutil.rmtree(extract_dir, ignore_errors=True)
             except:
                 pass
 
@@ -2140,9 +2167,10 @@ def cmd_run(args):
     """Run benchmarks"""
     runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir, verbose=args.verbose)
 
-    # --curated: Run curated sample sets (~5000 benchmarks)
+    # --curated: Run curated sample sets (~4000-5000 benchmarks)
     if args.curated:
-        print("Running CURATED benchmark sets (~5000 total: 700 SL-COMP + 3300 QF_S + 500 QF_AX + 500 QF_BV)")
+        print("Running CURATED benchmark sets (~4000+ total: 700 SL-COMP + 3300 QF_S + QF_AX + QF_BV)")
+        print("(QF_AX and QF_BV counts depend on available full benchmarks from SMT-LIB 2024)")
         print("=" * 80)
 
         # Ensure curated sets exist
