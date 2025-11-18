@@ -1065,11 +1065,11 @@ class UnifiedBenchmarkRunner:
 
     # ========== Curated Sample Creation ==========
 
-    def create_qf_s_curated_set(self, sample_size: int = 500, seed: int = 42) -> int:
+    def create_qf_s_curated_set(self, sample_size: int = 3300, seed: int = 42) -> int:
         """Create a curated sample set from the full QF_S benchmarks using stratified sampling
 
         Args:
-            sample_size: Target number of samples (default 500)
+            sample_size: Target number of samples (default 3300)
             seed: Random seed for reproducibility (default 42)
 
         Returns:
@@ -1155,11 +1155,11 @@ class UnifiedBenchmarkRunner:
 
         return len(sampled_files)
 
-    def create_slcomp_curated_set(self, sample_size: int = 150, seed: int = 42) -> int:
+    def create_slcomp_curated_set(self, sample_size: int = 700, seed: int = 42) -> int:
         """Create a curated sample set from SL-COMP benchmarks using stratified sampling
 
         Args:
-            sample_size: Target number of samples (default 150)
+            sample_size: Target number of samples (default 700)
             seed: Random seed for reproducibility (default 42)
 
         Returns:
@@ -1481,8 +1481,8 @@ def cmd_run(args):
 
     # Determine which benchmarks to run based on --curated flag
     if args.curated:
-        # Curated sets: 150 SL-COMP + 500 QF_S = 650 total
-        print("Running CURATED benchmark sets (650 total: 150 SL-COMP + 500 QF_S)")
+        # Curated sets: 700 SL-COMP + 3300 QF_S = 4000 total
+        print("Running CURATED benchmark sets (~4000 total: 700 SL-COMP + 3300 QF_S)")
         print("=" * 80)
 
         # Ensure curated sets exist
@@ -1848,7 +1848,7 @@ Examples:
     run_parser.add_argument('--suite', choices=['slcomp', 'qf_s', 'all'], default='slcomp')
     run_parser.add_argument('--division', type=str, help='Specific division/source to run')
     run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
-    run_parser.add_argument('--curated', action='store_true', help='Run only curated sample sets (500 QF_S + 150 SL-COMP)')
+    run_parser.add_argument('--curated', action='store_true', help='Run only curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
     run_parser.add_argument('--output', default='benchmark_results.json', help='Output file')
     run_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
     run_parser.add_argument('--verbose', action='store_true', help='Verbose output')
@@ -1859,7 +1859,7 @@ Examples:
     dl_parser.add_argument('--division', type=str, help='Specific division to download')
     dl_parser.add_argument('--max-files', type=int, default=10, help='Max files to download')
     dl_parser.add_argument('--all', action='store_true', help='Download all uncached benchmarks')
-    dl_parser.add_argument('--curated', action='store_true', help='Create curated sample sets (500 QF_S + 150 SL-COMP)')
+    dl_parser.add_argument('--curated', action='store_true', help='Create curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
     dl_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
 
     # Analyze command
