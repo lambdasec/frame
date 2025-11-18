@@ -1497,11 +1497,16 @@ def cmd_run(args):
             print("\nQF_S curated set not found. Creating...")
             runner.create_qf_s_curated_set()
 
-        # Run curated sets
-        if args.suite in ['slcomp', 'all']:
+        # When --curated is specified, default to running BOTH sets
+        # User can still specify --suite to run only one curated set
+        # Default suite is 'slcomp', but with --curated we want both, so treat 'slcomp' as 'all'
+        effective_suite = 'all' if args.suite == 'slcomp' else args.suite
+
+        # Run curated sets based on effective suite
+        if effective_suite in ['slcomp', 'all']:
             runner.run_slcomp_division('slcomp_curated', max_tests=args.max_tests)
 
-        if args.suite in ['qf_s', 'all']:
+        if effective_suite in ['qf_s', 'all']:
             runner.run_qf_s_division('qf_s_curated', max_tests=args.max_tests)
 
     else:
