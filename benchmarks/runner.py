@@ -1479,9 +1479,8 @@ def cmd_run(args):
     """Run benchmarks"""
     runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir, verbose=args.verbose)
 
-    # Determine which benchmarks to run based on --curated flag
+    # --curated: Run curated sample sets (~4000 benchmarks)
     if args.curated:
-        # Curated sets: 700 SL-COMP + 3300 QF_S = 4000 total
         print("Running CURATED benchmark sets (~4000 total: 700 SL-COMP + 3300 QF_S)")
         print("=" * 80)
 
@@ -1497,29 +1496,42 @@ def cmd_run(args):
             print("\nQF_S curated set not found. Creating...")
             runner.create_qf_s_curated_set()
 
-        # When --curated is specified, default to running BOTH sets
-        # User can still specify --suite to run only one curated set
-        # Default suite is 'slcomp', but with --curated we want both, so treat 'slcomp' as 'all'
-        effective_suite = 'all' if args.suite == 'slcomp' else args.suite
+        # Run both curated sets
+        runner.run_slcomp_division('slcomp_curated', max_tests=args.max_tests)
+        runner.run_qf_s_division('qf_s_curated', max_tests=args.max_tests)
 
-        # Run curated sets based on effective suite
-        if effective_suite in ['slcomp', 'all']:
-            runner.run_slcomp_division('slcomp_curated', max_tests=args.max_tests)
+    # --division: Run specific division
+    elif args.division:
+        print(f"Running specific division: {args.division}")
+        print("=" * 80)
 
-        if effective_suite in ['qf_s', 'all']:
-            runner.run_qf_s_division('qf_s_curated', max_tests=args.max_tests)
+        # Determine if it's SL-COMP or QF_S division
+        if args.division in ['slcomp_curated'] or args.division.startswith('qf_') or \
+           args.division.startswith('bsl_') or args.division.startswith('shid'):
+            runner.run_slcomp_division(args.division, max_tests=args.max_tests)
+        elif 'qf_s' in args.division.lower():
+            runner.run_qf_s_division(args.division, max_tests=args.max_tests)
+        else:
+            print(f"ERROR: Unknown division '{args.division}'")
+            print("Available divisions:")
+            print("  SL-COMP: qf_shid_entl, qf_shls_entl, qf_bsl_sat, etc.")
+            print("  QF_S: qf_s_curated, or subdirectories in qf_s_full/")
+            return
 
-    else:
-        # Full benchmark sets
-        # All 12 SL-COMP divisions (861 total benchmarks)
+    # --all: Run ALL benchmarks (full suites, ~20k total)
+    elif args.all:
+        print("Running ALL benchmark sets (~20k total: SL-COMP + QF_S)")
+        print("=" * 80)
+
+        # All 12 SL-COMP divisions (1298 total benchmarks)
         slcomp_divisions = [
             # Entailment problems (6 divisions)
-            'qf_shid_entl',      # 50 tests
+            'qf_shid_entl',      # 312 tests
             'qf_shls_entl',      # 296 tests
-            'qf_shlid_entl',     # 50 tests
-            'qf_shidlia_entl',   # 50 tests
-            'shid_entl',         # 50 tests
-            'shidlia_entl',      # 50 tests
+            'qf_shlid_entl',     # 60 tests
+            'qf_shidlia_entl',   # 61 tests
+            'shid_entl',         # 73 tests
+            'shidlia_entl',      # 181 tests
             # Satisfiability problems (6 divisions)
             'qf_bsl_sat',        # 46 tests
             'qf_bsllia_sat',     # 24 tests
@@ -1529,17 +1541,12 @@ def cmd_run(args):
             'qf_shls_sat',       # 110 tests
         ]
 
-        qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje', 'qf_s_full']
+        # Run all SL-COMP divisions
+        for division in slcomp_divisions:
+            runner.run_slcomp_division(division, max_tests=args.max_tests)
 
-        if args.suite in ['slcomp', 'all']:
-            divisions = [args.division] if args.division else slcomp_divisions
-            for division in divisions:
-                runner.run_slcomp_division(division, max_tests=args.max_tests)
-
-        if args.suite in ['qf_s', 'all']:
-            sources = [args.division] if args.division else qf_s_sources
-            for source in sources:
-                runner.run_qf_s_division(source, max_tests=args.max_tests)
+        # Run all QF_S benchmarks
+        runner.run_qf_s_division('qf_s_full', max_tests=args.max_tests)
 
     runner.print_summary()
     runner.save_results(args.output)
@@ -1850,10 +1857,14 @@ Examples:
 
     # Run command
     run_parser = subparsers.add_parser('run', help='Run benchmarks')
-    run_parser.add_argument('--suite', choices=['slcomp', 'qf_s', 'all'], default='slcomp')
-    run_parser.add_argument('--division', type=str, help='Specific division/source to run')
+
+    # Mutually exclusive group for benchmark selection
+    run_group = run_parser.add_mutually_exclusive_group(required=True)
+    run_group.add_argument('--all', action='store_true', help='Run ALL benchmarks (full SL-COMP + QF_S suites, ~20k total)')
+    run_group.add_argument('--curated', action='store_true', help='Run curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
+    run_group.add_argument('--division', type=str, help='Run specific division (e.g., qf_shls_entl, qf_s_curated)')
+
     run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
-    run_parser.add_argument('--curated', action='store_true', help='Run only curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
     run_parser.add_argument('--output', default='benchmark_results.json', help='Output file')
     run_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
     run_parser.add_argument('--verbose', action='store_true', help='Verbose output')
