@@ -74,10 +74,10 @@ class Lexer:
         ('COMMA', r','),
         ('DOT', r'\.'),
         # Keywords (order matters - more specific first)
-        # Array operations
-        ('SELECT', r'select'),
-        ('STORE', r'store'),
-        ('CONST', r'const'),
+        # Array operations (with word boundaries to avoid matching prefixes)
+        ('SELECT', r'select\b'),
+        ('STORE', r'store\b'),
+        ('CONST', r'const\b'),
         # Bitvector operations (alphabetical for easier maintenance)
         ('BVADD', r'bvadd'),
         ('BVAND', r'bvand'),

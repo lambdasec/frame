@@ -95,6 +95,9 @@ class Z3Encoder:
         # Array Theory (QF_AX) support
         # Cache for array variables and constants
         self.array_var_cache: Dict[str, z3.ArrayRef] = {}
+        # Function to map array base pointers to their sizes
+        # This allows Z3 to infer that if arr1 = arr2, then array_size(arr1) = array_size(arr2)
+        self.array_size_fn = z3.Function('array_size', z3.IntSort(), z3.IntSort())
         # Default array sort: Array from Int to Int (can be parameterized later)
         self.ArrayIntIntSort = z3.ArraySort(z3.IntSort(), z3.IntSort())
         # Array from Int to String (for string arrays)
@@ -220,8 +223,8 @@ class Z3Encoder:
                 return z3.IntVal(numeric_value)
             except ValueError:
                 # Not a number, treat as variable
-                # Variables could be strings or integers depending on context
-                # For now, default to integer (location) sort
+                # Variables default to integer (location) sort
+                # Arrays are explicitly handled through ArraySelect/ArrayStore operations
                 return self.get_or_create_var(expr.name, prefix=prefix)
 
         elif isinstance(expr, Const):
@@ -266,9 +269,19 @@ class Z3Encoder:
 
         elif isinstance(expr, ArrayConst):
             # Constant array with all elements = default_value
-            default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
+            # Ensure default value is encoded as integer
+            if isinstance(expr.default_value, Const):
+                default_z3 = z3.IntVal(expr.default_value.value if expr.default_value.value is not None else 0)
+            else:
+                default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
+                # Ensure it's integer sort
+                if isinstance(default_z3, z3.ArithRef):
+                    pass  # Already arithmetic
+                else:
+                    default_z3 = z3.IntVal(0)  # Fallback
             # Create constant array (all indices map to default_value)
-            return z3.K(self.ArrayIntIntSort, default_z3)
+            # z3.K(domain_sort, value) creates Array(domain_sort, value_sort)
+            return z3.K(z3.IntSort(), default_z3)
 
         # Bitvector Theory expressions
         elif isinstance(expr, BitVecVal):
@@ -305,9 +318,16 @@ class Z3Encoder:
             value_z3 = self.encode_expr(expr.value, prefix=prefix)
             return z3.Store(array_z3, index_z3, value_z3)
         elif isinstance(expr, ArrayConst):
-            # Constant array
-            default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
-            return z3.K(self.ArrayIntIntSort, default_z3)
+            # Constant array - ensure default value is properly typed as integer
+            if isinstance(expr.default_value, Const):
+                default_z3 = z3.IntVal(expr.default_value.value if expr.default_value.value is not None else 0)
+            else:
+                default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
+                # Ensure it's integer sort
+                if not isinstance(default_z3, z3.ArithRef):
+                    default_z3 = z3.IntVal(0)  # Fallback
+            # z3.K(domain_sort, value) creates Array(domain_sort, value_sort)
+            return z3.K(z3.IntSort(), default_z3)
         else:
             # Try regular encoding and hope it's an array
             return self.encode_expr(expr, prefix=prefix)
@@ -586,9 +606,11 @@ class Z3Encoder:
 
         elif isinstance(formula, ArrayBounds):
             # bounds(array, size) constrains the size of an array
+            # Use array_size function to track sizes - this allows Z3 to infer that
+            # if arr1 = arr2, then array_size(arr1) = array_size(arr2)
             array_z3 = self.encode_expr(formula.array, prefix=prefix)
             size_z3 = self.encode_expr(formula.size, prefix=prefix)
-            return self.array_bounds(array_z3) == size_z3
+            return self.array_size_fn(array_z3) == size_z3
 
         # Array and bitvector security predicates
         elif isinstance(formula, TaintedArray):
