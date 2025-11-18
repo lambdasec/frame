@@ -61,6 +61,13 @@ class SMTLibParser:
                         self.expected_result = result_match.group(1)
                 continue
 
+            # Parse set-info :status (SL-COMP format)
+            if 'set-info' in line and ':status' in line:
+                status_match = re.search(r'\(set-info\s+:status\s+(sat|unsat|unknown)\)', line)
+                if status_match:
+                    self.expected_result = status_match.group(1).lower()
+                continue
+
             # Parse set-logic
             if line.startswith('(set-logic'):
                 logic_match = re.search(r'\(set-logic\s+(\w+)\)', line)
