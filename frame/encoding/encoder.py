@@ -152,6 +152,57 @@ class Z3Encoder:
         from frame.core.ast import StrLiteral, StrConcat, StrSubstr
         return isinstance(expr, (StrLiteral, StrConcat, StrSubstr))
 
+    def _is_bitvec_expr(self, expr: Expr) -> bool:
+        """Check if an expression is a bitvector expression
+
+        Args:
+            expr: Expression to check
+
+        Returns:
+            True if the expression is a bitvector type
+        """
+        return isinstance(expr, (BitVecVal, BitVecExpr))
+
+    def _get_bitvec_width(self, expr: Expr) -> Optional[int]:
+        """Get the bit width of a bitvector expression
+
+        Args:
+            expr: Expression to check
+
+        Returns:
+            Bit width if expression is a bitvector, None otherwise
+        """
+        if isinstance(expr, BitVecVal):
+            return expr.width
+        elif isinstance(expr, BitVecExpr):
+            return expr.width
+        return None
+
+    def encode_bitvec_expr(self, expr: Expr, width: int, prefix: str = "") -> z3.BitVecRef:
+        """Encode an expression as a bitvector (for bitvector contexts)
+
+        Args:
+            expr: Expression to encode
+            width: Expected bit width
+            prefix: Variable prefix for scoping
+
+        Returns:
+            Z3 bitvector expression
+        """
+        if isinstance(expr, BitVecVal):
+            return z3.BitVecVal(expr.value, expr.width)
+        elif isinstance(expr, BitVecExpr):
+            return self._encode_bitvec_op(expr, prefix=prefix)
+        elif isinstance(expr, Var):
+            # In bitvector context, create a bitvector variable
+            cache_key = (f"{prefix}{expr.name}", width)
+            if cache_key not in self.bitvec_var_cache:
+                self.bitvec_var_cache[cache_key] = z3.BitVec(f"{prefix}{expr.name}", width)
+            return self.bitvec_var_cache[cache_key]
+        else:
+            # For other expressions, try regular encoding
+            return self.encode_expr(expr, prefix=prefix)
+
     def encode_string_expr(self, expr: Expr, prefix: str = "") -> z3.SeqRef:
         """Encode an expression as a string (for string contexts)
 
@@ -258,12 +309,18 @@ class Z3Encoder:
             # (select array index)
             array_z3 = self._encode_array_expr(expr.array, prefix=prefix)
             index_z3 = self.encode_expr(expr.index, prefix=prefix)
+            # Convert bitvector indices to integers (arrays expect IntSort indices)
+            if self._is_bitvec_expr(expr.index):
+                index_z3 = z3.BV2Int(index_z3)
             return z3.Select(array_z3, index_z3)
 
         elif isinstance(expr, ArrayStore):
             # (store array index value)
             array_z3 = self._encode_array_expr(expr.array, prefix=prefix)
             index_z3 = self.encode_expr(expr.index, prefix=prefix)
+            # Convert bitvector indices to integers (arrays expect IntSort indices)
+            if self._is_bitvec_expr(expr.index):
+                index_z3 = z3.BV2Int(index_z3)
             value_z3 = self.encode_expr(expr.value, prefix=prefix)
             return z3.Store(array_z3, index_z3, value_z3)
 
@@ -390,26 +447,34 @@ class Z3Encoder:
         elif op == 'bvashr':
             return ops[0] >> ops[1]
 
-        # Comparison operations (return Bool, not BitVec)
+        # Comparison operations (return Bool by default, or 1-bit BitVec if width=1)
         elif op == 'bvult':
-            return z3.ULT(ops[0], ops[1])
+            bool_result = z3.ULT(ops[0], ops[1])
         elif op == 'bvule':
-            return z3.ULE(ops[0], ops[1])
+            bool_result = z3.ULE(ops[0], ops[1])
         elif op == 'bvugt':
-            return z3.UGT(ops[0], ops[1])
+            bool_result = z3.UGT(ops[0], ops[1])
         elif op == 'bvuge':
-            return z3.UGE(ops[0], ops[1])
+            bool_result = z3.UGE(ops[0], ops[1])
         elif op == 'bvslt':
-            return ops[0] < ops[1]
+            bool_result = ops[0] < ops[1]
         elif op == 'bvsle':
-            return ops[0] <= ops[1]
+            bool_result = ops[0] <= ops[1]
         elif op == 'bvsgt':
-            return ops[0] > ops[1]
+            bool_result = ops[0] > ops[1]
         elif op == 'bvsge':
-            return ops[0] >= ops[1]
-
+            bool_result = ops[0] >= ops[1]
         else:
             raise ValueError(f"Unsupported bitvector operation: {op}")
+
+        # For comparison operations, convert Bool to 1-bit bitvector if width=1 is specified
+        if op in ['bvult', 'bvule', 'bvugt', 'bvuge', 'bvslt', 'bvsle', 'bvsgt', 'bvsge']:
+            if expr.width == 1:
+                # Convert boolean result to 1-bit bitvector: true -> 0b1, false -> 0b0
+                return z3.If(bool_result, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+            else:
+                # Return as boolean (standard SMT-LIB behavior)
+                return bool_result
 
     def encode_heap_assertion(self, formula: Formula, heap_var: z3.ExprRef,
                              domain_set: Set[z3.ExprRef],
@@ -454,6 +519,15 @@ class Z3Encoder:
                 # Encode both sides as strings
                 left = self.encode_string_expr(formula.left, prefix=prefix)
                 right = self.encode_string_expr(formula.right, prefix=prefix)
+            # Check if either side is a bitvector expression
+            elif self._is_bitvec_expr(formula.left) or self._is_bitvec_expr(formula.right):
+                # Encode both sides as bitvectors
+                # Determine the width from whichever side is a bitvector
+                width = self._get_bitvec_width(formula.left) or self._get_bitvec_width(formula.right)
+                if width is None:
+                    width = 32  # Default width if not specified
+                left = self.encode_bitvec_expr(formula.left, width, prefix=prefix)
+                right = self.encode_bitvec_expr(formula.right, width, prefix=prefix)
             else:
                 # Regular (integer/location) equality
                 left = self.encode_expr(formula.left, prefix=prefix)
@@ -461,8 +535,16 @@ class Z3Encoder:
             return left == right
 
         elif isinstance(formula, Neq):
-            left = self.encode_expr(formula.left, prefix=prefix)
-            right = self.encode_expr(formula.right, prefix=prefix)
+            # Handle bitvectors similar to Eq
+            if self._is_bitvec_expr(formula.left) or self._is_bitvec_expr(formula.right):
+                width = self._get_bitvec_width(formula.left) or self._get_bitvec_width(formula.right)
+                if width is None:
+                    width = 32  # Default width if not specified
+                left = self.encode_bitvec_expr(formula.left, width, prefix=prefix)
+                right = self.encode_bitvec_expr(formula.right, width, prefix=prefix)
+            else:
+                left = self.encode_expr(formula.left, prefix=prefix)
+                right = self.encode_expr(formula.right, prefix=prefix)
             return left != right
 
         elif isinstance(formula, Lt):
@@ -640,6 +722,10 @@ class Z3Encoder:
             # BufferOverflowCheck(arr, index, size) verifies: 0 <= index < size
             index_z3 = self.encode_expr(formula.index, prefix=prefix)
             size_z3 = self.encode_expr(formula.size, prefix=prefix)
+
+            # Convert bitvector indices to integers for comparison
+            if self._is_bitvec_expr(formula.index):
+                index_z3 = z3.BV2Int(index_z3)
 
             # Safe access: index in bounds
             in_bounds = z3.And(

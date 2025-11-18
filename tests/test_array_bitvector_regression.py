@@ -276,7 +276,6 @@ class TestBitvectorSignedness:
 class TestBitvectorComparisons:
     """Test bitvector comparison operations"""
 
-    @pytest.mark.skip(reason="Bitvector comparison operations not yet fully implemented")
     def test_unsigned_less_than(self):
         """Test unsigned less than comparison"""
         checker = EntailmentChecker()
@@ -290,7 +289,6 @@ class TestBitvectorComparisons:
         result = checker.is_satisfiable(Eq(result_bv, BitVecVal(1, 1)))
         assert result, "5 < 10 should be true (unsigned)"
 
-    @pytest.mark.skip(reason="Bitvector comparison operations not yet fully implemented")
     def test_signed_less_than(self):
         """Test signed less than comparison"""
         checker = EntailmentChecker()
@@ -304,7 +302,6 @@ class TestBitvectorComparisons:
         result = checker.is_satisfiable(Eq(result_bv, BitVecVal(1, 1)))
         assert result, "-5 < 5 should be true (signed)"
 
-    @pytest.mark.skip(reason="Bitvector comparison operations not yet fully implemented")
     def test_unsigned_vs_signed_comparison(self):
         """Test difference between signed and unsigned comparison"""
         checker = EntailmentChecker()
@@ -384,7 +381,6 @@ class TestBitvectorShiftEdgeCases:
 class TestBitvectorArithmeticEdgeCases:
     """Test edge cases in bitvector arithmetic"""
 
-    @pytest.mark.skip(reason="Bitvector division/modulo not yet fully implemented")
     def test_division_by_zero(self):
         """Test division by zero behavior"""
         checker = EntailmentChecker()
@@ -401,7 +397,6 @@ class TestBitvectorArithmeticEdgeCases:
         result = checker.is_satisfiable(formula)
         assert result, "Division by zero should be satisfiable (undefined)"
 
-    @pytest.mark.skip(reason="Bitvector division/modulo not yet fully implemented")
     def test_modulo_by_zero(self):
         """Test modulo by zero behavior"""
         checker = EntailmentChecker()
@@ -447,7 +442,6 @@ class TestBitvectorArithmeticEdgeCases:
 class TestCombinedArrayBitvectorScenarios:
     """Test realistic scenarios combining arrays and bitvectors"""
 
-    @pytest.mark.skip(reason="Mixing bitvectors and integers in array indexing requires type conversion")
     def test_array_index_with_bitvector_arithmetic(self):
         """Test using bitvector arithmetic to compute array index"""
         checker = EntailmentChecker()
@@ -466,7 +460,6 @@ class TestCombinedArrayBitvectorScenarios:
         result = checker.is_satisfiable(formula)
         assert result, "Array index from bitvector arithmetic should work"
 
-    @pytest.mark.skip(reason="Mixing bitvectors and integers in array indexing requires type conversion")
     def test_bitvector_overflow_prevents_array_access(self):
         """Test that bitvector overflow can cause out-of-bounds access"""
         checker = EntailmentChecker()
