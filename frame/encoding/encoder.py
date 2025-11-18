@@ -18,7 +18,13 @@ from frame.core.ast import (
     # Error states
     Error, NullDeref, UseAfterFree, BufferOverflow,
     # Heap lifecycle and arrays
-    Allocated, Freed, ArrayPointsTo, ArrayBounds
+    Allocated, Freed, ArrayPointsTo, ArrayBounds,
+    # Array theory
+    ArraySelect, ArrayStore, ArrayConst,
+    # Bitvector theory
+    BitVecVal, BitVecExpr,
+    # Array and bitvector security
+    TaintedArray, BufferOverflowCheck, IntegerOverflow
 )
 from frame.encoding._spatial import SpatialEncoder
 
@@ -85,6 +91,18 @@ class Z3Encoder:
         # array_heap: array heap mapping (array_base, index) -> value
         # We model arrays as a separate heap for efficient reasoning
         self.array_heap = z3.Function('array_heap', self.LocSort, z3.IntSort(), self.ValSort)
+
+        # Array Theory (QF_AX) support
+        # Cache for array variables and constants
+        self.array_var_cache: Dict[str, z3.ArrayRef] = {}
+        # Default array sort: Array from Int to Int (can be parameterized later)
+        self.ArrayIntIntSort = z3.ArraySort(z3.IntSort(), z3.IntSort())
+        # Array from Int to String (for string arrays)
+        self.ArrayIntStringSort = z3.ArraySort(z3.IntSort(), z3.StringSort())
+
+        # Bitvector Theory (QF_BV) support
+        # Cache for bitvector variables
+        self.bitvec_var_cache: Dict[Tuple[str, int], z3.BitVecRef] = {}  # (name, width) -> BitVec
 
     def fresh_var(self, prefix: str = "v", sort=None) -> z3.ExprRef:
         """Generate a fresh Z3 variable"""
@@ -231,8 +249,147 @@ class Z3Encoder:
                 return left_z3 % right_z3
             else:
                 raise ValueError(f"Unsupported arithmetic operator: {expr.op}")
+
+        # Array Theory expressions
+        elif isinstance(expr, ArraySelect):
+            # (select array index)
+            array_z3 = self._encode_array_expr(expr.array, prefix=prefix)
+            index_z3 = self.encode_expr(expr.index, prefix=prefix)
+            return z3.Select(array_z3, index_z3)
+
+        elif isinstance(expr, ArrayStore):
+            # (store array index value)
+            array_z3 = self._encode_array_expr(expr.array, prefix=prefix)
+            index_z3 = self.encode_expr(expr.index, prefix=prefix)
+            value_z3 = self.encode_expr(expr.value, prefix=prefix)
+            return z3.Store(array_z3, index_z3, value_z3)
+
+        elif isinstance(expr, ArrayConst):
+            # Constant array with all elements = default_value
+            default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
+            # Create constant array (all indices map to default_value)
+            return z3.K(self.ArrayIntIntSort, default_z3)
+
+        # Bitvector Theory expressions
+        elif isinstance(expr, BitVecVal):
+            # Bitvector constant
+            return z3.BitVecVal(expr.value, expr.width)
+
+        elif isinstance(expr, BitVecExpr):
+            # Bitvector operations
+            return self._encode_bitvec_op(expr, prefix=prefix)
+
         else:
             raise ValueError(f"Unsupported expression type: {type(expr)}")
+
+    def _encode_array_expr(self, expr: Expr, prefix: str = "") -> z3.ArrayRef:
+        """Encode an expression as an array
+
+        Args:
+            expr: Expression to encode
+            prefix: Variable prefix for scoping
+
+        Returns:
+            Z3 array expression
+        """
+        if isinstance(expr, Var):
+            # Array variable
+            cache_key = f"{prefix}{expr.name}"
+            if cache_key not in self.array_var_cache:
+                self.array_var_cache[cache_key] = z3.Array(cache_key, z3.IntSort(), z3.IntSort())
+            return self.array_var_cache[cache_key]
+        elif isinstance(expr, ArrayStore):
+            # Recursively encode store operations
+            array_z3 = self._encode_array_expr(expr.array, prefix=prefix)
+            index_z3 = self.encode_expr(expr.index, prefix=prefix)
+            value_z3 = self.encode_expr(expr.value, prefix=prefix)
+            return z3.Store(array_z3, index_z3, value_z3)
+        elif isinstance(expr, ArrayConst):
+            # Constant array
+            default_z3 = self.encode_expr(expr.default_value, prefix=prefix)
+            return z3.K(self.ArrayIntIntSort, default_z3)
+        else:
+            # Try regular encoding and hope it's an array
+            return self.encode_expr(expr, prefix=prefix)
+
+    def _encode_bitvec_op(self, expr: BitVecExpr, prefix: str = "") -> z3.BitVecRef:
+        """Encode a bitvector operation
+
+        Args:
+            expr: Bitvector expression
+            prefix: Variable prefix for scoping
+
+        Returns:
+            Z3 bitvector expression
+        """
+        # Encode operands
+        operands_z3 = []
+        for op in expr.operands:
+            if isinstance(op, Var):
+                # Bitvector variable
+                cache_key = (f"{prefix}{op.name}", expr.width)
+                if cache_key not in self.bitvec_var_cache:
+                    self.bitvec_var_cache[cache_key] = z3.BitVec(f"{prefix}{op.name}", expr.width)
+                operands_z3.append(self.bitvec_var_cache[cache_key])
+            else:
+                operands_z3.append(self.encode_expr(op, prefix=prefix))
+
+        # Apply operation
+        op = expr.op
+        ops = operands_z3
+
+        # Arithmetic operations
+        if op == 'bvadd':
+            return ops[0] + ops[1]
+        elif op == 'bvsub':
+            return ops[0] - ops[1]
+        elif op == 'bvmul':
+            return ops[0] * ops[1]
+        elif op == 'bvudiv':
+            return z3.UDiv(ops[0], ops[1])
+        elif op == 'bvurem':
+            return z3.URem(ops[0], ops[1])
+        elif op == 'bvsdiv':
+            return ops[0] / ops[1]
+        elif op == 'bvsrem':
+            return z3.SRem(ops[0], ops[1])
+
+        # Bitwise operations
+        elif op == 'bvand':
+            return ops[0] & ops[1]
+        elif op == 'bvor':
+            return ops[0] | ops[1]
+        elif op == 'bvxor':
+            return ops[0] ^ ops[1]
+        elif op == 'bvnot':
+            return ~ops[0]
+        elif op == 'bvshl':
+            return ops[0] << ops[1]
+        elif op == 'bvlshr':
+            return z3.LShR(ops[0], ops[1])
+        elif op == 'bvashr':
+            return ops[0] >> ops[1]
+
+        # Comparison operations (return Bool, not BitVec)
+        elif op == 'bvult':
+            return z3.ULT(ops[0], ops[1])
+        elif op == 'bvule':
+            return z3.ULE(ops[0], ops[1])
+        elif op == 'bvugt':
+            return z3.UGT(ops[0], ops[1])
+        elif op == 'bvuge':
+            return z3.UGE(ops[0], ops[1])
+        elif op == 'bvslt':
+            return ops[0] < ops[1]
+        elif op == 'bvsle':
+            return ops[0] <= ops[1]
+        elif op == 'bvsgt':
+            return ops[0] > ops[1]
+        elif op == 'bvsge':
+            return ops[0] >= ops[1]
+
+        else:
+            raise ValueError(f"Unsupported bitvector operation: {op}")
 
     def encode_heap_assertion(self, formula: Formula, heap_var: z3.ExprRef,
                              domain_set: Set[z3.ExprRef],
@@ -432,6 +589,88 @@ class Z3Encoder:
             array_z3 = self.encode_expr(formula.array, prefix=prefix)
             size_z3 = self.encode_expr(formula.size, prefix=prefix)
             return self.array_bounds(array_z3) == size_z3
+
+        # Array and bitvector security predicates
+        elif isinstance(formula, TaintedArray):
+            # TaintedArray(arr, indices) means some array elements are tainted
+            # We track this by checking if ANY of the specified indices contain tainted data
+            array_z3 = self._encode_array_expr(formula.array, prefix=prefix)
+
+            if formula.tainted_indices is None:
+                # Unknown which indices - conservatively assume some are tainted
+                # Create existential: exists i. tainted(array[i])
+                return z3.BoolVal(True)  # Conservative approximation
+            elif len(formula.tainted_indices) == 0:
+                # No tainted indices
+                return z3.BoolVal(False)
+            else:
+                # Check if any specified index has tainted value
+                constraints = []
+                for idx in formula.tainted_indices:
+                    idx_z3 = self.encode_expr(idx, prefix=prefix)
+                    value_z3 = z3.Select(array_z3, idx_z3)
+                    # Value is tainted (implementation-specific)
+                    # For now, we mark it in a separate tracking structure
+                    constraints.append(z3.BoolVal(True))  # Placeholder
+                return z3.Or(*constraints) if constraints else z3.BoolVal(False)
+
+        elif isinstance(formula, BufferOverflowCheck):
+            # BufferOverflowCheck(arr, index, size) verifies: 0 <= index < size
+            index_z3 = self.encode_expr(formula.index, prefix=prefix)
+            size_z3 = self.encode_expr(formula.size, prefix=prefix)
+
+            # Safe access: index in bounds
+            in_bounds = z3.And(
+                index_z3 >= 0,
+                index_z3 < size_z3
+            )
+            return in_bounds
+
+        elif isinstance(formula, IntegerOverflow):
+            # IntegerOverflow(op, operands, width, signed) detects overflow
+            ops_z3 = [self.encode_expr(op, prefix=prefix) for op in formula.operands]
+            width = formula.width
+            signed = formula.signed
+
+            if formula.op == 'add':
+                if signed:
+                    # Signed overflow: result doesn't fit in width bits
+                    # For signed addition: overflow if signs match but result sign differs
+                    if len(ops_z3) == 2:
+                        result = ops_z3[0] + ops_z3[1]
+                        max_val = 2**(width-1) - 1
+                        min_val = -(2**(width-1))
+                        return z3.Or(result > max_val, result < min_val)
+                else:
+                    # Unsigned overflow: result > 2^width - 1
+                    result = ops_z3[0] + ops_z3[1]
+                    max_val = 2**width - 1
+                    return result > max_val
+
+            elif formula.op == 'sub':
+                if signed:
+                    result = ops_z3[0] - ops_z3[1]
+                    max_val = 2**(width-1) - 1
+                    min_val = -(2**(width-1))
+                    return z3.Or(result > max_val, result < min_val)
+                else:
+                    result = ops_z3[0] - ops_z3[1]
+                    return result < 0  # Unsigned underflow
+
+            elif formula.op == 'mul':
+                if signed:
+                    result = ops_z3[0] * ops_z3[1]
+                    max_val = 2**(width-1) - 1
+                    min_val = -(2**(width-1))
+                    return z3.Or(result > max_val, result < min_val)
+                else:
+                    result = ops_z3[0] * ops_z3[1]
+                    max_val = 2**width - 1
+                    return result > max_val
+
+            else:
+                # Unsupported operation - conservatively return false
+                return z3.BoolVal(False)
 
         else:
             # For spatial formulas, return true (handled separately)
