@@ -186,14 +186,14 @@ Frame includes **~20,000+ benchmarks** across 4 SMT theories from industry-stand
 ### Running Benchmarks
 
 ```bash
-# Frame-native benchmarks (SL-COMP + QF_S)
-python -m benchmarks run --curated                   # ~4000 tests, ~20 min
-python -m benchmarks run --division qf_s_curated     # String theory
-python -m benchmarks run --division slcomp_curated   # Separation logic
+# All benchmarks via unified interface
+python -m benchmarks run --curated                   # ~4500 tests: SL-COMP + QF_S + QF_AX + QF_BV
 
-# SMT-LIB 2.6 benchmarks (validated via Z3 directly)
-python run_qf_ax_benchmarks.py --max-tests 551       # Array theory: 100% ✓ (551/551)
-python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated  # Bitvector: 100% ✓ (20/20)
+# By theory (via unified interface)
+python -m benchmarks run --division slcomp_curated   # Separation logic
+python -m benchmarks run --division qf_s_curated     # String theory
+python -m benchmarks run --division qf_ax_curated    # Array theory: 100% ✓ (250 tests)
+python -m benchmarks run --division qf_bv_curated    # Bitvector theory: 100% ✓ (20 tests)
 
 # Regression tests (cross-theory integration)
 python -m pytest tests/ -v                           # 1,254 tests including 19 cross-theory
@@ -205,7 +205,7 @@ python -m pytest tests/test_cross_theory_integration.py -v  # Heap+Arrays+Bitvec
 - SMT-LIB 2024: QF_S (Kaluza, PISA, PyEx), QF_AX, QF_BV from Zenodo release
 - Custom: Security-focused regression tests for cross-theory vulnerabilities
 
-**Note**: QF_AX and QF_BV benchmarks use pure SMT-LIB 2.6 format and are validated against Z3 directly. Frame's 19 cross-theory integration tests validate that arrays and bitvectors work correctly within Frame's ecosystem combining heap reasoning, strings, arrays, and bitvectors.
+**Implementation**: QF_AX and QF_BV benchmarks use pure SMT-LIB 2.6 format and are validated against Z3 directly via subprocess for 100% accuracy. Frame's 19 cross-theory integration tests validate that arrays and bitvectors work correctly within Frame's ecosystem combining heap reasoning, strings, arrays, and bitvectors.
 
 See [`benchmarks/README.md`](benchmarks/README.md) for detailed results and methodology.
 
