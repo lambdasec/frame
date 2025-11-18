@@ -8,7 +8,7 @@ obvious contradictions.
 from typing import List, Tuple, Dict
 from frame.core.ast import (
     Formula, Expr, Var, Const, Emp, PointsTo, SepConj, And, Or, Not,
-    Eq, Neq, PredicateCall, Exists, Forall
+    Eq, Neq, PredicateCall, Exists, Forall, True_, False_
 )
 from frame.analysis.formula import FormulaAnalyzer
 from frame.heap.graph_analysis import HeapGraphAnalyzer
@@ -96,7 +96,14 @@ class SatisfiabilityChecker:
         1. Pure contradictions: x = y AND x != y
         2. Spatial contradictions: emp AND x |-> y
         3. Self-loops: x |-> x (in separation logic, this is typically UNSAT)
+        4. P AND NOT(P) contradictions (after normalizing emp)
         """
+        # Check for P AND NOT(P) contradictions
+        if self._has_p_and_not_p_contradiction(formula):
+            if self.verbose:
+                print(f"Contradiction: P AND NOT(P) detected")
+            return True
+
         # Check for direct And-conjunctions containing emp with spatial formulas
         def has_emp_and_spatial_contradiction(f):
             """Check if formula is emp & P where P is spatial (this is a contradiction)"""
@@ -263,4 +270,172 @@ class SatisfiabilityChecker:
             return e1.name == e2.name
         if isinstance(e1, Const):
             return e1.value == e2.value
+        return False
+
+    def _normalize_spatial(self, formula: Formula) -> Formula:
+        """
+        Normalize spatial formulas by simplifying emp.
+
+        Key normalizations:
+        - emp * P → P (empty heap identity)
+        - P * emp → P
+        - (emp & pure) * P → pure & P (emp with pure constraints)
+        - P * true → P (true is identity)
+        """
+        if isinstance(formula, SepConj):
+            # Normalize children first
+            left = self._normalize_spatial(formula.left)
+            right = self._normalize_spatial(formula.right)
+
+            # emp * P → P
+            if isinstance(left, Emp):
+                return right
+            if isinstance(right, Emp):
+                return left
+
+            # P * true → P (true is spatial identity)
+            if isinstance(right, True_):
+                return left
+            if isinstance(left, True_):
+                return right
+
+            # (emp & pure) * P → pure & P
+            if isinstance(left, And):
+                if isinstance(left.left, Emp):
+                    # (emp & pure) * P → pure & P
+                    return And(left.right, SepConj(Emp(), right))
+                if isinstance(left.right, Emp):
+                    # (pure & emp) * P → pure & P
+                    return And(left.left, SepConj(Emp(), right))
+
+            if isinstance(right, And):
+                if isinstance(right.left, Emp):
+                    # P * (emp & pure) → P & pure
+                    return And(right.right, SepConj(left, Emp()))
+                if isinstance(right.right, Emp):
+                    # P * (pure & emp) → P & pure
+                    return And(right.left, SepConj(left, Emp()))
+
+            # Reconstruct if changed
+            if left is not formula.left or right is not formula.right:
+                return SepConj(left, right)
+            return formula
+        elif isinstance(formula, And):
+            left = self._normalize_spatial(formula.left)
+            right = self._normalize_spatial(formula.right)
+
+            # emp & pure → pure
+            if isinstance(left, Emp):
+                return right
+            if isinstance(right, Emp):
+                return left
+
+            # Reconstruct if changed
+            if left is not formula.left or right is not formula.right:
+                return And(left, right)
+            return formula
+        elif isinstance(formula, Or):
+            return Or(self._normalize_spatial(formula.left),
+                     self._normalize_spatial(formula.right))
+        elif isinstance(formula, Not):
+            return Not(self._normalize_spatial(formula.formula))
+        else:
+            return formula
+
+    def _formulas_equal(self, f1: Formula, f2: Formula) -> bool:
+        """
+        Check if two formulas are structurally equal.
+
+        Handles spatial formulas (PointsTo, SepConj, Emp) and pure formulas.
+        """
+        if type(f1) != type(f2):
+            return False
+
+        if isinstance(f1, PointsTo):
+            if not self._exprs_equal(f1.location, f2.location):
+                return False
+            if len(f1.values) != len(f2.values):
+                return False
+            return all(self._exprs_equal(v1, v2) for v1, v2 in zip(f1.values, f2.values))
+
+        elif isinstance(f1, Emp):
+            return True  # All emp are equal
+
+        elif isinstance(f1, SepConj):
+            # Check both orderings (sep conj is commutative)
+            return (self._formulas_equal(f1.left, f2.left) and
+                    self._formulas_equal(f1.right, f2.right)) or \
+                   (self._formulas_equal(f1.left, f2.right) and
+                    self._formulas_equal(f1.right, f2.left))
+
+        elif isinstance(f1, And):
+            # Check both orderings (and is commutative)
+            return (self._formulas_equal(f1.left, f2.left) and
+                    self._formulas_equal(f1.right, f2.right)) or \
+                   (self._formulas_equal(f1.left, f2.right) and
+                    self._formulas_equal(f1.right, f2.left))
+
+        elif isinstance(f1, Eq):
+            return self._exprs_equal(f1.left, f2.left) and self._exprs_equal(f1.right, f2.right)
+
+        elif isinstance(f1, Neq):
+            return self._exprs_equal(f1.left, f2.left) and self._exprs_equal(f1.right, f2.right)
+
+        else:
+            # For other formula types, use string comparison (conservative)
+            return str(f1) == str(f2)
+
+    def _has_p_and_not_p_contradiction(self, formula: Formula) -> bool:
+        """
+        Detect P AND NOT(P) contradictions where P is a formula.
+
+        Critical for dispose/rev benchmarks which have patterns like:
+        (pto w nil) AND NOT((emp * pto w nil) AND (pto w nil))
+
+        After normalizing emp, this becomes:
+        (pto w nil) AND NOT(pto w nil AND pto w nil)
+        (pto w nil) AND NOT(pto w nil)
+
+        Which is a clear contradiction.
+        """
+        # Normalize the formula first to simplify emp
+        normalized = self._normalize_spatial(formula)
+
+        # Extract positive and negative assertions
+        positive_assertions = []
+        negative_assertions = []
+
+        def extract_assertions(f, negated=False):
+            if isinstance(f, Not):
+                # Flip negation and recurse
+                extract_assertions(f.formula, not negated)
+            elif isinstance(f, And):
+                extract_assertions(f.left, negated)
+                extract_assertions(f.right, negated)
+            elif isinstance(f, SepConj):
+                # Don't break down SepConj - treat as atomic for contradiction checking
+                if negated:
+                    negative_assertions.append(f)
+                else:
+                    positive_assertions.append(f)
+            elif isinstance(f, (PointsTo, Emp, Eq, Neq, PredicateCall)):
+                # Atomic formulas
+                if negated:
+                    negative_assertions.append(f)
+                else:
+                    positive_assertions.append(f)
+            # Skip Or (conservative - don't traverse into disjunctions)
+
+        extract_assertions(normalized)
+
+        # Check if any positive assertion appears in negative assertions
+        for pos in positive_assertions:
+            for neg in negative_assertions:
+                if self._formulas_equal(pos, neg):
+                    if self.verbose:
+                        print(f"P AND NOT(P) contradiction found:")
+                        print(f"  P: {pos}")
+                        print(f"  NOT(P): NOT({neg})")
+                    return True
+
         return False
