@@ -98,22 +98,25 @@ if bug.found:
 
 ## Benchmarks
 
-Frame includes ~20,000 benchmarks with curated sets for efficient testing:
-- **Curated**: ~4,000 tests (3,300 QF_S + 700 SL-COMP) - stratified samples, recommended for benchmarking
-- **Full**: ~20,000 tests (18,940 QF_S + 1,298 SL-COMP) - comprehensive testing
+Frame includes ~20,000+ benchmarks across 4 theories with curated sets for efficient testing:
+- **Curated**: ~5,000 tests (3,300 QF_S + 700 SL-COMP + 500 QF_AX + 500 QF_BV) - stratified samples, recommended for benchmarking
+- **Full**: ~20,000+ tests (18,940 QF_S + 1,298 SL-COMP + QF_AX/QF_BV from SMT-LIB) - comprehensive testing
 
 ```bash
-# Run curated benchmarks (recommended, ~15 minutes)
+# Run curated benchmarks (recommended, ~20 minutes)
 python -m benchmarks run --curated
 
 # Run full benchmark suite (~2+ hours)
 python -m benchmarks run --all
 
-# Run specific division
-python -m benchmarks run --division qf_shls_entl
+# Run specific theory
+python -m benchmarks run --division qf_s_curated     # String theory
+python -m benchmarks run --division qf_ax_curated    # Array theory
+python -m benchmarks run --division qf_bv_curated    # Bitvector theory
+python -m benchmarks run --division slcomp_curated   # Separation logic
 ```
 
-**Results**: 73.4% on QF_S curated samples, 72.0% on SL-COMP curated. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
+**Results**: 82.8% on QF_S, 70.6% on SL-COMP curated. QF_AX/QF_BV accuracy to be benchmarked. See [`benchmarks/README.md`](benchmarks/README.md) for detailed results.
 
 ## Architecture
 
