@@ -1244,6 +1244,174 @@ class UnifiedBenchmarkRunner:
         """Alias for download_full_kaluza - SMT-LIB contains all QF_S benchmarks"""
         return self.download_full_kaluza()
 
+    def download_qf_ax_full(self) -> int:
+        """Download full QF_AX (Array Theory) benchmark set from SMT-LIB"""
+        print("\n" + "=" * 80)
+        print("DOWNLOADING FULL QF_AX BENCHMARK SET FROM SMT-LIB")
+        print("=" * 80)
+        print("Source: SMT-LIB GitHub repository")
+        print("Theory: QF_AX (Quantifier-Free Array Theory with Extensionality)")
+
+        qf_ax_full_dir = os.path.join(self.cache_dir, 'qf_ax_full')
+        os.makedirs(qf_ax_full_dir, exist_ok=True)
+
+        # Check if already downloaded
+        existing_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
+        if len(existing_files) > 50:
+            print(f"\n✓ QF_AX benchmarks already cached ({len(existing_files)} files)")
+            print(f"  Location: {qf_ax_full_dir}")
+            return len(existing_files)
+
+        # Try GitHub repository for SMT-LIB benchmarks
+        github_url = "https://github.com/SMT-LIB/SMT-LIB-benchmarks-tmp/archive/refs/heads/main.zip"
+        archive_path = os.path.join(self.cache_dir, 'smtlib_qf_ax.zip')
+
+        try:
+            if not os.path.exists(archive_path):
+                print(f"\n  Downloading QF_AX benchmarks from GitHub...")
+                response = requests.get(github_url, timeout=300, stream=True)
+                if response.status_code == 200:
+                    total_size = int(response.headers.get('content-length', 0))
+                    with open(archive_path, 'wb') as f:
+                        downloaded = 0
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                print(f"\r  Progress: {progress:.1f}%", end='', flush=True)
+                    print(f"\n  ✓ Downloaded ({downloaded / 1024 / 1024:.1f} MB)")
+                else:
+                    print(f"  ✗ GitHub download failed (HTTP {response.status_code})")
+                    print(f"  Using local samples instead...")
+                    return self.download_qf_ax_samples()
+
+            # Extract QF_AX benchmarks
+            print(f"  Extracting QF_AX benchmarks...")
+            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                # Extract only QF_AX directory
+                for member in zip_ref.namelist():
+                    if '/QF_AX/' in member and member.endswith('.smt2'):
+                        zip_ref.extract(member, self.cache_dir)
+                        # Move to qf_ax_full directory
+                        src = os.path.join(self.cache_dir, member)
+                        dst = os.path.join(qf_ax_full_dir, os.path.basename(member))
+                        if os.path.exists(src):
+                            shutil.move(src, dst)
+
+            smt2_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
+
+            # If we got very few files, fall back to samples
+            if len(smt2_files) < 10:
+                print(f"  ✗ Insufficient benchmarks extracted ({len(smt2_files)} files)")
+                print(f"  Using local samples instead...")
+                return self.download_qf_ax_samples()
+
+            print(f"\n✓ QF_AX benchmarks ready: {len(smt2_files)} files")
+            print(f"  Location: {qf_ax_full_dir}")
+
+            # Clean up
+            try:
+                os.remove(archive_path)
+                # Clean up extracted directory structure
+                for root, dirs, files in os.walk(self.cache_dir):
+                    if 'SMT-LIB-benchmarks' in root:
+                        shutil.rmtree(root)
+                        break
+            except:
+                pass
+
+            return len(smt2_files)
+
+        except Exception as e:
+            print(f"  ✗ Download failed: {e}")
+            print(f"  Using local samples instead...")
+            return self.download_qf_ax_samples()
+
+    def download_qf_bv_full(self) -> int:
+        """Download full QF_BV (Bitvector Theory) benchmark set from SMT-LIB"""
+        print("\n" + "=" * 80)
+        print("DOWNLOADING FULL QF_BV BENCHMARK SET FROM SMT-LIB")
+        print("=" * 80)
+        print("Source: SMT-LIB GitHub repository")
+        print("Theory: QF_BV (Quantifier-Free Bitvector Theory)")
+
+        qf_bv_full_dir = os.path.join(self.cache_dir, 'qf_bv_full')
+        os.makedirs(qf_bv_full_dir, exist_ok=True)
+
+        # Check if already downloaded
+        existing_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
+        if len(existing_files) > 50:
+            print(f"\n✓ QF_BV benchmarks already cached ({len(existing_files)} files)")
+            print(f"  Location: {qf_bv_full_dir}")
+            return len(existing_files)
+
+        # Try GitHub repository for SMT-LIB benchmarks
+        github_url = "https://github.com/SMT-LIB/SMT-LIB-benchmarks-tmp/archive/refs/heads/main.zip"
+        archive_path = os.path.join(self.cache_dir, 'smtlib_qf_bv.zip')
+
+        try:
+            if not os.path.exists(archive_path):
+                print(f"\n  Downloading QF_BV benchmarks from GitHub...")
+                response = requests.get(github_url, timeout=300, stream=True)
+                if response.status_code == 200:
+                    total_size = int(response.headers.get('content-length', 0))
+                    with open(archive_path, 'wb') as f:
+                        downloaded = 0
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                print(f"\r  Progress: {progress:.1f}%", end='', flush=True)
+                    print(f"\n  ✓ Downloaded ({downloaded / 1024 / 1024:.1f} MB)")
+                else:
+                    print(f"  ✗ GitHub download failed (HTTP {response.status_code})")
+                    print(f"  Using local samples instead...")
+                    return self.download_qf_bv_samples()
+
+            # Extract QF_BV benchmarks
+            print(f"  Extracting QF_BV benchmarks...")
+            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                # Extract only QF_BV directory
+                for member in zip_ref.namelist():
+                    if '/QF_BV/' in member and member.endswith('.smt2'):
+                        zip_ref.extract(member, self.cache_dir)
+                        # Move to qf_bv_full directory
+                        src = os.path.join(self.cache_dir, member)
+                        dst = os.path.join(qf_bv_full_dir, os.path.basename(member))
+                        if os.path.exists(src):
+                            shutil.move(src, dst)
+
+            smt2_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
+
+            # If we got very few files, fall back to samples
+            if len(smt2_files) < 10:
+                print(f"  ✗ Insufficient benchmarks extracted ({len(smt2_files)} files)")
+                print(f"  Using local samples instead...")
+                return self.download_qf_bv_samples()
+
+            print(f"\n✓ QF_BV benchmarks ready: {len(smt2_files)} files")
+            print(f"  Location: {qf_bv_full_dir}")
+
+            # Clean up
+            try:
+                os.remove(archive_path)
+                # Clean up extracted directory structure
+                for root, dirs, files in os.walk(self.cache_dir):
+                    if 'SMT-LIB-benchmarks' in root:
+                        shutil.rmtree(root)
+                        break
+            except:
+                pass
+
+            return len(smt2_files)
+
+        except Exception as e:
+            print(f"  ✗ Download failed: {e}")
+            print(f"  Using local samples instead...")
+            return self.download_qf_bv_samples()
+
     # ========== Curated Sample Creation ==========
 
     def create_qf_s_curated_set(self, sample_size: int = 3300, seed: int = 42) -> int:
@@ -1433,6 +1601,126 @@ class UnifiedBenchmarkRunner:
             division_counts[division] += 1
         for division, count in sorted(division_counts.items(), key=lambda x: -x[1]):
             print(f"    {division}: {count} tests")
+
+        return len(sampled_files)
+
+    def create_qf_ax_curated_set(self, sample_size: int = 250, seed: int = 42) -> int:
+        """Create a curated sample set from QF_AX benchmarks
+
+        Args:
+            sample_size: Target number of samples (default 250)
+            seed: Random seed for reproducibility (default 42)
+
+        Returns:
+            Number of files in curated set
+        """
+        print("\n" + "=" * 80)
+        print(f"CREATING QF_AX CURATED SAMPLE SET ({sample_size} tests)")
+        print("=" * 80)
+
+        qf_ax_full_dir = os.path.join(self.cache_dir, 'qf_ax_full')
+        qf_ax_curated_dir = os.path.join(self.cache_dir, 'qf_ax', 'qf_ax_curated')
+
+        # Check if full set exists
+        if not os.path.exists(qf_ax_full_dir):
+            print("Full QF_AX set not found. Downloading...")
+            count = self.download_qf_ax_full()
+            if count == 0:
+                print("ERROR: Failed to download full QF_AX set")
+                return 0
+
+        # Find all .smt2 files
+        all_files = list(Path(qf_ax_full_dir).rglob('*.smt2'))
+        print(f"Found {len(all_files)} total files in full set")
+
+        if len(all_files) == 0:
+            print("ERROR: No QF_AX benchmarks found")
+            return 0
+
+        # Random sampling
+        random.seed(seed)
+        if len(all_files) <= sample_size:
+            sampled_files = all_files
+        else:
+            sampled_files = random.sample(all_files, sample_size)
+
+        print(f"\nSampled {len(sampled_files)} files")
+
+        # Create curated directory
+        os.makedirs(qf_ax_curated_dir, exist_ok=True)
+
+        # Clear existing curated files
+        for existing_file in Path(qf_ax_curated_dir).glob('*.smt2'):
+            existing_file.unlink()
+
+        # Copy sampled files
+        for i, file_path in enumerate(sampled_files, 1):
+            dest_path = os.path.join(qf_ax_curated_dir, file_path.name)
+            shutil.copy2(file_path, dest_path)
+
+        print(f"\n✓ Created curated set: {len(sampled_files)} files")
+        print(f"  Location: {qf_ax_curated_dir}")
+        print(f"  Seed: {seed} (reproducible)")
+
+        return len(sampled_files)
+
+    def create_qf_bv_curated_set(self, sample_size: int = 250, seed: int = 42) -> int:
+        """Create a curated sample set from QF_BV benchmarks
+
+        Args:
+            sample_size: Target number of samples (default 250)
+            seed: Random seed for reproducibility (default 42)
+
+        Returns:
+            Number of files in curated set
+        """
+        print("\n" + "=" * 80)
+        print(f"CREATING QF_BV CURATED SAMPLE SET ({sample_size} tests)")
+        print("=" * 80)
+
+        qf_bv_full_dir = os.path.join(self.cache_dir, 'qf_bv_full')
+        qf_bv_curated_dir = os.path.join(self.cache_dir, 'qf_bv', 'qf_bv_curated')
+
+        # Check if full set exists
+        if not os.path.exists(qf_bv_full_dir):
+            print("Full QF_BV set not found. Downloading...")
+            count = self.download_qf_bv_full()
+            if count == 0:
+                print("ERROR: Failed to download full QF_BV set")
+                return 0
+
+        # Find all .smt2 files
+        all_files = list(Path(qf_bv_full_dir).rglob('*.smt2'))
+        print(f"Found {len(all_files)} total files in full set")
+
+        if len(all_files) == 0:
+            print("ERROR: No QF_BV benchmarks found")
+            return 0
+
+        # Random sampling
+        random.seed(seed)
+        if len(all_files) <= sample_size:
+            sampled_files = all_files
+        else:
+            sampled_files = random.sample(all_files, sample_size)
+
+        print(f"\nSampled {len(sampled_files)} files")
+
+        # Create curated directory
+        os.makedirs(qf_bv_curated_dir, exist_ok=True)
+
+        # Clear existing curated files
+        for existing_file in Path(qf_bv_curated_dir).glob('*.smt2'):
+            existing_file.unlink()
+
+        # Copy sampled files
+        for i, file_path in enumerate(sampled_files, 1):
+            dest_path = os.path.join(qf_bv_curated_dir, file_path.name)
+            shutil.copy2(file_path, dest_path)
+
+        print(f"\n✓ Created curated set: {len(sampled_files)} files")
+        print(f"  Location: {qf_bv_curated_dir}")
+        print(f"  Seed: {seed} (reproducible)")
 
         return len(sampled_files)
 
@@ -1836,14 +2124,16 @@ def cmd_run(args):
     """Run benchmarks"""
     runner = UnifiedBenchmarkRunner(cache_dir=args.cache_dir, verbose=args.verbose)
 
-    # --curated: Run curated sample sets (~4000 benchmarks)
+    # --curated: Run curated sample sets (~5000 benchmarks)
     if args.curated:
-        print("Running CURATED benchmark sets (~4000 total: 700 SL-COMP + 3300 QF_S)")
+        print("Running CURATED benchmark sets (~5000 total: 700 SL-COMP + 3300 QF_S + 500 QF_AX + 500 QF_BV)")
         print("=" * 80)
 
         # Ensure curated sets exist
         slcomp_curated_dir = os.path.join(args.cache_dir, 'slcomp_curated')
         qf_s_curated_dir = os.path.join(args.cache_dir, 'qf_s', 'qf_s_curated')
+        qf_ax_curated_dir = os.path.join(args.cache_dir, 'qf_ax', 'qf_ax_curated')
+        qf_bv_curated_dir = os.path.join(args.cache_dir, 'qf_bv', 'qf_bv_curated')
 
         if not os.path.exists(slcomp_curated_dir):
             print("\nSL-COMP curated set not found. Creating...")
@@ -1853,9 +2143,19 @@ def cmd_run(args):
             print("\nQF_S curated set not found. Creating...")
             runner.create_qf_s_curated_set()
 
-        # Run both curated sets
+        if not os.path.exists(qf_ax_curated_dir):
+            print("\nQF_AX curated set not found. Creating...")
+            runner.create_qf_ax_curated_set()
+
+        if not os.path.exists(qf_bv_curated_dir):
+            print("\nQF_BV curated set not found. Creating...")
+            runner.create_qf_bv_curated_set()
+
+        # Run all curated sets
         runner.run_slcomp_division('slcomp_curated', max_tests=args.max_tests)
         runner.run_qf_s_division('qf_s_curated', max_tests=args.max_tests)
+        runner.run_qf_ax_division('qf_ax_curated', max_tests=args.max_tests)
+        runner.run_qf_bv_division('qf_bv_curated', max_tests=args.max_tests)
 
     # --division: Run specific division
     elif args.division:
@@ -2218,7 +2518,7 @@ Examples:
     # Mutually exclusive group for benchmark selection
     run_group = run_parser.add_mutually_exclusive_group(required=True)
     run_group.add_argument('--all', action='store_true', help='Run ALL benchmarks (full SL-COMP + QF_S suites, ~20k total)')
-    run_group.add_argument('--curated', action='store_true', help='Run curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
+    run_group.add_argument('--curated', action='store_true', help='Run curated sample sets (~5000 total: 3300 QF_S + 700 SL-COMP + 500 QF_AX + 500 QF_BV)')
     run_group.add_argument('--division', type=str, help='Run specific division (e.g., qf_shls_entl, qf_s_curated)')
 
     run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
@@ -2232,7 +2532,7 @@ Examples:
     dl_parser.add_argument('--division', type=str, help='Specific division to download')
     dl_parser.add_argument('--max-files', type=int, default=10, help='Max files to download')
     dl_parser.add_argument('--all', action='store_true', help='Download all uncached benchmarks')
-    dl_parser.add_argument('--curated', action='store_true', help='Create curated sample sets (~4000 total: 3300 QF_S + 700 SL-COMP)')
+    dl_parser.add_argument('--curated', action='store_true', help='Create curated sample sets (~5000 total: 3300 QF_S + 700 SL-COMP + 500 QF_AX + 500 QF_BV)')
     dl_parser.add_argument('--cache-dir', default='./benchmarks/cache', help='Cache directory')
 
     # Analyze command
