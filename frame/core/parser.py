@@ -51,6 +51,8 @@ class Lexer:
     TOKEN_PATTERNS = [
         ('STRING', r'"([^"\\]|\\.)*"'),  # String literals with escape support
         ('REGEX', r'/([^/\\]|\\.)+/'),  # Regex patterns like /pattern/
+        ('BVHEX', r'#x[0-9a-fA-F]+'),  # Bitvector hex literal: #x0F
+        ('BVBIN', r'#b[01]+'),  # Bitvector binary literal: #b1010
         ('ARROW', r'\|->'),
         ('CONCAT', r'\+\+'),  # Must come before PLUS
         ('LE', r'<='),
@@ -67,9 +69,39 @@ class Lexer:
         ('NEQ', r'!='),
         ('LPAREN', r'\('),
         ('RPAREN', r'\)'),
+        ('LBRACKET', r'\['),
+        ('RBRACKET', r'\]'),
         ('COMMA', r','),
         ('DOT', r'\.'),
         # Keywords (order matters - more specific first)
+        # Array operations
+        ('SELECT', r'select'),
+        ('STORE', r'store'),
+        ('CONST', r'const'),
+        # Bitvector operations (alphabetical for easier maintenance)
+        ('BVADD', r'bvadd'),
+        ('BVAND', r'bvand'),
+        ('BVASHR', r'bvashr'),
+        ('BVLSHR', r'bvlshr'),
+        ('BVMUL', r'bvmul'),
+        ('BVNOT', r'bvnot'),
+        ('BVOR', r'bvor'),
+        ('BVSDIV', r'bvsdiv'),
+        ('BVSGE', r'bvsge'),
+        ('BVSGT', r'bvsgt'),
+        ('BVSHL', r'bvshl'),
+        ('BVSLE', r'bvsle'),
+        ('BVSLT', r'bvslt'),
+        ('BVSREM', r'bvsrem'),
+        ('BVSUB', r'bvsub'),
+        ('BVUDIV', r'bvudiv'),
+        ('BVUGE', r'bvuge'),
+        ('BVUGT', r'bvugt'),
+        ('BVULE', r'bvule'),
+        ('BVULT', r'bvult'),
+        ('BVUREM', r'bvurem'),
+        ('BVXOR', r'bvxor'),
+        # Other keywords
         ('CONTAINS', r'contains'),
         ('MATCHES', r'matches'),
         ('EXISTS', r'exists'),
@@ -267,6 +299,13 @@ class Parser:
         if token.type == 'STRING':
             return self.parse_string_atom()
 
+        # Array/bitvector operations (can appear in comparisons)
+        if token.type in ('SELECT', 'STORE', 'CONST', 'BVHEX', 'BVBIN',
+                          'BVADD', 'BVSUB', 'BVMUL', 'BVUDIV', 'BVUREM', 'BVSDIV', 'BVSREM',
+                          'BVAND', 'BVOR', 'BVXOR', 'BVNOT', 'BVSHL', 'BVLSHR', 'BVASHR',
+                          'BVULT', 'BVULE', 'BVUGT', 'BVUGE', 'BVSLT', 'BVSLE', 'BVSGT', 'BVSGE'):
+            return self.parse_array_bv_atom()
+
         # Identifier (could be variable, predicate call, or points-to)
         if token.type == 'IDENT' or token.type == 'NIL':
             return self.parse_atom()
@@ -311,6 +350,36 @@ class Parser:
 
         raise ParseError(f"Unexpected token after string literal: {token}")
 
+    def parse_array_bv_atom(self) -> Formula:
+        """Parse formulas starting with array/bitvector operations"""
+        # Parse the expression (array/bitvector operation)
+        expr = self.parse_expr()
+
+        token = self.current_token()
+        if not token:
+            raise ParseError("Unexpected EOF after array/bitvector operation")
+
+        # Array/bitvector operations must be in comparisons
+        if token.type in ('EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'):
+            op = token.type
+            self.advance()
+            right = self.parse_expr()
+
+            if op == 'EQ':
+                return Eq(expr, right)
+            elif op == 'NEQ':
+                return Neq(expr, right)
+            elif op == 'LT':
+                return Lt(expr, right)
+            elif op == 'LE':
+                return Le(expr, right)
+            elif op == 'GT':
+                return Gt(expr, right)
+            elif op == 'GE':
+                return Ge(expr, right)
+
+        raise ParseError(f"Unexpected token after array/bitvector operation: {token}")
+
     def parse_atom(self) -> Formula:
         """Parse atomic formulas (identifier-based)"""
         token = self.current_token()
@@ -326,6 +395,35 @@ class Parser:
         # Must be an identifier
         name = self.expect('IDENT').value
         token = self.current_token()
+
+        # Array indexing: arr[idx]
+        if token and token.type == 'LBRACKET':
+            self.advance()  # consume '['
+            index = self.parse_expr()
+            self.expect('RBRACKET')
+            arr_select = ArraySelect(Var(name), index)
+
+            # Must be followed by comparison
+            token = self.current_token()
+            if token and token.type in ('EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'):
+                op = token.type
+                self.advance()
+                right = self.parse_expr()
+
+                if op == 'EQ':
+                    return Eq(arr_select, right)
+                elif op == 'NEQ':
+                    return Neq(arr_select, right)
+                elif op == 'LT':
+                    return Lt(arr_select, right)
+                elif op == 'LE':
+                    return Le(arr_select, right)
+                elif op == 'GT':
+                    return Gt(arr_select, right)
+                elif op == 'GE':
+                    return Ge(arr_select, right)
+            else:
+                raise ParseError(f"Array indexing must be followed by comparison operator")
 
         # Predicate call: pred(args)
         if token and token.type == 'LPAREN':
@@ -455,6 +553,29 @@ class Parser:
         if token.type == 'SUBSTR':
             return self.parse_str_substr()
 
+        # Array operations
+        if token.type == 'SELECT':
+            return self.parse_array_select()
+
+        if token.type == 'STORE':
+            return self.parse_array_store()
+
+        if token.type == 'CONST':
+            return self.parse_array_const()
+
+        # Bitvector literals
+        if token.type == 'BVHEX':
+            return self.parse_bv_hex()
+
+        if token.type == 'BVBIN':
+            return self.parse_bv_bin()
+
+        # Bitvector operations
+        if token.type in ('BVADD', 'BVSUB', 'BVMUL', 'BVUDIV', 'BVUREM', 'BVSDIV', 'BVSREM',
+                          'BVAND', 'BVOR', 'BVXOR', 'BVNOT', 'BVSHL', 'BVLSHR', 'BVASHR',
+                          'BVULT', 'BVULE', 'BVUGT', 'BVUGE', 'BVSLT', 'BVSLE', 'BVSGT', 'BVSGE'):
+            return self.parse_bv_op()
+
         # Parenthesized expression
         if token.type == 'LPAREN':
             self.advance()
@@ -464,6 +585,12 @@ class Parser:
 
         if token.type == 'IDENT':
             self.advance()
+            # Check for array indexing: arr[idx]
+            if self.current_token() and self.current_token().type == 'LBRACKET':
+                self.advance()  # consume '['
+                index = self.parse_expr()
+                self.expect('RBRACKET')
+                return ArraySelect(Var(token.value), index)
             # Check for function call
             if self.current_token() and self.current_token().type == 'LPAREN':
                 # This might be a predicate call, let the caller handle it
@@ -590,6 +717,87 @@ class Parser:
         size = self.parse_expr()
         self.expect('RPAREN')
         return BufferOverflow(array, index, size)
+
+    # Array theory parsing
+
+    def parse_array_select(self) -> Expr:
+        """Parse select(array, index) operation"""
+        self.expect('SELECT')
+        self.expect('LPAREN')
+        array = self.parse_expr()
+        self.expect('COMMA')
+        index = self.parse_expr()
+        self.expect('RPAREN')
+        return ArraySelect(array, index)
+
+    def parse_array_store(self) -> Expr:
+        """Parse store(array, index, value) operation"""
+        self.expect('STORE')
+        self.expect('LPAREN')
+        array = self.parse_expr()
+        self.expect('COMMA')
+        index = self.parse_expr()
+        self.expect('COMMA')
+        value = self.parse_expr()
+        self.expect('RPAREN')
+        return ArrayStore(array, index, value)
+
+    def parse_array_const(self) -> Expr:
+        """Parse const(default_value) operation"""
+        self.expect('CONST')
+        self.expect('LPAREN')
+        default = self.parse_expr()
+        self.expect('RPAREN')
+        return ArrayConst(default)
+
+    # Bitvector theory parsing
+
+    def parse_bv_hex(self) -> Expr:
+        """Parse bitvector hex literal: #x0F"""
+        token = self.expect('BVHEX')
+        # Extract hex value (skip #x prefix)
+        hex_str = token.value[2:]
+        value = int(hex_str, 16)
+        # Width is 4 bits per hex digit
+        width = len(hex_str) * 4
+        return BitVecVal(value, width)
+
+    def parse_bv_bin(self) -> Expr:
+        """Parse bitvector binary literal: #b1010"""
+        token = self.expect('BVBIN')
+        # Extract binary value (skip #b prefix)
+        bin_str = token.value[2:]
+        value = int(bin_str, 2)
+        # Width is number of bits
+        width = len(bin_str)
+        return BitVecVal(value, width)
+
+    def parse_bv_op(self) -> Expr:
+        """Parse bitvector operations: bvadd(x, y), bvand(x, y), etc."""
+        op_token = self.current_token()
+        op = op_token.value  # bvadd, bvand, etc.
+        self.advance()
+
+        self.expect('LPAREN')
+
+        # Parse operands
+        operands = []
+        operands.append(self.parse_expr())
+
+        # For unary operations like bvnot, there's only one operand
+        if op != 'bvnot':
+            while self.current_token() and self.current_token().type == 'COMMA':
+                self.advance()
+                operands.append(self.parse_expr())
+
+        self.expect('RPAREN')
+
+        # Infer width from operands (for now, use a default or require explicit width)
+        # In full SMT-LIB parser, width would be tracked via type system
+        # For simplicity, we'll use a default width of 32 bits
+        width = 32  # Default width
+
+        return BitVecExpr(op, operands, width)
 
 
 def parse(text: str) -> Formula:
