@@ -71,6 +71,19 @@ python -m benchmarks run --division qf_shls_entl
 - Sources: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje, etc.
 - Operations: concat, contains, replace, indexOf, regex matching
 
+**QF_AX: 551 benchmarks** from SMT-LIB 2024
+- Array Theory with Extensionality
+- Validates select, store, const operations
+- **Status: 100% pass rate (551/551 correct)**
+- Average time: 0.048s per benchmark
+
+**QF_BV: 20 curated benchmarks**
+- Bitvector Theory (8-bit, 16-bit, 32-bit)
+- Coverage: arithmetic, comparisons, bitwise, shifts, division/modulo
+- Edge cases: overflow, division by zero, signed/unsigned
+- **Status: 100% pass rate (20/20 correct)**
+- Average time: 0.025s per benchmark
+
 ## CLI Reference
 
 ### Run Benchmarks
@@ -86,6 +99,12 @@ python -m benchmarks run --all
 python -m benchmarks run --division qf_shls_entl
 python -m benchmarks run --division qf_s_curated
 python -m benchmarks run --division slcomp_curated
+
+# Run array theory (QF_AX) benchmarks
+python run_qf_ax_benchmarks.py --max-tests 551 --timeout 10
+
+# Run bitvector theory (QF_BV) curated benchmarks
+python run_qf_bv_benchmarks.py --benchmark-dir benchmarks/cache/qf_bv_curated --timeout 10
 
 # Limit number of tests
 python -m benchmarks run --curated --max-tests 100
@@ -141,9 +160,11 @@ benchmarks/
     ├── ... (12 SL-COMP divisions total)
     ├── qf_s/
     │   └── qf_s_curated/       # 3300 curated QF_S tests
-    └── qf_s_full/              # 18,940 full QF_S tests
-        └── non-incremental/
-            └── QF_S/           # All sources
+    ├── qf_s_full/              # 18,940 full QF_S tests
+    │   └── non-incremental/
+    │       └── QF_S/           # All sources
+    ├── qf_ax_full/             # 551 QF_AX array theory benchmarks
+    └── qf_bv_curated/          # 20 curated QF_BV bitvector benchmarks
 ```
 
 ## Benchmark Formats
@@ -176,6 +197,34 @@ benchmarks/
 (assert (= y (str.++ x " world")))
 (assert (str.contains y "world"))
 (assert (str.in_re x (re.++ (re.* re.allchar) (str.to_re "hello"))))
+(check-sat)
+```
+
+### QF_AX (SMT-LIB Array Theory)
+
+```smt2
+(set-logic QF_AX)
+(declare-const arr (Array Int Int))
+(declare-const i Int)
+(declare-const v Int)
+
+; Array operations: select, store
+(assert (= arr (store ((as const (Array Int Int)) 0) i v)))
+(assert (= (select arr i) v))
+(check-sat)
+```
+
+### QF_BV (SMT-LIB Bitvector Theory)
+
+```smt2
+(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
+
+; Bitvector operations: arithmetic, comparisons, bitwise
+(assert (= x #b00000101))
+(assert (= y (bvadd x #b00000011)))
+(assert (bvult x y))
 (check-sat)
 ```
 
