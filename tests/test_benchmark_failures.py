@@ -14,6 +14,8 @@ Test Status:
 
 import sys
 import os
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from frame import EntailmentChecker, PredicateRegistry
@@ -44,7 +46,7 @@ def test_nll_nested_folding():
     if not os.path.exists(filepath):
         print(f"⚠️  Benchmark file not found: {filepath}")
         print("   Skipping test (file may not be cached yet)")
-        pass  # Don't fail if file doesn't exist
+        pytest.skip("Benchmark file not cached")
 
     with open(filepath, 'r') as f:
         content = f.read()
@@ -110,7 +112,7 @@ def test_lasso_sat():
     if not os.path.exists(filepath):
         print(f"⚠️  Benchmark file not found: {filepath}")
         print("   Skipping test (file may not be cached yet)")
-        pass  # Don't fail if file doesn't exist
+        pytest.skip("Benchmark file not cached")
 
     with open(filepath, 'r') as f:
         content = f.read()
@@ -169,7 +171,7 @@ def test_dll_valid_entailment():
     if not os.path.exists(filepath):
         print(f"⚠️  Benchmark file not found: {filepath}")
         print("   Skipping test (file may not be cached yet)")
-        pass
+        pytest.skip("Benchmark file not cached")
 
     with open(filepath, 'r') as f:
         content = f.read()

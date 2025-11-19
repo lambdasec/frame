@@ -2,7 +2,7 @@
 
 A fast, practical separation logic solver combining heap reasoning, string constraint solving, and automated bug detection.
 
-[![Tests](https://img.shields.io/badge/tests-1254%2F1254-green)]() [![Python](https://img.shields.io/badge/python-3.7%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-1275%2F1275-green)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
 
 ## Features
 
@@ -23,11 +23,11 @@ git clone https://github.com/codelion/proofs.git
 cd proofs
 pip install -r requirements.txt
 
-# Run tests (1,254 tests, ~52s)
+# Run tests (1,275 tests including 21 benchmark regression tests, ~55s)
 python -m pytest tests/ -q
 ```
 
-**Requirements**: Python 3.7+, Z3, requests, zstandard
+**Requirements**: Python 3.10+, Z3, requests, zstandard
 
 ## Quick Start
 
@@ -195,9 +195,10 @@ python -m benchmarks run --division qf_s_curated     # String theory
 python -m benchmarks run --division qf_ax_curated    # Array theory: 100% ✓ (250 tests)
 python -m benchmarks run --division qf_bv_curated    # Bitvector theory: 100% ✓ (20 tests)
 
-# Regression tests (cross-theory integration)
-python -m pytest tests/ -v                           # 1,254 tests including 19 cross-theory
-python -m pytest tests/test_cross_theory_integration.py -v  # Heap+Arrays+Bitvectors integration
+# Regression tests (cross-theory integration + benchmark refactoring)
+python -m pytest tests/ -v                                    # 1,275 tests (1,254 core + 21 benchmark)
+python -m pytest tests/test_cross_theory_integration.py -v    # Heap+Arrays+Bitvectors integration
+python -m pytest tests/test_benchmark_refactoring.py -v       # Benchmark module regression tests (21 tests)
 ```
 
 **Benchmark Sources**:
