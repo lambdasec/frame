@@ -35,7 +35,7 @@ def is_satisfiable(
 
     # Eliminate magic wand: P * (P -* Q) → P * Q
     # CRITICAL for SAT divisions (bsl_sat, rev-*, dispose-*)
-    formula = checker_self.analyzer.eliminate_wand(formula, checker=self)
+    formula = checker_self.analyzer.eliminate_wand(formula, checker=checker_self)
     if checker_self.verbose:
         print(f"After wand elimination: {str(formula)[:200]}...")
 
