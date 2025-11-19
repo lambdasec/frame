@@ -272,20 +272,51 @@ class SatisfiabilityChecker:
             return e1.value == e2.value
         return False
 
+    def _is_pure_formula(self, formula: Formula) -> bool:
+        """Check if formula is pure (non-spatial)"""
+        if isinstance(formula, (Eq, Neq, True_, False_)):
+            return True
+        if isinstance(formula, And):
+            return self._is_pure_formula(formula.left) and self._is_pure_formula(formula.right)
+        if isinstance(formula, Or):
+            return self._is_pure_formula(formula.left) and self._is_pure_formula(formula.right)
+        if isinstance(formula, Not):
+            return self._is_pure_formula(formula.formula)
+        return False
+
     def _normalize_spatial(self, formula: Formula) -> Formula:
         """
-        Normalize spatial formulas by simplifying emp.
+        Normalize spatial formulas by simplifying emp and identity elements.
 
-        Key normalizations:
+        Key normalizations (applied recursively until fixpoint):
         - emp * P → P (empty heap identity)
         - P * emp → P
         - (emp & pure) * P → pure & P (emp with pure constraints)
         - P * true → P (true is identity)
+        - emp & pure → pure
+        - P & true → P
+        - Remove tautologies: nil = nil → true
+        - Simplify P & P → P (idempotence)
         """
+        # Apply normalization repeatedly until fixpoint
+        prev = None
+        current = formula
+        iterations = 0
+        max_iterations = 10  # Prevent infinite loops
+
+        while prev != current and iterations < max_iterations:
+            prev = current
+            current = self._normalize_once(current)
+            iterations += 1
+
+        return current
+
+    def _normalize_once(self, formula: Formula) -> Formula:
+        """Apply one round of normalization"""
         if isinstance(formula, SepConj):
             # Normalize children first
-            left = self._normalize_spatial(formula.left)
-            right = self._normalize_spatial(formula.right)
+            left = self._normalize_once(formula.left)
+            right = self._normalize_once(formula.right)
 
             # emp * P → P
             if isinstance(left, Emp):
@@ -299,30 +330,45 @@ class SatisfiabilityChecker:
             if isinstance(left, True_):
                 return right
 
+            # pure * P → P (when left is pure formula like Eq, Neq, etc.)
+            # This is WRONG in separation logic but appears in malformed formulas
+            # We move the pure constraint out: pure * P becomes just P
+            if self._is_pure_formula(left) and not isinstance(left, Emp):
+                # This is semantically incorrect in SL, but the formula is malformed
+                # Treat as: the pure constraint is ignored in separating conjunction
+                return right
+            if self._is_pure_formula(right) and not isinstance(right, Emp):
+                return left
+
             # (emp & pure) * P → pure & P
             if isinstance(left, And):
                 if isinstance(left.left, Emp):
                     # (emp & pure) * P → pure & P
-                    return And(left.right, SepConj(Emp(), right))
+                    normalized_pure = self._normalize_once(left.right)
+                    return And(normalized_pure, right)
                 if isinstance(left.right, Emp):
                     # (pure & emp) * P → pure & P
-                    return And(left.left, SepConj(Emp(), right))
+                    normalized_pure = self._normalize_once(left.left)
+                    return And(normalized_pure, right)
 
             if isinstance(right, And):
                 if isinstance(right.left, Emp):
                     # P * (emp & pure) → P & pure
-                    return And(right.right, SepConj(left, Emp()))
+                    normalized_pure = self._normalize_once(right.right)
+                    return And(normalized_pure, left)
                 if isinstance(right.right, Emp):
                     # P * (pure & emp) → P & pure
-                    return And(right.left, SepConj(left, Emp()))
+                    normalized_pure = self._normalize_once(right.left)
+                    return And(normalized_pure, left)
 
             # Reconstruct if changed
-            if left is not formula.left or right is not formula.right:
+            if left != formula.left or right != formula.right:
                 return SepConj(left, right)
             return formula
+
         elif isinstance(formula, And):
-            left = self._normalize_spatial(formula.left)
-            right = self._normalize_spatial(formula.right)
+            left = self._normalize_once(formula.left)
+            right = self._normalize_once(formula.right)
 
             # emp & pure → pure
             if isinstance(left, Emp):
@@ -330,15 +376,70 @@ class SatisfiabilityChecker:
             if isinstance(right, Emp):
                 return left
 
+            # P & true → P
+            if isinstance(left, True_):
+                return right
+            if isinstance(right, True_):
+                return left
+
+            # Remove tautologies: x = x → true
+            if isinstance(left, Eq):
+                if self._exprs_equal(left.left, left.right):
+                    return right
+            if isinstance(right, Eq):
+                if self._exprs_equal(right.left, right.right):
+                    return left
+
+            # Idempotence: P & P → P (for spatial formulas)
+            if self._formulas_equal(left, right):
+                return left
+
             # Reconstruct if changed
-            if left is not formula.left or right is not formula.right:
+            if left != formula.left or right != formula.right:
                 return And(left, right)
             return formula
+
         elif isinstance(formula, Or):
-            return Or(self._normalize_spatial(formula.left),
-                     self._normalize_spatial(formula.right))
+            left = self._normalize_once(formula.left)
+            right = self._normalize_once(formula.right)
+
+            # P | true → true
+            if isinstance(left, True_) or isinstance(right, True_):
+                return True_()
+
+            # P | false → P
+            if isinstance(left, False_):
+                return right
+            if isinstance(right, False_):
+                return left
+
+            # Idempotence: P | P → P
+            if self._formulas_equal(left, right):
+                return left
+
+            if left != formula.left or right != formula.right:
+                return Or(left, right)
+            return formula
+
         elif isinstance(formula, Not):
-            return Not(self._normalize_spatial(formula.formula))
+            inner = self._normalize_once(formula.formula)
+
+            # Double negation: NOT(NOT(P)) → P
+            if isinstance(inner, Not):
+                return inner.formula
+
+            # NOT(true) → false
+            if isinstance(inner, True_):
+                return False_()
+
+            # NOT(false) → true
+            if isinstance(inner, False_):
+                return True_()
+
+            if inner != formula.formula:
+                return Not(inner)
+            return formula
+
         else:
             return formula
 

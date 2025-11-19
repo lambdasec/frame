@@ -873,6 +873,14 @@ class SLCompParser:
         """Parse (pto x (c_Sll_t y)) or (pto x (node y1 y2)) or (pto x y) into PointsTo"""
         text = text.strip()
 
+        # IMPORTANT: Check for (as nil Type) format FIRST before structured format
+        # to avoid treating 'as' as a constructor name
+        match_as = re.search(r'\(pto\s+(\w+)\s+(\(as\s+nil\s+[^)]+\))\s*\)', text)
+        if match_as:
+            var_name = match_as.group(1)
+            var = self.variables.get(var_name, Var(var_name))
+            return PointsTo(var, [Const(None)])
+
         # Try structured format: (pto x (Constructor y1 y2 ...))
         # Constructor can be: c_Type (old format) or just a name like 'node' (BSL format)
         # Handle values that can be: variable names, or (as nil Type)
