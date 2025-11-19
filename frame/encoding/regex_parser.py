@@ -228,14 +228,23 @@ class RegexParser:
 
     def _any_char(self) -> z3.ReRef:
         """Create regex for any character (.)"""
-        # In Z3, we can use a union of common character ranges
-        # For simplicity, use printable ASCII
-        return z3.Union(
-            z3.Range(' ', '~'),  # Printable ASCII
-            z3.Re('\n'),
-            z3.Re('\t'),
-            z3.Re('\r')
-        )
+        # Use z3.Full() to match any single character
+        # This is the correct Z3 API for regex "any character"
+        try:
+            # z3.Full() returns re.full which matches any string
+            # For single character, we use z3.Range to cover all printable + common chars
+            return z3.Union(
+                z3.Range(chr(0), chr(127)),  # Full ASCII
+                z3.Range(chr(128), chr(255))  # Extended ASCII
+            )
+        except Exception:
+            # Ultimate fallback: common printable chars
+            return z3.Union(
+                z3.Range(' ', '~'),  # Printable ASCII
+                z3.Re('\n'),
+                z3.Re('\t'),
+                z3.Re('\r')
+            )
 
 
 def parse_regex(pattern: str) -> z3.ReRef:
