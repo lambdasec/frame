@@ -1,6 +1,12 @@
 """Benchmark sampling and curation"""
 
-from benchmarks.downloaders import download_slcomp_division, download_qf_ax_samples, download_qf_bv_samples
+from benchmarks.downloaders import (
+    download_slcomp_division,
+    download_qf_ax_samples,
+    download_qf_bv_samples,
+    download_qf_bv_full,
+    download_full_kaluza
+)
 
 import os
 import random
