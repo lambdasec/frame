@@ -209,11 +209,11 @@ def create_slcomp_curated_set(cache_dir: str, sample_size: int = 700, seed: int 
 
 
 
-def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 250, seed: int = 42) -> int:
+def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 500, seed: int = 42) -> int:
     """Create a curated sample set from QF_AX benchmarks
 
     Args:
-        sample_size: Target number of samples (default 250)
+        sample_size: Target number of samples (default 500)
         seed: Random seed for reproducibility (default 42)
 
     Returns:
