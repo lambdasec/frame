@@ -915,8 +915,9 @@ class UnifiedBenchmarkRunner:
         os.makedirs(qf_ax_dir, exist_ok=True)
 
         # QF_AX benchmarks test array operations with select/store axioms
+        # NOTE: Using QF_ALIA for samples since they use Int sorts (arrays + linear integer arithmetic)
         qf_ax_samples = {
-            'select_store_01.smt2': """(set-logic QF_AX)
+            'select_store_01.smt2': """(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= arr2 (store arr1 0 42)))
@@ -924,7 +925,7 @@ class UnifiedBenchmarkRunner:
 (check-sat)
 ; expected: sat
 """,
-            'select_store_diff_index.smt2': """(set-logic QF_AX)
+            'select_store_diff_index.smt2': """(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= arr2 (store arr1 0 42)))
@@ -933,7 +934,7 @@ class UnifiedBenchmarkRunner:
 (check-sat)
 ; expected: sat
 """,
-            'array_equality_01.smt2': """(set-logic QF_AX)
+            'array_equality_01.smt2': """(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= (select arr1 0) (select arr2 0)))
@@ -942,7 +943,7 @@ class UnifiedBenchmarkRunner:
 (check-sat)
 ; expected: sat
 """,
-            'const_array_01.smt2': """(set-logic QF_AX)
+            'const_array_01.smt2': """(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (assert (= arr ((as const (Array Int Int)) 0)))
 (assert (= (select arr 5) 0))
@@ -950,7 +951,7 @@ class UnifiedBenchmarkRunner:
 (check-sat)
 ; expected: sat
 """,
-            'buffer_overflow_01.smt2': """(set-logic QF_AX)
+            'buffer_overflow_01.smt2': """(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (declare-const size Int)
 (declare-const index Int)
@@ -959,7 +960,7 @@ class UnifiedBenchmarkRunner:
 (check-sat)
 ; expected: sat (buffer overflow possible)
 """,
-            'in_bounds_01.smt2': """(set-logic QF_AX)
+            'in_bounds_01.smt2': """(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (declare-const size Int)
 (declare-const index Int)
