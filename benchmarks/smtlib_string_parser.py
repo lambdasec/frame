@@ -25,6 +25,11 @@ from frame.core.ast import (
     StrLiteral, StrConcat, StrLen, StrSubstr, StrContains, StrMatches,
     Eq, And, Or, Not, True_, False_
 )
+from benchmarks._smtlib_regex_parser import (
+    decode_string_literal,
+    split_top_level,
+    parse_smt_regex
+)
 
 
 class SMTLibStringParser:
@@ -34,64 +39,6 @@ class SMTLibStringParser:
         self.variables: Dict[str, str] = {}  # var_name -> type
         self.assertions: List[Formula] = []
         self.expected_result = None  # sat/unsat/unknown
-
-    def _decode_string_literal(self, s: str) -> str:
-        """Decode SMT-LIB string literal with Unicode escapes
-
-        Supports:
-        - \\u{XXXX} format (SMT-LIB 2.6)
-        - Standard escape sequences: \\n, \\t, \\r, \\\\, \\"
-        """
-        result = []
-        i = 0
-        while i < len(s):
-            if s[i] == '\\' and i + 1 < len(s):
-                next_char = s[i + 1]
-                # Unicode escape: \u{XXXX}
-                if next_char == 'u' and i + 2 < len(s) and s[i + 2] == '{':
-                    # Find closing }
-                    close_idx = s.find('}', i + 3)
-                    if close_idx != -1:
-                        hex_code = s[i + 3:close_idx]
-                        try:
-                            char_code = int(hex_code, 16)
-                            result.append(chr(char_code))
-                            i = close_idx + 1
-                            continue
-                        except ValueError:
-                            # Invalid hex, treat as literal
-                            result.append(s[i])
-                            i += 1
-                            continue
-                # Standard escapes
-                elif next_char == 'n':
-                    result.append('\n')
-                    i += 2
-                    continue
-                elif next_char == 't':
-                    result.append('\t')
-                    i += 2
-                    continue
-                elif next_char == 'r':
-                    result.append('\r')
-                    i += 2
-                    continue
-                elif next_char == '\\':
-                    result.append('\\')
-                    i += 2
-                    continue
-                elif next_char == '"':
-                    result.append('"')
-                    i += 2
-                    continue
-                else:
-                    # Unknown escape, keep backslash
-                    result.append(s[i])
-                    i += 1
-            else:
-                result.append(s[i])
-                i += 1
-        return ''.join(result)
 
     def parse_file(self, content: str) -> Tuple[Formula, str]:
         """
@@ -228,7 +175,7 @@ class SMTLibStringParser:
 
         # String literal
         if text.startswith('"') and text.endswith('"'):
-            decoded = self._decode_string_literal(text[1:-1])
+            decoded = decode_string_literal(text[1:-1])
             return StrLiteral(decoded)
 
         # Fallback: treat as True for now (TODO: complete implementation)
@@ -237,7 +184,7 @@ class SMTLibStringParser:
     def _parse_and(self, text: str) -> Formula:
         """Parse (and ...)"""
         # Extract subformulas - simple version
-        parts = self._split_top_level(text[4:-1])
+        parts = split_top_level(text[4:-1])
 
         formulas = [self._parse_formula(part) for part in parts]
         formulas = [f for f in formulas if f is not None]
@@ -254,7 +201,7 @@ class SMTLibStringParser:
 
     def _parse_or(self, text: str) -> Formula:
         """Parse (or ...)"""
-        parts = self._split_top_level(text[4:-1])
+        parts = split_top_level(text[4:-1])
 
         formulas = [self._parse_formula(part) for part in parts]
         formulas = [f for f in formulas if f is not None]
@@ -272,7 +219,7 @@ class SMTLibStringParser:
     def _parse_equals(self, text: str) -> Formula:
         """Parse (= ...)"""
         # Extract left and right sides
-        parts = self._split_top_level(text[3:-1])
+        parts = split_top_level(text[3:-1])
 
         if len(parts) != 2:
             return True_()  # Malformed, skip
@@ -284,7 +231,7 @@ class SMTLibStringParser:
 
     def _parse_str_contains(self, text: str) -> Formula:
         """Parse (str.contains x "admin")"""
-        parts = self._split_top_level(text[14:-1])
+        parts = split_top_level(text[14:-1])
 
         if len(parts) != 2:
             return True_()
@@ -300,7 +247,7 @@ class SMTLibStringParser:
 
         # String literal
         if text.startswith('"') and text.endswith('"'):
-            decoded = self._decode_string_literal(text[1:-1])
+            decoded = decode_string_literal(text[1:-1])
             return StrLiteral(decoded)
 
         # Variable
@@ -318,7 +265,7 @@ class SMTLibStringParser:
 
         # String substring
         if text.startswith('(str.substr '):
-            parts = self._split_top_level(text[12:-1])
+            parts = split_top_level(text[12:-1])
             if len(parts) == 3:
                 string = self._parse_expr(parts[0])
                 start = self._parse_expr(parts[1])
@@ -334,7 +281,7 @@ class SMTLibStringParser:
 
     def _parse_str_concat(self, text: str) -> Expr:
         """Parse (str.++ x y z ...)"""
-        parts = self._split_top_level(text[8:-1])
+        parts = split_top_level(text[8:-1])
 
         if len(parts) < 2:
             return StrLiteral("")
@@ -355,167 +302,16 @@ class SMTLibStringParser:
         # Extract string and regex parts
         # Handle both (str.in_re ...) and (str.in.re ...)
         start_pos = 11 if text.startswith('(str.in_re ') else 11
-        parts = self._split_top_level(text[start_pos:-1])
+        parts = split_top_level(text[start_pos:-1])
 
         if len(parts) != 2:
             return True_()  # Malformed
 
         string_expr = self._parse_expr(parts[0])
-        regex_pattern = self._parse_smt_regex(parts[1])
+        regex_pattern = parse_smt_regex(parts[1])
 
         # Return StrMatches with the converted regex pattern
         return StrMatches(string_expr, regex_pattern)
-
-    def _parse_smt_regex(self, text: str) -> str:
-        """Parse SMT-LIB regex expression and convert to string pattern
-
-        Supports:
-        - (str.to_re "lit") → "lit"
-        - (re.++ r1 r2) → concatenation
-        - (re.* r) → r*
-        - (re.+ r) → r+
-        - (re.union r1 r2) → (r1|r2)
-        - (re.range "a" "z") → [a-z]
-        - ((_ re.loop n m) r) → r{n,m}
-        - (re.opt r) → r?
-        - (re.comp r) → [^r] (simplified)
-        - (re.allchar) → .
-        """
-        text = text.strip()
-
-        # String to regex: (str.to_re "hello")
-        if text.startswith('(str.to_re '):
-            inner = text[11:-1].strip()
-            if inner.startswith('"') and inner.endswith('"'):
-                # Decode Unicode escapes first
-                literal = self._decode_string_literal(inner[1:-1])
-                # Escape special regex characters in the literal
-                for char in r'\.^$*+?{}[]()':
-                    literal = literal.replace(char, '\\' + char)
-                return literal
-            return "."
-
-        # Regex concatenation: (re.++ r1 r2 ...)
-        if text.startswith('(re.++ '):
-            parts = self._split_top_level(text[7:-1])
-            return ''.join(self._parse_smt_regex(p) for p in parts)
-
-        # Kleene star: (re.* r)
-        if text.startswith('(re.* '):
-            inner = text[6:-1].strip()
-            inner_regex = self._parse_smt_regex(inner)
-            # Wrap in parens if it's complex
-            if len(inner_regex) > 1:
-                return f"({inner_regex})*"
-            return inner_regex + "*"
-
-        # Kleene plus: (re.+ r)
-        if text.startswith('(re.+ '):
-            inner = text[6:-1].strip()
-            inner_regex = self._parse_smt_regex(inner)
-            if len(inner_regex) > 1:
-                return f"({inner_regex})+"
-            return inner_regex + "+"
-
-        # Optional: (re.opt r)
-        if text.startswith('(re.opt '):
-            inner = text[8:-1].strip()
-            inner_regex = self._parse_smt_regex(inner)
-            if len(inner_regex) > 1:
-                return f"({inner_regex})?"
-            return inner_regex + "?"
-
-        # Union: (re.union r1 r2 ...)
-        if text.startswith('(re.union '):
-            parts = self._split_top_level(text[10:-1])
-            regex_parts = [self._parse_smt_regex(p) for p in parts]
-            return '(' + '|'.join(regex_parts) + ')'
-
-        # Character range: (re.range "a" "z")
-        if text.startswith('(re.range '):
-            parts = self._split_top_level(text[10:-1])
-            if len(parts) == 2:
-                start = parts[0].strip('"')
-                end = parts[1].strip('"')
-                return f"[{start}-{end}]"
-            return "."
-
-        # Bounded repetition: ((_ re.loop n m) r)
-        if text.startswith('((_ re.loop '):
-            # Extract n, m, and the regex
-            # Format: ((_ re.loop n m) regex)
-            inner = text[12:]  # Skip "((_ re.loop "
-            # Find the closing ) for the loop parameters
-            depth = 1
-            i = 0
-            while i < len(inner) and depth > 0:
-                if inner[i] == '(':
-                    depth += 1
-                elif inner[i] == ')':
-                    depth -= 1
-                i += 1
-
-            params = inner[:i-1].strip()  # Get "n m"
-            rest = inner[i:].strip()  # Get "regex)"
-
-            # Parse n and m
-            param_parts = params.split()
-            if len(param_parts) >= 2:
-                n = param_parts[0]
-                m = param_parts[1]
-                # Get the regex part (remove trailing ')')
-                if rest.endswith(')'):
-                    rest = rest[:-1].strip()
-                regex = self._parse_smt_regex(rest)
-                if n == m:
-                    return f"({regex}){{{n}}}"
-                else:
-                    return f"({regex}){{{n},{m}}}"
-            return "."
-
-        # All characters: (re.allchar) or re.allchar
-        if text == '(re.allchar)' or text == 're.allchar':
-            return "."
-
-        # Complement: (re.comp r) - simplified to .* (matches anything)
-        if text.startswith('(re.comp '):
-            # Complement is complex to represent in basic regex
-            # For now, just match any string
-            return ".*"
-
-        # Fallback for unknown regex operations
-        return "."
-
-    def _split_top_level(self, text: str) -> List[str]:
-        """Split expression at top-level spaces (respecting parentheses)"""
-        parts = []
-        current = ""
-        depth = 0
-        in_string = False
-
-        for char in text:
-            if char == '"' and (not current or current[-1] != '\\'):
-                in_string = not in_string
-                current += char
-            elif in_string:
-                current += char
-            elif char == '(':
-                depth += 1
-                current += char
-            elif char == ')':
-                depth -= 1
-                current += char
-            elif char == ' ' and depth == 0:
-                if current.strip():
-                    parts.append(current.strip())
-                current = ""
-            else:
-                current += char
-
-        if current.strip():
-            parts.append(current.strip())
-
-        return parts
 
 
 def main():
