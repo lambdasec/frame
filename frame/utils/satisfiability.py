@@ -284,6 +284,29 @@ class SatisfiabilityChecker:
             return self._is_pure_formula(formula.formula)
         return False
 
+    def _sepconj_contains(self, sepconj: SepConj, target: Formula) -> bool:
+        """
+        Check if a SepConj chain contains a specific formula (using structural equality).
+
+        This handles the case where we have:
+        (P * Q * R) & P  ->  should normalize to (P * Q * R)
+
+        Used for dispose benchmark patterns.
+        """
+        def extract_sepconj_elements(f, elements=None):
+            """Flatten a SepConj into a list of elements"""
+            if elements is None:
+                elements = []
+            if isinstance(f, SepConj):
+                extract_sepconj_elements(f.left, elements)
+                extract_sepconj_elements(f.right, elements)
+            else:
+                elements.append(f)
+            return elements
+
+        elements = extract_sepconj_elements(sepconj)
+        return any(self._formulas_equal(elem, target) for elem in elements)
+
     def _normalize_spatial(self, formula: Formula) -> Formula:
         """
         Normalize spatial formulas by simplifying emp and identity elements.
@@ -394,6 +417,16 @@ class SatisfiabilityChecker:
             if self._formulas_equal(left, right):
                 return left
 
+            # Special case: (SepConj containing P) & P → SepConj
+            # This handles dispose patterns like: (w|->a * a|->b * b|->c) & w|->a
+            # If P appears in the SepConj, the And is redundant
+            if isinstance(left, SepConj) and isinstance(right, PointsTo):
+                if self._sepconj_contains(left, right):
+                    return left
+            if isinstance(right, SepConj) and isinstance(left, PointsTo):
+                if self._sepconj_contains(right, left):
+                    return right
+
             # Reconstruct if changed
             if left != formula.left or right != formula.right:
                 return And(left, right)
@@ -448,6 +481,7 @@ class SatisfiabilityChecker:
         Check if two formulas are structurally equal.
 
         Handles spatial formulas (PointsTo, SepConj, Emp) and pure formulas.
+        For SepConj, handles all reorderings since it's associative and commutative.
         """
         if type(f1) != type(f2):
             return False
@@ -463,11 +497,37 @@ class SatisfiabilityChecker:
             return True  # All emp are equal
 
         elif isinstance(f1, SepConj):
-            # Check both orderings (sep conj is commutative)
-            return (self._formulas_equal(f1.left, f2.left) and
-                    self._formulas_equal(f1.right, f2.right)) or \
-                   (self._formulas_equal(f1.left, f2.right) and
-                    self._formulas_equal(f1.right, f2.left))
+            # SepConj is associative and commutative, so we need to compare sets of elements
+            # Extract all elements from both SepConj chains
+            def extract_elements(f, elements=None):
+                if elements is None:
+                    elements = []
+                if isinstance(f, SepConj):
+                    extract_elements(f.left, elements)
+                    extract_elements(f.right, elements)
+                else:
+                    elements.append(f)
+                return elements
+
+            elements1 = extract_elements(f1)
+            elements2 = extract_elements(f2)
+
+            if len(elements1) != len(elements2):
+                return False
+
+            # Check if all elements from f1 have a matching element in f2
+            # This is expensive (O(n²)) but needed for correctness
+            matched = [False] * len(elements2)
+            for e1 in elements1:
+                found = False
+                for i, e2 in enumerate(elements2):
+                    if not matched[i] and self._formulas_equal(e1, e2):
+                        matched[i] = True
+                        found = True
+                        break
+                if not found:
+                    return False
+            return True
 
         elif isinstance(f1, And):
             # Check both orderings (and is commutative)
