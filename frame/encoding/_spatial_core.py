@@ -9,7 +9,8 @@ import z3
 from typing import Set, Tuple, Dict, Optional, List
 from frame.core.ast import (
     Formula, Expr, Var, Const, Emp, PointsTo, SepConj, Wand, And, Or, Not,
-    Eq, Neq, Exists, Forall, PredicateCall, True_, False_
+    Eq, Neq, Exists, Forall, PredicateCall, True_, False_,
+    ArrayPointsTo, ArrayBounds
 )
 
 
