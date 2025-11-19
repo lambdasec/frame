@@ -29,13 +29,17 @@ folding enables long chains like x|->y * y|->z * z|->w to fold completely.
 """
 
 from typing import Optional, List, Set, Tuple
-from frame.core.ast import Formula, Var, PredicateCall, SepConj
+from frame.core.ast import Formula, Var, PredicateCall
 from frame.heap.graph import FoldProposal
 from frame.folding.utils import generate_fold_proposals
-from frame.arithmetic.synth import synthesize_arith_for_chain, extract_pure_constraints_z3
-from frame.arithmetic.check import verify_side_conditions
+from frame.arithmetic.synth import extract_pure_constraints_z3
 from frame.encoding.encoder import Z3Encoder
-from frame.utils.formula_utils import extract_spatial_part
+from frame.folding._goal_directed_helpers import (
+    verify_proposal_soundness,
+    synthesize_and_verify_arithmetic,
+    check_proposal_matches_goal,
+    extract_pure_parts
+)
 
 
 def extract_target_predicates(formula: Formula) -> Set[str]:
@@ -151,7 +155,7 @@ def check_heap_matches_base(
         # 1. If proposal has pto cells, predicate should allow allocated heap
         # 2. If proposal is empty (no pto cells), predicate should allow emp
 
-        from frame.core.ast import True_, Emp, Or, And
+        from frame.core.ast import True_, Emp
 
         # Simple heuristic: if we have points-to cells, the base should not be just Emp
         if proposal.pto_cells:
@@ -219,7 +223,6 @@ def fold_towards_goal(
             print(f"[Goal-Directed Folding] Targets: {targets}")
 
         # Generate fold proposals using shared logic
-        # Phase 3/4: Increase max_proposals for better coverage
         graph, proposals = generate_fold_proposals(antecedent, max_proposals=30,
                                                   predicate_registry=predicate_registry)
 
@@ -239,115 +242,39 @@ def fold_towards_goal(
         encoder = Z3Encoder()
         pure_constraints_z3 = extract_pure_constraints_z3(antecedent, encoder)
 
-        # Extract pure constraints as Formula list for verification
-        # Pure constraints are the non-spatial parts of the antecedent
-        from frame.analysis.formula import FormulaAnalyzer
-        analyzer = FormulaAnalyzer()
-        ante_parts = analyzer._extract_sepconj_parts(antecedent)
-        pure_parts = [p for p in ante_parts if not p.is_spatial()]
+        # Extract pure parts for verification
+        pure_parts = extract_pure_parts(antecedent)
 
         # Try each proposal (prioritized by goal matching)
         for proposal in proposals:
             # STEP 1: BASE CHECKING (S2S approach)
-            # Check if concrete heap matches predicate's spatial base
-            # This provides early soundness filtering before expensive verification
             if not check_heap_matches_base(proposal, predicate_registry, verbose=verbose):
                 if verbose:
                     print(f"[Goal-Directed Folding] Proposal {proposal.predicate_name} failed base check")
                 continue
 
             # STEP 2: SOUNDNESS VERIFICATION
-            # Verify the fold is sound before accepting it
-            # Use unification-based verification (fast, precise, and sound for recursive predicates)
-            from frame.folding.verify import verify_proposal_with_unification
-
-            is_sound = verify_proposal_with_unification(
-                proposal,
-                predicate_registry,
-                pure_parts,
-                verbose=verbose
-            )
-
-            if not is_sound:
-                if verbose:
-                    print(f"[Goal-Directed Folding] Proposal {proposal.predicate_name} failed soundness check")
+            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True):
                 continue
 
-            # Synthesize arithmetic side conditions if needed
+            # STEP 3: ARITHMETIC SYNTHESIS AND VERIFICATION
+            if not synthesize_and_verify_arithmetic(proposal, graph, encoder, pure_constraints_z3, timeout_ms=1000, verbose=verbose):
+                continue
+
+            # STEP 4: CHECK IF PROPOSAL MATCHES GOAL
+            # Get witness map for lemma naming
+            from frame.arithmetic.synth import synthesize_arith_for_chain
             chain = None
-            if proposal.pto_cells:
-                first_pto = proposal.pto_cells[0]
-                if isinstance(first_pto.location, Var):
-                    chain = graph.chain_from(first_pto.location.name)
+            if proposal.pto_cells and isinstance(proposal.pto_cells[0].location, Var):
+                chain = graph.chain_from(proposal.pto_cells[0].location.name)
 
-            side_constraints = None
             witness_map = None
-
             if chain:
-                side_constraints, witness_map = synthesize_arith_for_chain(
-                    chain, proposal, encoder
-                )
+                _, witness_map = synthesize_arith_for_chain(chain, proposal, encoder)
 
-            # Verify side conditions
-            if side_constraints:
-                if not verify_side_conditions(side_constraints, pure_constraints_z3, timeout_ms=1000):
-                    if verbose:
-                        print(f"[Goal-Directed Folding] Side conditions failed for {proposal.predicate_name}")
-                    continue
-
-            # Create proposed predicate
-            proposed_pred = proposal.to_predicate_call()
-
-            # Check if it matches the consequent (or part of it)
-            from frame.lemmas._matcher import LemmaMatcher
-            matcher = LemmaMatcher()
-
-            # Direct match: consequent is a single predicate
-            if isinstance(consequent, PredicateCall):
-                if matcher.formulas_equal(proposed_pred, consequent):
-                    lemma_name = f"graph_fold_{proposal.predicate_name}"
-                    if witness_map:
-                        lemma_name += "_arith"
-
-                    if verbose:
-                        print(f"[Goal-Directed Folding] ✓ Found match: {lemma_name}")
-
-                    return lemma_name
-
-            # Partial match: consequent is a separating conjunction
-            # Try to match the proposed predicate against ANY part of the consequent
-            # This handles cases like: x|->y * z|->w |- ls(x,y) * ls(z,w)
-            # where we can fold x|->y to match ls(x,y) even though we can't match the whole RHS
-            from frame.analysis.formula import FormulaAnalyzer
-            analyzer = FormulaAnalyzer()
-
-            # Extract all parts of the consequent (handle separating conjunction)
-            consequent_parts = analyzer._extract_sepconj_parts(consequent)
-            for part in consequent_parts:
-                if isinstance(part, PredicateCall):
-                    if matcher.formulas_equal(proposed_pred, part):
-                        lemma_name = f"graph_fold_{proposal.predicate_name}_partial"
-                        if witness_map:
-                            lemma_name += "_arith"
-
-                        if verbose:
-                            print(f"[Goal-Directed Folding] ✓ Found partial match: {lemma_name}")
-                            print(f"  Matched: {proposed_pred} against {part}")
-
-                        return lemma_name
-
-            # Also try matching spatial part of consequent (for pure + spatial formulas)
-            consequent_spatial = extract_spatial_part(consequent)
-            if consequent_spatial and isinstance(consequent_spatial, PredicateCall):
-                if matcher.formulas_equal(proposed_pred, consequent_spatial):
-                    lemma_name = f"graph_fold_{proposal.predicate_name}"
-                    if witness_map:
-                        lemma_name += "_arith"
-
-                    if verbose:
-                        print(f"[Goal-Directed Folding] ✓ Found match: {lemma_name}")
-
-                    return lemma_name
+            lemma_name = check_proposal_matches_goal(proposal, consequent, witness_map, verbose=verbose)
+            if lemma_name:
+                return lemma_name
 
         if verbose:
             print(f"[Goal-Directed Folding] No matching proposals found")
@@ -463,56 +390,25 @@ def fold_towards_goal_multistep(
         pure_constraints_z3 = extract_pure_constraints_z3(current, encoder)
 
         # Extract pure parts
-        from frame.analysis.formula import FormulaAnalyzer
-        analyzer = FormulaAnalyzer()
-        parts = analyzer._extract_sepconj_parts(current)
-        pure_parts = [p for p in parts if not p.is_spatial()]
+        pure_parts = extract_pure_parts(current)
 
         # Try to apply ONE fold this iteration
         fold_applied = False
 
         for proposal in proposals:
-            # STEP 1: BASE CHECKING (S2S approach)
-            # Check if concrete heap matches predicate's spatial base
+            # STEP 1: BASE CHECKING
             if not check_heap_matches_base(proposal, predicate_registry, verbose=verbose):
                 if verbose:
                     print(f"[Multi-Step Folding] Proposal {proposal.predicate_name} failed base check")
                 continue
 
-            # STEP 2: SOUNDNESS VERIFICATION
-            # Use Z3-based verification for soundness (unification can be unsound for some cases)
-            from frame.folding.verify import verify_proposal_with_z3
-
-            is_sound = verify_proposal_with_z3(
-                proposal,
-                pure_parts,
-                encoder,
-                timeout=timeout,
-                predicate_registry=predicate_registry
-            )
-
-            if not is_sound:
-                if verbose:
-                    print(f"[Multi-Step Folding] Proposal {proposal.predicate_name} failed soundness")
+            # STEP 2: SOUNDNESS VERIFICATION (use Z3 for multi-step)
+            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=False):
                 continue
 
-            # Synthesize arithmetic if needed
-            chain = None
-            if proposal.pto_cells:
-                first_pto = proposal.pto_cells[0]
-                if isinstance(first_pto.location, Var):
-                    chain = graph.chain_from(first_pto.location.name)
-
-            side_constraints = None
-            if chain:
-                side_constraints, _ = synthesize_arith_for_chain(chain, proposal, encoder)
-
-            # Verify side conditions
-            if side_constraints:
-                if not verify_side_conditions(side_constraints, pure_constraints_z3, timeout_ms=1000):
-                    if verbose:
-                        print(f"[Multi-Step Folding] Side conditions failed for {proposal.predicate_name}")
-                    continue
+            # STEP 3: ARITHMETIC SYNTHESIS AND VERIFICATION
+            if not synthesize_and_verify_arithmetic(proposal, graph, encoder, pure_constraints_z3, timeout_ms=1000, verbose=verbose):
+                continue
 
             # SUCCESS! Apply this fold
             if verbose:
