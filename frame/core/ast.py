@@ -48,6 +48,13 @@ from frame.core._ast_errors import (
     Allocated, Freed
 )
 
+# Re-export array and bitvector operations
+from frame.core._ast_arrays_bitvecs import (
+    ArraySelect, ArrayStore, ArrayConst,
+    BitVecVal, BitVecExpr,
+    TaintedArray, BufferOverflowCheck, IntegerOverflow
+)
+
 # Define __all__ for explicit exports
 __all__ = [
     # Base classes
@@ -78,4 +85,13 @@ __all__ = [
     # Error states and heap lifecycle
     'Error', 'NullDeref', 'UseAfterFree', 'BufferOverflow',
     'Allocated', 'Freed',
+
+    # Array theory (QF_AX)
+    'ArraySelect', 'ArrayStore', 'ArrayConst',
+
+    # Bitvector theory (QF_BV)
+    'BitVecVal', 'BitVecExpr',
+
+    # Array and bitvector security predicates
+    'TaintedArray', 'BufferOverflowCheck', 'IntegerOverflow',
 ]

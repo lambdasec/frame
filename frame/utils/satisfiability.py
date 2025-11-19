@@ -8,10 +8,11 @@ obvious contradictions.
 from typing import List, Tuple, Dict
 from frame.core.ast import (
     Formula, Expr, Var, Const, Emp, PointsTo, SepConj, And, Or, Not,
-    Eq, Neq, PredicateCall, Exists, Forall
+    Eq, Neq, PredicateCall, Exists, Forall, True_, False_
 )
 from frame.analysis.formula import FormulaAnalyzer
 from frame.heap.graph_analysis import HeapGraphAnalyzer
+from frame.utils._normalization import FormulaNormalizer
 
 
 class SatisfiabilityChecker:
@@ -21,6 +22,7 @@ class SatisfiabilityChecker:
         self.verbose = verbose
         self.analyzer = FormulaAnalyzer()
         self.heap_analyzer = HeapGraphAnalyzer(verbose=verbose)
+        self.normalizer = FormulaNormalizer()
 
     def is_simple_ls_chain(self, formula: Formula) -> bool:
         """
@@ -96,7 +98,14 @@ class SatisfiabilityChecker:
         1. Pure contradictions: x = y AND x != y
         2. Spatial contradictions: emp AND x |-> y
         3. Self-loops: x |-> x (in separation logic, this is typically UNSAT)
+        4. P AND NOT(P) contradictions (after normalizing emp)
         """
+        # Check for P AND NOT(P) contradictions
+        if self._has_p_and_not_p_contradiction(formula):
+            if self.verbose:
+                print(f"Contradiction: P AND NOT(P) detected")
+            return True
+
         # Check for direct And-conjunctions containing emp with spatial formulas
         def has_emp_and_spatial_contradiction(f):
             """Check if formula is emp & P where P is spatial (this is a contradiction)"""
@@ -256,11 +265,80 @@ class SatisfiabilityChecker:
             return ('unknown', str(expr))
 
     def _exprs_equal(self, e1: Expr, e2: Expr) -> bool:
-        """Check if two expressions are syntactically equal"""
-        if type(e1) != type(e2):
-            return False
-        if isinstance(e1, Var):
-            return e1.name == e2.name
-        if isinstance(e1, Const):
-            return e1.value == e2.value
+        """Delegate to normalizer"""
+        return self.normalizer.exprs_equal(e1, e2)
+
+    def _is_pure_formula(self, formula: Formula) -> bool:
+        """Delegate to normalizer"""
+        return self.normalizer.is_pure_formula(formula)
+
+    def _sepconj_contains(self, sepconj: SepConj, target: Formula) -> bool:
+        """Delegate to normalizer"""
+        return self.normalizer.sepconj_contains(sepconj, target)
+
+    def _normalize_spatial(self, formula: Formula) -> Formula:
+        """Delegate to normalizer"""
+        return self.normalizer.normalize_spatial(formula)
+
+    def _normalize_once(self, formula: Formula) -> Formula:
+        """Delegate to normalizer"""
+        return self.normalizer.normalize_once(formula)
+
+    def _formulas_equal(self, f1: Formula, f2: Formula) -> bool:
+        """Delegate to normalizer"""
+        return self.normalizer.formulas_equal(f1, f2)
+
+    def _has_p_and_not_p_contradiction(self, formula: Formula) -> bool:
+        """
+        Detect P AND NOT(P) contradictions where P is a formula.
+
+        Critical for dispose/rev benchmarks which have patterns like:
+        (pto w nil) AND NOT((emp * pto w nil) AND (pto w nil))
+
+        After normalizing emp, this becomes:
+        (pto w nil) AND NOT(pto w nil AND pto w nil)
+        (pto w nil) AND NOT(pto w nil)
+
+        Which is a clear contradiction.
+        """
+        # Normalize the formula first to simplify emp
+        normalized = self._normalize_spatial(formula)
+
+        # Extract positive and negative assertions
+        positive_assertions = []
+        negative_assertions = []
+
+        def extract_assertions(f, negated=False):
+            if isinstance(f, Not):
+                # Flip negation and recurse
+                extract_assertions(f.formula, not negated)
+            elif isinstance(f, And):
+                extract_assertions(f.left, negated)
+                extract_assertions(f.right, negated)
+            elif isinstance(f, SepConj):
+                # Don't break down SepConj - treat as atomic for contradiction checking
+                if negated:
+                    negative_assertions.append(f)
+                else:
+                    positive_assertions.append(f)
+            elif isinstance(f, (PointsTo, Emp, Eq, Neq, PredicateCall)):
+                # Atomic formulas
+                if negated:
+                    negative_assertions.append(f)
+                else:
+                    positive_assertions.append(f)
+            # Skip Or (conservative - don't traverse into disjunctions)
+
+        extract_assertions(normalized)
+
+        # Check if any positive assertion appears in negative assertions
+        for pos in positive_assertions:
+            for neg in negative_assertions:
+                if self._formulas_equal(pos, neg):
+                    if self.verbose:
+                        print(f"P AND NOT(P) contradiction found:")
+                        print(f"  P: {pos}")
+                        print(f"  NOT(P): NOT({neg})")
+                    return True
+
         return False

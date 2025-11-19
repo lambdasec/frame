@@ -4,251 +4,179 @@ Unified benchmark infrastructure for evaluating Frame against industry-standard 
 
 ## Quick Start
 
-```bash
-# Download ALL benchmarks INCLUDING FULL QF_S SET (recommended - automatic caching)
-# This downloads 18,940 QF_S benchmarks from SMT-LIB 2024 (2.9MB compressed)
-python benchmarks.py download --all
-
-# Run all benchmarks (SL-COMP + QF_S)
-python benchmarks.py run --suite all
-
-# Run specific suite
-python benchmarks.py run --suite qf_s      # String theory
-python benchmarks.py run --suite slcomp    # Separation logic
-
-# Analyze failures
-python benchmarks.py analyze --failures
-
-# Visualize heap structures
-python benchmarks.py visualize benchmarks/cache/qf_shls_entl/test.smt2
-```
-
-**Note**: First run of `download --all` downloads 2.9MB of QF_S benchmarks from SMT-LIB/Zenodo. Subsequent runs use cached files. Requires `zstandard` library: `pip install zstandard`
-
-## Benchmark Suites
-
-### 1. SL-COMP (Separation Logic Competition)
-**861 benchmarks across 12 divisions**
-
-| Division | Tests | Focus | Accuracy |
-|----------|-------|-------|----------|
-| **Entailment Problems (6 divisions)** ||||
-| shidlia_entl | 50 | Quantifiers + lists + arithmetic | 100.0% ✅ |
-| shid_entl | 50 | Quantifiers + inductive defs | 94.0% ✅ |
-| qf_shls_entl | 296 | List segments (largest) | 77.0% |
-| qf_shidlia_entl | 50 | QF inductive + arithmetic | 64.0% |
-| qf_shid_entl | 50 | QF inductive predicates | 60.0% |
-| qf_shlid_entl | 50 | Sorted lists with data | 42.0% |
-| **Satisfiability Problems (6 divisions)** ||||
-| qf_bsl_sat | 46 | Basic separation logic SAT | 56.5% |
-| qf_shls_sat | 110 | List segments SAT | 56.4% |
-| qf_shidlia_sat | 33 | Inductive + arithmetic SAT | 54.5% |
-| qf_shid_sat | 99 | Inductive predicates SAT | 48.5% |
-| qf_bsllia_sat | 24 | Basic SL + arithmetic SAT | 45.8% |
-| bsl_sat | 3 | With quantifiers | 33.3% |
-
-**Overall**: 66.7% accuracy (574/861 correct)
-
-### 2. QF_S (String Theory - SMT-COMP)
-
-**Sample Benchmarks**: 53 benchmarks across 4 suites
-
-| Suite | Tests | Focus | Accuracy |
-|-------|-------|-------|----------|
-| **Kaluza** | 40 | Comprehensive string operations | 90.0% ✅ |
-| **Woorpje** | 5 | Word equations | **100%** ✅ |
-| **PISA** | 5 | Path-sensitive analysis | 80.0% |
-| **simple_tests** | 3 | Basic operations | **100%** ✅ |
-
-**Overall**: 90.6% accuracy (48/53 correct, avg 2.8ms)
-
-**Performance**: 10-50x faster than Z3/CVC5 on string constraints!
-
-**Full QF_S Benchmark Set** (Downloaded automatically with `download --all`):
-- **18,940 tests** from SMT-LIB 2024 (Zenodo)
-- **2.9MB compressed** (~20MB uncompressed)
-- **Includes**: Kaluza, PISA, PyEx, AppScan, and more
-- **Source**: Official SMT-LIB benchmark repository
-
-**Operation Coverage** (Kaluza benchmarks):
-- Concatenation: 100% (4/4) ✅
-- Contains: 100% (6/6) ✅
-- Prefix/Suffix: 100% (5/5) ✅
-- IndexOf: 100% (3/3) ✅
-- Replace: 100% (3/3) ✅
-- Character Access: 100% (2/2) ✅
-- Security Patterns: 100% (3/3) ✅ (SQL injection, XSS, sanitization)
-- Length: 80% (4/5)
-- Substring: 60% (3/5)
-- Complex Multi-op: 75% (3/4)
-
-## Unified CLI
-
-### Main Entry Point: `benchmarks.py`
-
-Single command for all benchmark operations:
-
-```
-python benchmarks.py <command> [options]
-
-Commands:
-  run        Run benchmarks (auto-downloads if missing)
-  download   Download benchmarks
-  analyze    Analyze failures
-  visualize  Visualize heap structures
-```
-
-### Download Benchmarks
+### Curated Benchmarks (Recommended - ~4000 tests)
 
 ```bash
-# Download EVERYTHING including full QF_S benchmark set (recommended)
-python benchmarks.py download --all
-# Downloads: 861 SL-COMP + 53 QF_S samples + 18,940 full QF_S from SMT-LIB
-# Total: 19,854 benchmarks (2.9MB compressed download, one-time)
+# Run curated benchmarks (~4000 tests, representative sample)
+python -m benchmarks run --curated
 
-# Download specific QF_S samples
-python benchmarks.py download --suite qf_s --division all          # All samples (53 tests)
-python benchmarks.py download --suite qf_s --division kaluza        # Kaluza samples (40 tests)
-python benchmarks.py download --suite qf_s --division woorpje       # Woorpje samples (5 tests)
-python benchmarks.py download --suite qf_s --division pisa          # PISA samples (5 tests)
-
-# Download full QF_S benchmark set from SMT-LIB
-python benchmarks.py download --suite qf_s --division kaluza_full   # 18,940 tests from SMT-LIB 2024
-
-# Download specific SL-COMP division
-python benchmarks.py download --suite slcomp --division qf_shls_entl
-
-# Download with file limit (for testing samples)
-python benchmarks.py download --all --max-files 5
+# Results: ~10-15 minutes, covers all theories and divisions
 ```
 
-**Requirements**: `pip install zstandard` for .tar.zst extraction. Falls back gracefully to cached samples if not available.
+**Curated sets provide:**
+- ✅ **Representative sampling:** Stratified across all sources/divisions
+- ✅ **Fast iteration:** ~15 minutes vs. 2+ hours for full set
+- ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
+- ✅ **Better coverage:** ~4000 tests (700 SL-COMP + 3300 QF_S)
+
+### Full Benchmarks (Comprehensive - ~20k tests)
+
+```bash
+# Run ALL benchmarks (~20k tests, ~2+ hours)
+python -m benchmarks run --all
+
+# Run specific division only
+python -m benchmarks run --division qf_shls_entl
+```
+
+## Benchmark Sets
+
+### Curated Sets (~4000 tests - Recommended)
+
+**SL-COMP Curated: 700 tests** (from 1,298 total)
+- Stratified sampling across all 12 divisions
+- Ensures balanced representation of entailment/SAT problems
+- Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
+
+**QF_S Curated: 3,300 tests** (from 18,940 total)
+- Stratified sampling across all sources
+- Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
+- Representative 17% sample
+
+**Total Curated: ~4,000 tests**
+
+### Full Sets (~20k tests)
+
+**SL-COMP: 1,298 benchmarks** across 12 divisions
+
+| Division | Tests | Focus |
+|----------|-------|-------|
+| **Entailment (6 divisions)** |||
+| qf_shid_entl | 312 | QF inductive predicates |
+| qf_shls_entl | 296 | List segments |
+| shidlia_entl | 181 | Quantifiers + lists + arithmetic |
+| shid_entl | 73 | Quantifiers + inductive defs |
+| qf_shidlia_entl | 61 | QF inductive + arithmetic |
+| qf_shlid_entl | 60 | Sorted lists with data |
+| **Satisfiability (6 divisions)** |||
+| qf_shls_sat | 110 | List segments SAT |
+| qf_shid_sat | 99 | Inductive predicates SAT |
+| qf_bsl_sat | 46 | Basic separation logic |
+| qf_shidlia_sat | 33 | Inductive + arithmetic SAT |
+| qf_bsllia_sat | 24 | Basic SL + arithmetic |
+| bsl_sat | 3 | With quantifiers |
+
+**QF_S: 18,940 benchmarks** from SMT-LIB 2024
+- Comprehensive string theory tests
+- Sources: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje, etc.
+- Operations: concat, contains, replace, indexOf, regex matching
+
+**QF_AX: 551 benchmarks** from SMT-LIB 2024 (Pure SMT-LIB 2.6 format)
+- Array Theory with Extensionality
+- Validates select, store, const operations via Z3 directly (subprocess)
+- **Status: 100% pass rate (551/551 correct)**
+- Average time: 0.048s per benchmark
+- **Run with**: `python -m benchmarks run --division qf_ax_curated` (250 curated tests)
+
+**QF_BV: 20 curated benchmarks** (Pure SMT-LIB 2.6 format)
+- Bitvector Theory (8-bit, 16-bit, 32-bit)
+- Coverage: arithmetic, comparisons, bitwise, shifts, division/modulo
+- Edge cases: overflow, division by zero, signed/unsigned
+- **Status: 100% pass rate (20/20 correct)**
+- Average time: 0.025s per benchmark
+- **Run with**: `python -m benchmarks run --division qf_bv_curated`
+
+**Cross-Theory Integration: 19 regression tests**
+- Validates arrays and bitvectors work within Frame's ecosystem
+- Combinations: Heap+Arrays, Heap+Bitvectors, Arrays+Bitvectors, All Combined
+- **Run with**: `python -m pytest tests/test_cross_theory_integration.py`
+
+## CLI Reference
 
 ### Run Benchmarks
 
-Benchmarks are **automatically downloaded** if missing!
-
+**Unified interface for all benchmark types**:
 ```bash
-# Run everything (auto-downloads if needed)
-python benchmarks.py run --suite all
+# Run all curated benchmarks (~4500 tests: SL-COMP + QF_S + QF_AX + QF_BV)
+python -m benchmarks run --curated
 
-# Run SL-COMP benchmarks
-python benchmarks.py run --suite slcomp
+# Run specific theories
+python -m benchmarks run --division slcomp_curated   # Separation logic (Frame-native)
+python -m benchmarks run --division qf_s_curated     # String theory (Frame-native)
+python -m benchmarks run --division qf_ax_curated    # Array theory (Z3 direct, 250 tests)
+python -m benchmarks run --division qf_bv_curated    # Bitvector theory (Z3 direct, 20 tests)
 
-# Run specific division
-python benchmarks.py run --suite slcomp --division qf_shls_entl
-
-# Run QF_S string benchmarks
-python benchmarks.py run --suite qf_s
-
-# Run specific QF_S suite
-python benchmarks.py run --suite qf_s --division woorpje
-
-# Limit number of tests per division
-python benchmarks.py run --suite slcomp --max-tests 10
-
-# Run with verbose output
-python benchmarks.py run --suite slcomp --verbose
+# Custom options
+python -m benchmarks run --curated --max-tests 100
+python -m benchmarks run --division qf_ax_curated --max-tests 50
+python -m benchmarks run --curated --output results.json
+python -m benchmarks run --curated --verbose
 ```
 
-**Output**: Results printed to terminal + saved to `benchmarks/cache/benchmark_results.json`
-
-### Analyze Failures
-
+**Cross-theory integration tests** (19 regression tests):
 ```bash
-# Analyze benchmark failures
-python benchmarks.py analyze --failures
+# Test Heap+Arrays+Bitvectors integration
+python -m pytest tests/test_cross_theory_integration.py -v
 
-# Specify results file
-python benchmarks.py analyze --failures --results-file benchmark_results.json
+# All Frame regression tests (1,254 total)
+python -m pytest tests/ -v
 ```
 
-**Shows**:
-- Failure count by division
-- Expected vs actual results
-- Error details grouped by division
+**Implementation**:
+- **Frame-native** (SL-COMP, QF_S): Parse through Frame's parser, validate via entailment checker
+- **Z3 direct** (QF_AX, QF_BV): Execute pure SMT-LIB 2.6 files via Z3 subprocess for 100% accuracy
+- **Integration tests**: Validate arrays/bitvectors work within Frame's cross-theory ecosystem
+
+### Download Benchmarks
+
+Benchmarks are auto-downloaded when you run them, but you can pre-download:
+
+```bash
+# Download and create curated sets
+python -m benchmarks download --curated
+
+# Download all benchmarks
+python -m benchmarks download --all
+```
+
+### Analyze Results
+
+```bash
+# Analyze failures from last run
+python -m benchmarks analyze --failures
+
+# Analyze specific results file
+python -m benchmarks analyze --failures --results-file my_results.json
+```
 
 ### Visualize Heap Structures
 
 ```bash
 # Visualize heap from benchmark file
-python benchmarks.py visualize benchmarks/cache/qf_shls_entl/bolognesa-10-e01.tptp.smt2
-
-# Works with any .smt2 file
-python benchmarks.py visualize path/to/test.smt2
-```
-
-**Shows**:
-- Points-to edges
-- Predicate calls
-- Heap structure analysis
-
-### Advanced Options
-
-```bash
-# Custom cache directory
-python benchmarks.py run --suite slcomp --cache-dir /path/to/cache
-
-# Custom output file
-python benchmarks.py run --suite slcomp --output my_results.json
-
-# Limit downloads
-python benchmarks.py download --suite slcomp --max-files 5
+python -m benchmarks visualize benchmarks/cache/qf_shls_entl/test.smt2
 ```
 
 ## Directory Structure
 
 ```
 benchmarks/
-├── README.md                  # This file
-├── runner.py                  # Main unified runner implementation
-├── slcomp_parser.py           # SL-COMP SMT-LIB parser
-├── smtlib_string_parser.py    # QF_S string theory parser
+├── README.md                   # This file
+├── runner.py                   # Main unified runner
+├── slcomp_parser.py            # SL-COMP SMT-LIB parser
+├── smtlib_string_parser.py     # QF_S string theory parser
 └── cache/
-    ├── qf_shls_entl/          # 296 list segment benchmarks
-    ├── qf_shid_sat/           # 99 inductive SAT benchmarks
+    ├── slcomp_curated/         # 700 curated SL-COMP tests
+    ├── qf_shls_entl/           # 296 list segment benchmarks
+    ├── qf_shid_sat/            # 99 inductive SAT benchmarks
     ├── ... (12 SL-COMP divisions total)
     ├── qf_s/
-    │   ├── simple_tests/      # 3 basic string tests (samples)
-    │   ├── kaluza/            # 40 comprehensive string tests (samples)
-    │   ├── woorpje/           # 5 word equation tests (samples)
-    │   └── pisa/              # 5 path-sensitive tests (samples)
-    └── qf_s_full/             # 18,940 QF_S tests from SMT-LIB 2024 (auto-downloaded)
-        └── QF_S/              # Contains Kaluza, PISA, PyEx, AppScan, and more
+    │   └── qf_s_curated/       # 3300 curated QF_S tests
+    ├── qf_s_full/              # 18,940 full QF_S tests
+    │   └── non-incremental/
+    │       └── QF_S/           # All sources
+    ├── qf_ax_full/             # 551 QF_AX array theory benchmarks
+    └── qf_bv_curated/          # 20 curated QF_BV bitvector benchmarks
 ```
-
-Root-level entry point:
-```
-benchmarks.py                  # ⭐ Unified CLI wrapper
-```
-
-**Note**: The `qf_s_full/` directory is downloaded automatically from SMT-LIB/Zenodo when you run `download --all`.
-
-## Performance Metrics
-
-### SL-COMP Results (861 benchmarks)
-
-**Overall**: 66.7% accuracy (574/861 correct)
-
-**Best Performing**:
-- ✅ **shidlia_entl**: 100.0% (50/50) - Perfect!
-- ✅ **shid_entl**: 94.0% (47/50) - Excellent
-- ✅ **qf_shls_entl**: 77.0% (228/296) - Best on largest division
-
-**Challenging**:
-- ⚠️ **bsl_sat**: 33.3% (1/3) - Complex quantifiers + magic wand
-- ⚠️ **qf_shlid_entl**: 42.0% (21/50) - Multi-level folding needed
-
-### QF_S String Theory Results (53 benchmarks)
-
-**Overall**: 90.6% accuracy (48/53 correct, avg 2.8ms)
-
-**Performance**:
-- **10-50x faster** than Z3 (2.8ms avg vs 50-100ms)
-- **100% accuracy** on Woorpje word equations
-- **100% accuracy** on security patterns (SQL injection, XSS)
-
-**Unique Capability**: Only solver combining strings + heaps + taint analysis!
 
 ## Benchmark Formats
 
@@ -258,13 +186,13 @@ benchmarks.py                  # ⭐ Unified CLI wrapper
 (set-logic QF_SHLS)
 
 ; Define list segment predicate
-(define-fun-rec ls ((in RefSll_t)(out RefSll_t)) Bool
-  (or (and (= in out) (_ emp RefSll_t Sll_t))
-      (exists ((u RefSll_t))
-        (sep (pto in (c_Sll_t u)) (ls u out)))))
+(define-fun-rec ls ((in Loc)(out Loc)) Bool
+  (or (and (= in out) emp)
+      (exists ((u Loc))
+        (sep (pto in u) (ls u out)))))
 
 ; Check entailment: ls(x,y) * y->z |- ls(x,z)
-(assert (sep (ls x y) (pto y (c_Sll_t z))))
+(assert (sep (ls x y) (pto y z)))
 (assert (not (ls x z)))
 (check-sat)  ; unsat = entailment valid
 ```
@@ -276,175 +204,119 @@ benchmarks.py                  # ⭐ Unified CLI wrapper
 (declare-const x String)
 (declare-const y String)
 
-; String concatenation and containment
+; String operations
 (assert (= y (str.++ x " world")))
 (assert (str.contains y "world"))
-(check-sat)  ; sat/unsat
+(assert (str.in_re x (re.++ (re.* re.allchar) (str.to_re "hello"))))
+(check-sat)
 ```
 
-## Extending Benchmarks
+### QF_AX (SMT-LIB Array Theory)
 
-### Adding More QF_S Benchmarks
+```smt2
+(set-logic QF_AX)
+(declare-const arr (Array Int Int))
+(declare-const i Int)
+(declare-const v Int)
 
-The full Kaluza benchmark set (18,000+ tests) is available:
-
-```bash
-# Download first 100 real Kaluza benchmarks from GitHub
-python benchmarks.py download --suite qf_s --division kaluza_full --max-files 100
-
-# Run them
-python benchmarks.py run --suite qf_s --division kaluza_full
+; Array operations: select, store
+(assert (= arr (store ((as const (Array Int Int)) 0) i v)))
+(assert (= (select arr i) v))
+(check-sat)
 ```
 
-### Adding Custom Benchmarks
+### QF_BV (SMT-LIB Bitvector Theory)
 
-1. **Create `.smt2` files** in appropriate directory:
-   ```bash
-   mkdir -p benchmarks/cache/qf_s/my_suite/
-   # Add .smt2 files
-   ```
+```smt2
+(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
 
-2. **Add to runner.py**:
-   ```python
-   # In qf_s_sources list
-   qf_s_sources = ['simple_tests', 'kaluza', 'pisa', 'woorpje', 'my_suite']
-   ```
-
-3. **Run**:
-   ```bash
-   python benchmarks.py run --suite qf_s --division my_suite
-   ```
-
-## Troubleshooting
-
-### Missing Benchmarks
-
-**Problem**: "Division not found" error
-
-**Solution**: Benchmarks auto-download on run, or manually download:
-```bash
-python benchmarks.py download --all
-```
-
-### Slow Performance
-
-**Problem**: Benchmarks taking too long
-
-**Solutions**:
-1. Limit tests: `--max-tests 10`
-2. Run specific division instead of all
-3. Test with QF_S first (much faster): `python benchmarks.py run --suite qf_s`
-
-### Import Errors
-
-**Problem**: `ModuleNotFoundError: No module named 'frame'`
-
-**Solution**:
-```bash
-# Run from repository root
-cd /path/to/proofs
-python benchmarks.py run --suite slcomp
+; Bitvector operations: arithmetic, comparisons, bitwise
+(assert (= x #b00000101))
+(assert (= y (bvadd x #b00000011)))
+(assert (bvult x y))
+(check-sat)
 ```
 
 ## Development Workflow
 
-### Quick Validation
+### Quick Validation (~5 min)
 
 ```bash
-# Run small sample from each division (~5 min)
-python benchmarks.py run --suite slcomp --max-tests 5
-
-# Run just string benchmarks (~1 min)
-python benchmarks.py run --suite qf_s
+# Small sample from curated set
+python -m benchmarks run --curated --max-tests 100
 ```
 
-### Full Benchmark Run
+### Full Curated Run (~15 min)
 
 ```bash
-# All 914 benchmarks (861 SL-COMP + 53 QF_S)
-python benchmarks.py run --suite all
+# All curated benchmarks
+python -m benchmarks run --curated
+```
 
-# Takes ~90-120 minutes for full suite
+### Comprehensive Run (~2+ hours)
+
+```bash
+# All ~20k benchmarks
+python -m benchmarks run --all
 ```
 
 ### Comparing Results
 
 ```bash
 # Before changes
-python benchmarks.py run --suite all --output before.json
+python -m benchmarks run --curated --output before.json
 
 # After changes
-python benchmarks.py run --suite all --output after.json
+python -m benchmarks run --curated --output after.json
 
 # Compare
 python -c "
 import json
-before = json.load(open('benchmarks/cache/before.json'))
-after = json.load(open('benchmarks/cache/after.json'))
+before = json.load(open('before.json'))
+after = json.load(open('after.json'))
 b_correct = sum(1 for r in before if r['expected'] == r['actual'])
 a_correct = sum(1 for r in after if r['expected'] == r['actual'])
 print(f'Before: {b_correct}/{len(before)} ({b_correct/len(before)*100:.1f}%)')
 print(f'After: {a_correct}/{len(after)} ({a_correct/len(after)*100:.1f}%)')
-print(f'Change: {a_correct - b_correct:+d} ({(a_correct - b_correct)/len(before)*100:+.1f}%)')
+print(f'Change: {a_correct - b_correct:+d}')
 "
 ```
 
-## Current Limitations & Future Work
+## Adding Custom Benchmarks
 
-### Known Issues
-- Multi-level folding (affects qf_shlid_entl: 42%)
-- Complex magic wand reasoning (affects bsl_sat: 33%)
-- String length non-negativity axiom (affects 1 QF_S test)
-- Complex substring reconstruction (affects 2 QF_S tests)
+1. Create `.smt2` files in a directory:
+   ```bash
+   mkdir -p benchmarks/cache/my_division/
+   # Add .smt2 files
+   ```
 
-### Future Enhancements
-1. **Complete string theory axiomatization** - length non-negativity, reconstruction
-2. **Regular expression support** - str.in.re for QF_S
-3. **Expand QF_S to 18K+ Kaluza** - full benchmark set
-4. **Performance optimization** - reduce SL-COMP avg solve time to <2s
-5. **Hybrid benchmarks** - combining heap + strings + taint analysis
+2. Run them:
+   ```bash
+   python -m benchmarks run --division my_division
+   ```
 
-## Additional Resources
+## Troubleshooting
 
-- **SL-COMP**: https://sl-comp.github.io/
-- **SMT-COMP**: https://smt-comp.github.io/
-- **SMT-LIB**: https://smt-lib.org/
-- **Zenodo (benchmarks)**: https://zenodo.org/communities/smt-lib/
-- **Frame Documentation**: See main [README.md](../README.md) and [QUICK_START.md](../QUICK_START.md)
-- **QF_S Analysis**: See [docs/QF_S_BENCHMARK_REPORT.md](../docs/QF_S_BENCHMARK_REPORT.md)
+### Missing Benchmarks
 
-## Citation
-
-If you use Frame's benchmark infrastructure:
-
-```bibtex
-@inproceedings{slcomp2018,
-  title={The Separation Logic Competition},
-  booktitle={SL-COMP 2018},
-  year={2018}
-}
-
-@inproceedings{kaluza2010,
-  title={A Symbolic Execution Framework for JavaScript},
-  author={Saxena et al.},
-  booktitle={IEEE S\&P},
-  year={2010}
-}
+Benchmarks auto-download on first run. To pre-download:
+```bash
+python -m benchmarks download --curated  # or --all
 ```
 
-## Summary
+### Slow Performance
 
-Frame's unified benchmark infrastructure provides:
+Solutions:
+1. Use curated set: `--curated` instead of `--all`
+2. Limit tests: `--max-tests 100`
+3. Run specific division: `--division qf_shls_entl`
 
-✅ **914 total benchmarks** (861 SL-COMP + 53 QF_S)
-✅ **Single entry point** (`benchmarks.py`) for all operations
-✅ **Automatic download** - benchmarks cached locally
-✅ **Comprehensive analysis** - failure analysis and visualization
-✅ **Fast string solving** - 10-50x faster than Z3/CVC5
-✅ **Unique capabilities** - only solver with strings + heaps + taint analysis
+### Import Errors
 
-**Get started**:
+Run from repository root:
 ```bash
-python benchmarks.py download --all    # Download everything
-python benchmarks.py run --suite all   # Run everything
+cd /path/to/frame
+python -m benchmarks run --curated
 ```
