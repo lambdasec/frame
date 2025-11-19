@@ -253,8 +253,8 @@ def parse_primary_expr(parser_self) -> Expr:
         parser_self.expect('RPAREN')
         return expr
 
-    # String length: strlen(x)
-    if token.type == 'STRLEN':
+    # String length: len(x)
+    if token.type == 'LEN':
         return parser_self.parse_str_len()
 
     # String substring: substr(x, start, len)

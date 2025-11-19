@@ -114,8 +114,8 @@ def check_entailment_core(
     # Eliminate magic wand: P * (P -* Q) → P * Q
     # This is critical for SAT divisions (bsl_sat, rev-*, dispose-*)
     # where wands should not create extension heaps
-    antecedent = checker_self.analyzer.eliminate_wand(antecedent, checker=self)
-    consequent = checker_self.analyzer.eliminate_wand(consequent, checker=self)
+    antecedent = checker_self.analyzer.eliminate_wand(antecedent, checker=checker_self)
+    consequent = checker_self.analyzer.eliminate_wand(consequent, checker=checker_self)
     if checker_self.verbose:
         print(f"After wand elimination:")
         print(f"  Antecedent: {antecedent}")
@@ -140,7 +140,7 @@ def check_entailment_core(
                 checker_self.predicate_registry,
                 timeout=checker_self.timeout,
                 verbose=checker_self.verbose,
-                checker=self if checker_self.use_abduction else None  # Only pass checker if abduction enabled
+                checker=checker_self if checker_self.use_abduction else None  # Only pass checker if abduction enabled
             )
             success, reason = frame_engine.try_frame_inference(antecedent, consequent)
             if success:
