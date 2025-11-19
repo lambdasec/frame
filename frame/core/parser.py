@@ -27,6 +27,7 @@ import re
 from typing import List, Optional, Tuple
 from frame.core.ast import *
 from frame.core._lexer import Lexer, Token, ParseError
+from frame.core import _parser_helpers
 
 
 class Parser:
@@ -120,76 +121,8 @@ class Parser:
         return self.parse_primary()
 
     def parse_primary(self) -> Formula:
-        """Parse primary formulas"""
-        token = self.current_token()
-
-        if token is None:
-            raise ParseError("Unexpected EOF")
-
-        # Parenthesized formula
-        if token.type == 'LPAREN':
-            self.advance()
-            formula = self.parse()
-            self.expect('RPAREN')
-            return formula
-
-        # emp
-        if token.type == 'EMP':
-            self.advance()
-            return Emp()
-
-        # true
-        if token.type == 'TRUE':
-            self.advance()
-            return True_()
-
-        # false
-        if token.type == 'FALSE':
-            self.advance()
-            return False_()
-
-        # Security predicates
-        if token.type == 'TAINT':
-            return self.parse_taint()
-
-        if token.type == 'SANITIZED':
-            return self.parse_sanitized()
-
-        if token.type == 'SOURCE':
-            return self.parse_source()
-
-        if token.type == 'SINK':
-            return self.parse_sink()
-
-        # Error states
-        if token.type == 'ERROR':
-            return self.parse_error()
-
-        if token.type == 'NULL_DEREF':
-            return self.parse_null_deref()
-
-        if token.type == 'USE_AFTER_FREE':
-            return self.parse_use_after_free()
-
-        if token.type == 'BUFFER_OVERFLOW':
-            return self.parse_buffer_overflow()
-
-        # String literal (can appear in comparisons)
-        if token.type == 'STRING':
-            return self.parse_string_atom()
-
-        # Array/bitvector operations (can appear in comparisons)
-        if token.type in ('SELECT', 'STORE', 'CONST', 'BVHEX', 'BVBIN',
-                          'BVADD', 'BVSUB', 'BVMUL', 'BVUDIV', 'BVUREM', 'BVSDIV', 'BVSREM',
-                          'BVAND', 'BVOR', 'BVXOR', 'BVNOT', 'BVSHL', 'BVLSHR', 'BVASHR',
-                          'BVULT', 'BVULE', 'BVUGT', 'BVUGE', 'BVSLT', 'BVSLE', 'BVSGT', 'BVSGE'):
-            return self.parse_array_bv_atom()
-
-        # Identifier (could be variable, predicate call, or points-to)
-        if token.type == 'IDENT' or token.type == 'NIL':
-            return self.parse_atom()
-
-        raise ParseError(f"Unexpected token: {token}")
+        """Delegate to parser helpers"""
+        return _parser_helpers.parse_primary(self)
 
     def parse_string_atom(self) -> Formula:
         """Parse formulas starting with string literals"""
@@ -260,101 +193,8 @@ class Parser:
         raise ParseError(f"Unexpected token after array/bitvector operation: {token}")
 
     def parse_atom(self) -> Formula:
-        """Parse atomic formulas (identifier-based)"""
-        token = self.current_token()
-
-        # Handle nil specially for comparisons
-        if token.type == 'NIL':
-            self.advance()
-            expr = Const(None)
-            # Nil can only appear in comparisons in this simplified parser
-            # For now, we'll return an error
-            raise ParseError("nil can only appear in comparisons like 'x = nil' or 'x != nil'")
-
-        # Must be an identifier
-        name = self.expect('IDENT').value
-        token = self.current_token()
-
-        # Array indexing: arr[idx]
-        if token and token.type == 'LBRACKET':
-            self.advance()  # consume '['
-            index = self.parse_expr()
-            self.expect('RBRACKET')
-            arr_select = ArraySelect(Var(name), index)
-
-            # Must be followed by comparison
-            token = self.current_token()
-            if token and token.type in ('EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'):
-                op = token.type
-                self.advance()
-                right = self.parse_expr()
-
-                if op == 'EQ':
-                    return Eq(arr_select, right)
-                elif op == 'NEQ':
-                    return Neq(arr_select, right)
-                elif op == 'LT':
-                    return Lt(arr_select, right)
-                elif op == 'LE':
-                    return Le(arr_select, right)
-                elif op == 'GT':
-                    return Gt(arr_select, right)
-                elif op == 'GE':
-                    return Ge(arr_select, right)
-            else:
-                raise ParseError(f"Array indexing must be followed by comparison operator")
-
-        # Predicate call: pred(args)
-        if token and token.type == 'LPAREN':
-            self.advance()
-            args = self.parse_expr_list()
-            self.expect('RPAREN')
-            return PredicateCall(name, args)
-
-        # Points-to: x |-> y
-        if token and token.type == 'ARROW':
-            self.advance()
-            location = Var(name)
-            values = self.parse_pointsto_values()
-            return PointsTo(location, values)
-
-        # Equality, disequality, or comparisons: x = y, x != y, x < y, x <= y, x > y, x >= y
-        if token and token.type in ('EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'):
-            op = token.type
-            self.advance()
-            left = Var(name)
-            right = self.parse_expr()
-
-            if op == 'EQ':
-                return Eq(left, right)
-            elif op == 'NEQ':
-                return Neq(left, right)
-            elif op == 'LT':
-                return Lt(left, right)
-            elif op == 'LE':
-                return Le(left, right)
-            elif op == 'GT':
-                return Gt(left, right)
-            elif op == 'GE':
-                return Ge(left, right)
-
-        # String contains: x contains y
-        if token and token.type == 'CONTAINS':
-            self.advance()
-            left = Var(name)
-            right = self.parse_expr()
-            return StrContains(left, right)
-
-        # String matches: x matches /regex/
-        if token and token.type == 'MATCHES':
-            self.advance()
-            regex_token = self.expect('REGEX')
-            # Remove slashes from /pattern/
-            regex = regex_token.value[1:-1]
-            return StrMatches(Var(name), regex)
-
-        # Just a variable in a pure context - this is a problem
-        raise ParseError(f"Unexpected variable {name} without operator (expected |-> , =, !=, contains, matches, or function call)")
+        """Delegate to parser helpers"""
+        return _parser_helpers.parse_atom(self)
 
     def parse_pointsto_values(self) -> List[Expr]:
         """Parse values in points-to: y or (y, z, ...)"""
@@ -409,84 +249,9 @@ class Parser:
             left = ArithExpr(op, left, right)
 
         return left
-
     def parse_primary_expr(self) -> Expr:
-        """Parse a primary expression (variable, constant, string literal, function call)"""
-        token = self.current_token()
-
-        if token is None:
-            raise ParseError("Expected expression, got EOF")
-
-        # String literal
-        if token.type == 'STRING':
-            self.advance()
-            # Remove quotes and handle escape sequences
-            value = token.value[1:-1]  # Remove surrounding quotes
-            value = value.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
-            return StrLiteral(value)
-
-        # String function calls
-        if token.type == 'LEN':
-            return self.parse_str_len()
-
-        if token.type == 'SUBSTR':
-            return self.parse_str_substr()
-
-        # Array operations
-        if token.type == 'SELECT':
-            return self.parse_array_select()
-
-        if token.type == 'STORE':
-            return self.parse_array_store()
-
-        if token.type == 'CONST':
-            return self.parse_array_const()
-
-        # Bitvector literals
-        if token.type == 'BVHEX':
-            return self.parse_bv_hex()
-
-        if token.type == 'BVBIN':
-            return self.parse_bv_bin()
-
-        # Bitvector operations
-        if token.type in ('BVADD', 'BVSUB', 'BVMUL', 'BVUDIV', 'BVUREM', 'BVSDIV', 'BVSREM',
-                          'BVAND', 'BVOR', 'BVXOR', 'BVNOT', 'BVSHL', 'BVLSHR', 'BVASHR',
-                          'BVULT', 'BVULE', 'BVUGT', 'BVUGE', 'BVSLT', 'BVSLE', 'BVSGT', 'BVSGE'):
-            return self.parse_bv_op()
-
-        # Parenthesized expression
-        if token.type == 'LPAREN':
-            self.advance()
-            expr = self.parse_expr()
-            self.expect('RPAREN')
-            return expr
-
-        if token.type == 'IDENT':
-            self.advance()
-            # Check for array indexing: arr[idx]
-            if self.current_token() and self.current_token().type == 'LBRACKET':
-                self.advance()  # consume '['
-                index = self.parse_expr()
-                self.expect('RBRACKET')
-                return ArraySelect(Var(token.value), index)
-            # Check for function call
-            if self.current_token() and self.current_token().type == 'LPAREN':
-                # This might be a predicate call, let the caller handle it
-                # For now, just return a variable
-                self.pos -= 1  # Back up
-                return Var(token.value)
-            return Var(token.value)
-
-        if token.type == 'NUMBER':
-            self.advance()
-            return Const(int(token.value))
-
-        if token.type == 'NIL':
-            self.advance()
-            return Const(None)
-
-        raise ParseError(f"Expected expression, got {token}")
+        """Delegate to parser helpers"""
+        return _parser_helpers.parse_primary_expr(self)
 
     # String function parsing
 
@@ -650,95 +415,6 @@ class Parser:
         # Width is number of bits
         width = len(bin_str)
         return BitVecVal(value, width)
-
-    def parse_bv_op(self) -> Expr:
-        """Parse bitvector operations: bvadd(x, y), bvand(x, y), etc."""
-        op_token = self.current_token()
-        op = op_token.value  # bvadd, bvand, etc.
-        self.advance()
-
-        self.expect('LPAREN')
-
-        # Parse operands
-        operands = []
-        operands.append(self.parse_expr())
-
-        # For unary operations like bvnot, there's only one operand
-        if op != 'bvnot':
-            while self.current_token() and self.current_token().type == 'COMMA':
-                self.advance()
-                operands.append(self.parse_expr())
-
-        self.expect('RPAREN')
-
-        # Infer width from operands (for now, use a default or require explicit width)
-        # In full SMT-LIB parser, width would be tracked via type system
-        # For simplicity, we'll use a default width of 32 bits
-        width = 32  # Default width
-
-        return BitVecExpr(op, operands, width)
-
-
-def parse(text: str) -> Formula:
-    """
-    Parse a separation logic formula from a string.
-
-    Args:
-        text: String representation of the formula
-
-    Returns:
-        Parsed Formula object
-
-    Example:
-        >>> parse("x |-> 5 * y |-> 3")
-        SepConj(PointsTo(x, [5]), PointsTo(y, [3]))
-    """
-    parser = Parser(text)
-    return parser.parse()
-
-
-def parse_entailment(text: str) -> Tuple[Formula, Formula]:
-    """
-    Parse an entailment from a string with turnstile |-
-
-    Args:
-        text: String representation of the entailment (e.g., "P |- Q")
-
-    Returns:
-        Tuple of (antecedent, consequent) Formula objects
-
-    Example:
-        >>> ante, cons = parse_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
-        >>> # ante = SepConj(PointsTo(x, [5]), PointsTo(y, [3]))
-        >>> # cons = PointsTo(x, [5])
-    """
-    # Find the turnstile symbol (|- not followed by >)
-    # We need to distinguish |- (turnstile) from |-> (points-to arrow)
-    import re
-
-    # Find all occurrences of |- that are NOT followed by >
-    pattern = r'\|-(?!>)'
-    matches = list(re.finditer(pattern, text))
-
-    if len(matches) == 0:
-        raise ParseError("Entailment must contain '|-' symbol (turnstile). Use parse() for single formulas.")
-
-    if len(matches) > 1:
-        raise ParseError("Entailment must have exactly one '|-' turnstile symbol")
-
-    # Split at the turnstile position
-    match = matches[0]
-    turnstile_pos = match.start()
-
-    antecedent_text = text[:turnstile_pos].strip()
-    consequent_text = text[turnstile_pos + 2:].strip()  # +2 to skip '|-'
-
-    if not antecedent_text:
-        raise ParseError("Antecedent (left side of |-) cannot be empty")
-    if not consequent_text:
-        raise ParseError("Consequent (right side of |-) cannot be empty")
-
-    antecedent = parse(antecedent_text)
-    consequent = parse(consequent_text)
-
-    return antecedent, consequent
+    def parse_bv_op(self) -> Formula:
+        """Delegate to parser helpers"""
+        return _parser_helpers.parse_bv_op(self)
