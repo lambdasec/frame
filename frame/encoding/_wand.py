@@ -59,7 +59,7 @@ class WandEncoder:
         self.enable_full_encoding = True  # Enable full bounded heap extension encoding
         self.mode = "SAT"  # Default mode: "SAT" or "ENTAILMENT"
 
-    def encode_wand(self, wand: Wand, heap_var: z3.ExprRef,
+    def encode_wand(self, wand: Wand, heap_id: z3.ExprRef,
                    domain_set: Set[z3.ExprRef],
                    domain_map: Dict[z3.ExprRef, z3.ExprRef],
                    prefix: str = "") -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
@@ -90,20 +90,20 @@ class WandEncoder:
 
         # Special case 1: emp -* Q means Q (with empty heap)
         if isinstance(P, Emp):
-            return self._encode_emp_wand(Q, heap_var, domain_set, prefix)
+            return self._encode_emp_wand(Q, heap_id, domain_set, prefix)
 
         # Route to mode-specific encoding
         if self.mode == "SAT" and self.enable_full_encoding:
-            return self._encode_wand_sat(P, Q, heap_var, domain_set, domain_map, prefix)
+            return self._encode_wand_sat(P, Q, heap_id, domain_set, domain_map, prefix)
         elif self.mode == "ENTAILMENT" and self.enable_full_encoding:
-            return self._encode_wand_full(P, Q, heap_var, domain_set, domain_map, prefix)
+            return self._encode_wand_full(P, Q, heap_id, domain_set, domain_map, prefix)
         else:
             # Conservative fallback: create boolean variable
             wand_var = z3.Bool(f"wand_{prefix}_{id(wand)}")
             wand_domain = self._extract_locations_from_antecedent(P, prefix)
             return (wand_var, wand_domain)
 
-    def _encode_emp_wand(self, Q: Formula, heap_var: z3.ExprRef,
+    def _encode_emp_wand(self, Q: Formula, heap_id: z3.ExprRef,
                         domain_set: Set[z3.ExprRef],
                         prefix: str) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
         """
@@ -114,14 +114,14 @@ class WandEncoder:
         """
         # Q should hold on the current heap
         q_constraints, q_domain = self.encoder._spatial_encoder.encode_heap_assertion(
-            Q, heap_var, domain_set, prefix=f"{prefix}_empwand"
+            Q, heap_id, domain_set, prefix=f"{prefix}_empwand"
         )
 
         # emp -* Q: Since antecedent is emp, no locations to claim
         # But we return q_domain to indicate this wand requires those locations
         return (q_constraints, q_domain)
 
-    def _encode_pto_wand(self, P: PointsTo, Q: PointsTo, heap_var: z3.ExprRef,
+    def _encode_pto_wand(self, P: PointsTo, Q: PointsTo, heap_id: z3.ExprRef,
                         domain_set: Set[z3.ExprRef],
                         prefix: str) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
         """
@@ -140,7 +140,7 @@ class WandEncoder:
 
         return (wand_var, wand_domain)
 
-    def _encode_wand_full(self, P: Formula, Q: Formula, heap_var: z3.ExprRef,
+    def _encode_wand_full(self, P: Formula, Q: Formula, heap_id: z3.ExprRef,
                          domain_set: Set[z3.ExprRef],
                          domain_map: Dict[z3.ExprRef, z3.ExprRef],
                          prefix: str) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
@@ -188,9 +188,9 @@ class WandEncoder:
                 # Location from original heap: alloc(union, loc) <-> alloc(h, loc)
                 #                               hval(union, loc) = hval(h, loc)
                 union_constraints.append(
-                    z3.Implies(self.encoder.alloc(heap_var, loc),
+                    z3.Implies(self.encoder.alloc(heap_id, loc),
                                z3.And(self.encoder.alloc(union_heap_id, loc),
-                                      self.encoder.hval(union_heap_id, loc) == self.encoder.hval(heap_var, loc))))
+                                      self.encoder.hval(union_heap_id, loc) == self.encoder.hval(heap_id, loc))))
             else:
                 # Location from extension heap: alloc(union, loc) <-> alloc(h', loc)
                 #                                hval(union, loc) = hval(h', loc)
@@ -219,7 +219,7 @@ class WandEncoder:
 
         return (wand_constraint, wand_domain)
 
-    def _antecedent_matches_context(self, P: Formula, heap_var: z3.ExprRef,
+    def _antecedent_matches_context(self, P: Formula, heap_id: z3.ExprRef,
                                     domain_set: Set[z3.ExprRef], prefix: str) -> bool:
         """
         Check if wand antecedent P matches what's already in the local heap context.
@@ -260,28 +260,28 @@ class WandEncoder:
 
         # Handle SepConj: P1 * P2 (both parts must match)
         if isinstance(P, SepConj):
-            return (self._antecedent_matches_context(P.left, heap_var, domain_set, prefix) and
-                    self._antecedent_matches_context(P.right, heap_var, domain_set, prefix))
+            return (self._antecedent_matches_context(P.left, heap_id, domain_set, prefix) and
+                    self._antecedent_matches_context(P.right, heap_id, domain_set, prefix))
 
         # Handle And: P1 & P2 (both parts must match)
         if isinstance(P, And):
             # If left is pure and right is spatial, check the spatial part
             if not P.left.is_spatial() and P.right.is_spatial():
-                return self._antecedent_matches_context(P.right, heap_var, domain_set, prefix)
+                return self._antecedent_matches_context(P.right, heap_id, domain_set, prefix)
             # If right is pure and left is spatial, check the spatial part
             if not P.right.is_spatial() and P.left.is_spatial():
-                return self._antecedent_matches_context(P.left, heap_var, domain_set, prefix)
+                return self._antecedent_matches_context(P.left, heap_id, domain_set, prefix)
             # Both spatial: check both
             if P.left.is_spatial() and P.right.is_spatial():
-                return (self._antecedent_matches_context(P.left, heap_var, domain_set, prefix) and
-                        self._antecedent_matches_context(P.right, heap_var, domain_set, prefix))
+                return (self._antecedent_matches_context(P.left, heap_id, domain_set, prefix) and
+                        self._antecedent_matches_context(P.right, heap_id, domain_set, prefix))
             # Both pure: matches vacuously (pure constraints don't affect heap)
             return True
 
         # Conservative: return False for complex patterns
         return False
 
-    def _try_wand_elimination(self, P: Formula, Q: Formula, heap_var: z3.ExprRef,
+    def _try_wand_elimination(self, P: Formula, Q: Formula, heap_id: z3.ExprRef,
                              domain_set: Set[z3.ExprRef],
                              domain_map: Dict[z3.ExprRef, z3.ExprRef],
                              prefix: str) -> Optional[Tuple[z3.BoolRef, Set[z3.ExprRef]]]:
@@ -305,7 +305,7 @@ class WandEncoder:
                 spatial_encoder = SpatialEncoder(self.encoder)
                 # CRITICAL: Use empty prefix so Q references existing variables from left side
                 q_constraint, q_domain = spatial_encoder.encode_heap_assertion(
-                    Q, heap_var, domain_set, set(), 0, prefix=""
+                    Q, heap_id, domain_set, set(), 0, prefix=""
                 )
                 return (q_constraint, set())  # Wand doesn't claim domain
             return None
@@ -336,7 +336,7 @@ class WandEncoder:
         spatial_encoder = SpatialEncoder(self.encoder)
         # CRITICAL: Use empty prefix so Q references existing variables from left side
         q_constraint, q_domain = spatial_encoder.encode_heap_assertion(
-            Q, heap_var, domain_set, set(), 0, prefix=""
+            Q, heap_id, domain_set, set(), 0, prefix=""
         )
 
         # Return Q's constraint with empty wand domain
@@ -346,12 +346,12 @@ class WandEncoder:
         """Delegate to wand utils"""
         return _extract_footprint_with_values(self.encoder, formula, prefix)
 
-    def _encode_wand_sat(self, P: Formula, Q: Formula, heap_var: z3.ExprRef,
+    def _encode_wand_sat(self, P: Formula, Q: Formula, heap_id: z3.ExprRef,
                         domain_set: Set[z3.ExprRef],
                         domain_map: Dict[z3.ExprRef, z3.ExprRef],
                         prefix: str) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
         """Delegate to SAT encoding module"""
-        return _encode_wand_sat_impl(self, P, Q, heap_var, domain_set, domain_map, prefix)
+        return _encode_wand_sat_impl(self, P, Q, heap_id, domain_set, domain_map, prefix)
 
     def _collect_known_locations(self, P: Formula, Q: Formula, prefix: str) -> Set[z3.ExprRef]:
         """Delegate to wand utils"""
@@ -372,11 +372,11 @@ class WandEncoder:
         """Delegate to SAT encoding module"""
         return _encode_formula_on_finite_heap_impl(self, formula, alloc_map, val_map, prefix)
 
-    def _encode_negated_wand_sat(self, P: Formula, Q: Formula, heap_var: z3.ExprRef,
+    def _encode_negated_wand_sat(self, P: Formula, Q: Formula, heap_id: z3.ExprRef,
                                  domain_set: Set[z3.ExprRef],
                                  prefix: str) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
         """Delegate to SAT encoding module"""
-        return _encode_negated_wand_sat_impl(self, P, Q, heap_var, domain_set, prefix)
+        return _encode_negated_wand_sat_impl(self, P, Q, heap_id, domain_set, prefix)
 
     def _compute_extension_bound(self, formula: Formula) -> int:
         """Delegate to wand utils"""
