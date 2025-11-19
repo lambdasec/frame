@@ -304,3 +304,22 @@ class SLCompParser:
             return Emp()
 
         return None
+
+    # Expose extracted methods for backward compatibility with tests
+    def _parse_and(self, text: str, depth: int = 0) -> Formula:
+        """Delegate to formula parser"""
+        return parse_and(text, self.variables, self._parse_formula, depth)
+
+    def _parse_sep(self, text: str, depth: int = 0) -> Formula:
+        """Delegate to formula parser"""
+        return parse_sep(text, self.variables, self._parse_formula, depth)
+
+    def _extract_balanced_parens_at_index(self, text: str, start_idx: int):
+        """Delegate to utils"""
+        from benchmarks._slcomp_utils import extract_balanced_parens_at_index
+        return extract_balanced_parens_at_index(text, start_idx)
+
+    def _parse_define_funs_rec(self, content: str):
+        """Delegate to predicates parser"""
+        from benchmarks._slcomp_predicates import _parse_define_funs_rec
+        return _parse_define_funs_rec(content, self.predicates, self.predicate_arities, self.predicate_bodies, self._parse_formula)
