@@ -13,7 +13,7 @@ def encode_wand_sat(
     wand_encoder,
     P: Formula,
     Q: Formula,
-    heap_var: z3.ExprRef,
+    heap_id: z3.ExprRef,
     domain_set: Set[z3.ExprRef],
     domain_map: Dict[z3.ExprRef, z3.ExprRef],
     prefix: str
@@ -48,7 +48,7 @@ def encode_wand_sat(
     """
     # STEP 1: Try wand elimination (P * (P -* Q) ≡ P * Q)
     # If P's footprint is already in domain_set with matching values, just encode Q
-    elimination_result = wand_encoder._try_wand_elimination(P, Q, heap_var, domain_set, domain_map, prefix)
+    elimination_result = wand_encoder._try_wand_elimination(P, Q, heap_id, domain_set, domain_map, prefix)
     if elimination_result is not None:
         return elimination_result
 
@@ -58,7 +58,7 @@ def encode_wand_sat(
 
     if not known_locs:
         # Fallback to implication encoding if no locations found
-        return wand_encoder._encode_wand_full(P, Q, heap_var, domain_set, domain_map, prefix)
+        return wand_encoder._encode_wand_full(P, Q, heap_id, domain_set, domain_map, prefix)
 
     # Create finite symbolic heaps using alloc/val variables per location
     ext_alloc = {}
@@ -112,7 +112,7 @@ def encode_wand_sat(
 
         # If ext doesn't allocate but main does, use main value
         if main_alloc is not None:
-            main_val = wand_encoder._get_value_from_heap(loc, heap_var)
+            main_val = wand_encoder._get_value_from_heap(loc, heap_id)
             union_constraints.append(
                 z3.Implies(z3.And(z3.Not(ext_alloc[loc]), main_alloc),
                          union_val[loc] == main_val)
@@ -252,7 +252,7 @@ def encode_negated_wand_sat(
     wand_encoder,
     P: Formula,
     Q: Formula,
-    heap_var: z3.ExprRef,
+    heap_id: z3.ExprRef,
     domain_set: Set[z3.ExprRef],
     prefix: str
 ) -> Tuple[z3.BoolRef, Set[z3.ExprRef]]:
@@ -282,7 +282,7 @@ def encode_negated_wand_sat(
 
     if not known_locs:
         # Fallback: negate the implication encoding
-        wand_constraint, wand_domain = wand_encoder._encode_wand_full(P, Q, heap_var, domain_set, {}, prefix)
+        wand_constraint, wand_domain = wand_encoder._encode_wand_full(P, Q, heap_id, domain_set, {}, prefix)
         return (z3.Not(wand_constraint), wand_domain)
 
     # Create finite symbolic heaps
@@ -322,7 +322,7 @@ def encode_negated_wand_sat(
         )
 
         if main_alloc is not None:
-            main_val = wand_encoder._get_value_from_heap(loc, heap_var)
+            main_val = wand_encoder._get_value_from_heap(loc, heap_id)
             union_constraints.append(
                 z3.Implies(z3.And(z3.Not(ext_alloc[loc]), main_alloc),
                          union_val[loc] == main_val)
