@@ -418,3 +418,70 @@ class Parser:
     def parse_bv_op(self) -> Formula:
         """Delegate to parser helpers"""
         return _parser_helpers.parse_bv_op(self)
+
+
+# Module-level parsing functions
+
+def parse(text: str) -> Formula:
+    """
+    Parse a separation logic formula from a string.
+
+    Args:
+        text: String representation of the formula
+
+    Returns:
+        Parsed Formula object
+
+    Example:
+        >>> parse("x |-> 5 * y |-> 3")
+        SepConj(PointsTo(x, [5]), PointsTo(y, [3]))
+    """
+    parser = Parser(text)
+    return parser.parse()
+
+
+def parse_entailment(text: str) -> Tuple[Formula, Formula]:
+    """
+    Parse an entailment from a string with turnstile |-
+
+    Args:
+        text: String representation of the entailment (e.g., "P |- Q")
+
+    Returns:
+        Tuple of (antecedent, consequent) Formula objects
+
+    Example:
+        >>> ante, cons = parse_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
+        >>> # ante = SepConj(PointsTo(x, [5]), PointsTo(y, [3]))
+        >>> # cons = PointsTo(x, [5])
+    """
+    # Find the turnstile symbol (|- not followed by >)
+    # We need to distinguish |- (turnstile) from |-> (points-to arrow)
+    import re
+
+    # Find all occurrences of |- that are NOT followed by >
+    pattern = r'\|-(?!>)'
+    matches = list(re.finditer(pattern, text))
+
+    if len(matches) == 0:
+        raise ParseError("Entailment must contain '|-' symbol (turnstile). Use parse() for single formulas.")
+
+    if len(matches) > 1:
+        raise ParseError("Entailment must have exactly one '|-' turnstile symbol")
+
+    # Split at the turnstile position
+    match = matches[0]
+    turnstile_pos = match.start()
+
+    antecedent_text = text[:turnstile_pos].strip()
+    consequent_text = text[turnstile_pos + 2:].strip()  # +2 to skip '|-'
+
+    if not antecedent_text:
+        raise ParseError("Antecedent (left side of |-) cannot be empty")
+    if not consequent_text:
+        raise ParseError("Consequent (right side of |-) cannot be empty")
+
+    antecedent = parse(antecedent_text)
+    consequent = parse(consequent_text)
+
+    return antecedent, consequent

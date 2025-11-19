@@ -10,13 +10,9 @@ from frame.core.ast import (
     Eq, Neq, Lt, Le, Gt, Ge, True_, False_, Emp,
     And, Or, Not, Exists, Forall,
     StrLiteral, StrConcat, StrLen, StrSubstr, StrContains, StrMatches,
-    ArraySelect, ArrayStore,
-    Add, Sub, Mul, Div, Mod,
-    BitVecLiteral, BitVecConcat, BitVecExtract, BitVecNot, BitVecAnd,
-    BitVecOr, BitVecXor, BitVecNeg, BitVecAdd, BitVecSub, BitVecMul,
-    BitVecUDiv, BitVecURem, BitVecShl, BitVecLShr, BitVecAShr,
-    BitVecULt, BitVecULe, BitVecUGt, BitVecUGe, BitVecSLt, BitVecSLe,
-    BitVecSGt, BitVecSGe
+    ArraySelect, ArrayStore, ArrayConst,
+    ArithExpr, BitVecVal, BitVecExpr,
+    TaintedArray, BufferOverflowCheck, IntegerOverflow
 )
 from frame.core._lexer import ParseError
 
@@ -233,7 +229,7 @@ def parse_primary_expr(parser_self) -> Expr:
         return Const(value)
 
     # String literal
-    if token.type == 'STRING_LITERAL':
+    if token.type == 'STRING':
         value = token.value[1:-1]  # Remove quotes
         # Unescape common sequences
         value = value.replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\').replace('\\"', '"')
@@ -243,7 +239,7 @@ def parse_primary_expr(parser_self) -> Expr:
     # BitVector literal: 0bxNNNN where x is binary/hex and NNNN is width
     if token.type == 'BITVEC_LITERAL':
         parser_self.advance()
-        return BitVecLiteral(token.value, token.width)
+        return BitVecVal(token.value, token.width)
 
     # Nil
     if token.type == 'NIL':
@@ -257,13 +253,21 @@ def parse_primary_expr(parser_self) -> Expr:
         parser_self.expect('RPAREN')
         return expr
 
-    # String length: str.len(x)
-    if token.type == 'STR_LEN':
+    # String length: strlen(x)
+    if token.type == 'STRLEN':
         return parser_self.parse_str_len()
 
-    # String substring: str.substr(x, start, len)
-    if token.type == 'STR_SUBSTR':
+    # String substring: substr(x, start, len)
+    if token.type == 'SUBSTR':
         return parser_self.parse_str_substr()
+
+    # String contains: contains(s, sub)
+    if token.type == 'CONTAINS':
+        return parser_self.parse_str_contains()
+
+    # String matches: matches(s, pattern)
+    if token.type == 'MATCHES':
+        return parser_self.parse_str_matches()
 
     # Array select: select(arr, idx)
     if token.type == 'SELECT':
@@ -289,9 +293,9 @@ def parse_primary_expr(parser_self) -> Expr:
         operand = parser_self.parse_expr()
         parser_self.expect('RPAREN')
         if op == 'BVNOT':
-            return BitVecNot(operand)
+            return BitVecExpr("bvnot", [operand])
         else:  # BVNEG
-            return BitVecNeg(operand)
+            return BitVecExpr("bvneg", [operand])
 
     # Bitvector concat: bvconcat(x, y)
     if token.type == 'BVCONCAT':
@@ -301,7 +305,7 @@ def parse_primary_expr(parser_self) -> Expr:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecConcat(left, right)
+        return BitVecExpr("bvconcat", [left, right])
 
     # Bitvector extract: bvextract(x, high, low)
     if token.type == 'BVEXTRACT':
@@ -315,7 +319,12 @@ def parse_primary_expr(parser_self) -> Expr:
         low_token = parser_self.expect('NUMBER')
         low = int(low_token.value)
         parser_self.expect('RPAREN')
-        return BitVecExtract(bv, high, low)
+        # bvextract stores high/low as metadata, not operands
+        # For now, create a simple wrapper - the encoder will handle it
+        result = BitVecExpr("bvextract", [bv])
+        result.high = high
+        result.low = low
+        return result
 
     # Variable or identifier
     if token.type == 'IDENT':
@@ -344,7 +353,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecULt(left, right)
+        return BitVecExpr("bvult", [left, right])
     elif token.type == 'BVULE':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -352,7 +361,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecULe(left, right)
+        return BitVecExpr("bvule", [left, right])
     elif token.type == 'BVUGT':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -360,7 +369,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecUGt(left, right)
+        return BitVecExpr("bvugt", [left, right])
     elif token.type == 'BVUGE':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -368,7 +377,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecUGe(left, right)
+        return BitVecExpr("bvuge", [left, right])
     elif token.type == 'BVSLT':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -376,7 +385,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecSLt(left, right)
+        return BitVecExpr("bvslt", [left, right])
     elif token.type == 'BVSLE':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -384,7 +393,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecSLe(left, right)
+        return BitVecExpr("bvsle", [left, right])
     elif token.type == 'BVSGT':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -392,7 +401,7 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecSGt(left, right)
+        return BitVecExpr("bvsgt", [left, right])
     elif token.type == 'BVSGE':
         parser_self.advance()
         parser_self.expect('LPAREN')
@@ -400,6 +409,6 @@ def parse_bv_op(parser_self) -> Formula:
         parser_self.expect('COMMA')
         right = parser_self.parse_expr()
         parser_self.expect('RPAREN')
-        return BitVecSGe(left, right)
+        return BitVecExpr("bvsge", [left, right])
     else:
         raise ParseError(f"Unknown bitvector comparison operator: {token}")
