@@ -318,7 +318,7 @@ class Z3Encoder:
 
     def _encode_bitvec_op(self, expr: BitVecExpr, prefix: str = "") -> z3.BitVecRef:
         """Delegate to bitvector encoder"""
-        return self._bitvec_encoder._encode_bitvec_op(expr, prefix)
+        return self._bitvec_encoder.encode_bitvec_op(expr, prefix)
 
     def encode_heap_assertion(self, formula: Formula, heap_var: z3.ExprRef,
                              domain_set: Set[z3.ExprRef],
