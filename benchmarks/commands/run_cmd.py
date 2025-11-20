@@ -66,7 +66,7 @@ def cmd_run(args, orchestrator):
 
     # --all: Run ALL benchmarks (full suites, ~20k total)
     elif args.all:
-        print("Running ALL benchmark sets (~20k total: SL-COMP + QF_S)")
+        print("Running ALL benchmark sets (~20k total: SL-COMP + QF_S + QF_AX + QF_BV)")
         print("=" * 80)
 
         # All 12 SL-COMP divisions
@@ -83,6 +83,12 @@ def cmd_run(args, orchestrator):
 
         # Run all QF_S benchmarks
         orchestrator.run_qf_s_division('qf_s_full', max_tests=args.max_tests)
+
+        # Run all QF_AX benchmarks
+        orchestrator.run_qf_ax_division('qf_ax_full', max_tests=args.max_tests)
+
+        # Run all QF_BV benchmarks
+        orchestrator.run_qf_bv_division('qf_bv_full', max_tests=args.max_tests)
 
     orchestrator.print_summary()
     orchestrator.save_results(args.output)
