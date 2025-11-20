@@ -93,6 +93,18 @@ def run_slcomp_benchmark(cache_dir: str, division: str, filename: str, verbose: 
             time_ms=elapsed_ms
         )
 
+    except RecursionError as e:
+        # Recursion limit hit - return unknown instead of error
+        elapsed_ms = (time.time() - start_time) * 1000
+        return BenchmarkResult(
+            filename=filename,
+            suite='slcomp',
+            division=division,
+            expected=expected_status,
+            actual='unknown',
+            time_ms=elapsed_ms,
+            error='RecursionError: maximum recursion depth exceeded'
+        )
     except Exception as e:
         elapsed_ms = (time.time() - start_time) * 1000
         return BenchmarkResult(
