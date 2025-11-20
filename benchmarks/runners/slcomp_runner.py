@@ -38,10 +38,10 @@ def get_checker(verbose=False):
     global _checker, _registry
     if _checker is None:
         _registry = PredicateRegistry()
-        _registry.max_unfold_depth = 10
+        _registry.max_unfold_depth = 12
         _checker = EntailmentChecker(
             predicate_registry=_registry,
-            timeout=15000,
+            timeout=30000,
             use_folding=True,
             use_cyclic_proof=True,
             use_s2s_normalization=True,
@@ -108,10 +108,10 @@ def run_slcomp_benchmark(cache_dir: str, division: str, filename: str, verbose: 
         # Reset for next test
         global _checker, _registry
         _registry = PredicateRegistry()
-        _registry.max_unfold_depth = 10
+        _registry.max_unfold_depth = 12
         _checker = EntailmentChecker(
             predicate_registry=_registry,
-            timeout=15000,
+            timeout=30000,
             use_folding=True,
             use_cyclic_proof=True,
             use_s2s_normalization=True,
