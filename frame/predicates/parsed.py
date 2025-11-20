@@ -39,13 +39,14 @@ class ParsedPredicate(InductivePredicate):
         # Perform substitution
         return self._substitute(self.body, subst_map)
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         """
         Unfold the predicate to a bounded depth, recursively unfolding nested predicates.
 
         Args:
             args: Arguments to the predicate
             depth: Maximum unfolding depth
+            registry: Optional PredicateRegistry for unfolding nested predicates
 
         Returns:
             The bounded unfolded formula with nested predicates also unfolded
@@ -58,15 +59,20 @@ class ParsedPredicate(InductivePredicate):
 
         # Then recursively unfold any nested PredicateCalls in the result
         # This is critical for predicates like ls(x,y) that contain recursive calls
-        return self._unfold_nested(unfolded, depth - 1)
+        return self._unfold_nested(unfolded, depth - 1, registry)
 
-    def _unfold_nested(self, formula: Formula, remaining_depth: int) -> Formula:
+    def _unfold_nested(self, formula: Formula, remaining_depth: int, registry=None) -> Formula:
         """
         Recursively unfold nested PredicateCalls within a formula.
 
         This handles the body of an unfolded predicate that contains recursive calls.
         For example, after unfolding ls(x,y) to "x=y & emp | exists u. x|->u * ls(u,y)",
         we need to continue unfolding the nested ls(u,y) call.
+
+        Args:
+            formula: The formula to unfold
+            remaining_depth: Remaining unfold depth
+            registry: Optional PredicateRegistry for unfolding other predicates
         """
         if remaining_depth <= 0:
             return formula
@@ -74,36 +80,41 @@ class ParsedPredicate(InductivePredicate):
         if isinstance(formula, PredicateCall):
             # If it's a recursive call to the same predicate, handle it directly
             if formula.name == self.name:
-                return self.unfold_bounded(formula.args, remaining_depth)
-            # Otherwise leave it as-is (other predicates will be handled by registry)
+                return self.unfold_bounded(formula.args, remaining_depth, registry)
+            # If we have a registry, use it to unfold other predicates
+            elif registry is not None:
+                other_predicate = registry.get(formula.name)
+                if other_predicate:
+                    return other_predicate.unfold_bounded(formula.args, remaining_depth, registry)
+            # Otherwise leave it as-is
             return formula
 
         elif isinstance(formula, SepConj):
             return SepConj(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, And):
             return And(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, Or):
             return Or(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, Not):
-            return Not(self._unfold_nested(formula.formula, remaining_depth))
+            return Not(self._unfold_nested(formula.formula, remaining_depth, registry))
         elif isinstance(formula, Exists):
             return Exists(
                 formula.var,
-                self._unfold_nested(formula.formula, remaining_depth)
+                self._unfold_nested(formula.formula, remaining_depth, registry)
             )
         elif isinstance(formula, Forall):
             return Forall(
                 formula.var,
-                self._unfold_nested(formula.formula, remaining_depth)
+                self._unfold_nested(formula.formula, remaining_depth, registry)
             )
         else:
             # Base formulas: Emp, PointsTo, Eq, Neq, etc.
