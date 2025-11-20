@@ -50,12 +50,19 @@ python -m benchmarks run --curated
 python -m benchmarks run --all
 ```
 
-**Curated Results** (4,742 tests total):
+**Curated Results** (4,742 tests, ~15-20 min):
 - SL-COMP: 73.8% correct on 692 benchmarks (separation logic entailment/SAT)
 - QF_S: 83.9% correct on 3,300 benchmarks (string theory)
 - QF_AX: **100%** correct on 500 benchmarks (array theory)
 - QF_BV: **76.4%** correct on 250 benchmarks (bitvector theory)
 - **Overall: 83.7% correct (3971/4742), 2 errors, avg 1.7s/test**
+
+**Full Results** (19,801 tests, ~2+ hours):
+- SL-COMP: 77.7% correct on 861 benchmarks (all 13 divisions)
+- QF_S: 84.2% correct on 18,940 benchmarks (complete SMT-LIB 2024)
+- QF_AX: **100%** correct on 500 benchmarks (array theory)
+- QF_BV: **76.4%** correct on 250 benchmarks (bitvector theory)
+- **Overall: 83.9% correct (16608/19801), 1 error, avg 0.8s/test**
 
 See [benchmarks/README.md](benchmarks/README.md) for detailed results and usage.
 
@@ -97,12 +104,12 @@ print(bug.found)  # True if index can exceed bounds
 - **Spatial formulas**: Points-to (`x |-> v`), empty heap (`emp`), separating conjunction (`*`), magic wand (`-*`)
 - **Inductive predicates**: Lists (`ls`, `list`), trees (`tree`), doubly-linked lists (`dll`), custom predicates
 - **Frame inference**: Automatic computation of heap differences
-- **Validation**: 73.8% on SL-COMP curated (692 benchmarks, 2 errors)
+- **Validation**: 73.8% on curated (692 tests, 2 errors), 77.7% on full (861 tests, 1 error)
 
 ### String Theory (QF_S)
 - **Operations**: Concatenation (`str.++`), contains, indexof, replace, substring, regex matching
 - **Coverage**: 10/10 operation categories from SMT-LIB 2.6
-- **Validation**: 83.9% on QF_S curated (3,300 benchmarks), 90.6% on targeted test suite
+- **Validation**: 83.9% on curated (3,300 tests), 84.2% on full (18,940 tests), 90.6% on targeted test suite
 - **Sources**: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje
 
 ### Array Theory (QF_AX) - **100% Validated**
@@ -205,13 +212,13 @@ Frame includes **~20,000+ benchmarks** across 4 SMT theories from industry-stand
 
 ### Validation Results
 
-| Theory | Curated | Full Set | Accuracy | Avg Time |
-|--------|---------|----------|----------|----------|
-| **Separation Logic** | 700 tests | 1,298 tests | 70.6% | ~5ms |
-| **String (QF_S)** | 3,300 tests | 18,940 tests | 82.8% | ~15ms |
-| **Array (QF_AX)** | - | 551 tests | **100%** ✓ | 0.048s |
-| **Bitvector (QF_BV)** | 20 tests | Downloading | **100%** ✓ | 0.025s |
-| **Total** | ~4,000 tests | ~21,000 tests | 78.5% | - |
+| Theory | Curated | Full Set | Curated Acc. | Full Acc. | Avg Time |
+|--------|---------|----------|--------------|-----------|----------|
+| **Separation Logic** | 692 tests | 861 tests | 73.8% | 77.7% | 1.7s / 0.8s |
+| **String (QF_S)** | 3,300 tests | 18,940 tests | 83.9% | 84.2% | ~15ms |
+| **Array (QF_AX)** | 500 tests | 500 tests | **100%** ✓ | **100%** ✓ | 0.048s |
+| **Bitvector (QF_BV)** | 250 tests | 250 tests | **76.4%** | **76.4%** | 0.025s |
+| **Total** | 4,742 tests | 19,801 tests | 83.7% | **83.9%** | 1.7s / 0.8s |
 
 ### Running Benchmarks
 
