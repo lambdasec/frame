@@ -144,16 +144,14 @@ class SatisfiabilityChecker:
             elif isinstance(f, Neq):
                 inequalities.append((f.left, f.right))
             elif isinstance(f, PointsTo):
-                points_to.append(f)
+                points_to.append((f))
             elif isinstance(f, (And, SepConj)):
                 extract(f.left)
                 extract(f.right)
-            elif isinstance(f, Or):
-                # FIXED: Also extract from Or branches to find contradictions
-                # We extract from both sides - if there's a contradiction that
-                # appears in all branches, we'll catch it
-                extract(f.left)
-                extract(f.right)
+            # Note: We don't extract from Or branches because constraints in different
+            # branches are alternatives, not simultaneous. Extracting from both would
+            # cause false contradictions. For example, (x=y) ∨ (x≠y) would look like
+            # x=y AND x≠y if we extract from both sides.
 
         extract(formula)
 
