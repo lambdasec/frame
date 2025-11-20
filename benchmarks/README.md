@@ -4,10 +4,10 @@ Unified benchmark infrastructure for evaluating Frame against industry-standard 
 
 ## Quick Start
 
-### Curated Benchmarks (Recommended - ~4750 tests)
+### Curated Benchmarks (Recommended - 4742 tests)
 
 ```bash
-# Run curated benchmarks (~4750 tests, representative sample)
+# Run curated benchmarks (4742 tests, representative sample)
 python -m benchmarks run --curated
 
 # Results: ~15-20 minutes, covers all theories and divisions
@@ -17,11 +17,11 @@ python -m benchmarks run --curated
 - ✅ **Representative sampling:** Stratified across all sources/divisions
 - ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
-- ✅ **Complete coverage:** ~4750 tests across all 4 theory divisions
-  - 700 SL-COMP (separation logic)
-  - 3300 QF_S (string theory)
-  - 500 QF_AX (array theory)
-  - 250 QF_BV (bitvector theory)
+- ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
+  - 692 SL-COMP (separation logic) - 73.8% correct, 2 errors
+  - 3300 QF_S (string theory) - 83.9% correct
+  - 500 QF_AX (array theory) - 100% correct
+  - 250 QF_BV (bitvector theory) - 76.4% correct
 
 ### Full Benchmarks (Comprehensive - ~20k tests)
 
@@ -35,29 +35,34 @@ python -m benchmarks run --division qf_shls_entl
 
 ## Benchmark Sets
 
-### Curated Sets (~4750 tests - Recommended)
+### Curated Sets (4742 tests - Recommended)
 
-**SL-COMP Curated: 700 tests** (from 1,298 total)
+**SL-COMP Curated: 692 tests** (from 1,298 total)
 - Stratified sampling across all 12 divisions
 - Ensures balanced representation of entailment/SAT problems
 - Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
+- **Results: 73.8% correct (511/692), 2 errors**
 
 **QF_S Curated: 3,300 tests** (from 18,940 total)
 - Stratified sampling across all sources
 - Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
 - Representative 17% sample
+- **Results: 83.9% correct (2769/3300), 0 errors**
 
 **QF_AX Curated: 500 tests** (from 551 total)
 - Array theory with extensionality
 - Operations: select, store, const
 - Executed via Z3 subprocess for 100% accuracy
+- **Results: 100% correct (500/500), 0 errors**
 
 **QF_BV Curated: 250 tests** (from full BV suite)
 - Bitvector theory (8-bit, 16-bit, 32-bit)
 - Coverage: arithmetic, comparisons, bitwise, shifts
-- Executed via Z3 subprocess for 100% accuracy
+- Executed via Z3 subprocess for validation
+- **Results: 76.4% correct (191/250), 0 errors**
 
-**Total Curated: ~4,750 tests**
+**Total Curated: 4,742 tests**
+- **Overall: 83.7% correct (3971/4742), 2 errors, avg 1.7s/test**
 
 ### Full Sets (~20k tests)
 
@@ -111,14 +116,14 @@ python -m benchmarks run --division qf_shls_entl
 
 **Unified interface for all benchmark types**:
 ```bash
-# Run all curated benchmarks (~4750 tests: SL-COMP + QF_S + QF_AX + QF_BV)
+# Run all curated benchmarks (4742 tests: SL-COMP + QF_S + QF_AX + QF_BV)
 python -m benchmarks run --curated
 
 # Run ALL benchmarks (~20k tests: all divisions, all theories)
 python -m benchmarks run --all
 
 # Run specific theories
-python -m benchmarks run --division slcomp_curated   # Separation logic (700 tests)
+python -m benchmarks run --division slcomp_curated   # Separation logic (692 tests)
 python -m benchmarks run --division qf_s_curated     # String theory (3300 tests)
 python -m benchmarks run --division qf_ax_curated    # Array theory (500 tests)
 python -m benchmarks run --division qf_bv_curated    # Bitvector theory (250 tests)
