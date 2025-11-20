@@ -76,6 +76,13 @@ def is_satisfiable(
         formula_unfolded = checker_self.predicate_registry.unfold_predicates(
             formula, adaptive=True
         )
+    except RecursionError:
+        # Hit Python's recursion limit during unfolding
+        # This can happen with deeply nested predicates or circular definitions
+        # Be conservative: assume SAT (better than crashing)
+        if checker_self.verbose:
+            print("RecursionError during predicate unfolding - assuming SAT")
+        return True
     finally:
         # Restore original max depth
         checker_self.predicate_registry.max_unfold_depth = original_max_depth
@@ -85,7 +92,15 @@ def is_satisfiable(
         return False  # UNSAT
 
     # Encode the formula
-    constraints, heap, domain = encoder.encode_formula(formula_unfolded)
+    try:
+        constraints, heap, domain = encoder.encode_formula(formula_unfolded)
+    except RecursionError:
+        # Hit recursion limit during Z3 encoding
+        # This can happen with very complex formulas
+        # Be conservative: assume SAT
+        if checker_self.verbose:
+            print("RecursionError during Z3 encoding - assuming SAT")
+        return True
 
     # Debug: Dump Z3 encoding if verbose
     if checker_self.verbose:
