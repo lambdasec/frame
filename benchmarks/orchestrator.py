@@ -167,15 +167,15 @@ class BenchmarkOrchestrator:
         """Create QF_S curated benchmark set"""
         return create_qf_s_curated_set(self.cache_dir, sample_size, seed)
 
-    def create_slcomp_curated_set(self, sample_size: int = 500, seed: int = 42) -> int:
+    def create_slcomp_curated_set(self, sample_size: int = 700, seed: int = 42) -> int:
         """Create SL-COMP curated benchmark set"""
         return create_slcomp_curated_set(self.cache_dir, sample_size, seed)
 
-    def create_qf_ax_curated_set(self, sample_size: int = 800, seed: int = 42) -> int:
+    def create_qf_ax_curated_set(self, sample_size: int = 500, seed: int = 42) -> int:
         """Create QF_AX curated benchmark set"""
         return create_qf_ax_curated_set(self.cache_dir, sample_size, seed)
 
-    def create_qf_bv_curated_set(self, sample_size: int = 300, seed: int = 42) -> int:
+    def create_qf_bv_curated_set(self, sample_size: int = 250, seed: int = 42) -> int:
         """Create QF_BV curated benchmark set"""
         return create_qf_bv_curated_set(self.cache_dir, sample_size, seed)
 

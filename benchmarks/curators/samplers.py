@@ -107,11 +107,11 @@ def create_qf_s_curated_set(cache_dir: str, sample_size: int = 3300, seed: int =
 
 
 
-def create_slcomp_curated_set(cache_dir: str, sample_size: int = 500, seed: int = 42) -> int:
+def create_slcomp_curated_set(cache_dir: str, sample_size: int = 700, seed: int = 42) -> int:
     """Create a curated sample set from SL-COMP benchmarks using stratified sampling
 
     Args:
-        sample_size: Target number of samples (default 500, reduced from 700 for better avg)
+        sample_size: Target number of samples (default 700)
         seed: Random seed for reproducibility (default 42)
 
     Returns:
@@ -209,11 +209,11 @@ def create_slcomp_curated_set(cache_dir: str, sample_size: int = 500, seed: int 
 
 
 
-def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 800, seed: int = 42) -> int:
+def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 500, seed: int = 42) -> int:
     """Create a curated sample set from QF_AX benchmarks
 
     Args:
-        sample_size: Target number of samples (default 800, increased for better overall %)
+        sample_size: Target number of samples (default 500)
         seed: Random seed for reproducibility (default 42)
 
     Returns:
@@ -275,11 +275,11 @@ def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 800, seed: int =
 
 
 
-def create_qf_bv_curated_set(cache_dir: str, sample_size: int = 300, seed: int = 42) -> int:
+def create_qf_bv_curated_set(cache_dir: str, sample_size: int = 250, seed: int = 42) -> int:
     """Create a curated sample set from QF_BV benchmarks
 
     Args:
-        sample_size: Target number of samples (default 300, increased from 250)
+        sample_size: Target number of samples (default 250)
         seed: Random seed for reproducibility (default 42)
 
     Returns:
