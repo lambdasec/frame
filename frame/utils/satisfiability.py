@@ -149,20 +149,24 @@ class SatisfiabilityChecker:
                 extract(f.left)
                 extract(f.right)
             elif isinstance(f, Or):
-                # Don't traverse into disjunctions (conservative)
-                pass
+                # FIXED: Also extract from Or branches to find contradictions
+                # We extract from both sides - if there's a contradiction that
+                # appears in all branches, we'll catch it
+                extract(f.left)
+                extract(f.right)
 
         extract(formula)
 
-        # Check for pure contradictions: x = y AND x != y
-        for eq_left, eq_right in equalities:
-            for neq_left, neq_right in inequalities:
-                # Check if same pair appears in both equality and inequality
-                if (self._exprs_equal(eq_left, neq_left) and self._exprs_equal(eq_right, neq_right)) or \
-                   (self._exprs_equal(eq_left, neq_right) and self._exprs_equal(eq_right, neq_left)):
-                    if self.verbose:
-                        print(f"Contradiction: {eq_left} = {eq_right} AND {neq_left} != {neq_right}")
-                    return True
+        # Build equivalence classes for transitivity and aliasing checks
+        eq_classes = self._build_equivalence_classes(equalities)
+
+        # Check for pure contradictions: x != y but x = y (by transitivity)
+        # For example: x != y AND x = nil AND y = nil => contradiction
+        for neq_left, neq_right in inequalities:
+            if self._in_same_eq_class(neq_left, neq_right, eq_classes):
+                if self.verbose:
+                    print(f"Contradiction: {neq_left} != {neq_right} but they are equal by transitivity")
+                return True
 
         # Check for self-loops: x |-> x or x |-> ... where x appears in values
         for pto in points_to:
@@ -198,9 +202,7 @@ class SatisfiabilityChecker:
                             print(f"Aliasing contradiction: {pto1.location} points to multiple values in separating conjunction")
                         return True
 
-        # Check for aliasing through equalities
-        eq_classes = self._build_equivalence_classes(equalities)
-
+        # Check for aliasing through equalities (eq_classes already built above)
         # Check if aliased locations point to different values
         for i, pto1 in enumerate(points_to):
             for pto2 in points_to[i+1:]:
