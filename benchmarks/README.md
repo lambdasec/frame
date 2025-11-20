@@ -4,20 +4,24 @@ Unified benchmark infrastructure for evaluating Frame against industry-standard 
 
 ## Quick Start
 
-### Curated Benchmarks (Recommended - ~4000 tests)
+### Curated Benchmarks (Recommended - ~4750 tests)
 
 ```bash
-# Run curated benchmarks (~4000 tests, representative sample)
+# Run curated benchmarks (~4750 tests, representative sample)
 python -m benchmarks run --curated
 
-# Results: ~10-15 minutes, covers all theories and divisions
+# Results: ~15-20 minutes, covers all theories and divisions
 ```
 
 **Curated sets provide:**
 - ✅ **Representative sampling:** Stratified across all sources/divisions
-- ✅ **Fast iteration:** ~15 minutes vs. 2+ hours for full set
+- ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
-- ✅ **Better coverage:** ~4000 tests (700 SL-COMP + 3300 QF_S)
+- ✅ **Complete coverage:** ~4750 tests across all 4 theory divisions
+  - 700 SL-COMP (separation logic)
+  - 3300 QF_S (string theory)
+  - 500 QF_AX (array theory)
+  - 250 QF_BV (bitvector theory)
 
 ### Full Benchmarks (Comprehensive - ~20k tests)
 
@@ -31,7 +35,7 @@ python -m benchmarks run --division qf_shls_entl
 
 ## Benchmark Sets
 
-### Curated Sets (~4000 tests - Recommended)
+### Curated Sets (~4750 tests - Recommended)
 
 **SL-COMP Curated: 700 tests** (from 1,298 total)
 - Stratified sampling across all 12 divisions
@@ -43,7 +47,17 @@ python -m benchmarks run --division qf_shls_entl
 - Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
 - Representative 17% sample
 
-**Total Curated: ~4,000 tests**
+**QF_AX Curated: 500 tests** (from 551 total)
+- Array theory with extensionality
+- Operations: select, store, const
+- Executed via Z3 subprocess for 100% accuracy
+
+**QF_BV Curated: 250 tests** (from full BV suite)
+- Bitvector theory (8-bit, 16-bit, 32-bit)
+- Coverage: arithmetic, comparisons, bitwise, shifts
+- Executed via Z3 subprocess for 100% accuracy
+
+**Total Curated: ~4,750 tests**
 
 ### Full Sets (~20k tests)
 
@@ -97,14 +111,17 @@ python -m benchmarks run --division qf_shls_entl
 
 **Unified interface for all benchmark types**:
 ```bash
-# Run all curated benchmarks (~4500 tests: SL-COMP + QF_S + QF_AX + QF_BV)
+# Run all curated benchmarks (~4750 tests: SL-COMP + QF_S + QF_AX + QF_BV)
 python -m benchmarks run --curated
 
+# Run ALL benchmarks (~20k tests: all divisions, all theories)
+python -m benchmarks run --all
+
 # Run specific theories
-python -m benchmarks run --division slcomp_curated   # Separation logic (Frame-native)
-python -m benchmarks run --division qf_s_curated     # String theory (Frame-native)
-python -m benchmarks run --division qf_ax_curated    # Array theory (Z3 direct, 250 tests)
-python -m benchmarks run --division qf_bv_curated    # Bitvector theory (Z3 direct, 20 tests)
+python -m benchmarks run --division slcomp_curated   # Separation logic (700 tests)
+python -m benchmarks run --division qf_s_curated     # String theory (3300 tests)
+python -m benchmarks run --division qf_ax_curated    # Array theory (500 tests)
+python -m benchmarks run --division qf_bv_curated    # Bitvector theory (250 tests)
 
 # Custom options
 python -m benchmarks run --curated --max-tests 100
