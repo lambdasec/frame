@@ -64,9 +64,12 @@ python -m benchmarks run --division qf_shls_entl
 **Total Curated: 4,742 tests**
 - **Overall: 83.7% correct (3971/4742), 2 errors, avg 1.7s/test**
 
-### Full Sets (~20k tests)
+### Full Sets (19,801 tests)
 
-**SL-COMP: 1,298 benchmarks** across 12 divisions
+**Overall Full Results: 83.9% correct (16608/19801), 1 error, avg 0.8s/test**
+
+**SL-COMP Full: 861 benchmarks** across 13 divisions
+- **Results: 77.7% correct (669/861), 1 error in qf_bsl_sat**
 
 | Division | Tests | Focus |
 |----------|-------|-------|
@@ -85,7 +88,22 @@ python -m benchmarks run --division qf_shls_entl
 | qf_bsllia_sat | 24 | Basic SL + arithmetic |
 | bsl_sat | 3 | With quantifiers |
 
+**Detailed Full Results by Division**:
+- bsl_sat: 100.0% (3/3), 0 errors
+- qf_bsl_sat: 32.6% (15/46), 1 error ⚠️
+- qf_bsllia_sat: 58.3% (14/24), 0 errors
+- qf_shid_entl: 98.0% (49/50), 0 errors
+- qf_shid_sat: 88.9% (88/99), 0 errors
+- qf_shidlia_entl: 54.0% (27/50), 0 errors
+- qf_shidlia_sat: 57.6% (19/33), 0 errors
+- qf_shlid_entl: 42.0% (21/50), 0 errors
+- qf_shls_entl: 76.0% (225/296), 0 errors
+- qf_shls_sat: 100.0% (110/110), 0 errors
+- shid_entl: 96.0% (48/50), 0 errors
+- shidlia_entl: 100.0% (50/50), 0 errors
+
 **QF_S: 18,940 benchmarks** from SMT-LIB 2024
+- **Results: 84.2% correct (15939/18940), 0 errors**
 - Comprehensive string theory tests
 - Sources: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje, etc.
 - Operations: concat, contains, replace, indexOf, regex matching
