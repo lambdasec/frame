@@ -1,41 +1,51 @@
 """Base utilities for running benchmarks"""
 
-import subprocess
+import z3
 from typing import Tuple, Optional
 
 
 def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[str]]:
     """
-    Run an SMT-LIB 2.6 file directly with Z3
+    Run an SMT-LIB 2.6 file directly with Z3 Python API
 
     Args:
         filepath: Path to .smt2 file
-        timeout: Timeout in seconds
+        timeout: Timeout in milliseconds (converted from seconds for compatibility)
 
     Returns:
         (result, error) where result is 'sat', 'unsat', 'unknown', or 'timeout'
     """
     try:
-        result = subprocess.run(
-            ['z3', filepath, f'-T:{timeout}'],
-            capture_output=True,
-            text=True,
-            timeout=timeout + 1
-        )
+        # Parse the SMT2 file
+        assertions = z3.parse_smt2_file(filepath)
 
-        output = result.stdout.strip()
+        # Create solver with timeout
+        solver = z3.Solver()
+        solver.set("timeout", timeout * 1000)  # Z3 expects milliseconds
 
-        if 'sat' in output and 'unsat' not in output:
+        # Add all assertions from the file
+        solver.add(assertions)
+
+        # Check satisfiability
+        check_result = solver.check()
+
+        if check_result == z3.sat:
             return 'sat', None
-        elif 'unsat' in output:
+        elif check_result == z3.unsat:
             return 'unsat', None
-        else:
-            return 'unknown', None
+        else:  # z3.unknown
+            # Check if it's a timeout or genuinely unknown
+            reason = solver.reason_unknown()
+            if 'timeout' in reason.lower() or 'canceled' in reason.lower():
+                return 'timeout', f'Z3 timeout: {reason}'
+            else:
+                return 'unknown', None
 
-    except subprocess.TimeoutExpired:
-        return 'timeout', 'Z3 timeout'
     except FileNotFoundError:
-        return 'error', 'Z3 not found in PATH'
+        return 'error', 'File not found'
+    except z3.Z3Exception as e:
+        # Z3-specific errors (parsing, etc.)
+        return 'error', f'Z3 error: {str(e)}'
     except Exception as e:
         return 'error', str(e)
 
