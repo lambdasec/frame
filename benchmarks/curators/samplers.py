@@ -38,6 +38,23 @@ def create_qf_s_curated_set(cache_dir: str, sample_size: int = 3300, seed: int =
         count = download_full_kaluza(cache_dir)
         if count == 0:
             print("ERROR: Failed to download full QF_S set")
+            print("Falling back to creating sample benchmarks...")
+            # Fall back to creating samples from comprehensive_samples
+            from benchmarks.downloaders import download_qf_s_kaluza
+            download_qf_s_kaluza(cache_dir, max_files=sample_size)
+
+            # Use the kaluza samples directory as source
+            kaluza_dir = os.path.join(cache_dir, 'qf_s', 'kaluza')
+            if os.path.exists(kaluza_dir):
+                # Copy kaluza samples to curated directory
+                os.makedirs(qf_s_curated_dir, exist_ok=True)
+                import shutil
+                for file in Path(kaluza_dir).glob('*.smt2'):
+                    shutil.copy2(file, os.path.join(qf_s_curated_dir, file.name))
+                created_count = len(list(Path(qf_s_curated_dir).glob('*.smt2')))
+                print(f"\n✓ Created curated set from samples: {created_count} files")
+                print(f"  Location: {qf_s_curated_dir}")
+                return created_count
             return 0
 
     # Find all .smt2 files recursively
