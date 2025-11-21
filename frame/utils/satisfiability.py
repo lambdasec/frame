@@ -99,7 +99,14 @@ class SatisfiabilityChecker:
         2. Spatial contradictions: emp AND x |-> y
         3. Self-loops: x |-> x (in separation logic, this is typically UNSAT)
         4. P AND NOT(P) contradictions (after normalizing emp)
+        5. Or where ALL branches contradict: (A ∨ B) where both A and B are UNSAT
         """
+        # Check for Or where all branches contradict
+        if self._check_or_all_branches_contradict(formula):
+            if self.verbose:
+                print(f"Contradiction: All Or branches lead to contradictions")
+            return True
+
         # Check for P AND NOT(P) contradictions
         if self._has_p_and_not_p_contradiction(formula):
             if self.verbose:
@@ -133,7 +140,7 @@ class SatisfiabilityChecker:
                 print(f"Contradiction: emp & spatial_formula")
             return True
 
-        # Extract all atomic formulas
+        # Extract all atomic formulas (but NOT from Or branches - handle those separately above)
         equalities = []
         inequalities = []
         points_to = []
@@ -148,21 +155,20 @@ class SatisfiabilityChecker:
             elif isinstance(f, (And, SepConj)):
                 extract(f.left)
                 extract(f.right)
-            elif isinstance(f, Or):
-                # Don't traverse into disjunctions (conservative)
-                pass
+            # Don't extract from Or - those are handled by _check_or_all_branches_contradict
 
         extract(formula)
 
-        # Check for pure contradictions: x = y AND x != y
-        for eq_left, eq_right in equalities:
-            for neq_left, neq_right in inequalities:
-                # Check if same pair appears in both equality and inequality
-                if (self._exprs_equal(eq_left, neq_left) and self._exprs_equal(eq_right, neq_right)) or \
-                   (self._exprs_equal(eq_left, neq_right) and self._exprs_equal(eq_right, neq_left)):
-                    if self.verbose:
-                        print(f"Contradiction: {eq_left} = {eq_right} AND {neq_left} != {neq_right}")
-                    return True
+        # Build equivalence classes for transitivity and aliasing checks
+        eq_classes = self._build_equivalence_classes(equalities)
+
+        # Check for pure contradictions: x != y but x = y (by transitivity)
+        # For example: x != y AND x = nil AND y = nil => contradiction
+        for neq_left, neq_right in inequalities:
+            if self._in_same_eq_class(neq_left, neq_right, eq_classes):
+                if self.verbose:
+                    print(f"Contradiction: {neq_left} != {neq_right} but they are equal by transitivity")
+                return True
 
         # Check for self-loops: x |-> x or x |-> ... where x appears in values
         for pto in points_to:
@@ -198,9 +204,7 @@ class SatisfiabilityChecker:
                             print(f"Aliasing contradiction: {pto1.location} points to multiple values in separating conjunction")
                         return True
 
-        # Check for aliasing through equalities
-        eq_classes = self._build_equivalence_classes(equalities)
-
+        # Check for aliasing through equalities (eq_classes already built above)
         # Check if aliased locations point to different values
         for i, pto1 in enumerate(points_to):
             for pto2 in points_to[i+1:]:
@@ -211,6 +215,104 @@ class SatisfiabilityChecker:
                               for v1 in pto1.values for v2 in pto2.values):
                         if self.verbose:
                             print(f"Aliasing through equality: {pto1.location} and {pto2.location} are equal but point to different values")
+                        return True
+
+        return False
+
+    def _check_or_all_branches_contradict(self, formula: Formula) -> bool:
+        """
+        Check if formula contains an Or where ALL branches lead to contradictions.
+
+        For example:
+        - (x=y ∧ x≠y) ∨ (x=z ∧ x≠z) => TRUE (both branches contradict)
+        - (x=y) ∨ (x≠y) => FALSE (neither branch contradicts individually)
+        - (x=y ∧ x≠y) ∨ (x=z) => FALSE (only one branch contradicts)
+        """
+        def check_formula(f):
+            if isinstance(f, Or):
+                # Check if BOTH branches have contradictions
+                # We recursively check each branch as a standalone formula
+                left_contradicts = self._check_branch_contradiction(f.left)
+                right_contradicts = self._check_branch_contradiction(f.right)
+
+                if left_contradicts and right_contradicts:
+                    if self.verbose:
+                        print(f"Or contradiction: both branches contradict")
+                    return True
+
+                # Also recursively check within each branch for nested Ors
+                if check_formula(f.left) or check_formula(f.right):
+                    return True
+
+            elif isinstance(f, (And, SepConj)):
+                # Recursively check both sides
+                return check_formula(f.left) or check_formula(f.right)
+            elif isinstance(f, Not):
+                return check_formula(f.formula)
+            elif isinstance(f, (Exists, Forall)):
+                return check_formula(f.formula)
+
+            return False
+
+        return check_formula(formula)
+
+    def _check_branch_contradiction(self, branch: Formula) -> bool:
+        """
+        Check if a single branch (from an Or) has an obvious contradiction.
+        This is similar to has_obvious_contradiction but without the Or-branch check
+        to avoid infinite recursion.
+        """
+        # Check for P AND NOT(P) contradictions
+        if self._has_p_and_not_p_contradiction(branch):
+            return True
+
+        # Extract atomic formulas from this branch only
+        equalities = []
+        inequalities = []
+        points_to = []
+
+        def extract(f):
+            if isinstance(f, Eq):
+                equalities.append((f.left, f.right))
+            elif isinstance(f, Neq):
+                inequalities.append((f.left, f.right))
+            elif isinstance(f, PointsTo):
+                points_to.append(f)
+            elif isinstance(f, (And, SepConj)):
+                extract(f.left)
+                extract(f.right)
+            # Don't recurse into Or - we're checking a single branch
+
+        extract(branch)
+
+        # Build equivalence classes for this branch
+        eq_classes = self._build_equivalence_classes(equalities)
+
+        # Check for pure contradictions: x != y but x = y (by transitivity)
+        for neq_left, neq_right in inequalities:
+            if self._in_same_eq_class(neq_left, neq_right, eq_classes):
+                return True
+
+        # Check for self-loops
+        for pto in points_to:
+            if isinstance(pto.location, Var):
+                for val in pto.values:
+                    if isinstance(val, Var) and val.name == pto.location.name:
+                        return True
+
+        # Check for aliasing violations
+        if len(points_to) >= 2:
+            for i, pto1 in enumerate(points_to):
+                for pto2 in points_to[i+1:]:
+                    if self._exprs_equal(pto1.location, pto2.location):
+                        return True
+
+        # Check for aliasing through equalities
+        for i, pto1 in enumerate(points_to):
+            for pto2 in points_to[i+1:]:
+                if self._in_same_eq_class(pto1.location, pto2.location, eq_classes):
+                    if not all(self._in_same_eq_class(v1, v2, eq_classes)
+                              for v1 in pto1.values for v2 in pto2.values):
                         return True
 
         return False

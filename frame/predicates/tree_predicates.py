@@ -51,7 +51,7 @@ class Tree(InductivePredicate):
 
         return Or(base_case, recursive_case)
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         if depth <= 0:
             return PredicateCall(self.name, args)
 
@@ -69,8 +69,8 @@ class Tree(InductivePredicate):
         r = Var(f"r_{id(args)}_{depth}")
 
         points_to = PointsTo(x, [l, r])
-        left_tree = Tree().unfold_bounded([l], depth - 1)
-        right_tree = Tree().unfold_bounded([r], depth - 1)
+        left_tree = Tree().unfold_bounded([l], depth - 1, registry)
+        right_tree = Tree().unfold_bounded([r], depth - 1, registry)
 
         recursive_case = Exists(
             l.name,

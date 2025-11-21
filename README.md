@@ -2,19 +2,25 @@
 
 A fast, practical separation logic solver combining heap reasoning, string constraint solving, and automated bug detection.
 
-[![Tests](https://img.shields.io/badge/tests-1254%2F1254-green)]() [![Python](https://img.shields.io/badge/python-3.7%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-1274%2F1274-green)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]() [![Benchmarks](https://img.shields.io/badge/benchmarks-4742%20curated-blue)]()
 
 ## Features
 
 The only solver combining **4 SMT theories** for comprehensive program verification:
 - **Separation Logic**: Heap structure reasoning with inductive predicates (lists, trees, DLLs)
-- **String Theory** (QF_S): SMT-LIB string operations - 82.8% accuracy on 18,940 benchmarks
-- **Array Theory** (QF_AX): Select/store operations - **100% accuracy on 551 benchmarks**
-- **Bitvector Theory** (QF_BV): Fixed-width arithmetic - **100% accuracy on curated benchmarks**
+- **String Theory** (QF_S): SMT-LIB string operations - 83.9% accuracy on 3,300 curated benchmarks
+- **Array Theory** (QF_AX): Select/store operations - **100% accuracy on 500 curated benchmarks**
+- **Bitvector Theory** (QF_BV): Fixed-width arithmetic - **76.4% accuracy on 250 curated benchmarks**
 - **Incorrectness Logic**: Under-approximate bug detection with concrete exploits
 - **Taint Analysis**: Cross-theory security vulnerability detection
 
 **Performance**: 10-50x faster than Z3/CVC5 on string constraints, <1ms reflexivity checks, 0.025-0.048s per benchmark on array/bitvector theories
+
+**Recent Improvements**:
+- ✅ Fixed RecursionError handling for deep predicate unfolding (reduced crashes on 4742 benchmarks)
+- ✅ Improved Or-branch contradiction detection (no false positives on SAT formulas)
+- ✅ Fixed nested predicate unfolding for complex recursive definitions
+- ✅ Added transitivity detection in equality reasoning
 
 ## Installation
 
@@ -23,11 +29,42 @@ git clone https://github.com/codelion/proofs.git
 cd proofs
 pip install -r requirements.txt
 
-# Run tests (1,254 tests, ~52s)
+# Run tests (1,274 tests including regression tests, ~60s)
 python -m pytest tests/ -q
+
+# Run curated benchmarks (4,742 tests, ~15-20 minutes)
+python -m benchmarks run --curated
 ```
 
-**Requirements**: Python 3.7+, Z3, requests, zstandard
+**Requirements**: Python 3.10+, Z3, requests, zstandard
+
+## Benchmarks
+
+Frame is validated against industry-standard benchmark suites:
+
+```bash
+# Quick validation (4,742 curated tests, ~15-20 min)
+python -m benchmarks run --curated
+
+# Comprehensive validation (~20k tests, ~2+ hours)
+python -m benchmarks run --all
+```
+
+**Curated Results** (4,742 tests, ~15-20 min):
+- SL-COMP: 73.8% correct on 692 benchmarks (separation logic entailment/SAT)
+- QF_S: 83.9% correct on 3,300 benchmarks (string theory)
+- QF_AX: **100%** correct on 500 benchmarks (array theory)
+- QF_BV: **76.4%** correct on 250 benchmarks (bitvector theory)
+- **Overall: 83.7% correct (3971/4742), 2 errors, avg 1.7s/test**
+
+**Full Results** (19,801 tests, ~2+ hours):
+- SL-COMP: 77.7% correct on 861 benchmarks (all 13 divisions)
+- QF_S: 84.2% correct on 18,940 benchmarks (complete SMT-LIB 2024)
+- QF_AX: **100%** correct on 500 benchmarks (array theory)
+- QF_BV: **76.4%** correct on 250 benchmarks (bitvector theory)
+- **Overall: 83.9% correct (16608/19801), 1 error, avg 0.8s/test**
+
+See [benchmarks/README.md](benchmarks/README.md) for detailed results and usage.
 
 ## Quick Start
 
@@ -67,26 +104,26 @@ print(bug.found)  # True if index can exceed bounds
 - **Spatial formulas**: Points-to (`x |-> v`), empty heap (`emp`), separating conjunction (`*`), magic wand (`-*`)
 - **Inductive predicates**: Lists (`ls`, `list`), trees (`tree`), doubly-linked lists (`dll`), custom predicates
 - **Frame inference**: Automatic computation of heap differences
-- **Validation**: 70.6% on SL-COMP curated (700 benchmarks)
+- **Validation**: 73.8% on curated (692 tests, 2 errors), 77.7% on full (861 tests, 1 error)
 
 ### String Theory (QF_S)
 - **Operations**: Concatenation (`str.++`), contains, indexof, replace, substring, regex matching
 - **Coverage**: 10/10 operation categories from SMT-LIB 2.6
-- **Validation**: 82.8% on QF_S curated (3,300 benchmarks), 90.6% on targeted test suite
+- **Validation**: 83.9% on curated (3,300 tests), 84.2% on full (18,940 tests), 90.6% on targeted test suite
 - **Sources**: Kaluza, PISA, PyEx, AppScan, slog_stranger, woorpje
 
 ### Array Theory (QF_AX) - **100% Validated**
 - **Operations**: Select (`select arr i`), store (`store arr i v`), constant arrays
 - **Axioms**: Extensionality, read-over-write consistency
 - **Security**: Buffer overflow detection, bounds checking with symbolic indices
-- **Validation**: **100% accuracy (551/551)** on SMT-LIB 2024 QF_AX benchmarks, 0.048s avg
+- **Validation**: **100% accuracy on 500 curated benchmarks**, executed via Z3 subprocess, 0.048s avg
 
-### Bitvector Theory (QF_BV) - **100% Validated**
+### Bitvector Theory (QF_BV)
 - **Arithmetic**: `bvadd`, `bvsub`, `bvmul`, `bvudiv`, `bvsdiv`, `bvurem`, `bvsrem`
 - **Comparisons**: Unsigned (`bvult`, `bvule`, `bvugt`, `bvuge`), signed (`bvslt`, `bvsle`, `bvsgt`, `bvsge`)
 - **Bitwise**: `bvand`, `bvor`, `bvxor`, `bvnot`, `bvshl`, `bvlshr`, `bvashr`
 - **Edge cases**: Overflow detection (signed/unsigned), division by zero handling
-- **Validation**: **100% accuracy (20/20)** on curated benchmarks (8/16/32-bit widths), 0.025s avg
+- **Validation**: **76.4% accuracy on 250 curated benchmarks**, executed via Z3 subprocess, 0.025s avg
 
 ### Cross-Theory Integration
 Frame uniquely combines these theories for real-world program verification:
@@ -175,13 +212,13 @@ Frame includes **~20,000+ benchmarks** across 4 SMT theories from industry-stand
 
 ### Validation Results
 
-| Theory | Curated | Full Set | Accuracy | Avg Time |
-|--------|---------|----------|----------|----------|
-| **Separation Logic** | 700 tests | 1,298 tests | 70.6% | ~5ms |
-| **String (QF_S)** | 3,300 tests | 18,940 tests | 82.8% | ~15ms |
-| **Array (QF_AX)** | - | 551 tests | **100%** ✓ | 0.048s |
-| **Bitvector (QF_BV)** | 20 tests | Downloading | **100%** ✓ | 0.025s |
-| **Total** | ~4,000 tests | ~21,000 tests | 78.5% | - |
+| Theory | Curated | Full Set | Curated Acc. | Full Acc. | Avg Time |
+|--------|---------|----------|--------------|-----------|----------|
+| **Separation Logic** | 692 tests | 861 tests | 73.8% | 77.7% | 1.7s / 0.8s |
+| **String (QF_S)** | 3,300 tests | 18,940 tests | 83.9% | 84.2% | ~15ms |
+| **Array (QF_AX)** | 500 tests | 500 tests | **100%** ✓ | **100%** ✓ | 0.048s |
+| **Bitvector (QF_BV)** | 250 tests | 250 tests | **76.4%** | **76.4%** | 0.025s |
+| **Total** | 4,742 tests | 19,801 tests | 83.7% | **83.9%** | 1.7s / 0.8s |
 
 ### Running Benchmarks
 
@@ -195,9 +232,10 @@ python -m benchmarks run --division qf_s_curated     # String theory
 python -m benchmarks run --division qf_ax_curated    # Array theory: 100% ✓ (250 tests)
 python -m benchmarks run --division qf_bv_curated    # Bitvector theory: 100% ✓ (20 tests)
 
-# Regression tests (cross-theory integration)
-python -m pytest tests/ -v                           # 1,254 tests including 19 cross-theory
-python -m pytest tests/test_cross_theory_integration.py -v  # Heap+Arrays+Bitvectors integration
+# Regression tests (cross-theory integration + benchmark refactoring)
+python -m pytest tests/ -v                                    # 1,275 tests (1,254 core + 21 benchmark)
+python -m pytest tests/test_cross_theory_integration.py -v    # Heap+Arrays+Bitvectors integration
+python -m pytest tests/test_benchmark_refactoring.py -v       # Benchmark module regression tests (21 tests)
 ```
 
 **Benchmark Sources**:

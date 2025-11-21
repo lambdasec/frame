@@ -244,11 +244,11 @@ class TestWandDomainTracking:
 
         wand = Wand(PointsTo(u, [Const(5)]), PointsTo(x, [Const(7)]))
 
-        # Encode the wand
+        # Encode the wand using heap_id (not heap array)
         import z3
-        heap = z3.Array('test_heap', encoder.LocSort, encoder.ValSort)
+        heap_id = encoder.fresh_heap_id("test_heap")
         constraint, domain = encoder._spatial_encoder.wand_encoder.encode_wand(
-            wand, heap, set(), {}, prefix=""
+            wand, heap_id, set(), {}, prefix=""
         )
 
         # Domain should be EMPTY - wands don't claim locations

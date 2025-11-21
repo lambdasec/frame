@@ -208,7 +208,8 @@ class PredicateRegistry:
         if isinstance(formula, PredicateCall):
             predicate = self.get(formula.name)
             if predicate:
-                return predicate.unfold_bounded(formula.args, depth)
+                # Pass self (the registry) so nested predicates can be unfolded
+                return predicate.unfold_bounded(formula.args, depth, registry=self)
             else:
                 # Unknown predicate, leave as is
                 return formula
