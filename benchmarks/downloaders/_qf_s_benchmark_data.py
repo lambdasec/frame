@@ -6,7 +6,8 @@ Extracted SMT2 benchmark strings for Kaluza, Pisa, and Woorpje benchmarks.
 # Kaluza comprehensive samples
 comprehensive_samples = {
     # Basic concatenation tests
-    'concat_eq_01.smt2': """(set-logic QF_S)
+    'concat_eq_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= y (str.++ x "world")))
@@ -14,7 +15,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'concat_assoc_01.smt2': """(set-logic QF_S)
+    'concat_assoc_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -22,14 +24,16 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'concat_empty_01.smt2': """(set-logic QF_S)
+    'concat_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= x (str.++ x "")))
 (assert (= x (str.++ "" x)))
 (check-sat)
 ; expected: sat
 """,
-    'concat_neq_01.smt2': """(set-logic QF_S)
+    'concat_neq_01.smt2': """(set-info :status unsat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "ab"))
@@ -40,13 +44,15 @@ comprehensive_samples = {
 """,
 
     # Contains operations
-    'contains_sat_01.smt2': """(set-logic QF_S)
+    'contains_sat_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.contains x "admin"))
 (check-sat)
 ; expected: sat
 """,
-    'contains_trans_01.smt2': """(set-logic QF_S)
+    'contains_trans_01.smt2': """(set-info :status unsat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -56,7 +62,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: unsat
 """,
-    'contains_substr_01.smt2': """(set-logic QF_S)
+    'contains_substr_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "hello world"))
@@ -65,7 +72,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'concat_contains_01.smt2': """(set-logic QF_S)
+    'concat_contains_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -75,13 +83,15 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'contains_empty_01.smt2': """(set-logic QF_S)
+    'contains_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.contains x ""))
 (check-sat)
 ; expected: sat
 """,
-    'contains_self_01.smt2': """(set-logic QF_S)
+    'contains_self_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.contains x x))
 (check-sat)
@@ -89,13 +99,15 @@ comprehensive_samples = {
 """,
 
     # Length operations
-    'length_eq_01.smt2': """(set-logic QF_S)
+    'length_eq_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= (str.len x) 5))
 (check-sat)
 ; expected: sat
 """,
-    'length_concat_01.smt2': """(set-logic QF_S)
+    'length_concat_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -104,20 +116,23 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'length_bounds_01.smt2': """(set-logic QF_S)
+    'length_bounds_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (>= (str.len x) 5))
 (assert (<= (str.len x) 10))
 (check-sat)
 ; expected: sat
 """,
-    'length_nonneg_01.smt2': """(set-logic QF_S)
+    'length_nonneg_01.smt2': """(set-info :status unsat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (< (str.len x) 0))
 (check-sat)
 ; expected: unsat
 """,
-    'length_empty_01.smt2': """(set-logic QF_S)
+    'length_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= (str.len "") 0))
 (assert (= x ""))
@@ -127,7 +142,8 @@ comprehensive_samples = {
 """,
 
     # Substring operations
-    'substr_basic_01.smt2': """(set-logic QF_S)
+    'substr_basic_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "hello"))
@@ -136,13 +152,15 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'substr_empty_01.smt2': """(set-logic QF_S)
+    'substr_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= (str.substr x 0 0) ""))
 (check-sat)
 ; expected: sat
 """,
-    'substr_length_01.smt2': """(set-logic QF_S)
+    'substr_length_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "hello"))
@@ -151,7 +169,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'substr_concat_01.smt2': """(set-logic QF_S)
+    'substr_concat_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -162,7 +181,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'substr_bounds_01.smt2': """(set-logic QF_S)
+    'substr_bounds_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "test"))
@@ -173,7 +193,8 @@ comprehensive_samples = {
 """,
 
     # Prefix/Suffix operations
-    'prefix_sat_01.smt2': """(set-logic QF_S)
+    'prefix_sat_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (str.prefixof x y))
@@ -182,19 +203,22 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'prefix_empty_01.smt2': """(set-logic QF_S)
+    'prefix_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.prefixof "" x))
 (check-sat)
 ; expected: sat
 """,
-    'prefix_self_01.smt2': """(set-logic QF_S)
+    'prefix_self_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.prefixof x x))
 (check-sat)
 ; expected: sat
 """,
-    'suffix_sat_01.smt2': """(set-logic QF_S)
+    'suffix_sat_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (str.suffixof x y))
@@ -203,7 +227,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'suffix_empty_01.smt2': """(set-logic QF_S)
+    'suffix_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (str.suffixof "" x))
 (check-sat)
@@ -211,21 +236,24 @@ comprehensive_samples = {
 """,
 
     # IndexOf operations
-    'indexof_found_01.smt2': """(set-logic QF_S)
+    'indexof_found_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= x "hello world"))
 (assert (= (str.indexof x "world" 0) 6))
 (check-sat)
 ; expected: sat
 """,
-    'indexof_notfound_01.smt2': """(set-logic QF_S)
+    'indexof_notfound_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= x "hello"))
 (assert (= (str.indexof x "world" 0) (- 1)))
 (check-sat)
 ; expected: sat
 """,
-    'indexof_empty_01.smt2': """(set-logic QF_S)
+    'indexof_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= (str.indexof x "" 0) 0))
 (check-sat)
@@ -233,7 +261,8 @@ comprehensive_samples = {
 """,
 
     # Replace operations
-    'replace_basic_01.smt2': """(set-logic QF_S)
+    'replace_basic_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "hello world"))
@@ -242,7 +271,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'replace_noop_01.smt2': """(set-logic QF_S)
+    'replace_noop_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "hello"))
@@ -251,7 +281,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'replace_empty_01.smt2': """(set-logic QF_S)
+    'replace_empty_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= y (str.replace x "" "a")))
@@ -260,7 +291,8 @@ comprehensive_samples = {
 """,
 
     # At (character access) operations
-    'at_basic_01.smt2': """(set-logic QF_S)
+    'at_basic_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= x "hello"))
 (assert (= (str.at x 0) "h"))
@@ -268,7 +300,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'at_bounds_01.smt2': """(set-logic QF_S)
+    'at_bounds_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (assert (= x "hi"))
 (assert (= (str.at x 5) ""))
@@ -277,7 +310,8 @@ comprehensive_samples = {
 """,
 
     # Complex multi-operation scenarios
-    'complex_01.smt2': """(set-logic QF_S)
+    'complex_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -290,7 +324,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'complex_02.smt2': """(set-logic QF_S)
+    'complex_02.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= x "testing"))
@@ -300,7 +335,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'complex_03.smt2': """(set-logic QF_S)
+    'complex_03.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -311,7 +347,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'complex_unsat_01.smt2': """(set-logic QF_S)
+    'complex_unsat_01.smt2': """(set-info :status unsat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= (str.len x) 5))
@@ -323,7 +360,8 @@ comprehensive_samples = {
 """,
 
     # Security-relevant patterns
-    'taint_sql_01.smt2': """(set-logic QF_S)
+    'taint_sql_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const user_input String)
 (declare-const query String)
 (assert (= query (str.++ "SELECT * FROM users WHERE id=" user_input)))
@@ -331,7 +369,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'taint_xss_01.smt2': """(set-logic QF_S)
+    'taint_xss_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const user_input String)
 (declare-const output String)
 (assert (= output (str.++ "<div>" user_input "</div>")))
@@ -339,7 +378,8 @@ comprehensive_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'sanitize_01.smt2': """(set-logic QF_S)
+    'sanitize_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const user_input String)
 (declare-const sanitized String)
 (assert (= sanitized (str.replace user_input "'" "")))
@@ -351,7 +391,8 @@ comprehensive_samples = {
 
 # Pisa samples
 pisa_samples = {
-    'path_01.smt2': """(set-logic QF_S)
+    'path_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const cond Bool)
@@ -360,7 +401,8 @@ pisa_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'path_02.smt2': """(set-logic QF_S)
+    'path_02.smt2': """(set-info :status unsat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const result String)
 (declare-const flag Bool)
@@ -370,7 +412,8 @@ pisa_samples = {
 (check-sat)
 ; expected: unsat
 """,
-    'branch_merge_01.smt2': """(set-logic QF_S)
+    'branch_merge_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -382,7 +425,8 @@ pisa_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'loop_invariant_01.smt2': """(set-logic QF_S)
+    'loop_invariant_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x0 String)
 (declare-const x1 String)
 (declare-const x2 String)
@@ -392,7 +436,8 @@ pisa_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'symbolic_exec_01.smt2': """(set-logic QF_S)
+    'symbolic_exec_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const input String)
 (declare-const output String)
 (declare-const sanitized String)
@@ -406,7 +451,8 @@ pisa_samples = {
 
 # Woorpje samples
 woorpje_samples = {
-    'word_eq_01.smt2': """(set-logic QF_S)
+    'word_eq_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= (str.++ x y) (str.++ y x)))
@@ -416,7 +462,8 @@ woorpje_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'word_eq_02.smt2': """(set-logic QF_S)
+    'word_eq_02.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)
@@ -425,14 +472,16 @@ woorpje_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'word_eq_03.smt2': """(set-logic QF_S)
+    'word_eq_03.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= (str.++ x x) (str.++ y y y)))
 (check-sat)
 ; expected: sat
 """,
-    'quadratic_01.smt2': """(set-logic QF_S)
+    'quadratic_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (assert (= (str.++ x x) (str.++ y y)))
@@ -440,7 +489,8 @@ woorpje_samples = {
 (check-sat)
 ; expected: sat
 """,
-    'periodic_01.smt2': """(set-logic QF_S)
+    'periodic_01.smt2': """(set-info :status sat)
+(set-logic QF_S)
 (declare-const x String)
 (declare-const y String)
 (declare-const z String)

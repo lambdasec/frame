@@ -17,50 +17,51 @@ def download_qf_ax_samples(cache_dir: str, max_files: Optional[int] = None) -> i
     # QF_AX benchmarks test array operations with select/store axioms
     # NOTE: Using QF_ALIA for samples since they use Int sorts (arrays + linear integer arithmetic)
     qf_ax_samples = {
-        'select_store_01.smt2': """(set-logic QF_ALIA)
+        'select_store_01.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= arr2 (store arr1 0 42)))
 (assert (= (select arr2 0) 42))
 (check-sat)
-; expected: sat
 """,
-        'select_store_diff_index.smt2': """(set-logic QF_ALIA)
+        'select_store_diff_index.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= arr2 (store arr1 0 42)))
 (assert (= (select arr1 5) 10))
 (assert (= (select arr2 5) 10))
 (check-sat)
-; expected: sat
 """,
-        'array_equality_01.smt2': """(set-logic QF_ALIA)
+        'array_equality_01.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr1 (Array Int Int))
 (declare-const arr2 (Array Int Int))
 (assert (= (select arr1 0) (select arr2 0)))
 (assert (= (select arr1 1) (select arr2 1)))
 (assert (not (= arr1 arr2)))
 (check-sat)
-; expected: sat
 """,
-        'const_array_01.smt2': """(set-logic QF_ALIA)
+        'const_array_01.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (assert (= arr ((as const (Array Int Int)) 0)))
 (assert (= (select arr 5) 0))
 (assert (= (select arr 100) 0))
 (check-sat)
-; expected: sat
 """,
-        'buffer_overflow_01.smt2': """(set-logic QF_ALIA)
+        'buffer_overflow_01.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (declare-const size Int)
 (declare-const index Int)
 (assert (= size 10))
 (assert (>= index size))
 (check-sat)
-; expected: sat (buffer overflow possible)
 """,
-        'in_bounds_01.smt2': """(set-logic QF_ALIA)
+        'in_bounds_01.smt2': """(set-info :status sat)
+(set-logic QF_ALIA)
 (declare-const arr (Array Int Int))
 (declare-const size Int)
 (declare-const index Int)
@@ -68,7 +69,6 @@ def download_qf_ax_samples(cache_dir: str, max_files: Optional[int] = None) -> i
 (assert (< index size))
 (assert (>= index 0))
 (check-sat)
-; expected: sat (in bounds access)
 """,
     }
 
