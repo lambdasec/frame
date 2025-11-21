@@ -16,65 +16,65 @@ def download_qf_bv_samples(cache_dir: str, max_files: Optional[int] = None) -> i
 
     # QF_BV benchmarks test bitvector operations and overflow detection
     qf_bv_samples = {
-        'bvadd_01.smt2': """(set-logic QF_BV)
+        'bvadd_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (declare-const y (_ BitVec 8))
 (assert (= x #x05))
 (assert (= y #x03))
 (assert (= (bvadd x y) #x08))
 (check-sat)
-; expected: sat
 """,
-        'bvand_01.smt2': """(set-logic QF_BV)
+        'bvand_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (assert (= (bvand x #xFF) x))
 (check-sat)
-; expected: sat
 """,
-        'bvor_01.smt2': """(set-logic QF_BV)
+        'bvor_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (assert (= (bvor #xF0 #x0F) #xFF))
 (check-sat)
-; expected: sat
 """,
-        'bvxor_01.smt2': """(set-logic QF_BV)
+        'bvxor_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (assert (= x #xFF))
 (assert (= (bvxor x x) #x00))
 (check-sat)
-; expected: sat
 """,
-        'overflow_unsigned_01.smt2': """(set-logic QF_BV)
+        'overflow_unsigned_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (declare-const y (_ BitVec 8))
 (assert (= x #xFF))
 (assert (= y #x01))
 (assert (= (bvadd x y) #x00))
 (check-sat)
-; expected: sat (unsigned overflow)
 """,
-        'overflow_signed_01.smt2': """(set-logic QF_BV)
+        'overflow_signed_01.smt2': """(set-info :status unsat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (assert (= x #x7F))
 (assert (bvsgt (bvadd x #x01) x))
 (check-sat)
-; expected: unsat (signed overflow wraps negative)
 """,
-        'shift_01.smt2': """(set-logic QF_BV)
+        'shift_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (assert (= x #x01))
 (assert (= (bvshl x #x03) #x08))
 (check-sat)
-; expected: sat
 """,
-        'comparison_unsigned_01.smt2': """(set-logic QF_BV)
+        'comparison_unsigned_01.smt2': """(set-info :status sat)
+(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
 (declare-const y (_ BitVec 8))
 (assert (= x #x05))
 (assert (= y #x0A))
 (assert (bvult x y))
 (check-sat)
-; expected: sat
 """,
     }
 
