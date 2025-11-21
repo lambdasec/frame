@@ -173,17 +173,19 @@ def test_wand_z3_encoding():
     # Create wand formula: x |-> y -* ls(z, nil)
     wand = Wand(PointsTo(x, [y]), PredicateCall("ls", [z, Const(None)]))
 
-    # Try to encode
+    # Try to encode using the correct API (encode_formula, not encode_heap_assertion directly)
     try:
         import z3
-        heap = z3.Array('heap', encoder.LocSort, encoder.ValSort)
-        constraints, domain = encoder.encode_heap_assertion(wand, heap, set())
+        # Use encode_formula which properly creates heap_id
+        constraints, heap_id, domain = encoder.encode_formula(wand)
 
         print(f"Encoded wand to Z3 (conservative encoding)")
         print(f"Constraints type: {type(constraints)}")
+        print(f"Heap ID: {heap_id}")
         print(f"Domain: {domain}")
 
         assert constraints is not None, "Should produce some constraint"
+        assert heap_id is not None, "Should produce heap ID"
         print("✓ Wand Z3 encoding works (conservative)")
     except Exception as e:
         print(f"✗ Failed to encode wand: {e}")

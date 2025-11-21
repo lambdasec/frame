@@ -47,7 +47,7 @@ class ListSegment(InductivePredicate):
 
         return Or(base_case, recursive_case)
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         if depth <= 0:
             return PredicateCall(self.name, args)
 
@@ -61,7 +61,7 @@ class ListSegment(InductivePredicate):
 
         # Recursive case with bounded depth: ∃z. (x != y) ∧ (x |-> z * ls(z, y))
         z = Var(f"z_{id(args)}_{depth}")  # Fresh variable
-        recursive_call = ListSegment().unfold_bounded([z, y], depth - 1)
+        recursive_call = ListSegment().unfold_bounded([z, y], depth - 1, registry)
         recursive_case = Exists(
             z.name,
             And(
@@ -160,7 +160,7 @@ class ListSegmentWithLength(InductivePredicate):
 
         return Or(base_case, recursive_case)
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         """
         Unfold list segment to a bounded depth with recursive unfolding of nested predicates.
 
@@ -170,6 +170,7 @@ class ListSegmentWithLength(InductivePredicate):
         Args:
             args: Arguments to ls (either [x, y] or [x, y, n])
             depth: Maximum unfolding depth
+            registry: Optional PredicateRegistry for unfolding nested predicates
 
         Returns:
             Formula with nested predicates recursively unfolded
@@ -182,9 +183,9 @@ class ListSegmentWithLength(InductivePredicate):
 
         # Then recursively unfold any nested PredicateCalls in the result
         # This handles nested ls(...) calls that appear in the recursive case
-        return self._unfold_nested(unfolded, depth - 1)
+        return self._unfold_nested(unfolded, depth - 1, registry)
 
-    def _unfold_nested(self, formula: Formula, remaining_depth: int) -> Formula:
+    def _unfold_nested(self, formula: Formula, remaining_depth: int, registry=None) -> Formula:
         """
         Recursively unfold nested PredicateCalls within a formula.
 
@@ -197,36 +198,36 @@ class ListSegmentWithLength(InductivePredicate):
         if isinstance(formula, PredicateCall):
             # If it's a recursive call to ls, unfold it further
             if formula.name == self.name:
-                return self.unfold_bounded(formula.args, remaining_depth)
+                return self.unfold_bounded(formula.args, remaining_depth, registry)
             # Otherwise leave it as-is (other predicates handled separately)
             return formula
 
         elif isinstance(formula, SepConj):
             return SepConj(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, And):
             return And(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, Or):
             return Or(
-                self._unfold_nested(formula.left, remaining_depth),
-                self._unfold_nested(formula.right, remaining_depth)
+                self._unfold_nested(formula.left, remaining_depth, registry),
+                self._unfold_nested(formula.right, remaining_depth, registry)
             )
         elif isinstance(formula, Not):
-            return Not(self._unfold_nested(formula.formula, remaining_depth))
+            return Not(self._unfold_nested(formula.formula, remaining_depth, registry))
         elif isinstance(formula, Exists):
             return Exists(
                 formula.var,
-                self._unfold_nested(formula.formula, remaining_depth)
+                self._unfold_nested(formula.formula, remaining_depth, registry)
             )
         elif isinstance(formula, Forall):
             return Forall(
                 formula.var,
-                self._unfold_nested(formula.formula, remaining_depth)
+                self._unfold_nested(formula.formula, remaining_depth, registry)
             )
         else:
             # Base formulas: Emp, PointsTo, Eq, Neq, etc.
@@ -269,7 +270,7 @@ class LinkedList(InductivePredicate):
 
         return Or(base_case, recursive_case)
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         if depth <= 0:
             return PredicateCall(self.name, args)
 
@@ -284,7 +285,7 @@ class LinkedList(InductivePredicate):
 
         # Recursive case with bounded depth
         y = Var(f"y_{id(args)}_{depth}")
-        recursive_call = LinkedList().unfold_bounded([y], depth - 1)
+        recursive_call = LinkedList().unfold_bounded([y], depth - 1, registry)
         recursive_case = Exists(
             y.name,
             SepConj(

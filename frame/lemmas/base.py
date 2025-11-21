@@ -230,74 +230,16 @@ class LemmaLibrary:
 
     def try_apply_lemma(self, antecedent: Formula, consequent: Formula) -> Optional[str]:
         """
-        Try to apply a lemma to prove the entailment.
+        Try to apply a lemma to prove the entailment (delegate to _lemma_application).
 
         Two-phase matching strategy:
         1. Direct matching (fast path): syntactic pattern matching
         2. Constraint-aware matching: normalize with equality constraints
 
-        Note: Graph-based folding (synthesis) has been moved to frame/folding/goal_directed.py
-        where it belongs. Lemmas are ONLY for proven facts about predicates.
-
-        Lemmas are validated against predicate definitions to ensure soundness.
-
         Returns the name of the applied lemma if successful, None otherwise.
         """
-        # Normalize SepConj order for consistent matching (P * Q = Q * P)
-        from frame.analysis.formula import FormulaAnalyzer
-        analyzer = FormulaAnalyzer()
-        antecedent = analyzer.normalize_sepconj(antecedent)
-        consequent = analyzer.normalize_sepconj(consequent)
-
-        # Phase 1: Direct matching (fast path)
-        for lemma in self.lemmas:
-            # Validate lemma before applying
-            if not self._is_lemma_sound(lemma):
-                continue
-
-            bindings = self.match_formula(lemma.antecedent, antecedent)
-            if bindings is not None:
-                instantiated_consequent = self.substitute_bindings(lemma.consequent, bindings)
-                if self._formulas_equal(instantiated_consequent, consequent):
-                    return lemma.name
-
-        # Phase 2: Constraint-aware matching
-        # Extract equality constraints from antecedent
-        substitution = self._extract_equality_constraints(antecedent)
-
-        if substitution:
-            # Apply substitutions to get normalized antecedent
-            normalized_antecedent = self._apply_substitution_to_formula(antecedent, substitution)
-
-            # Extract spatial part from normalized antecedent
-            spatial_part = extract_spatial_part(normalized_antecedent)
-
-            if spatial_part:
-                # Try to match lemmas against the normalized spatial part
-                for lemma in self.lemmas:
-                    # Validate lemma before applying
-                    if not self._is_lemma_sound(lemma):
-                        continue
-
-                    bindings = self.match_formula(lemma.antecedent, spatial_part)
-                    if bindings is not None:
-                        instantiated_consequent = self.substitute_bindings(lemma.consequent, bindings)
-
-                        # Check if instantiated consequent matches the consequent's spatial part
-                        consequent_spatial = extract_spatial_part(consequent)
-                        if consequent_spatial and self._formulas_equal(instantiated_consequent, consequent_spatial):
-                            return lemma.name
-
-        # Phase 3 (graph-based folding) has been REMOVED and moved to:
-        # frame/folding/goal_directed.py - fold_towards_goal()
-        #
-        # This keeps concerns properly separated:
-        #   - Lemmas: proven facts about predicates
-        #   - Folding: synthesis of predicates from concrete heaps
-        #
-        # The checker now calls goal-directed folding BEFORE lemma application.
-
-        return None
+        from frame.lemmas._lemma_application import try_apply_lemma as _try_apply_lemma
+        return _try_apply_lemma(self, antecedent, consequent)
 
     def try_apply_lemma_multistep(
         self,

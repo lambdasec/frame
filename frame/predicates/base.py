@@ -202,13 +202,14 @@ class InductivePredicate(ABC):
         """
         pass
 
-    def unfold_bounded(self, args: List[Expr], depth: int) -> Formula:
+    def unfold_bounded(self, args: List[Expr], depth: int, registry=None) -> Formula:
         """
         Unfold the predicate to a bounded depth to avoid infinite unfolding.
 
         Args:
             args: Arguments to the predicate
             depth: Maximum unfolding depth
+            registry: Optional PredicateRegistry for unfolding nested predicates
 
         Returns:
             The bounded unfolded formula
