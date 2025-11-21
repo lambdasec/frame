@@ -32,6 +32,37 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
 
+    - name: Cache benchmark files
+      uses: actions/cache@v3
+      with:
+        path: ./benchmarks/cache
+        key: ${{ runner.os }}-benchmarks-${{ hashFiles('benchmarks/downloaders/**/*.py') }}
+        restore-keys: |
+          ${{ runner.os }}-benchmarks-
+
+    - name: Download curated benchmarks
+      run: |
+        # Download and create curated benchmark sets (cached by GitHub Actions)
+        python -c "
+        from benchmarks.curators import create_qf_ax_curated_set, create_qf_bv_curated_set
+        import os
+
+        cache_dir = './benchmarks/cache'
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Create QF_AX curated set
+        if not os.path.exists(os.path.join(cache_dir, 'qf_ax', 'qf_ax_curated')):
+            print('Creating QF_AX curated set...')
+            create_qf_ax_curated_set(cache_dir)
+
+        # Create QF_BV curated set
+        if not os.path.exists(os.path.join(cache_dir, 'qf_bv', 'qf_bv_curated')):
+            print('Creating QF_BV curated set...')
+            create_qf_bv_curated_set(cache_dir)
+
+        print('✓ Curated benchmarks ready')
+        "
+
     - name: Run regression tests
       run: |
         python -m pytest tests/ -v --tb=short
@@ -78,7 +109,7 @@ jobs:
         total = len(results)
         accuracy = correct / total * 100 if total > 0 else 0
         print(f'Benchmark Results: {correct}/{total} correct ({accuracy:.1f}%)')
-        # Fail if accuracy drops below 60% (regression detection)
-        assert accuracy >= 60, f'Accuracy too low: {accuracy:.1f}% < 60%'
+        # Fail if accuracy drops below 80% (regression detection)
+        assert accuracy >= 80, f'Accuracy too low: {accuracy:.1f}% < 80%'
         print('✓ Benchmark accuracy check passed')
         "

@@ -53,9 +53,14 @@ def run_qf_bv_division(cache_dir: str, source: str,
     source_dir = os.path.join(cache_dir, 'qf_bv', source)
 
     if not os.path.exists(source_dir):
-        print(f"{source} benchmarks not found. Creating samples...")
+        print(f"{source} benchmarks not found.")
         if source == 'samples':
+            print("Creating samples...")
             download_qf_bv_samples(cache_dir, max_files=max_tests or 10)
+        elif source == 'qf_bv_curated':
+            print("Creating curated set...")
+            from benchmarks.curators import create_qf_bv_curated_set
+            create_qf_bv_curated_set(cache_dir)
         else:
             print(f"ERROR: QF_BV source {source} not found")
             return []
