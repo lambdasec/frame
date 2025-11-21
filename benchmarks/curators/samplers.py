@@ -237,7 +237,7 @@ def create_qf_ax_curated_set(cache_dir: str, sample_size: int = 500, seed: int =
         print("Full QF_AX set not available, using sample benchmarks...")
         if not os.path.exists(qf_ax_samples_dir):
             print("Downloading QF_AX samples...")
-            download_qf_ax_samples()
+            download_qf_ax_samples(cache_dir)
         all_files = list(Path(qf_ax_samples_dir).rglob('*.smt2'))
 
     print(f"Found {len(all_files)} total files")
@@ -311,7 +311,7 @@ def create_qf_bv_curated_set(cache_dir: str, sample_size: int = 250, seed: int =
             print("Full QF_BV set not available, using sample benchmarks...")
             if not os.path.exists(qf_bv_samples_dir):
                 print("Downloading QF_BV samples...")
-                download_qf_bv_samples()
+                download_qf_bv_samples(cache_dir)
             all_files = list(Path(qf_bv_samples_dir).rglob('*.smt2'))
 
     print(f"Found {len(all_files)} total files in full set")
