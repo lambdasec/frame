@@ -83,11 +83,11 @@ jobs:
 
     - name: Run curated benchmarks (sample)
       run: |
-        # Run small sample from curated set (QF_AX and QF_BV only)
+        # Run full curated benchmark sets (QF_AX and QF_BV)
         # Note: QF_S (string theory) is skipped due to poor Z3 support (~8% accuracy)
         # Note: SL-COMP requires large downloads, skipped in CI
-        python -m benchmarks run --division qf_ax_curated --max-tests 25 --output ci_results_ax.json
-        python -m benchmarks run --division qf_bv_curated --max-tests 25 --output ci_results_bv.json
+        python -m benchmarks run --division qf_ax_curated --output ci_results_ax.json
+        python -m benchmarks run --division qf_bv_curated --output ci_results_bv.json
 
         # Combine results into single file
         python -c "
