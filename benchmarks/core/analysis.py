@@ -116,10 +116,18 @@ def save_results(results: List[BenchmarkResult], cache_dir: str, output_file: st
 
     Args:
         results: List of benchmark results
-        cache_dir: Cache directory path
-        output_file: Output filename
+        cache_dir: Cache directory path (unused, kept for backward compatibility)
+        output_file: Output filename (relative to current directory or absolute path)
     """
-    output_path = os.path.join(cache_dir, output_file)
+    # Use output_file directly - don't join with cache_dir
+    # This allows users to specify where they want results saved
+    output_path = output_file
+
+    # Create parent directory if needed
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     with open(output_path, 'w') as f:
         json.dump([asdict(r) for r in results], f, indent=2)
     print(f"\nResults saved to: {output_path}")
