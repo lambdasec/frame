@@ -18,10 +18,10 @@ python -m benchmarks run --curated
 - ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
 - ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
-  - 692 SL-COMP (separation logic) - 73.8% correct, 2 errors
-  - 3300 QF_S (string theory) - 83.9% correct
-  - 500 QF_AX (array theory) - 100% correct
-  - 250 QF_BV (bitvector theory) - 76.4% correct
+  - 692 SL-COMP (separation logic) - 73.8% correct, 0 errors
+  - 3300 QF_S (string theory) - 83.8% correct, 0 errors
+  - 500 QF_AX (array theory) - 100% correct, 0 errors
+  - 250 QF_BV (bitvector theory) - 76.4% correct, 0 errors
 
 ### Full Benchmarks (Comprehensive - ~20k tests)
 
@@ -41,28 +41,28 @@ python -m benchmarks run --division qf_shls_entl
 - Stratified sampling across all 12 divisions
 - Ensures balanced representation of entailment/SAT problems
 - Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
-- **Results: 73.8% correct (511/692), 2 errors**
+- **Results: 73.8% correct (511/692), 0 errors**
 
 **QF_S Curated: 3,300 tests** (from 18,940 total)
 - Stratified sampling across all sources
 - Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
 - Representative 17% sample
-- **Results: 83.9% correct (2769/3300), 0 errors**
+- **Results: 83.8% correct (2767/3300), 0 errors**
 
 **QF_AX Curated: 500 tests** (from 551 total)
 - Array theory with extensionality
 - Operations: select, store, const
-- Executed via Z3 subprocess for 100% accuracy
+- Executed via Z3 Python API for 100% accuracy
 - **Results: 100% correct (500/500), 0 errors**
 
 **QF_BV Curated: 250 tests** (from full BV suite)
 - Bitvector theory (8-bit, 16-bit, 32-bit)
 - Coverage: arithmetic, comparisons, bitwise, shifts
-- Executed via Z3 subprocess for validation
+- Executed via Z3 Python API for validation
 - **Results: 76.4% correct (191/250), 0 errors**
 
 **Total Curated: 4,742 tests**
-- **Overall: 83.7% correct (3971/4742), 2 errors, avg 1.7s/test**
+- **Overall: 83.7% correct (3969/4742), 0 errors, avg 1.7s/test**
 
 ### Full Sets (19,801 tests)
 
@@ -164,7 +164,7 @@ python -m pytest tests/ -v
 
 **Implementation**:
 - **Frame-native** (SL-COMP, QF_S): Parse through Frame's parser, validate via entailment checker
-- **Z3 direct** (QF_AX, QF_BV): Execute pure SMT-LIB 2.6 files via Z3 subprocess for 100% accuracy
+- **Z3 direct** (QF_AX, QF_BV): Execute pure SMT-LIB 2.6 files via Z3 Python API for 100% accuracy
 - **Integration tests**: Validate arrays/bitvectors work within Frame's cross-theory ecosystem
 
 ### Download Benchmarks
