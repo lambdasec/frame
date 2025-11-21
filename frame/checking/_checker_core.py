@@ -277,7 +277,22 @@ def check_entailment_core(
         print(f"Checking: {antecedent} |- {consequent}")
 
     # Unfold predicates if present (use adaptive depth if enabled)
-    if checker_self.use_cyclic_proof:
+    # NEW: Guided unfolding - only unfold predicates that match the goal
+    if checker_self.use_guided_unfolding:
+        from frame.predicates.guided_unfolding import GuidedUnfoldingStrategy
+        guided_strategy = GuidedUnfoldingStrategy(checker_self.predicate_registry, verbose=checker_self.verbose)
+
+        # Compute which predicates to unfold and to what depth
+        unfold_targets = guided_strategy.compute_unfolding_targets(antecedent, consequent)
+
+        if checker_self.verbose:
+            print(f"[Guided Unfolding] Targets: {unfold_targets}")
+
+        # Apply guided unfolding
+        antecedent_unfolded = guided_strategy.guided_unfold(antecedent, unfold_targets, default_depth=2)
+        consequent_unfolded = guided_strategy.guided_unfold(consequent, unfold_targets, default_depth=2)
+
+    elif checker_self.use_cyclic_proof:
         # Use cyclic proof-aware unfolding for antecedent
         from frame.folding.cyclic_unfold import unfold_with_cycles
         antecedent_unfolded = unfold_with_cycles(
