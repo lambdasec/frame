@@ -55,21 +55,12 @@ class LemmaLibrary:
         from frame.lemmas.dll_lemmas import initialize_dll_lemmas
         from frame.lemmas.other_lemmas import initialize_other_lemmas
         from frame.lemmas.wand_lemmas import initialize_wand_lemmas
-        from frame.lemmas.tree_lemmas import initialize_tree_lemmas
-        from frame.lemmas.graph_lemmas import initialize_graph_lemmas
-        from frame.lemmas.skip_list_lemmas import initialize_skip_list_lemmas
         from frame.lemmas.compositional import install_compositional_lemmas, CompositionalAnalyzer
 
-        # Initialize core lemma categories
         initialize_list_lemmas(self)
         initialize_dll_lemmas(self)
         initialize_other_lemmas(self)
         initialize_wand_lemmas(self)
-
-        # Initialize new lemma categories (expanded library)
-        initialize_tree_lemmas(self)
-        initialize_graph_lemmas(self)
-        initialize_skip_list_lemmas(self)
 
         # Install auto-generated compositional lemmas
         if self._predicate_registry:
