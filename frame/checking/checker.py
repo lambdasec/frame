@@ -66,7 +66,7 @@ class EntailmentChecker:
                  timeout: int = 5000, verbose: bool = False, adaptive_unfolding: bool = True,
                  use_lemmas: bool = True, use_cyclic_proof: bool = True, use_folding: bool = True,
                  use_abduction: bool = False, use_s2s_normalization: bool = False,
-                 use_guided_unfolding: bool = True):
+                 use_guided_unfolding: bool = False):
         """
         Initialize the entailment checker.
 
@@ -84,7 +84,7 @@ class EntailmentChecker:
             use_s2s_normalization: Use S2S-style normalized unfolding to avoid disjunction explosion
                           (enabled by default for improved performance on benchmarks)
             use_guided_unfolding: Use goal-directed unfolding (only unfold predicates matching consequent).
-                          Enabled by default for 2-3x speedup on complex benchmarks.
+                          DISABLED by default - experimental feature, no significant gains observed.
         """
         self.predicate_registry = predicate_registry or PredicateRegistry()
         self.timeout = timeout
