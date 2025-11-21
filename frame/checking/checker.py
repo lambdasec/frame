@@ -65,8 +65,7 @@ class EntailmentChecker:
     def __init__(self, predicate_registry: Optional[PredicateRegistry] = None,
                  timeout: int = 5000, verbose: bool = False, adaptive_unfolding: bool = True,
                  use_lemmas: bool = True, use_cyclic_proof: bool = True, use_folding: bool = True,
-                 use_abduction: bool = False, use_s2s_normalization: bool = False,
-                 use_guided_unfolding: bool = False):
+                 use_abduction: bool = False, use_s2s_normalization: bool = False):
         """
         Initialize the entailment checker.
 
@@ -83,8 +82,6 @@ class EntailmentChecker:
                           Use for automatic specification inference, NOT standard entailment.
             use_s2s_normalization: Use S2S-style normalized unfolding to avoid disjunction explosion
                           (enabled by default for improved performance on benchmarks)
-            use_guided_unfolding: Use goal-directed unfolding (only unfold predicates matching consequent).
-                          DISABLED by default - experimental feature, no significant gains observed.
         """
         self.predicate_registry = predicate_registry or PredicateRegistry()
         self.timeout = timeout
@@ -95,7 +92,6 @@ class EntailmentChecker:
         self.use_folding = use_folding
         self.use_abduction = use_abduction
         self.use_s2s_normalization = use_s2s_normalization
-        self.use_guided_unfolding = use_guided_unfolding
         # Pass predicate registry to lemma library for validation
         self.lemma_library = LemmaLibrary(self.predicate_registry) if use_lemmas else None
 
