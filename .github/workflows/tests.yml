@@ -42,26 +42,9 @@ jobs:
 
     - name: Download curated benchmarks
       run: |
-        # Download and create curated benchmark sets (cached by GitHub Actions)
-        python -c "
-        from benchmarks.curators import create_qf_ax_curated_set, create_qf_bv_curated_set
-        import os
-
-        cache_dir = './benchmarks/cache'
-        os.makedirs(cache_dir, exist_ok=True)
-
-        # Create QF_AX curated set
-        if not os.path.exists(os.path.join(cache_dir, 'qf_ax', 'qf_ax_curated')):
-            print('Creating QF_AX curated set...')
-            create_qf_ax_curated_set(cache_dir)
-
-        # Create QF_BV curated set
-        if not os.path.exists(os.path.join(cache_dir, 'qf_bv', 'qf_bv_curated')):
-            print('Creating QF_BV curated set...')
-            create_qf_bv_curated_set(cache_dir)
-
-        print('✓ Curated benchmarks ready')
-        "
+        # Download and create ALL curated benchmark sets (cached by GitHub Actions)
+        # This creates all 4 curated sets: SL-COMP, QF_S, QF_AX, QF_BV
+        python -m benchmarks download --curated
 
     - name: Run regression tests
       run: |
@@ -83,21 +66,12 @@ jobs:
 
     - name: Run curated benchmarks (sample)
       run: |
-        # Run full curated benchmark sets (QF_AX and QF_BV)
-        # Note: QF_S (string theory) is skipped due to poor Z3 support (~8% accuracy)
-        # Note: SL-COMP requires large downloads, skipped in CI
-        python -m benchmarks run --division qf_ax_curated --output ci_results_ax.json
-        python -m benchmarks run --division qf_bv_curated --output ci_results_bv.json
-
-        # Combine results into single file
-        python -c "
-        import json
-        ax = json.load(open('ci_results_ax.json'))
-        bv = json.load(open('ci_results_bv.json'))
-        combined = ax + bv
-        json.dump(combined, open('ci_results.json', 'w'), indent=2)
-        print(f'Combined {len(ax)} QF_AX + {len(bv)} QF_BV = {len(combined)} total tests')
-        "
+        # Run FULL curated benchmark sets (all 4,742 tests)
+        # - 692 SL-COMP (separation logic)
+        # - 3,300 QF_S (string theory)
+        # - 500 QF_AX (array theory)
+        # - 250 QF_BV (bitvector theory)
+        python -m benchmarks run --curated --output ci_results.json
 
     - name: Check benchmark results
       run: |
