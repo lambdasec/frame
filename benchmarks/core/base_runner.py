@@ -16,24 +16,17 @@ def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[st
         (result, error) where result is 'sat', 'unsat', 'unknown', or 'timeout'
     """
     try:
-        # Read the SMT2 file content
-        with open(filepath, 'r') as f:
-            smt2_content = f.read()
-
         # Create solver with timeout
         solver = z3.Solver()
         solver.set("timeout", timeout * 1000)  # Z3 expects milliseconds
 
-        # Parse the SMT2 content and add to solver
-        # parse_smt2_string returns assertions from the file
-        assertions = z3.parse_smt2_string(smt2_content)
+        # Parse the SMT2 file and add assertions to solver
+        # Using parse_smt2_file is more reliable than parse_smt2_string
+        # for complex SMT-LIB files with string/bitvector theories
+        assertions = z3.parse_smt2_file(filepath)
 
-        # parse_smt2_string returns a list of assertions
-        if isinstance(assertions, list):
-            for assertion in assertions:
-                solver.add(assertion)
-        else:
-            solver.add(assertions)
+        # Add assertions to solver (handles both AstVector and single assertions)
+        solver.add(assertions)
 
         # Check satisfiability
         check_result = solver.check()
