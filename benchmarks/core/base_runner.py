@@ -1,12 +1,16 @@
 """Base utilities for running benchmarks"""
 
+import subprocess
 import z3
 from typing import Tuple, Optional
 
 
 def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[str]]:
     """
-    Run an SMT-LIB 2.6 file directly with Z3 Python API
+    Run an SMT-LIB 2.6 file with Z3
+
+    Tries Z3 binary first (more robust, handles all SMT-LIB features),
+    falls back to Python API if binary not available (for CI).
 
     Args:
         filepath: Path to .smt2 file
@@ -15,20 +19,41 @@ def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[st
     Returns:
         (result, error) where result is 'sat', 'unsat', 'unknown', or 'timeout'
     """
+    # Try Z3 binary first - it's more robust and handles all SMT-LIB 2.6 features
     try:
-        # Create solver with timeout
-        solver = z3.Solver()
-        solver.set("timeout", timeout * 1000)  # Z3 expects milliseconds
+        result = subprocess.run(
+            ['z3', filepath, f'-T:{timeout}'],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1
+        )
 
-        # Parse the SMT2 file and add assertions to solver
-        # Using parse_smt2_file is more reliable than parse_smt2_string
-        # for complex SMT-LIB files with string/bitvector theories
+        output = result.stdout.strip()
+
+        if 'sat' in output and 'unsat' not in output:
+            return 'sat', None
+        elif 'unsat' in output:
+            return 'unsat', None
+        else:
+            return 'unknown', None
+
+    except subprocess.TimeoutExpired:
+        return 'timeout', 'Z3 timeout'
+    except FileNotFoundError:
+        # Z3 binary not found, fall back to Python API
+        pass
+    except Exception as e:
+        # Other subprocess errors, fall back to Python API
+        pass
+
+    # Fallback: Use Z3 Python API (for CI environments without z3 binary)
+    try:
         assertions = z3.parse_smt2_file(filepath)
 
-        # Add assertions to solver (handles both AstVector and single assertions)
+        solver = z3.Solver()
+        solver.set("timeout", timeout * 1000)  # Z3 expects milliseconds
         solver.add(assertions)
 
-        # Check satisfiability
         check_result = solver.check()
 
         if check_result == z3.sat:
@@ -36,7 +61,6 @@ def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[st
         elif check_result == z3.unsat:
             return 'unsat', None
         else:  # z3.unknown
-            # Check if it's a timeout or genuinely unknown
             reason = solver.reason_unknown()
             if 'timeout' in reason.lower() or 'canceled' in reason.lower():
                 return 'timeout', f'Z3 timeout: {reason}'
@@ -46,7 +70,6 @@ def run_smt2_with_z3(filepath: str, timeout: int = 10) -> Tuple[str, Optional[st
     except FileNotFoundError:
         return 'error', 'File not found'
     except z3.Z3Exception as e:
-        # Z3-specific errors (parsing, etc.)
         return 'error', f'Z3 error: {str(e)}'
     except Exception as e:
         return 'error', str(e)
