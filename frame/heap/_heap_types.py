@@ -62,24 +62,36 @@ class DLLPattern:
 @dataclass
 class FoldProposal:
     """
-    A proposed fold of multiple pto cells into a predicate.
+    A proposed fold of pto cells and/or predicate calls into a predicate.
 
-    Represents: pto_cells ⊢ predicate_call with side_conditions
+    Represents: (pto_cells * predicate_calls) ⊢ predicate_call with side_conditions
+
+    For hierarchical predicates like nll (nested list), both pto_cells AND
+    predicate_calls are needed:
+      Example: x |-> (y, z) * ls(z, nil) ⊢ nll(x, nil, nil)
     """
-    predicate_name: str           # e.g., "ls", "dll", "ldll"
-    args: List[Expr]              # Arguments to the predicate
-    pto_cells: List[PointsTo]    # The pto cells to be folded
-    side_conditions: List[Formula]  # Arithmetic or pure constraints required
-    confidence: float = 1.0       # Confidence score (0-1) for heuristic ordering
+    predicate_name: str                    # e.g., "ls", "dll", "nll"
+    args: List[Expr]                       # Arguments to the predicate
+    pto_cells: List[PointsTo]             # The pto cells to be folded
+    predicate_calls: List[PredicateCall] = field(default_factory=list)  # Nested predicates to fold
+    side_conditions: List[Formula] = field(default_factory=list)  # Arithmetic or pure constraints required
+    confidence: float = 1.0                # Confidence score (0-1) for heuristic ordering
 
     def to_predicate_call(self) -> PredicateCall:
         """Convert proposal to a PredicateCall"""
         return PredicateCall(self.predicate_name, self.args)
 
     def __str__(self) -> str:
-        pto_str = " * ".join(str(pto) for pto in self.pto_cells)
+        parts = []
+        if self.pto_cells:
+            parts.append(" * ".join(str(pto) for pto in self.pto_cells))
+        if self.predicate_calls:
+            parts.append(" * ".join(str(pred) for pred in self.predicate_calls))
+
+        lhs = " * ".join(parts) if parts else "emp"
         pred_str = f"{self.predicate_name}({', '.join(str(arg) for arg in self.args)})"
+
         if self.side_conditions:
             conds = " & ".join(str(c) for c in self.side_conditions)
-            return f"{pto_str} ⊢ {pred_str} [if {conds}]"
-        return f"{pto_str} ⊢ {pred_str}"
+            return f"{lhs} ⊢ {pred_str} [if {conds}]"
+        return f"{lhs} ⊢ {pred_str}"
