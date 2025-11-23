@@ -45,20 +45,23 @@ def cmd_run(args, orchestrator):
         print(f"Running specific division: {args.division}")
         print("=" * 80)
 
-        # Determine division type
-        if 'qf_s' in args.division.lower():
+        # Determine division type (check SL-COMP patterns first to avoid substring matches)
+        if args.division in ['slcomp_curated'] or \
+           args.division.startswith('qf_sh') or args.division.startswith('qf_bsl') or \
+           args.division.startswith('bsl_') or args.division.startswith('shid'):
+            # SL-COMP divisions: qf_shid_entl, qf_shls_entl, qf_shlid_entl, qf_bsl_sat, etc.
+            orchestrator.run_slcomp_division(args.division, max_tests=args.max_tests)
+        elif 'qf_s' in args.division.lower():
+            # QF_S divisions (check after SL-COMP to avoid matching qf_shls, etc.)
             orchestrator.run_qf_s_division(args.division, max_tests=args.max_tests)
         elif 'qf_ax' in args.division.lower():
             orchestrator.run_qf_ax_division(args.division, max_tests=args.max_tests)
         elif 'qf_bv' in args.division.lower():
             orchestrator.run_qf_bv_division(args.division, max_tests=args.max_tests)
-        elif args.division in ['slcomp_curated'] or args.division.startswith('qf_') or \
-             args.division.startswith('bsl_') or args.division.startswith('shid'):
-            orchestrator.run_slcomp_division(args.division, max_tests=args.max_tests)
         else:
             print(f"ERROR: Unknown division '{args.division}'")
             print("Available divisions:")
-            print("  SL-COMP: qf_shid_entl, qf_shls_entl, qf_bsl_sat, etc.")
+            print("  SL-COMP: qf_shid_entl, qf_shls_entl, qf_shlid_entl, qf_bsl_sat, etc.")
             print("  QF_S: qf_s_curated, or subdirectories in qf_s_full/")
             print("  QF_AX: qf_ax_curated, samples")
             print("  QF_BV: qf_bv_curated, samples")
