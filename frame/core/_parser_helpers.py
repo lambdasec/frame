@@ -118,9 +118,29 @@ def parse_atom(parser_self) -> Formula:
     if token.type == 'NIL':
         parser_self.advance()
         expr = Const(None)
-        # Nil can only appear in comparisons in this simplified parser
-        # For now, we'll return an error
-        raise ParseError("nil can only appear in comparisons like 'x = nil' or 'x != nil'")
+
+        # Check if followed by comparison operator
+        token = parser_self.current_token()
+        if token and token.type in ('EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'):
+            op = token.type
+            parser_self.advance()
+            right = parser_self.parse_expr()
+
+            if op == 'EQ':
+                return Eq(expr, right)
+            elif op == 'NEQ':
+                return Neq(expr, right)
+            elif op == 'LT':
+                return Lt(expr, right)
+            elif op == 'LE':
+                return Le(expr, right)
+            elif op == 'GT':
+                return Gt(expr, right)
+            elif op == 'GE':
+                return Ge(expr, right)
+        else:
+            # Standalone nil without comparison is not a formula
+            raise ParseError("nil must be followed by a comparison operator (=, !=, <, <=, >, >=)")
 
     # Must be an identifier
     name = parser_self.expect('IDENT').value

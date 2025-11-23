@@ -45,21 +45,33 @@ def verify_proposal_with_unification(
     unifier = Unifier(verbose=verbose)
     analyzer = FormulaAnalyzer()
 
-    # Build concrete heap from pto cells
-    if not proposal.pto_cells:
+    # Build concrete heap from pto cells AND predicate calls (for hierarchical predicates)
+    if not proposal.pto_cells and not proposal.predicate_calls:
         return False
 
-    concrete = proposal.pto_cells[0]
-    for pto in proposal.pto_cells[1:]:
-        concrete = SepConj(concrete, pto)
+    # Start with first pto or predicate
+    if proposal.pto_cells:
+        concrete = proposal.pto_cells[0]
+        for pto in proposal.pto_cells[1:]:
+            concrete = SepConj(concrete, pto)
+        # Add predicate calls if any
+        for pred_call in proposal.predicate_calls:
+            concrete = SepConj(concrete, pred_call)
+    else:
+        # Only predicate calls (edge case)
+        concrete = proposal.predicate_calls[0]
+        for pred_call in proposal.predicate_calls[1:]:
+            concrete = SepConj(concrete, pred_call)
 
     # Create predicate call
     pred_call = proposal.to_predicate_call()
 
-    # Unfold predicate deeply enough to match the number of concrete pto cells
+    # Unfold predicate deeply enough to match the number of concrete parts (ptos + predicates)
     # For N concrete cells, unfold to depth N to get N pto cells + 1 residual predicate
     # Example: 4 cells need depth 4 to get: x->y * y->z * z->w * w->v * list(v)
-    unfold_depth = max(len(proposal.pto_cells), 4)
+    # For hierarchical predicates with inner predicates, we may need deeper unfolding
+    total_parts = len(proposal.pto_cells) + len(proposal.predicate_calls)
+    unfold_depth = total_parts  # Match exactly the number of parts we have
     pred_unfolded = predicate_registry.unfold_predicates(pred_call, depth=unfold_depth)
 
     if verbose:
@@ -191,9 +203,41 @@ def verify_proposal_with_unification(
         pred_ratio = pred_pred_count / matched_pto if matched_pto > 0 else 0
         concrete_ratio = concrete_pred_count / concrete_pto_count if concrete_pto_count > 0 else 0
 
+        # CRITICAL FIX: If concrete has NO predicates but unfolded predicate has predicates,
+        # check if the concrete heap terminates properly (has a cell pointing to nil).
+        # Example 1 (VALID): x |-> y * y |-> nil |- list(x)
+        #   Concrete has cell pointing to nil (terminal) - OK
+        # Example 2 (INVALID): x |-> y * y |-> z |- list(x)
+        #   Concrete has no nil, z is fresh (needs more heap) - UNSOUND
+        if concrete_pred_count == 0 and pred_pred_count > 0 and matched_pred < pred_pred_count:
+            # Check if ANY concrete pto cell points to nil (chain terminates)
+            from frame.core.ast import Const, Var
+
+            all_concrete_ptos = [p for p in concrete_spatial if isinstance(p, PointsTo)]
+
+            # Check if any concrete cell points to nil
+            has_nil_terminator = False
+            for pto in all_concrete_ptos:
+                if pto.values:
+                    target = pto.values[0]
+                    target_str = str(target)
+                    # Check if target is nil
+                    is_nil = ((isinstance(target, Const) and target.value == 'nil') or
+                              (isinstance(target, Var) and target.name == 'nil') or
+                              target_str == 'nil')
+                    if is_nil:
+                        has_nil_terminator = True
+                        break
+
+            # If no nil terminator, we have residual predicates that need more heap - UNSOUND!
+            if not has_nil_terminator:
+                all_required_matched = False
+                if verbose:
+                    print(f"[Unification Verify] ✗ Concrete has no nil terminator but predicate has {pred_pred_count} residual predicates")
+                    print(f"[Unification Verify]   Residual predicates need more heap - UNSOUND!")
         # If predicate requires more predicates per pto cell than we have in concrete, FAIL
-        # Allow some tolerance for residual recursive calls
-        if pred_ratio > concrete_ratio + 0.5:
+        # Allow some tolerance for residual recursive calls (but only if concrete HAS predicates)
+        elif pred_ratio > concrete_ratio + 0.5:
             # This indicates branching structure (like tree) where we're missing required predicates
             # Check that we matched enough predicates
             if matched_pred < pred_pred_count:
