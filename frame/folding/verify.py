@@ -204,42 +204,37 @@ def verify_proposal_with_unification(
         concrete_ratio = concrete_pred_count / concrete_pto_count if concrete_pto_count > 0 else 0
 
         # CRITICAL FIX: If concrete has NO predicates but unfolded predicate has predicates,
-        # check if the last matched pto cell points to a fresh unallocated variable.
+        # check if the concrete heap terminates properly (has a cell pointing to nil).
         # Example 1 (VALID): x |-> y * y |-> nil |- list(x)
-        #   Last cell: y |-> nil (nil is terminal) - OK
+        #   Concrete has cell pointing to nil (terminal) - OK
         # Example 2 (INVALID): x |-> y * y |-> z |- list(x)
-        #   Last cell: y |-> z (z is fresh, needs more heap) - UNSOUND
+        #   Concrete has no nil, z is fresh (needs more heap) - UNSOUND
         if concrete_pred_count == 0 and pred_pred_count > 0 and matched_pred < pred_pred_count:
-            # Check the last matched pto cell to see if it points to a fresh variable
+            # Check if ANY concrete pto cell points to nil (chain terminates)
             from frame.core.ast import Const, Var
 
-            # Get all matched pto cells
-            matched_ptos = [(i, pred_spatial[i]) for i in used_indices if isinstance(pred_spatial[i], PointsTo)]
+            all_concrete_ptos = [p for p in concrete_spatial if isinstance(p, PointsTo)]
 
-            if matched_ptos and current_subst:
-                # Look at the last matched pto cell (after substitution)
-                last_idx, last_pto = matched_ptos[-1]
+            # Check if any concrete cell points to nil
+            has_nil_terminator = False
+            for pto in all_concrete_ptos:
+                if pto.values:
+                    target = pto.values[0]
+                    target_str = str(target)
+                    # Check if target is nil
+                    is_nil = ((isinstance(target, Const) and target.value == 'nil') or
+                              (isinstance(target, Var) and target.name == 'nil') or
+                              target_str == 'nil')
+                    if is_nil:
+                        has_nil_terminator = True
+                        break
 
-                # Apply substitution to the target/value of the last pto
-                if last_pto.values:
-                    last_target = current_subst.apply(last_pto.values[0])
-                    last_target_str = str(last_target)
-
-                    # Check if it's nil (terminal)
-                    is_nil = ((isinstance(last_target, Const) and last_target.value == 'nil') or
-                              (isinstance(last_target, Var) and last_target.name == 'nil') or
-                              last_target_str == 'nil')
-
-                    # Collect allocated locations
-                    all_concrete_ptos = [p for p in concrete_spatial if isinstance(p, PointsTo)]
-                    allocated_locations = {str(pto.location) for pto in all_concrete_ptos}
-
-                    # If last cell points to a fresh variable (not nil, not allocated), reject
-                    if not is_nil and last_target_str not in allocated_locations and isinstance(last_target, Var):
-                        all_required_matched = False
-                        if verbose:
-                            print(f"[Unification Verify] ✗ Last matched cell points to fresh variable: {last_target_str}")
-                            print(f"[Unification Verify]   With {pred_pred_count - matched_pred} unmatched residual predicates - need more heap!")
+            # If no nil terminator, we have residual predicates that need more heap - UNSOUND!
+            if not has_nil_terminator:
+                all_required_matched = False
+                if verbose:
+                    print(f"[Unification Verify] ✗ Concrete has no nil terminator but predicate has {pred_pred_count} residual predicates")
+                    print(f"[Unification Verify]   Residual predicates need more heap - UNSOUND!")
         # If predicate requires more predicates per pto cell than we have in concrete, FAIL
         # Allow some tolerance for residual recursive calls (but only if concrete HAS predicates)
         elif pred_ratio > concrete_ratio + 0.5:
