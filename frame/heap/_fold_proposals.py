@@ -11,7 +11,7 @@ from frame.heap.graph import FoldProposal
 
 
 def propose_folds(graph, pto_atoms: List[PointsTo],
-                 max_proposals: int = 10, predicate_registry=None) -> List[FoldProposal]:
+                 max_proposals: int = 10, predicate_registry=None, formula=None) -> List[FoldProposal]:
     """
     Propose folds of pto atoms into inductive predicates.
 
@@ -20,17 +20,25 @@ def propose_folds(graph, pto_atoms: List[PointsTo],
         pto_atoms: List of PointsTo formulas to consider
         max_proposals: Maximum number of proposals to return
         predicate_registry: Optional PredicateRegistry to check predicate arities
+        formula: Optional formula to extract predicate calls from (for hierarchical folding)
 
     Returns:
         List of FoldProposal objects, ordered by confidence (high to low)
     """
     proposals = []
 
+    # Extract predicate calls from formula if provided (for hierarchical folding)
+    predicate_calls = []
+    if formula:
+        from frame.analysis.formula import FormulaAnalyzer
+        analyzer = FormulaAnalyzer()
+        predicate_calls = analyzer.extract_predicate_calls(formula)
+
     # Generate different types of proposals
     proposals.extend(_propose_ls_folds(graph, pto_atoms))
     proposals.extend(_propose_dll_folds(graph, pto_atoms, predicate_registry))
     proposals.extend(_propose_cyclic_folds(graph, pto_atoms))  # NEW: Cyclic patterns
-    proposals.extend(_propose_nested_folds(graph, pto_atoms, predicate_registry))  # NEW: Nested predicates
+    proposals.extend(_propose_nested_folds(graph, pto_atoms, predicate_registry, predicate_calls))  # NEW: Nested predicates
 
     # Enhanced ranking: score proposals more intelligently
     for proposal in proposals:
@@ -375,7 +383,8 @@ def _propose_cyclic_folds(graph, pto_atoms: List[PointsTo]) -> List[FoldProposal
     return proposals
 
 
-def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=None) -> List[FoldProposal]:
+def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=None,
+                         predicate_calls=None) -> List[FoldProposal]:
     """
     Propose folds for nested predicates like nll, sls, etc.
 
@@ -387,13 +396,14 @@ def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=N
     Strategy:
     1. Detect cells with multiple fields (len(pto.values) > 1)
     2. Check if any registered predicates expect multi-field cells
-    3. Analyze field usage (which field is 'next', which is data/down)
-    4. Propose folds that match the predicate structure
+    3. Find predicate calls (like ls, lso) that correspond to inner structures
+    4. Propose folds that combine both cells AND predicates
 
     Args:
         graph: HeapGraph instance
         pto_atoms: List of PointsTo formulas to consider
         predicate_registry: Registry to check available nested predicates
+        predicate_calls: List of PredicateCall objects already in the formula
 
     Returns:
         List of FoldProposal objects for nested predicates
@@ -402,6 +412,9 @@ def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=N
 
     if predicate_registry is None:
         return proposals  # Cannot propose without knowing available predicates
+
+    if predicate_calls is None:
+        predicate_calls = []
 
     # Map locations to pto atoms
     pto_map = {}
@@ -463,6 +476,19 @@ def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=N
                 ends_at_nil = (not tail_successors or "nil" in tail_successors)
 
                 if ends_at_nil and len(chain_ptos) >= 1:
+                    # Find inner predicates that correspond to field[1] (down pointers)
+                    # For nll, each cell x |-> (next, down) should have lso(down, ...) or ls(down, ...)
+                    inner_preds = []
+                    for pto in chain_ptos:
+                        if len(pto.values) >= 2 and isinstance(pto.values[1], Var):
+                            down_var = pto.values[1]
+                            # Find predicate calls starting with this variable
+                            for pred_call in predicate_calls:
+                                if (pred_call.name in ['ls', 'lso', 'list'] and
+                                    len(pred_call.args) >= 1 and
+                                    pred_call.args[0] == down_var):
+                                    inner_preds.append(pred_call)
+
                     # Propose nll(head, nil, boundary)
                     # The boundary parameter is typically nil or inferred from inner lists
                     proposal = FoldProposal(
@@ -473,13 +499,25 @@ def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=N
                             Const(None)       # boundary (end of inner lists = nil)
                         ],
                         pto_cells=chain_ptos,
+                        predicate_calls=inner_preds,  # Include inner list predicates!
                         side_conditions=[],
-                        confidence=0.75  # Good confidence for nll with 2-field cells
+                        confidence=0.85 if inner_preds else 0.75  # Higher confidence with inner preds
                     )
                     proposals.append(proposal)
 
                 # Also propose with non-nil endpoint
                 if not ends_at_nil and len(chain_ptos) >= 1:
+                    # Find inner predicates for non-nil endpoint case too
+                    inner_preds = []
+                    for pto in chain_ptos:
+                        if len(pto.values) >= 2 and isinstance(pto.values[1], Var):
+                            down_var = pto.values[1]
+                            for pred_call in predicate_calls:
+                                if (pred_call.name in ['ls', 'lso', 'list'] and
+                                    len(pred_call.args) >= 1 and
+                                    pred_call.args[0] == down_var):
+                                    inner_preds.append(pred_call)
+
                     end_var = Var(chain.tail) if chain.tail != "nil" else Const(None)
                     proposal = FoldProposal(
                         predicate_name="nll",
@@ -489,8 +527,9 @@ def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=N
                             Const(None)       # boundary
                         ],
                         pto_cells=chain_ptos,
+                        predicate_calls=inner_preds,  # Include inner list predicates!
                         side_conditions=[],
-                        confidence=0.7
+                        confidence=0.8 if inner_preds else 0.7
                     )
                     proposals.append(proposal)
 

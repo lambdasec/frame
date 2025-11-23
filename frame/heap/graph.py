@@ -447,7 +447,7 @@ def _extract_spatial_atoms(formula: Formula) -> List[Formula]:
 
 
 def propose_folds(graph: HeapGraph, pto_atoms: List[PointsTo],
-                  max_proposals: int = 5, predicate_registry=None) -> List[FoldProposal]:
+                  max_proposals: int = 5, predicate_registry=None, formula=None) -> List[FoldProposal]:
     """
     Propose candidate folds from heap graph patterns.
 
@@ -459,10 +459,11 @@ def propose_folds(graph: HeapGraph, pto_atoms: List[PointsTo],
         pto_atoms: List of PointsTo atoms available for folding
         max_proposals: Maximum number of proposals to return
         predicate_registry: Optional PredicateRegistry to check predicate arities
+        formula: Optional formula to extract predicate calls from (for hierarchical folding)
 
     Returns:
         List of FoldProposal objects, sorted by confidence (high to low)
     """
     # Delegate to fold proposal module
     from frame.heap._fold_proposals import propose_folds as _propose_folds_impl
-    return _propose_folds_impl(graph, pto_atoms, max_proposals, predicate_registry)
+    return _propose_folds_impl(graph, pto_atoms, max_proposals, predicate_registry, formula)

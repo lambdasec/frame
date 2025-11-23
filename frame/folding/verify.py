@@ -45,21 +45,33 @@ def verify_proposal_with_unification(
     unifier = Unifier(verbose=verbose)
     analyzer = FormulaAnalyzer()
 
-    # Build concrete heap from pto cells
-    if not proposal.pto_cells:
+    # Build concrete heap from pto cells AND predicate calls (for hierarchical predicates)
+    if not proposal.pto_cells and not proposal.predicate_calls:
         return False
 
-    concrete = proposal.pto_cells[0]
-    for pto in proposal.pto_cells[1:]:
-        concrete = SepConj(concrete, pto)
+    # Start with first pto or predicate
+    if proposal.pto_cells:
+        concrete = proposal.pto_cells[0]
+        for pto in proposal.pto_cells[1:]:
+            concrete = SepConj(concrete, pto)
+        # Add predicate calls if any
+        for pred_call in proposal.predicate_calls:
+            concrete = SepConj(concrete, pred_call)
+    else:
+        # Only predicate calls (edge case)
+        concrete = proposal.predicate_calls[0]
+        for pred_call in proposal.predicate_calls[1:]:
+            concrete = SepConj(concrete, pred_call)
 
     # Create predicate call
     pred_call = proposal.to_predicate_call()
 
-    # Unfold predicate deeply enough to match the number of concrete pto cells
+    # Unfold predicate deeply enough to match the number of concrete parts (ptos + predicates)
     # For N concrete cells, unfold to depth N to get N pto cells + 1 residual predicate
     # Example: 4 cells need depth 4 to get: x->y * y->z * z->w * w->v * list(v)
-    unfold_depth = max(len(proposal.pto_cells), 4)
+    # For hierarchical predicates with inner predicates, we may need deeper unfolding
+    total_parts = len(proposal.pto_cells) + len(proposal.predicate_calls)
+    unfold_depth = max(total_parts, 4)
     pred_unfolded = predicate_registry.unfold_predicates(pred_call, depth=unfold_depth)
 
     if verbose:
