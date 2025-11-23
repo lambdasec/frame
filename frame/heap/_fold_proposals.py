@@ -35,7 +35,7 @@ def propose_folds(graph, pto_atoms: List[PointsTo],
         predicate_calls = analyzer.extract_predicate_calls(formula)
 
     # Generate different types of proposals
-    proposals.extend(_propose_ls_folds(graph, pto_atoms))
+    proposals.extend(_propose_ls_folds(graph, pto_atoms, predicate_registry))  # Pass registry
     proposals.extend(_propose_dll_folds(graph, pto_atoms, predicate_registry))
     proposals.extend(_propose_cyclic_folds(graph, pto_atoms))  # NEW: Cyclic patterns
     proposals.extend(_propose_nested_folds(graph, pto_atoms, predicate_registry, predicate_calls))  # NEW: Nested predicates
@@ -49,15 +49,32 @@ def propose_folds(graph, pto_atoms: List[PointsTo],
     return proposals[:max_proposals]
 
 
-def _propose_ls_folds(graph, pto_atoms: List[PointsTo]) -> List[FoldProposal]:
+def _propose_ls_folds(graph, pto_atoms: List[PointsTo], predicate_registry=None) -> List[FoldProposal]:
     """
     Propose list segment folds from detected chains.
 
     For a chain x -> y -> z, proposes:
     - ls(x, z) with appropriate length
     - list(x) if ending at nil
+    - Custom list-like predicates (e.g., lso) if registered
+
+    Args:
+        graph: HeapGraph instance
+        pto_atoms: List of PointsTo formulas
+        predicate_registry: Optional registry to check for custom list predicates
     """
     proposals = []
+
+    # Detect custom list-like predicates (arity 2, list segment structure)
+    custom_ls_predicates = []
+    if predicate_registry:
+        # Check for predicates with arity 2 that might be list segments
+        # Common names: lso, ls1, ls2, sls, etc.
+        for pred_name in predicate_registry.predicates.keys():
+            pred = predicate_registry.get(pred_name)
+            if pred and pred.arity == 2 and pred_name not in ['ls', 'list', 'dll']:
+                # This might be a custom list segment predicate
+                custom_ls_predicates.append(pred_name)
 
     # Map locations to pto atoms for quick lookup
     pto_map = {}
@@ -157,6 +174,18 @@ def _propose_ls_folds(graph, pto_atoms: List[PointsTo]) -> List[FoldProposal]:
                 confidence=0.85 if chain.length >= 3 else 0.6
             )
             proposals.append(proposal)
+
+            # Also generate proposals for custom list segment predicates (e.g., lso)
+            # These have the same structure as ls but different names
+            for custom_pred_name in custom_ls_predicates:
+                custom_proposal = FoldProposal(
+                    predicate_name=custom_pred_name,
+                    args=[Var(chain.head), tail_var],
+                    pto_cells=chain_ptos,
+                    side_conditions=[],
+                    confidence=0.85 if chain.length >= 3 else 0.6  # Same confidence as ls
+                )
+                proposals.append(custom_proposal)
 
         # Proposal 3: ldll (length-annotated doubly-linked list) if applicable
         # Check if this looks like it might need length annotation
