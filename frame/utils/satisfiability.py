@@ -179,20 +179,13 @@ class SatisfiabilityChecker:
                             print(f"Self-loop: {pto.location.name} |-> {val.name}")
                         return True
 
-        # Check for cycles in the heap graph (PRIORITY 1 improvement)
-        # Cyclic heaps violate separation logic semantics and should be UNSAT
-        if len(points_to) >= 2:  # Need at least 2 points-to for a cycle
-            try:
-                graph, _ = self.heap_analyzer.build_heap_graph(formula)
-                if self.heap_analyzer._has_cycle(graph):
-                    if self.verbose:
-                        print(f"Cycle detected in heap graph")
-                    return True
-            except Exception as e:
-                # If cycle detection fails, be conservative and continue
-                if self.verbose:
-                    print(f"Cycle detection error (ignored): {e}")
-                pass
+        # REMOVED INCORRECT CYCLE CHECK
+        # The previous code incorrectly treated ALL cycles as contradictions.
+        # This is WRONG - cyclic heaps (e.g., circular doubly-linked lists) are valid!
+        # Example: dll-vc14 has x -> y -> x (cycle) which is perfectly satisfiable.
+        # Separation logic allows cycles. Only true self-loops (x |-> x) are unsound.
+        # Self-loops are already checked above (lines 175-180).
+        # DO NOT re-add general cycle detection without careful consideration!
 
         # Check for aliasing violations in separating conjunction
         if len(points_to) >= 2:
