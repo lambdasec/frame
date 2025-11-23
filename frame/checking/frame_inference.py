@@ -168,16 +168,41 @@ class FrameInferenceEngine:
                     )
 
                     if folded_formula is not None and num_folds > 0:
-                        if self.verbose:
-                            print(f"[Frame Inference] ✓ Matched via multi-step folding ({num_folds} folds)")
+                        # CRITICAL: Verify that the goal predicate was actually achieved
+                        # Check if cons_part is now present in folded_formula
+                        from frame.analysis.formula import FormulaAnalyzer
+                        analyzer = FormulaAnalyzer()
+                        folded_preds = analyzer.extract_predicate_calls(folded_formula)
 
-                        # Update current antecedent with folded version
-                        current_ant = folded_formula
-                        cons_parts.remove(cons_part)
-                        matched_parts.append(cons_part)
-                        strategies_used.append(f"fold_x{num_folds}")
-                        matched_any = True
-                        break
+                        # Check if the goal predicate matches any predicate in the folded formula
+                        goal_achieved = False
+                        for folded_pred in folded_preds:
+                            if (folded_pred.name == cons_part.name and
+                                len(folded_pred.args) == len(cons_part.args)):
+                                # Check if arguments match
+                                args_match = all(
+                                    str(fa) == str(ca)
+                                    for fa, ca in zip(folded_pred.args, cons_part.args)
+                                )
+                                if args_match:
+                                    goal_achieved = True
+                                    break
+
+                        if goal_achieved:
+                            if self.verbose:
+                                print(f"[Frame Inference] ✓ Matched via multi-step folding ({num_folds} folds)")
+
+                            # Update current antecedent with folded version
+                            current_ant = folded_formula
+                            cons_parts.remove(cons_part)
+                            matched_parts.append(cons_part)
+                            strategies_used.append(f"fold_x{num_folds}")
+                            matched_any = True
+                            break
+                        else:
+                            if self.verbose:
+                                print(f"[Frame Inference] ✗ Multi-step folding applied {num_folds} folds but did not achieve goal {cons_part}")
+                            # Continue to try other strategies
 
                     # REMOVED UNSOUND FALLBACK: single-step folding
                     # The previous code called fold_towards_goal() which returns only a lemma name,
