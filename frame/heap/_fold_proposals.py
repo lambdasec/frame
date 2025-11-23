@@ -30,6 +30,7 @@ def propose_folds(graph, pto_atoms: List[PointsTo],
     proposals.extend(_propose_ls_folds(graph, pto_atoms))
     proposals.extend(_propose_dll_folds(graph, pto_atoms, predicate_registry))
     proposals.extend(_propose_cyclic_folds(graph, pto_atoms))  # NEW: Cyclic patterns
+    proposals.extend(_propose_nested_folds(graph, pto_atoms, predicate_registry))  # NEW: Nested predicates
 
     # Enhanced ranking: score proposals more intelligently
     for proposal in proposals:
@@ -370,6 +371,138 @@ def _propose_cyclic_folds(graph, pto_atoms: List[PointsTo]) -> List[FoldProposal
                         confidence=0.75
                     )
                     proposals.append(proposal)
+
+    return proposals
+
+
+def _propose_nested_folds(graph, pto_atoms: List[PointsTo], predicate_registry=None) -> List[FoldProposal]:
+    """
+    Propose folds for nested predicates like nll, sls, etc.
+
+    Nested predicates have multi-field cells where each field may point to
+    different structures. For example:
+    - nll (nested list): x |-> (next, down) where 'down' points to inner lists
+    - sls (sorted list segment): x |-> (next, data) where data is sorted
+
+    Strategy:
+    1. Detect cells with multiple fields (len(pto.values) > 1)
+    2. Check if any registered predicates expect multi-field cells
+    3. Analyze field usage (which field is 'next', which is data/down)
+    4. Propose folds that match the predicate structure
+
+    Args:
+        graph: HeapGraph instance
+        pto_atoms: List of PointsTo formulas to consider
+        predicate_registry: Registry to check available nested predicates
+
+    Returns:
+        List of FoldProposal objects for nested predicates
+    """
+    proposals = []
+
+    if predicate_registry is None:
+        return proposals  # Cannot propose without knowing available predicates
+
+    # Map locations to pto atoms
+    pto_map = {}
+    multi_field_cells = []  # Track cells with multiple fields
+    for pto in pto_atoms:
+        if isinstance(pto.location, Var):
+            pto_map[pto.location.name] = pto
+            if len(pto.values) > 1:
+                multi_field_cells.append(pto)
+
+    if not multi_field_cells:
+        return proposals  # No multi-field cells, skip nested fold proposals
+
+    # Check for registered nested predicates
+    nested_predicates = []
+    for pred_name in ['nll', 'lso', 'sls', 'skl1', 'skl2', 'skl3']:
+        pred = predicate_registry.get(pred_name)
+        if pred is not None:
+            nested_predicates.append((pred_name, pred))
+
+    if not nested_predicates:
+        return proposals  # No nested predicates registered
+
+    # Try to detect nested list (nll) patterns
+    # NLL structure: x |-> (next, down) where:
+    # - field[0] is next pointer (forms outer list)
+    # - field[1] is down pointer (points to inner list)
+    for pred_name, pred in nested_predicates:
+        if pred_name == 'nll' and pred.arity == 3:  # nll(in, out, boundary)
+            # Detect nll patterns: look for chains of 2-field cells
+            for node_name in list(graph.nodes.keys()):
+                if node_name not in pto_map:
+                    continue
+
+                pto = pto_map[node_name]
+                if len(pto.values) != 2:
+                    continue  # nll expects exactly 2 fields
+
+                # Try to build a chain using field[0] as 'next'
+                chain = graph.chain_from(node_name, max_depth=10)
+
+                if chain is None or chain.length < 1:
+                    continue
+
+                # Collect pto cells for this chain
+                # Only include cells that have 2 fields
+                chain_ptos = []
+                for node in chain.nodes:
+                    if node in pto_map:
+                        node_pto = pto_map[node]
+                        if len(node_pto.values) == 2:
+                            chain_ptos.append(node_pto)
+
+                if not chain_ptos:
+                    continue
+
+                # Check if chain ends at nil
+                tail_successors = graph.get_successors(chain.tail, "next")
+                ends_at_nil = (not tail_successors or "nil" in tail_successors)
+
+                if ends_at_nil and len(chain_ptos) >= 1:
+                    # Propose nll(head, nil, boundary)
+                    # The boundary parameter is typically nil or inferred from inner lists
+                    proposal = FoldProposal(
+                        predicate_name="nll",
+                        args=[
+                            Var(chain.head),  # in (start of outer list)
+                            Const(None),      # out (end of outer list = nil)
+                            Const(None)       # boundary (end of inner lists = nil)
+                        ],
+                        pto_cells=chain_ptos,
+                        side_conditions=[],
+                        confidence=0.75  # Good confidence for nll with 2-field cells
+                    )
+                    proposals.append(proposal)
+
+                # Also propose with non-nil endpoint
+                if not ends_at_nil and len(chain_ptos) >= 1:
+                    end_var = Var(chain.tail) if chain.tail != "nil" else Const(None)
+                    proposal = FoldProposal(
+                        predicate_name="nll",
+                        args=[
+                            Var(chain.head),  # in
+                            end_var,          # out
+                            Const(None)       # boundary
+                        ],
+                        pto_cells=chain_ptos,
+                        side_conditions=[],
+                        confidence=0.7
+                    )
+                    proposals.append(proposal)
+
+        elif pred_name == 'lso' and pred.arity == 2:  # lso(in, out) - list segment with 1 field
+            # lso is like ls but may be used internally by nll
+            # Treat it the same as ls for now
+            pass  # Already handled by _propose_ls_folds
+
+        elif pred_name == 'sls' and pred.arity >= 3:  # sls(in, data_in, out, data_out)
+            # Sorted list segment - similar structure to nll
+            # Would analyze field[1] as data field and check ordering
+            pass  # TODO: Implement sls-specific proposals
 
     return proposals
 
