@@ -359,7 +359,28 @@ class FrameInferenceEngine:
                         )
 
                         if folded_ant is not None and num_folds > 0:
-                            return folded_ant
+                            # CRITICAL: Verify that the goal was actually achieved
+                            # Same bug as in main matching loop - must check arguments match!
+                            from frame.analysis.formula import FormulaAnalyzer
+                            analyzer = FormulaAnalyzer()
+                            folded_preds = analyzer.extract_predicate_calls(folded_ant)
+
+                            goal_achieved = False
+                            for folded_pred in folded_preds:
+                                if (folded_pred.name == target.name and
+                                    len(folded_pred.args) == len(target.args)):
+                                    # Check if arguments match
+                                    args_match = all(
+                                        str(fa) == str(ca)
+                                        for fa, ca in zip(folded_pred.args, target.args)
+                                    )
+                                    if args_match:
+                                        goal_achieved = True
+                                        break
+
+                            if goal_achieved:
+                                return folded_ant
+                            # Otherwise, continue searching (goal not achieved)
 
                 except Exception:
                     continue
