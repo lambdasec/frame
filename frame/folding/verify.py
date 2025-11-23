@@ -71,7 +71,7 @@ def verify_proposal_with_unification(
     # Example: 4 cells need depth 4 to get: x->y * y->z * z->w * w->v * list(v)
     # For hierarchical predicates with inner predicates, we may need deeper unfolding
     total_parts = len(proposal.pto_cells) + len(proposal.predicate_calls)
-    unfold_depth = max(total_parts, 4)
+    unfold_depth = total_parts  # Match exactly the number of parts we have
     pred_unfolded = predicate_registry.unfold_predicates(pred_call, depth=unfold_depth)
 
     if verbose:
