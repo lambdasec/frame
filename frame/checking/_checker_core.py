@@ -144,9 +144,62 @@ def check_entailment_core(
             )
             success, reason = frame_engine.try_frame_inference(antecedent, consequent)
             if success:
-                if checker_self.verbose:
-                    print(f"Frame inference: {reason}")
-                return EntailmentResult(valid=True, reason=reason)
+                # CRITICAL: Frame inference only matches SPATIAL parts.
+                # We must also verify any PURE constraints in the consequent!
+                # Example: dll-vc14 has consequent (x != z & dll(...))
+                # Frame inference matches dll(...) but we must verify x != z separately.
+
+                # Extract pure constraints from consequent
+                from frame.utils.formula_utils import extract_pure_formulas
+                pure_cons_parts = extract_pure_formulas(consequent)
+
+                if pure_cons_parts:
+                    # There are pure constraints - verify them with Z3
+                    from frame.core.ast import And as AndFormula
+                    pure_ant_parts = extract_pure_formulas(antecedent)
+
+                    # Build pure entailment: pure_ant |- pure_cons
+                    # Use Z3 to check if antecedent's pure part entails consequent's pure part
+                    from frame.core.ast import And as AndFormula
+
+                    # Build conjunction of pure constraints
+                    pure_consequent = pure_cons_parts[0] if len(pure_cons_parts) == 1 else \
+                                     AndFormula(pure_cons_parts[0], pure_cons_parts[1]) if len(pure_cons_parts) == 2 else \
+                                     AndFormula(pure_cons_parts[0], AndFormula(pure_cons_parts[1], pure_cons_parts[2]))  # simplified
+
+                    encoder = Z3Encoder()
+                    solver = z3.Solver()
+                    solver.set("timeout", checker_self.timeout)
+
+                    # Encode: pure_ant & ~pure_cons (should be UNSAT if entailment holds)
+                    if pure_ant_parts:
+                        # Build conjunction of antecedent pure parts
+                        for pure_ant in pure_ant_parts:
+                            ant_constraint = encoder.encode_pure(pure_ant)
+                            solver.add(ant_constraint)
+
+                    cons_constraint = encoder.encode_pure(pure_consequent)
+                    solver.add(z3.Not(cons_constraint))
+
+                    pure_check = solver.check()
+
+                    if pure_check == z3.unsat:
+                        # Pure constraints entailed - frame inference success is valid!
+                        if checker_self.verbose:
+                            print(f"Frame inference: {reason}")
+                            print(f"Pure constraints verified: {pure_consequent}")
+                        return EntailmentResult(valid=True, reason=reason + " (pure constraints verified)")
+                    else:
+                        # Pure constraints NOT entailed - frame inference claimed false positive!
+                        if checker_self.verbose:
+                            print(f"Frame inference matched spatial parts but pure constraints FAILED")
+                            print(f"Pure consequent not entailed: {pure_consequent}")
+                        # Fall through to continue with other strategies
+                else:
+                    # No pure constraints in consequent - frame inference success is valid
+                    if checker_self.verbose:
+                        print(f"Frame inference: {reason}")
+                    return EntailmentResult(valid=True, reason=reason)
         finally:
             checker_self._in_frame_inference = False  # Clear guard
 

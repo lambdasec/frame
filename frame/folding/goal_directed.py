@@ -402,8 +402,8 @@ def fold_towards_goal_multistep(
                     print(f"[Multi-Step Folding] Proposal {proposal.predicate_name} failed base check")
                 continue
 
-            # STEP 2: SOUNDNESS VERIFICATION (use Z3 for multi-step)
-            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=False):
+            # STEP 2: SOUNDNESS VERIFICATION (use unification for speed and accuracy)
+            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True):
                 continue
 
             # STEP 3: ARITHMETIC SYNTHESIS AND VERIFICATION

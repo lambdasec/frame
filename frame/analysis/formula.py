@@ -100,6 +100,20 @@ class FormulaAnalyzer:
             return self._count_predicates(formula.formula)
         return 0
 
+    def extract_predicate_calls(self, formula: Formula) -> List[PredicateCall]:
+        """Extract all predicate calls from a formula"""
+        predicate_calls = []
+
+        if isinstance(formula, PredicateCall):
+            predicate_calls.append(formula)
+        elif isinstance(formula, (SepConj, Wand, And, Or)):
+            predicate_calls.extend(self.extract_predicate_calls(formula.left))
+            predicate_calls.extend(self.extract_predicate_calls(formula.right))
+        elif isinstance(formula, (Not, Exists, Forall)):
+            predicate_calls.extend(self.extract_predicate_calls(formula.formula))
+
+        return predicate_calls
+
     def _count_points_to(self, formula: Formula) -> int:
         """Count concrete points-to facts in a formula"""
         if isinstance(formula, PointsTo):

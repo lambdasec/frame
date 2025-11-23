@@ -42,9 +42,9 @@ def generate_fold_proposals(
     if len(pto_atoms) < min_pto_atoms:
         return None, []
 
-    # Generate proposals
+    # Generate proposals (pass formula for predicate call extraction)
     proposals = propose_folds(heap_graph, pto_atoms, max_proposals=max_proposals,
-                            predicate_registry=predicate_registry)
+                            predicate_registry=predicate_registry, formula=formula)
 
     return heap_graph, proposals
 
