@@ -412,7 +412,8 @@ def cmd_check(args) -> int:
         lines = ["entailment,valid,time_ms,reason"]
         for r in results:
             valid_str = str(r.get("valid", "error")).lower()
-            reason = r.get("reason", r.get("error", "")).replace(",", ";")
+            reason = r.get("reason") or r.get("error") or ""
+            reason = reason.replace(",", ";") if reason else ""
             lines.append(f"\"{r['entailment']}\",{valid_str},{r['time_ms']},\"{reason}\"")
         output_str = "\n".join(lines)
     else:
