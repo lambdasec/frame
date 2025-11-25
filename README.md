@@ -1,4 +1,4 @@
-# Frame - Separation Logic Solver
+# Frame - Separation Logic Verification Tool with Security Scanning
 
 A fast, practical separation logic solver combining heap reasoning, string constraint solving, and automated bug detection.
 
@@ -301,7 +301,7 @@ If you use Frame in academic work, please cite:
 
 ```bibtex
 @software{frame_solver,
-  title = {Frame: Separation Logic Solver with String Theory and Bug Detection},
+  title = {Frame: Separation Logic Verification Tool with Security Scanning},
   author = {Asankhaya Sharma},
   year = {2025},
   url = {https://github.com/lambdasec/frame}
