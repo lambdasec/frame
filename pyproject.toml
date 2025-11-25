@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "frame"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Frame - Separation Logic Verification Tool with Security Scanning"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -75,6 +75,9 @@ Issues = "https://github.com/lambdasec/frame/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["frame*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "frame.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

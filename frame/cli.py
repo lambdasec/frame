@@ -22,8 +22,8 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-# Version
-__version__ = "0.1.0"
+# Import version from main package (single source of truth)
+from frame import __version__
 
 
 def create_parser() -> argparse.ArgumentParser:
