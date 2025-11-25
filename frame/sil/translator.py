@@ -62,8 +62,7 @@ class VulnType(Enum):
     SECURITY_MISCONFIGURATION = "security_misconfiguration"  # CWE-16
 
     # A03: Software Supply Chain Failures
-    DEPENDENCY_CONFUSION = "dependency_confusion"  # CWE-427
-    MALICIOUS_PACKAGE = "malicious_package"     # CWE-1357
+    # Note: Requires SCA tools, out of scope for SAST/taint analysis
 
     # A04: Cryptographic Failures
     WEAK_CRYPTOGRAPHY = "weak_cryptography"     # CWE-327

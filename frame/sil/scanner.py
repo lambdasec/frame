@@ -211,8 +211,7 @@ class FrameScanner:
         VulnType.SECURITY_MISCONFIGURATION: Severity.MEDIUM,
 
         # A03: Software Supply Chain Failures
-        VulnType.DEPENDENCY_CONFUSION: Severity.HIGH,
-        VulnType.MALICIOUS_PACKAGE: Severity.CRITICAL,
+        # Note: Requires SCA tools, out of scope for SAST/taint analysis
 
         # A04: Cryptographic Failures
         VulnType.WEAK_CRYPTOGRAPHY: Severity.HIGH,
@@ -290,8 +289,7 @@ class FrameScanner:
         VulnType.SECURITY_MISCONFIGURATION: "CWE-16",
 
         # A03: Software Supply Chain Failures
-        VulnType.DEPENDENCY_CONFUSION: "CWE-427",
-        VulnType.MALICIOUS_PACKAGE: "CWE-1357",
+        # Note: Requires SCA tools, out of scope for SAST/taint analysis
 
         # A04: Cryptographic Failures
         VulnType.WEAK_CRYPTOGRAPHY: "CWE-327",
