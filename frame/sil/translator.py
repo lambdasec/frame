@@ -42,44 +42,130 @@ from .procedure import Procedure, Node, Program, ProcSpec
 # =============================================================================
 
 class VulnType(Enum):
-    """Types of vulnerabilities that can be detected"""
-    SQL_INJECTION = "sql_injection"
-    XSS = "xss"
-    COMMAND_INJECTION = "command_injection"
-    PATH_TRAVERSAL = "path_traversal"
-    LDAP_INJECTION = "ldap_injection"
-    XPATH_INJECTION = "xpath_injection"
-    CODE_INJECTION = "code_injection"
-    DESERIALIZATION = "deserialization"
-    SSRF = "ssrf"
-    OPEN_REDIRECT = "open_redirect"
-    HEADER_INJECTION = "header_injection"
-    LOG_INJECTION = "log_injection"
-    TEMPLATE_INJECTION = "template_injection"
-    NULL_DEREFERENCE = "null_dereference"
-    USE_AFTER_FREE = "use_after_free"
-    BUFFER_OVERFLOW = "buffer_overflow"
-    DOUBLE_FREE = "double_free"
-    MEMORY_LEAK = "memory_leak"
+    """
+    Types of vulnerabilities that can be detected.
+
+    Organized by OWASP Top 10 2025 categories for comprehensive coverage.
+    """
+    # A01: Broken Access Control
+    PATH_TRAVERSAL = "path_traversal"           # CWE-22
+    OPEN_REDIRECT = "open_redirect"             # CWE-601
+    SSRF = "ssrf"                               # CWE-918
+    AUTHORIZATION_BYPASS = "authorization_bypass"  # CWE-863
+    CORS_MISCONFIGURATION = "cors_misconfiguration"  # CWE-942
+    IDOR = "idor"                               # CWE-639
+
+    # A02: Security Misconfiguration
+    HEADER_INJECTION = "header_injection"       # CWE-113
+    SECRET_EXPOSURE = "secret_exposure"         # CWE-200
+    DEBUG_ENABLED = "debug_enabled"             # CWE-215
+    SECURITY_MISCONFIGURATION = "security_misconfiguration"  # CWE-16
+
+    # A03: Software Supply Chain Failures
+    DEPENDENCY_CONFUSION = "dependency_confusion"  # CWE-427
+    MALICIOUS_PACKAGE = "malicious_package"     # CWE-1357
+
+    # A04: Cryptographic Failures
+    WEAK_CRYPTOGRAPHY = "weak_cryptography"     # CWE-327
+    HARDCODED_SECRET = "hardcoded_secret"       # CWE-798
+    INSECURE_RANDOM = "insecure_random"         # CWE-330
+    WEAK_HASH = "weak_hash"                     # CWE-328
+    MISSING_ENCRYPTION = "missing_encryption"   # CWE-311
+    SENSITIVE_DATA_EXPOSURE = "sensitive_data_exposure"  # CWE-200
+
+    # A05: Injection
+    SQL_INJECTION = "sql_injection"             # CWE-89
+    XSS = "xss"                                 # CWE-79
+    COMMAND_INJECTION = "command_injection"     # CWE-78
+    LDAP_INJECTION = "ldap_injection"           # CWE-90
+    XPATH_INJECTION = "xpath_injection"         # CWE-643
+    CODE_INJECTION = "code_injection"           # CWE-94
+    TEMPLATE_INJECTION = "template_injection"   # CWE-1336
+    NOSQL_INJECTION = "nosql_injection"         # CWE-943
+    XXE = "xxe"                                 # CWE-611
+    REGEX_DOS = "regex_dos"                     # CWE-1333
+    ORM_INJECTION = "orm_injection"             # CWE-89
+    EL_INJECTION = "el_injection"               # CWE-917
+
+    # A06: Insecure Design
+    MASS_ASSIGNMENT = "mass_assignment"         # CWE-915
+    BUSINESS_LOGIC_FLAW = "business_logic_flaw" # CWE-840
+    RACE_CONDITION = "race_condition"           # CWE-362
+
+    # A07: Authentication Failures
+    BROKEN_AUTHENTICATION = "broken_authentication"  # CWE-287
+    CREDENTIAL_STUFFING = "credential_stuffing"  # CWE-307
+    SESSION_FIXATION = "session_fixation"       # CWE-384
+    WEAK_PASSWORD = "weak_password"             # CWE-521
+
+    # A08: Software/Data Integrity Failures
+    DESERIALIZATION = "deserialization"         # CWE-502
+    CODE_INTEGRITY = "code_integrity"           # CWE-494
+    CI_CD_VULNERABILITY = "ci_cd_vulnerability" # CWE-1395
+
+    # A09: Logging & Alerting Failures
+    LOG_INJECTION = "log_injection"             # CWE-117
+    SENSITIVE_DATA_LOGGED = "sensitive_data_logged"  # CWE-532
+    INSUFFICIENT_LOGGING = "insufficient_logging"  # CWE-778
+
+    # A10: Mishandling of Exceptional Conditions
+    ERROR_DISCLOSURE = "error_disclosure"       # CWE-209
+    UNHANDLED_EXCEPTION = "unhandled_exception" # CWE-755
+    IMPROPER_ERROR_HANDLING = "improper_error_handling"  # CWE-388
+
+    # Memory Safety (critical for native code)
+    NULL_DEREFERENCE = "null_dereference"       # CWE-476
+    USE_AFTER_FREE = "use_after_free"           # CWE-416
+    BUFFER_OVERFLOW = "buffer_overflow"         # CWE-120
+    DOUBLE_FREE = "double_free"                 # CWE-415
+    MEMORY_LEAK = "memory_leak"                 # CWE-401
+
+    # Generic taint flow
     TAINT_FLOW = "taint_flow"
 
     @classmethod
     def from_sink_kind(cls, sink_kind: SinkKind) -> 'VulnType':
         """Map sink kind to vulnerability type"""
         mapping = {
+            # A05: Injection
             SinkKind.SQL_QUERY: cls.SQL_INJECTION,
             SinkKind.HTML_OUTPUT: cls.XSS,
             SinkKind.SHELL_COMMAND: cls.COMMAND_INJECTION,
-            SinkKind.FILE_PATH: cls.PATH_TRAVERSAL,
             SinkKind.LDAP_QUERY: cls.LDAP_INJECTION,
             SinkKind.XPATH_QUERY: cls.XPATH_INJECTION,
             SinkKind.EVAL: cls.CODE_INJECTION,
-            SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
-            SinkKind.SSRF: cls.SSRF,
-            SinkKind.REDIRECT: cls.OPEN_REDIRECT,
-            SinkKind.HEADER: cls.HEADER_INJECTION,
-            SinkKind.LOG: cls.LOG_INJECTION,
             SinkKind.TEMPLATE: cls.TEMPLATE_INJECTION,
+            SinkKind.NOSQL_QUERY: cls.NOSQL_INJECTION,
+            SinkKind.XML_PARSE: cls.XXE,
+            SinkKind.REGEX: cls.REGEX_DOS,
+            SinkKind.ORM_QUERY: cls.ORM_INJECTION,
+            SinkKind.EXPRESSION_LANG: cls.EL_INJECTION,
+            # A01: Broken Access Control
+            SinkKind.FILE_PATH: cls.PATH_TRAVERSAL,
+            SinkKind.REDIRECT: cls.OPEN_REDIRECT,
+            SinkKind.SSRF: cls.SSRF,
+            SinkKind.AUTHZ_CHECK: cls.AUTHORIZATION_BYPASS,
+            SinkKind.CORS: cls.CORS_MISCONFIGURATION,
+            # A02: Security Misconfiguration
+            SinkKind.HEADER: cls.HEADER_INJECTION,
+            SinkKind.SECRET_EXPOSURE: cls.SECRET_EXPOSURE,
+            SinkKind.DEBUG_INFO: cls.DEBUG_ENABLED,
+            # A04: Cryptographic Failures
+            SinkKind.WEAK_CRYPTO: cls.WEAK_CRYPTOGRAPHY,
+            SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
+            SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
+            SinkKind.WEAK_HASH: cls.WEAK_HASH,
+            # A07: Authentication Failures
+            SinkKind.CREDENTIAL: cls.BROKEN_AUTHENTICATION,
+            SinkKind.SESSION: cls.SESSION_FIXATION,
+            SinkKind.PASSWORD_STORE: cls.WEAK_PASSWORD,
+            # A08: Software/Data Integrity Failures
+            SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
+            # A09: Logging Failures
+            SinkKind.LOG: cls.LOG_INJECTION,
+            SinkKind.SENSITIVE_LOG: cls.SENSITIVE_DATA_LOGGED,
+            # A10: Error Handling
+            SinkKind.ERROR_DISCLOSURE: cls.ERROR_DISCLOSURE,
         }
         return mapping.get(sink_kind, cls.TAINT_FLOW)
 
