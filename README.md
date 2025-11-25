@@ -561,10 +561,6 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guide.
 
 ---
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
 ## Citation
 
 ```bibtex
