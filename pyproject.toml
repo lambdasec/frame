@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "Frame - Separation Logic Verification Tool with Security Scanning"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "codelion"}
 ]
@@ -26,10 +26,9 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -68,10 +67,10 @@ all = [
 frame = "frame.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/frame/frame"
-Documentation = "https://github.com/frame/frame#readme"
-Repository = "https://github.com/frame/frame"
-Issues = "https://github.com/frame/frame/issues"
+Homepage = "https://github.com/lambdasec/frame"
+Documentation = "https://github.com/lambdasec/frame#readme"
+Repository = "https://github.com/lambdasec/frame"
+Issues = "https://github.com/lambdasec/frame/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

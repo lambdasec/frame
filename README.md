@@ -4,7 +4,7 @@
 
 Frame is a fast, practical separation logic solver that combines heap reasoning, taint analysis, and automated vulnerability detection. It provides both a powerful Python API and a command-line interface for security scanning.
 
-[![Tests](https://img.shields.io/badge/tests-1329%20passed-green)]() [![Python](https://img.shields.io/badge/python-3.9%2B-blue)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
+[![Tests](https://img.shields.io/badge/tests-1329%20passed-green)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]() [![Benchmarks](https://img.shields.io/badge/benchmarks-4742%20curated-blue)]()
 
 ## Table of Contents
 
@@ -73,7 +73,7 @@ pip install -e ".[all]"
 
 ### Requirements
 
-- Python 3.9+
+- Python 3.10+
 - Z3 SMT Solver (installed automatically)
 - tree-sitter (for security scanning)
 
@@ -484,16 +484,27 @@ overflow = BitVecExpr("bvadd", [BitVecVal(255, 8), BitVecVal(1, 8)], 8)
 
 ## Benchmarks
 
-Frame is validated against industry-standard benchmark suites.
+Frame is validated against industry-standard benchmark suites with ~20,000+ tests across 4 SMT theories.
 
-### Results Summary
+### Curated Results (4,742 tests, ~15-20 min)
 
 | Theory | Tests | Accuracy | Avg Time |
 |--------|-------|----------|----------|
-| Separation Logic | 861 | 77.7% | 0.8s |
+| Separation Logic (SL-COMP) | 692 | 73.8% | 1.7s |
+| String (QF_S) | 3,300 | 83.9% | ~15ms |
+| Array (QF_AX) | 500 | **100%** | 0.048s |
+| Bitvector (QF_BV) | 250 | 76.4% | 0.025s |
+| **Total** | **4,742** | **83.7%** | 1.7s |
+
+### Full Results (19,801 tests, ~2+ hours)
+
+| Theory | Tests | Accuracy | Avg Time |
+|--------|-------|----------|----------|
+| Separation Logic (SL-COMP) | 861 | 77.7% | 0.8s |
 | String (QF_S) | 18,940 | 84.2% | ~15ms |
 | Array (QF_AX) | 500 | **100%** | 0.048s |
 | Bitvector (QF_BV) | 250 | 76.4% | 0.025s |
+| **Total** | **19,801** | **83.9%** | 0.8s |
 
 ### Running Benchmarks
 
@@ -510,6 +521,11 @@ python -m benchmarks run --division qf_s_curated
 python -m benchmarks run --division qf_ax_curated
 python -m benchmarks run --division qf_bv_curated
 ```
+
+**Benchmark Sources:**
+- SL-COMP 2024: Official separation logic competition benchmarks
+- SMT-LIB 2024: QF_S (Kaluza, PISA, PyEx), QF_AX, QF_BV from Zenodo release
+- Custom: Security-focused regression tests for cross-theory vulnerabilities
 
 See [benchmarks/README.md](benchmarks/README.md) for detailed methodology.
 
