@@ -307,13 +307,13 @@ The scanner uses a **Separation Intermediate Language (SIL)** inspired by Facebo
 
 ### OWASP Top 10 2025 Coverage
 
-Frame detects vulnerabilities across all [OWASP Top 10](https://owasp.org/Top10/) categories:
+Frame detects vulnerabilities across [OWASP Top 10](https://owasp.org/Top10/) categories using static analysis and taint tracking:
 
 | OWASP 2025 | Vulnerabilities Detected | CWEs |
 |------------|-------------------------|------|
 | **A01: Broken Access Control** | Path Traversal, SSRF, Open Redirect, IDOR, CORS Misconfiguration | CWE-22, CWE-918, CWE-601, CWE-639, CWE-942 |
 | **A02: Security Misconfiguration** | Header Injection, Secret Exposure, Debug Enabled | CWE-113, CWE-200, CWE-215 |
-| **A03: Supply Chain Failures** | Dependency Confusion, Malicious Package | CWE-427, CWE-1357 |
+| **A03: Supply Chain Failures** | *Requires SCA tools (out of scope for SAST)* | — |
 | **A04: Cryptographic Failures** | Weak Crypto, Hardcoded Secrets, Insecure Random, Weak Hash | CWE-327, CWE-798, CWE-330, CWE-328 |
 | **A05: Injection** | SQL, XSS, Command, LDAP, XPath, Code, Template, NoSQL, XXE, ReDoS | CWE-89, CWE-79, CWE-78, CWE-90, CWE-643, CWE-94, CWE-1336, CWE-943, CWE-611, CWE-1333 |
 | **A06: Insecure Design** | Mass Assignment, Race Condition | CWE-915, CWE-362 |
@@ -321,6 +321,8 @@ Frame detects vulnerabilities across all [OWASP Top 10](https://owasp.org/Top10/
 | **A08: Integrity Failures** | Insecure Deserialization | CWE-502 |
 | **A09: Logging Failures** | Log Injection, Sensitive Data Logged | CWE-117, CWE-532 |
 | **A10: Error Handling** | Error Disclosure, Unhandled Exception | CWE-209, CWE-755 |
+
+> **Note:** A03 (Supply Chain Failures) requires Software Composition Analysis (SCA) tools that analyze dependency manifests and check against vulnerability databases. Frame focuses on SAST (Static Application Security Testing) with taint analysis for detecting code-level vulnerabilities.
 
 ### Supported Frameworks
 
