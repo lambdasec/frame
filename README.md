@@ -307,7 +307,7 @@ The scanner uses a **Separation Intermediate Language (SIL)** inspired by Facebo
 
 ### OWASP Top 10 2025 Coverage
 
-Frame detects vulnerabilities across all [OWASP Top 10 2025](https://owasp.org/Top10/2025/) categories:
+Frame detects vulnerabilities across all [OWASP Top 10](https://owasp.org/Top10/) categories:
 
 | OWASP 2025 | Vulnerabilities Detected | CWEs |
 |------------|-------------------------|------|
@@ -369,10 +369,21 @@ Vulnerabilities Found: 1
 **GitHub Actions:**
 
 ```yaml
-- name: Security Scan
+- name: Checkout
+  uses: actions/checkout@v4
+
+- name: Setup Python
+  uses: actions/setup-python@v5
+  with:
+    python-version: '3.10'
+
+- name: Install Frame
   run: |
-    pip install frame-sl[scan]
-    frame scan src/ --format sarif -o results.sarif --fail-on high
+    git clone https://github.com/lambdasec/frame.git
+    cd frame && pip install -e ".[scan]"
+
+- name: Security Scan
+  run: frame scan src/ --format sarif -o results.sarif --fail-on high
 
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v2
