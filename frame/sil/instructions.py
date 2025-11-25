@@ -61,21 +61,70 @@ class TaintKind(Enum):
 
 
 class SinkKind(Enum):
-    """Types of security-sensitive sinks"""
-    SQL_QUERY = "sql"           # SQL query execution
-    HTML_OUTPUT = "html"        # HTML output (XSS)
-    SHELL_COMMAND = "shell"     # Shell command execution
-    FILE_PATH = "filesystem"    # File path operations
-    LDAP_QUERY = "ldap"         # LDAP query
-    XPATH_QUERY = "xpath"       # XPath query
-    EVAL = "eval"               # Dynamic code evaluation
-    DESERIALIZATION = "deserialize"  # Object deserialization
-    REDIRECT = "redirect"       # URL redirect
-    HEADER = "header"           # HTTP header injection
-    LOG = "log"                 # Log injection
-    REGEX = "regex"             # ReDoS via regex
-    SSRF = "ssrf"               # Server-side request forgery
-    TEMPLATE = "template"       # Template injection
+    """
+    Types of security-sensitive sinks.
+
+    Mapped to OWASP Top 10 2025 categories:
+    - A01: Broken Access Control (SSRF, redirect, file access, authz)
+    - A02: Security Misconfiguration (secrets, debug, headers)
+    - A03: Software Supply Chain Failures (package integrity)
+    - A04: Cryptographic Failures (weak crypto, hardcoded keys)
+    - A05: Injection (SQL, command, LDAP, XPath, template, etc.)
+    - A06: Insecure Design (mass assignment, IDOR)
+    - A07: Authentication Failures (credential handling, session)
+    - A08: Software/Data Integrity Failures (deserialize, code signing)
+    - A09: Logging & Alerting Failures (log injection, sensitive logging)
+    - A10: Mishandling of Exceptional Conditions (error disclosure)
+    """
+    # A05: Injection - Various injection attacks
+    SQL_QUERY = "sql"           # SQL query execution (CWE-89)
+    HTML_OUTPUT = "html"        # HTML output - XSS (CWE-79)
+    SHELL_COMMAND = "shell"     # Shell command execution (CWE-78)
+    LDAP_QUERY = "ldap"         # LDAP query (CWE-90)
+    XPATH_QUERY = "xpath"       # XPath query (CWE-643)
+    EVAL = "eval"               # Dynamic code evaluation (CWE-94)
+    TEMPLATE = "template"       # Template injection (CWE-1336)
+    NOSQL_QUERY = "nosql"       # NoSQL injection (CWE-943)
+    XML_PARSE = "xml"           # XXE - XML External Entity (CWE-611)
+    REGEX = "regex"             # ReDoS via regex (CWE-1333)
+    ORM_QUERY = "orm"           # ORM injection (CWE-89)
+    EXPRESSION_LANG = "el"      # Expression language injection (CWE-917)
+
+    # A01: Broken Access Control
+    FILE_PATH = "filesystem"    # File path operations (CWE-22)
+    REDIRECT = "redirect"       # URL redirect (CWE-601)
+    SSRF = "ssrf"               # Server-side request forgery (CWE-918)
+    AUTHZ_CHECK = "authz"       # Authorization bypass (CWE-863)
+    CORS = "cors"               # CORS misconfiguration (CWE-942)
+
+    # A02: Security Misconfiguration
+    HEADER = "header"           # HTTP header injection (CWE-113)
+    SECRET_EXPOSURE = "secret"  # Secret/credential exposure (CWE-200)
+    DEBUG_INFO = "debug"        # Debug information exposure (CWE-215)
+
+    # A04: Cryptographic Failures
+    WEAK_CRYPTO = "weak_crypto" # Weak cryptography (CWE-327)
+    HARDCODED_SECRET = "hardcoded_secret"  # Hardcoded credentials (CWE-798)
+    INSECURE_RANDOM = "insecure_random"    # Insecure randomness (CWE-330)
+    WEAK_HASH = "weak_hash"     # Weak hashing (CWE-328)
+
+    # A07: Authentication Failures
+    CREDENTIAL = "credential"   # Credential handling (CWE-522)
+    SESSION = "session"         # Session management (CWE-384)
+    PASSWORD_STORE = "password" # Password storage (CWE-257)
+
+    # A08: Software/Data Integrity Failures
+    DESERIALIZATION = "deserialize"  # Object deserialization (CWE-502)
+
+    # A09: Logging & Alerting Failures
+    LOG = "log"                 # Log injection (CWE-117)
+    SENSITIVE_LOG = "sensitive_log"  # Logging sensitive data (CWE-532)
+
+    # A10: Mishandling of Exceptional Conditions
+    ERROR_DISCLOSURE = "error_disclosure"  # Error message disclosure (CWE-209)
+
+    # Memory Safety (not in OWASP web but critical for native)
+    MEMORY = "memory"           # Memory safety sink
 
     def __str__(self) -> str:
         return self.value

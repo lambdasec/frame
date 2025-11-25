@@ -305,25 +305,32 @@ The scanner uses a **Separation Intermediate Language (SIL)** inspired by Facebo
 - Local reasoning with the frame rule
 - Zero false positives (when verification is enabled)
 
-### Detected Vulnerabilities
+### OWASP Top 10 2025 Coverage
 
-| Type | CWE | Description |
-|------|-----|-------------|
-| SQL Injection | CWE-89 | Tainted data in SQL queries |
-| XSS | CWE-79 | Tainted data in HTML output |
-| Command Injection | CWE-78 | Tainted data in shell commands |
-| Path Traversal | CWE-22 | Tainted data in file paths |
-| SSRF | CWE-918 | Tainted data in URLs |
-| Code Injection | CWE-94 | Tainted data in eval/exec |
+Frame detects vulnerabilities across all [OWASP Top 10 2025](https://owasp.org/Top10/2025/) categories:
+
+| OWASP 2025 | Vulnerabilities Detected | CWEs |
+|------------|-------------------------|------|
+| **A01: Broken Access Control** | Path Traversal, SSRF, Open Redirect, IDOR, CORS Misconfiguration | CWE-22, CWE-918, CWE-601, CWE-639, CWE-942 |
+| **A02: Security Misconfiguration** | Header Injection, Secret Exposure, Debug Enabled | CWE-113, CWE-200, CWE-215 |
+| **A03: Supply Chain Failures** | Dependency Confusion, Malicious Package | CWE-427, CWE-1357 |
+| **A04: Cryptographic Failures** | Weak Crypto, Hardcoded Secrets, Insecure Random, Weak Hash | CWE-327, CWE-798, CWE-330, CWE-328 |
+| **A05: Injection** | SQL, XSS, Command, LDAP, XPath, Code, Template, NoSQL, XXE, ReDoS | CWE-89, CWE-79, CWE-78, CWE-90, CWE-643, CWE-94, CWE-1336, CWE-943, CWE-611, CWE-1333 |
+| **A06: Insecure Design** | Mass Assignment, Race Condition | CWE-915, CWE-362 |
+| **A07: Authentication Failures** | Broken Auth, Session Fixation, Weak Password | CWE-287, CWE-384, CWE-521 |
+| **A08: Integrity Failures** | Insecure Deserialization | CWE-502 |
+| **A09: Logging Failures** | Log Injection, Sensitive Data Logged | CWE-117, CWE-532 |
+| **A10: Error Handling** | Error Disclosure, Unhandled Exception | CWE-209, CWE-755 |
 
 ### Supported Frameworks
 
 **Python:**
-- Flask (`request.args`, `request.form`, `request.data`)
-- Django (`request.GET`, `request.POST`)
-- SQLAlchemy (`cursor.execute`)
-- subprocess (`os.system`, `subprocess.run`)
-- File operations (`open`, `os.path.join`)
+- **Web:** Flask, Django, FastAPI
+- **Database:** SQLAlchemy, PyMongo, Redis
+- **Security:** cryptography, hashlib, secrets
+- **Shell:** subprocess, os.system
+- **XML:** lxml, xml.etree, defusedxml
+- **Templates:** Jinja2, Mako
 
 ### Example Scan
 

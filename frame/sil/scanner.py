@@ -194,48 +194,159 @@ class FrameScanner:
     3. Frame verification engine (incorrectness logic)
     """
 
-    # Severity mapping for vulnerability types
+    # Severity mapping for vulnerability types (OWASP Top 10 2025 aligned)
     SEVERITY_MAP = {
-        VulnType.SQL_INJECTION: Severity.CRITICAL,
-        VulnType.COMMAND_INJECTION: Severity.CRITICAL,
-        VulnType.CODE_INJECTION: Severity.CRITICAL,
-        VulnType.DESERIALIZATION: Severity.CRITICAL,
-        VulnType.XSS: Severity.HIGH,
+        # A01: Broken Access Control
         VulnType.PATH_TRAVERSAL: Severity.HIGH,
+        VulnType.OPEN_REDIRECT: Severity.MEDIUM,
         VulnType.SSRF: Severity.HIGH,
-        VulnType.TEMPLATE_INJECTION: Severity.HIGH,
+        VulnType.AUTHORIZATION_BYPASS: Severity.CRITICAL,
+        VulnType.CORS_MISCONFIGURATION: Severity.MEDIUM,
+        VulnType.IDOR: Severity.HIGH,
+
+        # A02: Security Misconfiguration
+        VulnType.HEADER_INJECTION: Severity.MEDIUM,
+        VulnType.SECRET_EXPOSURE: Severity.CRITICAL,
+        VulnType.DEBUG_ENABLED: Severity.MEDIUM,
+        VulnType.SECURITY_MISCONFIGURATION: Severity.MEDIUM,
+
+        # A03: Software Supply Chain Failures
+        VulnType.DEPENDENCY_CONFUSION: Severity.HIGH,
+        VulnType.MALICIOUS_PACKAGE: Severity.CRITICAL,
+
+        # A04: Cryptographic Failures
+        VulnType.WEAK_CRYPTOGRAPHY: Severity.HIGH,
+        VulnType.HARDCODED_SECRET: Severity.CRITICAL,
+        VulnType.INSECURE_RANDOM: Severity.MEDIUM,
+        VulnType.WEAK_HASH: Severity.HIGH,
+        VulnType.MISSING_ENCRYPTION: Severity.HIGH,
+        VulnType.SENSITIVE_DATA_EXPOSURE: Severity.HIGH,
+
+        # A05: Injection (CRITICAL category)
+        VulnType.SQL_INJECTION: Severity.CRITICAL,
+        VulnType.XSS: Severity.HIGH,
+        VulnType.COMMAND_INJECTION: Severity.CRITICAL,
         VulnType.LDAP_INJECTION: Severity.HIGH,
         VulnType.XPATH_INJECTION: Severity.MEDIUM,
-        VulnType.OPEN_REDIRECT: Severity.MEDIUM,
-        VulnType.HEADER_INJECTION: Severity.MEDIUM,
+        VulnType.CODE_INJECTION: Severity.CRITICAL,
+        VulnType.TEMPLATE_INJECTION: Severity.HIGH,
+        VulnType.NOSQL_INJECTION: Severity.HIGH,
+        VulnType.XXE: Severity.HIGH,
+        VulnType.REGEX_DOS: Severity.MEDIUM,
+        VulnType.ORM_INJECTION: Severity.HIGH,
+        VulnType.EL_INJECTION: Severity.HIGH,
+
+        # A06: Insecure Design
+        VulnType.MASS_ASSIGNMENT: Severity.MEDIUM,
+        VulnType.BUSINESS_LOGIC_FLAW: Severity.MEDIUM,
+        VulnType.RACE_CONDITION: Severity.HIGH,
+
+        # A07: Authentication Failures
+        VulnType.BROKEN_AUTHENTICATION: Severity.CRITICAL,
+        VulnType.CREDENTIAL_STUFFING: Severity.HIGH,
+        VulnType.SESSION_FIXATION: Severity.HIGH,
+        VulnType.WEAK_PASSWORD: Severity.MEDIUM,
+
+        # A08: Software/Data Integrity Failures
+        VulnType.DESERIALIZATION: Severity.CRITICAL,
+        VulnType.CODE_INTEGRITY: Severity.HIGH,
+        VulnType.CI_CD_VULNERABILITY: Severity.HIGH,
+
+        # A09: Logging & Alerting Failures
         VulnType.LOG_INJECTION: Severity.LOW,
+        VulnType.SENSITIVE_DATA_LOGGED: Severity.MEDIUM,
+        VulnType.INSUFFICIENT_LOGGING: Severity.LOW,
+
+        # A10: Mishandling of Exceptional Conditions
+        VulnType.ERROR_DISCLOSURE: Severity.LOW,
+        VulnType.UNHANDLED_EXCEPTION: Severity.MEDIUM,
+        VulnType.IMPROPER_ERROR_HANDLING: Severity.MEDIUM,
+
+        # Memory Safety
         VulnType.NULL_DEREFERENCE: Severity.MEDIUM,
         VulnType.USE_AFTER_FREE: Severity.CRITICAL,
         VulnType.BUFFER_OVERFLOW: Severity.CRITICAL,
         VulnType.DOUBLE_FREE: Severity.HIGH,
         VulnType.MEMORY_LEAK: Severity.LOW,
+
+        # Generic
         VulnType.TAINT_FLOW: Severity.MEDIUM,
     }
 
-    # CWE mapping
+    # CWE mapping for all vulnerability types
     CWE_MAP = {
-        VulnType.SQL_INJECTION: "CWE-89",
-        VulnType.COMMAND_INJECTION: "CWE-78",
-        VulnType.CODE_INJECTION: "CWE-94",
-        VulnType.XSS: "CWE-79",
+        # A01: Broken Access Control
         VulnType.PATH_TRAVERSAL: "CWE-22",
-        VulnType.SSRF: "CWE-918",
-        VulnType.DESERIALIZATION: "CWE-502",
         VulnType.OPEN_REDIRECT: "CWE-601",
+        VulnType.SSRF: "CWE-918",
+        VulnType.AUTHORIZATION_BYPASS: "CWE-863",
+        VulnType.CORS_MISCONFIGURATION: "CWE-942",
+        VulnType.IDOR: "CWE-639",
+
+        # A02: Security Misconfiguration
+        VulnType.HEADER_INJECTION: "CWE-113",
+        VulnType.SECRET_EXPOSURE: "CWE-200",
+        VulnType.DEBUG_ENABLED: "CWE-215",
+        VulnType.SECURITY_MISCONFIGURATION: "CWE-16",
+
+        # A03: Software Supply Chain Failures
+        VulnType.DEPENDENCY_CONFUSION: "CWE-427",
+        VulnType.MALICIOUS_PACKAGE: "CWE-1357",
+
+        # A04: Cryptographic Failures
+        VulnType.WEAK_CRYPTOGRAPHY: "CWE-327",
+        VulnType.HARDCODED_SECRET: "CWE-798",
+        VulnType.INSECURE_RANDOM: "CWE-330",
+        VulnType.WEAK_HASH: "CWE-328",
+        VulnType.MISSING_ENCRYPTION: "CWE-311",
+        VulnType.SENSITIVE_DATA_EXPOSURE: "CWE-200",
+
+        # A05: Injection
+        VulnType.SQL_INJECTION: "CWE-89",
+        VulnType.XSS: "CWE-79",
+        VulnType.COMMAND_INJECTION: "CWE-78",
         VulnType.LDAP_INJECTION: "CWE-90",
         VulnType.XPATH_INJECTION: "CWE-643",
+        VulnType.CODE_INJECTION: "CWE-94",
         VulnType.TEMPLATE_INJECTION: "CWE-1336",
-        VulnType.HEADER_INJECTION: "CWE-113",
+        VulnType.NOSQL_INJECTION: "CWE-943",
+        VulnType.XXE: "CWE-611",
+        VulnType.REGEX_DOS: "CWE-1333",
+        VulnType.ORM_INJECTION: "CWE-89",
+        VulnType.EL_INJECTION: "CWE-917",
+
+        # A06: Insecure Design
+        VulnType.MASS_ASSIGNMENT: "CWE-915",
+        VulnType.BUSINESS_LOGIC_FLAW: "CWE-840",
+        VulnType.RACE_CONDITION: "CWE-362",
+
+        # A07: Authentication Failures
+        VulnType.BROKEN_AUTHENTICATION: "CWE-287",
+        VulnType.CREDENTIAL_STUFFING: "CWE-307",
+        VulnType.SESSION_FIXATION: "CWE-384",
+        VulnType.WEAK_PASSWORD: "CWE-521",
+
+        # A08: Software/Data Integrity Failures
+        VulnType.DESERIALIZATION: "CWE-502",
+        VulnType.CODE_INTEGRITY: "CWE-494",
+        VulnType.CI_CD_VULNERABILITY: "CWE-1395",
+
+        # A09: Logging & Alerting Failures
         VulnType.LOG_INJECTION: "CWE-117",
+        VulnType.SENSITIVE_DATA_LOGGED: "CWE-532",
+        VulnType.INSUFFICIENT_LOGGING: "CWE-778",
+
+        # A10: Mishandling of Exceptional Conditions
+        VulnType.ERROR_DISCLOSURE: "CWE-209",
+        VulnType.UNHANDLED_EXCEPTION: "CWE-755",
+        VulnType.IMPROPER_ERROR_HANDLING: "CWE-388",
+
+        # Memory Safety
         VulnType.NULL_DEREFERENCE: "CWE-476",
         VulnType.USE_AFTER_FREE: "CWE-416",
         VulnType.BUFFER_OVERFLOW: "CWE-120",
         VulnType.DOUBLE_FREE: "CWE-415",
+        VulnType.MEMORY_LEAK: "CWE-401",
     }
 
     def __init__(

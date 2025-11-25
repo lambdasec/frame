@@ -371,6 +371,126 @@ STRING_SPECS = {
 }
 
 # =============================================================================
+# A04: Cryptographic Failures (OWASP 2025)
+# =============================================================================
+
+CRYPTO_SPECS = {
+    # Weak cryptography sinks
+    "hashlib.md5": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "hashlib.sha1": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+    "Crypto.Hash.MD5.new": _sink("weak_hash", [0], "PyCrypto MD5"),
+    "Crypto.Hash.SHA.new": _sink("weak_hash", [0], "PyCrypto SHA1"),
+
+    # Insecure random sinks
+    "random.random": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.randint": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.choice": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.randrange": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+
+    # Weak encryption modes
+    "Crypto.Cipher.AES.new": _sink("weak_crypto", [0], "Check AES mode (CWE-327)"),
+    "Crypto.Cipher.DES.new": _sink("weak_crypto", [0], "DES is deprecated (CWE-327)"),
+    "Crypto.Cipher.DES3.new": _sink("weak_crypto", [0], "3DES is deprecated (CWE-327)"),
+    "cryptography.hazmat.primitives.ciphers.algorithms.TripleDES": _sink("weak_crypto", [], "3DES deprecated"),
+
+    # Hardcoded secrets (detected via pattern, not just API call)
+    # These are handled specially by the scanner for pattern matching
+}
+
+# =============================================================================
+# A08: Software/Data Integrity - Additional Deserialization
+# =============================================================================
+
+DESERIALIZATION_SPECS = {
+    # Dangerous deserialization
+    "jsonpickle.decode": _sink("deserialize", [0], "jsonpickle deserialization (CWE-502)"),
+    "dill.loads": _sink("deserialize", [0], "dill deserialization (CWE-502)"),
+    "shelve.open": _sink("deserialize", [0], "shelve deserialization (CWE-502)"),
+
+    # XML parsing (XXE)
+    "xml.etree.ElementTree.parse": _sink("xml", [0], "XML parse (potential XXE CWE-611)"),
+    "xml.etree.ElementTree.fromstring": _sink("xml", [0], "XML parse (potential XXE)"),
+    "lxml.etree.parse": _sink("xml", [0], "lxml parse (potential XXE)"),
+    "lxml.etree.fromstring": _sink("xml", [0], "lxml parse (potential XXE)"),
+    "xml.dom.minidom.parse": _sink("xml", [0], "minidom parse (XXE)"),
+    "xml.dom.minidom.parseString": _sink("xml", [0], "minidom parseString (XXE)"),
+    "xml.sax.parse": _sink("xml", [0], "SAX parse (XXE)"),
+
+    # Safe XML parsers (sanitizers)
+    "defusedxml.parse": _sanitizer(["xml"], "defusedxml safe parser"),
+    "defusedxml.fromstring": _sanitizer(["xml"], "defusedxml safe parser"),
+}
+
+# =============================================================================
+# NoSQL Databases (A05: Injection)
+# =============================================================================
+
+NOSQL_SPECS = {
+    # MongoDB (NoSQL injection)
+    "pymongo.collection.Collection.find": _sink("nosql", [0], "MongoDB find (NoSQL injection)"),
+    "pymongo.collection.Collection.find_one": _sink("nosql", [0], "MongoDB find_one"),
+    "pymongo.collection.Collection.aggregate": _sink("nosql", [0], "MongoDB aggregate"),
+    "pymongo.collection.Collection.update": _sink("nosql", [0, 1], "MongoDB update"),
+    "pymongo.collection.Collection.delete_many": _sink("nosql", [0], "MongoDB delete"),
+
+    # Redis
+    "redis.Redis.execute_command": _sink("nosql", [0], "Redis command injection"),
+    "redis.Redis.eval": _sink("eval", [0], "Redis Lua eval"),
+}
+
+# =============================================================================
+# Regex (A05: ReDoS)
+# =============================================================================
+
+REGEX_SPECS = {
+    # Regex DoS sinks
+    "re.match": _sink("regex", [0], "Regex match (potential ReDoS CWE-1333)"),
+    "re.search": _sink("regex", [0], "Regex search (potential ReDoS)"),
+    "re.findall": _sink("regex", [0], "Regex findall (potential ReDoS)"),
+    "re.sub": _sink("regex", [0], "Regex sub (potential ReDoS)"),
+    "re.compile": _sink("regex", [0], "Regex compile (potential ReDoS)"),
+}
+
+# =============================================================================
+# Template Engines (A05: Template Injection)
+# =============================================================================
+
+TEMPLATE_SPECS = {
+    # Jinja2
+    "jinja2.Environment.from_string": _sink("template", [0], "Jinja2 template injection (CWE-1336)"),
+    "jinja2.Template": _sink("template", [0], "Jinja2 template injection"),
+
+    # Mako
+    "mako.template.Template": _sink("template", [0], "Mako template injection"),
+
+    # String formatting as template
+    "string.Template": _sink("template", [0], "String template injection"),
+}
+
+# =============================================================================
+# LDAP (A05: LDAP Injection)
+# =============================================================================
+
+LDAP_SPECS = {
+    # python-ldap
+    "ldap.initialize": _sink("ldap", [0], "LDAP connection"),
+    "ldap.open": _sink("ldap", [0], "LDAP connection"),
+    "ldap.LDAPObject.search_s": _sink("ldap", [0, 2], "LDAP search (injection CWE-90)"),
+    "ldap.LDAPObject.search": _sink("ldap", [0, 2], "LDAP search"),
+    "ldap.filter.filter_format": _sanitizer(["ldap"], "LDAP filter escaping"),
+}
+
+# =============================================================================
+# A09: Logging - Sensitive Data Exposure
+# =============================================================================
+
+SENSITIVE_LOGGING_SPECS = {
+    # Patterns that might log sensitive data
+    # Note: These require context analysis, flagged as potential issues
+    "print": _sink("sensitive_log", [0], "Print (may expose sensitive data CWE-532)"),
+}
+
+# =============================================================================
 # Combined Specifications
 # =============================================================================
 
@@ -386,6 +506,14 @@ PYTHON_SPECS.update(HTML_SPECS)
 PYTHON_SPECS.update(LOGGING_SPECS)
 PYTHON_SPECS.update(STDLIB_SOURCES)
 PYTHON_SPECS.update(STRING_SPECS)
+# OWASP 2025 additions
+PYTHON_SPECS.update(CRYPTO_SPECS)
+PYTHON_SPECS.update(DESERIALIZATION_SPECS)
+PYTHON_SPECS.update(NOSQL_SPECS)
+PYTHON_SPECS.update(REGEX_SPECS)
+PYTHON_SPECS.update(TEMPLATE_SPECS)
+PYTHON_SPECS.update(LDAP_SPECS)
+PYTHON_SPECS.update(SENSITIVE_LOGGING_SPECS)
 
 
 def get_python_specs() -> Dict[str, ProcSpec]:
