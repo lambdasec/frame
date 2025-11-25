@@ -4,7 +4,7 @@
 
 Frame is a fast, practical separation logic solver that combines heap reasoning, taint analysis, and automated vulnerability detection. It provides both a powerful Python API and a command-line interface for security scanning.
 
-[![Tests](https://img.shields.io/badge/tests-1329%20passed-green)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)]() [![Benchmarks](https://img.shields.io/badge/benchmarks-4742%20curated-blue)]()
+[![Tests](https://img.shields.io/badge/tests-1329%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![Benchmarks](https://img.shields.io/badge/benchmarks-4742%20curated-blue)](benchmarks/)
 
 ## Table of Contents
 
