@@ -18,8 +18,8 @@ python -m benchmarks run --curated
 - ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
 - ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
-  - 692 SL-COMP (separation logic) - 73.8% correct, 0 errors
-  - 3300 QF_S (string theory) - 83.8% correct, 0 errors
+  - 692 SL-COMP (separation logic) - 79.9% correct, 0 errors
+  - 3300 QF_S (string theory) - 84.2% correct, 0 errors
   - 500 QF_AX (array theory) - 100% correct, 0 errors
   - 250 QF_BV (bitvector theory) - 76.4% correct, 0 errors
 
@@ -41,13 +41,13 @@ python -m benchmarks run --division qf_shls_entl
 - Stratified sampling across all 12 divisions
 - Ensures balanced representation of entailment/SAT problems
 - Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
-- **Results: 73.8% correct (511/692), 0 errors**
+- **Results: 79.9% correct (553/692), 0 errors**
 
 **QF_S Curated: 3,300 tests** (from 18,940 total)
 - Stratified sampling across all sources
 - Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
 - Representative 17% sample
-- **Results: 83.8% correct (2767/3300), 0 errors**
+- **Results: 84.2% correct (2779/3300), 0 errors**
 
 **QF_AX Curated: 500 tests** (from 551 total)
 - Array theory with extensionality
@@ -62,14 +62,14 @@ python -m benchmarks run --division qf_shls_entl
 - **Results: 76.4% correct (191/250), 0 errors**
 
 **Total Curated: 4,742 tests**
-- **Overall: 83.7% correct (3969/4742), 0 errors, avg 1.7s/test**
+- **Overall: 84.0% correct (3982/4742), 0 errors, avg 1.7s/test**
 
 ### Full Sets (19,801 tests)
 
-**Overall Full Results: 83.9% correct (16608/19801), 1 error, avg 0.8s/test**
+**Overall Full Results: 84.0% correct (16627/19801), 0 errors, avg 0.8s/test**
 
 **SL-COMP Full: 861 benchmarks** across 13 divisions
-- **Results: 77.7% correct (669/861), 1 error in qf_bsl_sat**
+- **Results: 79.9% correct (688/861), 0 errors**
 
 | Division | Tests | Focus |
 |----------|-------|-------|
@@ -90,14 +90,14 @@ python -m benchmarks run --division qf_shls_entl
 
 **Detailed Full Results by Division**:
 - bsl_sat: 100.0% (3/3), 0 errors
-- qf_bsl_sat: 32.6% (15/46), 1 error ⚠️
+- qf_bsl_sat: 32.6% (15/46), 0 errors
 - qf_bsllia_sat: 58.3% (14/24), 0 errors
 - qf_shid_entl: 98.0% (49/50), 0 errors
 - qf_shid_sat: 88.9% (88/99), 0 errors
 - qf_shidlia_entl: 54.0% (27/50), 0 errors
 - qf_shidlia_sat: 57.6% (19/33), 0 errors
-- qf_shlid_entl: 42.0% (21/50), 0 errors
-- qf_shls_entl: 76.0% (225/296), 0 errors
+- qf_shlid_entl: 40.0% (20/50), 0 errors
+- qf_shls_entl: 82.8% (245/296), 0 errors
 - qf_shls_sat: 100.0% (110/110), 0 errors
 - shid_entl: 96.0% (48/50), 0 errors
 - shidlia_entl: 100.0% (50/50), 0 errors
