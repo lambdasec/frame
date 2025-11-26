@@ -96,7 +96,7 @@ python -m benchmarks run --division qf_shls_entl
 - qf_shid_sat: 88.9% (88/99), 0 errors
 - qf_shidlia_entl: 54.0% (27/50), 0 errors
 - qf_shidlia_sat: 57.6% (19/33), 0 errors
-- qf_shlid_entl: 40.0% (20/50), 0 errors
+- qf_shlid_entl: 54.0% (27/50), 0 errors
 - qf_shls_entl: 82.8% (245/296), 0 errors
 - qf_shls_sat: 100.0% (110/110), 0 errors
 - shid_entl: 96.0% (48/50), 0 errors
