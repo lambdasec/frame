@@ -204,36 +204,90 @@ def verify_proposal_with_unification(
         concrete_ratio = concrete_pred_count / concrete_pto_count if concrete_pto_count > 0 else 0
 
         # CRITICAL FIX: If concrete has NO predicates but unfolded predicate has predicates,
-        # check if the concrete heap terminates properly (has a cell pointing to nil).
-        # Example 1 (VALID): x |-> y * y |-> nil |- list(x)
-        #   Concrete has cell pointing to nil (terminal) - OK
-        # Example 2 (INVALID): x |-> y * y |-> z |- list(x)
-        #   Concrete has no nil, z is fresh (needs more heap) - UNSOUND
+        # we need to check if the residual predicates can reduce to emp (base case).
+        #
+        # For list predicates (ls, list):
+        #   Example 1 (VALID): x |-> y * y |-> nil |- list(x)
+        #     Concrete has cell pointing to nil (terminal) - OK
+        #   Example 2 (INVALID): x |-> y * y |-> z |- list(x)
+        #     If z is fresh and not nil, residual needs more heap - UNSOUND
+        #
+        # For multi-parameter predicates (dll, nll, etc.):
+        #   Base case is typically when certain parameters are equal (e.g., fr = nx for dll)
+        #   Check if the substitution makes these parameters equal
         if concrete_pred_count == 0 and pred_pred_count > 0 and matched_pred < pred_pred_count:
-            # Check if ANY concrete pto cell points to nil (chain terminates)
             from frame.core.ast import Const, Var
 
             all_concrete_ptos = [p for p in concrete_spatial if isinstance(p, PointsTo)]
 
-            # Check if any concrete cell points to nil
-            has_nil_terminator = False
+            # Collect all values pointed to by concrete cells
+            pointed_to_locs = set()
             for pto in all_concrete_ptos:
                 if pto.values:
-                    target = pto.values[0]
-                    target_str = str(target)
-                    # Check if target is nil
-                    is_nil = ((isinstance(target, Const) and target.value == 'nil') or
-                              (isinstance(target, Var) and target.name == 'nil') or
-                              target_str == 'nil')
-                    if is_nil:
-                        has_nil_terminator = True
+                    for val in pto.values:
+                        pointed_to_locs.add(str(val))
+
+            # Collect all source locations (allocated)
+            allocated_locs = set(str(pto.location) for pto in all_concrete_ptos)
+
+            # Terminal locations are those pointed to but not allocated
+            terminal_locs = pointed_to_locs - allocated_locs
+
+            # Check termination heuristics:
+            # 1. Has nil terminator (classic list case)
+            has_nil_terminator = 'nil' in terminal_locs
+
+            # 2. Has boundary terminators (e.g., for dll, the 'nx' parameter)
+            # If the last pto cell points to a terminal location that matches
+            # one of the predicate call arguments, the predicate can reach base case
+            has_boundary_terminator = False
+
+            # Get the unmatched residual predicates
+            unmatched_pred_spatial = [pred_spatial[i] for i in range(len(pred_spatial)) if i not in used_indices]
+            residual_preds = [p for p in unmatched_pred_spatial if isinstance(p, PredicateCall)]
+
+            for residual_pred in residual_preds:
+                # Apply substitution to residual predicate arguments
+                subst_args = []
+                for arg in residual_pred.args:
+                    arg_str = str(arg)
+                    # Apply substitution if we have one
+                    # Substitution can be a Substitution object or a dict
+                    if current_subst:
+                        subst_mappings = current_subst.mappings if hasattr(current_subst, 'mappings') else current_subst
+                        for var, val in subst_mappings.items():
+                            if arg_str == str(var):
+                                arg_str = str(val)
+                                break
+                    subst_args.append(arg_str)
+
+                if len(subst_args) >= 2:
+                    # For predicates like dll(fr, bk, pr, nx), check if fr could equal nx
+                    # This happens when the last cell points to a boundary location
+                    first_arg = subst_args[0]
+
+                    # Check if first arg is a terminal location (base case: fr = nx or similar)
+                    if first_arg in terminal_locs:
+                        has_boundary_terminator = True
                         break
 
-            # If no nil terminator, we have residual predicates that need more heap - UNSOUND!
-            if not has_nil_terminator:
+                    # Also check if first arg matches a later argument (equality base case)
+                    # e.g., lsso(z_emp, z_emp) where first_arg = z_emp = second_arg
+                    for other_arg in subst_args[1:]:
+                        if first_arg == other_arg:
+                            has_boundary_terminator = True
+                            break
+                elif len(subst_args) == 1:
+                    # Single-arg predicates like list(x) - check if arg is nil or terminal
+                    if subst_args[0] in terminal_locs or subst_args[0] == 'nil':
+                        has_boundary_terminator = True
+
+            # Allow folding if we have proper termination (nil or boundary)
+            if not has_nil_terminator and not has_boundary_terminator:
                 all_required_matched = False
                 if verbose:
-                    print(f"[Unification Verify] ✗ Concrete has no nil terminator but predicate has {pred_pred_count} residual predicates")
+                    print(f"[Unification Verify] ✗ Concrete has no valid terminator for {pred_pred_count} residual predicates")
+                    print(f"[Unification Verify]   Terminal locs: {terminal_locs}")
                     print(f"[Unification Verify]   Residual predicates need more heap - UNSOUND!")
         # If predicate requires more predicates per pto cell than we have in concrete, FAIL
         # Allow some tolerance for residual recursive calls (but only if concrete HAS predicates)
