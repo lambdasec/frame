@@ -31,35 +31,16 @@ class LSHeuristicsHelper:
         """
         Check complex multi-segment patterns that require composition or rearrangement.
 
-        Patterns handled:
+        DISABLED Nov 2025: This uses transitivity-like reasoning which is UNSOUND!
+
+        Patterns that WERE handled (but are unsound due to aliasing):
         1. Multiple segments composing into one: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
         2. Segment subsumption: ls(x,y) * ls(y,z) |- ls(x,y)
-        3. Multiple consequent segments from one: ls(x,z) |- ls(x,y) * ls(y,z) (if ante has intermediate)
+        3. Multiple consequent segments from one: ls(x,z) |- ls(x,y) * ls(y,z)
+
+        All of these are invalid when aliasing is possible (e.g., x = w in pattern 1).
         """
-        # Extract all ls predicates from both sides
-        ante_ls = self.extract_ls_predicates(antecedent)
-        cons_ls = self.extract_ls_predicates(consequent)
-
-        if not ante_ls or not cons_ls:
-            return None
-
-        # Pattern 1: Multi-segment transitivity (n >= 3 segments)
-        # ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
-        if len(cons_ls) == 1:
-            cons_pred = cons_ls[0]
-            if len(cons_pred.args) >= 2:
-                target_start, target_end = cons_pred.args[0], cons_pred.args[1]
-
-                # Try to build a chain from ante segments
-                if self.can_build_chain(ante_ls, target_start, target_end):
-                    if self.verbose:
-                        print(f"Multi-segment composition: {len(ante_ls)} segments compose to ls({target_start},{target_end})")
-                    return True
-
-        # Pattern 2: Segment subsumption - DISABLED for now
-        # This was causing false positives, need more sophisticated checking
-        # TODO: Re-enable with better verification (frame rule should handle this)
-
+        # DISABLED - uses transitivity-like reasoning which is unsound
         return None
 
     def is_pure_ls_conjunction(self, formula: Formula) -> bool:
@@ -161,63 +142,21 @@ class LSHeuristicsHelper:
         """
         Check list segment transitivity: ls(x,y) * ls(y,z) |- ls(x,z)
 
-        This is one of the most common patterns in SL-COMP benchmarks.
+        DISABLED Nov 2025: This heuristic is UNSOUND!
 
-        IMPORTANT: Validates predicate definitions before applying. If the ls predicate
-        has distinctness constraints (like SL-COMP's ls), transitivity is INVALID.
+        The transitivity lemma ls(x,y) * ls(y,z) |- ls(x,z) is NOT sound in
+        separation logic because when x = z (aliasing):
+        - Antecedent ls(x,y) * ls(y,x) can have heap cells (if y != x)
+        - Consequent ls(x,x) = emp (base case)
+        A non-empty heap cannot entail an empty heap.
+
+        The comment "SOUND under acyclic heap assumptions" was incorrect.
+        Acyclicity prevents the heap from having cycles, but it doesn't prevent
+        the variables x and z from aliasing.
+
+        This heuristic should NEVER be used. Return None unconditionally.
         """
-        # VALIDATION: Check if transitivity is sound for the ls predicate
-        if self._validator:
-            # Check if ls transitivity is sound
-            from frame.core.ast import Var, SepConj
-            x, y, z = Var("X"), Var("Y"), Var("Z")
-            test_ant = SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z]))
-            test_cons = PredicateCall("ls", [x, z])
-
-            is_sound, reason = self._validator.is_lemma_sound(
-                "ls_transitivity", test_ant, test_cons
-            )
-
-            if not is_sound:
-                # Transitivity is not valid for this predicate definition
-                if self.verbose:
-                    print(f"Skipping ls transitivity heuristic: {reason}")
-                return None
-
-        # Only applies if consequent is a single ls predicate
-        if not isinstance(consequent, PredicateCall) or consequent.name != "ls":
-            return None
-
-        if len(consequent.args) < 2:
-            return None
-
-        cons_x, cons_z = consequent.args[0], consequent.args[1]
-
-        # Extract all ls predicates from antecedent
-        ls_preds = self.extract_ls_predicates(antecedent)
-
-        # Look for chains: ls(cons_x, y) and ls(y, cons_z) for some y
-        for ls1 in ls_preds:
-            if len(ls1.args) < 2:
-                continue
-            start1, end1 = ls1.args[0], ls1.args[1]
-
-            # Check if this starts at cons_x
-            if self.analyzer._expr_equal(start1, cons_x):
-                # Look for a second segment that continues from end1 to cons_z
-                for ls2 in ls_preds:
-                    if len(ls2.args) < 2 or ls1 == ls2:
-                        continue
-                    start2, end2 = ls2.args[0], ls2.args[1]
-
-                    # Check if ls2 continues from where ls1 ends
-                    # NOTE: This is SOUND under acyclic heap assumptions (enforced by encoder)
-                    if (self.analyzer._expr_equal(end1, start2) and
-                        self.analyzer._expr_equal(end2, cons_z)):
-                        if self.verbose:
-                            print(f"List segment transitivity: ls({start1},{end1}) * ls({start2},{end2}) |- ls({cons_x},{cons_z})")
-                        return True
-
+        # DISABLED - transitivity is unsound
         return None
 
     def check_length_reasoning(self, antecedent: Formula, consequent: Formula) -> Optional[bool]:

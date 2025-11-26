@@ -254,11 +254,29 @@ class CyclicUnfoldEngine:
                             return self._unfold_recursive(unfolded, depth - 1, context)
                         return formula
 
-                # CYCLE CONFIRMED - CLOSE INDUCTIVELY
+                # CYCLE CONFIRMED - RETURN PREDICATE UNCHANGED FOR SOUNDNESS
+                #
+                # CRITICAL FIX (Nov 2025): We previously returned True_() here, which
+                # is UNSOUND because it loses heap allocation information.
+                #
+                # Example bug: ls(x, nil) |- emp was incorrectly marked as valid because:
+                # 1. Unfold ls(x, nil) -> (x = nil & emp) | (x != nil & x |-> u * ls(u, nil))
+                # 2. In recursive branch, ls(u, nil) eventually cycles
+                # 3. Returning True_() made Z3 think the heap was empty
+                # 4. So "x != nil & x |-> u * emp |- emp" incorrectly passed
+                #
+                # The fix: Return the predicate UNCHANGED when a cycle is detected.
+                # This means Z3 cannot prove anything about the cyclic branch,
+                # which is the correct conservative behavior for soundness.
+                #
+                # This may cause some valid entailments to return "unknown" instead
+                # of "valid", but that's acceptable - soundness is more important
+                # than completeness.
+
                 if self.verbose:
                     print(f"[Cycle] Confirmed cycle: {formula} with key {state_key}")
                     print(f"[Cycle] Closed after {current_unfold_depth} unfolds")
-                    print("[Cycle] Closing inductively (returning True_)")
+                    print("[Cycle] Returning predicate unchanged for soundness")
 
                 self.cycle_stats["closed"] += 1
 
@@ -275,9 +293,9 @@ class CyclicUnfoldEngine:
                                     print(f"[Cycle] Back-edge: depth {current_node.depth} -> depth {node.depth}")
                             break
 
-                # Return True_ so Z3 treats this branch as satisfied
-                from frame.core.ast import True_
-                return True_()
+                # Return the predicate unchanged - Z3 will treat this as an
+                # uninterpreted predicate symbol, which is sound
+                return formula
 
             # Mark this state as seen
             context.mark_seen(state_key)

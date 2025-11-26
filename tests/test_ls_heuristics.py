@@ -11,22 +11,33 @@ from frame.core.ast import *
 
 
 class TestLSTransitivity:
-    """Test list segment transitivity heuristics"""
+    """Test list segment transitivity heuristics
 
-    def test_basic_transitivity(self):
-        """Test ls(x,y) * ls(y,z) |- ls(x,z)"""
+    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
+    ls(x,y) * ls(y,z) |- ls(x,z) is INVALID when x = z is possible.
+
+    These tests now verify that the UNSOUND heuristics have been disabled.
+    """
+
+    def test_basic_transitivity_is_invalid(self):
+        """Test ls(x,y) * ls(y,z) |- ls(x,z) is correctly rejected as invalid
+
+        This entailment is NOT sound because when x = z:
+        - Antecedent ls(x,y) * ls(y,x) has heap cells if y != x
+        - Consequent ls(x,x) = emp
+        """
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(x,y) * ls(y,z) |- ls(x,z)")
-        assert result.valid
+        assert not result.valid  # Should be INVALID
 
-    def test_three_segment_transitivity(self):
-        """Test ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)"""
+    def test_three_segment_transitivity_is_invalid(self):
+        """Test ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w) is correctly rejected"""
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)")
-        assert result.valid
+        assert not result.valid  # Should be INVALID
 
     def test_four_segment_chain(self):
-        """Test multi-segment chain detection"""
+        """Test multi-segment chain detection (now disabled for soundness)"""
         from frame.checking._ls_heuristics import LSHeuristicsHelper
         from frame.analysis.formula import FormulaAnalyzer
 
@@ -42,24 +53,23 @@ class TestLSTransitivity:
             PredicateCall("ls", [d, e])
         ]
 
-        # Can we build a chain from a to e?
+        # Chain building is still possible structurally, but not used for entailment
         can_build = helper.can_build_chain(segs, a, e)
-        assert can_build
+        assert can_build  # Structural chain exists
 
     def test_transitivity_with_intermediate(self):
-        """Test that intermediate segments can be inferred"""
+        """Test that intermediate segments can be extracted"""
         checker = EntailmentChecker()
-        # ls(x,y) * ls(y,z) * ls(z,w) should entail ls(x,y) (subsumption)
+        # ls(x,y) * ls(y,z) * ls(z,w) should entail ls(x,y) (subsumption via frame rule)
         result = checker.check_entailment("ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,y)")
-        # Subsumption may not always work without frame rule
-        # Just ensure it doesn't crash
+        # This should work via frame rule, not transitivity
         assert result is not None
 
-    def test_out_of_order_segments(self):
-        """Test segments provided in non-sequential order"""
+    def test_out_of_order_segments_is_invalid(self):
+        """Test segments in non-sequential order - still invalid due to aliasing"""
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(y,z) * ls(x,y) * ls(z,w) |- ls(x,w)")
-        assert result.valid
+        assert not result.valid  # Should be INVALID
 
 
 class TestLSLengthReasoning:
@@ -380,10 +390,18 @@ class TestExprToKey:
 
 
 class TestMultiSegmentPatterns:
-    """Test multi-segment pattern detection"""
+    """Test multi-segment pattern detection
 
-    def test_multi_segment_composition(self):
-        """Test that multi-segment patterns are detected"""
+    NOTE (Nov 2025): Multi-segment patterns using transitivity are UNSOUND.
+    The heuristic has been disabled, so these tests now verify it returns None.
+    """
+
+    def test_multi_segment_composition_disabled(self):
+        """Test that multi-segment patterns are disabled for soundness
+
+        Multi-segment composition ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
+        is UNSOUND due to aliasing (when x = w).
+        """
         from frame.checking._ls_heuristics import LSHeuristicsHelper
         from frame.analysis.formula import FormulaAnalyzer
 
@@ -394,7 +412,7 @@ class TestMultiSegmentPatterns:
         cons = parse("ls(x,w)")
 
         result = helper.check_multi_segment_patterns(ante, cons)
-        assert result is True
+        assert result is None  # DISABLED for soundness
 
     def test_no_pattern_with_no_ls(self):
         """Test that no pattern is detected without ls predicates"""

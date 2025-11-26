@@ -25,21 +25,29 @@ class CompositionalAnalyzer:
     A binary predicate P(x,y) is compositional if it satisfies:
       P(x, a) * P(a, y) |- P(x, y)
 
-    Common examples:
-    - ls(x, y): List segments compose transitively
-    - path(x, y): Path predicates compose
-    - reach(x, y): Reachability composes
+    DISABLED Nov 2025: Compositional reasoning is UNSOUND in separation logic!
+
+    The property P(x,a) * P(a,y) |- P(x,y) is NOT valid when x = y is possible.
+    For example, with ls:
+    - ls(x,a) * ls(a,x) has heap cells if a != x
+    - ls(x,x) = emp (empty heap)
+    - A non-empty heap cannot entail an empty heap
+
+    The comment "compositional under acyclic heap assumptions" was incorrect.
+    Acyclicity prevents heap cycles, but not variable aliasing.
+
+    The KNOWN_COMPOSITIONAL dictionary is now EMPTY to prevent unsound lemmas.
     """
 
-    # Known compositional predicates (built-in knowledge)
-    # NOTE: These are compositional under acyclic heap assumptions (enforced by encoder)
-    # Under acyclicity, if x = y then both segments must be empty, so ls(x,x) = emp is correct
-    KNOWN_COMPOSITIONAL = {
-        "ls": ("start", "end"),           # List segment: ls(start, end)
-        "path": ("from", "to"),            # Path: path(from, to)
-        "reach": ("from", "to"),           # Reachability
-        "sls": ("start", "end", "min", "max"),  # Sorted list segment
-    }
+    # DISABLED: These compositional lemmas are UNSOUND due to aliasing
+    # Previously:
+    # KNOWN_COMPOSITIONAL = {
+    #     "ls": ("start", "end"),
+    #     "path": ("from", "to"),
+    #     "reach": ("from", "to"),
+    #     "sls": ("start", "end", "min", "max"),
+    # }
+    KNOWN_COMPOSITIONAL = {}  # Empty to disable unsound lemmas
 
     def __init__(self, registry: PredicateRegistry):
         self.registry = registry

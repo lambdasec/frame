@@ -354,13 +354,25 @@ class HeapGraphAnalyzer:
             # So if both start and end are source locations, we know start != end.
             path = self._find_disjoint_path(graph, cons_start, cons_end, used_concrete)
             if path is not None:
-                # SOUNDNESS CHECK: For ls(start, end), we need start != end
-                # This is guaranteed if:
-                # 1. Path length >= 3 (at least 2 edges), OR
-                # 2. BOTH start AND end are source locations (disjointness from sep. conj.)
+                # SOUNDNESS CHECK (CRITICAL FIX Nov 2025): For ls(start, end), we need start != end
+                #
+                # Previously we used: len(path) >= 3 OR (start_is_source AND end_is_source)
+                # But path length doesn't prove distinctness! For path x -> y -> z (len 3):
+                #   - We have x != y (x is source, y is target of x)
+                #   - We have y != z (y is source, z is target of y)
+                #   - But we DON'T have x != z! Variables could alias.
+                #
+                # Example: x |-> y * y |-> z |- ls(x, z) with x = z
+                #   - Path x -> y -> z exists (len 3)
+                #   - But if x = z, then ls(x, z) = ls(x, x) = emp (base case)
+                #   - So 2-cell heap doesn't entail emp - entailment INVALID
+                #
+                # The fix: ONLY use disjointness from separating conjunction.
+                # If BOTH start AND end are source locations, they must be distinct.
+                # Path length alone does NOT guarantee distinctness.
                 start_is_source = cons_start in source_locations
                 end_is_source = cons_end in source_locations
-                distinctness_guaranteed = len(path) >= 3 or (start_is_source and end_is_source)
+                distinctness_guaranteed = start_is_source and end_is_source
 
                 if distinctness_guaranteed:
                     # Mark all sources in path as used

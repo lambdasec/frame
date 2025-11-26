@@ -130,12 +130,13 @@ class TestBaseGuidedFolding:
         """Test full integration with EntailmentChecker."""
         checker = EntailmentChecker()
 
-        # Various valid entailments that work with or without base checking
+        # Various entailments - NOTE (Nov 2025): Transitivity is UNSOUND
+        # due to aliasing (when x = z, ls(x,x) = emp but antecedent has cells)
         test_cases = [
             ("list(x) |- list(x)", True),  # Reflexivity
             ("list(x) * list(y) |- list(x)", True),  # Frame
             ("list(x) |- ls(x, nil)", True),  # Predicate conversion
-            ("ls(x, y) * ls(y, z) |- ls(x, z)", True),  # Transitivity
+            ("ls(x, y) * ls(y, z) |- ls(x, z)", False),  # Transitivity INVALID
         ]
 
         for formula, expected in test_cases:
