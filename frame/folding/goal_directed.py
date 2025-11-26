@@ -324,6 +324,70 @@ def apply_fold_to_formula(formula: Formula, proposal: FoldProposal) -> Formula:
     return analyzer._build_sepconj(remaining_parts)
 
 
+def has_spatial_conflict(proposal: FoldProposal, formula: Formula, verbose: bool = False) -> bool:
+    """
+    Check if folding a pto into a predicate would conflict with existing predicates.
+
+    A spatial conflict occurs when:
+    1. The pto's location X is being folded into a predicate
+    2. There's already a predicate in the formula that starts at X
+
+    For example, if we have:
+        ldll(E2, ...) * E2 |-> (...)
+    Then folding E2 |-> (...) into a dll would conflict because ldll(E2, ...)
+    already (potentially) allocates E2.
+
+    Args:
+        proposal: The fold proposal containing the pto being folded
+        formula: The current formula
+        verbose: Enable debug output
+
+    Returns:
+        True if there's a conflict (fold should be rejected), False otherwise
+    """
+    from frame.core.ast import PredicateCall, SepConj, And, PointsTo
+
+    # Get the location(s) being folded
+    folded_locations = set()
+    for pto in proposal.pto_cells:
+        if hasattr(pto.location, 'name'):
+            folded_locations.add(pto.location.name)
+        else:
+            folded_locations.add(str(pto.location))
+
+    # Extract predicates from the formula
+    def extract_predicates(f):
+        predicates = []
+        if isinstance(f, PredicateCall):
+            predicates.append(f)
+        elif isinstance(f, (SepConj, And)):
+            predicates.extend(extract_predicates(f.left))
+            predicates.extend(extract_predicates(f.right))
+        elif hasattr(f, 'formula'):  # Quantifiers, Not, etc.
+            predicates.extend(extract_predicates(f.formula))
+        return predicates
+
+    predicates = extract_predicates(formula)
+
+    # Check each predicate for potential conflict
+    for pred in predicates:
+        if not pred.args:
+            continue
+
+        # Get the first argument (typically the head/start location)
+        first_arg = pred.args[0]
+        pred_start = first_arg.name if hasattr(first_arg, 'name') else str(first_arg)
+
+        # If the predicate starts at a location we're folding, there's a conflict
+        if pred_start in folded_locations:
+            if verbose:
+                print(f"[Spatial Conflict] ✗ Predicate {pred.name}({pred_start}, ...) "
+                      f"conflicts with folding pto at {pred_start}")
+            return True
+
+    return False
+
+
 def fold_towards_goal_multistep(
     antecedent: Formula,
     consequent: Formula,
@@ -396,6 +460,13 @@ def fold_towards_goal_multistep(
         fold_applied = False
 
         for proposal in proposals:
+            # STEP 0: SPATIAL CONFLICT CHECK (CRITICAL FOR SOUNDNESS)
+            # Check if the pto being folded conflicts with existing predicates
+            if has_spatial_conflict(proposal, current, verbose=verbose):
+                if verbose:
+                    print(f"[Multi-Step Folding] Proposal {proposal.predicate_name} rejected due to spatial conflict")
+                continue
+
             # STEP 1: BASE CHECKING
             if not check_heap_matches_base(proposal, predicate_registry, verbose=verbose):
                 if verbose:
