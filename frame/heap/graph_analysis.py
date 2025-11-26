@@ -177,6 +177,12 @@ class HeapGraphAnalyzer:
             False if entailment is invalid based on graph analysis
             None if graph analysis is inconclusive
         """
+        # Try enhanced graph analysis for mixed cases (predicates + concrete cells)
+        # This handles bolognesa-style benchmarks where antecedent has both ls() and pto
+        result = self._check_list_segments_mixed(antecedent, consequent, predicate_registry)
+        if result is not None:
+            return result
+
         # Only use heap graph for purely concrete heaps (no predicates in antecedent)
         # Mixed cases (predicates + concrete) are too complex
         if self.analyzer._has_predicates(antecedent):
@@ -233,6 +239,236 @@ class HeapGraphAnalyzer:
         if self.verbose:
             print(f"Heap graph: all {len(list_segments)} segment(s) can be formed")
         return True
+
+    def _check_list_segments_mixed(self, antecedent: Formula, consequent: Formula,
+                                    predicate_registry) -> Optional[bool]:
+        """
+        Handle mixed cases where antecedent has BOTH predicates and concrete cells.
+
+        This is essential for bolognesa-style benchmarks where:
+        - Antecedent: ls(x9, x7) * x6 |-> x4 * x4 |-> x7 * ...
+        - Consequent: ls(x9, x7) * ls(x6, x7) * ...
+
+        Strategy:
+        1. Build graph from concrete cells
+        2. Add ls() predicates as "super edges" (path from start to end)
+        3. Try to find disjoint paths for all required segments
+        4. Match existing ls() predicates directly when possible
+
+        Returns:
+            True if entailment is valid
+            False if entailment is invalid (counterexample found)
+            None if analysis is inconclusive
+        """
+        # Extract parts from antecedent
+        ant_parts = self.analyzer._extract_sepconj_parts(antecedent)
+
+        # Separate concrete cells from predicates
+        concrete_cells = []  # List of (source, targets) tuples
+        ant_ls_predicates = []  # List of (start, end) tuples from ls() predicates
+
+        for part in ant_parts:
+            if isinstance(part, PointsTo):
+                if isinstance(part.location, Var):
+                    source = part.location.name
+                    targets = []
+                    for val in part.values:
+                        if isinstance(val, Var):
+                            targets.append(val.name)
+                        elif isinstance(val, Const) and val.value == 'nil':
+                            targets.append('nil')
+                    if targets:
+                        concrete_cells.append((source, targets))
+            elif isinstance(part, PredicateCall) and part.name == 'ls':
+                if len(part.args) == 2:
+                    start = str(part.args[0]) if isinstance(part.args[0], Var) else str(part.args[0])
+                    end = str(part.args[1]) if isinstance(part.args[1], Var) else str(part.args[1])
+                    ant_ls_predicates.append((start, end))
+
+        # If no concrete cells, we can't use this analysis
+        if not concrete_cells and not ant_ls_predicates:
+            return None
+
+        # Extract consequent list segments
+        cons_parts = self.analyzer._extract_sepconj_parts(consequent)
+        cons_ls_segments = []
+        other_cons_parts = []
+
+        for part in cons_parts:
+            if isinstance(part, PredicateCall) and part.name == 'ls':
+                if len(part.args) == 2:
+                    start = str(part.args[0]) if isinstance(part.args[0], Var) else str(part.args[0])
+                    end = str(part.args[1]) if isinstance(part.args[1], Var) else str(part.args[1])
+                    cons_ls_segments.append((start, end))
+            elif not isinstance(part, (Emp, True_, And)):
+                if isinstance(part, PredicateCall) or isinstance(part, PointsTo):
+                    other_cons_parts.append(part)
+
+        # If no list segments in consequent, this analysis doesn't apply
+        if not cons_ls_segments:
+            return None
+
+        # If there are other spatial parts in consequent, be conservative
+        if other_cons_parts:
+            return None
+
+        # Build directed graph from concrete cells
+        # graph[source] = [target1, target2, ...]
+        graph = {}
+        source_locations = set()  # All source locations are DISTINCT due to separating conjunction
+        for source, targets in concrete_cells:
+            graph[source] = targets
+            source_locations.add(source)
+
+        # Now try to match each consequent ls() with either:
+        # 1. An existing antecedent ls() (direct match)
+        # 2. A path through concrete cells
+        # 3. A combination (path using concrete cells ending at existing ls)
+
+        used_ant_ls = set()  # Indices of used antecedent ls predicates
+        used_concrete = set()  # Sources of used concrete cells
+
+        # Sort consequent segments - match direct ls first, then longer paths
+        # This greedy strategy works for most benchmarks
+
+        for cons_start, cons_end in cons_ls_segments:
+            matched = False
+
+            # Strategy 1: Direct match with antecedent ls
+            for i, (ant_start, ant_end) in enumerate(ant_ls_predicates):
+                if i in used_ant_ls:
+                    continue
+                if cons_start == ant_start and cons_end == ant_end:
+                    used_ant_ls.add(i)
+                    matched = True
+                    if self.verbose:
+                        print(f"[Mixed Graph] Direct match: ls({cons_start}, {cons_end})")
+                    break
+
+            if matched:
+                continue
+
+            # Strategy 2: Find path through concrete cells
+            # SOUNDNESS: We need to prove start != end for ls(start, end) recursive case.
+            # Key insight: all SOURCE locations in separating conjunction are DISTINCT.
+            # So if both start and end are source locations, we know start != end.
+            path = self._find_disjoint_path(graph, cons_start, cons_end, used_concrete)
+            if path is not None:
+                # SOUNDNESS CHECK: For ls(start, end), we need start != end
+                # This is guaranteed if:
+                # 1. Path length >= 3 (at least 2 edges), OR
+                # 2. BOTH start AND end are source locations (disjointness from sep. conj.)
+                start_is_source = cons_start in source_locations
+                end_is_source = cons_end in source_locations
+                distinctness_guaranteed = len(path) >= 3 or (start_is_source and end_is_source)
+
+                if distinctness_guaranteed:
+                    # Mark all sources in path as used
+                    for i, node in enumerate(path[:-1]):  # All except last node
+                        used_concrete.add(node)
+                    matched = True
+                    if self.verbose:
+                        print(f"[Mixed Graph] Path found for ls({cons_start}, {cons_end}): {' -> '.join(path)}")
+
+            if matched:
+                continue
+
+            # Strategy 3: Path ending at antecedent ls endpoint
+            # e.g., ls(x6, x7) can be matched by x6 -> x4 -> x7 where ls(x4, x7) exists
+            # OR by x6 -> x4 if x4 -> x7 exists as concrete
+            # SOUNDNESS: Skip empty ls predicates (ls(y, y) = emp), and require
+            # either multiple segments or path length >= 2 to handle single-edge cases
+            for i, (ant_start, ant_end) in enumerate(ant_ls_predicates):
+                if i in used_ant_ls:
+                    continue
+                # Skip empty ls predicates (e.g., ls(y, y) where start == end)
+                if ant_start == ant_end:
+                    continue
+                if cons_end == ant_end:
+                    # Try to find path from cons_start to ant_start using concrete
+                    path = self._find_disjoint_path(graph, cons_start, ant_start, used_concrete)
+                    if path is not None:
+                        # Soundness: require multiple segments or path with >= 2 nodes
+                        if len(path) >= 2 or len(cons_ls_segments) > 1:
+                            for j, node in enumerate(path[:-1]):
+                                used_concrete.add(node)
+                            used_ant_ls.add(i)
+                            matched = True
+                            if self.verbose:
+                                print(f"[Mixed Graph] Combined path: {' -> '.join(path)} + ls({ant_start}, {ant_end})")
+                            break
+
+            if not matched:
+                # Cannot match this segment - fall back to Z3
+                if self.verbose:
+                    print(f"[Mixed Graph] Cannot match ls({cons_start}, {cons_end})")
+                return None
+
+        # SOUNDNESS CHECK: All antecedent resources must be consumed!
+        # In separation logic, P |- Q requires EXACT resource matching.
+        # If antecedent has more heap cells than consequent covers, entailment is INVALID.
+        #
+        # Check 1: All concrete cells must be used
+        unused_concrete = source_locations - used_concrete
+        if unused_concrete:
+            if self.verbose:
+                print(f"[Mixed Graph] Unused concrete cells: {unused_concrete} - entailment INVALID")
+            # There are antecedent heap cells not covered by any consequent segment
+            # This means the consequent doesn't describe the same heap
+            return None  # Fall back to Z3 (could be frame rule application)
+
+        # Check 2: All antecedent ls predicates must be used
+        unused_ant_ls_count = len(ant_ls_predicates) - len(used_ant_ls)
+        if unused_ant_ls_count > 0:
+            if self.verbose:
+                unused_ls = [ant_ls_predicates[i] for i in range(len(ant_ls_predicates)) if i not in used_ant_ls]
+                print(f"[Mixed Graph] Unused antecedent ls predicates: {unused_ls} - entailment INVALID")
+            return None  # Fall back to Z3
+
+        # All segments matched and all resources consumed
+        if self.verbose:
+            print(f"[Mixed Graph] All {len(cons_ls_segments)} segments matched, all resources consumed")
+        return True
+
+    def _find_disjoint_path(self, graph: Dict[str, List[str]], start: str, end: str,
+                             used: set, max_depth: int = 15) -> Optional[List[str]]:
+        """
+        Find a path from start to end avoiding used nodes.
+
+        Returns the path as a list of nodes [start, ..., end], or None if not found.
+        The path includes start and end.
+        """
+        if start == end:
+            return [start]  # Empty list segment
+
+        # BFS to find shortest disjoint path
+        from collections import deque
+        queue = deque([(start, [start])])
+        visited = {start}
+
+        while queue:
+            current, path = queue.popleft()
+
+            if len(path) > max_depth:
+                continue
+
+            if current not in graph:
+                continue
+
+            for next_node in graph[current]:
+                # Check if we reached the end
+                if next_node == end:
+                    return path + [end]
+
+                # Check if next node is usable (not already used by another segment)
+                if next_node in used:
+                    continue
+
+                if next_node not in visited:
+                    visited.add(next_node)
+                    queue.append((next_node, path + [next_node]))
+
+        return None  # No path found
 
     def _has_cycle(self, graph: Dict[str, List[str]]) -> bool:
         """

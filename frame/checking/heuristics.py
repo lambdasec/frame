@@ -48,11 +48,16 @@ class HeuristicChecker:
             return length_result
 
         # Check 0a: Detect opposite-direction list segments (circular patterns)
-        if self._detect_opposite_list_segments(antecedent):
-            if self.verbose:
-                print("Detected opposite-direction list segments in antecedent (likely circular)")
-            # Circular segments are unsatisfiable, making the entailment vacuously valid
-            return True
+        # DISABLED: This heuristic was UNSOUND. Opposite-direction segments like
+        # ls(x,y) * ls(y,x) represent a cyclic heap, which IS satisfiable (just not
+        # for acyclic data structures). Returning True here was incorrect.
+        # The entailment P |- Q is valid iff every model of P is a model of Q.
+        # A cyclic heap satisfies P but may not satisfy Q, so we can't assume validity.
+        # if self._detect_opposite_list_segments(antecedent):
+        #     if self.verbose:
+        #         print("Detected opposite-direction list segments in antecedent (likely circular)")
+        #     # Circular segments are unsatisfiable, making the entailment vacuously valid
+        #     return True
 
         # Check 0: Simple cycle detection - only reject obvious small cycles
         ante_edges = self._extract_points_to_edges(antecedent)

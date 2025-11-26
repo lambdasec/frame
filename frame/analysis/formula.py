@@ -282,13 +282,16 @@ class FormulaAnalyzer:
         """
         Eliminate magic wand when pattern P * (P -* Q) appears.
 
-        Rewrite:  P * (P -* Q)  →  P * Q
+        Rewrite:  P * (P -* Q)  →  Q
 
-        This is sound because:
-        - P holds in the current heap
-        - (P -* Q) means "if P then Q"
-        - Therefore Q must hold
-        - No extension heap needed
+        Semantics of P * (P -* Q):
+        - h = h1 ⊎ h2 (disjoint union)
+        - h1 ⊨ P
+        - h2 ⊨ (P -* Q), meaning for all h' disjoint from h2, if h' ⊨ P then h2 ⊎ h' ⊨ Q
+        - Since h1 ⊨ P and h1 is disjoint from h2, we have h2 ⊎ h1 = h ⊨ Q
+
+        So P * (P -* Q) implies Q holds at the full heap h.
+        NOTE: The result is Q, NOT P * Q! P is "consumed" by the wand.
 
         This fixes SAT divisions (bsl_sat, rev-*, dispose-*) where
         wands should not create fresh heaps.
@@ -306,25 +309,25 @@ class FormulaAnalyzer:
             left = self.eliminate_wand(formula.left, checker)
             right = self.eliminate_wand(formula.right, checker)
 
-            # Pattern 1: P * (P -* Q)  →  P * Q
+            # Pattern 1: P * (P -* Q)  →  Q
             if isinstance(right, Wand):
                 wand_left = right.left
                 wand_right = right.right
 
                 # Check if left |- wand_left (P holds)
                 if self._can_prove_entailment(left, wand_left, checker):
-                    # Replace with P * Q
-                    return SepConj(left, wand_right)
+                    # Replace with Q (P is consumed by the wand)
+                    return wand_right
 
-            # Pattern 2: (P -* Q) * P  →  P * Q (symmetric)
+            # Pattern 2: (P -* Q) * P  →  Q (symmetric)
             if isinstance(left, Wand):
                 wand_left = left.left
                 wand_right = left.right
 
                 # Check if right |- wand_left (P holds)
                 if self._can_prove_entailment(right, wand_left, checker):
-                    # Replace with P * Q
-                    return SepConj(right, wand_right)
+                    # Replace with Q (P is consumed by the wand)
+                    return wand_right
 
             # No match - return with processed subformulas
             return SepConj(left, right)
