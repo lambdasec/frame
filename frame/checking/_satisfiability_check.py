@@ -51,6 +51,11 @@ def is_satisfiable(
     encoder = Z3Encoder()
     # Set mode to SAT for satisfiability checking
     encoder._spatial_encoder.wand_encoder.mode = "SAT"
+    # CRITICAL: Disable acyclicity constraints for SAT checking!
+    # Cyclic heaps (e.g., x |-> y * y |-> x) ARE satisfiable in separation logic.
+    # The acyclicity constraint is only meaningful for list segment predicates
+    # (which enforce acyclicity semantically), not for raw points-to cells.
+    encoder.use_acyclicity_constraints = False
 
     if checker_self.verbose:
         print(f"Wand encoder mode: {encoder._spatial_encoder.wand_encoder.mode}")

@@ -106,9 +106,10 @@ def test_true_is_satisfiable(checker):
     assert result is True
 
 def test_x_5_x_5_is_satisfiable(checker):
-    """x = 5 & x |-> 5 is unsatisfiable (self-loop after substitution)"""
+    """x = 5 & x |-> 5 IS satisfiable (self-loop is valid heap configuration)"""
     result = checker.is_satisfiable(And(eq("x", 5), pts("x", 5)))
     # After equality substitution: 5 = 5 & 5 |-> 5
-    # This creates a self-loop (location 5 points to value 5)
-    # which violates the rank-based acyclicity constraint
-    assert result is False
+    # This represents a heap cell where location 5 stores value 5
+    # While unusual, this is a valid heap configuration in separation logic
+    # (Note: acyclicity constraints are disabled for SAT checking to allow cyclic heaps)
+    assert result is True
