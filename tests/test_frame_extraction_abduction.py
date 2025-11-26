@@ -80,16 +80,21 @@ def test_frame_extraction_with_predicates(checker):
 
 
 def test_frame_extraction_list_segments(checker):
-    """Frame extraction with list segments: ls(x,y) * ls(y,z) * w|->5 |- ls(x,z)"""
+    """Frame extraction with list segments: ls(x,y) * ls(y,z) * w|->5 |- ls(x,z)
+
+    NOTE (Nov 2025): This test relied on transitivity which is UNSOUND.
+    The entailment ls(x,y) * ls(y,z) |- ls(x,z) is INVALID due to aliasing.
+    This test now verifies the correct behavior (frame extraction fails).
+    """
     antecedent = sep(ls("x", "y"), ls("y", "z"), pts("w", "5"))
     consequent = ls("x", "z")
 
     frame = checker.find_frame(antecedent, consequent)
 
-    # Frame should be w |-> 5 (after ls transitivity)
-    # Note: This test validates that frame extraction works even when
-    # semantic reasoning (lemmas) is needed
-    assert frame is not None
+    # Frame extraction should fail because ls(x,y) * ls(y,z) does NOT entail ls(x,z)
+    # due to aliasing (when x = z). This is correct behavior.
+    # The unsound transitivity lemma has been removed.
+    assert frame is None  # Frame extraction should fail
 
 
 def test_frame_extraction_complex_order(checker):
@@ -260,22 +265,24 @@ def test_frame_extraction_then_abduction(checker):
 def test_frame_operations_with_list_segments(checker):
     """Complex test with list segments
 
+    NOTE (Nov 2025): Transitivity is UNSOUND due to aliasing!
+    ls(x,y) * ls(y,z) does NOT entail ls(x,z) when x = z is possible.
+
     Extraction: ls(x,y) * ls(y,z) * w|->5 |- ls(x,z)
-    Frame: w |-> 5
+    Frame extraction should FAIL because the base entailment is invalid.
 
     Abduction: x |-> y |- ls(x, z)
     Frame: ls(y, z)
     """
-    # Test extraction
+    # Test extraction - should FAIL because transitivity is unsound
     ante1 = sep(ls("x", "y"), ls("y", "z"), pts("w", "5"))
     cons1 = ls("x", "z")
 
     frame_extracted = checker.find_frame(ante1, cons1)
-    # Should extract w |-> 5 (after using transitivity on list segments)
-    # This might be complex to extract, so we allow it to be more general
-    assert frame_extracted is not None
+    # Frame extraction should fail because ls(x,y) * ls(y,z) does NOT entail ls(x,z)
+    assert frame_extracted is None
 
-    # Test abduction
+    # Test abduction - this can still work
     ante2 = pts("x", "y")
     cons2 = ls("x", "z")
 

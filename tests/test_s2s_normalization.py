@@ -36,12 +36,16 @@ def checker_no_normalization():
 # ==========================================================================
 
 def test_list_transitivity_normalized(checker):
-    """Test that ls(x,y) * ls(y,z) |- ls(x,z) works with normalization"""
+    """Test that ls(x,y) * ls(y,z) |- ls(x,z) is INVALID with normalization
+
+    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
+    When x = z, antecedent ls(x,y) * ls(y,x) has heap cells but consequent ls(x,x) = emp.
+    """
     antecedent = sep(ls("x", "y"), ls("y", "z"))
     consequent = ls("x", "z")
 
     result = checker.check(antecedent, consequent)
-    assert result.valid
+    assert not result.valid  # INVALID - transitivity is unsound
 
 
 def test_list_cons_normalized(checker):
@@ -170,12 +174,16 @@ def test_normalization_improves_performance():
 # ==========================================================================
 
 def test_three_segment_composition_normalized(checker):
-    """Test three-way composition: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)"""
+    """Test three-way composition: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w) is INVALID
+
+    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
+    When x = w, the antecedent has heap cells but consequent ls(x,x) = emp.
+    """
     antecedent = sep(ls("x", "y"), ls("y", "z"), ls("z", "w"))
     consequent = ls("x", "w")
 
     result = checker.check(antecedent, consequent)
-    assert result.valid
+    assert not result.valid  # INVALID - transitivity is unsound
 
 
 def test_mixed_concrete_and_abstract_normalized(checker):
@@ -232,8 +240,8 @@ def test_invalid_entailments_still_fail_normalized(checker):
 
 def test_normalization_vs_traditional_correctness(checker, checker_no_normalization):
     """Test that normalization gives same correctness as traditional approach"""
+    # NOTE (Nov 2025): Removed transitivity test case - it's UNSOUND
     test_cases = [
-        (sep(ls("x", "y"), ls("y", "z")), ls("x", "z")),  # Transitivity
         (sep(pts("x", "y"), lst("y")), lst("x")),  # List cons
         (ls("x", "x"), Emp()),  # Empty segment
         (lst("x"), lst("x")),  # Reflexivity

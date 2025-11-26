@@ -363,8 +363,19 @@ def encode_entailment(
     cons_constraints = z3.And(cons_constraints, cons_taint_propagation)
 
     if cons_spatial is not None:
+        # CRITICAL FIX (Nov 2025): Use NO prefix for consequent spatial encoding
+        #
+        # Previously we used prefix="cons_" which caused variables in the consequent
+        # to be prefixed (e.g., x became cons_x). This meant the antecedent's x and
+        # consequent's cons_x were DIFFERENT Z3 variables, breaking entailment checking.
+        #
+        # For entailment P(x) |- Q(x), the x in both must be the SAME variable.
+        # The prefix was intended to distinguish heap structures, but it incorrectly
+        # prefixed all variables including those from the original formula.
+        #
+        # The fix: Use empty prefix so variables are shared between antecedent and consequent.
         cons_heap_constraints, cons_domain = encoder_self.encoder.encode_heap_assertion(
-            cons_spatial, heap_id, set(), prefix="cons_"
+            cons_spatial, heap_id, set(), prefix=""
         )
         cons_constraints = z3.And(cons_constraints, cons_heap_constraints)
     else:
@@ -373,6 +384,37 @@ def encode_entailment(
     # NOTE: Footprint-aware affine weakening is handled at the frame rule level
     # in checker.py using FootprintAnalyzer. This allows safe weakening while
     # preventing soundness bugs like x |-> y * list(z) ⊢ list(z).
+
+    # CRITICAL FIX (Nov 2025): Handle P |- emp correctly
+    #
+    # When the consequent is emp (empty heap), we must verify that the antecedent
+    # has NO allocations. The issue was that emp encodes as z3.BoolVal(True),
+    # making any entailment P |- emp trivially valid (since X => True is always true).
+    #
+    # The fix: When cons_spatial is emp (or consequent is pure-only), we must
+    # verify that the antecedent's domain is empty. We do this by adding constraints
+    # that any alloc boolean tracked by the antecedent must be false.
+    #
+    # This fixes false positives like: ls(x, nil) |- emp being marked valid
+    # when it should be invalid (ls could have non-empty heap if x != nil).
+
+    # Check if consequent spatial part is emp or None (pure-only)
+    from frame.core.ast import Emp
+    consequent_is_emp = (cons_spatial is None or isinstance(cons_spatial, Emp))
+
+    if consequent_is_emp and ante_spatial is not None:
+        # Consequent expects empty heap, so antecedent must have empty domain
+        # Get all alloc booleans that were set during antecedent encoding
+        # Access via encoder -> _spatial_encoder -> alloc_map
+        alloc_map = encoder_self.encoder._spatial_encoder.alloc_map
+
+        if alloc_map:
+            # Add constraint: all alloc booleans must be false for the entailment to hold
+            # This means: if any location is allocated, the entailment fails
+            all_unallocated = z3.And([z3.Not(alloc) for alloc in alloc_map.values()])
+            # The entailment is: ante => (cons AND all_unallocated)
+            # Or equivalently: if antecedent holds, then no locations are allocated
+            cons_constraints = z3.And(cons_constraints, all_unallocated)
 
     # Standard entailment check: ante_constraints => cons_constraints
     entailment = z3.Implies(ante_constraints, cons_constraints)

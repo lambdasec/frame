@@ -41,9 +41,54 @@ def verify_proposal_with_unification(
         True if unification succeeds (fold is sound)
     """
     from frame.analysis.formula import FormulaAnalyzer
+    from frame.core.ast import Neq, Eq, Var
 
     unifier = Unifier(verbose=verbose)
     analyzer = FormulaAnalyzer()
+
+    # CRITICAL SOUNDNESS CHECK (Nov 2025): For predicates with disjunctive definitions
+    # like ls(start, end) = (start = end & emp) | (start != end & ...),
+    # we must verify that we can prove the guard of the non-empty case.
+    #
+    # If we're folding into the recursive case (because we have pto cells),
+    # we need start != end. Without this check, we could incorrectly fold:
+    #   x |-> y * y |-> z |- ls(x, z)
+    # when x could equal z (making ls(x,z) = emp, not matching the 2-cell heap).
+    #
+    # For soundness, we require EXPLICIT disequality in antecedent_pure.
+    # If not present, we reject the fold and fall back to Z3.
+    if proposal.pto_cells and proposal.predicate_name in ['ls', 'list', 'dll', 'nll', 'lso', 'lse']:
+        # These predicates have guard conditions in their recursive case
+        # For ls(start, end), we need start != end
+        if len(proposal.args) >= 2:
+            start_arg = str(proposal.args[0])
+            end_arg = str(proposal.args[1])
+
+            # Check if we have explicit disequality
+            has_disequality = False
+            for pure in antecedent_pure:
+                if isinstance(pure, Neq):
+                    left_str = str(pure.left)
+                    right_str = str(pure.right)
+                    if (left_str == start_arg and right_str == end_arg) or \
+                       (left_str == end_arg and right_str == start_arg):
+                        has_disequality = True
+                        break
+
+            # Also check if start and end are the same (trivially distinct or same)
+            if start_arg == end_arg:
+                # ls(x, x) = emp, but we have pto cells, so this is UNSOUND
+                if verbose:
+                    print(f"[Unification Verify] ✗ Cannot fold: start = end = {start_arg}")
+                return False
+
+            # If no explicit disequality and we have pto cells (non-empty case),
+            # reject the fold - we can't prove the guard
+            if not has_disequality:
+                if verbose:
+                    print(f"[Unification Verify] ✗ Cannot prove {start_arg} != {end_arg}")
+                    print(f"[Unification Verify]   Rejecting fold - guard not provable")
+                return False
 
     # Build concrete heap from pto cells AND predicate calls (for hierarchical predicates)
     if not proposal.pto_cells and not proposal.predicate_calls:

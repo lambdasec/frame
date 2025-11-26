@@ -32,6 +32,8 @@ def initialize_dll_lemmas(library):
     # SL-COMP STANDARD DLL (4-arg: head, prev_head, tail, next_tail)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
+    # When x = t2, the antecedent has heap cells but consequent DLL(x,y,x,n2) may be empty.
     # DLL transitivity (SL-COMP 4-arg, NO length): DLL(x,y,z,w) * DLL(z,w,t2,n2) |- DLL(x,y,t2,n2)
     # dll(x, y, z, w) where x=head, y=prev(head), z=tail, w=next(tail)
     # Compose dll(x,y,z,w) with dll(z,w,t2,n2):
@@ -41,26 +43,26 @@ def initialize_dll_lemmas(library):
     # NOTE: The uppercase DLL predicate must be case-insensitive
     t2 = Var("T2")
     n2 = Var("N2")
-    library.add_lemma(
-        "DLL_transitivity_slcomp",
-        SepConj(
-            PredicateCall("DLL", [x, y, z, w]),
-            PredicateCall("DLL", [z, w, t2, n2])
-        ),
-        PredicateCall("DLL", [x, y, t2, n2]),
-        "DLL transitivity (SL-COMP 4-arg): compose two DLL segments"
-    )
+    # library.add_lemma(
+    #     "DLL_transitivity_slcomp",
+    #     SepConj(
+    #         PredicateCall("DLL", [x, y, z, w]),
+    #         PredicateCall("DLL", [z, w, t2, n2])
+    #     ),
+    #     PredicateCall("DLL", [x, y, t2, n2]),
+    #     "DLL transitivity (SL-COMP 4-arg): compose two DLL segments"
+    # )
 
     # Also add lowercase version for case-insensitive matching
-    library.add_lemma(
-        "dll_transitivity_slcomp",
-        SepConj(
-            PredicateCall("dll", [x, y, z, w]),
-            PredicateCall("dll", [z, w, t2, n2])
-        ),
-        PredicateCall("dll", [x, y, t2, n2]),
-        "dll transitivity (SL-COMP 4-arg lowercase): compose two dll segments"
-    )
+    # library.add_lemma(
+    #     "dll_transitivity_slcomp",
+    #     SepConj(
+    #         PredicateCall("dll", [x, y, z, w]),
+    #         PredicateCall("dll", [z, w, t2, n2])
+    #     ),
+    #     PredicateCall("dll", [x, y, t2, n2]),
+    #     "dll transitivity (SL-COMP 4-arg lowercase): compose two dll segments"
+    # )
 
     # DLL cons (SL-COMP): x |-> (w, p) * dll(w, x, tail, next_tail) |- dll(x, p, tail, next_tail)
     # Prepending a node x to a DLL from w to tail
@@ -132,6 +134,9 @@ def initialize_dll_lemmas(library):
     # The 4th parameter in 4-arg DLL is next_of_tail (a pointer), not a length.
     # Therefore, we only provide length composition for 5-arg DLL.
 
+    # DISABLED Nov 2025: Composition lemmas are UNSOUND due to aliasing!
+    # When h1 = tail2 or h1 = nt2, the aliasing causes soundness issues.
+    #
     # DLL length composition (5-arg): dll(h1, ph1, tail1, nt1, len1) * dll(nt1, tail1, tail2, nt2, len2) |- dll(h1, ph1, tail2, nt2, len1+len2)
     # Signature: dll(head, prev_head, tail, next_tail, length)
     # Pattern: first segment from h1 to tail1, next(tail1)=nt1
@@ -145,15 +150,15 @@ def initialize_dll_lemmas(library):
     nt2 = Var("NT2")   # next_tail of second segment
     len1 = Var("LEN1")
     len2 = Var("LEN2")
-    library.add_lemma(
-        "dll_length_compose_5arg",
-        SepConj(
-            PredicateCall("dll", [h1, ph1, tail1, nt1, len1]),  # first: head1, prev(head1), tail1, next(tail1), len1
-            PredicateCall("dll", [nt1, tail1, tail2, nt2, len2])   # second: head2, prev(head2), tail2, next(tail2), len2
-        ),
-        PredicateCall("dll", [h1, ph1, tail2, nt2, ArithExpr('+', len1, len2)]),  # result: head1, prev(head1), tail2, next(tail2), len1+len2
-        "DLL composition (5-arg) with length parameters"
-    )
+    # library.add_lemma(
+    #     "dll_length_compose_5arg",
+    #     SepConj(
+    #         PredicateCall("dll", [h1, ph1, tail1, nt1, len1]),  # first: head1, prev(head1), tail1, next(tail1), len1
+    #         PredicateCall("dll", [nt1, tail1, tail2, nt2, len2])   # second: head2, prev(head2), tail2, next(tail2), len2
+    #     ),
+    #     PredicateCall("dll", [h1, ph1, tail2, nt2, ArithExpr('+', len1, len2)]),  # result: head1, prev(head1), tail2, next(tail2), len1+len2
+    #     "DLL composition (5-arg) with length parameters"
+    # )
 
     # DLL length cons (5-arg): x |-> (nxt, prv) * dll(nxt, x, tl, n, len) |- dll(x, prv, tl, n, len+1)
     nxt = Var("NXT")
@@ -190,17 +195,20 @@ def initialize_dll_lemmas(library):
         "DLL with nil next_tail is a null-terminated DLL"
     )
 
+    # DISABLED Nov 2025: Composition lemmas are UNSOUND due to aliasing!
+    # When x = t (the head equals the second head), aliasing causes soundness issues.
+    #
     # dll + dllnull composition: dll(x,y,z,t,n) * dllnull(t,z,m) |- dllnull(x,y,m+n)
     # This composes a dll segment with a dllnull segment
-    library.add_lemma(
-        "dll_dllnull_compose",
-        SepConj(
-            PredicateCall("dll", [x, y, z, t, n1]),
-            PredicateCall("dllnull", [t, z, n2])
-        ),
-        PredicateCall("dllnull", [x, y, ArithExpr('+', n2, n1)]),
-        "DLL + dllnull composition: dll ending at t composed with dllnull starting at t"
-    )
+    # library.add_lemma(
+    #     "dll_dllnull_compose",
+    #     SepConj(
+    #         PredicateCall("dll", [x, y, z, t, n1]),
+    #         PredicateCall("dllnull", [t, z, n2])
+    #     ),
+    #     PredicateCall("dllnull", [x, y, ArithExpr('+', n2, n1)]),
+    #     "DLL + dllnull composition: dll ending at t composed with dllnull starting at t"
+    # )
 
     # dllnull transitivity: dllnull(x,p,n1) * dllnull(y,x,n2) might compose
     # (though less common pattern, adding for completeness)
@@ -317,27 +325,29 @@ def initialize_dll_lemmas(library):
         "DLL implies reversed list segment"
     )
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
     # ls_pre transitivity: ls_pre(x,y,n1) * ls_pre(y,z,n2) |- ls_pre(x,z,n1+n2)
-    library.add_lemma(
-        "lspre_transitivity",
-        SepConj(
-            PredicateCall("ls_pre", [x, y, n1]),
-            PredicateCall("ls_pre", [y, z, n2])
-        ),
-        PredicateCall("ls_pre", [x, z, ArithExpr('+', n1, n2)]),
-        "Backward list segment transitivity"
-    )
+    # library.add_lemma(
+    #     "lspre_transitivity",
+    #     SepConj(
+    #         PredicateCall("ls_pre", [x, y, n1]),
+    #         PredicateCall("ls_pre", [y, z, n2])
+    #     ),
+    #     PredicateCall("ls_pre", [x, z, ArithExpr('+', n1, n2)]),
+    #     "Backward list segment transitivity"
+    # )
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
     # lsrev transitivity: lsrev(x,y,n1) * lsrev(y,z,n2) |- lsrev(x,z,n1+n2)
-    library.add_lemma(
-        "lsrev_transitivity",
-        SepConj(
-            PredicateCall("lsrev", [x, y, n1]),
-            PredicateCall("lsrev", [y, z, n2])
-        ),
-        PredicateCall("lsrev", [x, z, ArithExpr('+', n1, n2)]),
-        "Reversed list segment transitivity"
-    )
+    # library.add_lemma(
+    #     "lsrev_transitivity",
+    #     SepConj(
+    #         PredicateCall("lsrev", [x, y, n1]),
+    #         PredicateCall("lsrev", [y, z, n2])
+    #     ),
+    #     PredicateCall("lsrev", [x, z, ArithExpr('+', n1, n2)]),
+    #     "Reversed list segment transitivity"
+    # )
 
     # ============================================
     # TREE LEMMAS
@@ -396,17 +406,21 @@ def initialize_dll_lemmas(library):
     #
     # For now, we keep only the safest lemmas that don't have these issues
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
+    # The comment "safe because ls predicates include distinct constraints" is WRONG.
+    # The issue is variable aliasing (x = w), not predicate constraints.
+    # When x = w, antecedent has heap cells but consequent ls(x,x) = emp.
+    #
     # Three-way transitivity: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
-    # This is safe because ls predicates already include distinct constraints
-    library.add_lemma(
-        "ls_transitivity_3",
-        SepConj(
-            SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-            PredicateCall("ls", [z, w])
-        ),
-        PredicateCall("ls", [x, w]),
-        "Three-way list segment transitivity"
-    )
+    # library.add_lemma(
+    #     "ls_transitivity_3",
+    #     SepConj(
+    #         SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #         PredicateCall("ls", [z, w])
+    #     ),
+    #     PredicateCall("ls", [x, w]),
+    #     "Three-way list segment transitivity"
+    # )
 
     # Empty list segment equivalences
     # These are safe because they're about nil/emp
@@ -428,17 +442,20 @@ def initialize_dll_lemmas(library):
     # RLIST LEMMAS (RECURSIVE LIST WITH CONSTRAINTS)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent RList(x,x) = emp.
+    #
     # RList transitivity: RList(x,y) * RList(y,z) |- RList(x,z)
     # RList is a recursive list predicate with distinct nil constraints
-    library.add_lemma(
-        "rlist_transitivity",
-        SepConj(
-            PredicateCall("RList", [x, y]),
-            PredicateCall("RList", [y, z])
-        ),
-        PredicateCall("RList", [x, z]),
-        "RList transitivity: concatenating RList segments"
-    )
+    # library.add_lemma(
+    #     "rlist_transitivity",
+    #     SepConj(
+    #         PredicateCall("RList", [x, y]),
+    #         PredicateCall("RList", [y, z])
+    #     ),
+    #     PredicateCall("RList", [x, z]),
+    #     "RList transitivity: concatenating RList segments"
+    # )
 
     # ============================================
     # LIST LEMMAS (for SL-COMP "List" predicate)

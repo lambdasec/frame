@@ -35,10 +35,19 @@ def test_x_y_ls_y_z_ls_x_z_segment_cons(checker):
     result = checker.check(sep(pts("x", "y"), ls("y", "z")), ls("x", "z"))
     assert result.valid
 
-def test_ls_x_y_ls_y_z_ls_x_z_composition(checker):
-    """ls(x, y) * ls(y, z) |- ls(x, z) (composition)"""
+def test_ls_x_y_ls_y_z_ls_x_z_composition_invalid(checker):
+    """ls(x, y) * ls(y, z) |- ls(x, z) is INVALID (aliasing possible)
+
+    This entailment is NOT sound in separation logic because when x = z:
+    - Antecedent ls(x,y) * ls(y,x) has heap cells if y != x
+    - Consequent ls(x,x) = emp
+    A non-empty heap cannot entail an empty heap.
+
+    Note: This was previously expected to be valid under "acyclic heap assumptions"
+    but that reasoning was incorrect - acyclicity prevents heap cycles, not variable aliasing.
+    """
     result = checker.check(sep(ls("x", "y"), ls("y", "z")), ls("x", "z"))
-    assert result.valid
+    assert not result.valid  # Should be INVALID
 
 def test_list_x_list_x(checker):
     """list(x) |- list(x)"""

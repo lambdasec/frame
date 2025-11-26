@@ -27,31 +27,31 @@ def test_list_transitivity_not_closed_early(checker):
     """Test that ls(x,y) * ls(y,z) |- ls(x,z) doesn't close prematurely
 
     Before improvement: Might close cycle too early, causing false negative
-    After improvement: Unfolds enough to prove transitivity via lemmas
+    UPDATED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    This test now verifies that the unsound lemma is correctly rejected.
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"))
     consequent = ls("x", "z")
 
     result = checker.check(antecedent, consequent)
 
-    # Should be VALID via transitivity lemma, not rejected due to early cycle closure
-    assert result.valid
+    # Should be INVALID - transitivity is unsound when x = z is possible
+    assert not result.valid
 
 
-def test_list_composition_three_segments(checker):
+def test_list_composition_three_segments_invalid(checker):
     """Test three-segment composition: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
 
-    This requires multi-step LEMMA transitivity: (x,y)+(y,z)=(x,z), then (x,z)+(z,w)=(x,w)
-
-    Now handled by multi-step lemma application.
+    UPDATED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    When x = w, the antecedent has heap cells but the consequent ls(x,x) = emp.
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"), ls("z", "w"))
     consequent = ls("x", "w")
 
     result = checker.check(antecedent, consequent)
 
-    # Should be VALID via repeated transitivity (currently fails)
-    assert result.valid
+    # Should be INVALID - transitivity is unsound when x = w is possible
+    assert not result.valid
 
 
 def test_list_cons_with_segment(checker):

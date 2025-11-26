@@ -20,27 +20,35 @@ def initialize_list_lemmas(library):
     # ============================================
 
     # 1. Transitivity: ls(x,y) * ls(y,z) |- ls(x,z)
-    # NOTE: This lemma is SOUND under acyclic heap assumptions (enforced by encoder)
-    # The acyclicity constraint ensures that if x = z, both segments must be empty,
-    # so ls(x,x) correctly reduces to emp in that case.
-    library.add_lemma(
-        "ls_transitivity",
-        SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-        PredicateCall("ls", [x, z]),
-        "List segment transitivity: concatenating list segments"
-    )
+    # UNSOUND! Removed Nov 2025.
+    # This lemma is NOT sound in separation logic because when x = z:
+    # - Antecedent ls(x,y) * ls(y,x) can have heap cells (if y != x)
+    # - Consequent ls(x,x) = emp (base case)
+    # A non-empty heap cannot entail an empty heap.
+    # The SL-COMP ls predicate has (distinct in out) constraint which
+    # makes transitivity invalid.
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_transitivity",
+    #     SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #     PredicateCall("ls", [x, z]),
+    #     "List segment transitivity: concatenating list segments"
+    # )
 
     # 1b. Triple transitivity: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
-    # NOTE: Sound under acyclic heap assumptions (same as above)
-    library.add_lemma(
-        "ls_triple_transitivity",
-        SepConj(
-            SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-            PredicateCall("ls", [z, w])
-        ),
-        PredicateCall("ls", [x, w]),
-        "List segment triple transitivity: three segments compose"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as ls_transitivity)
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_triple_transitivity",
+    #     SepConj(
+    #         SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #         PredicateCall("ls", [z, w])
+    #     ),
+    #     PredicateCall("ls", [x, w]),
+    #     "List segment triple transitivity: three segments compose"
+    # )
 
     # 2. Cons lemma: x |-> y * ls(y, z) |- ls(x, z)
     library.add_lemma(
@@ -51,15 +59,20 @@ def initialize_list_lemmas(library):
     )
 
     # 3. Snoc lemma: ls(x, y) * y |-> z * ls(z, w) |- ls(x, w)
-    library.add_lemma(
-        "ls_snoc",
-        SepConj(
-            SepConj(PredicateCall("ls", [x, y]), PointsTo(y, [z])),
-            PredicateCall("ls", [z, w])
-        ),
-        PredicateCall("ls", [x, w]),
-        "Snoc: appending a cell in the middle of list segments"
-    )
+    # UNSOUND! Removed Nov 2025.
+    # When x = w, we have ls(x, y) * y |-> z * ls(z, x), but ls(x, x) = emp.
+    # The cell y |-> z means non-empty heap, which cannot entail emp.
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_snoc",
+    #     SepConj(
+    #         SepConj(PredicateCall("ls", [x, y]), PointsTo(y, [z])),
+    #         PredicateCall("ls", [z, w])
+    #     ),
+    #     PredicateCall("ls", [x, w]),
+    #     "Snoc: appending a cell in the middle of list segments"
+    # )
 
     # 4. Empty list segment: ls(x, x) |- emp
     library.add_lemma(
@@ -108,35 +121,44 @@ def initialize_list_lemmas(library):
     # ============================================
 
     # 8a. Antisymmetry: ls(x,y) * ls(y,x) |- emp ∧ x=y (CRITICAL FOR CYCLES!)
-    # This detects when two list segments form a cycle, which means they must be empty
-    # and the endpoints must be equal
-    library.add_lemma(
-        "ls_antisymmetry",
-        SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
-        And(Emp(), Eq(x, y)),
-        "Antisymmetry: cyclic list segments must be empty with equal endpoints"
-    )
+    # UNSOUND! Removed Nov 2025.
+    # This lemma incorrectly concludes emp & x=y for any ls(x,y) * ls(y,x).
+    # The correct reasoning is: under acyclic heap semantics, ls(x,y) * ls(y,x)
+    # is only SATISFIABLE if x=y and both are emp. But as a lemma, we can't
+    # conclude this without proving x=y first.
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_antisymmetry",
+    #     SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
+    #     And(Emp(), Eq(x, y)),
+    #     "Antisymmetry: cyclic list segments must be empty with equal endpoints"
+    # )
 
     # 8b. Alternative antisymmetry: ls(x,y) * ls(y,x) |- x=y (without emp in consequent)
-    # Some benchmarks may expect just the equality constraint
-    library.add_lemma(
-        "ls_antisymmetry_eq",
-        SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
-        Eq(x, y),
-        "Antisymmetry: cyclic list segments imply equal endpoints"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as above).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_antisymmetry_eq",
+    #     SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
+    #     Eq(x, y),
+    #     "Antisymmetry: cyclic list segments imply equal endpoints"
+    # )
 
     # 8c. Triple cycle detection: ls(x,y) * ls(y,z) * ls(z,x) |- emp ∧ x=y=z
-    # For three-node cycles, all must be equal and heap must be empty
-    library.add_lemma(
-        "ls_triple_cycle",
-        SepConj(
-            SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-            PredicateCall("ls", [z, x])
-        ),
-        And(And(Emp(), Eq(x, y)), Eq(y, z)),
-        "Triple cycle: three segments forming a cycle must collapse to a point"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as above).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_triple_cycle",
+    #     SepConj(
+    #         SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #         PredicateCall("ls", [z, x])
+    #     ),
+    #     And(And(Emp(), Eq(x, y)), Eq(y, z)),
+    #     "Triple cycle: three segments forming a cycle must collapse to a point"
+    # )
 
     # 8d. Cycle with segment: ls(x,y) * ls(y,z) * ls(z,x) * ls(x,w) |- ls(y,z) * ls(z,x) * ls(x,w)
     # Simplification: if we have a cycle, we can reason about it more simply
@@ -169,19 +191,21 @@ def initialize_list_lemmas(library):
     # ============================================
 
     # 9. Four-step transitivity: ls(x,y) * ls(y,z) * ls(z,w) * ls(w,v) |- ls(x,v)
-    # NOTE: Sound under acyclic heap assumptions
-    library.add_lemma(
-        "ls_four_step_transitivity",
-        SepConj(
-            SepConj(
-                SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-                PredicateCall("ls", [z, w])
-            ),
-            PredicateCall("ls", [w, Var("V")])
-        ),
-        PredicateCall("ls", [x, Var("V")]),
-        "Four-step list segment composition"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as ls_transitivity - aliasing)
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ls_four_step_transitivity",
+    #     SepConj(
+    #         SepConj(
+    #             SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #             PredicateCall("ls", [z, w])
+    #         ),
+    #         PredicateCall("ls", [w, Var("V")])
+    #     ),
+    #     PredicateCall("ls", [x, Var("V")]),
+    #     "Four-step list segment composition"
+    # )
 
     # 10. Mixed composition with cells: x |-> y * y |-> z * ls(z, w) |- ls(x, w)
     library.add_lemma(
@@ -298,34 +322,40 @@ def initialize_list_lemmas(library):
     b = Var("B")
     c = Var("C")
 
+    # DISABLED Nov 2025: Transitivity lemmas are UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent sls(x,a,x,c) may be empty.
+    # The ordering constraints (a <= b <= c) don't prevent variable aliasing.
+    #
     # sls transitivity WITH ordering constraints: sls(x,a,y,b) * sls(y,b,z,c) & a <= b <= c |- sls(x,a,z,c)
-    library.add_lemma(
-        "sls_transitivity",
-        And(
-            And(
-                SepConj(
-                    PredicateCall("sls", [x, a, y, b]),
-                    PredicateCall("sls", [y, b, z, c])
-                ),
-                Le(a, b)
-            ),
-            Le(b, c)
-        ),
-        PredicateCall("sls", [x, a, z, c]),
-        "Sorted list segment transitivity with ordering constraints"
-    )
+    # library.add_lemma(
+    #     "sls_transitivity",
+    #     And(
+    #         And(
+    #             SepConj(
+    #                 PredicateCall("sls", [x, a, y, b]),
+    #                 PredicateCall("sls", [y, b, z, c])
+    #             ),
+    #             Le(a, b)
+    #         ),
+    #         Le(b, c)
+    #     ),
+    #     PredicateCall("sls", [x, a, z, c]),
+    #     "Sorted list segment transitivity with ordering constraints"
+    # )
 
     # sls transitivity WITHOUT ordering constraints (for data equality semantics)
-    # This handles benchmarks where sls uses data equality instead of ordering
-    library.add_lemma(
-        "sls_transitivity_no_constraints",
-        SepConj(
-            PredicateCall("sls", [x, a, y, b]),
-            PredicateCall("sls", [y, b, z, c])
-        ),
-        PredicateCall("sls", [x, a, z, c]),
-        "SLS transitivity without ordering (for data equality semantics)"
-    )
+    # UNSOUND! Removed Nov 2025 (same aliasing issue as ls_transitivity).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "sls_transitivity_no_constraints",
+    #     SepConj(
+    #         PredicateCall("sls", [x, a, y, b]),
+    #         PredicateCall("sls", [y, b, z, c])
+    #     ),
+    #     PredicateCall("sls", [x, a, z, c]),
+    #     "SLS transitivity without ordering (for data equality semantics)"
+    # )
 
     # ============================================
     # LENGTH-PARAMETERIZED LIST SEGMENT LEMMAS
@@ -337,17 +367,19 @@ def initialize_list_lemmas(library):
     n3 = Var("N3")
 
     # ls with length transitivity: ls(x,y,n1) * ls(y,z,n2) |- ls(x,z,n1+n2)
-    # This requires arithmetic constraint: n3 = n1 + n2
-    from frame.core.ast import ArithExpr
-    library.add_lemma(
-        "ls_length_compose",
-        SepConj(
-            PredicateCall("ls", [x, y, n1]),
-            PredicateCall("ls", [y, z, n2])
-        ),
-        PredicateCall("ls", [x, z, ArithExpr('+', n1, n2)]),
-        "List segment composition with length parameters"
-    )
+    # UNSOUND! Removed Nov 2025 (same aliasing issue as ls_transitivity).
+    #
+    # PREVIOUSLY:
+    # from frame.core.ast import ArithExpr
+    # library.add_lemma(
+    #     "ls_length_compose",
+    #     SepConj(
+    #         PredicateCall("ls", [x, y, n1]),
+    #         PredicateCall("ls", [y, z, n2])
+    #     ),
+    #     PredicateCall("ls", [x, z, ArithExpr('+', n1, n2)]),
+    #     "List segment composition with length parameters"
+    # )
 
     # ls with length cons: x |-> y * ls(y, z, n) |- ls(x, z, n+1)
     library.add_lemma(
@@ -365,16 +397,18 @@ def initialize_list_lemmas(library):
     # ============================================
 
     # nll transitivity: nll(x,y,field) * nll(y,z,field) |- nll(x,z,field)
-    # Note: Third parameter (field) must be identical in both segments
-    library.add_lemma(
-        "nll_transitivity",
-        SepConj(
-            PredicateCall("nll", [x, y, nil]),
-            PredicateCall("nll", [y, z, nil])
-        ),
-        PredicateCall("nll", [x, z, nil]),
-        "Nested list transitivity with matching field parameter"
-    )
+    # UNSOUND! Removed Nov 2025 (same aliasing issue as ls_transitivity).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "nll_transitivity",
+    #     SepConj(
+    #         PredicateCall("nll", [x, y, nil]),
+    #         PredicateCall("nll", [y, z, nil])
+    #     ),
+    #     PredicateCall("nll", [x, z, nil]),
+    #     "Nested list transitivity with matching field parameter"
+    # )
 
     # ============================================
     # INDUCTION LEMMAS FOR CYCLIC STRUCTURES
@@ -399,28 +433,32 @@ def initialize_list_lemmas(library):
     )
 
     # Cyclic induction: if ls(x,y) * ls(y,x), by induction both must be empty
-    # This lemma explicitly states the inductive principle for cycles
-    library.add_lemma(
-        "cyclic_induction",
-        SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
-        And(Emp(), Eq(x, y)),
-        "Cyclic induction: two-way segments collapse by induction"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as ls_antisymmetry).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "cyclic_induction",
+    #     SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, x])),
+    #     And(Emp(), Eq(x, y)),
+    #     "Cyclic induction: two-way segments collapse by induction"
+    # )
 
     # Multi-node cyclic induction for larger cycles
-    # ls(x,y) * ls(y,z) * ls(z,w) * ls(w,x) |- all equal and empty
-    library.add_lemma(
-        "four_cycle_induction",
-        SepConj(
-            SepConj(
-                SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-                PredicateCall("ls", [z, w])
-            ),
-            PredicateCall("ls", [w, x])
-        ),
-        And(And(And(Emp(), Eq(x, y)), Eq(y, z)), Eq(z, w)),
-        "Four-cycle induction: four segments forming cycle must all collapse"
-    )
+    # UNSOUND! Removed Nov 2025 (same issue as ls_antisymmetry).
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "four_cycle_induction",
+    #     SepConj(
+    #         SepConj(
+    #             SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+    #             PredicateCall("ls", [z, w])
+    #         ),
+    #         PredicateCall("ls", [w, x])
+    #     ),
+    #     And(And(And(Emp(), Eq(x, y)), Eq(y, z)), Eq(z, w)),
+    #     "Four-cycle induction: four segments forming cycle must all collapse"
+    # )
 
     # ============================================
     # MUTUALLY RECURSIVE LIST LEMMAS (ListE/ListO from SL-COMP)
@@ -428,54 +466,53 @@ def initialize_list_lemmas(library):
 
     # Mutually recursive list predicates from SL-COMP benchmarks
     # ListE (even-length list) and ListO (odd-length list)
+    #
+    # ALL COMPOSITION LEMMAS BELOW ARE UNSOUND due to aliasing!
+    # Removed Nov 2025 (same issue as ls_transitivity).
+    #
+    # Example: ListE(x, y) * ListO(y, x) would have odd cells on one side
+    # but ListO(x, x) = undefined behavior
+    #
+    # PREVIOUSLY:
+    # library.add_lemma(
+    #     "ListE_ListO_comp",
+    #     SepConj(
+    #         PredicateCall("ListE", [x, y]),
+    #         PredicateCall("ListO", [y, z])
+    #     ),
+    #     PredicateCall("ListO", [x, z]),
+    #     "Even-length list + Odd-length list = Odd-length list"
+    # )
 
-    # ListE(x, y) * ListO(y, z) |- ListO(x, z)
-    # Even + Odd = Odd
-    library.add_lemma(
-        "ListE_ListO_comp",
-        SepConj(
-            PredicateCall("ListE", [x, y]),
-            PredicateCall("ListO", [y, z])
-        ),
-        PredicateCall("ListO", [x, z]),
-        "Even-length list + Odd-length list = Odd-length list"
-    )
+    # library.add_lemma(
+    #     "ListO_ListE_comp",
+    #     SepConj(
+    #         PredicateCall("ListO", [x, y]),
+    #         PredicateCall("ListE", [y, z])
+    #     ),
+    #     PredicateCall("ListO", [x, z]),
+    #     "Odd-length list + Even-length list = Odd-length list"
+    # )
 
-    # ListO(x, y) * ListE(y, z) |- ListO(x, z)
-    # Odd + Even = Odd
-    library.add_lemma(
-        "ListO_ListE_comp",
-        SepConj(
-            PredicateCall("ListO", [x, y]),
-            PredicateCall("ListE", [y, z])
-        ),
-        PredicateCall("ListO", [x, z]),
-        "Odd-length list + Even-length list = Odd-length list"
-    )
+    # library.add_lemma(
+    #     "ListE_ListE_comp",
+    #     SepConj(
+    #         PredicateCall("ListE", [x, y]),
+    #         PredicateCall("ListE", [y, z])
+    #     ),
+    #     PredicateCall("ListE", [x, z]),
+    #     "Even-length list + Even-length list = Even-length list"
+    # )
 
-    # ListE(x, y) * ListE(y, z) |- ListE(x, z)
-    # Even + Even = Even
-    library.add_lemma(
-        "ListE_ListE_comp",
-        SepConj(
-            PredicateCall("ListE", [x, y]),
-            PredicateCall("ListE", [y, z])
-        ),
-        PredicateCall("ListE", [x, z]),
-        "Even-length list + Even-length list = Even-length list"
-    )
-
-    # ListO(x, y) * ListO(y, z) |- ListE(x, z)
-    # Odd + Odd = Even
-    library.add_lemma(
-        "ListO_ListO_comp",
-        SepConj(
-            PredicateCall("ListO", [x, y]),
-            PredicateCall("ListO", [y, z])
-        ),
-        PredicateCall("ListE", [x, z]),
-        "Odd-length list + Odd-length list = Even-length list"
-    )
+    # library.add_lemma(
+    #     "ListO_ListO_comp",
+    #     SepConj(
+    #         PredicateCall("ListO", [x, y]),
+    #         PredicateCall("ListO", [y, z])
+    #     ),
+    #     PredicateCall("ListE", [x, z]),
+    #     "Odd-length list + Odd-length list = Even-length list"
+    # )
 
     # ============================================
     # DOUBLY-LINKED LIST LEMMAS

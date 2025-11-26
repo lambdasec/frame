@@ -15,16 +15,18 @@ def initialize_other_lemmas(library):
     w = Var("W")
     nil = Const(None)
 
+    # DISABLED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent List(x,x) = emp.
     # List transitivity: List(x,y) * List(y,z) |- List(x,z)
-    library.add_lemma(
-        "list_transitivity",
-        SepConj(
-            PredicateCall("List", [x, y]),
-            PredicateCall("List", [y, z])
-        ),
-        PredicateCall("List", [x, z]),
-        "List transitivity for SL-COMP List predicate"
-    )
+    # library.add_lemma(
+    #     "list_transitivity",
+    #     SepConj(
+    #         PredicateCall("List", [x, y]),
+    #         PredicateCall("List", [y, z])
+    #     ),
+    #     PredicateCall("List", [x, z]),
+    #     "List transitivity for SL-COMP List predicate"
+    # )
 
     # List cons: List(x,y) * y |-> z |- List(x,z)
     library.add_lemma(
@@ -52,16 +54,18 @@ def initialize_other_lemmas(library):
     # BINPATH LEMMAS (binary tree path reachability)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent BinPath(x,x) = emp.
     # BinPath transitivity: BinPath(x,y) * BinPath(y,z) |- BinPath(x,z)
-    library.add_lemma(
-        "binpath_transitivity",
-        SepConj(
-            PredicateCall("BinPath", [x, y]),
-            PredicateCall("BinPath", [y, z])
-        ),
-        PredicateCall("BinPath", [x, z]),
-        "BinPath transitivity: path composition in binary trees"
-    )
+    # library.add_lemma(
+    #     "binpath_transitivity",
+    #     SepConj(
+    #         PredicateCall("BinPath", [x, y]),
+    #         PredicateCall("BinPath", [y, z])
+    #     ),
+    #     PredicateCall("BinPath", [x, z]),
+    #     "BinPath transitivity: path composition in binary trees"
+    # )
 
     # BinPath with swap: BinPath(x,z) * BinPath(z,y) |- BinPath(x,y)
     # (already covered by transitivity with commutativity)
@@ -70,16 +74,18 @@ def initialize_other_lemmas(library):
     # LSEG LEMMAS (for SL-COMP "lseg" predicate)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent lseg(x,x) = emp.
     # lseg transitivity: lseg(x,y) * lseg(y,z) |- lseg(x,z)
-    library.add_lemma(
-        "lseg_transitivity",
-        SepConj(
-            PredicateCall("lseg", [x, y]),
-            PredicateCall("lseg", [y, z])
-        ),
-        PredicateCall("lseg", [x, z]),
-        "lseg transitivity for SL-COMP lseg predicate"
-    )
+    # library.add_lemma(
+    #     "lseg_transitivity",
+    #     SepConj(
+    #         PredicateCall("lseg", [x, y]),
+    #         PredicateCall("lseg", [y, z])
+    #     ),
+    #     PredicateCall("lseg", [x, z]),
+    #     "lseg transitivity for SL-COMP lseg predicate"
+    # )
 
     # lseg cons: x |-> y * lseg(y,z) |- lseg(x,z)
     library.add_lemma(
@@ -122,16 +128,18 @@ def initialize_other_lemmas(library):
     # PELIST LEMMAS (possibly-empty list)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent PeList(x,x) = emp.
     # PeList transitivity: PeList(x,y) * PeList(y,z) |- PeList(x,z)
-    library.add_lemma(
-        "pelist_transitivity",
-        SepConj(
-            PredicateCall("PeList", [x, y]),
-            PredicateCall("PeList", [y, z])
-        ),
-        PredicateCall("PeList", [x, z]),
-        "PeList transitivity"
-    )
+    # library.add_lemma(
+    #     "pelist_transitivity",
+    #     SepConj(
+    #         PredicateCall("PeList", [x, y]),
+    #         PredicateCall("PeList", [y, z])
+    #     ),
+    #     PredicateCall("PeList", [x, z]),
+    #     "PeList transitivity"
+    # )
 
     # PeList cons: PeList(x,y) * y |-> z |- PeList(x,z)
     library.add_lemma(
@@ -148,16 +156,18 @@ def initialize_other_lemmas(library):
     # BINTREESEG LEMMAS (binary tree segment)
     # ============================================
 
+    # DISABLED Nov 2025: Transitivity is UNSOUND due to aliasing!
+    # When x = z, antecedent has heap cells but consequent BinTreeSeg(x,x) = emp.
     # BinTreeSeg transitivity: BinTreeSeg(x,y) * BinTreeSeg(y,z) |- BinTreeSeg(x,z)
-    library.add_lemma(
-        "bintreeseg_transitivity",
-        SepConj(
-            PredicateCall("BinTreeSeg", [x, y]),
-            PredicateCall("BinTreeSeg", [y, z])
-        ),
-        PredicateCall("BinTreeSeg", [x, z]),
-        "BinTreeSeg transitivity"
-    )
+    # library.add_lemma(
+    #     "bintreeseg_transitivity",
+    #     SepConj(
+    #         PredicateCall("BinTreeSeg", [x, y]),
+    #         PredicateCall("BinTreeSeg", [y, z])
+    #     ),
+    #     PredicateCall("BinTreeSeg", [x, z]),
+    #     "BinTreeSeg transitivity"
+    # )
 
     # BinPath to BinTreeSeg: BinPath(x,y) |- BinTreeSeg(x,y)
     # A path through a tree is also a tree segment
