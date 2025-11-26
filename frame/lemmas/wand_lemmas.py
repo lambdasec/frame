@@ -45,14 +45,27 @@ def initialize_wand_lemmas(library):
         description="Wand with empty antecedent: (emp -* Q) |- Q"
     )
 
-    # Lemma 3: Wand Reflexivity / Introduction
-    # Pattern: P |- (emp -* P)
-    library.add_lemma(
-        name="wand_reflexivity",
-        antecedent=Var("P"),
-        consequent=Wand(Emp(), Var("P")),
-        description="Wand reflexivity: P |- (emp -* P)"
-    )
+    # NOTE: wand_reflexivity lemma REMOVED for soundness in Multi-Step Lemma application
+    #
+    # The lemma: P |- (emp -* P)
+    #
+    # The problem: When used in Multi-Step Lemma application with the meta-variable P,
+    # it can match ANY formula part and convert it to a wand. This can "hide" spatial
+    # assertions in wands, causing the checker to lose track of heap allocations.
+    #
+    # Example (dll-entl-08.smt2 false positive):
+    #   Current: ldll(E1, ...) * E2 |-> (...) * ldll(E2, ...)
+    #   Applied wand_reflexivity (P = ldll(E1, ...))
+    #   New formula: (emp -* P) * E2 |-> (...) * ldll(E2, ...)
+    #
+    # This transformation is SOUND in isolation, but in Multi-Step Lemma application
+    # it can lead to incorrect conclusions because subsequent lemma applications may
+    # treat the wand differently than the original spatial assertion.
+    #
+    # The wand_emp_left lemma (emp -* Q) |- Q can undo this, but the interaction
+    # between these lemmas in multi-step application is unpredictable.
+    #
+    # Fix: Keep wand_emp_left (safe), remove wand_reflexivity (unsafe in multi-step)
 
     # Lemma 4: Wand Transitivity
     # Pattern: (P -* Q) * (Q -* R) |- (P -* R)
@@ -63,23 +76,9 @@ def initialize_wand_lemmas(library):
         description="Wand transitivity: (P -* Q) * (Q -* R) |- (P -* R)"
     )
 
-    # Lemma 5: Wand with PointsTo (Common Case)
-    # Pattern: x |-> v |- (emp -* x |-> v)
-    library.add_lemma(
-        name="wand_pto_intro",
-        antecedent=PointsTo(Var("x"), [Var("v")]),
-        consequent=Wand(Emp(), PointsTo(Var("x"), [Var("v")])),
-        description="Introduce wand for points-to: x |-> v |- (emp -* x |-> v)"
-    )
-
-    # Lemma 6: Wand with Predicate Calls
-    # Pattern: P(args) |- (emp -* P(args))
-    library.add_lemma(
-        name="wand_pred_intro",
-        antecedent=PredicateCall(Var("P"), [Var("X"), Var("Y")]),
-        consequent=Wand(Emp(), PredicateCall(Var("P"), [Var("X"), Var("Y")])),
-        description="Introduce wand for predicate: P(x,y) |- (emp -* P(x,y))"
-    )
+    # NOTE: wand_pto_intro and wand_pred_intro lemmas REMOVED
+    # Same issue as wand_reflexivity - wrapping spatial parts in wands
+    # can hide heap allocations and lead to unsound Multi-Step Lemma derivations
 
     # Lemma 7: Wand Curry/Uncurry
     # Pattern: (P * Q -* R) |- (P -* (Q -* R))

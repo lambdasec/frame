@@ -79,16 +79,19 @@ def initialize_dll_lemmas(library):
         "DLL cons (SL-COMP 4-arg): prepend a node to DLL segment"
     )
 
-    # DLL to LS (4-arg DLL): dll(x, y, z, w) |- ls(x, y)
+    # DLL to LS (4-arg DLL): dll(x, y, z, w) |- ls(x, w)
     # A doubly-linked list segment is also a (forward) list segment
     # DLL signature: dll(head, prev_of_head, tail, next_of_tail)
-    # So dll(x, y, z, w) means DLL from x (head) to z (tail)
-    # Therefore it entails ls(x, z), not ls(x, y)!
+    # So dll(x, y, z, w) means DLL from x (head) to z (tail), with z pointing to w
+    #
+    # Key insight: 2-arg ls(x, y) means list from x with last cell pointing to y.
+    # In 4-arg DLL, the last cell (tail=z) points to w (next_of_tail).
+    # Therefore: dll(x, y, z, w) |- ls(x, w)  (NOT ls(x, z)!)
     library.add_lemma(
         "dll_to_ls_4arg",
         PredicateCall("dll", [x, y, z, w]),  # dll(head, prev, tail, next)
-        PredicateCall("ls", [x, z]),  # forward list from head to tail
-        "DLL (4-arg) is also a forward list segment from head to tail"
+        PredicateCall("ls", [x, w]),  # forward list from head ending at next_of_tail
+        "DLL (4-arg) is also a forward list segment ending at next_of_tail"
     )
 
     # DLL to BSLL (backward singly-linked list): DLL(x, y, z, w) |- BSLL(z, w)
@@ -110,16 +113,19 @@ def initialize_dll_lemmas(library):
         "dll (4-arg lowercase) implies backward singly-linked list segment"
     )
 
-    # DLL to LS (5-arg DLL with length): dll(hd, prev_hd, tail, next_tail, len) |- ls(hd, tail, len)
+    # DLL to LS (5-arg DLL with length): dll(hd, prev_hd, tail, next_tail, len) |- ls(hd, next_tail, len)
     # This matches SL-COMP benchmark signatures where dll has:
     #   param1: head, param2: prev of head, param3: tail, param4: next of tail, param5: length
-    # IMPORTANT: param3 is TAIL, param4 is NEXT_TAIL (not prev_tail!)
+    #
+    # Key insight: ls(x, y, n) means n cells from x, with the LAST cell pointing to y.
+    # dll(x, y, z, w, n) has the tail z pointing to w (next_tail).
+    # Therefore: dll(x, y, z, w, n) |- ls(x, w, n)  (NOT ls(x, z, n)!)
     len_var = Var("LEN")
     library.add_lemma(
         "dll_to_ls_5arg",
         PredicateCall("dll", [x, y, z, w, len_var]),  # dll(head, prev_hd, tail, next_tail, len)
-        PredicateCall("ls", [x, z, len_var]),  # ls(head, tail, length) - z is tail (param 3)
-        "DLL (5-arg with length) is also a forward list segment"
+        PredicateCall("ls", [x, w, len_var]),  # ls(head, next_tail, length) - w is next_tail (param 4)
+        "DLL (5-arg with length) is also a forward list segment ending at next_tail"
     )
 
     # NOTE: 4-arg DLL has NO length parameter, only 5-arg does!
@@ -173,6 +179,16 @@ def initialize_dll_lemmas(library):
     # Define variables for dllnull lemmas
     t = Var("T")
     prev = Var("PREV")
+
+    # dll with nil next_tail IS a dllnull: dll(x, y, t, nil, n) |- dllnull(x, y, n)
+    # When the dll's next_tail parameter is nil, it's a null-terminated DLL
+    # This is a critical lemma for the qf_shidlia_entl benchmarks
+    library.add_lemma(
+        "dll_nil_to_dllnull",
+        PredicateCall("dll", [x, y, t, nil, len_var]),  # dll with next_tail = nil
+        PredicateCall("dllnull", [x, y, len_var]),  # becomes dllnull
+        "DLL with nil next_tail is a null-terminated DLL"
+    )
 
     # dll + dllnull composition: dll(x,y,z,t,n) * dllnull(t,z,m) |- dllnull(x,y,m+n)
     # This composes a dll segment with a dllnull segment
@@ -232,37 +248,49 @@ def initialize_dll_lemmas(library):
         "ldll cons: prepend a cell to ldll (spatial pattern only)"
     )
 
-    # ldll single cell: E1 |-> (E2, E1_p) ⊢ ldll(E1, E1_p, 1, E2, E2_p, 0)
-    # Base case: single cell forms ldll of length 1
-    library.add_lemma(
-        "ldll_single_cell",
-        PointsTo(e1, [e2, e1_p]),
-        PredicateCall("ldll", [e1, e1_p, Const(1), e2, e2_p, Const(0)]),
-        "Single cell forms ldll of length 1"
-    )
+    # NOTE: ldll_single_cell and ldll_single_cell_arith lemmas REMOVED for soundness
+    #
+    # These lemmas converted a points-to into an ldll predicate:
+    #   E1 |-> (E2, E1_p) ⊢ ldll(E1, E1_p, 1, E2, E2_p, 0)
+    #
+    # The problem: When the Multi-Step Lemma phase applies this lemma to a points-to
+    # that spatially overlaps with an existing ldll predicate (e.g., both allocate E1),
+    # it creates an UNSOUND derivation. The lemma matcher doesn't verify spatial
+    # disjointness before applying lemmas.
+    #
+    # Example (dll-entl-08.smt2):
+    #   Antecedent: ldll(E1, ..., E2, ...) * E2 |-> (...) * ldll(E2, ..., E3, ...)
+    #   If ldll(E2, ...) allocates E2, and we fold E2 |-> (...) into another ldll,
+    #   we get an inconsistent heap (E2 allocated twice).
+    #
+    # Fix: Only allow such folding in goal-directed folding (frame/folding/goal_directed.py)
+    # where disjointness is properly checked, not in the general lemma library.
 
-    # ldll single cell with arithmetic: E1 |-> (E2, E1_p) ⊢ ldll(E1, E1_p, len1, E2, E2_p, len2)
-    # where len1 = len2 + 1 (constraint must be verified separately)
-    # This is for patterns like: x1 = x2 + 1 & E1 |-> (E2, E1_p) ⊢ ldll(E1, E1_p, x1, E2, E2_p, x2)
-    library.add_lemma(
-        "ldll_single_cell_arith",
-        PointsTo(e1, [e2, e1_p]),
-        PredicateCall("ldll", [e1, e1_p, len1, e2, e2_p, len2]),
-        "Single cell forms ldll with arithmetic lengths"
-    )
-
-    # ldll transitivity: ldll(E1, P1, len1, E2, P2, len2) * ldll(E2, P2, len2, E3, P3, len3)
-    #                   ⊢ ldll(E1, P1, len1+len2, E3, P3, len3)
-    # Note: Middle element must match exactly
-    library.add_lemma(
-        "ldll_transitivity",
-        SepConj(
-            PredicateCall("ldll", [e1, e1_p, len1, e2, e2_p, len2]),
-            PredicateCall("ldll", [e2, e2_p, len2, e3, e3_p, len3])
-        ),
-        PredicateCall("ldll", [e1, e1_p, ArithExpr('+', len1, len2), e3, e3_p, len3]),
-        "ldll transitivity: compose two ldll segments"
-    )
+    # NOTE: ldll_transitivity lemma REMOVED for soundness
+    #
+    # The problem: Multi-step lemma application doesn't verify spatial disjointness.
+    # When the antecedent contains:
+    #   ldll(E1, ..., E2, ...) * E2 |-> (...) * ldll(E2, ..., E3, ...)
+    #
+    # The lemma matcher would combine the two ldll predicates:
+    #   ldll(E1, ...) * ldll(E2, ...) --> ldll(E1, ..., E3, ...)
+    #
+    # But this leaves E2 |-> (...) as "frame" - a spatial contradiction!
+    # The second ldll starts at E2, so E2 is in its domain. Having both
+    # ldll(E2, ...) and E2 |-> (...) means E2 is allocated twice.
+    #
+    # Example (dll-entl-08.smt2 - false positive):
+    #   Antecedent: ldll(E1,...,E2,...) * E2 |-> (E3,E2_p) * ldll(E2,...,E3,...)
+    #   Consequent: ldll(E1,...,E3,...)
+    #   Expected: SAT (entailment does NOT hold due to heap overlap)
+    #   Bug: ldll_transitivity combined the two ldll, got unsat (incorrectly valid)
+    #
+    # Fix: Remove this lemma. Transitivity should only be applied when we can
+    # verify the two segments are ACTUALLY disjoint, which requires checking
+    # there's no other spatial assertion on the connecting point.
+    #
+    # A future improvement could add disjointness checking to multi-step lemma
+    # application, but for now removing the lemma ensures soundness.
 
     # ============================================
     # LS_PRE AND LSREV LEMMAS (BACKWARD/REVERSE LISTS)
