@@ -79,12 +79,27 @@ def encode_heap_assertion(
             # Value at location in this heap fragment
             constraints.append(encoder_self.encoder.hval(heap_id, loc + i) == val)
 
-            # ACYCLICITY CONSTRAINT: Following pointers increases rank
+            # ACYCLICITY CONSTRAINT: Following forward pointers increases rank
             # x |-> y ∧ y ≠ nil ⇒ rank(x) < rank(y)
             # This prevents cyclic heap structures (e.g., x → y → z → x)
             # NOTE: rank is GLOBAL, not per-heap-fragment, so cycles are detected across separating conjunction
-            if encoder_self.encoder.use_acyclicity_constraints:
-                # Only enforce rank constraint for non-nil values
+            #
+            # CRITICAL FIX (Nov 2025): Only apply acyclicity to SINGLE-FIELD points-to
+            # In doubly-linked lists, points-to cells have 2+ fields: (next, prev)
+            # Self-references like E2 |-> (E3, E2_p) with E2 = E3 are VALID in DLL base cases
+            # where E2 = E3 means the segment is empty (start equals end), but we still have
+            # an explicit allocation E2 |-> (...) that points forward to itself.
+            #
+            # Example (dll-entl-08.smt2):
+            #   Antecedent: ldll(...) * E2 |-> (E3, E2_p) * ldll(E2, ..., E3, ...)
+            #   When second ldll is base case: E2 = E3 & emp
+            #   So E2 |-> (E3, E2_p) becomes E2 |-> (E2, E2_p) - valid self-reference!
+            #
+            # By only enforcing rank on SINGLE-field points-to (singly-linked lists),
+            # we avoid false positives for DLLs while still preventing true cycles in SLLs.
+            is_single_field = len(formula.values) == 1
+            if encoder_self.encoder.use_acyclicity_constraints and is_single_field:
+                # Only enforce rank constraint for single-field (singly-linked) structures
                 # If val is not nil, then rank(loc) < rank(val)
                 rank_constraint = z3.Implies(
                     val != encoder_self.encoder.nil,
