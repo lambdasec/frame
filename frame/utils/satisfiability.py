@@ -395,6 +395,11 @@ class SatisfiabilityChecker:
         (pto w nil) AND NOT(pto w nil)
 
         Which is a clear contradiction.
+
+        Also handles the pattern:
+        (A * B) AND NOT((A * X) & (A * Y))
+        Where both branches of the negated AND contain the same spatial cell A
+        from the positive formula.
         """
         # Normalize the formula first to simplify emp
         normalized = self._normalize_spatial(formula)
@@ -436,4 +441,141 @@ class SatisfiabilityChecker:
                         print(f"  NOT(P): NOT({neg})")
                     return True
 
+        # Check for pattern: positive SepConj contains cell A, and
+        # negated SepConj also contains cell A at the same position
+        # This handles: (A * B) & NOT((A * X) & ...)
+        if self._has_shared_cell_contradiction(normalized):
+            return True
+
         return False
+
+    def _has_shared_cell_contradiction(self, formula: Formula) -> bool:
+        """
+        Detect contradiction where positive and negated formulas share cells.
+
+        Pattern 1: (A * B) & NOT((A * X) & (A * Y))
+        If the heap has cells A * B, and the negated formula has conjuncts
+        that both require cell A, then if A and B together satisfy the
+        negated formula's structure, it's a contradiction.
+
+        Pattern 2: (A * B) & NOT(A * wand(P, Q))
+        If the heap has cells A * B, and the negated formula is A * wand,
+        then if B can satisfy the wand, the negated formula is true,
+        making NOT(...) = false, hence UNSAT.
+
+        This is a heuristic that catches common BSL patterns.
+        """
+        from frame.core.ast import Wand
+
+        # Extract positive cells (from SepConj or PointsTo)
+        positive_cells = []
+        negated_and_parts = []
+        negated_sepconjs = []
+
+        def extract_positive_cells(f):
+            if isinstance(f, PointsTo):
+                positive_cells.append(f)
+            elif isinstance(f, SepConj):
+                extract_positive_cells(f.left)
+                extract_positive_cells(f.right)
+            elif isinstance(f, And):
+                # Handle And containing spatial formulas
+                if f.left.is_spatial():
+                    extract_positive_cells(f.left)
+                if f.right.is_spatial():
+                    extract_positive_cells(f.right)
+
+        def extract_negated_structure(f, negated=False):
+            if isinstance(f, Not):
+                extract_negated_structure(f.formula, not negated)
+            elif isinstance(f, And):
+                if negated:
+                    # We're inside NOT(And(...))
+                    negated_and_parts.append(f)
+                else:
+                    extract_negated_structure(f.left, negated)
+                    extract_negated_structure(f.right, negated)
+            elif isinstance(f, SepConj):
+                if negated:
+                    # We're inside NOT(SepConj(...))
+                    negated_sepconjs.append(f)
+
+        extract_positive_cells(formula)
+        extract_negated_structure(formula)
+
+        if not positive_cells:
+            return False
+
+        # Pattern 1: Check negated ANDs
+        for negated_and in negated_and_parts:
+            left_has_cell = self._sepconj_shares_cells(negated_and.left, positive_cells)
+            right_has_cell = self._sepconj_shares_cells(negated_and.right, positive_cells)
+
+            if left_has_cell and right_has_cell:
+                if self.verbose:
+                    print(f"Shared cell contradiction: NOT(And) has cells from positive in both branches")
+                return True
+
+        # Pattern 2: Check negated SepConjs with wands
+        for negated_sep in negated_sepconjs:
+            # Check if this SepConj has a wand and shares cells with positive
+            has_wand = self._contains_wand(negated_sep)
+            shares_cells = self._sepconj_shares_cells(negated_sep, positive_cells)
+
+            if has_wand and shares_cells:
+                # Count cells in positive vs negated SepConj's non-wand parts
+                negated_cell_count = self._count_non_wand_cells(negated_sep)
+                positive_cell_count = len(positive_cells)
+
+                # If positive has more cells than negated needs (excluding wand),
+                # the extra cells might satisfy the wand, making negated true
+                if positive_cell_count >= negated_cell_count:
+                    if self.verbose:
+                        print(f"Wand contradiction: positive heap can satisfy negated SepConj with wand")
+                    return True
+
+        return False
+
+    def _contains_wand(self, formula: Formula) -> bool:
+        """Check if formula contains a Wand"""
+        from frame.core.ast import Wand
+        if isinstance(formula, Wand):
+            return True
+        elif isinstance(formula, (SepConj, And, Or)):
+            return self._contains_wand(formula.left) or self._contains_wand(formula.right)
+        elif isinstance(formula, Not):
+            return self._contains_wand(formula.formula)
+        return False
+
+    def _count_non_wand_cells(self, formula: Formula) -> int:
+        """Count PointsTo cells in formula, excluding wand contents"""
+        from frame.core.ast import Wand
+        if isinstance(formula, PointsTo):
+            return 1
+        elif isinstance(formula, Wand):
+            return 0  # Don't count cells inside wand
+        elif isinstance(formula, SepConj):
+            return self._count_non_wand_cells(formula.left) + self._count_non_wand_cells(formula.right)
+        elif isinstance(formula, And):
+            return self._count_non_wand_cells(formula.left) + self._count_non_wand_cells(formula.right)
+        return 0
+
+    def _sepconj_shares_cells(self, formula: Formula, cells: list) -> bool:
+        """Check if formula contains any of the given cells in a SepConj"""
+        if isinstance(formula, PointsTo):
+            for cell in cells:
+                if self._cells_same_location(formula, cell):
+                    return True
+        elif isinstance(formula, SepConj):
+            return (self._sepconj_shares_cells(formula.left, cells) or
+                    self._sepconj_shares_cells(formula.right, cells))
+        elif isinstance(formula, And):
+            return (self._sepconj_shares_cells(formula.left, cells) or
+                    self._sepconj_shares_cells(formula.right, cells))
+        return False
+
+    def _cells_same_location(self, cell1: PointsTo, cell2: PointsTo) -> bool:
+        """Check if two PointsTo cells reference the same location"""
+        if not isinstance(cell1, PointsTo) or not isinstance(cell2, PointsTo):
+            return False
+        return self._exprs_equal(cell1.location, cell2.location)
