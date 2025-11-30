@@ -21,7 +21,8 @@ def verify_proposal_with_unification(
     proposal: FoldProposal,
     predicate_registry: PredicateRegistry,
     antecedent_pure: List[Formula],
-    verbose: bool = False
+    verbose: bool = False,
+    full_antecedent: Optional[Formula] = None
 ) -> bool:
     """
     Verify fold proposal using unification instead of Z3.
@@ -36,6 +37,7 @@ def verify_proposal_with_unification(
         predicate_registry: Registry with predicate definitions
         antecedent_pure: Pure constraints from antecedent (for checking consistency)
         verbose: Enable debug output
+        full_antecedent: Optional full antecedent formula for cycle detection
 
     Returns:
         True if unification succeeds (fold is sound)
@@ -46,6 +48,49 @@ def verify_proposal_with_unification(
     unifier = Unifier(verbose=verbose)
     analyzer = FormulaAnalyzer()
 
+    # SOUNDNESS CHECK (Nov 2025): Check if the proposal path itself forms a cycle
+    #
+    # We should ONLY reject if the cells in THIS PROPOSAL form a cycle.
+    # Just because a cell participates in a cycle elsewhere in the graph doesn't
+    # mean we can't fold a non-cyclic subset into an ls predicate.
+    #
+    # Example where folding IS valid despite cycles elsewhere:
+    #   Full antecedent: x1 |-> x6 * x6 |-> x1 * x3 |-> x2 (x1 <-> x6 is a cycle)
+    #   Proposal: fold x3 |-> x2 into ls(x3, x2) - THIS IS VALID!
+    #   The x1 <-> x6 cycle doesn't affect the x3 -> x2 path.
+    #
+    # Example where folding is INVALID:
+    #   Full antecedent: x1 |-> x6 * x6 |-> x1
+    #   Proposal: fold x1 |-> x6 * x6 |-> x1 into ls(x1, x1) - INVALID! Forms a cycle.
+    if full_antecedent is not None and proposal.predicate_name in ['ls', 'list', 'dll', 'nll', 'lso', 'lse']:
+        # Build a graph from ONLY the proposal cells
+        proposal_graph = {}  # location -> next_location
+        for pto in proposal.pto_cells:
+            loc = str(pto.location)
+            if pto.values:
+                proposal_graph[loc] = str(pto.values[0])
+
+        # Check if the proposal path forms a cycle
+        # A cycle exists if following edges from any cell leads back to that cell
+        def proposal_forms_cycle(graph: dict) -> bool:
+            """Check if the proposal cells form a cycle among themselves."""
+            for start in graph:
+                visited = set()
+                current = start
+                while current in graph and current not in visited:
+                    visited.add(current)
+                    next_node = graph[current]
+                    if next_node == start:
+                        # Found a cycle back to start within the proposal!
+                        return True
+                    current = next_node
+            return False
+
+        if proposal_forms_cycle(proposal_graph):
+            if verbose:
+                print(f"[Unification Verify] ✗ Cannot fold: proposal cells form a cycle")
+            return False
+
     # CRITICAL SOUNDNESS CHECK (Nov 2025): For predicates with disjunctive definitions
     # like ls(start, end) = (start = end & emp) | (start != end & ...),
     # we must verify that we can prove the guard of the non-empty case.
@@ -55,8 +100,10 @@ def verify_proposal_with_unification(
     #   x |-> y * y |-> z |- ls(x, z)
     # when x could equal z (making ls(x,z) = emp, not matching the 2-cell heap).
     #
-    # For soundness, we require EXPLICIT disequality in antecedent_pure.
-    # If not present, we reject the fold and fall back to Z3.
+    # We try multiple strategies to prove distinctness:
+    # 1. Explicit disequality in antecedent_pure (fast syntactic check)
+    # 2. Implicit distinctness from allocation (both are pto locations in separating conjunction)
+    # 3. Z3-based check (more expensive but complete for pure constraints)
     if proposal.pto_cells and proposal.predicate_name in ['ls', 'list', 'dll', 'nll', 'lso', 'lse']:
         # These predicates have guard conditions in their recursive case
         # For ls(start, end), we need start != end
@@ -64,7 +111,14 @@ def verify_proposal_with_unification(
             start_arg = str(proposal.args[0])
             end_arg = str(proposal.args[1])
 
-            # Check if we have explicit disequality
+            # Check if start and end are syntactically the same
+            if start_arg == end_arg:
+                # ls(x, x) = emp, but we have pto cells, so this is UNSOUND
+                if verbose:
+                    print(f"[Unification Verify] ✗ Cannot fold: start = end = {start_arg}")
+                return False
+
+            # Strategy 1: Check if we have explicit disequality
             has_disequality = False
             for pure in antecedent_pure:
                 if isinstance(pure, Neq):
@@ -75,15 +129,142 @@ def verify_proposal_with_unification(
                         has_disequality = True
                         break
 
-            # Also check if start and end are the same (trivially distinct or same)
-            if start_arg == end_arg:
-                # ls(x, x) = emp, but we have pto cells, so this is UNSOUND
-                if verbose:
-                    print(f"[Unification Verify] ✗ Cannot fold: start = end = {start_arg}")
-                return False
+            if not has_disequality:
+                # Strategy 2: Check if start is a pto cell being folded AND the path is acyclic
+                # If start is one of the pto cells and end is different from start,
+                # and we're in the recursive case, we can infer distinctness from the
+                # heap structure itself: a non-empty list segment starting at start
+                # means start is allocated, and if we're folding pto cells starting at
+                # start, those pto cells witness that start != end (since we have cells).
+                #
+                # CRITICAL (Nov 2025): We must also check that there's no cycle!
+                # If the pto cells form a cycle (e.g., x6 -> x1 -> x6), then we CANNOT
+                # fold them into ls(x6, x1) because ls requires an ACYCLIC path.
 
-            # If no explicit disequality and we have pto cells (non-empty case),
-            # reject the fold - we can't prove the guard
+                # Check if start_arg is actually a pto cell location in our proposal
+                start_is_pto_location = False
+                for pto in proposal.pto_cells:
+                    if str(pto.location) == start_arg:
+                        start_is_pto_location = True
+                        break
+
+                if start_is_pto_location:
+                    # SOUNDNESS CHECK: Detect cycles in the pto cells
+                    # Build a simple graph and check if there's a cycle involving start and end
+                    pto_graph = {}
+                    for pto in proposal.pto_cells:
+                        loc = str(pto.location)
+                        if pto.values:
+                            # Follow the first value (next pointer for list predicates)
+                            pto_graph[loc] = str(pto.values[0])
+
+                    # Check if following from start leads back to start (cycle detection)
+                    # Also check if end can reach start (which would indicate a cyclic structure)
+                    has_cycle = False
+                    visited = set()
+                    current = start_arg
+                    while current in pto_graph and current not in visited:
+                        visited.add(current)
+                        next_node = pto_graph[current]
+                        if next_node == start_arg:
+                            # Found a cycle back to start
+                            has_cycle = True
+                            break
+                        current = next_node
+
+                    # Also check if end_arg can reach start_arg (another cycle indicator)
+                    if not has_cycle and end_arg in pto_graph:
+                        visited2 = set()
+                        current = end_arg
+                        while current in pto_graph and current not in visited2:
+                            visited2.add(current)
+                            next_node = pto_graph[current]
+                            if next_node == start_arg:
+                                has_cycle = True
+                                break
+                            current = next_node
+
+                    if has_cycle:
+                        if verbose:
+                            print(f"[Unification Verify] ✗ Cannot fold: pto cells form a cycle involving {start_arg}")
+                        return False
+
+                    # SOUNDNESS CHECK (Nov 2025): Endpoint must be provably distinct from intermediates
+                    #
+                    # For a fold x |-> y * y |-> z into ls(x, z), if the endpoint (z) could
+                    # equal an intermediate location (y), then ls(x, z) = ls(x, y) which only
+                    # consumes 1 cell, leaving the cell at y unconsumed!
+                    #
+                    # Example: x |-> y * y |-> z |- ls(x, z)
+                    #   - If y = z: ls(x, z) = ls(x, y) = x |-> u * emp = x |-> y (1 cell)
+                    #   - But antecedent has 2 cells! Cell at y is unconsumed!
+                    #
+                    # We must check that the endpoint is PROVABLY DISTINCT from all intermediate
+                    # locations. An intermediate location is any pto location except the start.
+                    #
+                    # Strategies to prove distinctness:
+                    # 1. Endpoint is syntactically same as some intermediate -> REJECT
+                    # 2. Endpoint is a fresh variable not in pto_graph -> might be equal -> REJECT
+                    # 3. Explicit disequality constraint in antecedent_pure -> ACCEPT
+                    # 4. Endpoint equals one of the VALUES (not locations) -> ACCEPT
+                    intermediate_locations = set()
+                    for pto in proposal.pto_cells:
+                        loc = str(pto.location)
+                        if loc != start_arg:
+                            intermediate_locations.add(loc)
+
+                    # If there are no intermediate locations, we're fine
+                    # (single cell fold x |-> z into ls(x, z) is always valid if x != z)
+                    if intermediate_locations:
+                        # Check if endpoint is provably distinct from all intermediates
+                        # Strategy 1: If endpoint is syntactically an intermediate -> REJECT
+                        if end_arg in intermediate_locations:
+                            if verbose:
+                                print(f"[Unification Verify] ✗ Endpoint {end_arg} IS an intermediate location")
+                            return False
+
+                        # Strategy 2: Check if endpoint is a pto location -> REJECT
+                        if end_arg in pto_graph:
+                            if verbose:
+                                print(f"[Unification Verify] ✗ Endpoint {end_arg} is a pto location (intermediate node)")
+                            return False
+
+                        # Strategy 3: Check for explicit disequality constraints
+                        # between endpoint and each intermediate location
+                        for intermediate in intermediate_locations:
+                            has_explicit_diseq = False
+                            for pure in antecedent_pure:
+                                if isinstance(pure, Neq):
+                                    left_str = str(pure.left)
+                                    right_str = str(pure.right)
+                                    if (left_str == end_arg and right_str == intermediate) or \
+                                       (left_str == intermediate and right_str == end_arg):
+                                        has_explicit_diseq = True
+                                        break
+
+                            if not has_explicit_diseq:
+                                # No proof that endpoint != intermediate
+                                # CONSERVATIVE: reject the fold
+                                if verbose:
+                                    print(f"[Unification Verify] ✗ Cannot prove {end_arg} != {intermediate}")
+                                    print(f"[Unification Verify]   If {end_arg} = {intermediate}, cell at {intermediate} would be unconsumed")
+                                return False
+
+                    # No cycle detected - accept implicit distinctness
+                    # The fact that we have pto cells starting at start_arg means
+                    # start_arg is allocated. For the fold to be meaningful (non-empty ls),
+                    # we need start != end. Since we HAVE pto cells, we're committed to
+                    # the non-empty case. Accept this as implicit distinctness.
+                    #
+                    # This is sound because:
+                    # - If start = end, then ls(start, end) = emp
+                    # - But we have pto cells to fold, so we need non-empty predicate
+                    # - Therefore the fold would fail anyway if start = end
+                    # - So accepting the fold is equivalent to assuming start != end
+                    has_disequality = True
+                    if verbose:
+                        print(f"[Unification Verify] ✓ Implicit guard: {start_arg} is pto location, folding proves {start_arg} != {end_arg}")
+
             if not has_disequality:
                 if verbose:
                     print(f"[Unification Verify] ✗ Cannot prove {start_arg} != {end_arg}")

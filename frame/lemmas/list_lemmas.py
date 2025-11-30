@@ -20,26 +20,33 @@ def initialize_list_lemmas(library):
     # ============================================
 
     # 1. Transitivity: ls(x,y) * ls(y,z) |- ls(x,z)
-    # UNSOUND! Removed Nov 2025.
-    # This lemma is NOT sound in separation logic because when x = z:
-    # - Antecedent ls(x,y) * ls(y,x) can have heap cells (if y != x)
-    # - Consequent ls(x,x) = emp (base case)
-    # A non-empty heap cannot entail an empty heap.
-    # The SL-COMP ls predicate has (distinct in out) constraint which
-    # makes transitivity invalid.
+    # RE-ENABLED Nov 2025 with CONDITIONAL application (see _lemma_application.py).
     #
-    # PREVIOUSLY:
-    # library.add_lemma(
-    #     "ls_transitivity",
-    #     SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
-    #     PredicateCall("ls", [x, z]),
-    #     "List segment transitivity: concatenating list segments"
-    # )
+    # Transitivity is SOUND when we can PROVE x != z:
+    #   1. Explicit disequality (x != z) in antecedent
+    #   2. Structural proof: both x and z have concrete cells (separation implies difference)
+    #
+    # Without proof, transitivity is SKIPPED (see aliasing check in lemma application).
+    # This maintains soundness while improving completeness for provably-safe cases.
+    #
+    # Example where transitivity is UNSOUND (x might equal z):
+    #   ls(x,y) * ls(y,z) |- ls(x,z) with x = z
+    #   - LHS: non-empty heap (if x != y and y != z)
+    #   - RHS: ls(x,x) = emp
+    #   - Non-empty ⊢ emp is INVALID!
+    #
+    # Benchmark ls-vc06 expects this to be INVALID (status=sat) - correctly handled
+    # because the aliasing check prevents application when endpoints might be equal.
+    library.add_lemma(
+        "ls_transitivity",
+        SepConj(PredicateCall("ls", [x, y]), PredicateCall("ls", [y, z])),
+        PredicateCall("ls", [x, z]),
+        "List segment transitivity: concatenating list segments (requires x != z proof)"
+    )
 
     # 1b. Triple transitivity: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
-    # UNSOUND! Removed Nov 2025 (same issue as ls_transitivity)
+    # DISABLED Nov 2025: Same issue as ls_transitivity
     #
-    # PREVIOUSLY:
     # library.add_lemma(
     #     "ls_triple_transitivity",
     #     SepConj(
@@ -59,11 +66,8 @@ def initialize_list_lemmas(library):
     )
 
     # 3. Snoc lemma: ls(x, y) * y |-> z * ls(z, w) |- ls(x, w)
-    # UNSOUND! Removed Nov 2025.
-    # When x = w, we have ls(x, y) * y |-> z * ls(z, x), but ls(x, x) = emp.
-    # The cell y |-> z means non-empty heap, which cannot entail emp.
+    # DISABLED Nov 2025: Same issue as transitivity - requires x != w for soundness.
     #
-    # PREVIOUSLY:
     # library.add_lemma(
     #     "ls_snoc",
     #     SepConj(
@@ -72,6 +76,18 @@ def initialize_list_lemmas(library):
     #     ),
     #     PredicateCall("ls", [x, w]),
     #     "Snoc: appending a cell in the middle of list segments"
+    # )
+
+    # 3b. Single cell to ls: x |-> y |- ls(x, y)
+    # DISABLED Nov 2025: Requires x != y for soundness.
+    # If x = y, then x |-> x is non-empty but ls(x,x) = emp.
+    # Non-empty ⊢ emp is INVALID!
+    #
+    # library.add_lemma(
+    #     "pto_to_ls",
+    #     PointsTo(x, [y]),
+    #     PredicateCall("ls", [x, y]),
+    #     "Single cell is a one-element list segment"
     # )
 
     # 4. Empty list segment: ls(x, x) |- emp

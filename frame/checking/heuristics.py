@@ -109,36 +109,41 @@ class HeuristicChecker:
                 return False
 
         # Check 1b: Non-empty antecedent cannot entail emp
+        # IMPORTANT: Only reject if antecedent is DEFINITELY non-empty (PointsTo cells).
+        # Predicates MIGHT be empty (e.g., list(nil), ls(x,x)), so let Z3 decide.
         if isinstance(consequent, Emp):
             if isinstance(antecedent, PointsTo):
-                return False
+                return False  # PointsTo is always non-empty
             if isinstance(antecedent, PredicateCall):
-                if antecedent.args and len(antecedent.args) > 0:
-                    first_arg = antecedent.args[0]
-                    is_nil = False
-                    if isinstance(first_arg, Var) and first_arg.name in ["nil", "null"]:
-                        is_nil = True
-                    elif isinstance(first_arg, Const) and str(first_arg) in ["nil", "null"]:
-                        is_nil = True
-                    if is_nil:
-                        return None
-                return False
+                # Predicates might be empty - let Z3 decide
+                return None
             if isinstance(antecedent, SepConj):
                 parts = self.analyzer._extract_sepconj_parts(antecedent)
                 for part in parts:
                     if isinstance(part, PointsTo):
-                        return False
-                    if isinstance(part, PredicateCall):
-                        if part.args and len(part.args) > 0:
-                            first_arg = part.args[0]
-                            is_nil = False
-                            if isinstance(first_arg, Var) and first_arg.name in ["nil", "null"]:
-                                is_nil = True
-                            elif isinstance(first_arg, Const) and str(first_arg) in ["nil", "null"]:
-                                is_nil = True
-                            if is_nil:
-                                continue
-                        return False
+                        return False  # Has concrete cells - definitely non-empty
+                # Only predicates - they might be empty, let Z3 decide
+                return None
+            # CRITICAL FIX (Nov 2025): Handle And with spatial parts
+            # When antecedent is And(pure, spatial), extract the spatial part
+            # Example: ((nil = nil & nil != x1) & x1 |-> nil) should be rejected
+            if isinstance(antecedent, And):
+                from frame.utils.formula_utils import extract_spatial_part
+                spatial_part = extract_spatial_part(antecedent)
+                if spatial_part is not None and not isinstance(spatial_part, Emp):
+                    # Only reject if spatial part contains PointsTo (definitely non-empty)
+                    if isinstance(spatial_part, PointsTo):
+                        return False  # PointsTo is always non-empty
+                    if isinstance(spatial_part, SepConj):
+                        parts = self.analyzer._extract_sepconj_parts(spatial_part)
+                        for part in parts:
+                            if isinstance(part, PointsTo):
+                                return False  # Has concrete cells
+                        # Only predicates - they might be empty, let Z3 decide
+                        return None
+                    if isinstance(spatial_part, PredicateCall):
+                        # Predicates might be empty - let Z3 decide
+                        return None
 
         # Check 2: Field count mismatch
         if isinstance(antecedent, PointsTo) and isinstance(consequent, PointsTo):

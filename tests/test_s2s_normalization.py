@@ -35,17 +35,18 @@ def checker_no_normalization():
 # Basic Normalization Tests
 # ==========================================================================
 
-def test_list_transitivity_normalized(checker):
+def test_list_transitivity_invalid_normalized(checker):
     """Test that ls(x,y) * ls(y,z) |- ls(x,z) is INVALID with normalization
 
-    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
-    When x = z, antecedent ls(x,y) * ls(y,x) has heap cells but consequent ls(x,x) = emp.
+    NOTE (Nov 2025 - UPDATED): Transitivity is UNSOUND without explicit disequality.
+    When x = z, antecedent has heap cells but consequent ls(x,x) = emp.
+    Non-empty heap cannot entail empty heap.
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"))
     consequent = ls("x", "z")
 
     result = checker.check(antecedent, consequent)
-    assert not result.valid  # INVALID - transitivity is unsound
+    assert not result.valid  # INVALID - without disequality proof
 
 
 def test_list_cons_normalized(checker):
@@ -173,17 +174,18 @@ def test_normalization_improves_performance():
 # Complex Entailment Tests
 # ==========================================================================
 
-def test_three_segment_composition_normalized(checker):
+def test_three_segment_composition_invalid_normalized(checker):
     """Test three-way composition: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w) is INVALID
 
-    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
-    When x = w, the antecedent has heap cells but consequent ls(x,x) = emp.
+    NOTE (Nov 2025 - UPDATED): Transitivity is UNSOUND without explicit disequality.
+    When x = w, antecedent has heap cells but consequent ls(x,x) = emp.
+    Non-empty heap cannot entail empty heap.
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"), ls("z", "w"))
     consequent = ls("x", "w")
 
     result = checker.check(antecedent, consequent)
-    assert not result.valid  # INVALID - transitivity is unsound
+    assert not result.valid  # INVALID - without disequality proof
 
 
 def test_mixed_concrete_and_abstract_normalized(checker):

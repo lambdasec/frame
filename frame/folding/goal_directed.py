@@ -253,8 +253,8 @@ def fold_towards_goal(
                     print(f"[Goal-Directed Folding] Proposal {proposal.predicate_name} failed base check")
                 continue
 
-            # STEP 2: SOUNDNESS VERIFICATION
-            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True):
+            # STEP 2: SOUNDNESS VERIFICATION (pass full antecedent for cycle detection)
+            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True, full_antecedent=antecedent):
                 continue
 
             # STEP 3: ARITHMETIC SYNTHESIS AND VERIFICATION
@@ -474,7 +474,8 @@ def fold_towards_goal_multistep(
                 continue
 
             # STEP 2: SOUNDNESS VERIFICATION (use unification for speed and accuracy)
-            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True):
+            # Pass current formula for cycle detection - this is the evolving antecedent
+            if not verify_proposal_soundness(proposal, predicate_registry, pure_parts, verbose=verbose, use_unification=True, full_antecedent=current):
                 continue
 
             # STEP 3: ARITHMETIC SYNTHESIS AND VERIFICATION

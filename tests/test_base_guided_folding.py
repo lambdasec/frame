@@ -27,8 +27,11 @@ class TestBaseGuidedFolding:
         """Base check should handle frame rule correctly."""
         checker = EntailmentChecker()
 
-        # Frame rule with predicates
-        result = checker.check_entailment("list(x) * list(y) |- list(x)")
+        # Frame rule with predicates - must have matching parts on BOTH sides
+        # In exact entailment semantics, list(x) * list(y) |- list(x) is INVALID
+        # because we can't "drop" the list(y) heap. Use a case where frame
+        # parts actually appear on both sides.
+        result = checker.check_entailment("list(x) * ls(a, b) |- list(x) * ls(a, b)")
         assert result.valid
 
     def test_base_computation_cached(self):
@@ -58,8 +61,10 @@ class TestBaseGuidedFolding:
         result1 = checker.check_entailment("list(x) |- ls(x, nil)")
         assert result1.valid
 
-        # Frame with predicates
-        result2 = checker.check_entailment("list(x) * list(y) |- list(x)")
+        # Predicate to predicate with equal footprint (reflexivity)
+        # NOTE: In exact entailment semantics (SL-COMP), list(x) * list(y) |- list(x)
+        # is INVALID because we can't drop the list(y) heap. Use a valid case instead.
+        result2 = checker.check_entailment("list(x) |- list(x)")
         assert result2.valid
 
     def test_base_check_with_goal_directed_folding(self):
@@ -131,12 +136,14 @@ class TestBaseGuidedFolding:
         checker = EntailmentChecker()
 
         # Various entailments - NOTE (Nov 2025): Transitivity is UNSOUND
-        # due to aliasing (when x = z, ls(x,x) = emp but antecedent has cells)
+        # without explicit disequality constraints. When x = z, antecedent
+        # has heap cells but consequent ls(x,x) = emp.
+        # NOTE: In exact entailment semantics (SL-COMP), list(x) * list(y) |- list(x)
+        # is INVALID because we can't drop the list(y) heap.
         test_cases = [
             ("list(x) |- list(x)", True),  # Reflexivity
-            ("list(x) * list(y) |- list(x)", True),  # Frame
             ("list(x) |- ls(x, nil)", True),  # Predicate conversion
-            ("ls(x, y) * ls(y, z) |- ls(x, z)", False),  # Transitivity INVALID
+            ("ls(x, y) * ls(y, z) |- ls(x, z)", False),  # INVALID without disequality
         ]
 
         for formula, expected in test_cases:

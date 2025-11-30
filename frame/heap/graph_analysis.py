@@ -320,6 +320,54 @@ class HeapGraphAnalyzer:
             graph[source] = targets
             source_locations.add(source)
 
+        # CRITICAL SOUNDNESS CHECK (Nov 2025): Detect cycles in concrete cells
+        # If the concrete heap contains a cycle, we CANNOT partition it into multiple
+        # ACYCLIC ls predicates. A cycle like x6 -> x1 -> x6 cannot be represented
+        # as ls(x4, x6) * ls(x6, x1) because:
+        # 1. ls(x4, x6) would need to "own" the edge x1 -> x6
+        # 2. ls(x6, x1) would need to "own" the edge x6 -> x1
+        # 3. But then x1 is reachable from x6 (via ls(x6,x1)) AND x6 is reachable from x1 (via ls(x4,x6))
+        # 4. This violates the acyclic semantics of ls predicates
+        #
+        # The fix: if there's a cycle in the concrete cells, fall back to Z3
+        def has_cycle_in_graph(graph):
+            """Detect any cycle in the graph using DFS."""
+            visited = set()
+            rec_stack = set()
+
+            def dfs(node):
+                if node in rec_stack:
+                    return True  # Found cycle
+                if node in visited:
+                    return False
+                visited.add(node)
+                rec_stack.add(node)
+                if node in graph:
+                    for next_node in graph[node]:
+                        if next_node in graph:  # Only follow edges to allocated nodes
+                            if dfs(next_node):
+                                return True
+                rec_stack.remove(node)
+                return False
+
+            for start in graph:
+                if start not in visited:
+                    if dfs(start):
+                        return True
+            return False
+
+        if has_cycle_in_graph(graph):
+            if self.verbose:
+                print(f"[Mixed Graph] Concrete heap contains a cycle - falling back to Z3")
+            return None
+
+        # Rebuild graph (it was populated in the check above, reset for clarity)
+        graph = {}
+        source_locations = set()
+        for source, targets in concrete_cells:
+            graph[source] = targets
+            source_locations.add(source)
+
         # Now try to match each consequent ls() with either:
         # 1. An existing antecedent ls() (direct match)
         # 2. A path through concrete cells
@@ -425,9 +473,11 @@ class HeapGraphAnalyzer:
         if unused_concrete:
             if self.verbose:
                 print(f"[Mixed Graph] Unused concrete cells: {unused_concrete} - entailment INVALID")
-            # There are antecedent heap cells not covered by any consequent segment
-            # This means the consequent doesn't describe the same heap
-            return None  # Fall back to Z3 (could be frame rule application)
+            # SOUNDNESS FIX (Nov 2025): Return False instead of None
+            # In SL-COMP's exact entailment, unused concrete cells mean INVALID.
+            # Returning None allowed blind folding to convert cells to predicates,
+            # then frame rule would incorrectly drop those predicates.
+            return False  # Definite INVALID
 
         # Check 2: All antecedent ls predicates must be used
         unused_ant_ls_count = len(ant_ls_predicates) - len(used_ant_ls)
