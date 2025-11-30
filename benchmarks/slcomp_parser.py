@@ -118,9 +118,9 @@ class SLCompParser:
 
         # Determine problem type
         # Use division hint if available (most reliable)
-        if division_hint and '_sat' in division_hint:
+        if division_hint and ('_sat' in division_hint or division_hint == 'sat'):
             problem_type = 'sat'
-        elif division_hint and '_entl' in division_hint:
+        elif division_hint and ('_entl' in division_hint or division_hint == 'entl'):
             problem_type = 'entl'
         else:
             # Fall back to heuristics based on number of assertions

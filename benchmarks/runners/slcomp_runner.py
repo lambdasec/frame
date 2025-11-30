@@ -60,16 +60,32 @@ def run_slcomp_benchmark(cache_dir: str, division: str, filename: str, verbose: 
         with open(cache_path, 'r') as f:
             content = f.read()
 
+        # For curated division, use filename to determine problem type
+        # Filenames like qf_bsl_sat_dispose-1.cvc4.smt2 contain the actual division
+        if division == 'slcomp_curated':
+            # Detect problem type from filename patterns
+            fname_lower = filename.lower()
+            if '_sat_' in fname_lower or fname_lower.startswith('bsl_sat') or fname_lower.startswith('qf_bsl_sat'):
+                division_hint = 'sat'  # Just needs to contain '_sat'
+            elif '_entl_' in fname_lower or '_entl.' in fname_lower:
+                division_hint = 'entl'  # Just needs to contain '_entl'
+            else:
+                division_hint = division  # Fall back to division name
+        else:
+            division_hint = division
+
+        # Create fresh parser for each test to avoid state accumulation
+        parser = SLCompParser()
         antecedent, consequent, expected_status, problem_type, logic = \
-            get_slcomp_parser().parse_file(content, division_hint=division)
+            parser.parse_file(content, division_hint=division_hint)
 
         # Detect BSL mode
         is_bsl_mode = logic and ('BSL' in logic.upper() or 'BSLLIA' in logic.upper())
 
         # Register predicates
-        for pred_name, pred_params_body in get_slcomp_parser().predicate_bodies.items():
+        for pred_name, pred_params_body in parser.predicate_bodies.items():
             params, body_text = pred_params_body
-            body_formula = get_slcomp_parser()._parse_formula(body_text)
+            body_formula = parser._parse_formula(body_text)
             if body_formula:
                 custom_pred = ParsedPredicate(pred_name, params, body_formula)
                 registry.register(custom_pred, validate=False)

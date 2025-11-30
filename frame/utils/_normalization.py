@@ -298,5 +298,44 @@ class FormulaNormalizer:
                 return Not(inner)
             return formula
 
+        elif isinstance(formula, Eq):
+            # Simplify constant equalities: 2 = 0 → false, 0 = 0 → true
+            left_val = self._eval_const_expr(formula.left)
+            right_val = self._eval_const_expr(formula.right)
+            if left_val is not None and right_val is not None:
+                return True_() if left_val == right_val else False_()
+            return formula
+
         else:
             return formula
+
+    def _eval_const_expr(self, expr):
+        """
+        Evaluate a constant expression to an integer value.
+        Returns None if the expression is not a constant.
+        Handles Const, ArithExpr with subtraction, etc.
+        """
+        from frame.core.ast import ArithExpr
+
+        if isinstance(expr, Const):
+            return expr.value
+
+        if isinstance(expr, ArithExpr):
+            # Handle arithmetic: (- a b) → a - b
+            if expr.op == '-':
+                left_val = self._eval_const_expr(expr.left)
+                right_val = self._eval_const_expr(expr.right)
+                if left_val is not None and right_val is not None:
+                    return left_val - right_val
+            elif expr.op == '+':
+                left_val = self._eval_const_expr(expr.left)
+                right_val = self._eval_const_expr(expr.right)
+                if left_val is not None and right_val is not None:
+                    return left_val + right_val
+            elif expr.op == '*':
+                left_val = self._eval_const_expr(expr.left)
+                right_val = self._eval_const_expr(expr.right)
+                if left_val is not None and right_val is not None:
+                    return left_val * right_val
+
+        return None
