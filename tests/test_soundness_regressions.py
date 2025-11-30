@@ -39,8 +39,15 @@ def test_different_list_segments_dont_entail(checker):
 
 
 def test_frame_rule_works_correctly(checker):
-    """Frame rule works correctly"""
-    result = checker.check_entailment("ls(x, y) * ls(a, b) |- ls(x, y)")
+    """Frame rule works correctly
+
+    NOTE (Nov 2025): In exact semantics (SL-COMP), ls(x, y) * ls(a, b) |- ls(x, y)
+    is INVALID because we cannot drop ls(a, b). Frame rule only applies when
+    the frame appears on BOTH sides.
+
+    Test the correct frame rule: ls(x, y) * ls(a, b) |- ls(x, y) * ls(a, b)
+    """
+    result = checker.check_entailment("ls(x, y) * ls(a, b) |- ls(x, y) * ls(a, b)")
     assert result.valid
 
 

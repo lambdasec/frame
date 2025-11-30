@@ -241,6 +241,42 @@ class LemmaLibrary:
         from frame.lemmas._lemma_application import try_apply_lemma as _try_apply_lemma
         return _try_apply_lemma(self, antecedent, consequent)
 
+    def _convert_all_pto_to_ls(self, formula: Formula, verbose: bool = False,
+                                antecedent_pure: List[Formula] = None) -> Tuple[Formula, int]:
+        """
+        Bulk conversion of PointsTo cells to ls predicates.
+
+        For each x |-> y in the formula, convert to ls(x, y).
+        This is a preprocessing step before multi-step lemma application
+        that significantly speeds up folding for complex benchmarks.
+
+        SOUNDNESS FIX (Nov 2025): Only convert if we can PROVE location != value.
+        The conversion x |-> y |- ls(x, y) is UNSOUND if x = y because:
+          - ls(x, x) = emp (base case)
+          - x |-> x ⊢ emp is INVALID (non-empty cell cannot entail empty heap)
+
+        We can prove loc != val if:
+          1. loc and val are syntactically different AND
+          2. val is a "terminal" (nil, null) that can't equal loc, OR
+          3. There's explicit disequality loc != val in antecedent_pure
+
+        CONSERVATIVE: For now, we DISABLE pto_to_ls bulk conversion to maintain soundness.
+        This may reduce completeness but ensures no false positives.
+
+        Returns:
+            (converted_formula, num_conversions)
+        """
+        # SOUNDNESS FIX (Nov 2025): Disable bulk pto_to_ls conversion
+        # The conversion x |-> y |- ls(x, y) requires x != y, but we can't always prove this.
+        # Example: x |-> y * y |-> z |- ls(x, z) is INVALID when y = z
+        # because y |-> z with y = z is y |-> y, and ls(y, y) = emp, but y |-> y ⊢ emp is INVALID.
+        #
+        # Without explicit disequality constraints, we can't safely convert arbitrary pto to ls.
+        # Disabling this maintains soundness at the cost of some completeness.
+        if verbose:
+            print(f"[PTO->LS] Bulk conversion disabled for soundness")
+        return formula, 0
+
     def try_apply_lemma_multistep(
         self,
         antecedent: Formula,
@@ -249,20 +285,18 @@ class LemmaLibrary:
         verbose: bool = False
     ) -> Optional[Tuple[str, int]]:
         """
-        Try to apply lemmas iteratively to prove the entailment.
+        Try to apply lemmas iteratively to prove the entailment using GOAL-DIRECTED strategy.
 
         This enables proving entailments that require multiple lemma applications,
         such as: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
         which needs transitivity applied twice.
 
-        Algorithm:
-        1. Start with current = antecedent
-        2. For each iteration:
-           a. Try to find a lemma L where L.antecedent matches part of current
-           b. If found, replace that part with L.consequent
-           c. Check if result matches consequent (success!)
-           d. Otherwise, continue with transformed formula
-        3. Stop when consequent is reached or no more lemmas apply
+        GOAL-DIRECTED Algorithm (improved for SL-COMP benchmarks):
+        1. Convert all PointsTo to ls predicates
+        2. Identify predicates that already match the goal (preserve them)
+        3. For remaining predicates, apply transitivity ONLY if the result
+           would produce a predicate that exists in the goal
+        4. Continue until all goal predicates are matched or no progress
 
         Args:
             antecedent: The formula to transform
@@ -282,6 +316,72 @@ class LemmaLibrary:
         if verbose:
             print(f"[Multi-Step Lemma] Starting: {antecedent} |- {consequent}")
 
+        # PREPROCESSING: Convert all PointsTo to ls in one step
+        # This is crucial for benchmarks like bolognesa that have many pto cells
+        current, num_pto_converted = self._convert_all_pto_to_ls(current, verbose)
+        if num_pto_converted > 0:
+            applications.extend(['pto_to_ls'] * num_pto_converted)
+            if verbose:
+                print(f"[Multi-Step Lemma] Preprocessing: converted {num_pto_converted} pto -> ls")
+                print(f"[Multi-Step Lemma] After preprocessing: {current}")
+
+        # Extract goal parts for goal-directed matching
+        goal_parts = analyzer._extract_sepconj_parts(consequent)
+        goal_signatures = set()
+        for gp in goal_parts:
+            if isinstance(gp, PredicateCall) and gp.name == 'ls' and len(gp.args) >= 2:
+                # Create signature (start_var, end_var) for goal matching
+                start_name = gp.args[0].name if isinstance(gp.args[0], Var) else str(gp.args[0])
+                end_name = gp.args[1].name if isinstance(gp.args[1], Var) else str(gp.args[1])
+                goal_signatures.add((start_name, end_name))
+
+        if verbose:
+            print(f"[Multi-Step Lemma] Goal signatures: {goal_signatures}")
+
+        # SOUNDNESS CHECK: Detect ls predicate cycles in antecedent
+        # If predicates form a cycle (ls(a,b) * ls(b,c) * ls(c,a)), transitivity is unsound
+        # because the cycle can only be satisfied if all are empty (a=b=c) or UNSAT.
+        def detect_ls_cycles(formula_parts: List[Formula]) -> bool:
+            """Check if ls predicates form a cycle."""
+            # Build a graph of ls edges: start -> end
+            edges = {}
+            for part in formula_parts:
+                if isinstance(part, PredicateCall) and part.name == 'ls' and len(part.args) >= 2:
+                    start = part.args[0].name if isinstance(part.args[0], Var) else str(part.args[0])
+                    end = part.args[1].name if isinstance(part.args[1], Var) else str(part.args[1])
+                    if start != end:  # Skip reflexive ls(x,x) - these are always emp
+                        if start not in edges:
+                            edges[start] = set()
+                        edges[start].add(end)
+
+            # DFS to detect cycle
+            visited = set()
+            rec_stack = set()
+
+            def dfs(node):
+                visited.add(node)
+                rec_stack.add(node)
+                for neighbor in edges.get(node, []):
+                    if neighbor not in visited:
+                        if dfs(neighbor):
+                            return True
+                    elif neighbor in rec_stack:
+                        return True
+                rec_stack.remove(node)
+                return False
+
+            for node in edges:
+                if node not in visited:
+                    if dfs(node):
+                        return True
+            return False
+
+        # Check for cycles in initial antecedent
+        initial_parts = analyzer._extract_sepconj_parts(current)
+        has_cycle = detect_ls_cycles(initial_parts)
+        if has_cycle and verbose:
+            print(f"[Multi-Step Lemma] ⚠ Formula contains ls predicate cycles - applying transitivity cautiously")
+
         for iteration in range(max_iterations):
             if verbose:
                 print(f"\n[Multi-Step Lemma] Iteration {iteration + 1}/{max_iterations}")
@@ -299,48 +399,151 @@ class LemmaLibrary:
             # Extract parts from current formula
             current_parts = analyzer._extract_sepconj_parts(current)
 
-            # Try to find a lemma that applies to some subset of parts
+            # GOAL-DIRECTED: Check if current parts are a subset match of goal
+            # (accounting for the frame rule)
+            # Pass consequent to check for pure constraints
+            current_matched = self._check_subset_match(current_parts, goal_parts, verbose, consequent=consequent)
+            if current_matched:
+                if verbose:
+                    print(f"[Multi-Step Lemma] ✓ Subset match found!")
+                return (f"multi_step_lemma ({'+'.join(applications)})", len(applications))
+
+            # Identify PROTECTED predicates - those that already match a goal
+            # These should NOT be consumed by transitivity
+            protected_indices = set()
+            for i, cp in enumerate(current_parts):
+                for gp in goal_parts:
+                    if self._formulas_equal(cp, gp):
+                        protected_indices.add(i)
+                        break
+
+            if verbose and protected_indices:
+                protected_names = [str(current_parts[i]) for i in protected_indices]
+                print(f"[Multi-Step Lemma] Protected predicates: {protected_names}")
+
+            # Try to find a GOAL-DIRECTED lemma application
             lemma_applied = False
+            best_application = None
+            best_is_goal_directed = False
 
             for lemma in self.lemmas:
                 # Validate lemma before applying
                 if not self._is_lemma_sound(lemma):
                     continue
 
+                # PREVENT INFINITE LOOPS: Skip certain lemmas
+                if lemma.name in ('emp_to_ls_empty', 'ls_empty', 'ls_frame_emp',
+                                  'ls_convergent_identity', 'ls_with_eq'):
+                    continue
+
                 # Get lemma antecedent parts
                 lemma_ante_parts = analyzer._extract_sepconj_parts(lemma.antecedent)
 
                 # Try to match lemma antecedent against subset of current parts
-                # This allows matching ls(x,y) * ls(y,z) within larger formula
-                bindings = self._try_match_subset(current_parts, lemma_ante_parts)
+                # EXCLUDING protected predicates
+                available_parts = [p for i, p in enumerate(current_parts) if i not in protected_indices]
+                available_indices = [i for i in range(len(current_parts)) if i not in protected_indices]
+
+                if len(available_parts) < len(lemma_ante_parts):
+                    continue  # Not enough unprotected parts
+
+                bindings = self._try_match_subset(available_parts, lemma_ante_parts)
 
                 if bindings is not None:
-                    # Found a match! Apply the lemma
+                    # SOUNDNESS CHECK 1: Detect aliasing in transitivity lemma
+                    # Use the same check as single-step lemma application
+                    if lemma.name in ('ls_transitivity', 'ls_triple_transitivity', 'ls_snoc'):
+                        from frame.lemmas._lemma_application import (
+                            _extract_disequalities, _extract_cell_locations, _can_apply_transitivity
+                        )
+                        disequalities = _extract_disequalities(antecedent)
+                        cells_at = _extract_cell_locations(antecedent)
+
+                        if not _can_apply_transitivity(lemma, bindings, disequalities, cells_at):
+                            if verbose:
+                                print(f"[Multi-Step Lemma] ✗ Skipping {lemma.name}: cannot prove endpoint disequality")
+                            continue
+
+                    # SOUNDNESS CHECK 2: Don't apply transitivity if formula has cycles
+                    # Cycles can only be satisfied if all are empty, but transitivity
+                    # might incorrectly "prove" entailments through the cycle.
+                    if has_cycle and lemma.name in ('ls_transitivity', 'ls_triple_transitivity', 'ls_snoc'):
+                        # Check if applying this lemma would involve cycle predicates
+                        current_parts_check = analyzer._extract_sepconj_parts(current)
+                        if detect_ls_cycles(current_parts_check):
+                            if verbose:
+                                print(f"[Multi-Step Lemma] ✗ Skipping {lemma.name}: formula contains ls cycles")
+                            continue
+
+                    # GOAL-DIRECTED CHECK: Would the result help us reach the goal?
                     instantiated_consequent = self.substitute_bindings(lemma.consequent, bindings)
 
-                    # Build new formula: remove matched parts, add consequent
-                    matched_parts_set = set()
-                    for lemma_part in lemma_ante_parts:
-                        for i, current_part in enumerate(current_parts):
-                            if i not in matched_parts_set:
-                                part_bindings = self.match_formula(lemma_part, current_part)
-                                if part_bindings is not None:
-                                    matched_parts_set.add(i)
+                    # Check if result is in goal signatures
+                    result_in_goal = False
+                    if isinstance(instantiated_consequent, PredicateCall) and instantiated_consequent.name == 'ls':
+                        if len(instantiated_consequent.args) >= 2:
+                            result_start = instantiated_consequent.args[0].name if isinstance(instantiated_consequent.args[0], Var) else str(instantiated_consequent.args[0])
+                            result_end = instantiated_consequent.args[1].name if isinstance(instantiated_consequent.args[1], Var) else str(instantiated_consequent.args[1])
+                            result_in_goal = (result_start, result_end) in goal_signatures
+
+                    # ONLY apply goal-directed lemmas for transitivity
+                    # Non-goal-directed transitivity often leads to dead ends
+                    if result_in_goal:
+                        # This is a high-priority match - apply immediately
+                        best_application = (lemma, bindings, instantiated_consequent, lemma_ante_parts, available_parts, available_indices)
+                        best_is_goal_directed = True
+                        if verbose:
+                            print(f"[Multi-Step Lemma] Found goal-directed match: {lemma.name} -> {instantiated_consequent}")
+                        break
+                    # Skip non-goal-directed transitivity - it often leads to dead ends
+                    # elif best_application is None:
+                    #     best_application = (lemma, bindings, instantiated_consequent, lemma_ante_parts, available_parts, available_indices)
+
+            # Apply the best found lemma
+            if best_application:
+                lemma, bindings, instantiated_consequent, lemma_ante_parts, available_parts, available_indices = best_application
+
+                # Build new formula: remove matched parts from available_parts, add consequent
+                # IMPORTANT: Use the SAME bindings to ensure consistent matching
+                # and prevent the same part from being matched twice
+                matched_available_indices = set()
+                for lemma_part in lemma_ante_parts:
+                    for j, avail_part in enumerate(available_parts):
+                        if j not in matched_available_indices:
+                            # Use bindings to verify this part actually matches with the correct variables
+                            part_bindings = self.match_formula(lemma_part, avail_part, dict(bindings))
+                            if part_bindings is not None:
+                                # Verify bindings are consistent
+                                consistent = True
+                                for k, v in part_bindings.items():
+                                    if k in bindings:
+                                        # Check if the binding values match
+                                        old_v = bindings[k]
+                                        if isinstance(old_v, Var) and isinstance(v, Var):
+                                            if old_v.name != v.name:
+                                                consistent = False
+                                                break
+                                        elif str(old_v) != str(v):
+                                            consistent = False
+                                            break
+                                if consistent:
+                                    matched_available_indices.add(j)
                                     break
 
-                    # Build new formula with unmatched parts + instantiated consequent
-                    new_parts = [p for i, p in enumerate(current_parts) if i not in matched_parts_set]
-                    new_parts.append(instantiated_consequent)
+                # Map back to original indices
+                matched_original_indices = {available_indices[j] for j in matched_available_indices}
 
-                    current = analyzer._build_sepconj(new_parts)
-                    applications.append(lemma.name)
-                    lemma_applied = True
+                # Build new formula with unmatched parts + instantiated consequent
+                new_parts = [p for i, p in enumerate(current_parts) if i not in matched_original_indices]
+                new_parts.append(instantiated_consequent)
 
-                    if verbose:
-                        print(f"[Multi-Step Lemma] ✓ Applied {lemma.name}")
-                        print(f"[Multi-Step Lemma] New formula: {current}")
+                current = analyzer._build_sepconj(new_parts)
+                applications.append(lemma.name)
+                lemma_applied = True
 
-                    break  # Apply one lemma per iteration
+                if verbose:
+                    print(f"[Multi-Step Lemma] ✓ Applied {lemma.name}")
+                    print(f"[Multi-Step Lemma] New formula: {current}")
 
             if not lemma_applied:
                 if verbose:
@@ -356,12 +559,108 @@ class LemmaLibrary:
                 print(f"[Multi-Step Lemma] ✓ Success after {len(applications)} applications!")
             return (f"multi_step_lemma ({'+'.join(applications)})", len(applications))
 
+        # Final check: subset match (frame rule)
+        # Pass consequent to check for pure constraints
+        current_parts = analyzer._extract_sepconj_parts(current_normalized)
+        if self._check_subset_match(current_parts, goal_parts, verbose, consequent=consequent):
+            if verbose:
+                print(f"[Multi-Step Lemma] ✓ Success (frame) after {len(applications)} applications!")
+            return (f"multi_step_lemma ({'+'.join(applications)})", len(applications))
+
         if verbose:
             print(f"[Multi-Step Lemma] ✗ Failed after {len(applications)} applications")
             print(f"[Multi-Step Lemma]   Final: {current_normalized}")
             print(f"[Multi-Step Lemma]   Goal:  {consequent_normalized}")
 
         return None
+
+    def _check_subset_match(self, current_parts: List[Formula], goal_parts: List[Formula],
+                           verbose: bool = False, consequent: Formula = None,
+                           allow_frame: bool = False) -> bool:
+        """
+        Check if current parts match goal parts.
+
+        Args:
+            current_parts: Parts from current formula
+            goal_parts: Parts from goal formula
+            verbose: Enable debug output
+            consequent: Original consequent for pure constraint checking
+            allow_frame: If True, allow extra parts in current (for frame extraction)
+                        If False, require exact match (for entailment checking)
+
+        SOUNDNESS FIX (Nov 2025): Changed default behavior to exact match.
+
+        In standard separation logic, P * R |- Q is NOT valid just because P matches Q.
+        The remainder R MUST be empty (emp), otherwise the entailment is invalid.
+
+        Example of UNSOUND subset matching:
+          ls(x4, x6) * ls(x6, x4) |- ls(x4, x6)
+          - Subset: ls(x4, x6) matches goal ✓
+          - But: ls(x6, x4) is NOT emp (unless x6 = x4)!
+          - So entailment is INVALID
+
+        For entailment checking (allow_frame=False):
+          Require ALL current parts to match some goal part (bidirectional match).
+
+        For frame extraction (allow_frame=True):
+          Allow extra parts in current - these become the extracted frame.
+
+        IMPORTANT: Also check if consequent has PURE constraints that are not in the antecedent.
+        If so, we can't claim a match (spatial match is not enough).
+        """
+        from frame.utils.formula_utils import extract_pure_formulas
+        from frame.core.ast import Emp
+
+        # SOUNDNESS CHECK: If consequent has pure constraints, we need to verify them
+        # This prevents accepting emp |- (x = 5 & emp) via spatial-only matching
+        if consequent is not None:
+            pure_constraints = extract_pure_formulas(consequent)
+            if pure_constraints:
+                # There are pure constraints in consequent that we haven't verified
+                # A spatial match is NOT sufficient
+                if verbose:
+                    print(f"[Subset Match] ✗ Consequent has pure constraints: {pure_constraints}")
+                return False
+
+        # Filter out emp parts from current (they're vacuous)
+        current_spatial = [p for p in current_parts if not isinstance(p, Emp)]
+        goal_spatial = [p for p in goal_parts if not isinstance(p, Emp)]
+
+        # For exact matching (entailment checking): current must have same or fewer parts than goal
+        # If current has MORE spatial parts than goal, those extras can't be consumed
+        if not allow_frame and len(current_spatial) > len(goal_spatial):
+            if verbose:
+                print(f"[Subset Match] ✗ Current has {len(current_spatial)} parts, goal has {len(goal_spatial)}")
+                print(f"[Subset Match]   Extra parts cannot be consumed by goal")
+            return False
+
+        # Check that every goal part has a matching current part
+        goal_matched = [False] * len(goal_spatial)
+        current_used = [False] * len(current_spatial)
+
+        for i, goal_part in enumerate(goal_spatial):
+            for j, current_part in enumerate(current_spatial):
+                if not current_used[j] and self._formulas_equal(goal_part, current_part):
+                    goal_matched[i] = True
+                    current_used[j] = True
+                    break
+
+        # All goal parts must be matched
+        if not all(goal_matched):
+            if verbose:
+                unmatched = [str(goal_spatial[i]) for i, m in enumerate(goal_matched) if not m]
+                print(f"[Subset Match] ✗ Unmatched goal parts: {unmatched}")
+            return False
+
+        # For exact matching: all current parts must be used (no leftovers)
+        # For frame extraction: leftovers are OK (they become the frame)
+        if not allow_frame and not all(current_used):
+            if verbose:
+                leftovers = [str(current_spatial[i]) for i, u in enumerate(current_used) if not u]
+                print(f"[Subset Match] ✗ Leftover current parts not in goal: {leftovers}")
+            return False
+
+        return True
 
     def _remove_emp_parts(self, formula: Formula, analyzer) -> Formula:
         """
@@ -407,31 +706,40 @@ class LemmaLibrary:
 
         This enables matching ls(x,y) * ls(y,z) within x|->a * ls(x,y) * ls(y,z) * z|->b
 
+        IMPORTANT: We must try all PERMUTATIONS of how pattern parts map to formula parts,
+        not just combinations. For example, with pattern [ls(X,Y), ls(Y,Z)] and formula
+        parts [ls(a,b), ls(c,a)], we need to try:
+          - pattern[0]->formula[0], pattern[1]->formula[1]: ls(X,Y)->ls(a,b), ls(Y,Z)->ls(c,a) - FAIL (Y=b != c)
+          - pattern[0]->formula[1], pattern[1]->formula[0]: ls(X,Y)->ls(c,a), ls(Y,Z)->ls(a,b) - OK (X=c, Y=a, Z=b)
+
         Returns unified bindings if all pattern parts match, None otherwise.
         """
         if len(pattern_parts) > len(formula_parts):
             return None
 
-        # Try all combinations of formula_parts that match the size of pattern_parts
-        from itertools import combinations
+        # Try all permutations of formula_parts that match the size of pattern_parts
+        from itertools import combinations, permutations
 
+        # First get all combinations of indices, then try all permutations of each
         for combo in combinations(range(len(formula_parts)), len(pattern_parts)):
-            # Try to match this combination
-            bindings = {}
-            matched = True
+            # Try all orderings of this combination
+            for perm in permutations(combo):
+                # Try to match this permutation
+                bindings = {}
+                matched = True
 
-            for pattern_part, formula_idx in zip(pattern_parts, combo):
-                formula_part = formula_parts[formula_idx]
-                part_bindings = self.match_formula(pattern_part, formula_part, bindings)
+                for pattern_part, formula_idx in zip(pattern_parts, perm):
+                    formula_part = formula_parts[formula_idx]
+                    part_bindings = self.match_formula(pattern_part, formula_part, bindings)
 
-                if part_bindings is None:
-                    matched = False
-                    break
+                    if part_bindings is None:
+                        matched = False
+                        break
 
-                bindings = part_bindings
+                    bindings = part_bindings
 
-            if matched:
-                return bindings
+                if matched:
+                    return bindings
 
         return None
 

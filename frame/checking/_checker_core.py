@@ -121,6 +121,25 @@ def check_entailment_core(
         print(f"  Antecedent: {antecedent}")
         print(f"  Consequent: {consequent}")
 
+    # EARLY SOUNDNESS CHECK: Detect cycles in the concrete heap
+    # A cycle in the concrete heap (e.g., x |-> y * y |-> x) cannot be represented
+    # by acyclic predicates like ls(). This is a definite INVALID case.
+    # This check must happen BEFORE any folding or frame inference to prevent
+    # the cyclic structure from being transformed/hidden.
+    #
+    # NOTE (Nov 2025): In AFFINE semantics (for bug finding/bi-abduction), we skip
+    # the strict footprint checks since extra heap is allowed to be "forgotten".
+    # Only enforce in exact/classical semantics (for SL-COMP compliance).
+    if not checker_self.affine_semantics:
+        from frame.checking.footprint_check import check_cyclic_proof_soundness
+        is_sound, cycle_reason = check_cyclic_proof_soundness(
+            antecedent, consequent, verbose=checker_self.verbose
+        )
+        if not is_sound:
+            if checker_self.verbose:
+                print(f"Cycle check FAILED: {cycle_reason}")
+            return EntailmentResult(valid=False, reason=f"Soundness check: {cycle_reason}")
+
     # Apply frame rule to simplify if possible
     antecedent, consequent, simplified = checker_self.frame_rule_applicator.apply_frame_rule(antecedent, consequent)
     if simplified and checker_self.analyzer.formulas_syntactically_equal(antecedent, consequent):
@@ -232,8 +251,10 @@ def check_entailment_core(
     # Try to apply lemmas from the lemma library
     if checker_self.use_lemmas and checker_self.lemma_library:
         # Try multi-step lemma application first (more powerful, handles cases like multi-transitivity)
+        # Nov 2025: Increased max_iterations from 5 to 15 to handle complex benchmarks
+        # with many pto cells that need multiple transitivity applications
         multistep_result = checker_self.lemma_library.try_apply_lemma_multistep(
-            antecedent, consequent, max_iterations=5, verbose=checker_self.verbose
+            antecedent, consequent, max_iterations=15, verbose=checker_self.verbose
         )
         if multistep_result is not None:
             lemma_desc, num_applications = multistep_result
@@ -373,6 +394,24 @@ def check_entailment_core(
         if checker_self.verbose:
             print("Formulas are syntactically equal after unfolding")
         return EntailmentResult(valid=True, reason="Syntactic equality after unfolding")
+
+    # CYCLIC PROOF SOUNDNESS CHECK: Verify footprint compatibility on UNFOLDED formulas
+    # This catches cases where Z3 incorrectly chooses all base cases (emp)
+    # for consequent predicates, making the consequent footprint smaller than antecedent.
+    # Key insight from cyclic proof theory: In P |- Q, every heap cell in P must be consumed by Q.
+    # NOTE (Nov 2025): Must use UNFOLDED formulas to properly count concrete cells
+    # after predicate definitions have been expanded (e.g., points_to -> pto).
+    #
+    # NOTE: In AFFINE semantics, we skip this check since extra heap is allowed.
+    if not checker_self.affine_semantics:
+        from frame.checking.footprint_check import check_cyclic_proof_soundness
+        is_sound, footprint_reason = check_cyclic_proof_soundness(
+            antecedent_unfolded, consequent_unfolded, verbose=checker_self.verbose
+        )
+        if not is_sound:
+            if checker_self.verbose:
+                print(f"Footprint check FAILED: {footprint_reason}")
+            return EntailmentResult(valid=False, reason=f"Footprint check: {footprint_reason}")
 
     # Try unification-based matching before Z3
     unification_result = checker_self._try_unification_matching(antecedent_unfolded, consequent_unfolded)

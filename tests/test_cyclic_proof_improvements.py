@@ -23,34 +23,36 @@ def checker():
 
 # ========== Minimum Depth Threshold Tests ==========
 
-def test_list_transitivity_not_closed_early(checker):
-    """Test that ls(x,y) * ls(y,z) |- ls(x,z) doesn't close prematurely
+def test_list_transitivity_invalid_without_disequality(checker):
+    """Test that ls(x,y) * ls(y,z) |- ls(x,z) is INVALID without x != z
 
-    Before improvement: Might close cycle too early, causing false negative
-    UPDATED Nov 2025: Transitivity is UNSOUND due to aliasing!
-    This test now verifies that the unsound lemma is correctly rejected.
+    UPDATED Nov 2025: SL-COMP semantics require explicit disequality.
+    - When x = z, antecedent has cells but consequent ls(x,x) = emp
+    - Non-empty heap cannot entail empty heap
+    - This matches SL-COMP benchmark ls-vc06.sb.smt2 (status sat = INVALID)
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"))
     consequent = ls("x", "z")
 
     result = checker.check(antecedent, consequent)
 
-    # Should be INVALID - transitivity is unsound when x = z is possible
+    # INVALID without explicit disequality proof
     assert not result.valid
 
 
-def test_list_composition_three_segments_invalid(checker):
+def test_list_composition_three_segments_invalid_without_disequality(checker):
     """Test three-segment composition: ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)
 
-    UPDATED Nov 2025: Transitivity is UNSOUND due to aliasing!
-    When x = w, the antecedent has heap cells but the consequent ls(x,x) = emp.
+    UPDATED Nov 2025: SL-COMP semantics require explicit disequality.
+    - When x = w, antecedent has cells but consequent ls(x,x) = emp
+    - Non-empty heap cannot entail empty heap
     """
     antecedent = sep(ls("x", "y"), ls("y", "z"), ls("z", "w"))
     consequent = ls("x", "w")
 
     result = checker.check(antecedent, consequent)
 
-    # Should be INVALID - transitivity is unsound when x = w is possible
+    # INVALID without explicit disequality proof
     assert not result.valid
 
 

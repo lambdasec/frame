@@ -275,7 +275,12 @@ class TestEdgeCases:
         assert len(fv) == 0
 
     def test_complex_predicate_structure(self):
-        """Test complex predicate structure"""
+        """Test complex predicate structure
+
+        NOTE (Nov 2025): In exact semantics (SL-COMP), we cannot drop tree(y).
+        This is INVALID because extra heap cells must be accounted for.
+        """
         checker = EntailmentChecker()
         result = checker.check_entailment("nll(x) * tree(y) |- nll(x)")
-        assert result.valid
+        # In exact semantics, extra heap cannot be dropped
+        assert not result.valid

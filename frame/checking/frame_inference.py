@@ -214,6 +214,13 @@ class FrameInferenceEngine:
                 # NEW: This is the key integration of abduce_frame()!
                 # If we can't match cons_part directly, try to abduce what's missing
                 # and add it to the antecedent
+                #
+                # SOUNDNESS NOTE (Nov 2025): DISABLED "emp frame" path because it relies
+                # on checker.check() which can have false positives in certain cases
+                # (e.g., cyclic heaps folded into acyclic predicates).
+                # The emp frame case is: "antecedent already entails consequent part"
+                # which is exactly what we're trying to verify, so trusting it creates
+                # circular reasoning. Only use abduction for non-emp frames.
                 if self.checker and not matched_any:
                     if self.verbose:
                         print(f"[Frame Inference] Trying frame abduction for: {cons_part}")
@@ -225,14 +232,15 @@ class FrameInferenceEngine:
 
                     if abduced_frame is not None:
                         if isinstance(abduced_frame, Emp):
-                            # Emp means current_ant already entails cons_part
+                            # SOUNDNESS: Skip emp frame - this is unreliable because it relies
+                            # on checker.check() which may have false positives.
+                            # The emp frame case essentially claims "antecedent already entails
+                            # this consequent part" but that's exactly what we're trying to prove.
+                            # Trusting it creates circular reasoning and leads to false positives.
                             if self.verbose:
-                                print(f"[Frame Inference] ✓ Already provable (emp frame)")
-                            cons_parts.remove(cons_part)
-                            matched_parts.append(cons_part)
-                            strategies_used.append("abduction_emp")
-                            matched_any = True
-                            break
+                                print(f"[Frame Inference] ✗ Skipping emp frame (potential circular reasoning)")
+                            # Don't accept this match - continue to other strategies or fail
+                            pass
                         else:
                             # Got a non-emp frame R where current_ant * R |- cons_part was verified
                             if self.verbose:
@@ -291,9 +299,30 @@ class FrameInferenceEngine:
         - If target is ls(x, z) and antecedent has ls(x, y) * ls(y, z), use transitivity
         - If target is ls(x, y) and antecedent has x |-> z * ls(z, y), use cons
 
+        IMPORTANT (Nov 2025): Block pto_to_ls for single pto cells.
+        The pto_to_ls lemma is x |-> y |- ls(x, y), which is SOUND but can lead
+        to incorrect results in frame inference when the pto cell is part of a
+        larger structure (e.g., a cycle). When we match a single pto with an ls
+        predicate via pto_to_ls, we're essentially "forgetting" that the pto cell
+        might be connected to other cells that form a cycle or longer path.
+
         Returns:
             Lemma name if matched, None otherwise
         """
+        # SOUNDNESS: Block pto_to_ls for single pto matching ls
+        # This lemma is x |-> y |- ls(x, y) which is technically sound, but
+        # in frame inference context, using it for single pto cells can cause
+        # false positives when the pto cell is part of a cycle.
+        #
+        # Example: x6 |-> x1 (remaining from a cycle) matched with ls(x6, x1)
+        # via pto_to_ls allows frame inference to claim "matched", but this
+        # ignores that the original antecedent had a cycle that can't be folded
+        # into acyclic ls predicates.
+        if isinstance(antecedent, PointsTo) and target.name == 'ls':
+            if self.verbose:
+                print(f"[Frame Inference] Blocking pto_to_ls for single pto in lemma match")
+            return None
+
         # Get lemma library from predicate registry
         from frame.lemmas.base import LemmaLibrary
 

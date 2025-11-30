@@ -32,10 +32,15 @@ def try_apply_lemma(
     # Normalize SepConj order for consistent matching (P * Q = Q * P)
     from frame.analysis.formula import FormulaAnalyzer
     from frame.utils.formula_utils import extract_spatial_part
+    from frame.core.ast import PredicateCall, Var, Const
 
     analyzer = FormulaAnalyzer()
     antecedent = analyzer.normalize_sepconj(antecedent)
     consequent = analyzer.normalize_sepconj(consequent)
+
+    # Extract disequality and structural info for transitivity soundness check
+    disequalities = _extract_disequalities(antecedent)
+    cells_at = _extract_cell_locations(antecedent)
 
     # Phase 1: Direct matching (fast path)
     for lemma in library.lemmas:
@@ -45,6 +50,11 @@ def try_apply_lemma(
 
         bindings = library.match_formula(lemma.antecedent, antecedent)
         if bindings is not None:
+            # SOUNDNESS CHECK: For transitivity lemmas, verify endpoints are provably different
+            if lemma.name in ('ls_transitivity', 'ls_triple_transitivity', 'ls_snoc'):
+                if not _can_apply_transitivity(lemma, bindings, disequalities, cells_at):
+                    continue  # Skip - endpoints might be aliased
+
             instantiated_consequent = library.substitute_bindings(lemma.consequent, bindings)
             if library._formulas_equal(instantiated_consequent, consequent):
                 return lemma.name
@@ -69,6 +79,11 @@ def try_apply_lemma(
 
                 bindings = library.match_formula(lemma.antecedent, spatial_part)
                 if bindings is not None:
+                    # SOUNDNESS CHECK: For transitivity lemmas, verify endpoints are provably different
+                    if lemma.name in ('ls_transitivity', 'ls_triple_transitivity', 'ls_snoc'):
+                        if not _can_apply_transitivity(lemma, bindings, disequalities, cells_at):
+                            continue  # Skip - endpoints might be aliased
+
                     instantiated_consequent = library.substitute_bindings(lemma.consequent, bindings)
 
                     # Check if instantiated consequent matches the consequent's spatial part
@@ -86,6 +101,116 @@ def try_apply_lemma(
     # The checker now calls goal-directed folding BEFORE lemma application.
 
     return None
+
+
+def _extract_disequalities(formula: Formula) -> set:
+    """
+    Extract explicit disequality constraints (x != y) from formula.
+
+    Returns set of (name1, name2) tuples (sorted for canonical form).
+    """
+    from frame.core.ast import Neq, And, Var, Const
+
+    diseqs = set()
+
+    def extract(f):
+        if isinstance(f, Neq):
+            left = f.left
+            right = f.right
+            name1 = left.name if isinstance(left, Var) else str(left)
+            name2 = right.name if isinstance(right, Var) else str(right)
+            # Canonical form: sorted tuple
+            diseqs.add(tuple(sorted([name1, name2])))
+        elif isinstance(f, And):
+            extract(f.left)
+            extract(f.right)
+        elif isinstance(f, SepConj):
+            extract(f.left)
+            extract(f.right)
+
+    extract(formula)
+    return diseqs
+
+
+def _extract_cell_locations(formula: Formula) -> set:
+    """
+    Extract locations that have concrete cells (PointsTo).
+
+    If two different locations both have cells, they MUST be different
+    due to separation (disjoint domains).
+
+    Returns set of location names.
+    """
+    from frame.core.ast import PointsTo, Var, SepConj, And
+
+    locations = set()
+
+    def extract(f):
+        if isinstance(f, PointsTo):
+            loc = f.location
+            name = loc.name if isinstance(loc, Var) else str(loc)
+            locations.add(name)
+        elif isinstance(f, SepConj):
+            extract(f.left)
+            extract(f.right)
+        elif isinstance(f, And):
+            extract(f.left)
+            extract(f.right)
+
+    extract(formula)
+    return locations
+
+
+def _can_apply_transitivity(lemma, bindings: Dict, disequalities: set, cells_at: set) -> bool:
+    """
+    Check if transitivity lemma can be soundly applied.
+
+    Transitivity ls(x,y) * ls(y,z) |- ls(x,z) is ONLY sound when x != z.
+
+    We can prove x != z if:
+    1. Explicit disequality (x != z) in antecedent
+    2. Both x and z have concrete cells (separation implies difference)
+    3. x and z are syntactically different AND one is a special constant (nil, null)
+
+    Returns True if transitivity can be safely applied, False otherwise.
+    """
+    from frame.core.ast import PredicateCall, Var, Const
+
+    if not isinstance(lemma.consequent, PredicateCall) or len(lemma.consequent.args) < 2:
+        return True  # Not a transitivity-style lemma
+
+    # Get the instantiated start and end variables
+    start_var = lemma.consequent.args[0]
+    end_var = lemma.consequent.args[1]
+
+    start_val = bindings.get(start_var.name if isinstance(start_var, Var) else str(start_var), start_var)
+    end_val = bindings.get(end_var.name if isinstance(end_var, Var) else str(end_var), end_var)
+
+    # Get names for comparison
+    start_name = start_val.name if isinstance(start_val, Var) else str(start_val)
+    end_name = end_val.name if isinstance(end_val, Var) else str(end_val)
+
+    # Check 1: If syntactically the same, definitely aliased - REJECT
+    if start_name == end_name:
+        return False
+
+    # Check 2: Explicit disequality in antecedent - ACCEPT
+    canonical = tuple(sorted([start_name, end_name]))
+    if canonical in disequalities:
+        return True
+
+    # Check 3: Both have concrete cells - ACCEPT (separation implies difference)
+    if start_name in cells_at and end_name in cells_at:
+        return True
+
+    # Check 4: One is a special constant (nil, null, None) - these are special
+    special_constants = {'nil', 'null', 'None', '(as nil RefSll_t)'}
+    if start_name in special_constants or end_name in special_constants:
+        # If one is nil and they're syntactically different, they're different
+        return True
+
+    # Default: Cannot prove disequality - REJECT (conservative)
+    return False
 
 
 def try_apply_lemma_multistep(
@@ -163,6 +288,36 @@ def try_apply_lemma_multistep(
             bindings = try_match_subset(library, current_parts, lemma_ante_parts)
 
             if bindings is not None:
+                # SOUNDNESS CHECK: Detect aliasing in transitivity lemma
+                # If applying ls_transitivity would create ls(x,x) where x=z,
+                # skip this application as it leads to unsound conclusions.
+                # Example: ls(x,y) * ls(y,x) should NOT become ls(x,x) = emp
+                # because the antecedent has non-empty heap.
+                if lemma.name in ('ls_transitivity', 'ls_triple_transitivity', 'ls_snoc'):
+                    # Check if result would have aliased endpoints
+                    from frame.core.ast import PredicateCall, Var, Const
+                    if isinstance(lemma.consequent, PredicateCall) and len(lemma.consequent.args) >= 2:
+                        # Get the instantiated start and end variables
+                        start_var = lemma.consequent.args[0]
+                        end_var = lemma.consequent.args[1]
+
+                        # Substitute bindings
+                        start_val = bindings.get(start_var.name if isinstance(start_var, Var) else str(start_var), start_var)
+                        end_val = bindings.get(end_var.name if isinstance(end_var, Var) else str(end_var), end_var)
+
+                        # Check if they alias (same variable or value)
+                        def exprs_equal(e1, e2):
+                            if isinstance(e1, Var) and isinstance(e2, Var):
+                                return e1.name == e2.name
+                            if isinstance(e1, Const) and isinstance(e2, Const):
+                                return e1.value == e2.value
+                            return str(e1) == str(e2)
+
+                        if exprs_equal(start_val, end_val):
+                            if verbose:
+                                print(f"[Multi-Step Lemma] ✗ Skipping {lemma.name}: would create aliased endpoints {start_val}")
+                            continue  # Skip this lemma, try another
+
                 # Found a match! Apply the lemma
                 instantiated_consequent = library.substitute_bindings(lemma.consequent, bindings)
 
@@ -255,28 +410,39 @@ def try_match_subset(
 
     This enables matching ls(x,y) * ls(y,z) within x|->a * ls(x,y) * ls(y,z) * z|->b
 
+    IMPORTANT: We must try all PERMUTATIONS of how pattern parts map to formula parts,
+    not just combinations. For example, with pattern [ls(X,Y), ls(Y,Z)] and formula
+    parts [ls(a,b), ls(c,a)], we need to try:
+      - pattern[0]->formula[0], pattern[1]->formula[1]: ls(X,Y)->ls(a,b), ls(Y,Z)->ls(c,a) - FAIL (Y=b != c)
+      - pattern[0]->formula[1], pattern[1]->formula[0]: ls(X,Y)->ls(c,a), ls(Y,Z)->ls(a,b) - OK (X=c, Y=a, Z=b)
+
     Returns unified bindings if all pattern parts match, None otherwise.
     """
+    from itertools import permutations
+
     if len(pattern_parts) > len(formula_parts):
         return None
 
     # Try all combinations of formula_parts that match the size of pattern_parts
+    # and all permutations of each combination
     for combo in combinations(range(len(formula_parts)), len(pattern_parts)):
-        # Try to match this combination
-        bindings = {}
-        matched = True
+        # Try all orderings of this combination
+        for perm in permutations(combo):
+            # Try to match this permutation
+            bindings = {}
+            matched = True
 
-        for pattern_part, formula_idx in zip(pattern_parts, combo):
-            formula_part = formula_parts[formula_idx]
-            part_bindings = library.match_formula(pattern_part, formula_part, bindings)
+            for pattern_part, formula_idx in zip(pattern_parts, perm):
+                formula_part = formula_parts[formula_idx]
+                part_bindings = library.match_formula(pattern_part, formula_part, bindings)
 
-            if part_bindings is None:
-                matched = False
-                break
+                if part_bindings is None:
+                    matched = False
+                    break
 
-            bindings = part_bindings
+                bindings = part_bindings
 
-        if matched:
-            return bindings
+            if matched:
+                return bindings
 
     return None

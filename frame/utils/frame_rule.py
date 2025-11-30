@@ -79,9 +79,47 @@ class FrameRuleApplicator:
         - ls(x,y) * ls(y,z) ≡ ls(x,z) (via transitivity)
         - x |-> v * ls(x, y) ≡ ls(x, y) where x != y (via cons lemma)
 
+        IMPORTANT: We must NOT use pto_to_ls for frame rule matching because:
+        1. x |-> y is NOT equivalent to ls(x, y) when frame rule is applied
+        2. Frame rule removes common parts from BOTH sides
+        3. If we match x |-> y with ls(x, y) and remove both, we're claiming equivalence
+        4. But x |-> y |- ls(x, y) is entailment, not equivalence
+        5. The reverse ls(x, y) |- x |-> y is NOT always true!
+
         Returns True if semantically equivalent, False otherwise.
         """
         if not self.lemma_library:
+            return False
+
+        # SOUNDNESS FIX: Disable pto_to_ls for semantic matching in frame rule
+        # The pto_to_ls lemma says: x |-> y |- ls(x, y)
+        # This is an ENTAILMENT, not equivalence. Using it in frame rule is UNSOUND
+        # because frame rule needs A ≡ B (bi-directional), not A |- B.
+        #
+        # Example of the bug:
+        # - Antecedent: x6 |-> x1 * x1 |-> x6  (cycle!)
+        # - Consequent: ls(x6, x1) * ...
+        # - Frame rule matched x6 |-> x1 with ls(x6, x1) via pto_to_ls
+        # - This incorrectly split the cycle, leading to false positive
+        #
+        # FIX: Check if either formula is a single PointsTo or ls predicate
+        # and if so, skip semantic matching (only allow syntactic matching)
+        from frame.core.ast import PointsTo, PredicateCall
+
+        # Detect pto_to_ls matching scenario
+        is_pto_vs_ls = False
+        if isinstance(formula1, PointsTo) and isinstance(formula2, PredicateCall):
+            if formula2.name == 'ls':
+                is_pto_vs_ls = True
+        elif isinstance(formula2, PointsTo) and isinstance(formula1, PredicateCall):
+            if formula1.name == 'ls':
+                is_pto_vs_ls = True
+
+        if is_pto_vs_ls:
+            # Do NOT allow semantic matching between single pto and ls
+            # This is a one-way entailment (x |-> y |- ls(x,y)), not equivalence
+            if self.verbose:
+                print(f"[Frame Rule] Blocking pto_to_ls semantic match (not bidirectional)")
             return False
 
         # Try both directions (lemmas may be directional)
@@ -237,37 +275,39 @@ class FrameRuleApplicator:
             simplified_ante_spatial = self.analyzer._build_sepconj(remaining_ante) if remaining_ante else Emp()
             simplified_cons_spatial = self.analyzer._build_sepconj(remaining_cons) if remaining_cons else Emp()
 
-            # SOUNDNESS CHECK (Affine SL with footprint-aware + order-aware weakening):
-            # If consequent becomes emp, check if remainder can be safely dropped
+            # SOUNDNESS FIX (Nov 2025): Frame rule cannot drop non-emp from antecedent
+            # In SL-COMP's exact entailment semantics, P * R ⊢ emp is INVALID when R is non-empty.
+            # The original logic allowed dropping R if footprints were disjoint, but this is
+            # UNSOUND for exact entailment (only valid for affine separation logic).
+            #
+            # Example of the bug:
+            # - After folding: ls(x1, x3) * ls(x3, nil) ⊢ ls(x3, nil)
+            # - Frame rule matches ls(x3, nil) on both sides
+            # - Remainder: ls(x1, x3) ⊢ emp
+            # - Old logic: "disjoint footprints, safe to drop" → VALID (WRONG!)
+            # - Correct: ls(x1, x3) is non-empty, so ls(x1, x3) ⊢ emp is INVALID
+            #
+            # FIX: When consequent is emp but antecedent has spatial remainder,
+            # the entailment is INVALID (don't simplify).
             if isinstance(simplified_cons_spatial, Emp) and not isinstance(simplified_ante_spatial, Emp):
-                # Remainder ⊢ emp case - check footprints with order awareness
-                # Create position map from original ante_parts
-                pos_map = {id(p): idx for idx, p in enumerate(ante_parts)}
-
-                # Order-aware check: use minimum positions for each group
-                can_drop = True
+                # Check if ANY remaining part is definitely non-empty (concrete cells)
+                # Predicates MIGHT be empty (e.g., list(nil), ls(x,x)) so we allow them
+                # NOTE: The main soundness check for unused concrete cells happens in
+                # graph_analysis.py which returns False for unused cells.
+                has_concrete_cells = False
                 for r_part in remaining_ante:
-                    r_pos = pos_map.get(id(r_part), 0)
-                    for c_part in common_parts:
-                        c_pos = pos_map.get(id(c_part), 0)
-                        if not self.footprint_analyzer.can_drop_safely_order_aware(r_part, r_pos, c_part, c_pos):
-                            can_drop = False
-                            break
-                    if not can_drop:
+                    if isinstance(r_part, PointsTo):
+                        # PointsTo is always non-empty - cannot drop
+                        has_concrete_cells = True
                         break
 
-                if not can_drop:
-                    # Unsafe to drop - footprints overlap or order prevents it
+                if has_concrete_cells:
+                    # Has concrete cells that cannot be dropped
                     if self.verbose:
-                        print(f"Frame rule: Cannot drop remainder (footprint overlap with common parts)")
+                        print(f"Frame rule: Cannot drop concrete cells from antecedent")
                     # Don't simplify - return original
                     return antecedent, consequent, False
-                else:
-                    # Safe to drop - footprints are disjoint and order allows it
-                    if self.verbose:
-                        print(f"Frame rule: Safe to drop remainder (disjoint footprints)")
-                    # Return emp ⊢ emp (trivially valid)
-                    simplified_ante_spatial = Emp()
+                # For predicates, continue with simplification (they might be empty)
 
             # Combine with pure parts if they exist
             if ante_pure and not isinstance(ante_pure, True_):

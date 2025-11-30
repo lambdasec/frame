@@ -120,9 +120,10 @@ def fold_formula_blind(
             if verbose:
                 print(f"[Blind Folding] Verifying proposal: {proposal}")
 
-            # Try unification first
+            # Try unification first - pass current_formula for cycle detection
             is_sound = verify_proposal_with_unification(
-                proposal, predicate_registry, pure_constraints, verbose
+                proposal, predicate_registry, pure_constraints, verbose,
+                full_antecedent=current_formula
             )
 
             # Fall back to Z3 if unification doesn't work

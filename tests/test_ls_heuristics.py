@@ -13,28 +13,30 @@ from frame.core.ast import *
 class TestLSTransitivity:
     """Test list segment transitivity heuristics
 
-    NOTE (Nov 2025): Transitivity is UNSOUND in separation logic due to aliasing.
-    ls(x,y) * ls(y,z) |- ls(x,z) is INVALID when x = z is possible.
+    NOTE (Nov 2025 - UPDATED): Transitivity is UNSOUND without explicit disequality.
+    ls(x,y) * ls(y,z) |- ls(x,z) is INVALID in standard SL-COMP semantics.
 
-    These tests now verify that the UNSOUND heuristics have been disabled.
+    Key issue: When x = z, antecedent has heap cells but consequent ls(x,x) = emp.
+    Non-empty heap cannot entail empty heap.
     """
 
-    def test_basic_transitivity_is_invalid(self):
-        """Test ls(x,y) * ls(y,z) |- ls(x,z) is correctly rejected as invalid
+    def test_basic_transitivity_invalid_without_disequality(self):
+        """Test ls(x,y) * ls(y,z) |- ls(x,z) is INVALID without disequality
 
-        This entailment is NOT sound because when x = z:
-        - Antecedent ls(x,y) * ls(y,x) has heap cells if y != x
+        This entailment is UNSOUND because:
+        - When x = z, antecedent ls(x,y) * ls(y,x) has heap cells
         - Consequent ls(x,x) = emp
+        - Non-empty ⊢ emp is false
         """
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(x,y) * ls(y,z) |- ls(x,z)")
-        assert not result.valid  # Should be INVALID
+        assert not result.valid  # INVALID without disequality proof
 
-    def test_three_segment_transitivity_is_invalid(self):
-        """Test ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w) is correctly rejected"""
+    def test_three_segment_transitivity_invalid_without_disequality(self):
+        """Test ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w) is INVALID without disequality"""
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(x,y) * ls(y,z) * ls(z,w) |- ls(x,w)")
-        assert not result.valid  # Should be INVALID
+        assert not result.valid  # INVALID without disequality proof
 
     def test_four_segment_chain(self):
         """Test multi-segment chain detection (now disabled for soundness)"""
@@ -65,11 +67,15 @@ class TestLSTransitivity:
         # This should work via frame rule, not transitivity
         assert result is not None
 
-    def test_out_of_order_segments_is_invalid(self):
-        """Test segments in non-sequential order - still invalid due to aliasing"""
+    def test_out_of_order_segments_invalid_without_disequality(self):
+        """Test segments in non-sequential order - INVALID without disequality
+
+        Even though order doesn't matter (* is commutative), transitivity
+        still requires explicit disequality proof.
+        """
         checker = EntailmentChecker()
         result = checker.check_entailment("ls(y,z) * ls(x,y) * ls(z,w) |- ls(x,w)")
-        assert not result.valid  # Should be INVALID
+        assert not result.valid  # INVALID without disequality proof
 
 
 class TestLSLengthReasoning:

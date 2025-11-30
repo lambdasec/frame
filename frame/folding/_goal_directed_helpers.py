@@ -15,7 +15,8 @@ def verify_proposal_soundness(
     predicate_registry,
     pure_parts: List[Formula],
     verbose: bool = False,
-    use_unification: bool = True
+    use_unification: bool = True,
+    full_antecedent: Optional[Formula] = None
 ) -> bool:
     """
     Verify that a fold proposal is sound.
@@ -26,6 +27,7 @@ def verify_proposal_soundness(
         pure_parts: Pure (non-spatial) parts of the formula
         verbose: Enable debug output
         use_unification: Use unification-based verification (fast) vs Z3 (slower)
+        full_antecedent: Optional full antecedent formula for cycle detection
 
     Returns:
         True if proposal is sound, False otherwise
@@ -37,7 +39,8 @@ def verify_proposal_soundness(
                 proposal,
                 predicate_registry,
                 pure_parts,
-                verbose=verbose
+                verbose=verbose,
+                full_antecedent=full_antecedent
             )
         else:
             from frame.folding.verify import verify_proposal_with_z3
@@ -190,14 +193,44 @@ def extract_pure_parts(formula: Formula) -> List[Formula]:
     """
     Extract pure (non-spatial) parts from a formula.
 
+    Also derives IMPLICIT distinctness constraints from separating conjunction:
+    - All allocated addresses (pto locations) are distinct from each other
+    - All allocated addresses are distinct from nil
+
+    This is essential for proving guard constraints in predicate folding.
+    For example, if we have `x |-> y * z |-> w`, we know `x != z` because
+    they're in separating conjunction (disjoint heaps).
+
     Args:
         formula: The formula to analyze
 
     Returns:
-        List of pure formula parts
+        List of pure formula parts (including derived distinctness)
     """
     from frame.analysis.formula import FormulaAnalyzer
+    from frame.core.ast import PointsTo, Neq, Const
 
     analyzer = FormulaAnalyzer()
     parts = analyzer._extract_sepconj_parts(formula)
-    return [p for p in parts if not p.is_spatial()]
+
+    # Get explicit pure parts
+    pure_parts = [p for p in parts if not p.is_spatial()]
+
+    # Derive implicit distinctness from pto cells in separating conjunction
+    # x |-> y * z |-> w implies x != z (and both != nil)
+    pto_locations = []
+    for part in parts:
+        if isinstance(part, PointsTo):
+            pto_locations.append(part.location)
+
+    # Add distinctness between all pairs of allocated addresses
+    for i, loc1 in enumerate(pto_locations):
+        # loc1 != nil
+        nil_const = Const(None)
+        pure_parts.append(Neq(loc1, nil_const))
+
+        # loc1 != loc2 for all other locations
+        for loc2 in pto_locations[i+1:]:
+            pure_parts.append(Neq(loc1, loc2))
+
+    return pure_parts
