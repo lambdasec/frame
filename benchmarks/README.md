@@ -18,10 +18,10 @@ python -m benchmarks run --curated
 - ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
 - ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
-  - 692 SL-COMP (separation logic) - 79.9% correct, 0 errors
-  - 3300 QF_S (string theory) - 84.2% correct, 0 errors
+  - 692 SL-COMP (separation logic) - 79.5% correct, 0 errors
+  - 3300 QF_S (string theory) - 99.3% correct, 0 errors
   - 500 QF_AX (array theory) - 100% correct, 0 errors
-  - 250 QF_BV (bitvector theory) - 76.4% correct, 0 errors
+  - 250 QF_BV (bitvector theory) - 89.2% correct, 0 errors
 
 ### Full Benchmarks (Comprehensive - ~20k tests)
 
@@ -41,13 +41,13 @@ python -m benchmarks run --division qf_shls_entl
 - Stratified sampling across all 12 divisions
 - Ensures balanced representation of entailment/SAT problems
 - Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
-- **Results: 79.9% correct (553/692), 0 errors**
+- **Results: 79.5% correct (550/692), 0 errors**
 
 **QF_S Curated: 3,300 tests** (from 18,940 total)
 - Stratified sampling across all sources
 - Coverage: Kaluza, PISA, PyEx, AppScan, slog_stranger, etc.
 - Representative 17% sample
-- **Results: 84.2% correct (2779/3300), 0 errors**
+- **Results: 99.3% correct (3276/3300), 0 errors**
 
 **QF_AX Curated: 500 tests** (from 551 total)
 - Array theory with extensionality
@@ -59,10 +59,10 @@ python -m benchmarks run --division qf_shls_entl
 - Bitvector theory (8-bit, 16-bit, 32-bit)
 - Coverage: arithmetic, comparisons, bitwise, shifts
 - Executed via Z3 Python API for validation
-- **Results: 76.4% correct (191/250), 0 errors**
+- **Results: 89.2% correct (223/250), 0 errors**
 
 **Total Curated: 4,742 tests**
-- **Overall: 84.0% correct (3982/4742), 0 errors, avg 1.7s/test**
+- **Overall: 95.9% correct (4549/4742), 0 errors, avg 1.4s/test**
 
 ### Full Sets (19,801 tests)
 
@@ -90,8 +90,8 @@ python -m benchmarks run --division qf_shls_entl
 
 **Detailed Full Results by Division**:
 - bsl_sat: 100.0% (3/3), 0 errors
-- qf_bsl_sat: 32.6% (15/46), 0 errors
-- qf_bsllia_sat: 58.3% (14/24), 0 errors
+- qf_bsl_sat: 93.5% (43/46), 0 errors
+- qf_bsllia_sat: 70.8% (17/24), 0 errors
 - qf_shid_entl: 98.0% (49/50), 0 errors
 - qf_shid_sat: 88.9% (88/99), 0 errors
 - qf_shidlia_entl: 54.0% (27/50), 0 errors
@@ -158,7 +158,7 @@ python -m benchmarks run --curated --verbose
 # Test Heap+Arrays+Bitvectors integration
 python -m pytest tests/test_cross_theory_integration.py -v
 
-# All Frame regression tests (1,254 total)
+# All Frame regression tests (1,330 total)
 python -m pytest tests/ -v
 ```
 
@@ -205,7 +205,7 @@ benchmarks/
 ├── slcomp_parser.py            # SL-COMP SMT-LIB parser
 ├── smtlib_string_parser.py     # QF_S string theory parser
 └── cache/
-    ├── slcomp_curated/         # 700 curated SL-COMP tests
+    ├── slcomp_curated/         # 692 curated SL-COMP tests
     ├── qf_shls_entl/           # 296 list segment benchmarks
     ├── qf_shid_sat/            # 99 inductive SAT benchmarks
     ├── ... (12 SL-COMP divisions total)
