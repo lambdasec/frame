@@ -399,8 +399,13 @@ def encode_entailment(
     # when it should be invalid (ls could have non-empty heap if x != nil).
 
     # Check if consequent spatial part is emp or None (pure-only)
+    # CRITICAL FIX (Dec 2025): Also detect when formula effectively simplifies to emp
+    # For example: Or(And(x=x, emp), And(x!=x, stuff)) simplifies to emp because
+    # the second branch has x!=x which is always false
     from frame.core.ast import Emp
-    consequent_is_emp = (cons_spatial is None or isinstance(cons_spatial, Emp))
+    consequent_is_emp = (cons_spatial is None or
+                         isinstance(cons_spatial, Emp) or
+                         _is_effectively_emp(cons_spatial))
 
     if consequent_is_emp and ante_spatial is not None:
         # Consequent expects empty heap, so antecedent must have empty domain
@@ -420,4 +425,120 @@ def encode_entailment(
     entailment = z3.Implies(ante_constraints, cons_constraints)
 
     return entailment
+
+
+def _is_effectively_emp(formula: Formula) -> bool:
+    """
+    Check if a formula effectively simplifies to emp.
+
+    This handles cases like:
+    - Or(And(x=x, emp), And(x!=x, stuff)) -> emp (second branch is always false)
+    - And(True_, emp) -> emp
+    - Or(emp, false) -> emp
+
+    Critical for fixing false positives like:
+      (heap_cells) |- dll(x, y, y, x)
+    where dll(x, y, y, x) simplifies to emp because the base case
+    has conditions x=x and y=y which are always true.
+    """
+    if formula is None:
+        return False
+
+    if isinstance(formula, Emp):
+        return True
+
+    if isinstance(formula, And):
+        # And(pure, emp) -> emp if pure is trivially true
+        # And(emp, pure) -> emp if pure is trivially true
+        left_is_emp = isinstance(formula.left, Emp) or _is_effectively_emp(formula.left)
+        right_is_emp = isinstance(formula.right, Emp) or _is_effectively_emp(formula.right)
+
+        if left_is_emp and _is_trivially_true(formula.right):
+            return True
+        if right_is_emp and _is_trivially_true(formula.left):
+            return True
+        # Both sides are emp is still emp
+        if left_is_emp and right_is_emp:
+            return True
+        return False
+
+    if isinstance(formula, Or):
+        # Or(emp_branch, false_branch) -> emp
+        # Check if one branch is emp and other is trivially false
+        left_is_emp = _is_effectively_emp(formula.left)
+        right_is_emp = _is_effectively_emp(formula.right)
+        left_is_false = _is_trivially_false(formula.left)
+        right_is_false = _is_trivially_false(formula.right)
+
+        if left_is_emp and right_is_false:
+            return True
+        if right_is_emp and left_is_false:
+            return True
+        return False
+
+    if isinstance(formula, Exists):
+        # exists x. (false & stuff) -> false, not emp
+        # exists x. (emp & stuff) -> might be emp if stuff is true
+        if _is_trivially_false(formula.formula):
+            return False  # The whole exists is false, not emp
+        return _is_effectively_emp(formula.formula)
+
+    return False
+
+
+def _is_trivially_true(formula: Formula) -> bool:
+    """Check if a formula is trivially true (e.g., x=x, true)"""
+    if formula is None:
+        return True
+
+    if isinstance(formula, True_):
+        return True
+
+    if isinstance(formula, Emp):
+        # emp is spatially "true" for empty heap
+        return True
+
+    if isinstance(formula, Eq):
+        # x = x is always true
+        if isinstance(formula.left, Var) and isinstance(formula.right, Var):
+            if formula.left.name == formula.right.name:
+                return True
+        if isinstance(formula.left, Const) and isinstance(formula.right, Const):
+            if formula.left.value == formula.right.value:
+                return True
+        return False
+
+    if isinstance(formula, And):
+        return _is_trivially_true(formula.left) and _is_trivially_true(formula.right)
+
+    return False
+
+
+def _is_trivially_false(formula: Formula) -> bool:
+    """Check if a formula is trivially false (e.g., x!=x, false)"""
+    if formula is None:
+        return False
+
+    if isinstance(formula, False_):
+        return True
+
+    if isinstance(formula, Neq):
+        # x != x is always false
+        if isinstance(formula.left, Var) and isinstance(formula.right, Var):
+            if formula.left.name == formula.right.name:
+                return True
+        if isinstance(formula.left, Const) and isinstance(formula.right, Const):
+            if formula.left.value == formula.right.value:
+                return True
+        return False
+
+    if isinstance(formula, And):
+        # And is false if either side is false
+        return _is_trivially_false(formula.left) or _is_trivially_false(formula.right)
+
+    if isinstance(formula, Exists):
+        # exists x. false -> false
+        return _is_trivially_false(formula.formula)
+
+    return False
 

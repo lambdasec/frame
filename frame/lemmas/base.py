@@ -326,17 +326,32 @@ class LemmaLibrary:
                 print(f"[Multi-Step Lemma] After preprocessing: {current}")
 
         # Extract goal parts for goal-directed matching
+        # Nov 2025: Extended to track ALL predicates, not just 'ls'
         goal_parts = analyzer._extract_sepconj_parts(consequent)
-        goal_signatures = set()
+        goal_signatures = set()  # For ls predicates: (start, end)
+        goal_predicate_sigs = {}  # For ALL predicates: pred_name -> set of argument tuples
         for gp in goal_parts:
-            if isinstance(gp, PredicateCall) and gp.name == 'ls' and len(gp.args) >= 2:
-                # Create signature (start_var, end_var) for goal matching
-                start_name = gp.args[0].name if isinstance(gp.args[0], Var) else str(gp.args[0])
-                end_name = gp.args[1].name if isinstance(gp.args[1], Var) else str(gp.args[1])
-                goal_signatures.add((start_name, end_name))
+            if isinstance(gp, PredicateCall) and len(gp.args) >= 2:
+                # Create signature for this predicate
+                pred_name = gp.name
+                args_tuple = tuple(
+                    arg.name if isinstance(arg, Var) else (str(arg.value) if isinstance(arg, Const) and arg.value is not None else 'nil' if isinstance(arg, Const) else str(arg))
+                    for arg in gp.args
+                )
+                if pred_name not in goal_predicate_sigs:
+                    goal_predicate_sigs[pred_name] = set()
+                goal_predicate_sigs[pred_name].add(args_tuple)
+
+                # Also add to legacy goal_signatures for ls predicates
+                if pred_name == 'ls':
+                    start_name = gp.args[0].name if isinstance(gp.args[0], Var) else str(gp.args[0])
+                    end_name = gp.args[1].name if isinstance(gp.args[1], Var) else str(gp.args[1])
+                    goal_signatures.add((start_name, end_name))
 
         if verbose:
             print(f"[Multi-Step Lemma] Goal signatures: {goal_signatures}")
+            if goal_predicate_sigs:
+                print(f"[Multi-Step Lemma] Goal predicate signatures: {goal_predicate_sigs}")
 
         # SOUNDNESS CHECK: Detect ls predicate cycles in antecedent
         # If predicates form a cycle (ls(a,b) * ls(b,c) * ls(c,a)), transitivity is unsound
@@ -478,10 +493,21 @@ class LemmaLibrary:
                     # GOAL-DIRECTED CHECK: Would the result help us reach the goal?
                     instantiated_consequent = self.substitute_bindings(lemma.consequent, bindings)
 
-                    # Check if result is in goal signatures
+                    # Check if result matches any goal predicate
+                    # Nov 2025: Extended to check ALL predicates, not just 'ls'
                     result_in_goal = False
-                    if isinstance(instantiated_consequent, PredicateCall) and instantiated_consequent.name == 'ls':
-                        if len(instantiated_consequent.args) >= 2:
+                    if isinstance(instantiated_consequent, PredicateCall):
+                        pred_name = instantiated_consequent.name
+                        if pred_name in goal_predicate_sigs and len(instantiated_consequent.args) >= 2:
+                            # Build the result's argument tuple
+                            result_args_tuple = tuple(
+                                arg.name if isinstance(arg, Var) else (str(arg.value) if isinstance(arg, Const) and arg.value is not None else 'nil' if isinstance(arg, Const) else str(arg))
+                                for arg in instantiated_consequent.args
+                            )
+                            result_in_goal = result_args_tuple in goal_predicate_sigs[pred_name]
+
+                        # Legacy check for ls predicates
+                        elif pred_name == 'ls' and len(instantiated_consequent.args) >= 2:
                             result_start = instantiated_consequent.args[0].name if isinstance(instantiated_consequent.args[0], Var) else str(instantiated_consequent.args[0])
                             result_end = instantiated_consequent.args[1].name if isinstance(instantiated_consequent.args[1], Var) else str(instantiated_consequent.args[1])
                             result_in_goal = (result_start, result_end) in goal_signatures

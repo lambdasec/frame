@@ -38,8 +38,9 @@ def run_qf_s_benchmark(cache_dir: str, source: str, filename: str,
     expected = parse_smt2_expected(filepath) or 'unknown'
 
     # Run via Z3 directly (QF_S is pure SMT-LIB 2.6 format)
+    # Use 30s timeout to handle more complex benchmarks
     start_time = time.time()
-    actual, error = run_smt2_with_z3(filepath, timeout=20)
+    actual, error = run_smt2_with_z3(filepath, timeout=30)
     time_ms = (time.time() - start_time) * 1000
 
     return BenchmarkResult(

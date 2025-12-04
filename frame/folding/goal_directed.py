@@ -104,6 +104,87 @@ def prioritize_by_goal(proposals: List[FoldProposal], targets: Set[str]) -> List
     return proposals
 
 
+def extract_goal_predicates(formula: Formula) -> List[PredicateCall]:
+    """
+    Extract all predicate calls with their full arguments from a formula.
+
+    Unlike extract_target_predicates which only returns names, this returns
+    the full PredicateCall objects so we can check argument matching.
+
+    Args:
+        formula: Formula to extract from (usually the consequent)
+
+    Returns:
+        List of PredicateCall objects
+    """
+    goal_preds = []
+
+    def extract(f: Formula):
+        if isinstance(f, PredicateCall):
+            goal_preds.append(f)
+        # Handle binary formulas (SepConj, And, Or, etc.)
+        elif hasattr(f, 'left') and hasattr(f, 'right'):
+            extract(f.left)
+            extract(f.right)
+        # Handle unary formulas (Not, quantifiers, etc.)
+        elif hasattr(f, 'formula'):
+            extract(f.formula)
+        # Handle existentials/foralls
+        elif hasattr(f, 'body'):
+            extract(f.body)
+
+    extract(formula)
+    return goal_preds
+
+
+def proposal_matches_any_goal(proposal: FoldProposal, goal_preds: List[PredicateCall]) -> bool:
+    """
+    Check if a fold proposal's endpoint arguments match any goal predicate.
+
+    SOUNDNESS CRITICAL: This ensures we only fold predicates that actually
+    match what we're trying to prove, not just any predicate with the same name.
+
+    Args:
+        proposal: Fold proposal with args list
+        goal_preds: List of goal predicates to match against
+
+    Returns:
+        True if proposal matches any goal predicate
+    """
+    from frame.core.ast import Var, Const
+
+    def get_name(e):
+        if isinstance(e, Var):
+            return e.name
+        if isinstance(e, Const):
+            return str(e.value) if e.value is not None else 'nil'
+        return str(e)
+
+    # Get proposal's start and end from its args
+    if not proposal.args or len(proposal.args) < 2:
+        return False
+
+    prop_start = get_name(proposal.args[0])
+    prop_end = get_name(proposal.args[1])  # For ls, endpoint is second arg
+
+    for goal in goal_preds:
+        if goal.name != proposal.predicate_name:
+            continue
+
+        # Get goal's start and end arguments (usually first and second/last)
+        if len(goal.args) < 2:
+            continue
+
+        goal_start = get_name(goal.args[0])
+        goal_end = get_name(goal.args[1])  # For ls, endpoint is second arg
+
+        # Check if proposal matches this goal's endpoints
+        if prop_start == goal_start and prop_end == goal_end:
+            return True
+
+    return False
+
+
 def check_heap_matches_base(
     proposal: FoldProposal,
     predicate_registry,
@@ -434,8 +515,11 @@ def fold_towards_goal_multistep(
         if verbose:
             print(f"\n[Multi-Step Folding] Iteration {iteration + 1}/{max_iterations}")
 
-        # Extract targets from consequent
+        # Extract targets from consequent (predicate names only for prioritization)
         targets = extract_target_predicates(consequent)
+
+        # Extract full goal predicates with arguments for matching check
+        goal_preds = extract_goal_predicates(consequent)
 
         # Generate fold proposals
         graph, proposals = generate_fold_proposals(current, max_proposals=20,
@@ -460,7 +544,17 @@ def fold_towards_goal_multistep(
         fold_applied = False
 
         for proposal in proposals:
-            # STEP 0: SPATIAL CONFLICT CHECK (CRITICAL FOR SOUNDNESS)
+            # STEP 0: GOAL ARGUMENT MATCHING CHECK (SOUNDNESS CRITICAL)
+            # Only accept proposals whose endpoints match a goal predicate's arguments
+            # This prevents folding unrelated predicates that just happen to have the same name
+            if not proposal_matches_any_goal(proposal, goal_preds):
+                if verbose:
+                    args_str = ", ".join(str(a) for a in proposal.args) if proposal.args else "?"
+                    print(f"[Multi-Step Folding] Proposal {proposal.predicate_name}({args_str}) "
+                          f"does not match any goal predicate, skipping")
+                continue
+
+            # STEP 1: SPATIAL CONFLICT CHECK (CRITICAL FOR SOUNDNESS)
             # Check if the pto being folded conflicts with existing predicates
             if has_spatial_conflict(proposal, current, verbose=verbose):
                 if verbose:
