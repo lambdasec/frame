@@ -5,14 +5,159 @@ Provides utilities for checking formula satisfiability and detecting
 obvious contradictions.
 """
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional, Union
 from frame.core.ast import (
     Formula, Expr, Var, Const, Emp, PointsTo, SepConj, And, Or, Not,
-    Eq, Neq, PredicateCall, Exists, Forall, True_, False_
+    Eq, Neq, PredicateCall, Exists, Forall, True_, False_, ArithExpr
 )
 from frame.analysis.formula import FormulaAnalyzer
 from frame.heap.graph_analysis import HeapGraphAnalyzer
 from frame.utils._normalization import FormulaNormalizer
+
+
+def eval_const_arith(expr: Expr) -> Optional[int]:
+    """
+    Evaluate a constant arithmetic expression to an integer.
+    Returns None if the expression contains variables.
+    """
+    if isinstance(expr, Const):
+        if expr.value is None:  # nil
+            return None
+        if isinstance(expr.value, int):
+            return expr.value
+        return None
+    elif isinstance(expr, ArithExpr):
+        left = eval_const_arith(expr.left)
+        right = eval_const_arith(expr.right)
+        if left is None or right is None:
+            return None
+
+        if expr.op == '+':
+            return left + right
+        elif expr.op == '-':
+            return left - right
+        elif expr.op == '*':
+            return left * right
+        elif expr.op == 'div':
+            if right == 0:
+                return None
+            return left // right
+        elif expr.op == 'mod':
+            if right == 0:
+                return None
+            return left % right
+        return None
+    elif isinstance(expr, Var):
+        return None
+    return None
+
+
+def simplify_arithmetic_formula(formula: Formula) -> Formula:
+    """
+    Simplify a formula by evaluating constant arithmetic expressions.
+
+    Examples:
+    - `2 = 0` -> False_
+    - `(2 - 1) = 0` -> False_ (1 = 0 is false)
+    - `((2 - 1) - 1) = 0` -> True_ (0 = 0 is true)
+    - `(A | B)` where A is False_ -> B
+    - `(A & B)` where A is False_ -> False_
+    """
+    if isinstance(formula, Eq):
+        left_val = eval_const_arith(formula.left)
+        right_val = eval_const_arith(formula.right)
+
+        if left_val is not None and right_val is not None:
+            # Both are constants - evaluate directly
+            return True_() if left_val == right_val else False_()
+
+        return formula
+
+    elif isinstance(formula, Neq):
+        left_val = eval_const_arith(formula.left)
+        right_val = eval_const_arith(formula.right)
+
+        if left_val is not None and right_val is not None:
+            return True_() if left_val != right_val else False_()
+
+        return formula
+
+    elif isinstance(formula, And):
+        left = simplify_arithmetic_formula(formula.left)
+        right = simplify_arithmetic_formula(formula.right)
+
+        # Short-circuit False
+        if isinstance(left, False_) or isinstance(right, False_):
+            return False_()
+        # Remove True
+        if isinstance(left, True_):
+            return right
+        if isinstance(right, True_):
+            return left
+
+        if left == formula.left and right == formula.right:
+            return formula
+        return And(left, right)
+
+    elif isinstance(formula, Or):
+        left = simplify_arithmetic_formula(formula.left)
+        right = simplify_arithmetic_formula(formula.right)
+
+        # Short-circuit True
+        if isinstance(left, True_) or isinstance(right, True_):
+            return True_()
+        # Remove False
+        if isinstance(left, False_):
+            return right
+        if isinstance(right, False_):
+            return left
+
+        if left == formula.left and right == formula.right:
+            return formula
+        return Or(left, right)
+
+    elif isinstance(formula, Not):
+        inner = simplify_arithmetic_formula(formula.formula)
+
+        if isinstance(inner, True_):
+            return False_()
+        if isinstance(inner, False_):
+            return True_()
+
+        if inner == formula.formula:
+            return formula
+        return Not(inner)
+
+    elif isinstance(formula, SepConj):
+        left = simplify_arithmetic_formula(formula.left)
+        right = simplify_arithmetic_formula(formula.right)
+
+        # False in SepConj makes the whole thing false
+        if isinstance(left, False_) or isinstance(right, False_):
+            return False_()
+        # True/emp in SepConj can be simplified (though emp is different)
+        if isinstance(left, True_):
+            return right
+        if isinstance(right, True_):
+            return left
+
+        if left == formula.left and right == formula.right:
+            return formula
+        return SepConj(left, right)
+
+    elif isinstance(formula, Exists):
+        inner = simplify_arithmetic_formula(formula.formula)
+        if inner == formula.formula:
+            return formula
+        return Exists(formula.var, inner)
+
+    elif isinstance(formula, Forall):
+        inner = simplify_arithmetic_formula(formula.formula)
+        if inner == formula.formula:
+            return formula
+        return Forall(formula.var, inner)
+
+    return formula
 
 
 class SatisfiabilityChecker:
@@ -95,13 +240,26 @@ class SatisfiabilityChecker:
         Check for obvious contradictions that make the formula unsatisfiable.
 
         Detects:
-        1. Pure contradictions: x = y AND x != y
-        2. Spatial contradictions: emp AND x |-> y (conjunction, not separating)
-        3. P AND NOT(P) contradictions (after normalizing emp)
-        4. Or where ALL branches contradict: (A ∨ B) where both A and B are UNSAT
+        1. Arithmetic contradictions: 2 = 0, (2-1) = 0, etc.
+        2. Pure contradictions: x = y AND x != y
+        3. Spatial contradictions: emp AND x |-> y (conjunction, not separating)
+        4. P AND NOT(P) contradictions (after normalizing emp)
+        5. Or where ALL branches contradict: (A ∨ B) where both A and B are UNSAT
 
         NOTE: Self-loops (x |-> x) are NOT contradictions - a cell can contain its own address.
         """
+        # First, simplify arithmetic constraints (e.g., 2=0 -> False_)
+        simplified = simplify_arithmetic_formula(formula)
+
+        # If entire formula simplifies to False, it's a contradiction
+        if isinstance(simplified, False_):
+            if self.verbose:
+                print(f"Contradiction: Formula simplifies to False after arithmetic evaluation")
+            return True
+
+        # Use simplified formula for remaining checks
+        formula = simplified
+
         # Check for Or where all branches contradict
         if self._check_or_all_branches_contradict(formula):
             if self.verbose:
