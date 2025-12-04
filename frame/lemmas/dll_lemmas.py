@@ -64,20 +64,25 @@ def initialize_dll_lemmas(library):
     #     "dll transitivity (SL-COMP 4-arg lowercase): compose two dll segments"
     # )
 
-    # DLL cons (SL-COMP): x |-> (w, p) * dll(w, x, tail, next_tail) |- dll(x, p, tail, next_tail)
-    # Prepending a node x to a DLL from w to tail
-    # x has next=w and prev=p
-    # dll(w, x, tail, next_tail) is segment from w to tail with prev(w)=x and next(tail)=next_tail
-    # Result: dll(x, p, tail, next_tail) is segment from x to tail with prev(x)=p and next(tail)=next_tail
-    tail = Var("TAIL")
+    # DLL cons (SL-COMP): x |-> (w, p) * dll(w, bk, x, next_tail) |- dll(x, bk, p, next_tail)
+    # SL-COMP DLL signature: dll(fr, bk, pr, nx) where:
+    #   fr = first/head of segment
+    #   bk = back/last element of segment
+    #   pr = prev of head (pointer back from head)
+    #   nx = next of tail (pointer forward from tail)
+    #
+    # Prepending node x: x |-> (w, p) means x has next=w and prev=p
+    # Pattern: dll(w, bk, x, nx) - segment from w to bk, with prev(w)=x (points back to x!)
+    # Result: dll(x, bk, p, nx) - segment from x to bk, with prev(x)=p
+    bk = Var("BK")  # back/tail element (unchanged during cons)
     next_tail = Var("NEXT_TAIL")
     library.add_lemma(
         "dll_cons_slcomp",
         SepConj(
             PointsTo(x, [w, p]),
-            PredicateCall("dll", [w, x, tail, next_tail])
+            PredicateCall("dll", [w, bk, x, next_tail])  # dll[2]=x matches pto location
         ),
-        PredicateCall("dll", [x, p, tail, next_tail]),
+        PredicateCall("dll", [x, bk, p, next_tail]),
         "DLL cons (SL-COMP 4-arg): prepend a node to DLL segment"
     )
 

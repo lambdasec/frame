@@ -96,10 +96,11 @@ class SatisfiabilityChecker:
 
         Detects:
         1. Pure contradictions: x = y AND x != y
-        2. Spatial contradictions: emp AND x |-> y
-        3. Self-loops: x |-> x (in separation logic, this is typically UNSAT)
-        4. P AND NOT(P) contradictions (after normalizing emp)
-        5. Or where ALL branches contradict: (A ∨ B) where both A and B are UNSAT
+        2. Spatial contradictions: emp AND x |-> y (conjunction, not separating)
+        3. P AND NOT(P) contradictions (after normalizing emp)
+        4. Or where ALL branches contradict: (A ∨ B) where both A and B are UNSAT
+
+        NOTE: Self-loops (x |-> x) are NOT contradictions - a cell can contain its own address.
         """
         # Check for Or where all branches contradict
         if self._check_or_all_branches_contradict(formula):
@@ -170,14 +171,12 @@ class SatisfiabilityChecker:
                     print(f"Contradiction: {neq_left} != {neq_right} but they are equal by transitivity")
                 return True
 
-        # Check for self-loops: x |-> x or x |-> ... where x appears in values
-        for pto in points_to:
-            if isinstance(pto.location, Var):
-                for val in pto.values:
-                    if isinstance(val, Var) and val.name == pto.location.name:
-                        if self.verbose:
-                            print(f"Self-loop: {pto.location.name} |-> {val.name}")
-                        return True
+        # NOTE: Self-loops (x |-> x) are NOT contradictions in separation logic!
+        # A cell can contain its own address as a value. This is perfectly valid.
+        # Example: A cell that stores its own address for some reason.
+        # The previous code incorrectly treated self-loops as unsatisfiable.
+        # Removed to fix false positives like bolognesa-10-e01.tptp.smt2 where
+        # equality substitution creates x |-> x from x = y & x |-> y.
 
         # REMOVED INCORRECT CYCLE CHECK
         # The previous code incorrectly treated ALL cycles as contradictions.
