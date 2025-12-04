@@ -313,7 +313,10 @@ class WandEncoder:
         # Check if all locations in P are in domain_set with matching values using domain_map
         for loc_expr, required_val_expr in p_footprint.items():
             # Check location is in domain
-            if not self._is_allocated_in_domain(loc_expr, domain_set):
+            # Note: _is_allocated_in_domain returns a Z3 BoolRef, so use z3.is_true
+            # to check if it simplifies to True (handles symbolic expressions)
+            alloc_check = self._is_allocated_in_domain(loc_expr, domain_set)
+            if not z3.is_true(z3.simplify(alloc_check)):
                 return None  # Location not in domain, can't eliminate
 
             # Check value matches using domain_map
@@ -324,7 +327,8 @@ class WandEncoder:
                 # Use Z3's structural equality (z3.eq for objects, simplify for expressions)
                 if not z3.eq(actual_val, required_val_expr):
                     # Try semantic equality check
-                    if not z3.simplify(actual_val == required_val_expr):
+                    eq_check = z3.simplify(actual_val == required_val_expr)
+                    if not z3.is_true(eq_check):
                         return None  # Values don't match, can't eliminate
             else:
                 # Location not in domain_map - shouldn't happen if it's in domain_set

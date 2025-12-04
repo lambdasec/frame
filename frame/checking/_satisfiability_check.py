@@ -6,8 +6,9 @@ Contains logic for checking if a formula has a valid model.
 """
 
 import z3
-from frame.core.ast import Formula
+from frame.core.ast import Formula, False_
 from frame.encoding.encoder import Z3Encoder
+from frame.utils.satisfiability import simplify_arithmetic_formula
 
 
 def is_satisfiable(
@@ -30,12 +31,28 @@ def is_satisfiable(
     eq_preprocessor = EqualityPreprocessor()
     formula = eq_preprocessor.preprocess(formula)
 
+    # Simplify constant arithmetic constraints (critical for BSLLIA benchmarks)
+    # Example: (x |-> y & 2 = 0) | (x |-> y & 1 = 0) -> false
+    formula = simplify_arithmetic_formula(formula)
+    if isinstance(formula, False_):
+        if checker_self.verbose:
+            print("Formula simplified to False after arithmetic evaluation")
+        return False  # UNSAT - formula is trivially false
+
     if checker_self.verbose:
-        print(f"After equality substitution: {str(formula)[:200]}...")
+        print(f"After equality substitution and arithmetic simplification: {str(formula)[:200]}...")
 
     # Eliminate magic wand: P * (P -* Q) → P * Q
     # CRITICAL for SAT divisions (bsl_sat, rev-*, dispose-*)
     formula = checker_self.analyzer.eliminate_wand(formula, checker=checker_self)
+
+    # Simplify again after wand elimination (may expose new arithmetic patterns)
+    formula = simplify_arithmetic_formula(formula)
+    if isinstance(formula, False_):
+        if checker_self.verbose:
+            print("Formula simplified to False after wand elimination")
+        return False  # UNSAT
+
     if checker_self.verbose:
         print(f"After wand elimination: {str(formula)[:200]}...")
 

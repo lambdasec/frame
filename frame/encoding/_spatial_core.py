@@ -191,16 +191,22 @@ def encode_heap_assertion(
         heap2 = z3.Const(f'H2_{unique_id}', encoder_self.encoder.HeapIdSort)
 
         # Collect all locations mentioned in both operands for finite encoding
+        # Include domain_set from parent for disjoint/merge constraints at this level.
         left_locs = encoder_self.collect_mentioned_locations(formula.left, prefix)
         right_locs = encoder_self.collect_mentioned_locations(formula.right, prefix)
-        mentioned_locs = encoder_self.normalize_domain(left_locs | right_locs)
+        mentioned_locs = encoder_self.normalize_domain(left_locs | right_locs | domain_set)
 
         # Encode left on H1, right on H2 (both in SepConj context)
+        # CRITICAL for BSLLIA chain-unsat: Pass sibling locations to each child.
+        # This ensures nested SepConj has merge constraints for sibling locations.
+        # For left child: pass right_locs (sibling's locations)
+        # For right child: pass left_locs (sibling's locations)
+        # This avoids over-accumulation while ensuring proper merge constraint coverage.
         left_constraints, left_domain = encoder_self.encode_heap_assertion(
-            formula.left, heap1, set(), forbidden_domain, distribution_depth, prefix=prefix, in_sepconj=True
+            formula.left, heap1, right_locs, forbidden_domain, distribution_depth, prefix=prefix, in_sepconj=True
         )
         right_constraints, right_domain = encoder_self.encode_heap_assertion(
-            formula.right, heap2, set(), forbidden_domain, distribution_depth, prefix=prefix, in_sepconj=True
+            formula.right, heap2, left_locs, forbidden_domain, distribution_depth, prefix=prefix, in_sepconj=True
         )
 
         # DISJOINT constraint: H1 and H2 have no overlapping allocations
