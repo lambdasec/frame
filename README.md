@@ -510,11 +510,11 @@ Frame is validated against industry-standard benchmark suites with ~20,000+ test
 
 | Theory | Tests | Accuracy | Avg Time |
 |--------|-------|----------|----------|
-| Separation Logic (SL-COMP) | 692 | 79.6% | ~1s |
+| Separation Logic (SL-COMP) | 692 | 79.9% | ~1s |
 | String (QF_S) | 3,300 | **99.3%** | ~15ms |
 | Array (QF_AX) | 500 | **100%** | 0.048s |
 | Bitvector (QF_BV) | 250 | 89.2% | 0.025s |
-| **Total** | **4,742** | **96.0%** | 948ms |
+| **Total** | **4,742** | **96.0%** | 970ms |
 
 ### Full Results (19,801 tests, ~2+ hours)
 
