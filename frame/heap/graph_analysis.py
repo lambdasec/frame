@@ -357,6 +357,9 @@ class HeapGraphAnalyzer:
             return False
 
         if has_cycle_in_graph(graph):
+            # Cycle in concrete heap - this is tricky.
+            # If the cycle is in a separate part of the heap (frame), the entailment may still be valid.
+            # Fall back to Z3 for more precise handling.
             if self.verbose:
                 print(f"[Mixed Graph] Concrete heap contains a cycle - falling back to Z3")
             return None

@@ -18,7 +18,7 @@ python -m benchmarks run --curated
 - ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
 - ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
 - ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
-  - 692 SL-COMP (separation logic) - 79.5% correct, 0 errors
+  - 692 SL-COMP (separation logic) - 79.6% correct, 0 errors
   - 3300 QF_S (string theory) - 99.3% correct, 0 errors
   - 500 QF_AX (array theory) - 100% correct, 0 errors
   - 250 QF_BV (bitvector theory) - 89.2% correct, 0 errors
@@ -41,7 +41,7 @@ python -m benchmarks run --division qf_shls_entl
 - Stratified sampling across all 12 divisions
 - Ensures balanced representation of entailment/SAT problems
 - Covers: qf_shls_entl, qf_shid_entl, qf_bsl_sat, shidlia_entl, etc.
-- **Results: 79.5% correct (550/692), 0 errors**
+- **Results: 79.6% correct (551/692), 0 errors**
 
 **QF_S Curated: 3,300 tests** (from 18,940 total)
 - Stratified sampling across all sources
@@ -62,7 +62,7 @@ python -m benchmarks run --division qf_shls_entl
 - **Results: 89.2% correct (223/250), 0 errors**
 
 **Total Curated: 4,742 tests**
-- **Overall: 95.9% correct (4549/4742), 0 errors, avg 1.4s/test**
+- **Overall: 96.0% correct (4550/4742), 0 errors, avg 948ms/test**
 
 ### Full Sets (19,801 tests)
 

@@ -8,7 +8,7 @@ Contains the main check() implementation with all phases of entailment checking.
 import z3
 from typing import Optional
 from frame.core.ast import Formula, Or
-from frame.checking._formula_helpers import has_predicate_calls, has_concrete_spatial
+from frame.checking._formula_helpers import has_predicate_calls, has_concrete_spatial, try_instantiate_existential, try_instantiate_nested_existentials
 from frame.checking._disjunct_handling import extract_disjuncts, score_disjuncts
 from frame.preprocessing.equality import EqualityPreprocessor
 from frame.encoding.encoder import Z3Encoder
@@ -120,6 +120,88 @@ def check_entailment_core(
         print(f"After wand elimination:")
         print(f"  Antecedent: {antecedent}")
         print(f"  Consequent: {consequent}")
+
+    # EXISTENTIAL INSTANTIATION: Handle existential quantifiers in consequent
+    # For consequents like `exists w. dll(x,y,w,z)`, try each antecedent variable as witness
+    # This is key for shid_entl and shidlia_entl benchmarks
+    #
+    # LIMIT: To prevent exponential blowup with nested existentials (e.g., exists y. exists a. ...)
+    # we limit the number of instantiation attempts. Each witness combination goes through
+    # the full checker (unfolding, frame inference, Z3) which is expensive.
+    #
+    # CONSERVATIVE APPROACH: Only try instantiation for simple cases (1 existential).
+    # For nested existentials, let Z3 handle natively - it's more efficient for complex cases.
+    from frame.core.ast import Exists
+
+    def count_nested_existentials(f):
+        """Count total nested existential quantifiers"""
+        if isinstance(f, Exists):
+            return 1 + count_nested_existentials(f.formula)
+        return 0
+
+    if isinstance(consequent, Exists):
+        total_existentials = count_nested_existentials(consequent)
+
+        # Handle nested existentials based on depth
+        if total_existentials > 2:
+            # More than 2 nested - too complex, let Z3 handle
+            if checker_self.verbose:
+                print(f"  Consequent has {total_existentials} nested existentials, skipping instantiation (let Z3 handle)")
+            # Fall through to Z3
+        elif total_existentials == 2:
+            # SHIDLIA optimization: Handle 2 nested existentials (common pattern)
+            # Example: exists u. exists k. (z |-> (t, u) * ls(x, z, k)) & k = n-1
+            nested_instantiations = try_instantiate_nested_existentials(antecedent, consequent)
+            if nested_instantiations:
+                if checker_self.verbose:
+                    print(f"Nested existentials: trying {len(nested_instantiations)} witness combinations")
+
+                for witness_desc, instantiated in nested_instantiations:
+                    if checker_self.verbose:
+                        print(f"  Trying witnesses {witness_desc}: {instantiated}")
+
+                    result = check_entailment_core(checker_self, antecedent, instantiated)
+                    if result.valid:
+                        if checker_self.verbose:
+                            print(f"  ✓ Witnesses {witness_desc} succeeded!")
+                        return result
+
+                if checker_self.verbose:
+                    print(f"  ✗ No witness combination succeeded, falling back to Z3")
+            else:
+                if checker_self.verbose:
+                    print(f"  Consequent has 2 nested existentials but couldn't analyze structure, falling back to Z3")
+        else:
+            instantiations = try_instantiate_existential(antecedent, consequent)
+            if instantiations and checker_self.verbose:
+                print(f"Existential consequent: trying {len(instantiations)} witness instantiations")
+
+            # SHIDLIA optimization: Prioritize arithmetic witnesses
+            # For length-related existentials (e.g., exists m. dllnull(x,y,m)),
+            # arithmetic witnesses like n+1 are more likely to succeed
+            arith_witnesses = [(n, i) for n, i in instantiations if '+' in n or '-' in n]
+            var_witnesses = [(n, i) for n, i in instantiations if '+' not in n and '-' not in n]
+
+            # Limit witnesses but include both arithmetic and variable witnesses
+            MAX_VAR_WITNESSES = 3
+            MAX_ARITH_WITNESSES = 4
+            selected = arith_witnesses[:MAX_ARITH_WITNESSES] + var_witnesses[:MAX_VAR_WITNESSES]
+
+            for witness_name, instantiated in selected:
+                if checker_self.verbose:
+                    print(f"  Trying witness {witness_name}: {instantiated}")
+
+                # Recursively check with instantiated consequent
+                result = check_entailment_core(checker_self, antecedent, instantiated)
+                if result.valid:
+                    if checker_self.verbose:
+                        print(f"  ✓ Witness {witness_name} succeeded!")
+                    return result
+
+            # If no witness worked, fall through to regular checking
+            # (Z3 will handle the existential natively)
+            if checker_self.verbose:
+                print(f"  ✗ No witness succeeded, falling back to Z3")
 
     # EARLY SOUNDNESS CHECK: Detect cycles in the concrete heap
     # A cycle in the concrete heap (e.g., x |-> y * y |-> x) cannot be represented
