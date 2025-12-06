@@ -13,7 +13,10 @@ def run_qf_bv_benchmark(cache_dir: str, source: str, filename: str,
     if full_path:
         filepath = full_path
     else:
-        filepath = os.path.join(cache_dir, 'qf_bv', source, filename)
+        # Check for direct path first (for qf_bv_full which is at cache_dir/qf_bv_full)
+        direct_path = os.path.join(cache_dir, source, filename)
+        nested_path = os.path.join(cache_dir, 'qf_bv', source, filename)
+        filepath = direct_path if os.path.exists(direct_path) else nested_path
 
     if not os.path.exists(filepath):
         return BenchmarkResult(
@@ -51,7 +54,14 @@ def run_qf_bv_division(cache_dir: str, source: str,
     """Run all QF_BV benchmarks in a source"""
     from benchmarks.downloaders import download_qf_bv_samples
 
-    source_dir = os.path.join(cache_dir, 'qf_bv', source)
+    # Check for direct path first (for qf_bv_full which is at cache_dir/qf_bv_full)
+    direct_path = os.path.join(cache_dir, source)
+    nested_path = os.path.join(cache_dir, 'qf_bv', source)
+
+    if os.path.exists(direct_path):
+        source_dir = direct_path
+    else:
+        source_dir = nested_path
 
     if not os.path.exists(source_dir):
         print(f"{source} benchmarks not found.")
