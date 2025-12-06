@@ -4,7 +4,7 @@
 
 Frame is a fast, practical separation logic solver that combines heap reasoning, taint analysis, and automated vulnerability detection. It provides both a powerful Python API and a command-line interface for security scanning.
 
-[![Tests](https://img.shields.io/badge/tests-1330%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![Benchmarks](https://img.shields.io/badge/benchmarks-95.9%25%20(4742)-blue)](benchmarks/)
+[![Tests](https://img.shields.io/badge/tests-1330%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![Benchmarks](https://img.shields.io/badge/benchmarks-96.0%25%20(4742)-blue)](benchmarks/)
 
 ## Table of Contents
 
@@ -510,11 +510,11 @@ Frame is validated against industry-standard benchmark suites with ~20,000+ test
 
 | Theory | Tests | Accuracy | Avg Time |
 |--------|-------|----------|----------|
-| Separation Logic (SL-COMP) | 692 | 79.5% | 1.4s |
+| Separation Logic (SL-COMP) | 692 | 79.6% | ~1s |
 | String (QF_S) | 3,300 | **99.3%** | ~15ms |
 | Array (QF_AX) | 500 | **100%** | 0.048s |
 | Bitvector (QF_BV) | 250 | 89.2% | 0.025s |
-| **Total** | **4,742** | **95.9%** | 1.4s |
+| **Total** | **4,742** | **96.0%** | 948ms |
 
 ### Full Results (19,801 tests, ~2+ hours)
 

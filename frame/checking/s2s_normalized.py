@@ -336,6 +336,7 @@ def unfold_with_normalization(
     antecedent: Formula,
     registry: PredicateRegistry,
     depth: Optional[int] = None,
+    adaptive: bool = True,
     verbose: bool = False
 ) -> Formula:
     """
@@ -345,14 +346,19 @@ def unfold_with_normalization(
         consequent: Formula to unfold
         antecedent: Context for normalization
         registry: Predicate registry
-        depth: Maximum depth (uses registry default if None)
+        depth: Maximum depth (uses adaptive depth if None and adaptive=True)
+        adaptive: Use adaptive depth based on formula complexity
         verbose: Print debug information
 
     Returns:
         Normalized formula
     """
     if depth is None:
-        depth = registry.max_unfold_depth or 6
+        if adaptive:
+            # Use adaptive depth to handle multi-branch predicates (e.g., ls2 with 5 branches)
+            depth = registry._get_adaptive_depth(consequent)
+        else:
+            depth = registry.max_unfold_depth or 6
 
     engine = NormalizedUnfoldEngine(registry, verbose=verbose)
     result = engine.unfold_consequent_normalized(consequent, antecedent, depth)

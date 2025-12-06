@@ -147,6 +147,50 @@ class PredicateRegistry:
         else:
             return False
 
+    def _count_max_branches(self, formula: Formula) -> int:
+        """
+        Find the maximum number of branches in any predicate in the formula.
+
+        Multi-branch predicates cause exponential growth: branches^depth.
+        - 3 branches: 3^5 = 243 (manageable)
+        - 5 branches: 5^5 = 3125 (slow)
+        - 5 branches: 5^4 = 625 (better)
+        """
+        from frame.core.ast import Or
+
+        def count_or_branches(f: Formula) -> int:
+            """Count top-level Or branches in formula"""
+            if isinstance(f, Or):
+                return 1 + count_or_branches(f.left) + count_or_branches(f.right)
+            return 1
+
+        max_branches = 2  # Default (linear predicates)
+
+        def check_pred(f: Formula):
+            nonlocal max_branches
+            if isinstance(f, PredicateCall):
+                pred = self.get(f.name)
+                if pred and hasattr(pred, 'body') and pred.body:
+                    branches = count_or_branches(pred.body)
+                    max_branches = max(max_branches, branches)
+            elif isinstance(f, (SepConj, And, Or)):
+                check_pred(f.left)
+                check_pred(f.right)
+            elif isinstance(f, (Not, Exists, Forall)):
+                check_pred(f.formula)
+
+        check_pred(formula)
+        return max_branches
+
+    def _has_multi_branch_predicates(self, formula: Formula) -> bool:
+        """
+        Check if formula contains predicates with multi-branch recursion (3+ branches).
+
+        Multi-branch predicates like ls2 (with 3 branches) cause exponential growth 3^depth.
+        This is even worse than tree predicates (2^depth).
+        """
+        return self._count_max_branches(formula) >= 3
+
     def _get_adaptive_depth(self, formula: Formula) -> int:
         """
         Determine unfolding depth based on formula complexity.
@@ -156,14 +200,41 @@ class PredicateRegistry:
         """
         pred_count = self._count_predicates(formula)
 
-        # Check if formula contains tree predicates (exponential growth)
+        # Check if formula contains tree predicates (exponential growth 2^n)
         has_tree = self._contains_tree_predicate(formula)
+
+        # Check if formula contains multi-branch predicates (exponential growth 3^n or worse)
+        has_multi_branch = self._has_multi_branch_predicates(formula)
 
         # Adaptive strategy: Use max_unfold_depth as the cap, reduce for complex formulas
         # Tree predicates cause exponential growth (2^n nodes), so use shallower depths
+        # Multi-branch predicates (3+ branches) are even worse (3^n), so use very shallow depths
         # Linear predicates (lists, DLLs) scale linearly, so can handle deeper unfolding
 
-        if has_tree:
+        if has_multi_branch:
+            # Very shallow depths for multi-branch predicates
+            # Formula explosion is branches^depth, so limit based on branch count:
+            # - 3 branches: 3^4 = 81, 3^5 = 243 (ok)
+            # - 4 branches: 4^3 = 64, 4^4 = 256 (ok)
+            # - 5+ branches: 5^3 = 125, 5^4 = 625 (limit to 3-4)
+            max_branches = self._count_max_branches(formula)
+
+            if max_branches >= 5:
+                # 5+ branches: very aggressive limit
+                return min(self.max_unfold_depth, 3)
+            elif max_branches >= 4:
+                if pred_count <= 2:
+                    return min(self.max_unfold_depth, 4)
+                else:
+                    return min(self.max_unfold_depth, 3)
+            else:  # 3 branches
+                if pred_count <= 2:
+                    return min(self.max_unfold_depth, 5)
+                elif pred_count <= 5:
+                    return min(self.max_unfold_depth, 4)
+                else:
+                    return min(self.max_unfold_depth, 3)
+        elif has_tree:
             # Shallower depths for tree predicates to avoid exponential blowup
             if pred_count <= 2:
                 return min(self.max_unfold_depth, 4)
@@ -174,14 +245,19 @@ class PredicateRegistry:
         else:
             # Normal depths for linear predicates (lists, segments, etc.)
             # Use max_unfold_depth for simple formulas to ensure complete unfolding
+            # For very large formulas, use aggressive depth reduction to prevent timeout
             if pred_count <= 2:
                 return self.max_unfold_depth  # Use full depth for simple formulas
             elif pred_count <= 5:
                 return min(self.max_unfold_depth, self.max_unfold_depth - 1)
             elif pred_count <= 10:
                 return min(self.max_unfold_depth, self.max_unfold_depth - 2)
+            elif pred_count <= 15:
+                return min(self.max_unfold_depth, 5)  # Cap at 5 for 11-15 predicates
+            elif pred_count <= 20:
+                return min(self.max_unfold_depth, 4)  # Cap at 4 for 16-20 predicates
             else:
-                return min(self.max_unfold_depth, self.max_unfold_depth - 3)
+                return min(self.max_unfold_depth, 3)  # Cap at 3 for 21+ predicates (spaghetti benchmarks)
 
     def unfold_predicates(self, formula: Formula, depth: Optional[int] = None, adaptive: bool = False) -> Formula:
         """

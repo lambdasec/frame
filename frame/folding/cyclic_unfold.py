@@ -67,7 +67,9 @@ class CyclicUnfoldEngine:
 
     # Predicates where we're confident about cycle detection
     # Updated to include common SL-COMP predicates (case-insensitive matching)
-    CONSERVATIVE_PREDICATES = {"ls", "list", "dll", "tll", "bsll", "liste", "listo", "listeven", "listodd"}
+    # Added ls2, ls_even, ls_odd for multi-branch list predicates
+    CONSERVATIVE_PREDICATES = {"ls", "list", "dll", "tll", "bsll", "liste", "listo", "listeven", "listodd",
+                                "ls2", "ls_even", "ls_odd", "lsevenodd"}
 
     def __init__(self, registry: PredicateRegistry, verbose: bool = False):
         self.registry = registry

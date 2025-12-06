@@ -101,6 +101,79 @@ def initialize_dll_lemmas(library):
         "DLL (4-arg) is also a forward list segment ending at next_of_tail"
     )
 
+    # DLL snoc (append at tail): dll(fr, tl, pr, nx) * nx |-> (nxt, tl) |- dll(fr, nx, pr, nxt)
+    # SL-COMP DLL signature: dll(fr, bk, pr, nx) where:
+    #   fr = first/head of segment
+    #   bk = back/last element of segment
+    #   pr = prev of head (pointer back from head)
+    #   nx = next of tail (pointer forward from tail, i.e., what tail points to)
+    #
+    # Appending node nx: The dll ends with some cell pointing to nx.
+    # nx |-> (nxt, tl) means nx has next=nxt and prev=tl (connecting back to the old tail)
+    # Result: dll(fr, nx, pr, nxt) - segment now ends at nx, which points to nxt
+    nxt = Var("NXT")
+    tl = Var("TL")
+    nx = Var("NX")  # next of current tail (will become new tail)
+    library.add_lemma(
+        "dll_snoc_slcomp",
+        SepConj(
+            PredicateCall("dll", [x, tl, p, nx]),  # dll ending at tl, which points to nx
+            PointsTo(nx, [nxt, tl])  # nx has next=nxt, prev=tl (connects to old tail)
+        ),
+        PredicateCall("dll", [x, nx, p, nxt]),  # dll now ends at nx, pointing to nxt
+        "DLL snoc (SL-COMP 4-arg): append a node to DLL segment"
+    )
+
+    # DLL snoc variant with y as back: dll(fr, bk, pr, y) * y |-> (nx, bk) |- dll(fr, y, pr, nx)
+    # This handles the common pattern where y is the next pointer and becomes the new back
+    library.add_lemma(
+        "dll_snoc_slcomp_v2",
+        SepConj(
+            PredicateCall("dll", [x, bk, p, y]),  # dll ending with back=bk pointing to y
+            PointsTo(y, [z, bk])  # y has next=z, prev=bk
+        ),
+        PredicateCall("dll", [x, y, p, z]),  # dll now ends at y, pointing to z
+        "DLL snoc v2 (SL-COMP 4-arg): append a node using y as new back"
+    )
+
+    # ============================================
+    # DLL_REV LEMMAS (REVERSED DOUBLY-LINKED LIST)
+    # ============================================
+    # Many shid_entl benchmarks use dll_rev predicate
+
+    # dll_rev cons: dll_rev(hd, pr, tl, nx) * tl |-> (nx, y) |- dll_rev(hd, pr, tl, y)
+    # dll_rev signature: dll_rev(head, prev_head, tail, next_tail)
+    # Prepending on the reverse side
+    hd = Var("HD")
+    pr = Var("PR")
+    library.add_lemma(
+        "dll_rev_snoc",
+        SepConj(
+            PredicateCall("dll_rev", [hd, pr, tl, nx]),
+            PointsTo(tl, [nx, y])
+        ),
+        PredicateCall("dll_rev", [hd, pr, tl, y]),
+        "dll_rev snoc: extend dll_rev at tail"
+    )
+
+    # dll to dll_rev: dll(x, y, z, w) |- dll_rev(z, w, x, y)
+    # A DLL can be viewed as its reverse
+    library.add_lemma(
+        "dll_to_dll_rev",
+        PredicateCall("dll", [x, y, z, w]),
+        PredicateCall("dll_rev", [z, w, x, y]),
+        "DLL can be viewed as reversed DLL"
+    )
+
+    # dll_rev to dll: dll_rev(x, y, z, w) |- dll(z, w, x, y)
+    # Reverse of above
+    library.add_lemma(
+        "dll_rev_to_dll",
+        PredicateCall("dll_rev", [x, y, z, w]),
+        PredicateCall("dll", [z, w, x, y]),
+        "Reversed DLL can be viewed as DLL"
+    )
+
     # DLL to BSLL (backward singly-linked list): DLL(x, y, z, w) |- BSLL(z, w)
     # From a DLL segment, extract the backward list segment
     # DLL(x, y, z, w) where z is prev(head) and w is next(tail)
