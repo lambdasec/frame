@@ -9,7 +9,8 @@ from pathlib import Path
 
 
 # SecBench.js repository (ICSE 2023 paper)
-SECBENCH_REPO = "https://github.com/aspect-dev/secbench.js.git"
+# Paper: https://software-lab.org/publications/icse2023_SecBenchJS.pdf
+SECBENCH_REPO = "https://github.com/cristianstaicu/SecBench.js.git"
 SECBENCH_BRANCH = "main"
 
 # Fallback: Use NodeGoat as a well-known vulnerable Node.js app
