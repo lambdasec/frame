@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 from enum import Enum, auto
 
-from .types import Ident, PVar, Exp, ExpVar, Typ, Location
+from .types import Ident, PVar, Exp, ExpVar, ExpConst, Typ, Location
 
 
 # =============================================================================
@@ -388,6 +388,8 @@ class Call(Instr):
         """Get the function name as a string"""
         if isinstance(self.func, ExpVar):
             return str(self.func.var)
+        if isinstance(self.func, ExpConst) and isinstance(self.func.value, str):
+            return self.func.value  # Return raw string value without quotes
         return str(self.func)
 
     def get_full_name(self) -> str:

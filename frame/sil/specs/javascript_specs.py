@@ -310,6 +310,238 @@ SANITIZER_SPECS = {
 }
 
 # =============================================================================
+# A01: Broken Access Control (OWASP 2025)
+# =============================================================================
+
+ACCESS_CONTROL_SPECS = {
+    # JWT handling (potential vulnerabilities)
+    "jwt.verify": _sink("auth", [0], "JWT verify - check algorithm (CWE-347)"),
+    "jwt.decode": _sink("auth", [0], "JWT decode without verify (CWE-347)"),
+    "jwt.sign": _propagator([0], "JWT sign"),
+    "jsonwebtoken.verify": _sink("auth", [0], "JWT verify (CWE-347)"),
+    "jsonwebtoken.decode": _sink("auth", [0], "JWT decode (CWE-347)"),
+
+    # Session handling
+    "req.session": _source("user", "Express session data"),
+    "session.userId": _source("user", "Session user ID"),
+    "session.user": _source("user", "Session user object"),
+
+    # CORS (misconfiguration detection)
+    "cors": _sink("cors", [0], "CORS middleware configuration (CWE-942)"),
+    "Access-Control-Allow-Origin": _sink("cors", [0], "CORS header (CWE-942)"),
+    "origin: '*'": _sink("cors", [0], "CORS allow all origins (CWE-942)"),
+    "origin: true": _sink("cors", [0], "CORS reflect origin (CWE-942)"),
+
+    # Authorization middleware
+    "isAuthenticated": _propagator([0], "Authentication check"),
+    "isAuthorized": _propagator([0], "Authorization check"),
+    "requiresAuth": _propagator([0], "Auth required middleware"),
+    "passport.authenticate": _propagator([0], "Passport authentication"),
+}
+
+# =============================================================================
+# A02: Security Misconfiguration (OWASP 2025)
+# =============================================================================
+
+MISCONFIGURATION_SPECS = {
+    # Debug/Development mode
+    "NODE_ENV": _propagator([0], "Node environment"),
+    "development": _sink("config", [0], "Development mode"),
+    "app.set('env', 'development')": _sink("config", [0], "Express dev mode"),
+
+    # Secret keys (hardcoded)
+    "secret": _sink("hardcoded_secret", [0], "Hardcoded secret (CWE-798)"),
+    "SECRET_KEY": _sink("hardcoded_secret", [0], "Hardcoded secret key (CWE-798)"),
+    "JWT_SECRET": _sink("hardcoded_secret", [0], "Hardcoded JWT secret (CWE-798)"),
+    "API_KEY": _sink("hardcoded_secret", [0], "Hardcoded API key (CWE-798)"),
+    "privateKey": _sink("hardcoded_secret", [0], "Hardcoded private key (CWE-798)"),
+
+    # SSL/TLS verification disabled
+    "rejectUnauthorized: false": _sink("ssl", [0], "TLS verification disabled (CWE-295)"),
+    "NODE_TLS_REJECT_UNAUTHORIZED": _sink("ssl", [0], "TLS verification disabled (CWE-295)"),
+    "strictSSL: false": _sink("ssl", [0], "Strict SSL disabled (CWE-295)"),
+
+    # Verbose errors
+    "stack": _sink("info_disclosure", [0], "Stack trace exposure (CWE-209)"),
+    "console.error": _sink("info_disclosure", [0], "Console error (may leak info CWE-209)"),
+
+    # Binding to all interfaces
+    "0.0.0.0": _sink("config", [0], "Binding to all interfaces (CWE-668)"),
+}
+
+# =============================================================================
+# A04: Cryptographic Failures (OWASP 2025)
+# =============================================================================
+
+CRYPTO_SPECS = {
+    # Weak hash functions
+    "crypto.createHash('md5')": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "crypto.createHash('sha1')": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+    "md5": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "sha1": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+
+    # Weak encryption
+    "createCipheriv('des": _sink("weak_crypto", [0], "DES encryption (CWE-327)"),
+    "createCipheriv('des3": _sink("weak_crypto", [0], "3DES encryption (CWE-327)"),
+    "createCipheriv('rc4": _sink("weak_crypto", [0], "RC4 encryption (CWE-327)"),
+    "aes-128-ecb": _sink("weak_crypto", [0], "AES ECB mode (CWE-327)"),
+    "aes-256-ecb": _sink("weak_crypto", [0], "AES ECB mode (CWE-327)"),
+
+    # Insecure random
+    "Math.random": _sink("insecure_random", [0], "Math.random not cryptographic (CWE-330)"),
+
+    # Secure alternatives
+    "crypto.randomBytes": _sanitizer(["random"], "Cryptographically secure random"),
+    "crypto.randomUUID": _sanitizer(["random"], "Cryptographically secure UUID"),
+    "crypto.getRandomValues": _sanitizer(["random"], "Crypto getRandomValues (secure)"),
+
+    # Weak key sizes
+    "modulusLength: 1024": _sink("weak_crypto", [0], "Weak RSA key size (CWE-326)"),
+    "modulusLength: 512": _sink("weak_crypto", [0], "Weak RSA key size (CWE-326)"),
+}
+
+# =============================================================================
+# A07: Identification and Authentication Failures (OWASP 2025)
+# =============================================================================
+
+AUTH_SPECS = {
+    # Hardcoded credentials
+    "password": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "passwd": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "apiKey": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "api_key": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "token": _sink("hardcoded_cred", [0], "Potential hardcoded token (CWE-798)"),
+
+    # Password hashing
+    "bcrypt.hash": _sanitizer(["password"], "bcrypt password hashing (safe)"),
+    "bcrypt.compare": _propagator([0, 1], "bcrypt password compare"),
+    "argon2.hash": _sanitizer(["password"], "Argon2 password hashing (safe)"),
+    "scrypt": _sanitizer(["password"], "scrypt password hashing (safe)"),
+    "pbkdf2": _sanitizer(["password"], "PBKDF2 password hashing"),
+
+    # Session management
+    "maxAge": _sink("session", [0], "Session max age config"),
+    "cookie.secure": _propagator([0], "Secure cookie flag"),
+    "cookie.httpOnly": _propagator([0], "HttpOnly cookie flag"),
+    "cookie.sameSite": _propagator([0], "SameSite cookie flag"),
+
+    # Rate limiting
+    "express-rate-limit": _propagator([0], "Rate limiting middleware"),
+    "rateLimit": _propagator([0], "Rate limiting"),
+}
+
+# =============================================================================
+# A10: Mishandling of Exceptional Conditions (OWASP 2025 - NEW)
+# =============================================================================
+
+EXCEPTION_SPECS = {
+    # Empty catch blocks
+    "catch (e) {}": _sink("exception", [0], "Empty catch block (CWE-390)"),
+    "catch {}": _sink("exception", [0], "Empty catch block (CWE-390)"),
+
+    # Generic error handling
+    ".catch(() =>": _sink("exception", [0], "Swallowed promise rejection (CWE-390)"),
+
+    # Unhandled rejections
+    "unhandledRejection": _propagator([0], "Unhandled rejection handler"),
+    "uncaughtException": _propagator([0], "Uncaught exception handler"),
+
+    # Process exit
+    "process.exit": _sink("exception", [0], "Process exit (CWE-705)"),
+
+    # Error disclosure
+    "err.stack": _sink("info_disclosure", [0], "Error stack disclosure (CWE-209)"),
+    "error.message": _propagator([0], "Error message (may leak info)"),
+}
+
+# =============================================================================
+# Sensitive Data Exposure (A01/A09)
+# =============================================================================
+
+SENSITIVE_DATA_SPECS = {
+    # Logging sensitive data
+    "console.log": _sink("sensitive_log", [0], "Console log (may contain sensitive data CWE-532)"),
+    "console.debug": _sink("sensitive_log", [0], "Console debug (may contain sensitive data CWE-532)"),
+    "winston.info": _sink("sensitive_log", [0], "Winston info log (CWE-532)"),
+    "winston.debug": _sink("sensitive_log", [0], "Winston debug log (CWE-532)"),
+    "bunyan.info": _sink("sensitive_log", [0], "Bunyan info log (CWE-532)"),
+    "pino.info": _sink("sensitive_log", [0], "Pino info log (CWE-532)"),
+
+    # Response data
+    "res.json": _propagator([0], "JSON response (check for sensitive data)"),
+    "res.send": _propagator([0], "Send response (check for sensitive data)"),
+}
+
+# =============================================================================
+# HTTP Header Security (A02/A05)
+# =============================================================================
+
+HEADER_SPECS = {
+    # Security headers middleware
+    "helmet": _sanitizer(["header"], "Helmet security headers"),
+
+    # Individual headers
+    "X-Frame-Options": _propagator([0], "X-Frame-Options header"),
+    "X-Content-Type-Options": _propagator([0], "X-Content-Type-Options header"),
+    "X-XSS-Protection": _propagator([0], "X-XSS-Protection header"),
+    "Content-Security-Policy": _propagator([0], "CSP header"),
+    "Strict-Transport-Security": _propagator([0], "HSTS header"),
+
+    # Header injection
+    "res.setHeader": _sink("header_injection", [1], "Set header (CWE-113)"),
+    "res.header": _sink("header_injection", [1], "Set header (CWE-113)"),
+}
+
+# =============================================================================
+# SSRF Enhanced (A01)
+# =============================================================================
+
+SSRF_ENHANCED_SPECS = {
+    # Cloud metadata endpoints
+    "169.254.169.254": _sink("ssrf", [0], "Cloud metadata endpoint (SSRF)"),
+    "metadata.google.internal": _sink("ssrf", [0], "GCP metadata (SSRF)"),
+
+    # Internal network access
+    "localhost": _sink("ssrf", [0], "Localhost access (SSRF)"),
+    "127.0.0.1": _sink("ssrf", [0], "Loopback access (SSRF)"),
+    "0.0.0.0": _sink("ssrf", [0], "All interfaces (SSRF)"),
+
+    # URL parsing
+    "new URL": _propagator([0], "URL parsing"),
+    "url.parse": _propagator([0], "URL parsing"),
+}
+
+# =============================================================================
+# Prototype Pollution (JavaScript-specific)
+# =============================================================================
+
+PROTOTYPE_POLLUTION_SPECS = {
+    # Object manipulation
+    "__proto__": _sink("prototype_pollution", [0], "Prototype access (CWE-1321)"),
+    "constructor.prototype": _sink("prototype_pollution", [0], "Constructor prototype (CWE-1321)"),
+    "Object.assign": _sink("prototype_pollution", [1], "Object.assign (potential pollution)"),
+    "_.merge": _sink("prototype_pollution", [0, 1], "Lodash merge (prototype pollution)"),
+    "_.defaultsDeep": _sink("prototype_pollution", [0, 1], "Lodash defaultsDeep (prototype pollution)"),
+    "$.extend": _sink("prototype_pollution", [0, 1], "jQuery extend (prototype pollution)"),
+    "merge": _sink("prototype_pollution", [0, 1], "Deep merge (potential pollution)"),
+    "deepmerge": _sink("prototype_pollution", [0, 1], "Deep merge (potential pollution)"),
+}
+
+# =============================================================================
+# Regular Expression DoS (A05)
+# =============================================================================
+
+REDOS_SPECS = {
+    # Regex operations with user input
+    "new RegExp": _sink("redos", [0], "Dynamic regex (potential ReDoS CWE-1333)"),
+    "RegExp": _sink("redos", [0], "Dynamic regex (potential ReDoS CWE-1333)"),
+    ".match": _sink("redos", [0], "Regex match (potential ReDoS)"),
+    ".replace": _sink("redos", [0], "Regex replace (potential ReDoS)"),
+    ".split": _sink("redos", [0], "Regex split (potential ReDoS)"),
+    ".search": _sink("redos", [0], "Regex search (potential ReDoS)"),
+}
+
+# =============================================================================
 # Combined JavaScript Specs
 # =============================================================================
 
@@ -323,6 +555,17 @@ JAVASCRIPT_SPECS.update(REACT_SPECS)
 JAVASCRIPT_SPECS.update(HTTP_CLIENT_SPECS)
 JAVASCRIPT_SPECS.update(SERIALIZATION_SPECS)
 JAVASCRIPT_SPECS.update(SANITIZER_SPECS)
+# OWASP 2025 enhanced coverage
+JAVASCRIPT_SPECS.update(ACCESS_CONTROL_SPECS)
+JAVASCRIPT_SPECS.update(MISCONFIGURATION_SPECS)
+JAVASCRIPT_SPECS.update(CRYPTO_SPECS)
+JAVASCRIPT_SPECS.update(AUTH_SPECS)
+JAVASCRIPT_SPECS.update(EXCEPTION_SPECS)
+JAVASCRIPT_SPECS.update(SENSITIVE_DATA_SPECS)
+JAVASCRIPT_SPECS.update(HEADER_SPECS)
+JAVASCRIPT_SPECS.update(SSRF_ENHANCED_SPECS)
+JAVASCRIPT_SPECS.update(PROTOTYPE_POLLUTION_SPECS)
+JAVASCRIPT_SPECS.update(REDOS_SPECS)
 
 # Alias for TypeScript (same specs)
 TYPESCRIPT_SPECS = JAVASCRIPT_SPECS

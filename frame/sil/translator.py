@@ -393,8 +393,11 @@ class SILTranslator:
         # Use worklist algorithm for path-sensitive analysis
         worklist: List[Tuple[int, SymbolicState]] = [(proc.entry_node, initial_state)]
         visited: Dict[int, SymbolicState] = {}
+        max_iterations = 10000  # Safety limit to prevent infinite loops
 
-        while worklist:
+        iterations = 0
+        while worklist and iterations < max_iterations:
+            iterations += 1
             node_id, state = worklist.pop(0)
 
             if node_id not in proc.nodes:
@@ -403,10 +406,19 @@ class SILTranslator:
             node = proc.nodes[node_id]
 
             # Merge with existing state if we've visited this node
+            state_changed = True
             if node_id in visited:
-                state = self._merge_states(visited[node_id], state)
+                old_state = visited[node_id]
+                merged_state = self._merge_states(old_state, state)
+                # Check if we've reached a fixpoint (no change in taint info)
+                state_changed = not self._states_equal(old_state, merged_state)
+                state = merged_state
 
             visited[node_id] = state
+
+            # Only continue processing if state changed (or first visit)
+            if not state_changed:
+                continue
 
             # Execute instructions in node
             current_state = state.copy()
@@ -983,3 +995,17 @@ class SILTranslator:
         merged.path_constraints = []
 
         return merged
+
+    def _states_equal(self, s1: SymbolicState, s2: SymbolicState) -> bool:
+        """Check if two states are equal (for fixpoint detection)"""
+        # For fixpoint, we mainly care about taint information
+        # since that's what determines vulnerability detection
+        if set(s1.tainted.keys()) != set(s2.tainted.keys()):
+            return False
+        # Check if sanitized sets are equal
+        if set(s1.sanitized.keys()) != set(s2.sanitized.keys()):
+            return False
+        # Check if freed sets are equal
+        if s1.freed != s2.freed:
+            return False
+        return True

@@ -108,7 +108,7 @@ class PythonFrontend:
         """Translate module-level definitions"""
         for child in root.children:
             if child.type == "function_definition":
-                proc = self._translate_function(child)
+                proc = self._translate_function(child, program=program)
                 if proc:
                     program.add_procedure(proc)
 
@@ -125,7 +125,7 @@ class PythonFrontend:
 
                 if definition:
                     if definition.type == "function_definition":
-                        proc = self._translate_function(definition)
+                        proc = self._translate_function(definition, program=program)
                         if proc:
                             program.add_procedure(proc)
                     elif definition.type == "class_definition":
@@ -143,7 +143,7 @@ class PythonFrontend:
         if body_node:
             for child in body_node.children:
                 if child.type == "function_definition":
-                    proc = self._translate_function(child, is_method=True)
+                    proc = self._translate_function(child, is_method=True, program=program)
                     if proc:
                         proc.class_name = class_name
                         proc.name = f"{class_name}.{proc.name}"
@@ -152,7 +152,7 @@ class PythonFrontend:
                 elif child.type == "decorated_definition":
                     for c in child.children:
                         if c.type == "function_definition":
-                            proc = self._translate_function(c, is_method=True)
+                            proc = self._translate_function(c, is_method=True, program=program)
                             if proc:
                                 proc.class_name = class_name
                                 proc.name = f"{class_name}.{proc.name}"
@@ -161,7 +161,7 @@ class PythonFrontend:
 
         self._current_class = None
 
-    def _translate_function(self, node: TSNode, is_method: bool = False) -> Optional[Procedure]:
+    def _translate_function(self, node: TSNode, is_method: bool = False, program: Program = None) -> Optional[Procedure]:
         """Translate function definition to SIL Procedure"""
         # Get function name
         name_node = node.child_by_field_name("name")
@@ -205,10 +205,10 @@ class PythonFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
-        # Translate body
+        # Translate body (pass program for nested functions)
         body_node = node.child_by_field_name("body")
         if body_node:
-            self._translate_block(body_node)
+            self._translate_block(body_node, program=program)
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -264,10 +264,26 @@ class PythonFrontend:
 
         return params
 
-    def _translate_block(self, node: TSNode) -> None:
+    def _translate_block(self, node: TSNode, program: Program = None) -> None:
         """Translate a block of statements"""
         for child in node.children:
-            self._translate_statement(child)
+            # Handle nested function definitions
+            if child.type == "function_definition":
+                if program:
+                    proc = self._translate_function(child)
+                    if proc:
+                        program.add_procedure(proc)
+            elif child.type == "decorated_definition":
+                # Handle decorated nested functions
+                if program:
+                    for c in child.children:
+                        if c.type == "function_definition":
+                            proc = self._translate_function(c)
+                            if proc:
+                                program.add_procedure(proc)
+                            break
+            else:
+                self._translate_statement(child)
 
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a single statement"""
@@ -385,7 +401,17 @@ class PythonFrontend:
 
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+
+        # Handle nested calls - expand them first
+        args_exp = []
+        for i, arg in enumerate(args):
+            if arg.type == "call":
+                # Nested call - expand it first
+                nested_instrs, nested_var = self._expand_nested_call(arg, loc)
+                instrs.extend(nested_instrs)
+                args_exp.append((ExpVar(PVar(nested_var)), Typ.unknown_type()))
+            else:
+                args_exp.append((self._translate_expression(arg), Typ.unknown_type()))
 
         # Create return identifier
         ret_id = self._new_ident(target)
@@ -421,16 +447,26 @@ class PythonFrontend:
         if spec and spec.is_taint_sink():
             kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
             for arg_idx in spec.sink_args:
-                if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
+                if arg_idx < len(args_exp):
                     instrs.append(TaintSink(
                         loc=loc,
-                        exp=arg_exp,
+                        exp=args_exp[arg_idx][0],
                         kind=kind,
                         description=spec.description
                     ))
 
         return instrs
+
+    def _expand_nested_call(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
+        """Expand a nested call and return (instructions, result_var_name)"""
+        # Generate a temp variable for the result
+        temp_var = f"__nested_{self._ident_counter}"
+        self._ident_counter += 1
+
+        # Translate the nested call as an assignment
+        nested_instrs = self._translate_call_assignment(temp_var, call_node, loc)
+
+        return nested_instrs, temp_var
 
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone call: func(args)"""
@@ -503,9 +539,10 @@ class PythonFrontend:
         parts = []
 
         def walk(n: TSNode):
-            if n.type == "string_content" or n.type == "string":
+            if n.type == "string_content":
+                # Literal string content between interpolations
                 text = self._get_text(n)
-                if text and not text.startswith("f"):
+                if text:
                     parts.append(ExpConst.string(text))
 
             elif n.type == "interpolation":
@@ -515,11 +552,17 @@ class PythonFrontend:
                         exp = self._translate_expression(child)
                         parts.append(exp)
 
-            elif n.type == "formatted_string" or n.type == "f_string":
+            elif n.type in ("string_start", "string_end"):
+                # Skip f-string delimiters
+                pass
+
+            elif n.type == "string" or n.type == "formatted_string" or n.type == "f_string":
+                # Walk children of string node
                 for child in n.children:
                     walk(child)
 
             else:
+                # For other nodes, recurse into children
                 for child in n.children:
                     walk(child)
 
@@ -848,8 +891,27 @@ class PythonFrontend:
                 return ExpConst.integer(0)
 
         elif node.type == "string" or node.type == "concatenated_string":
-            text = self._get_string_content(node)
-            return ExpConst.string(text)
+            # Check if it's an f-string by looking for interpolation children
+            has_interpolation = False
+            for child in node.children:
+                if child.type == "interpolation":
+                    has_interpolation = True
+                    break
+                elif child.type == "string_start":
+                    start_text = self._get_text(child)
+                    if start_text.startswith('f') or start_text.startswith('F'):
+                        has_interpolation = True
+                        break
+
+            if has_interpolation:
+                # It's an f-string - extract parts
+                parts = self._extract_fstring_parts(node)
+                if parts:
+                    return ExpStringConcat(parts)
+                return ExpConst.string("")
+            else:
+                text = self._get_string_content(node)
+                return ExpConst.string(text)
 
         elif node.type in ("true", "True"):
             return ExpConst.boolean(True)
