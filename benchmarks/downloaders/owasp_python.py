@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 OWASP_PYTHON_REPO = "https://github.com/OWASP-Benchmark/BenchmarkPython.git"
-OWASP_PYTHON_BRANCH = "master"
+OWASP_PYTHON_BRANCH = "main"
 
 
 def download_owasp_python(cache_dir: str, max_files: Optional[int] = None) -> int:
