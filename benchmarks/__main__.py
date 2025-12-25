@@ -23,15 +23,25 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download benchmarks
+  # Download SMT benchmarks
   python -m benchmarks download --all
   python -m benchmarks download --curated
   python -m benchmarks download --division qf_ax_full
 
-  # Run benchmarks
+  # Download SAST benchmarks
+  python -m benchmarks download --all --sast
+  python -m benchmarks download --curated --sast
+  python -m benchmarks download --division owasp_python
+
+  # Run SMT benchmarks
   python -m benchmarks run --curated
   python -m benchmarks run --division qf_ax_curated
   python -m benchmarks run --all
+
+  # Run SAST benchmarks
+  python -m benchmarks run --curated --sast
+  python -m benchmarks run --division owasp_python_curated
+  python -m benchmarks run --all --sast
 
   # Analyze results
   python -m benchmarks analyze --failures
@@ -47,11 +57,13 @@ Examples:
     run_parser = subparsers.add_parser('run', help='Run benchmarks')
     run_group = run_parser.add_mutually_exclusive_group(required=True)
     run_group.add_argument('--all', action='store_true',
-                          help='Run ALL benchmarks (full SL-COMP + QF_S suites, ~20k total)')
+                          help='Run ALL benchmarks (SMT: ~20k, SAST: ~60k tests)')
     run_group.add_argument('--curated', action='store_true',
-                          help='Run curated sample sets (~5000 total: 3300 QF_S + 700 SL-COMP + 500 QF_AX + 500 QF_BV)')
+                          help='Run curated sample sets (SMT: ~5000, SAST: ~2400 tests)')
     run_group.add_argument('--division', type=str,
-                          help='Run specific division (e.g., qf_shls_entl, qf_s_curated)')
+                          help='Run specific division (e.g., qf_shls_entl, owasp_python_curated)')
+    run_parser.add_argument('--sast', action='store_true',
+                           help='Run SAST security benchmarks instead of SMT benchmarks')
     run_parser.add_argument('--max-tests', type=int, help='Maximum tests per division')
     run_parser.add_argument('--output', type=str, default='benchmark_results.json',
                            help='Output file')
@@ -65,9 +77,11 @@ Examples:
     download_group.add_argument('--all', action='store_true',
                                help='Download all uncached benchmarks')
     download_group.add_argument('--curated', action='store_true',
-                               help='Create curated sample sets (~5000 total)')
+                               help='Create curated sample sets (SMT: ~5000, SAST: ~2400)')
     download_group.add_argument('--division', type=str,
                                help='Specific division to download')
+    download_parser.add_argument('--sast', action='store_true',
+                                help='Download SAST security benchmarks instead of SMT benchmarks')
     download_parser.add_argument('--max-files', type=int, help='Max files to download')
     download_parser.add_argument('--cache-dir', type=str, default='./benchmarks/cache',
                                 help='Cache directory')
