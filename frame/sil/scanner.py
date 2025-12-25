@@ -382,6 +382,24 @@ class FrameScanner:
         if language == "python":
             from frame.sil.frontends.python_frontend import PythonFrontend
             return PythonFrontend()
+        elif language == "javascript":
+            from frame.sil.frontends.javascript_frontend import JavaScriptFrontend
+            return JavaScriptFrontend()
+        elif language == "typescript":
+            from frame.sil.frontends.javascript_frontend import TypeScriptFrontend
+            return TypeScriptFrontend()
+        elif language == "java":
+            from frame.sil.frontends.java_frontend import JavaFrontend
+            return JavaFrontend()
+        elif language == "c":
+            from frame.sil.frontends.c_frontend import CFrontend
+            return CFrontend()
+        elif language == "cpp":
+            from frame.sil.frontends.c_frontend import CppFrontend
+            return CppFrontend()
+        elif language == "csharp":
+            from frame.sil.frontends.csharp_frontend import CSharpFrontend
+            return CSharpFrontend()
         else:
             raise ValueError(f"Unsupported language: {language}")
 
@@ -399,6 +417,12 @@ class FrameScanner:
         start_time = time.time()
         result = ScanResult(filename=filename)
         result.lines_scanned = source_code.count('\n') + 1
+
+        # Check if frontend is available
+        if self.frontend is None:
+            result.errors.append(f"Language '{self.language}' frontend not yet implemented")
+            result.scan_time_ms = (time.time() - start_time) * 1000
+            return result
 
         try:
             # Step 1: Parse source to SIL
@@ -595,12 +619,17 @@ def scan_file(filepath: str, language: str = None) -> ScanResult:
         language_map = {
             ".py": "python",
             ".js": "javascript",
+            ".jsx": "javascript",
             ".ts": "typescript",
+            ".tsx": "typescript",
             ".java": "java",
-            ".go": "go",
             ".c": "c",
             ".cpp": "cpp",
+            ".cc": "cpp",
+            ".cxx": "cpp",
             ".h": "c",
+            ".hpp": "cpp",
+            ".cs": "csharp",
         }
         language = language_map.get(ext, "python")
 
