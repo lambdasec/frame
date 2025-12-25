@@ -180,6 +180,7 @@ FILESYSTEM_SPECS = {
     "open": _sink("filesystem", [0], "File open"),
     "builtins.open": _sink("filesystem", [0], "File open"),
     "io.open": _sink("filesystem", [0], "File open"),
+    "codecs.open": _sink("filesystem", [0], "codecs.open (path traversal CWE-22)"),
 
     # Path operations
     "os.path.join": _propagator([0, 1], "Path join"),
@@ -371,6 +372,39 @@ STRING_SPECS = {
 }
 
 # =============================================================================
+# URL/Encoding Operations (taint propagation)
+# =============================================================================
+
+URL_ENCODING_SPECS = {
+    # urllib.parse - URL encoding/decoding (propagates taint)
+    "urllib.parse.unquote": _propagator([0], "URL unquote"),
+    "urllib.parse.unquote_plus": _propagator([0], "URL unquote_plus"),
+    "urllib.parse.quote": _propagator([0], "URL quote"),
+    "urllib.parse.quote_plus": _propagator([0], "URL quote_plus"),
+    "urllib.parse.urlencode": _propagator([0], "URL encode"),
+    "urllib.parse.parse_qs": _propagator([0], "Parse query string"),
+    "urllib.parse.parse_qsl": _propagator([0], "Parse query string list"),
+    "urllib.parse.urlparse": _propagator([0], "URL parse"),
+    "urllib.parse.urlsplit": _propagator([0], "URL split"),
+    "urllib.parse.urljoin": _propagator([0, 1], "URL join"),
+
+    # html escaping
+    "html.escape": _sanitizer(["html"], "HTML escape (sanitizer)"),
+    "html.unescape": _propagator([0], "HTML unescape"),
+    "cgi.escape": _sanitizer(["html"], "CGI HTML escape (deprecated)"),
+
+    # base64 (propagates taint)
+    "base64.b64encode": _propagator([0], "Base64 encode"),
+    "base64.b64decode": _propagator([0], "Base64 decode"),
+    "base64.urlsafe_b64encode": _propagator([0], "URL-safe base64 encode"),
+    "base64.urlsafe_b64decode": _propagator([0], "URL-safe base64 decode"),
+
+    # json (propagates taint)
+    "json.loads": _propagator([0], "JSON loads"),
+    "json.dumps": _propagator([0], "JSON dumps"),
+}
+
+# =============================================================================
 # A04: Cryptographic Failures (OWASP 2025)
 # =============================================================================
 
@@ -491,6 +525,212 @@ SENSITIVE_LOGGING_SPECS = {
 }
 
 # =============================================================================
+# A01: Broken Access Control (OWASP 2025)
+# =============================================================================
+
+ACCESS_CONTROL_SPECS = {
+    # JWT handling (potential vulnerabilities)
+    "jwt.decode": _sink("auth", [0], "JWT decode - verify signature (CWE-347)"),
+    "jwt.encode": _propagator([0], "JWT encode"),
+    "jose.jwt.decode": _sink("auth", [0], "python-jose JWT decode"),
+    "authlib.jose.jwt.decode": _sink("auth", [0], "Authlib JWT decode"),
+
+    # Session handling
+    "session": _propagator([0], "Session data (check authorization)"),
+    "flask.session": _propagator([0], "Flask session"),
+    "request.session": _propagator([0], "Django session"),
+
+    # CORS (misconfiguration detection)
+    "CORS": _sink("cors", [0], "CORS configuration (CWE-942)"),
+    "Access-Control-Allow-Origin": _sink("cors", [0], "CORS header"),
+
+    # Authorization decorators (track usage)
+    "login_required": _propagator([0], "Login required decorator"),
+    "permission_required": _propagator([0], "Permission required decorator"),
+    "requires_auth": _propagator([0], "Auth required decorator"),
+}
+
+# =============================================================================
+# A02: Security Misconfiguration (OWASP 2025)
+# =============================================================================
+
+MISCONFIGURATION_SPECS = {
+    # Debug mode
+    "app.debug": _sink("config", [0], "Debug mode enabled (CWE-489)"),
+    "DEBUG": _sink("config", [0], "Debug flag (CWE-489)"),
+    "app.run": _sink("config", [0], "Flask app.run - check debug param"),
+
+    # Secret keys (hardcoded)
+    "SECRET_KEY": _sink("hardcoded_secret", [0], "Hardcoded secret key (CWE-798)"),
+    "app.secret_key": _sink("hardcoded_secret", [0], "Flask secret key (CWE-798)"),
+    "JWT_SECRET_KEY": _sink("hardcoded_secret", [0], "JWT secret key (CWE-798)"),
+
+    # SSL/TLS verification disabled
+    "verify=False": _sink("ssl", [0], "SSL verification disabled (CWE-295)"),
+    "CERT_NONE": _sink("ssl", [0], "Certificate verification disabled (CWE-295)"),
+    "ssl._create_unverified_context": _sink("ssl", [0], "Unverified SSL context (CWE-295)"),
+
+    # Binding to all interfaces
+    "0.0.0.0": _sink("config", [0], "Binding to all interfaces (CWE-668)"),
+
+    # Verbose errors
+    "PROPAGATE_EXCEPTIONS": _sink("config", [0], "Exception propagation enabled"),
+    "traceback.print_exc": _sink("info_disclosure", [0], "Traceback disclosure (CWE-209)"),
+    "traceback.format_exc": _sink("info_disclosure", [0], "Traceback formatting (CWE-209)"),
+}
+
+# =============================================================================
+# A07: Identification and Authentication Failures (OWASP 2025)
+# =============================================================================
+
+AUTH_SPECS = {
+    # Hardcoded credentials
+    "password": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "passwd": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "api_key": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "apikey": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "secret": _sink("hardcoded_cred", [0], "Potential hardcoded secret (CWE-798)"),
+    "token": _sink("hardcoded_cred", [0], "Potential hardcoded token (CWE-798)"),
+    "private_key": _sink("hardcoded_cred", [0], "Potential hardcoded private key (CWE-798)"),
+
+    # Weak password hashing
+    "hashlib.md5": _sink("weak_password_hash", [0], "MD5 for password hashing (CWE-916)"),
+    "hashlib.sha1": _sink("weak_password_hash", [0], "SHA1 for password hashing (CWE-916)"),
+
+    # Password storage
+    "bcrypt.hashpw": _sanitizer(["password"], "bcrypt password hashing (safe)"),
+    "argon2.hash": _sanitizer(["password"], "Argon2 password hashing (safe)"),
+    "pbkdf2_hmac": _sanitizer(["password"], "PBKDF2 password hashing (safe)"),
+    "werkzeug.security.generate_password_hash": _sanitizer(["password"], "Werkzeug password hash"),
+    "django.contrib.auth.hashers.make_password": _sanitizer(["password"], "Django password hash"),
+
+    # Session management
+    "session.permanent": _sink("session", [0], "Permanent session (check timeout)"),
+    "PERMANENT_SESSION_LIFETIME": _sink("session", [0], "Session lifetime config"),
+
+    # Rate limiting (absence is a vulnerability)
+    "ratelimit": _propagator([0], "Rate limiting decorator"),
+    "Limiter": _propagator([0], "Flask-Limiter"),
+}
+
+# =============================================================================
+# A10: Mishandling of Exceptional Conditions (OWASP 2025 - NEW)
+# =============================================================================
+
+EXCEPTION_SPECS = {
+    # Bare except (catches everything including SystemExit)
+    "except:": _sink("exception", [0], "Bare except clause (CWE-396)"),
+    "except Exception:": _sink("exception", [0], "Generic exception catch (CWE-396)"),
+    "except BaseException:": _sink("exception", [0], "BaseException catch (CWE-396)"),
+
+    # Exception swallowing
+    "pass": _sink("exception", [0], "Potential exception swallowing (CWE-390)"),
+
+    # Assertions in production (can be disabled with -O)
+    "assert": _sink("assertion", [0], "Assert statement (disabled with -O) (CWE-617)"),
+
+    # Resource management
+    "open": _sink("resource", [0], "File open without context manager (CWE-404)"),
+
+    # Error disclosure
+    "str(e)": _propagator([0], "Exception to string (may leak info)"),
+    "repr(e)": _propagator([0], "Exception repr (may leak info)"),
+}
+
+# =============================================================================
+# A04: Additional Cryptographic Failures (OWASP 2025)
+# =============================================================================
+
+CRYPTO_ENHANCED_SPECS = {
+    # ECB mode (insecure)
+    "MODE_ECB": _sink("weak_crypto", [0], "ECB mode is insecure (CWE-327)"),
+    "AES.MODE_ECB": _sink("weak_crypto", [0], "AES ECB mode (CWE-327)"),
+
+    # Weak key sizes
+    "key_size=1024": _sink("weak_crypto", [0], "Weak RSA key size (CWE-326)"),
+    "key_size=512": _sink("weak_crypto", [0], "Weak RSA key size (CWE-326)"),
+
+    # Predictable IV/nonce
+    "iv=": _sink("weak_crypto", [0], "Check for random IV (CWE-329)"),
+    "nonce=": _sink("weak_crypto", [0], "Check for random nonce (CWE-329)"),
+
+    # Insecure TLS versions
+    "SSLv2": _sink("weak_crypto", [0], "SSLv2 is insecure (CWE-327)"),
+    "SSLv3": _sink("weak_crypto", [0], "SSLv3 is insecure (CWE-327)"),
+    "TLSv1": _sink("weak_crypto", [0], "TLSv1.0 is deprecated (CWE-327)"),
+    "TLSv1_1": _sink("weak_crypto", [0], "TLSv1.1 is deprecated (CWE-327)"),
+    "PROTOCOL_SSLv2": _sink("weak_crypto", [0], "SSLv2 protocol (CWE-327)"),
+    "PROTOCOL_SSLv3": _sink("weak_crypto", [0], "SSLv3 protocol (CWE-327)"),
+    "PROTOCOL_TLSv1": _sink("weak_crypto", [0], "TLSv1.0 protocol (CWE-327)"),
+
+    # Secure alternatives
+    "secrets.token_bytes": _sanitizer(["random"], "Cryptographically secure random"),
+    "secrets.token_hex": _sanitizer(["random"], "Cryptographically secure random"),
+    "secrets.token_urlsafe": _sanitizer(["random"], "Cryptographically secure random"),
+    "os.urandom": _sanitizer(["random"], "Cryptographically secure random"),
+}
+
+# =============================================================================
+# Sensitive Data Exposure (A01/A09)
+# =============================================================================
+
+SENSITIVE_DATA_SPECS = {
+    # Logging sensitive data
+    "logging.debug": _sink("sensitive_log", [0], "Debug log (may contain sensitive data CWE-532)"),
+    "logging.info": _sink("sensitive_log", [0], "Info log (may contain sensitive data CWE-532)"),
+
+    # Sensitive data patterns in responses
+    "password": _sink("sensitive_exposure", [0], "Password in response (CWE-200)"),
+    "credit_card": _sink("sensitive_exposure", [0], "Credit card in response (CWE-200)"),
+    "ssn": _sink("sensitive_exposure", [0], "SSN in response (CWE-200)"),
+    "social_security": _sink("sensitive_exposure", [0], "SSN in response (CWE-200)"),
+
+    # PII exposure
+    "email": _propagator([0], "Email data (PII)"),
+    "phone": _propagator([0], "Phone data (PII)"),
+    "address": _propagator([0], "Address data (PII)"),
+}
+
+# =============================================================================
+# HTTP Header Security (A02/A05)
+# =============================================================================
+
+HEADER_SPECS = {
+    # Missing security headers
+    "X-Frame-Options": _propagator([0], "X-Frame-Options header"),
+    "X-Content-Type-Options": _propagator([0], "X-Content-Type-Options header"),
+    "X-XSS-Protection": _propagator([0], "X-XSS-Protection header"),
+    "Content-Security-Policy": _propagator([0], "CSP header"),
+    "Strict-Transport-Security": _propagator([0], "HSTS header"),
+
+    # Header injection
+    "response.headers": _sink("header_injection", [0], "Response header manipulation (CWE-113)"),
+    "make_response().headers": _sink("header_injection", [0], "Response header (CWE-113)"),
+}
+
+# =============================================================================
+# Server-Side Request Forgery Enhanced (A01)
+# =============================================================================
+
+SSRF_ENHANCED_SPECS = {
+    # Cloud metadata endpoints
+    "169.254.169.254": _sink("ssrf", [0], "Cloud metadata endpoint (SSRF)"),
+    "metadata.google.internal": _sink("ssrf", [0], "GCP metadata (SSRF)"),
+
+    # Internal network access
+    "localhost": _sink("ssrf", [0], "Localhost access (SSRF)"),
+    "127.0.0.1": _sink("ssrf", [0], "Loopback access (SSRF)"),
+    "0.0.0.0": _sink("ssrf", [0], "All interfaces (SSRF)"),
+    "10.": _sink("ssrf", [0], "Private network (SSRF)"),
+    "172.16.": _sink("ssrf", [0], "Private network (SSRF)"),
+    "192.168.": _sink("ssrf", [0], "Private network (SSRF)"),
+
+    # URL parsing (potential bypass)
+    "urllib.parse.urlparse": _propagator([0], "URL parsing"),
+    "urlparse": _propagator([0], "URL parsing"),
+}
+
+# =============================================================================
 # Combined Specifications
 # =============================================================================
 
@@ -506,6 +746,7 @@ PYTHON_SPECS.update(HTML_SPECS)
 PYTHON_SPECS.update(LOGGING_SPECS)
 PYTHON_SPECS.update(STDLIB_SOURCES)
 PYTHON_SPECS.update(STRING_SPECS)
+PYTHON_SPECS.update(URL_ENCODING_SPECS)
 # OWASP 2025 additions
 PYTHON_SPECS.update(CRYPTO_SPECS)
 PYTHON_SPECS.update(DESERIALIZATION_SPECS)
@@ -514,6 +755,15 @@ PYTHON_SPECS.update(REGEX_SPECS)
 PYTHON_SPECS.update(TEMPLATE_SPECS)
 PYTHON_SPECS.update(LDAP_SPECS)
 PYTHON_SPECS.update(SENSITIVE_LOGGING_SPECS)
+# OWASP 2025 enhanced coverage
+PYTHON_SPECS.update(ACCESS_CONTROL_SPECS)
+PYTHON_SPECS.update(MISCONFIGURATION_SPECS)
+PYTHON_SPECS.update(AUTH_SPECS)
+PYTHON_SPECS.update(EXCEPTION_SPECS)
+PYTHON_SPECS.update(CRYPTO_ENHANCED_SPECS)
+PYTHON_SPECS.update(SENSITIVE_DATA_SPECS)
+PYTHON_SPECS.update(HEADER_SPECS)
+PYTHON_SPECS.update(SSRF_ENHANCED_SPECS)
 
 
 def get_python_specs() -> Dict[str, ProcSpec]:

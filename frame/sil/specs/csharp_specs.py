@@ -371,6 +371,217 @@ SANITIZER_SPECS = {
 }
 
 # =============================================================================
+# A01: Broken Access Control (OWASP 2025)
+# =============================================================================
+
+ACCESS_CONTROL_SPECS = {
+    # JWT handling
+    "JwtSecurityTokenHandler": _sink("auth", [0], "JWT token handler (CWE-347)"),
+    "ValidateToken": _sink("auth", [0], "Token validation (CWE-347)"),
+    "SecurityTokenDescriptor": _propagator([0], "Token descriptor"),
+
+    # Session handling
+    "Session": _propagator([0], "Session access"),
+    "HttpContext.Session": _propagator([0], "HTTP session"),
+    "ISession": _propagator([0], "Session interface"),
+
+    # Authorization
+    "[Authorize]": _propagator([0], "Authorize attribute"),
+    "[AllowAnonymous]": _sink("auth", [0], "AllowAnonymous (check if intentional)"),
+    "AuthorizeAttribute": _propagator([0], "Authorization attribute"),
+    "IAuthorizationService": _propagator([0], "Authorization service"),
+    "ClaimsPrincipal": _source("user", "Claims principal"),
+    "User.Identity": _source("user", "User identity"),
+    "User.IsInRole": _propagator([0], "Role check"),
+
+    # CORS
+    "EnableCors": _sink("cors", [0], "CORS enabled (CWE-942)"),
+    "AllowAnyOrigin": _sink("cors", [0], "CORS any origin (CWE-942)"),
+    "WithOrigins": _sink("cors", [0], "CORS origins (CWE-942)"),
+    "CorsPolicy": _sink("cors", [0], "CORS policy (CWE-942)"),
+}
+
+# =============================================================================
+# A02: Security Misconfiguration (OWASP 2025)
+# =============================================================================
+
+MISCONFIGURATION_SPECS = {
+    # Debug/development mode
+    "IsDevelopment": _sink("config", [0], "Development mode check"),
+    "UseDeveloperExceptionPage": _sink("info_disclosure", [0], "Developer exception page (CWE-209)"),
+    "DeveloperExceptionPageMiddleware": _sink("info_disclosure", [0], "Dev exception middleware (CWE-209)"),
+
+    # Verbose errors
+    "Exception.ToString": _sink("info_disclosure", [0], "Exception to string (CWE-209)"),
+    "Exception.StackTrace": _sink("info_disclosure", [0], "Stack trace (CWE-209)"),
+    "Exception.Message": _sink("info_disclosure", [0], "Exception message (CWE-209)"),
+
+    # Hardcoded credentials
+    "password": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "apiKey": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "secretKey": _sink("hardcoded_cred", [0], "Potential hardcoded secret (CWE-798)"),
+    "connectionString": _sink("hardcoded_cred", [0], "Potential hardcoded connection string (CWE-798)"),
+
+    # SSL/TLS
+    "ServerCertificateValidationCallback": _sink("ssl", [0], "Custom cert validation (CWE-295)"),
+    "ServicePointManager.ServerCertificateValidationCallback": _sink("ssl", [0], "SSL callback (CWE-295)"),
+    "SslProtocols.Ssl3": _sink("weak_crypto", [0], "SSLv3 (CWE-327)"),
+    "SslProtocols.Tls": _sink("weak_crypto", [0], "TLSv1.0 (CWE-327)"),
+    "SslProtocols.Tls11": _sink("weak_crypto", [0], "TLSv1.1 (CWE-327)"),
+}
+
+# =============================================================================
+# A04: Cryptographic Failures Enhanced (OWASP 2025)
+# =============================================================================
+
+CRYPTO_ENHANCED_SPECS = {
+    # Weak algorithms (more specific)
+    "MD5CryptoServiceProvider": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "SHA1CryptoServiceProvider": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+    "SHA1Managed": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+    "DESCryptoServiceProvider": _sink("weak_crypto", [0], "DES encryption (CWE-327)"),
+    "TripleDESCryptoServiceProvider": _sink("weak_crypto", [0], "3DES encryption (CWE-327)"),
+    "RC2CryptoServiceProvider": _sink("weak_crypto", [0], "RC2 encryption (CWE-327)"),
+
+    # ECB mode
+    "CipherMode.ECB": _sink("weak_crypto", [0], "ECB mode (CWE-327)"),
+
+    # Weak key sizes
+    "KeySize = 1024": _sink("weak_crypto", [0], "Weak key size 1024 (CWE-326)"),
+    "KeySize = 512": _sink("weak_crypto", [0], "Weak key size 512 (CWE-326)"),
+
+    # Secure alternatives
+    "RNGCryptoServiceProvider": _sanitizer(["random"], "Secure random"),
+    "RandomNumberGenerator": _sanitizer(["random"], "Secure random generator"),
+    "SHA256": _propagator([0], "SHA256 hash"),
+    "SHA512": _propagator([0], "SHA512 hash"),
+    "Aes": _propagator([0], "AES encryption"),
+}
+
+# =============================================================================
+# A07: Identification and Authentication Failures (OWASP 2025)
+# =============================================================================
+
+AUTH_ENHANCED_SPECS = {
+    # Password hashing
+    "PasswordHasher": _sanitizer(["password"], "ASP.NET password hasher"),
+    "HashPassword": _sanitizer(["password"], "Password hashing"),
+    "VerifyHashedPassword": _propagator([0, 1, 2], "Password verification"),
+    "Rfc2898DeriveBytes": _sanitizer(["password"], "PBKDF2 key derivation"),
+    "BCrypt.HashPassword": _sanitizer(["password"], "BCrypt hash"),
+    "Argon2": _sanitizer(["password"], "Argon2 hash"),
+
+    # Weak password hashing
+    "FormsAuthentication.HashPasswordForStoringInConfigFile": _sink("weak_password_hash", [0], "Weak hash for password (CWE-916)"),
+
+    # Session/Cookie security
+    "CookieOptions": _propagator([0], "Cookie options"),
+    "HttpOnly": _propagator([0], "HttpOnly flag"),
+    "Secure": _propagator([0], "Secure flag"),
+    "SameSite": _propagator([0], "SameSite flag"),
+    "SessionOptions": _propagator([0], "Session options"),
+
+    # Authentication
+    "SignInManager": _propagator([0], "Sign in manager"),
+    "UserManager": _propagator([0], "User manager"),
+    "IdentityResult": _propagator([0], "Identity result"),
+}
+
+# =============================================================================
+# A10: Mishandling of Exceptional Conditions (OWASP 2025 - NEW)
+# =============================================================================
+
+EXCEPTION_HANDLING_SPECS = {
+    # Empty catch blocks
+    "catch (Exception)": _sink("exception", [0], "Generic exception catch (CWE-396)"),
+    "catch (Exception ex)": _sink("exception", [0], "Generic exception catch (CWE-396)"),
+
+    # Exception swallowing patterns
+    "catch { }": _sink("exception", [0], "Empty catch block (CWE-390)"),
+
+    # Environment exit
+    "Environment.Exit": _sink("exception", [0], "Environment exit (CWE-705)"),
+    "Environment.FailFast": _sink("exception", [0], "Fail fast (CWE-705)"),
+
+    # Finally blocks
+    "finally": _propagator([0], "Finally block"),
+
+    # Dispose pattern
+    "IDisposable": _propagator([0], "Disposable pattern"),
+    "using": _propagator([0], "Using statement"),
+    "Dispose": _propagator([0], "Dispose method"),
+}
+
+# =============================================================================
+# Sensitive Data Exposure (A01/A09)
+# =============================================================================
+
+SENSITIVE_DATA_ENHANCED_SPECS = {
+    # Console output
+    "Console.WriteLine": _sink("sensitive_log", [0], "Console output (CWE-532)"),
+    "Console.Write": _sink("sensitive_log", [0], "Console output (CWE-532)"),
+    "Debug.WriteLine": _sink("sensitive_log", [0], "Debug output (CWE-532)"),
+    "Trace.WriteLine": _sink("sensitive_log", [0], "Trace output (CWE-532)"),
+
+    # Response data
+    "JsonResult": _propagator([0], "JSON result"),
+    "ContentResult": _propagator([0], "Content result"),
+    "ObjectResult": _propagator([0], "Object result"),
+}
+
+# =============================================================================
+# HTTP Header Security (A02/A05)
+# =============================================================================
+
+HEADER_SECURITY_SPECS = {
+    # Security headers
+    "X-Frame-Options": _propagator([0], "X-Frame-Options header"),
+    "X-Content-Type-Options": _propagator([0], "X-Content-Type-Options header"),
+    "Content-Security-Policy": _propagator([0], "CSP header"),
+    "Strict-Transport-Security": _propagator([0], "HSTS header"),
+
+    # Header injection
+    "Response.Headers.Add": _sink("header_injection", [1], "Add header (CWE-113)"),
+    "Response.Headers.Append": _sink("header_injection", [1], "Append header (CWE-113)"),
+    "HttpResponse.Headers": _sink("header_injection", [0], "Response headers (CWE-113)"),
+}
+
+# =============================================================================
+# SSRF Enhanced (A01)
+# =============================================================================
+
+SSRF_ENHANCED_SPECS = {
+    # Cloud metadata
+    "169.254.169.254": _sink("ssrf", [0], "Cloud metadata (SSRF)"),
+    "metadata.google.internal": _sink("ssrf", [0], "GCP metadata (SSRF)"),
+
+    # Internal addresses
+    "localhost": _sink("ssrf", [0], "Localhost (SSRF)"),
+    "127.0.0.1": _sink("ssrf", [0], "Loopback (SSRF)"),
+    "0.0.0.0": _sink("ssrf", [0], "All interfaces (SSRF)"),
+
+    # URI parsing
+    "Uri": _propagator([0], "URI construction"),
+    "new Uri": _propagator([0], "URI construction"),
+}
+
+# =============================================================================
+# Prototype/Object Pollution (.NET equivalent)
+# =============================================================================
+
+OBJECT_MANIPULATION_SPECS = {
+    # Reflection-based manipulation
+    "Type.GetType": _sink("code", [0], "Dynamic type loading (CWE-470)"),
+    "Activator.CreateInstance": _sink("code", [0], "Dynamic instantiation (CWE-470)"),
+    "Assembly.Load": _sink("code", [0], "Dynamic assembly loading (CWE-470)"),
+    "Assembly.LoadFrom": _sink("code", [0], "Assembly load from path (CWE-470)"),
+
+    # Expression trees
+    "Expression.Compile": _sink("code", [0], "Expression compilation"),
+    "DynamicInvoke": _sink("code", [0], "Dynamic invocation"),
+}
+
+# =============================================================================
 # Combined C# Specs
 # =============================================================================
 
@@ -390,3 +601,13 @@ CSHARP_SPECS.update(LOGGING_SPECS)
 CSHARP_SPECS.update(CRYPTO_SPECS)
 CSHARP_SPECS.update(STRING_SPECS)
 CSHARP_SPECS.update(SANITIZER_SPECS)
+# OWASP 2025 enhanced coverage
+CSHARP_SPECS.update(ACCESS_CONTROL_SPECS)
+CSHARP_SPECS.update(MISCONFIGURATION_SPECS)
+CSHARP_SPECS.update(CRYPTO_ENHANCED_SPECS)
+CSHARP_SPECS.update(AUTH_ENHANCED_SPECS)
+CSHARP_SPECS.update(EXCEPTION_HANDLING_SPECS)
+CSHARP_SPECS.update(SENSITIVE_DATA_ENHANCED_SPECS)
+CSHARP_SPECS.update(HEADER_SECURITY_SPECS)
+CSHARP_SPECS.update(SSRF_ENHANCED_SPECS)
+CSHARP_SPECS.update(OBJECT_MANIPULATION_SPECS)

@@ -111,18 +111,23 @@ def load_owasp_python_expected_results(cache_dir: str) -> Dict[str, Dict]:
     results = {}
     try:
         with open(expected_path, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # OWASP format: test name, category, CWE, vulnerable (true/false)
-                test_name = row.get('test name', row.get('# test name', '')).strip()
-                if not test_name:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
                     continue
 
-                results[test_name] = {
-                    'cwe': row.get('CWE', row.get('cwe', '')),
-                    'category': row.get('category', ''),
-                    'vulnerable': row.get('real vulnerability', row.get('vulnerable', '')).lower() == 'true',
-                }
+                parts = line.split(',')
+                if len(parts) >= 4:
+                    test_name = parts[0].strip()
+                    category = parts[1].strip()
+                    vulnerable = parts[2].strip().lower() == 'true'
+                    cwe = parts[3].strip()
+
+                    results[test_name] = {
+                        'cwe': cwe,
+                        'category': category,
+                        'vulnerable': vulnerable,
+                    }
     except Exception as e:
         print(f"ERROR loading expected results: {e}")
 

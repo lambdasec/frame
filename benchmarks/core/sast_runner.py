@@ -80,16 +80,16 @@ def run_frame_scanner(
     try:
         from frame.sil import FrameScanner
 
-        scanner = FrameScanner()
-        result = scanner.scan_file(filepath, verify=verify)
+        scanner = FrameScanner(language=language, verify=verify)
+        result = scanner.scan_file(filepath)
 
         detected = []
         for vuln in result.vulnerabilities:
             detected.append(DetectedVulnerability(
                 vuln_type=vuln.type,
                 cwe_id=vuln.cwe_id,
-                line_number=vuln.location.line if vuln.location else None,
-                function_name=vuln.function_name if hasattr(vuln, 'function_name') else None,
+                line_number=vuln.line if hasattr(vuln, 'line') else None,
+                function_name=vuln.procedure if hasattr(vuln, 'procedure') else None,
                 confidence=vuln.confidence if hasattr(vuln, 'confidence') else None,
                 description=vuln.description,
             ))

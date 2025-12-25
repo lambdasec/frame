@@ -358,6 +358,203 @@ SANITIZER_SPECS = {
 }
 
 # =============================================================================
+# A01: Broken Access Control (OWASP 2025)
+# =============================================================================
+
+ACCESS_CONTROL_SPECS = {
+    # Privilege operations
+    "setuid": _sink("privilege", [0], "setuid (privilege escalation CWE-269)"),
+    "setgid": _sink("privilege", [0], "setgid (privilege escalation CWE-269)"),
+    "seteuid": _sink("privilege", [0], "seteuid (privilege escalation CWE-269)"),
+    "setegid": _sink("privilege", [0], "setegid (privilege escalation CWE-269)"),
+    "setreuid": _sink("privilege", [0, 1], "setreuid (privilege escalation CWE-269)"),
+    "setregid": _sink("privilege", [0, 1], "setregid (privilege escalation CWE-269)"),
+
+    # File permissions
+    "umask": _sink("config", [0], "umask setting (CWE-732)"),
+    "fchmod": _sink("config", [0, 1], "fchmod (CWE-732)"),
+    "fchown": _sink("config", [0, 1, 2], "fchown (CWE-732)"),
+
+    # Chroot/jail
+    "chroot": _sink("privilege", [0], "chroot jail (check for breakout CWE-243)"),
+}
+
+# =============================================================================
+# A02: Security Misconfiguration (OWASP 2025)
+# =============================================================================
+
+MISCONFIGURATION_SPECS = {
+    # Debug/verbose mode
+    "NDEBUG": _propagator([0], "NDEBUG flag"),
+    "assert": _sink("assertion", [0], "assert (disabled in release CWE-617)"),
+
+    # Hardcoded credentials
+    "password": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "passwd": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "secret": _sink("hardcoded_cred", [0], "Potential hardcoded secret (CWE-798)"),
+    "api_key": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "private_key": _sink("hardcoded_cred", [0], "Potential hardcoded key (CWE-798)"),
+
+    # SSL/TLS issues
+    "SSL_CTX_set_verify": _sink("ssl", [0, 1], "SSL verification config (CWE-295)"),
+    "SSL_set_verify": _sink("ssl", [0, 1], "SSL verification config (CWE-295)"),
+    "SSL_CTX_set_options": _sink("ssl", [0, 1], "SSL options (CWE-327)"),
+    "OPENSSL_NO_SSL2": _propagator([0], "SSLv2 disabled"),
+    "OPENSSL_NO_SSL3": _propagator([0], "SSLv3 disabled"),
+}
+
+# =============================================================================
+# A04: Cryptographic Failures Enhanced (OWASP 2025)
+# =============================================================================
+
+CRYPTO_ENHANCED_SPECS = {
+    # OpenSSL deprecated functions
+    "EVP_des_ecb": _sink("weak_crypto", [0], "DES ECB (CWE-327)"),
+    "EVP_des_cbc": _sink("weak_crypto", [0], "DES CBC (CWE-327)"),
+    "EVP_rc4": _sink("weak_crypto", [0], "RC4 (CWE-327)"),
+    "EVP_rc2_cbc": _sink("weak_crypto", [0], "RC2 (CWE-327)"),
+    "EVP_bf_ecb": _sink("weak_crypto", [0], "Blowfish ECB (CWE-327)"),
+
+    # ECB mode
+    "EVP_aes_128_ecb": _sink("weak_crypto", [0], "AES-128 ECB (CWE-327)"),
+    "EVP_aes_256_ecb": _sink("weak_crypto", [0], "AES-256 ECB (CWE-327)"),
+
+    # Weak key derivation
+    "crypt": _sink("weak_crypto", [0], "crypt() weak hash (CWE-328)"),
+    "crypt_r": _sink("weak_crypto", [0], "crypt_r() weak hash (CWE-328)"),
+
+    # Secure alternatives
+    "RAND_bytes": _sanitizer(["random"], "Cryptographically secure random"),
+    "getrandom": _sanitizer(["random"], "Cryptographically secure random"),
+    "arc4random": _sanitizer(["random"], "Cryptographically secure random"),
+    "arc4random_buf": _sanitizer(["random"], "Cryptographically secure random"),
+
+    # Key sizes
+    "RSA_generate_key": _sink("weak_crypto", [0], "RSA key generation (check size CWE-326)"),
+    "DSA_generate_parameters": _sink("weak_crypto", [0], "DSA params (check size CWE-326)"),
+}
+
+# =============================================================================
+# A07: Identification and Authentication Failures (OWASP 2025)
+# =============================================================================
+
+AUTH_SPECS = {
+    # PAM authentication
+    "pam_authenticate": _sink("auth", [0], "PAM authentication"),
+    "pam_start": _sink("auth", [0], "PAM start"),
+    "pam_end": _propagator([0], "PAM end"),
+
+    # Password handling
+    "getpass": _source("user", "getpass() password input"),
+    "getpwnam": _propagator([0], "Get password entry by name"),
+    "getpwuid": _propagator([0], "Get password entry by UID"),
+    "getspnam": _propagator([0], "Get shadow password entry"),
+}
+
+# =============================================================================
+# A10: Mishandling of Exceptional Conditions (OWASP 2025 - NEW)
+# =============================================================================
+
+EXCEPTION_SPECS = {
+    # Signal handling
+    "signal": _sink("exception", [0, 1], "Signal handler (CWE-479)"),
+    "sigaction": _sink("exception", [0, 1], "Signal action (CWE-479)"),
+    "raise": _sink("exception", [0], "Raise signal"),
+
+    # Error handling
+    "perror": _sink("info_disclosure", [0], "perror (may leak info CWE-209)"),
+    "strerror": _propagator([0], "strerror (error message)"),
+    "errno": _propagator([0], "errno value"),
+
+    # Abort/exit
+    "abort": _sink("exception", [0], "abort (CWE-705)"),
+    "exit": _sink("exception", [0], "exit (CWE-705)"),
+    "_exit": _sink("exception", [0], "_exit"),
+    "quick_exit": _sink("exception", [0], "quick_exit"),
+
+    # Longjmp (dangerous)
+    "longjmp": _sink("exception", [0], "longjmp (CWE-843)"),
+    "siglongjmp": _sink("exception", [0], "siglongjmp (CWE-843)"),
+    "setjmp": _propagator([0], "setjmp"),
+}
+
+# =============================================================================
+# Integer Overflow/Underflow (A05 related)
+# =============================================================================
+
+INTEGER_SPECS = {
+    # Size calculations
+    "sizeof": _propagator([0], "sizeof"),
+    "malloc": _sink("integer_overflow", [0], "malloc size (check overflow CWE-190)"),
+    "calloc": _sink("integer_overflow", [0, 1], "calloc size (check overflow CWE-190)"),
+    "realloc": _sink("integer_overflow", [0, 1], "realloc size (check overflow CWE-190)"),
+
+    # Array indexing
+    "[]": _sink("buffer", [0], "Array access (check bounds CWE-129)"),
+
+    # Arithmetic operations (track)
+    "+": _propagator([0, 1], "Addition (potential overflow)"),
+    "*": _propagator([0, 1], "Multiplication (potential overflow)"),
+}
+
+# =============================================================================
+# Race Conditions (A01 related)
+# =============================================================================
+
+RACE_CONDITION_SPECS = {
+    # TOCTOU vulnerabilities
+    "access": _sink("race", [0], "access() TOCTOU (CWE-367)"),
+    "stat": _sink("race", [0], "stat() TOCTOU (CWE-367)"),
+    "lstat": _sink("race", [0], "lstat() TOCTOU (CWE-367)"),
+
+    # File creation
+    "mktemp": _sink("race", [0], "mktemp race condition (CWE-377)"),
+    "tempnam": _sink("race", [0], "tempnam race condition (CWE-377)"),
+    "tmpnam": _sink("race", [0], "tmpnam race condition (CWE-377)"),
+
+    # Safe alternatives
+    "mkstemp": _sanitizer(["race"], "mkstemp (safe temp file)"),
+    "mkostemp": _sanitizer(["race"], "mkostemp (safe temp file)"),
+    "mkdtemp": _sanitizer(["race"], "mkdtemp (safe temp dir)"),
+
+    # Locking
+    "flock": _propagator([0, 1], "flock file lock"),
+    "lockf": _propagator([0, 1], "lockf file lock"),
+    "fcntl": _propagator([0, 1, 2], "fcntl (F_SETLK)"),
+}
+
+# =============================================================================
+# Use After Free / Double Free (A10 related)
+# =============================================================================
+
+MEMORY_SAFETY_SPECS = {
+    # Free operations
+    "free": _sink("memory", [0], "free (check for UAF/double-free CWE-416/CWE-415)"),
+    "delete": _sink("memory", [0], "delete (check for UAF CWE-416)"),
+    "delete[]": _sink("memory", [0], "delete[] (check for UAF CWE-416)"),
+
+    # Uninitialized memory
+    "malloc": _sink("memory", [0], "malloc (returns uninitialized CWE-457)"),
+    "alloca": _sink("memory", [0], "alloca (stack allocation CWE-770)"),
+}
+
+# =============================================================================
+# Format String (A05 related)
+# =============================================================================
+
+FORMAT_STRING_ENHANCED_SPECS = {
+    # Format string sinks with user input
+    "printf": _sink("format_string", [0], "printf format string (CWE-134)"),
+    "fprintf": _sink("format_string", [1], "fprintf format string (CWE-134)"),
+    "sprintf": _sink("format_string", [1], "sprintf format string (CWE-134)"),
+    "snprintf": _sink("format_string", [2], "snprintf format string (CWE-134)"),
+    "syslog": _sink("format_string", [1], "syslog format string (CWE-134)"),
+    "err": _sink("format_string", [1], "err format string (CWE-134)"),
+    "warn": _sink("format_string", [0], "warn format string (CWE-134)"),
+    "setproctitle": _sink("format_string", [0], "setproctitle format string (CWE-134)"),
+}
+
+# =============================================================================
 # Combined C/C++ Specs
 # =============================================================================
 
@@ -373,6 +570,16 @@ C_SPECS.update(SQL_SPECS)
 C_SPECS.update(XML_SPECS)
 C_SPECS.update(CRYPTO_SPECS)
 C_SPECS.update(SANITIZER_SPECS)
+# OWASP 2025 enhanced coverage
+C_SPECS.update(ACCESS_CONTROL_SPECS)
+C_SPECS.update(MISCONFIGURATION_SPECS)
+C_SPECS.update(CRYPTO_ENHANCED_SPECS)
+C_SPECS.update(AUTH_SPECS)
+C_SPECS.update(EXCEPTION_SPECS)
+C_SPECS.update(INTEGER_SPECS)
+C_SPECS.update(RACE_CONDITION_SPECS)
+C_SPECS.update(MEMORY_SAFETY_SPECS)
+C_SPECS.update(FORMAT_STRING_ENHANCED_SPECS)
 
 # C++ includes all C specs plus C++ specific
 CPP_SPECS: Dict[str, ProcSpec] = {}

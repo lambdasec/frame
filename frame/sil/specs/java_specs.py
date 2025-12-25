@@ -405,6 +405,210 @@ STRING_SPECS = {
 }
 
 # =============================================================================
+# A01: Broken Access Control (OWASP 2025)
+# =============================================================================
+
+ACCESS_CONTROL_SPECS = {
+    # JWT handling
+    "Jwts.parser": _sink("auth", [0], "JWT parser - verify signature (CWE-347)"),
+    "JWT.decode": _sink("auth", [0], "JWT decode (CWE-347)"),
+    "JWTVerifier": _propagator([0], "JWT verifier"),
+
+    # Session handling
+    "HttpSession": _propagator([0], "HTTP session"),
+    "session.getAttribute": _source("user", "Session attribute"),
+    "session.setAttribute": _propagator([0, 1], "Session attribute set"),
+    "session.invalidate": _propagator([0], "Session invalidation"),
+
+    # Authorization
+    "@PreAuthorize": _propagator([0], "Spring PreAuthorize"),
+    "@Secured": _propagator([0], "Spring Secured"),
+    "@RolesAllowed": _propagator([0], "Roles allowed"),
+    "hasRole": _propagator([0], "Role check"),
+    "hasAuthority": _propagator([0], "Authority check"),
+    "isAuthenticated": _propagator([0], "Authentication check"),
+
+    # CORS
+    "@CrossOrigin": _sink("cors", [0], "CORS annotation (CWE-942)"),
+    "CorsConfiguration": _sink("cors", [0], "CORS configuration (CWE-942)"),
+    "addAllowedOrigin": _sink("cors", [0], "CORS allowed origin (CWE-942)"),
+}
+
+# =============================================================================
+# A02: Security Misconfiguration (OWASP 2025)
+# =============================================================================
+
+MISCONFIGURATION_SPECS = {
+    # Debug/verbose mode
+    "printStackTrace": _sink("info_disclosure", [0], "Stack trace print (CWE-209)"),
+    "e.getMessage": _sink("info_disclosure", [0], "Exception message (CWE-209)"),
+    "getStackTrace": _sink("info_disclosure", [0], "Get stack trace (CWE-209)"),
+
+    # SSL/TLS verification disabled
+    "TrustAllCerts": _sink("ssl", [0], "Trust all certificates (CWE-295)"),
+    "ALLOW_ALL_HOSTNAME_VERIFIER": _sink("ssl", [0], "Allow all hostnames (CWE-295)"),
+    "setHostnameVerifier": _sink("ssl", [0], "Custom hostname verifier (CWE-295)"),
+    "X509TrustManager": _sink("ssl", [0], "Custom trust manager (CWE-295)"),
+
+    # Hardcoded secrets
+    "password": _sink("hardcoded_cred", [0], "Potential hardcoded password (CWE-798)"),
+    "apiKey": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
+    "secretKey": _sink("hardcoded_cred", [0], "Potential hardcoded secret (CWE-798)"),
+    "privateKey": _sink("hardcoded_cred", [0], "Potential hardcoded private key (CWE-798)"),
+
+    # Binding to all interfaces
+    "0.0.0.0": _sink("config", [0], "Binding to all interfaces (CWE-668)"),
+}
+
+# =============================================================================
+# A04: Cryptographic Failures (OWASP 2025)
+# =============================================================================
+
+CRYPTO_SPECS = {
+    # Weak hash functions
+    "MessageDigest.getInstance(\"MD5\")": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "MessageDigest.getInstance(\"SHA-1\")": _sink("weak_hash", [0], "SHA-1 hash (CWE-328)"),
+    "DigestUtils.md5": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
+    "DigestUtils.sha1": _sink("weak_hash", [0], "SHA-1 hash (CWE-328)"),
+
+    # Weak encryption
+    "Cipher.getInstance(\"DES\")": _sink("weak_crypto", [0], "DES encryption (CWE-327)"),
+    "Cipher.getInstance(\"DESede\")": _sink("weak_crypto", [0], "3DES encryption (CWE-327)"),
+    "Cipher.getInstance(\"RC4\")": _sink("weak_crypto", [0], "RC4 encryption (CWE-327)"),
+    "Cipher.getInstance(\"AES/ECB": _sink("weak_crypto", [0], "AES ECB mode (CWE-327)"),
+    "/ECB/": _sink("weak_crypto", [0], "ECB mode (CWE-327)"),
+    "NoPadding": _sink("weak_crypto", [0], "No padding (CWE-327)"),
+
+    # Insecure random
+    "java.util.Random": _sink("insecure_random", [0], "Insecure random (CWE-330)"),
+    "Math.random": _sink("insecure_random", [0], "Math.random (CWE-330)"),
+
+    # Secure random
+    "SecureRandom": _sanitizer(["random"], "Secure random"),
+
+    # Weak key sizes
+    "keysize=1024": _sink("weak_crypto", [0], "Weak key size 1024 (CWE-326)"),
+    "keysize=512": _sink("weak_crypto", [0], "Weak key size 512 (CWE-326)"),
+
+    # Insecure TLS versions
+    "SSLv2": _sink("weak_crypto", [0], "SSLv2 (CWE-327)"),
+    "SSLv3": _sink("weak_crypto", [0], "SSLv3 (CWE-327)"),
+    "TLSv1\"": _sink("weak_crypto", [0], "TLSv1.0 (CWE-327)"),
+    "TLSv1.1": _sink("weak_crypto", [0], "TLSv1.1 (CWE-327)"),
+}
+
+# =============================================================================
+# A07: Identification and Authentication Failures (OWASP 2025)
+# =============================================================================
+
+AUTH_SPECS = {
+    # Password hashing
+    "BCrypt.hashpw": _sanitizer(["password"], "BCrypt password hashing"),
+    "BCrypt.checkpw": _propagator([0, 1], "BCrypt password check"),
+    "Argon2PasswordEncoder": _sanitizer(["password"], "Argon2 password hashing"),
+    "SCryptPasswordEncoder": _sanitizer(["password"], "SCrypt password hashing"),
+    "PBKDF2": _sanitizer(["password"], "PBKDF2 password hashing"),
+
+    # Weak password hashing
+    "MD5PasswordEncoder": _sink("weak_password_hash", [0], "MD5 for passwords (CWE-916)"),
+    "ShaPasswordEncoder": _sink("weak_password_hash", [0], "SHA for passwords (CWE-916)"),
+
+    # Session management
+    "setMaxInactiveInterval": _propagator([0], "Session timeout"),
+    "JSESSIONID": _propagator([0], "Session ID"),
+    "setHttpOnly": _propagator([0], "HttpOnly cookie flag"),
+    "setSecure": _propagator([0], "Secure cookie flag"),
+
+    # Authentication
+    "UsernamePasswordAuthenticationToken": _propagator([0, 1], "Auth token"),
+    "AuthenticationManager": _propagator([0], "Authentication manager"),
+}
+
+# =============================================================================
+# A10: Mishandling of Exceptional Conditions (OWASP 2025 - NEW)
+# =============================================================================
+
+EXCEPTION_SPECS = {
+    # Empty catch blocks (detected by pattern)
+    "catch (Exception e)": _sink("exception", [0], "Generic exception catch (CWE-396)"),
+    "catch (Throwable t)": _sink("exception", [0], "Throwable catch (CWE-396)"),
+
+    # Exception suppression
+    "e.printStackTrace()": _sink("exception", [0], "printStackTrace only (CWE-390)"),
+
+    # Resource management
+    "finally": _propagator([0], "Finally block (check resource cleanup)"),
+    "try-with-resources": _propagator([0], "Try-with-resources"),
+
+    # System exit
+    "System.exit": _sink("exception", [0], "System exit (CWE-705)"),
+    "Runtime.halt": _sink("exception", [0], "Runtime halt (CWE-705)"),
+
+    # Null pointer risks
+    "NullPointerException": _propagator([0], "NPE handling"),
+}
+
+# =============================================================================
+# Sensitive Data Exposure (A01/A09)
+# =============================================================================
+
+SENSITIVE_DATA_SPECS = {
+    # Logging sensitive data
+    "System.out.println": _sink("sensitive_log", [0], "Console output (CWE-532)"),
+    "System.err.println": _sink("sensitive_log", [0], "Error output (CWE-532)"),
+
+    # Response body
+    "PrintWriter.write": _propagator([0], "Response write"),
+    "getWriter().write": _propagator([0], "Response write"),
+    "OutputStream.write": _propagator([0], "Output stream write"),
+}
+
+# =============================================================================
+# HTTP Header Security (A02/A05)
+# =============================================================================
+
+HEADER_SPECS = {
+    # Security headers
+    "X-Frame-Options": _propagator([0], "X-Frame-Options header"),
+    "X-Content-Type-Options": _propagator([0], "X-Content-Type-Options header"),
+    "Content-Security-Policy": _propagator([0], "CSP header"),
+    "Strict-Transport-Security": _propagator([0], "HSTS header"),
+
+    # Header injection
+    "setHeader": _sink("header_injection", [1], "Set header (CWE-113)"),
+    "addHeader": _sink("header_injection", [1], "Add header (CWE-113)"),
+    "response.setHeader": _sink("header_injection", [1], "Response header (CWE-113)"),
+}
+
+# =============================================================================
+# SSRF Enhanced (A01)
+# =============================================================================
+
+SSRF_ENHANCED_SPECS = {
+    # Cloud metadata
+    "169.254.169.254": _sink("ssrf", [0], "Cloud metadata (SSRF)"),
+    "metadata.google.internal": _sink("ssrf", [0], "GCP metadata (SSRF)"),
+
+    # Internal addresses
+    "localhost": _sink("ssrf", [0], "Localhost (SSRF)"),
+    "127.0.0.1": _sink("ssrf", [0], "Loopback (SSRF)"),
+    "0.0.0.0": _sink("ssrf", [0], "All interfaces (SSRF)"),
+}
+
+# =============================================================================
+# Regex DoS (A05)
+# =============================================================================
+
+REDOS_SPECS = {
+    # Regex with user input
+    "Pattern.compile": _sink("redos", [0], "Pattern compile (potential ReDoS CWE-1333)"),
+    "Pattern.matches": _sink("redos", [0], "Pattern matches (potential ReDoS)"),
+    ".matches": _sink("redos", [0], "String matches (potential ReDoS)"),
+    ".replaceAll": _sink("redos", [0], "String replaceAll (potential ReDoS)"),
+    ".split": _sink("redos", [0], "String split (potential ReDoS)"),
+}
+
+# =============================================================================
 # Combined Java Specs
 # =============================================================================
 
@@ -425,3 +629,13 @@ JAVA_SPECS.update(LOGGING_SPECS)
 JAVA_SPECS.update(REFLECTION_SPECS)
 JAVA_SPECS.update(SANITIZER_SPECS)
 JAVA_SPECS.update(STRING_SPECS)
+# OWASP 2025 enhanced coverage
+JAVA_SPECS.update(ACCESS_CONTROL_SPECS)
+JAVA_SPECS.update(MISCONFIGURATION_SPECS)
+JAVA_SPECS.update(CRYPTO_SPECS)
+JAVA_SPECS.update(AUTH_SPECS)
+JAVA_SPECS.update(EXCEPTION_SPECS)
+JAVA_SPECS.update(SENSITIVE_DATA_SPECS)
+JAVA_SPECS.update(HEADER_SPECS)
+JAVA_SPECS.update(SSRF_ENHANCED_SPECS)
+JAVA_SPECS.update(REDOS_SPECS)
