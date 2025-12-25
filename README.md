@@ -1,10 +1,27 @@
 # Frame
 
-**Separation Logic Verification Tool with Security Scanning**
-
-Frame is a fast, practical separation logic solver that combines heap reasoning, taint analysis, and automated vulnerability detection. It provides both a powerful Python API and a command-line interface for security scanning.
+**A Static Analysis Tool for Memory Safety and Security**
 
 [![Tests](https://img.shields.io/badge/tests-1330%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![Benchmarks](https://img.shields.io/badge/benchmarks-96.0%25%20(4742)-blue)](benchmarks/)
+
+## What is Frame?
+
+Frame helps you find bugs before they become vulnerabilities. It uses **separation logic**—a mathematical framework for reasoning about memory—to detect issues like:
+
+- **Memory errors**: Use-after-free, buffer overflows, null pointer dereferences
+- **Security vulnerabilities**: SQL injection, XSS, command injection, path traversal
+- **Data flow problems**: Tainted user input reaching sensitive operations
+
+**How it works**: Frame analyzes your code without running it. It builds a model of how your program uses memory and data, then mathematically proves whether dangerous conditions can occur.
+
+```bash
+# Scan a file for vulnerabilities
+$ frame scan app.py
+
+# Check a memory safety property
+$ frame solve "x |-> 5 * y |-> 3 |- x |-> 5"
+✓ VALID
+```
 
 ## Table of Contents
 
@@ -17,19 +34,26 @@ Frame is a fast, practical separation logic solver that combines heap reasoning,
 - [Supported Theories](#supported-theories)
 - [Benchmarks](#benchmarks)
 - [Architecture](#architecture)
+- [Getting Help](#getting-help)
 - [References](#references)
 
 ---
 
 ## Features
 
+### Two Ways to Use Frame
+
+| Use Case | Command | What It Does |
+|----------|---------|--------------|
+| **Security scanning** | `frame scan app.py` | Find vulnerabilities in your code |
+| **Logic verification** | `frame solve "P \|- Q"` | Prove memory safety properties |
+
 ### Core Capabilities
 
-- **Separation Logic Solver**: Entailment checking with inductive predicates (lists, trees, DLLs)
-- **Security Scanner**: Automated vulnerability detection with taint analysis
-- **Multi-Theory Support**: Heap, strings, arrays, and bitvectors in a unified framework
-- **Command-Line Interface**: `frame scan`, `frame solve`, `frame check`, `frame parse`
-- **High Performance**: <1ms reflexivity checks, 10-50x faster than Z3/CVC5 on string constraints
+- **Security Scanner**: Finds SQL injection, XSS, command injection, and 30+ vulnerability types using taint analysis
+- **Separation Logic Solver**: Proves properties about heap memory, pointers, and data structures (lists, trees, etc.)
+- **Multi-Theory Support**: Reasons about heap, strings, arrays, and bitvectors in one framework
+- **Fast**: Sub-millisecond for simple checks, 10-50x faster than Z3/CVC5 on string constraints
 
 ### Vulnerability Detection
 
@@ -51,50 +75,59 @@ Frame is a fast, practical separation logic solver that combines heap reasoning,
 
 ## Installation
 
-### Basic Installation
-
 ```bash
 git clone https://github.com/lambdasec/frame.git
 cd frame
-pip install -e .
 ```
 
-### With Security Scanner (Recommended)
+**Choose your installation:**
 
-```bash
-pip install -e ".[scan]"
-```
-
-### Full Development Setup
-
-```bash
-pip install -e ".[all]"
-```
+| Installation | Command | Use When |
+|--------------|---------|----------|
+| **Recommended** | `pip install -e ".[scan]"` | You want to scan code for vulnerabilities |
+| Basic | `pip install -e .` | You only need the logic solver |
+| Full | `pip install -e ".[all]"` | You're developing or running benchmarks |
 
 ### Requirements
 
-- Python 3.10+
+- **Python 3.10+**
 - Z3 SMT Solver (installed automatically)
-- tree-sitter (for security scanning)
+- tree-sitter (installed with `[scan]` option)
 
 ---
 
 ## Quick Start
 
-### Command Line
+### Security Scanning (Most Common Use)
 
 ```bash
 # Scan a Python file for vulnerabilities
 frame scan app.py
 
-# Check a separation logic entailment
+# Scan a directory
+frame scan src/ --pattern "**/*.py"
+
+# Get machine-readable output for CI/CD
+frame scan app.py --format sarif -o results.sarif
+```
+
+### Logic Verification
+
+```bash
+# Check if an entailment is valid
+# Read as: "x points to 5 AND y points to 3 (separately) IMPLIES x points to 5"
 frame solve "x |-> 5 * y |-> 3 |- x |-> 5"
+# Output: ✓ VALID
 
-# Parse and display a formula
-frame parse "x |-> 5 * y |-> 3"
+# The "|-> " means "points to", "*" means "separate memory regions", "|-" means "implies"
+```
 
-# Interactive REPL
-frame repl
+### Other Commands
+
+```bash
+frame parse "x |-> 5 * y |-> 3"   # Show formula structure
+frame check formulas.txt          # Batch check multiple formulas
+frame repl                        # Interactive mode
 ```
 
 ### Python API
@@ -103,8 +136,11 @@ frame repl
 from frame import EntailmentChecker
 
 checker = EntailmentChecker()
+
+# Check: does "x points to 5, y points to 3" imply "x points to 5"?
 result = checker.check_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
-print(result.valid)  # True
+print(result.valid)   # True
+print(result.reason)  # "Reflexivity" (trivially true)
 ```
 
 ---
@@ -290,12 +326,12 @@ frame> :quit
 
 ## Security Scanner
 
-Frame includes a powerful security scanner that uses separation logic for precise vulnerability detection.
+Frame's security scanner finds vulnerabilities by tracking how untrusted data (like user input) flows through your code. If tainted data reaches a dangerous operation (like a SQL query) without sanitization, Frame reports it.
 
-### Architecture
+### How It Works
 
 ```
-Source Code → Python Frontend → SIL (IR) → Taint Analysis → Frame Verification → Vulnerabilities
+Source Code → Parse → Build Control Flow → Track Taint → Verify with Logic → Report
 ```
 
 The scanner uses a **Separation Intermediate Language (SIL)** inspired by Facebook Infer, enabling:
@@ -397,19 +433,21 @@ Vulnerabilities Found: 1
 
 ## Python API
 
+Use Frame programmatically in your Python code.
+
 ### Entailment Checking
 
 ```python
 from frame import EntailmentChecker
 
-checker = EntailmentChecker(timeout=5000)
+checker = EntailmentChecker(timeout=5000)  # timeout in milliseconds
 
-# Check entailment
+# Check if entailment holds
 result = checker.check_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
 print(result.valid)   # True
-print(result.reason)  # Why it's valid/invalid
+print(result.reason)  # "Reflexivity" or explanation
 
-# With predicates
+# Works with predicates too
 result = checker.check_entailment("ls(x, nil) |- ls(x, nil)")
 ```
 
@@ -418,11 +456,11 @@ result = checker.check_entailment("ls(x, nil) |- ls(x, nil)")
 ```python
 from frame import parse, parse_entailment
 
-# Parse a formula
+# Parse a single formula (returns AST)
 formula = parse("x |-> 5 * y |-> 3")
 
-# Parse an entailment (returns antecedent, consequent)
-ant, cons = parse_entailment("x |-> 5 |- x |-> 5")
+# Parse an entailment (returns two ASTs: left and right of |-)
+antecedent, consequent = parse_entailment("x |-> 5 |- x |-> 5")
 ```
 
 ### Security Scanning
@@ -441,10 +479,14 @@ for vuln in result.vulnerabilities:
 
 ### Custom Predicates
 
+Define your own data structure predicates:
+
 ```python
 from frame import PredicateRegistry, EntailmentChecker
 
 registry = PredicateRegistry()
+
+# Define a binary search tree predicate
 registry.register_from_smt2("bst", """
 (bst ?x ?lo ?hi) := ((= ?x nil) * emp) |
   (exists ?v ?l ?r. (?x |-> (?v, ?l, ?r)) * (?lo < ?v) * (?v < ?hi) *
@@ -461,42 +503,70 @@ result = checker.check_entailment(
 
 ## Supported Theories
 
+Frame can reason about different types of program data. Most users only need separation logic (for the security scanner).
+
 ### Separation Logic (Core)
 
-| Feature | Syntax | Description |
-|---------|--------|-------------|
-| Points-to | `x \|-> v` | Location x points to value v |
-| Empty heap | `emp` | Empty heap |
-| Separating conjunction | `P * Q` | P and Q on disjoint heaps |
-| Magic wand | `P -* Q` | If given P, produces Q |
-| List segment | `ls(x, y)` | List from x to y |
-| Linked list | `list(x)` | Null-terminated list |
-| Tree | `tree(x)` | Binary tree |
-| DLL | `dll(x, p, y, n)` | Doubly-linked list |
+Separation logic describes heap memory—how pointers connect data structures.
+
+**Basic Operators:**
+
+| Syntax | Name | Meaning | Example |
+|--------|------|---------|---------|
+| `x \|-> v` | Points-to | Location x holds value v | `x \|-> 5` means x points to 5 |
+| `emp` | Empty | No heap memory used | Used as base case |
+| `P * Q` | Separating conjunction | P and Q use *disjoint* memory | `x \|-> 1 * y \|-> 2` (x ≠ y) |
+| `P -* Q` | Magic wand | "If given P, produces Q" | Advanced; for frame inference |
+| `P \|- Q` | Entailment | "P implies Q" | What we're proving |
+
+**Built-in Predicates:**
+
+| Predicate | Meaning | Example |
+|-----------|---------|---------|
+| `ls(x, y)` | Linked list segment from x to y | `ls(head, nil)` is a complete list |
+| `list(x)` | Null-terminated linked list | `list(head)` |
+| `tree(x)` | Binary tree rooted at x | `tree(root)` |
+| `dll(x, p, y, n)` | Doubly-linked list | Four-argument predicate |
+
+**Example entailments:**
+
+```bash
+# "x points to y, and y is a list" implies "x is a list"
+frame solve "x |-> y * list(y) |- list(x)"
+
+# Two list segments joined together form one segment
+frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"
+```
 
 ### String Theory (QF_S)
+
+For reasoning about string operations (useful for injection vulnerability detection).
 
 ```python
 formula = parse('x = "hello" & y = (str.++ x " world")')
 ```
 
-Supported operations: concatenation, contains, indexof, replace, substring, regex matching.
+Supported: concatenation, contains, indexOf, replace, substring, regex matching.
 
 ### Array Theory (QF_AX)
+
+For reasoning about array access and buffer operations.
 
 ```python
 from frame.core.ast import ArraySelect, ArrayStore, Var, Const
 
-arr = ArrayStore(Var("arr"), Const(5), Const(42))
-val = ArraySelect(arr, Const(5))
+arr = ArrayStore(Var("arr"), Const(5), Const(42))  # arr[5] = 42
+val = ArraySelect(arr, Const(5))                    # read arr[5]
 ```
 
 ### Bitvector Theory (QF_BV)
 
+For reasoning about fixed-width integers and overflow.
+
 ```python
 from frame.core.ast import BitVecExpr, BitVecVal
 
-# 8-bit overflow: 255 + 1 = 0
+# 8-bit overflow: 255 + 1 = 0 (wraps around)
 overflow = BitVecExpr("bvadd", [BitVecVal(255, 8), BitVecVal(1, 8)], 8)
 ```
 
@@ -504,7 +574,7 @@ overflow = BitVecExpr("bvadd", [BitVecVal(255, 8), BitVecVal(1, 8)], 8)
 
 ## Benchmarks
 
-Frame is validated against industry-standard benchmark suites with ~20,000+ tests across 4 SMT theories.
+Frame is validated against industry-standard benchmark suites. "Accuracy" measures how often Frame produces the correct answer (valid/invalid) compared to the expected result.
 
 ### Curated Results (4,742 tests, ~15-20 min)
 
@@ -553,47 +623,63 @@ See [benchmarks/README.md](benchmarks/README.md) for detailed methodology.
 
 ## Architecture
 
+### How Frame Works
+
+**Security Scanner Pipeline:**
+```
+Source Code → Parse (tree-sitter) → Build CFG → Taint Analysis → Verify with Frame → Report
+```
+
+**Entailment Checker Pipeline:**
+```
+Formula String → Parse → Fold predicates → Unfold definitions → Encode to Z3 → Solve
+```
+
+The key insight: Frame converts separation logic formulas into SMT queries that Z3 can solve. This lets us leverage Z3's power while keeping the intuitive separation logic interface.
+
+### Code Organization
+
 ```
 frame/
-├── core/           # AST, parser
-├── encoding/       # Z3 SMT encoding
-├── checking/       # Entailment checking
+├── core/           # Formula parsing and AST
+├── encoding/       # Convert formulas to Z3 constraints
+├── checking/       # Main entailment checker
 ├── folding/        # Predicate folding/unfolding
-├── predicates/     # Inductive predicates (lists, trees, DLLs)
-├── lemmas/         # Lemma library
+├── predicates/     # Built-in predicates (lists, trees, etc.)
+├── lemmas/         # Proven facts for fast-path checks
 ├── sil/            # Security scanner
-│   ├── types.py        # SIL type definitions
-│   ├── instructions.py # SIL instructions
-│   ├── procedure.py    # CFG representation
-│   ├── translator.py   # SIL to Frame translation
-│   ├── scanner.py      # Main scanner interface
-│   └── frontends/      # Language frontends
-│       └── python_frontend.py
+│   ├── scanner.py      # Main interface
+│   ├── translator.py   # SIL to Frame
+│   └── frontends/      # Language parsers
 └── cli.py          # Command-line interface
 ```
 
-**Algorithm**: Parse → Fold → Unfold → Encode → Z3 Solve
+See [CLAUDE.md](CLAUDE.md) for the full development guide.
 
-See [CLAUDE.md](CLAUDE.md) for detailed development guide.
+---
+
+## Getting Help
+
+- **Command help**: `frame --help` or `frame <command> --help`
+- **Interactive mode**: `frame repl` then type `:help`
+- **Issues & bugs**: [GitHub Issues](https://github.com/lambdasec/frame/issues)
+- **Development guide**: See [CLAUDE.md](CLAUDE.md)
 
 ---
 
 ## References
 
-### Separation Logic
+### Academic Papers
 
-- Reynolds, O'Hearn (2002). [Separation Logic: A Logic for Shared Mutable Data Structures](https://doi.org/10.1109/LICS.2002.1029817)
-- Piskac, Wies, Zufferey (2013). [Automating Separation Logic with Trees and Data](https://dl.acm.org/doi/10.1007/978-3-319-08867-9_47)
-
-### Incorrectness Logic
-
-- O'Hearn (2020). [Incorrectness Logic](https://doi.org/10.1145/3371078)
+- Reynolds, O'Hearn (2002). [Separation Logic: A Logic for Shared Mutable Data Structures](https://doi.org/10.1109/LICS.2002.1029817) — The foundational paper
+- Piskac, Wies, Zufferey (2013). [Automating Separation Logic with Trees and Data](https://dl.acm.org/doi/10.1007/978-3-319-08867-9_47) — SMT encoding approach
+- O'Hearn (2020). [Incorrectness Logic](https://doi.org/10.1145/3371078) — Bug-finding logic
 
 ### Related Tools
 
-- [Infer](https://fbinfer.com/) - Facebook's static analyzer (inspiration for SIL)
-- [Sleek/HIP](https://github.com/sleek-hoare) - NUS separation logic prover
-- [Cyclist](https://www.cyclist.cs.ucl.ac.uk/) - UCL cyclic proof system
+- [Infer](https://fbinfer.com/) — Facebook's static analyzer (inspiration for Frame's SIL)
+- [Sleek/HIP](https://github.com/sleek-hoare) — NUS separation logic prover
+- [Cyclist](https://www.cyclist.cs.ucl.ac.uk/) — UCL cyclic proof system
 
 ---
 
