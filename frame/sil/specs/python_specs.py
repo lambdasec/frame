@@ -409,17 +409,31 @@ URL_ENCODING_SPECS = {
 # =============================================================================
 
 CRYPTO_SPECS = {
-    # Weak cryptography sinks
+    # Weak cryptography sinks - hashlib
     "hashlib.md5": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
     "hashlib.sha1": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
+    "hashlib.new": _sink("weak_hash", [0], "hashlib.new - check algorithm (CWE-328)"),
     "Crypto.Hash.MD5.new": _sink("weak_hash", [0], "PyCrypto MD5"),
     "Crypto.Hash.SHA.new": _sink("weak_hash", [0], "PyCrypto SHA1"),
 
-    # Insecure random sinks
+    # Insecure random sinks - random module (not cryptographically secure)
     "random.random": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
     "random.randint": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
     "random.choice": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
     "random.randrange": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.uniform": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.triangular": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.gauss": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.normalvariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.lognormvariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.expovariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.betavariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.gammavariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.paretovariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.weibullvariate": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.sample": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.shuffle": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.getrandbits": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
 
     # Weak encryption modes
     "Crypto.Cipher.AES.new": _sink("weak_crypto", [0], "Check AES mode (CWE-327)"),
@@ -512,6 +526,156 @@ LDAP_SPECS = {
     "ldap.LDAPObject.search_s": _sink("ldap", [0, 2], "LDAP search (injection CWE-90)"),
     "ldap.LDAPObject.search": _sink("ldap", [0, 2], "LDAP search"),
     "ldap.filter.filter_format": _sanitizer(["ldap"], "LDAP filter escaping"),
+}
+
+# =============================================================================
+# XPath Injection (CWE-643)
+# =============================================================================
+
+XPATH_SPECS = {
+    # lxml XPath
+    "lxml.etree.XPath": _sink("xpath", [0], "XPath query (CWE-643)"),
+    "lxml.etree.ETXPath": _sink("xpath", [0], "XPath query (CWE-643)"),
+
+    # elementpath library
+    "elementpath.select": _sink("xpath", [1], "elementpath XPath select (CWE-643)"),
+    "elementpath.iter_select": _sink("xpath", [1], "elementpath XPath iter_select (CWE-643)"),
+    "elementpath.Selector": _sink("xpath", [0], "elementpath Selector (CWE-643)"),
+
+    # xml.etree XPath
+    "xml.etree.ElementTree.Element.find": _sink("xpath", [0], "ElementTree find (CWE-643)"),
+    "xml.etree.ElementTree.Element.findall": _sink("xpath", [0], "ElementTree findall (CWE-643)"),
+    "xml.etree.ElementTree.Element.iterfind": _sink("xpath", [0], "ElementTree iterfind (CWE-643)"),
+
+    # Direct xpath method calls
+    "xpath": _sink("xpath", [0], "XPath query (CWE-643)"),
+    "find": _sink("xpath", [0], "XML find (potential XPath CWE-643)"),
+    "findall": _sink("xpath", [0], "XML findall (potential XPath CWE-643)"),
+}
+
+# =============================================================================
+# Trust Boundary Violation (CWE-501)
+# =============================================================================
+
+TRUST_BOUNDARY_SPECS = {
+    # Session storage with untrusted data
+    "flask.session.__setitem__": _sink("trust_boundary", [1], "Session storage (CWE-501)"),
+    "session.__setitem__": _sink("trust_boundary", [1], "Session storage (CWE-501)"),
+
+    # Django session
+    "request.session.__setitem__": _sink("trust_boundary", [1], "Django session storage (CWE-501)"),
+
+    # Storing in application context
+    "g.__setattr__": _sink("trust_boundary", [1], "Flask g storage (CWE-501)"),
+}
+
+# =============================================================================
+# Insecure Cookie (CWE-614)
+# =============================================================================
+
+COOKIE_SPECS = {
+    # Flask/Werkzeug cookies
+    "response.set_cookie": _sink("insecure_cookie", [1], "Cookie setting (check secure flag CWE-614)"),
+    "Response.set_cookie": _sink("insecure_cookie", [1], "Cookie setting (CWE-614)"),
+    "make_response().set_cookie": _sink("insecure_cookie", [1], "Cookie setting (CWE-614)"),
+
+    # Django cookies
+    "HttpResponse.set_cookie": _sink("insecure_cookie", [1], "Django cookie (CWE-614)"),
+}
+
+# =============================================================================
+# Open Redirect (CWE-601)
+# =============================================================================
+
+REDIRECT_SPECS = {
+    # Flask redirects
+    "flask.redirect": _sink("redirect", [0], "Flask redirect (open redirect CWE-601)"),
+    "redirect": _sink("redirect", [0], "Redirect (open redirect CWE-601)"),
+
+    # Django redirects
+    "django.shortcuts.redirect": _sink("redirect", [0], "Django redirect (CWE-601)"),
+    "HttpResponseRedirect": _sink("redirect", [0], "Django HttpResponseRedirect (CWE-601)"),
+    "HttpResponsePermanentRedirect": _sink("redirect", [0], "Django permanent redirect (CWE-601)"),
+
+    # URL for with external URL
+    "url_for": _propagator([0], "URL generation"),
+}
+
+# =============================================================================
+# SQL Injection Enhanced (CWE-89)
+# =============================================================================
+
+SQL_ENHANCED_SPECS = {
+    # cursor.execute variations
+    "cursor.execute": _sink("sql", [0], "SQL execute (CWE-89)"),
+    "cur.execute": _sink("sql", [0], "SQL execute (CWE-89)"),
+    "conn.execute": _sink("sql", [0], "SQL execute (CWE-89)"),
+
+    # sqlite3
+    "sqlite3.Connection.execute": _sink("sql", [0], "SQLite execute (CWE-89)"),
+    "sqlite3.Cursor.execute": _sink("sql", [0], "SQLite cursor execute (CWE-89)"),
+    "sqlite3.Cursor.executemany": _sink("sql", [0], "SQLite executemany (CWE-89)"),
+    "sqlite3.Cursor.executescript": _sink("sql", [0], "SQLite executescript (CWE-89)"),
+
+    # psycopg2 (PostgreSQL)
+    "psycopg2.cursor.execute": _sink("sql", [0], "PostgreSQL execute (CWE-89)"),
+    "psycopg2.cursor.executemany": _sink("sql", [0], "PostgreSQL executemany (CWE-89)"),
+
+    # mysql-connector
+    "mysql.connector.cursor.execute": _sink("sql", [0], "MySQL execute (CWE-89)"),
+
+    # Parameterized query helpers (safe)
+    "cursor.mogrify": _propagator([0], "SQL mogrify (use params)"),
+}
+
+# =============================================================================
+# Command Injection Enhanced (CWE-78)
+# =============================================================================
+
+COMMAND_INJECTION_SPECS = {
+    # Shell=True is particularly dangerous
+    "subprocess.run": _sink("command", [0], "subprocess.run (CWE-78)"),
+    "subprocess.call": _sink("command", [0], "subprocess.call (CWE-78)"),
+    "subprocess.Popen": _sink("command", [0], "subprocess.Popen (CWE-78)"),
+    "subprocess.check_output": _sink("command", [0], "subprocess.check_output (CWE-78)"),
+    "subprocess.check_call": _sink("command", [0], "subprocess.check_call (CWE-78)"),
+
+    # os module commands
+    "os.system": _sink("command", [0], "os.system (CWE-78)"),
+    "os.popen": _sink("command", [0], "os.popen (CWE-78)"),
+
+    # commands module (Python 2)
+    "commands.getoutput": _sink("command", [0], "commands.getoutput (CWE-78)"),
+    "commands.getstatusoutput": _sink("command", [0], "commands.getstatusoutput (CWE-78)"),
+}
+
+# =============================================================================
+# XSS / Reflected Output (CWE-79)
+# =============================================================================
+
+XSS_SPECS = {
+    # Direct response output
+    "Response": _sink("xss", [0], "Response body (potential XSS CWE-79)"),
+
+    # Template rendering without escaping
+    "render_template_string": _sink("xss", [0], "Template string (XSS CWE-79)"),
+    "Markup": _sink("xss", [0], "Markup (XSS if not escaped CWE-79)"),
+
+    # Django
+    "mark_safe": _sink("xss", [0], "Django mark_safe (XSS CWE-79)"),
+    "SafeString": _sink("xss", [0], "Django SafeString (XSS CWE-79)"),
+
+    # Jinja2 without autoescape
+    "jinja2.Environment": _sink("xss", [0], "Jinja2 Environment (check autoescape CWE-79)"),
+
+    # Sanitizers
+    "escape": _sanitizer(["xss", "html"], "HTML escape"),
+    "html.escape": _sanitizer(["xss", "html"], "HTML escape"),
+    "markupsafe.escape": _sanitizer(["xss", "html"], "MarkupSafe escape"),
+    "bleach.clean": _sanitizer(["xss", "html"], "Bleach HTML cleaner"),
+    "cgi.escape": _sanitizer(["xss", "html"], "CGI escape (deprecated)"),
+    "helpers.utils.escape_for_html": _sanitizer(["xss", "html"], "Custom HTML escape"),
+    "escape_for_html": _sanitizer(["xss", "html"], "Custom HTML escape"),
 }
 
 # =============================================================================
@@ -764,6 +928,14 @@ PYTHON_SPECS.update(CRYPTO_ENHANCED_SPECS)
 PYTHON_SPECS.update(SENSITIVE_DATA_SPECS)
 PYTHON_SPECS.update(HEADER_SPECS)
 PYTHON_SPECS.update(SSRF_ENHANCED_SPECS)
+# Additional OWASP benchmark coverage
+PYTHON_SPECS.update(XPATH_SPECS)
+PYTHON_SPECS.update(TRUST_BOUNDARY_SPECS)
+PYTHON_SPECS.update(COOKIE_SPECS)
+PYTHON_SPECS.update(REDIRECT_SPECS)
+PYTHON_SPECS.update(SQL_ENHANCED_SPECS)
+PYTHON_SPECS.update(COMMAND_INJECTION_SPECS)
+PYTHON_SPECS.update(XSS_SPECS)
 
 
 def get_python_specs() -> Dict[str, ProcSpec]:
