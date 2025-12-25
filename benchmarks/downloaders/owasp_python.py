@@ -53,22 +53,22 @@ def download_owasp_python(cache_dir: str, max_files: Optional[int] = None) -> in
             temp_dir
         ], check=True, capture_output=True)
 
-        # Copy source files
-        repo_src = os.path.join(temp_dir, 'src', 'main', 'python')
+        # Copy source files - testcode directory contains BenchmarkTest*.py files
+        repo_src = os.path.join(temp_dir, 'testcode')
         if os.path.exists(repo_src):
             if os.path.exists(src_dir):
                 shutil.rmtree(src_dir)
             shutil.copytree(repo_src, src_dir)
 
         # Copy expected results CSV
-        repo_expected = os.path.join(temp_dir, 'expectedresults-1.0.csv')
+        repo_expected = os.path.join(temp_dir, 'expectedresults-0.1.csv')
         if os.path.exists(repo_expected):
             shutil.copy(repo_expected, expected_results_path)
         else:
-            # Try alternate location
+            # Try alternate locations
+            import glob
             for pattern in ['expectedresults*.csv', 'results/*.csv']:
-                import glob
-                matches = glob.glob(os.path.join(temp_dir, '**', pattern), recursive=True)
+                matches = glob.glob(os.path.join(temp_dir, pattern))
                 if matches:
                     shutil.copy(matches[0], expected_results_path)
                     break
