@@ -11,6 +11,37 @@ from benchmarks.downloaders.qf_s import (
 from benchmarks.downloaders.slcomp import download_slcomp_file, download_slcomp_division
 from benchmarks.downloaders.utils import download_gdrive_file, extract_archive
 
+# SAST benchmarks
+from benchmarks.downloaders.owasp_python import (
+    download_owasp_python,
+    create_owasp_python_curated_set,
+    load_owasp_python_expected_results,
+    get_owasp_python_test_files,
+)
+from benchmarks.downloaders.owasp_java import (
+    download_owasp_java,
+    create_owasp_java_curated_set,
+    load_owasp_java_expected_results,
+    get_owasp_java_test_files,
+)
+from benchmarks.downloaders.juliet import (
+    download_juliet,
+    create_juliet_curated_set,
+    get_juliet_test_files,
+    parse_juliet_testcase,
+)
+from benchmarks.downloaders.issueblot import (
+    download_issueblot,
+    create_issueblot_curated_set,
+    get_issueblot_test_files,
+)
+from benchmarks.downloaders.secbench_js import (
+    download_secbench_js,
+    create_secbench_curated_set,
+    get_secbench_test_files,
+    load_secbench_manifest,
+)
+
 __all__ = [
     # QF_AX
     'download_qf_ax_samples', 'download_qf_ax_full',
@@ -25,4 +56,18 @@ __all__ = [
     'download_slcomp_file', 'download_slcomp_division',
     # Utils
     'download_gdrive_file', 'extract_archive',
+    # SAST - OWASP Python
+    'download_owasp_python', 'create_owasp_python_curated_set',
+    'load_owasp_python_expected_results', 'get_owasp_python_test_files',
+    # SAST - OWASP Java
+    'download_owasp_java', 'create_owasp_java_curated_set',
+    'load_owasp_java_expected_results', 'get_owasp_java_test_files',
+    # SAST - Juliet C/C++
+    'download_juliet', 'create_juliet_curated_set',
+    'get_juliet_test_files', 'parse_juliet_testcase',
+    # SAST - IssueBlot.NET C#
+    'download_issueblot', 'create_issueblot_curated_set', 'get_issueblot_test_files',
+    # SAST - SecBench.js JavaScript
+    'download_secbench_js', 'create_secbench_curated_set',
+    'get_secbench_test_files', 'load_secbench_manifest',
 ]
