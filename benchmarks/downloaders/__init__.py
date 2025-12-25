@@ -34,6 +34,7 @@ from benchmarks.downloaders.issueblot import (
     download_issueblot,
     create_issueblot_curated_set,
     get_issueblot_test_files,
+    parse_issueblot_testcase,
 )
 from benchmarks.downloaders.secbench_js import (
     download_secbench_js,
@@ -67,6 +68,7 @@ __all__ = [
     'get_juliet_test_files', 'parse_juliet_testcase',
     # SAST - IssueBlot.NET C#
     'download_issueblot', 'create_issueblot_curated_set', 'get_issueblot_test_files',
+    'parse_issueblot_testcase',
     # SAST - SecBench.js JavaScript
     'download_secbench_js', 'create_secbench_curated_set',
     'get_secbench_test_files', 'load_secbench_manifest',

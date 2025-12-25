@@ -88,6 +88,16 @@ from frame.sil.translator import (
     VulnType,
 )
 
+# Scanner
+from frame.sil.scanner import (
+    FrameScanner,
+    ScanResult,
+    Vulnerability,
+    Severity,
+    scan_code,
+    scan_file,
+)
+
 __all__ = [
     # Types
     "Ident", "PVar", "Location", "Typ", "TypeKind",
@@ -101,4 +111,7 @@ __all__ = [
     "Node", "Procedure", "ProcSpec", "Program",
     # Translator
     "SILTranslator", "SymbolicState", "VulnerabilityCheck", "VulnType",
+    # Scanner
+    "FrameScanner", "ScanResult", "Vulnerability", "Severity",
+    "scan_code", "scan_file",
 ]
