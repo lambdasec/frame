@@ -1,40 +1,70 @@
-"""SecBench.js downloader for JavaScript/TypeScript security benchmarks"""
+"""JavaScript/TypeScript security benchmarks downloader.
+
+Includes multiple benchmark sources for comprehensive coverage:
+1. NodeGoat - OWASP's intentionally vulnerable Node.js app
+2. DVNA - Damn Vulnerable NodeJS Application (OWASP Top 10)
+3. Juice Shop - OWASP's modern insecure web app (TypeScript/Angular)
+4. OpenSSF CVE Benchmark - 200+ real JavaScript/TypeScript CVEs
+"""
 
 import os
 import json
 import shutil
 import subprocess
+import re
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 
 
-# NodeGoat: OWASP's intentionally vulnerable Node.js application
-# Best choice for SAST benchmarking - contains actual vulnerable source code
-# https://github.com/OWASP/NodeGoat
-NODEGOAT_REPO = "https://github.com/OWASP/NodeGoat.git"
-NODEGOAT_BRANCH = "master"
-
-# SecBench.js repository (ICSE 2023 paper) - for dynamic testing
-# Note: SecBench.js is designed for dynamic exploit testing, not static analysis
-# Paper: https://software-lab.org/publications/icse2023_SecBenchJS.pdf
-SECBENCH_REPO = "https://github.com/cristianstaicu/SecBench.js.git"
-SECBENCH_BRANCH = "main"
+# Benchmark repositories
+BENCHMARKS = {
+    'nodegoat': {
+        'name': 'NodeGoat',
+        'repo': 'https://github.com/OWASP/NodeGoat.git',
+        'branch': 'master',
+        'description': 'OWASP intentionally vulnerable Node.js application',
+        'languages': ['javascript'],
+    },
+    'dvna': {
+        'name': 'DVNA',
+        'repo': 'https://github.com/appsecco/dvna.git',
+        'branch': 'master',
+        'description': 'Damn Vulnerable NodeJS Application - OWASP Top 10',
+        'languages': ['javascript'],
+    },
+    'juice_shop': {
+        'name': 'Juice Shop',
+        'repo': 'https://github.com/juice-shop/juice-shop.git',
+        'branch': 'master',
+        'description': 'OWASP modern insecure web app (TypeScript/Angular)',
+        'languages': ['typescript', 'javascript'],
+    },
+    'openssf_cve': {
+        'name': 'OpenSSF CVE Benchmark',
+        'repo': 'https://github.com/ossf-cve-benchmark/ossf-cve-benchmark.git',
+        'branch': 'main',
+        'description': '200+ real JavaScript/TypeScript CVEs with ground truth',
+        'languages': ['javascript', 'typescript'],
+    },
+}
 
 
 def download_secbench_js(cache_dir: str, max_files: Optional[int] = None) -> int:
     """
-    Download JavaScript security benchmarks for SAST testing.
+    Download all JavaScript/TypeScript security benchmarks.
 
-    Primary: NodeGoat - OWASP's intentionally vulnerable Node.js application.
-    Contains real vulnerable source code ideal for static analysis testing.
-    Covers: SQL Injection, XSS, SSRF, Insecure Dependencies, etc.
+    Downloads from multiple sources:
+    - NodeGoat: OWASP vulnerable Node.js app
+    - DVNA: Damn Vulnerable NodeJS Application
+    - Juice Shop: TypeScript/Angular vulnerable app
+    - OpenSSF CVE Benchmark: 200+ real CVEs
 
     Args:
         cache_dir: Directory to store benchmarks
-        max_files: Maximum files to download (None for all)
+        max_files: Maximum files to download per source (None for all)
 
     Returns:
-        Number of test files downloaded
+        Total number of test files downloaded
     """
     secbench_dir = os.path.join(cache_dir, 'secbench_js')
     src_dir = os.path.join(secbench_dir, 'src')
@@ -42,74 +72,113 @@ def download_secbench_js(cache_dir: str, max_files: Optional[int] = None) -> int
     # Check if already downloaded
     if os.path.exists(src_dir):
         files = list(Path(src_dir).rglob('*.js')) + list(Path(src_dir).rglob('*.ts'))
-        if files:
+        if len(files) > 100:  # Require substantial download
             print(f"JS benchmarks already downloaded: {len(files)} files")
             return len(files)
 
-    print("Downloading JavaScript security benchmarks (NodeGoat)...")
+    print("Downloading JavaScript/TypeScript security benchmarks...")
     os.makedirs(secbench_dir, exist_ok=True)
+    os.makedirs(src_dir, exist_ok=True)
 
-    temp_dir = os.path.join(cache_dir, '_secbench_temp')
+    total_files = 0
+
+    for bench_id, bench_info in BENCHMARKS.items():
+        count = _download_single_benchmark(
+            cache_dir, bench_id, bench_info, src_dir, max_files
+        )
+        total_files += count
+        print(f"  {bench_info['name']}: {count} files")
+
+    # Create combined manifest
+    manifest = create_js_vulnerability_manifest(src_dir)
+    manifest_path = os.path.join(secbench_dir, 'manifest.json')
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"\nTotal JS/TS benchmarks: {total_files} files")
+    print(f"Files with detected vulnerabilities: {len(manifest.get('files', {}))}")
+
+    return total_files
+
+
+def _download_single_benchmark(
+    cache_dir: str,
+    bench_id: str,
+    bench_info: Dict,
+    src_dir: str,
+    max_files: Optional[int]
+) -> int:
+    """Download a single benchmark repository."""
+    temp_dir = os.path.join(cache_dir, f'_js_temp_{bench_id}')
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
 
-    success = False
     try:
+        print(f"  Downloading {bench_info['name']}...")
         subprocess.run([
             'git', 'clone',
             '--depth', '1',
-            '--branch', NODEGOAT_BRANCH,
-            NODEGOAT_REPO,
+            '--branch', bench_info['branch'],
+            bench_info['repo'],
             temp_dir
-        ], check=True, capture_output=True)
-        success = True
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: Failed to clone NodeGoat: {e}")
-        return 0
+        ], check=True, capture_output=True, timeout=120)
 
-    if not success:
-        return 0
+        # Create subdirectory for this benchmark
+        bench_src_dir = os.path.join(src_dir, bench_id)
+        os.makedirs(bench_src_dir, exist_ok=True)
 
-    try:
         # Copy JavaScript/TypeScript source files
-        if os.path.exists(src_dir):
-            shutil.rmtree(src_dir)
-        os.makedirs(src_dir)
-
+        file_count = 0
         for root, dirs, filenames in os.walk(temp_dir):
             # Skip non-source directories
-            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'dist', 'build', 'coverage']]
+            dirs[:] = [d for d in dirs if d not in [
+                '.git', 'node_modules', 'dist', 'build', 'coverage',
+                '.nyc_output', 'test', 'tests', '__tests__', 'spec'
+            ]]
 
             for filename in filenames:
                 if filename.endswith(('.js', '.ts', '.jsx', '.tsx')):
-                    # Skip test files and configs
-                    if '.test.' in filename or '.spec.' in filename or filename.endswith('.config.js'):
+                    # Skip test files, configs, and minified files
+                    if any(skip in filename.lower() for skip in [
+                        '.test.', '.spec.', '.config.', '.min.', 'd.ts'
+                    ]):
                         continue
 
                     src_path = os.path.join(root, filename)
                     rel_path = os.path.relpath(root, temp_dir)
-                    dest_dir = os.path.join(src_dir, rel_path)
+                    dest_dir = os.path.join(bench_src_dir, rel_path)
                     os.makedirs(dest_dir, exist_ok=True)
-                    shutil.copy(src_path, os.path.join(dest_dir, filename))
 
-        # Create manifest with known vulnerabilities
-        manifest = create_js_vulnerability_manifest(src_dir)
-        manifest_path = os.path.join(secbench_dir, 'manifest.json')
-        with open(manifest_path, 'w') as f:
-            json.dump(manifest, f, indent=2)
+                    try:
+                        shutil.copy(src_path, os.path.join(dest_dir, filename))
+                        file_count += 1
+
+                        if max_files and file_count >= max_files:
+                            break
+                    except Exception:
+                        pass
+
+                if max_files and file_count >= max_files:
+                    break
+            if max_files and file_count >= max_files:
+                break
 
         # Clean up
         shutil.rmtree(temp_dir)
+        return file_count
 
-        files = list(Path(src_dir).rglob('*.js')) + list(Path(src_dir).rglob('*.ts'))
-        if max_files:
-            files = files[:max_files]
-
-        print(f"Downloaded JS benchmarks: {len(files)} files")
-        return len(files)
-
+    except subprocess.CalledProcessError as e:
+        print(f"  WARNING: Failed to clone {bench_info['name']}: {e}")
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        return 0
+    except subprocess.TimeoutExpired:
+        print(f"  WARNING: Timeout cloning {bench_info['name']}")
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        return 0
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"  WARNING: Error with {bench_info['name']}: {e}")
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         return 0
@@ -121,8 +190,6 @@ def create_js_vulnerability_manifest(src_dir: str) -> Dict:
 
     Scans for common vulnerability patterns and creates ground truth.
     """
-    import re
-
     manifest = {
         'files': {},
         'vulnerability_types': [
@@ -135,7 +202,10 @@ def create_js_vulnerability_manifest(src_dir: str) -> Dict:
             'ssrf',
             'xxe',
             'insecure_deserialization',
-        ]
+            'open_redirect',
+            'hardcoded_secret',
+        ],
+        'sources': list(BENCHMARKS.keys()),
     }
 
     # Patterns that indicate vulnerabilities
@@ -144,33 +214,65 @@ def create_js_vulnerability_manifest(src_dir: str) -> Dict:
             r'\.query\s*\(\s*["\'].*\+',  # String concat in SQL
             r'\.query\s*\(\s*`.*\$\{',     # Template literal in SQL
             r'execute\s*\(\s*["\'].*\+',
+            r'sequelize\.query\s*\(',
         ],
         'xss': [
             r'\.html\s*\(\s*\w+',          # jQuery .html() with variable
-            r'innerHTML\s*=\s*\w+',
+            r'innerHTML\s*=\s*[^"\']+',
             r'document\.write\s*\(',
-            r'res\.send\s*\(\s*\w+',        # Express res.send without escape
+            r'res\.send\s*\(\s*[^"\'<]+\)',  # Express res.send without escape
+            r'dangerouslySetInnerHTML',
         ],
         'command_injection': [
             r'exec\s*\(\s*["\'].*\+',
             r'exec\s*\(\s*`.*\$\{',
-            r'spawn\s*\(\s*\w+',
-            r'execSync\s*\(',
+            r'spawn\s*\(\s*\w+[^)]*\)',
+            r'execSync\s*\([^"\']+\)',
+            r'child_process',
         ],
         'path_traversal': [
-            r'readFile\s*\(\s*\w+',
-            r'readFileSync\s*\(\s*\w+',
+            r'readFile\s*\(\s*[^"\']+\)',
+            r'readFileSync\s*\(\s*[^"\']+\)',
             r'path\.join\s*\([^)]*req\.',
+            r'fs\.\w+\s*\([^)]*req\.',
         ],
         'nosql_injection': [
             r'\.find\s*\(\s*\{[^}]*req\.',
             r'\.findOne\s*\(\s*\{[^}]*req\.',
             r'\$where.*req\.',
+            r'mongoose\.\w+\s*\([^)]*req\.',
         ],
         'prototype_pollution': [
             r'Object\.assign\s*\([^,]+,\s*\w+\)',
             r'\.\.\.req\.',
             r'merge\s*\([^,]+,\s*req\.',
+            r'extend\s*\([^,]+,\s*req\.',
+            r'\[.*\]\s*=.*req\.',
+        ],
+        'ssrf': [
+            r'axios\s*\(\s*[^"\']+\)',
+            r'fetch\s*\(\s*[^"\']+\)',
+            r'request\s*\(\s*[^"\']+\)',
+            r'http\.get\s*\(\s*[^"\']+\)',
+        ],
+        'open_redirect': [
+            r'res\.redirect\s*\(\s*req\.',
+            r'location\s*=\s*[^"\']+',
+            r'window\.location\.href\s*=',
+        ],
+        'hardcoded_secret': [
+            r'password\s*[=:]\s*["\'][^"\']+["\']',
+            r'secret\s*[=:]\s*["\'][^"\']+["\']',
+            r'apikey\s*[=:]\s*["\'][^"\']+["\']',
+            r'api_key\s*[=:]\s*["\'][^"\']+["\']',
+            r'AWS_SECRET',
+        ],
+        'insecure_deserialization': [
+            r'JSON\.parse\s*\(\s*req\.',
+            r'eval\s*\(',
+            r'Function\s*\(',
+            r'serialize\s*\(',
+            r'unserialize\s*\(',
         ],
     }
 
@@ -184,6 +286,8 @@ def create_js_vulnerability_manifest(src_dir: str) -> Dict:
         'ssrf': 'CWE-918',
         'xxe': 'CWE-611',
         'insecure_deserialization': 'CWE-502',
+        'open_redirect': 'CWE-601',
+        'hardcoded_secret': 'CWE-798',
     }
 
     for root, dirs, filenames in os.walk(src_dir):
@@ -199,20 +303,32 @@ def create_js_vulnerability_manifest(src_dir: str) -> Dict:
                     file_vulns = []
                     for vuln_type, patterns in vuln_patterns.items():
                         for pattern in patterns:
-                            matches = list(re.finditer(pattern, content))
-                            for match in matches:
-                                # Find line number
-                                line_num = content[:match.start()].count('\n') + 1
-                                file_vulns.append({
-                                    'type': vuln_type,
-                                    'cwe': cwe_mapping.get(vuln_type, 'unknown'),
-                                    'line': line_num,
-                                    'pattern': pattern,
-                                })
+                            try:
+                                matches = list(re.finditer(pattern, content, re.IGNORECASE))
+                                for match in matches:
+                                    # Find line number
+                                    line_num = content[:match.start()].count('\n') + 1
+                                    file_vulns.append({
+                                        'type': vuln_type,
+                                        'cwe': cwe_mapping.get(vuln_type, 'unknown'),
+                                        'line': line_num,
+                                        'pattern': pattern,
+                                    })
+                            except re.error:
+                                pass
 
                     if file_vulns:
+                        # Deduplicate by line number and type
+                        seen = set()
+                        unique_vulns = []
+                        for v in file_vulns:
+                            key = (v['type'], v['line'])
+                            if key not in seen:
+                                seen.add(key)
+                                unique_vulns.append(v)
+
                         manifest['files'][rel_path] = {
-                            'vulnerabilities': file_vulns,
+                            'vulnerabilities': unique_vulns,
                             'language': 'typescript' if filename.endswith('.ts') else 'javascript',
                         }
 
@@ -232,7 +348,7 @@ def load_secbench_manifest(cache_dir: str) -> Dict:
 
 
 def get_secbench_test_files(cache_dir: str) -> List[str]:
-    """Get list of SecBench.js test files"""
+    """Get list of all JS/TS benchmark test files"""
     src_dir = os.path.join(cache_dir, 'secbench_js', 'src')
     if not os.path.exists(src_dir):
         return []
@@ -248,13 +364,13 @@ def get_secbench_test_files(cache_dir: str) -> List[str]:
 
 def create_secbench_curated_set(
     cache_dir: str,
-    sample_size: int = 200,
+    sample_size: int = 500,
     seed: int = 42
 ) -> int:
     """
-    Create a curated subset of SecBench.js benchmarks.
+    Create a curated subset of JS/TS benchmarks.
 
-    Prioritizes files with known vulnerabilities.
+    Prioritizes files with known vulnerabilities and balances across sources.
 
     Args:
         cache_dir: Cache directory
@@ -276,8 +392,19 @@ def create_secbench_curated_set(
     src_dir = os.path.join(cache_dir, 'secbench_js', 'src')
 
     if not test_files:
-        print("No SecBench.js test files found")
+        print("No JS/TS test files found")
         return 0
+
+    # Group files by source
+    by_source: Dict[str, List[str]] = {}
+    for filepath in test_files:
+        rel_path = os.path.relpath(filepath, src_dir)
+        parts = rel_path.split(os.sep)
+        source = parts[0] if parts else 'unknown'
+
+        if source not in by_source:
+            by_source[source] = []
+        by_source[source].append(filepath)
 
     # Prioritize files with known vulnerabilities
     vuln_files = []
@@ -292,15 +419,26 @@ def create_secbench_curated_set(
 
     random.seed(seed)
 
-    # Select mostly vulnerable files, some clean files
+    # Select mostly vulnerable files, balanced across sources
     curated_files = []
-    vuln_quota = min(len(vuln_files), int(sample_size * 0.8))
-    other_quota = sample_size - vuln_quota
 
+    # First, take vulnerable files (80% of quota)
+    vuln_quota = min(len(vuln_files), int(sample_size * 0.8))
     if vuln_files:
         curated_files.extend(random.sample(vuln_files, vuln_quota))
-    if other_files:
-        curated_files.extend(random.sample(other_files, min(len(other_files), other_quota)))
+
+    # Then fill with other files, balanced by source
+    remaining = sample_size - len(curated_files)
+    if remaining > 0 and other_files:
+        # Balance across sources
+        per_source = max(1, remaining // len(by_source))
+        for source, files in by_source.items():
+            available = [f for f in files if f not in curated_files]
+            n = min(len(available), per_source)
+            if available and n > 0:
+                curated_files.extend(random.sample(available, n))
+
+    curated_files = curated_files[:sample_size]
 
     # Create curated directory
     curated_dir = os.path.join(cache_dir, 'secbench_js', 'secbench_js_curated')
@@ -308,10 +446,13 @@ def create_secbench_curated_set(
         shutil.rmtree(curated_dir)
     os.makedirs(curated_dir)
 
-    # Copy files
+    # Copy files with source prefix to avoid name collisions
     for i, filepath in enumerate(curated_files):
+        rel_path = os.path.relpath(filepath, src_dir)
+        parts = rel_path.split(os.sep)
+        source = parts[0] if parts else 'unknown'
         filename = os.path.basename(filepath)
-        dest_name = f"{i:04d}_{filename}"
+        dest_name = f"{i:04d}_{source}_{filename}"
         shutil.copy(filepath, os.path.join(curated_dir, dest_name))
 
     # Copy manifest
@@ -319,5 +460,33 @@ def create_secbench_curated_set(
     if os.path.exists(manifest_src):
         shutil.copy(manifest_src, os.path.join(curated_dir, 'manifest.json'))
 
-    print(f"Created SecBench.js curated set: {len(curated_files)} files")
+    print(f"Created JS/TS curated set: {len(curated_files)} files")
+    print(f"  Sources: {list(by_source.keys())}")
     return len(curated_files)
+
+
+# Additional helper for loading OpenSSF CVE metadata
+def load_openssf_cve_metadata(cache_dir: str) -> Dict:
+    """
+    Load CVE metadata from OpenSSF benchmark if available.
+
+    The OpenSSF CVE Benchmark contains detailed metadata for 200+ CVEs.
+    """
+    cve_dir = os.path.join(cache_dir, 'secbench_js', 'src', 'openssf_cve', 'CVEs')
+    if not os.path.exists(cve_dir):
+        return {}
+
+    cve_data = {}
+    for cve_id in os.listdir(cve_dir):
+        cve_path = os.path.join(cve_dir, cve_id)
+        if os.path.isdir(cve_path):
+            # Look for metadata file
+            meta_file = os.path.join(cve_path, 'cve.json')
+            if os.path.exists(meta_file):
+                try:
+                    with open(meta_file, 'r') as f:
+                        cve_data[cve_id] = json.load(f)
+                except Exception:
+                    pass
+
+    return cve_data
