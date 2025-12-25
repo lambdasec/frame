@@ -323,6 +323,8 @@ class FrameScanner:
         VulnType.CREDENTIAL_STUFFING: "CWE-307",
         VulnType.SESSION_FIXATION: "CWE-384",
         VulnType.WEAK_PASSWORD: "CWE-521",
+        VulnType.TRUST_BOUNDARY_VIOLATION: "CWE-501",
+        VulnType.INSECURE_COOKIE: "CWE-614",
 
         # A08: Software/Data Integrity Failures
         VulnType.DESERIALIZATION: "CWE-502",

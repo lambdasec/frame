@@ -96,6 +96,8 @@ class VulnType(Enum):
     CREDENTIAL_STUFFING = "credential_stuffing"  # CWE-307
     SESSION_FIXATION = "session_fixation"       # CWE-384
     WEAK_PASSWORD = "weak_password"             # CWE-521
+    TRUST_BOUNDARY_VIOLATION = "trust_boundary_violation"  # CWE-501
+    INSECURE_COOKIE = "insecure_cookie"         # CWE-614
 
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialization"         # CWE-502
@@ -158,6 +160,8 @@ class VulnType(Enum):
             SinkKind.CREDENTIAL: cls.BROKEN_AUTHENTICATION,
             SinkKind.SESSION: cls.SESSION_FIXATION,
             SinkKind.PASSWORD_STORE: cls.WEAK_PASSWORD,
+            SinkKind.TRUST_BOUNDARY: cls.TRUST_BOUNDARY_VIOLATION,
+            SinkKind.INSECURE_COOKIE: cls.INSECURE_COOKIE,
             # A08: Software/Data Integrity Failures
             SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
             # A09: Logging Failures
@@ -165,6 +169,9 @@ class VulnType(Enum):
             SinkKind.SENSITIVE_LOG: cls.SENSITIVE_DATA_LOGGED,
             # A10: Error Handling
             SinkKind.ERROR_DISCLOSURE: cls.ERROR_DISCLOSURE,
+            # Aliases for flexibility
+            SinkKind.XSS: cls.XSS,
+            SinkKind.COMMAND: cls.COMMAND_INJECTION,
         }
         return mapping.get(sink_kind, cls.TAINT_FLOW)
 

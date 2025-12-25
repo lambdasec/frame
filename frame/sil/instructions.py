@@ -112,6 +112,8 @@ class SinkKind(Enum):
     CREDENTIAL = "credential"   # Credential handling (CWE-522)
     SESSION = "session"         # Session management (CWE-384)
     PASSWORD_STORE = "password" # Password storage (CWE-257)
+    TRUST_BOUNDARY = "trust_boundary"  # Trust boundary violation (CWE-501)
+    INSECURE_COOKIE = "insecure_cookie"  # Insecure cookie (CWE-614)
 
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialize"  # Object deserialization (CWE-502)
@@ -122,6 +124,10 @@ class SinkKind(Enum):
 
     # A10: Mishandling of Exceptional Conditions
     ERROR_DISCLOSURE = "error_disclosure"  # Error message disclosure (CWE-209)
+
+    # Additional injection types (aliases for flexibility)
+    XSS = "xss"                 # XSS alias for HTML_OUTPUT (CWE-79)
+    COMMAND = "command"         # Command injection alias (CWE-78)
 
     # Memory Safety (not in OWASP web but critical for native)
     MEMORY = "memory"           # Memory safety sink
