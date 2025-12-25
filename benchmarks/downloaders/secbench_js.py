@@ -8,24 +8,26 @@ from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 
 
-# SecBench.js repository (ICSE 2023 paper)
+# NodeGoat: OWASP's intentionally vulnerable Node.js application
+# Best choice for SAST benchmarking - contains actual vulnerable source code
+# https://github.com/OWASP/NodeGoat
+NODEGOAT_REPO = "https://github.com/OWASP/NodeGoat.git"
+NODEGOAT_BRANCH = "master"
+
+# SecBench.js repository (ICSE 2023 paper) - for dynamic testing
+# Note: SecBench.js is designed for dynamic exploit testing, not static analysis
 # Paper: https://software-lab.org/publications/icse2023_SecBenchJS.pdf
 SECBENCH_REPO = "https://github.com/cristianstaicu/SecBench.js.git"
 SECBENCH_BRANCH = "main"
 
-# Fallback: Use NodeGoat as a well-known vulnerable Node.js app
-NODEGOAT_REPO = "https://github.com/OWASP/NodeGoat.git"
-NODEGOAT_BRANCH = "master"
-
 
 def download_secbench_js(cache_dir: str, max_files: Optional[int] = None) -> int:
     """
-    Download SecBench.js benchmark suite for JavaScript.
+    Download JavaScript security benchmarks for SAST testing.
 
-    SecBench.js contains 600 vulnerabilities across the 5 most common
-    vulnerability classes for server-side JavaScript.
-
-    Falls back to NodeGoat if SecBench.js is not available.
+    Primary: NodeGoat - OWASP's intentionally vulnerable Node.js application.
+    Contains real vulnerable source code ideal for static analysis testing.
+    Covers: SQL Injection, XSS, SSRF, Insecure Dependencies, etc.
 
     Args:
         cache_dir: Directory to store benchmarks
@@ -41,13 +43,12 @@ def download_secbench_js(cache_dir: str, max_files: Optional[int] = None) -> int
     if os.path.exists(src_dir):
         files = list(Path(src_dir).rglob('*.js')) + list(Path(src_dir).rglob('*.ts'))
         if files:
-            print(f"SecBench.js already downloaded: {len(files)} files")
+            print(f"JS benchmarks already downloaded: {len(files)} files")
             return len(files)
 
-    print("Downloading JavaScript security benchmarks...")
+    print("Downloading JavaScript security benchmarks (NodeGoat)...")
     os.makedirs(secbench_dir, exist_ok=True)
 
-    # Try SecBench.js first
     temp_dir = os.path.join(cache_dir, '_secbench_temp')
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
@@ -57,27 +58,14 @@ def download_secbench_js(cache_dir: str, max_files: Optional[int] = None) -> int
         subprocess.run([
             'git', 'clone',
             '--depth', '1',
-            SECBENCH_REPO,
+            '--branch', NODEGOAT_BRANCH,
+            NODEGOAT_REPO,
             temp_dir
-        ], check=True, capture_output=True, timeout=60)
+        ], check=True, capture_output=True)
         success = True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print("SecBench.js not available, falling back to NodeGoat...")
-
-    # Fall back to NodeGoat
-    if not success:
-        try:
-            subprocess.run([
-                'git', 'clone',
-                '--depth', '1',
-                '--branch', NODEGOAT_BRANCH,
-                NODEGOAT_REPO,
-                temp_dir
-            ], check=True, capture_output=True)
-            success = True
-        except subprocess.CalledProcessError as e:
-            print(f"ERROR: Failed to clone NodeGoat: {e}")
-            return 0
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Failed to clone NodeGoat: {e}")
+        return 0
 
     if not success:
         return 0
