@@ -85,8 +85,10 @@ def run_frame_scanner(
 
         detected = []
         for vuln in result.vulnerabilities:
+            # Convert VulnType enum to string for JSON serialization
+            vuln_type_str = vuln.type.value if hasattr(vuln.type, 'value') else str(vuln.type)
             detected.append(DetectedVulnerability(
-                vuln_type=vuln.type,
+                vuln_type=vuln_type_str,
                 cwe_id=vuln.cwe_id,
                 line_number=vuln.line if hasattr(vuln, 'line') else None,
                 function_name=vuln.procedure if hasattr(vuln, 'procedure') else None,

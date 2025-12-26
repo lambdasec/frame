@@ -453,6 +453,12 @@ class FrameScanner:
                 if vuln:
                     result.vulnerabilities.append(vuln)
 
+            # Step 4: Deduplicate vulnerabilities
+            result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
+
+            if self.verbose:
+                print(f"[Scanner] After deduplication: {len(result.vulnerabilities)} unique vulnerabilities")
+
         except Exception as e:
             result.errors.append(f"Scan error: {str(e)}")
             if self.verbose:
@@ -517,20 +523,20 @@ class FrameScanner:
         """
         witness_str = None
 
+        verified = False
         if self.verify and self.checker:
             # Verify using incorrectness logic
-            # This ensures zero false positives
             try:
                 # Use the appropriate checker method based on vulnerability type
                 report = self._verify_check(check)
 
-                if not report.reachable:
-                    # Not a real vulnerability (couldn't prove reachability)
-                    return None
-
-                # Extract witness
-                if report.witness:
-                    witness_str = str(report.witness)
+                if report.reachable:
+                    verified = True
+                    # Extract witness
+                    if report.witness:
+                        witness_str = str(report.witness)
+                # If not reachable, still report with lower confidence
+                # Taint analysis already proved data flows from source to sink
 
             except Exception as e:
                 if self.verbose:
@@ -541,6 +547,17 @@ class FrameScanner:
         # Create vulnerability object
         severity = self.SEVERITY_MAP.get(check.vuln_type, Severity.MEDIUM)
         cwe_id = self.CWE_MAP.get(check.vuln_type)
+
+        # Set confidence based on verification status
+        # - verified: highest confidence (formal proof)
+        # - verify mode but not proven: medium confidence (taint analysis)
+        # - no verification: lower confidence
+        if verified:
+            confidence = 1.0
+        elif self.verify:
+            confidence = 0.75  # Taint analysis found it, but couldn't formally verify
+        else:
+            confidence = 0.8
 
         return Vulnerability(
             type=check.vuln_type,
@@ -555,9 +572,86 @@ class FrameScanner:
             sink_type=check.sink_type,
             data_flow=check.data_flow_path,
             witness=witness_str,
-            confidence=1.0 if self.verify else 0.8,
+            confidence=confidence,
             cwe_id=cwe_id,
         )
+
+    def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:
+        """
+        Remove duplicate vulnerability reports.
+
+        Duplicates occur when:
+        - Same vulnerability type at same location (line) in same procedure
+        - Same CWE at same location (even different vuln types if same underlying issue)
+
+        Priority: Keep the highest severity, most detailed report.
+        """
+        if not vulns:
+            return vulns
+
+        # Group by deduplication key: (line, procedure, cwe_id or vuln_type)
+        seen = {}  # key -> best vulnerability
+
+        for vuln in vulns:
+            # Primary key: same line, procedure, and vulnerability type
+            primary_key = (vuln.line, vuln.procedure, vuln.type.value)
+
+            # Secondary key: same line, procedure, and CWE (for related vulns)
+            secondary_key = (vuln.line, vuln.procedure, vuln.cwe_id) if vuln.cwe_id else None
+
+            # Check if we've seen this vulnerability
+            existing = seen.get(primary_key)
+            if existing is None and secondary_key:
+                existing = seen.get(secondary_key)
+
+            if existing is None:
+                # New vulnerability
+                seen[primary_key] = vuln
+                if secondary_key:
+                    seen[secondary_key] = vuln
+            else:
+                # Compare and keep the better one
+                # Prefer: higher severity, more detail (longer description), has witness
+                should_replace = False
+
+                # Compare severity (CRITICAL > HIGH > MEDIUM > LOW > INFO)
+                severity_order = {
+                    Severity.CRITICAL: 5,
+                    Severity.HIGH: 4,
+                    Severity.MEDIUM: 3,
+                    Severity.LOW: 2,
+                    Severity.INFO: 1,
+                }
+                if severity_order.get(vuln.severity, 0) > severity_order.get(existing.severity, 0):
+                    should_replace = True
+                elif severity_order.get(vuln.severity, 0) == severity_order.get(existing.severity, 0):
+                    # Same severity - prefer one with witness
+                    if vuln.witness and not existing.witness:
+                        should_replace = True
+                    # Or prefer one with more data flow info
+                    elif len(vuln.data_flow) > len(existing.data_flow):
+                        should_replace = True
+
+                if should_replace:
+                    seen[primary_key] = vuln
+                    if secondary_key:
+                        seen[secondary_key] = vuln
+
+        # Extract unique vulnerabilities
+        unique_vulns = []
+        seen_ids = set()
+
+        for vuln in vulns:
+            primary_key = (vuln.line, vuln.procedure, vuln.type.value)
+            best = seen.get(primary_key)
+            if best is not None:
+                # Use id to track which we've already added
+                vuln_id = (best.line, best.column, best.procedure, best.type.value, best.cwe_id)
+                if vuln_id not in seen_ids:
+                    unique_vulns.append(best)
+                    seen_ids.add(vuln_id)
+
+        return unique_vulns
 
     def _verify_check(self, check: VulnerabilityCheck) -> BugReport:
         """Verify vulnerability check using Frame's incorrectness checker"""

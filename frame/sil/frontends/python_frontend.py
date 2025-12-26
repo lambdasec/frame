@@ -314,6 +314,9 @@ class PythonFrontend:
         elif node.type == "with_statement":
             self._translate_with(node)
 
+        elif node.type == "match_statement":
+            self._translate_match(node)
+
         elif node.type == "pass_statement":
             pass  # No SIL needed
 
@@ -334,6 +337,10 @@ class PythonFrontend:
                 # Assignment wrapped in expression_statement
                 self._translate_assignment(child)
 
+            elif child.type == "augmented_assignment":
+                # Augmented assignment wrapped in expression_statement
+                self._translate_augmented_assignment(child)
+
             elif child.type == "string":
                 # Docstring - skip
                 pass
@@ -346,8 +353,15 @@ class PythonFrontend:
         if not left or not right:
             return
 
-        target_name = self._get_text(left)
         loc = self._get_location(node)
+
+        # Check for subscript assignment: target[key] = value
+        # This handles patterns like session['userid'] = bar (CWE-501)
+        if left.type == "subscript":
+            self._translate_subscript_assignment(left, right, loc)
+            return
+
+        target_name = self._get_text(left)
 
         # Handle different RHS types
         if right.type == "call":
@@ -371,6 +385,10 @@ class PythonFrontend:
 
         elif right.type == "binary_operator":
             # x = a + b
+            # First, extract all nested calls to generate Call instructions
+            nested_call_instrs = self._extract_all_calls_from_node(right, loc)
+            self._add_instrs(nested_call_instrs)
+
             exp = self._translate_expression(right)
             self._add_instr(Assign(
                 loc=loc,
@@ -383,12 +401,71 @@ class PythonFrontend:
 
         else:
             # General case
+            # First, extract all nested calls to generate Call instructions
+            # This enables detection of usage-based sinks (like weak random) in nested expressions
+            nested_call_instrs = self._extract_all_calls_from_node(right, loc)
+            self._add_instrs(nested_call_instrs)
+
             exp = self._translate_expression(right)
             self._add_instr(Assign(
                 loc=loc,
                 id=PVar(target_name),
                 exp=exp
             ))
+
+    def _translate_subscript_assignment(
+        self,
+        subscript_node: TSNode,
+        value_node: TSNode,
+        loc: Location
+    ) -> None:
+        """
+        Translate subscript assignment: target[key] = value
+
+        Converts to synthetic __setitem__ call for taint tracking.
+        This handles patterns like:
+        - session['userid'] = bar  (CWE-501 Trust Boundary)
+        - dict['key'] = value
+        """
+        # Get the target (e.g., 'session' from 'session['userid']')
+        target = subscript_node.child_by_field_name("value")
+        key = subscript_node.child_by_field_name("subscript")
+
+        if not target or not key:
+            return
+
+        target_name = self._get_text(target)
+        key_exp = self._translate_expression(key)
+        value_exp = self._translate_expression(value_node)
+
+        # Generate synthetic __setitem__ call: target.__setitem__(key, value)
+        # This allows our spec system to detect trust boundary violations
+        func_name = f"{target_name}.__setitem__"
+
+        call_instr = Call(
+            loc=loc,
+            ret=None,  # __setitem__ returns None
+            func=ExpConst.string(func_name),
+            args=[
+                (key_exp, Typ.unknown_type()),
+                (value_exp, Typ.unknown_type())
+            ]
+        )
+        self._add_instr(call_instr)
+
+        # Also add a simple call with just the target name for broader spec matching
+        # e.g., "session" spec can match session['key'] = value
+        if '.' not in target_name:
+            simple_call = Call(
+                loc=loc,
+                ret=None,
+                func=ExpConst.string(target_name),
+                args=[
+                    (key_exp, Typ.unknown_type()),
+                    (value_exp, Typ.unknown_type())
+                ]
+            )
+            self._add_instr(simple_call)
 
     def _translate_call_assignment(
         self,
@@ -399,10 +476,41 @@ class PythonFrontend:
         """Translate: target = func(args)"""
         instrs = []
 
-        func_name = self._get_call_name(call_node)
+        # Check for method chain: obj.method1().method2()
+        # The "function" field will be an "attribute" whose object is a "call"
+        func_node = call_node.child_by_field_name("function")
+        inner_call = None
+
+        if func_node and func_node.type == "attribute":
+            # Check if the attribute's object is a call (method chain)
+            obj_node = func_node.child_by_field_name("object")
+            if obj_node and obj_node.type == "call":
+                inner_call = obj_node
+
+        if inner_call:
+            # Method chain - expand the inner call first
+            inner_instrs, inner_var = self._expand_nested_call(inner_call, loc)
+            instrs.extend(inner_instrs)
+
+            # Get the method name from the attribute
+            attr_name = func_node.child_by_field_name("attribute")
+            if attr_name:
+                method_name = self._get_text(attr_name)
+                # Create method call name like "var.method"
+                func_name = f"{inner_var}.{method_name}"
+            else:
+                func_name = self._get_call_name(call_node)
+        elif func_node and func_node.type == "call":
+            # Direct function call that is another call (rare but possible)
+            inner_instrs, inner_var = self._expand_nested_call(func_node, loc)
+            instrs.extend(inner_instrs)
+            func_name = inner_var  # The result of the call IS the function
+        else:
+            func_name = self._get_call_name(call_node)
+
         args = self._get_call_args(call_node)
 
-        # Handle nested calls - expand them first
+        # Handle nested calls in arguments - expand them first
         args_exp = []
         for i, arg in enumerate(args):
             if arg.type == "call":
@@ -467,6 +575,48 @@ class PythonFrontend:
         nested_instrs = self._translate_call_assignment(temp_var, call_node, loc)
 
         return nested_instrs, temp_var
+
+    def _extract_all_calls_from_node(self, node: TSNode, loc: Location) -> List[Instr]:
+        """
+        Walk a tree-sitter node and extract all call nodes as Call instructions.
+        This is used to detect usage-based sinks (like weak random) in nested expressions.
+        Returns list of Call instructions for all calls found.
+        """
+        instrs = []
+
+        def walk(n: TSNode):
+            if n is None:
+                return
+            if n.type == "call":
+                # Generate Call instruction for this call
+                func_name = self._get_call_name(n)
+                args = self._get_call_args(n)
+                args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+
+                # Create a Call instruction (result discarded for detection purposes)
+                call_instr = Call(
+                    loc=self._get_location(n),
+                    ret=None,
+                    func=ExpConst.string(func_name),
+                    args=args_exp
+                )
+                instrs.append(call_instr)
+
+                # Also recurse into the call's function and arguments to find nested calls
+                func = n.child_by_field_name("function")
+                if func:
+                    walk(func)
+                args_node = n.child_by_field_name("arguments")
+                if args_node:
+                    for child in args_node.children:
+                        walk(child)
+            else:
+                # Recurse into children
+                for child in n.children:
+                    walk(child)
+
+        walk(node)
+        return instrs
 
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone call: func(args)"""
@@ -606,10 +756,23 @@ class PythonFrontend:
 
         # Find return value (if any)
         value_exp = None
+        value_node = None
         for child in node.children:
             if child.type not in ("return",):
-                value_exp = self._translate_expression(child)
+                value_node = child
                 break
+
+        if value_node:
+            # If the return value is a call, translate it as a call assignment
+            if value_node.type == "call":
+                instrs = self._translate_call_assignment("__return_val", value_node, loc)
+                self._add_instrs(instrs)
+                value_exp = ExpVar(PVar("__return_val"))
+            else:
+                # Extract nested calls from the expression first
+                nested_call_instrs = self._extract_all_calls_from_node(value_node, loc)
+                self._add_instrs(nested_call_instrs)
+                value_exp = self._translate_expression(value_node)
 
         self._add_instr(Return(loc=loc, value=value_exp))
 
@@ -871,6 +1034,65 @@ class PythonFrontend:
         if body:
             self._translate_block(body)
 
+    def _translate_match(self, node: TSNode) -> None:
+        """Translate Python 3.10+ match statement (structural pattern matching)"""
+        proc = self._current_proc
+        if not proc:
+            return
+
+        loc = self._get_location(node)
+
+        # Get match subject
+        subject = node.child_by_field_name("subject")
+        if not subject:
+            # Try to find subject in children
+            for child in node.children:
+                if child.type not in ("match", ":", "case_clause", "block"):
+                    subject = child
+                    break
+
+        before_node = self._current_node
+
+        # Create join node for after match
+        join_node = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join_node)
+
+        # Find all case clauses
+        case_clauses = []
+        for child in node.children:
+            if child.type == "case_clause":
+                case_clauses.append(child)
+            elif child.type == "block":
+                # Block may contain case clauses
+                for block_child in child.children:
+                    if block_child.type == "case_clause":
+                        case_clauses.append(block_child)
+
+        # Translate each case
+        for case_node in case_clauses:
+            # Create case node
+            case_entry = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(case_entry)
+
+            if before_node:
+                proc.connect(before_node.id, case_entry.id)
+
+            self._current_node = case_entry
+
+            # Translate case body - look for the block/consequence
+            # Case structure: case_clause has pattern and body
+            for child in case_node.children:
+                if child.type == "block":
+                    self._translate_block(child)
+                elif child.type in ("case_pattern", "pattern"):
+                    # Skip pattern for now - for taint analysis we assume all cases can execute
+                    pass
+
+            if self._current_node:
+                proc.connect(self._current_node.id, join_node.id)
+
+        self._current_node = join_node
+
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression to SIL Exp"""
         if node is None:
@@ -1026,6 +1248,35 @@ class PythonFrontend:
             if parts:
                 return ExpStringConcat(parts)
             return ExpConst.string("")
+
+        elif node.type == "conditional_expression":
+            # Python ternary: value_if_true if condition else value_if_false
+            # For taint tracking, we return both possible values
+            # The translator will propagate taint from either branch
+            consequence = None
+            alternative = None
+            for child in node.children:
+                if child.type == "if":
+                    continue
+                elif child.type == "else":
+                    continue
+                elif consequence is None:
+                    consequence = self._translate_expression(child)
+                elif alternative is None:
+                    # Skip the condition
+                    pass
+                else:
+                    alternative = self._translate_expression(child)
+
+            # Return a binary expression that contains both possible values
+            # This ensures taint from either branch is tracked
+            if consequence and alternative:
+                return ExpBinOp(consequence, "?:", alternative)
+            elif alternative:
+                return alternative
+            elif consequence:
+                return consequence
+            return ExpConst.null()
 
         # Default: return as identifier
         text = self._get_text(node)
