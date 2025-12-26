@@ -1068,6 +1068,9 @@ class PythonFrontend:
                     if block_child.type == "case_clause":
                         case_clauses.append(block_child)
 
+        # Get subject expression for Prune conditions
+        subject_exp = self._translate_expression(subject) if subject else None
+
         # Translate each case
         for case_node in case_clauses:
             # Create case node
@@ -1079,19 +1082,69 @@ class PythonFrontend:
 
             self._current_node = case_entry
 
+            # Extract case pattern and add Prune instruction
+            # This enables constant folding to eliminate unreachable cases
+            pattern_exp = None
+            for child in case_node.children:
+                if child.type in ("case_pattern", "pattern"):
+                    pattern_exp = self._extract_case_pattern(child)
+                    break
+                # Also check for direct string/identifier patterns
+                elif child.type in ("string", "integer", "identifier"):
+                    pattern_exp = self._translate_expression(child)
+                    break
+
+            # Add Prune instruction for case condition (subject == pattern)
+            if subject_exp and pattern_exp:
+                from ..instructions import Prune
+                cond = ExpBinOp(subject_exp, "==", pattern_exp)
+                prune_instr = Prune(condition=cond, is_true_branch=True, loc=loc)
+                self._current_node.instrs.append(prune_instr)
+
             # Translate case body - look for the block/consequence
-            # Case structure: case_clause has pattern and body
             for child in case_node.children:
                 if child.type == "block":
                     self._translate_block(child)
-                elif child.type in ("case_pattern", "pattern"):
-                    # Skip pattern for now - for taint analysis we assume all cases can execute
-                    pass
 
             if self._current_node:
                 proc.connect(self._current_node.id, join_node.id)
 
         self._current_node = join_node
+
+    def _extract_case_pattern(self, pattern_node: TSNode) -> Optional[Exp]:
+        """Extract the expression from a case pattern for Prune conditions."""
+        if pattern_node is None:
+            return None
+
+        # Handle different pattern types
+        # case 'A': -> string literal
+        # case _: -> wildcard (return None to skip)
+        for child in pattern_node.children:
+            if child.type == "string":
+                return self._translate_expression(child)
+            elif child.type == "integer":
+                return self._translate_expression(child)
+            elif child.type == "identifier":
+                name = self._get_text(child)
+                if name == "_":
+                    return None  # Wildcard pattern, matches anything
+                return self._translate_expression(child)
+            elif child.type in ("case_pattern", "pattern"):
+                # Nested pattern
+                return self._extract_case_pattern(child)
+            elif child.type == "union_pattern":
+                # 'C' | 'D' - for now, return first pattern
+                for sub in child.children:
+                    if sub.type != "|":
+                        return self._translate_expression(sub)
+
+        # Try the pattern node itself if it's a simple type
+        if pattern_node.type == "string":
+            return self._translate_expression(pattern_node)
+        elif pattern_node.type == "integer":
+            return self._translate_expression(pattern_node)
+
+        return None
 
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression to SIL Exp"""
@@ -1251,26 +1304,64 @@ class PythonFrontend:
 
         elif node.type == "conditional_expression":
             # Python ternary: value_if_true if condition else value_if_false
-            # For taint tracking, we return both possible values
-            # The translator will propagate taint from either branch
+            # Structure: consequence "if" condition "else" alternative
             consequence = None
+            condition = None
             alternative = None
+            state = 0  # 0=consequence, 1=condition, 2=alternative
             for child in node.children:
                 if child.type == "if":
+                    state = 1
                     continue
                 elif child.type == "else":
+                    state = 2
                     continue
-                elif consequence is None:
+                elif state == 0:
                     consequence = self._translate_expression(child)
-                elif alternative is None:
-                    # Skip the condition
-                    pass
+                elif state == 1:
+                    condition = child  # Keep AST node for text extraction
                 else:
                     alternative = self._translate_expression(child)
 
-            # Return a binary expression that contains both possible values
-            # This ensures taint from either branch is tracked
-            if consequence and alternative:
+            # Try to evaluate the condition for constant folding
+            cons_is_const = isinstance(consequence, ExpConst)
+            alt_is_const = isinstance(alternative, ExpConst) if alternative else True
+
+            # Check if condition can be evaluated as constant
+            if condition:
+                cond_text = self._get_text(condition)
+                # Try simple constant evaluation
+                try:
+                    # Handle simple arithmetic conditions
+                    import re
+                    # Replace common patterns with evaluable Python
+                    eval_cond = cond_text
+                    # Only eval if it looks like a safe arithmetic expression
+                    if re.match(r'^[\d\s\+\-\*/%<>=!()]+$', eval_cond):
+                        cond_result = eval(eval_cond)
+                        if cond_result is True:
+                            # Condition is always TRUE - return consequence
+                            return consequence if consequence else ExpConst.null()
+                        elif cond_result is False:
+                            # Condition is always FALSE - return alternative
+                            return alternative if alternative else ExpConst.null()
+                except:
+                    pass
+
+            # Fallback: if constant folding didn't work, use heuristics
+            if cons_is_const and not alt_is_const:
+                # Safe consequence, potentially tainted alternative - include both
+                # so translator can do constant folding at runtime
+                if consequence and alternative:
+                    return ExpBinOp(consequence, "?:", alternative)
+                return alternative
+            elif not cons_is_const and alt_is_const:
+                # Potentially tainted consequence, safe alternative - include both
+                if consequence and alternative:
+                    return ExpBinOp(consequence, "?:", alternative)
+                return consequence
+            elif consequence and alternative:
+                # Both are variables or both are constants - include both
                 return ExpBinOp(consequence, "?:", alternative)
             elif alternative:
                 return alternative

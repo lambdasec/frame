@@ -422,6 +422,10 @@ class Program:
                 spec = self.library_specs.get(qualified_name)
                 if spec:
                     return spec
+            # Also try bare method name (e.g., "xpath" for "root.xpath")
+            spec = self.library_specs.get(method_name)
+            if spec:
+                return spec
 
         return None
 
