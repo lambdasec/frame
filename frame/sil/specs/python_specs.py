@@ -257,10 +257,11 @@ EVAL_SPECS = {
     "yaml.load": _sink("deserialize", [0], "YAML deserialization (unsafe)"),
     "yaml.unsafe_load": _sink("deserialize", [0], "YAML unsafe deserialization"),
 
-    # Safe deserializers
-    "json.loads": _source("user", "JSON deserialization (safe but tainted)"),
-    "json.load": _source("user", "JSON deserialization (safe but tainted)"),
-    "yaml.safe_load": _source("user", "YAML safe deserialization (tainted)"),
+    # Safe deserializers - propagate taint from input (don't create new taint)
+    "json.loads": _propagator([0], "JSON deserialization (safe)"),
+    "json.load": _propagator([0], "JSON deserialization (safe)"),
+    "yaml.safe_load": _propagator([0], "YAML safe deserialization"),
+    "yaml.full_load": _sink("deserialize", [0], "YAML full_load (unsafe in PyYAML < 5.1)"),
 }
 
 # =============================================================================
@@ -362,15 +363,22 @@ STRING_SPECS = {
     "str.__mod__": _propagator([0, 1], "String % formatting"),
     "str.__add__": _propagator([0, 1], "String concatenation"),
     "str.join": _propagator([0, 1], "String join"),
-    "str.replace": _propagator([0], "String replace"),
-    "str.lower": _propagator([0], "String lower"),
-    "str.upper": _propagator([0], "String upper"),
-    "str.strip": _propagator([0], "String strip"),
-    "str.lstrip": _propagator([0], "String lstrip"),
-    "str.rstrip": _propagator([0], "String rstrip"),
-    "str.split": _propagator([0], "String split"),
-    "str.encode": _propagator([0], "String encode"),
-    "bytes.decode": _propagator([0], "Bytes decode"),
+    # String methods - propagate from receiver (the string being operated on)
+    "str.replace": _propagator([], "String replace", from_receiver=True),
+    "str.lower": _propagator([], "String lower", from_receiver=True),
+    "str.upper": _propagator([], "String upper", from_receiver=True),
+    "str.strip": _propagator([], "String strip", from_receiver=True),
+    "str.lstrip": _propagator([], "String lstrip", from_receiver=True),
+    "str.rstrip": _propagator([], "String rstrip", from_receiver=True),
+    "str.split": _propagator([], "String split", from_receiver=True),
+    "str.encode": _propagator([], "String encode", from_receiver=True),
+    "bytes.decode": _propagator([], "Bytes decode", from_receiver=True),
+    # Also add bare method names for matching
+    "split": _propagator([], "String split method", from_receiver=True),
+    "lower": _propagator([], "String lower method", from_receiver=True),
+    "upper": _propagator([], "String upper method", from_receiver=True),
+    "strip": _propagator([], "String strip method", from_receiver=True),
+    "replace": _propagator([], "String replace method", from_receiver=True),
 
     # f-strings are handled specially in the frontend
 }

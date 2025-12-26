@@ -55,7 +55,7 @@ def run_owasp_python_benchmark(
                 description=expected_info.get('category', ''),
             ))
 
-    # Run scanner (verify=False for benchmarking to measure detection capability)
+    # Run scanner (verify=False for now - incorrectness logic needs work for taint flow)
     detected, error = run_frame_scanner(filepath, language='python', timeout_ms=timeout_ms, verify=False)
 
     elapsed_ms = (time.time() - start_time) * 1000
