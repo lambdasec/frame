@@ -476,7 +476,8 @@ class SILTranslator:
         checks = []
 
         if isinstance(instr, Assign):
-            state = self._exec_assign(instr, state)
+            assign_checks, state = self._exec_assign(instr, state, proc_name)
+            checks.extend(assign_checks)
 
         elif isinstance(instr, Load):
             checks, state = self._exec_load(instr, state, proc_name)
@@ -508,14 +509,23 @@ class SILTranslator:
         elif isinstance(instr, AssertSafe):
             state = self._exec_assert_safe(instr, state)
 
+        elif isinstance(instr, Return):
+            checks, state = self._exec_return(instr, state, proc_name)
+
         return checks, state
 
     # =========================================================================
     # Instruction Execution
     # =========================================================================
 
-    def _exec_assign(self, instr: Assign, state: SymbolicState) -> SymbolicState:
+    def _exec_assign(
+        self,
+        instr: Assign,
+        state: SymbolicState,
+        proc_name: str = ""
+    ) -> Tuple[List[VulnerabilityCheck], SymbolicState]:
         """Execute assignment: id = exp"""
+        checks = []
         target = self._get_var_name(instr.id)
         source_vars = self._get_exp_vars(instr.exp)
 
@@ -528,7 +538,65 @@ class SILTranslator:
                 state.propagate_taint(src_var, target)
                 break  # Only need one taint source
 
-        return state
+        # Check for path operations with tainted data
+        # Only detect clear pathlib-style division operations: p = path / tainted_var
+        # String concatenation is handled by existing filesystem sinks
+        exp_str = str(instr.exp)
+        is_path_division = (
+            ' / ' in exp_str or
+            (exp_str.startswith('(') and ' / ' in exp_str)
+        )
+
+        if is_path_division:
+            for src_var in source_vars:
+                if state.is_tainted(src_var):
+                    if not state.is_sanitized_for(src_var, "filesystem"):
+                        # Path operation with unsanitized tainted data
+                        check = self._create_taint_check(
+                            instr, state, proc_name,
+                            src_var, SinkKind.FILE_PATH
+                        )
+                        checks.append(check)
+                        break
+
+        # Propagate sanitization: if ALL tainted sources are sanitized for a sink type,
+        # then the target is also sanitized for that sink type.
+        # This handles cases like: result = escape_for_html(tainted_data)
+        tainted_sources = [v for v in source_vars if state.is_tainted(v)]
+        if tainted_sources:
+            # Find sink types that ALL tainted sources are sanitized for
+            common_sanitized = None
+            for src_var in tainted_sources:
+                src_sanitized = set(state.sanitized.get(src_var, []))
+                if common_sanitized is None:
+                    common_sanitized = src_sanitized
+                else:
+                    common_sanitized &= src_sanitized
+
+            if common_sanitized:
+                # Target inherits sanitization from all sources
+                existing = set(state.sanitized.get(target, []))
+                state.sanitized[target] = list(existing | common_sanitized)
+
+        # Also check for embedded sanitizer calls in the expression
+        # This handles cases like: result = f"text {escape_for_html(tainted)}"
+        embedded_sanitizers = self._get_sanitizer_calls(instr.exp)
+        if embedded_sanitizers and state.is_tainted(target):
+            # Get the sink types sanitized by all embedded sanitizers
+            # If all tainted data passes through sanitizers, the result is sanitized
+            all_sanitized = set()
+            for func_name, arg_vars in embedded_sanitizers:
+                spec = self.program.get_spec(func_name)
+                if spec and spec.is_taint_sanitizer():
+                    # Check if any of the sanitizer's args are tainted
+                    for arg_var in arg_vars:
+                        if state.is_tainted(arg_var):
+                            all_sanitized.update(spec.is_sanitizer)
+            if all_sanitized:
+                existing = set(state.sanitized.get(target, []))
+                state.sanitized[target] = list(existing | all_sanitized)
+
+        return checks, state
 
     def _exec_load(
         self,
@@ -650,36 +718,154 @@ class SILTranslator:
             # Handle taint sink
             if spec.is_taint_sink():
                 sink_kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
-                for arg_idx in spec.sink_args:
-                    if arg_idx < len(instr.args):
-                        arg_exp, _ = instr.args[arg_idx]
-                        arg_vars = self._get_exp_vars(arg_exp)
 
-                        for arg_var in arg_vars:
-                            if state.is_tainted(arg_var):
-                                if not state.is_sanitized_for(arg_var, spec.is_sink):
-                                    if not state.is_asserted_safe_for(arg_var, spec.is_sink):
-                                        check = self._create_taint_check(
-                                            instr, state, proc_name,
-                                            arg_var, sink_kind
-                                        )
-                                        checks.append(check)
+                # For sinks with empty sink_args (e.g., insecure_random, weak_hash),
+                # the function usage itself is the vulnerability - no taint required
+                if not spec.sink_args:
+                    # Special handling for hashlib.new - only flag weak algorithms
+                    if func_name == "hashlib.new":
+                        if len(instr.args) > 0:
+                            arg_exp, _ = instr.args[0]
+                            arg_str = str(arg_exp).strip("'\"").lower()
+                            # Only flag weak algorithms
+                            weak_algorithms = {'md5', 'sha1', 'sha', 'md4', 'md2'}
+                            if arg_str not in weak_algorithms:
+                                # Strong algorithm like sha256, sha384, sha512 - not vulnerable
+                                pass
+                            else:
+                                check = self._create_usage_based_check(
+                                    instr, state, proc_name, sink_kind
+                                )
+                                checks.append(check)
+                    # Special handling for set_cookie - only flag when secure=False
+                    elif func_name.endswith("set_cookie"):
+                        # Check if any arg is False (indicating secure=False)
+                        has_false_arg = False
+                        for arg_exp, _ in instr.args:
+                            arg_str = str(arg_exp).lower()
+                            if arg_str == "false":
+                                has_false_arg = True
+                                break
+                        if has_false_arg:
+                            check = self._create_usage_based_check(
+                                instr, state, proc_name, sink_kind
+                            )
+                            checks.append(check)
+                    else:
+                        # Create a usage-based vulnerability check
+                        check = self._create_usage_based_check(
+                            instr, state, proc_name, sink_kind
+                        )
+                        checks.append(check)
+                else:
+                    # For taint-flow sinks, check if tainted data reaches the sink
+                    for arg_idx in spec.sink_args:
+                        if arg_idx < len(instr.args):
+                            arg_exp, _ = instr.args[arg_idx]
+                            arg_vars = self._get_exp_vars(arg_exp)
+
+                            for arg_var in arg_vars:
+                                if state.is_tainted(arg_var):
+                                    if not state.is_sanitized_for(arg_var, spec.is_sink):
+                                        if not state.is_asserted_safe_for(arg_var, spec.is_sink):
+                                            check = self._create_taint_check(
+                                                instr, state, proc_name,
+                                                arg_var, sink_kind
+                                            )
+                                            checks.append(check)
 
             # Handle sanitizer
+            # Sanitizers should BOTH:
+            # 1. Propagate taint from input to output (data still flows through)
+            # 2. Add sanitization for specific sink types
             if spec.is_taint_sanitizer() and instr.ret:
                 ret_var = str(instr.ret[0])
                 state.add_sanitization(ret_var, spec.is_sanitizer)
+                # Also propagate taint from first argument (sanitizers process input)
+                if len(instr.args) > 0:
+                    arg_exp, _ = instr.args[0]
+                    arg_vars = self._get_exp_vars(arg_exp)
+                    for arg_var in arg_vars:
+                        if state.is_tainted(arg_var):
+                            state.propagate_taint(arg_var, ret_var)
 
             # Handle taint propagation
-            if spec.propagates_taint() and instr.ret:
+            if spec.propagates_taint():
+                # For methods with return values, propagate taint to return
+                if instr.ret:
+                    ret_var = str(instr.ret[0])
+                    # Check argument-based propagation
+                    for arg_idx in spec.taint_propagates:
+                        if arg_idx < len(instr.args):
+                            arg_exp, _ = instr.args[arg_idx]
+                            arg_vars = self._get_exp_vars(arg_exp)
+                            for arg_var in arg_vars:
+                                if state.is_tainted(arg_var):
+                                    state.propagate_taint(arg_var, ret_var)
+
+                    # Check receiver-based propagation (for method calls like var.method())
+                    # If the spec has taint_from_receiver, or if it's a method call
+                    # and the receiver is tainted, propagate taint
+                    if spec.taint_from_receiver or '.' in func_name:
+                        # Extract receiver from function name (e.g., "var.method" -> "var")
+                        parts = func_name.rsplit('.', 1)
+                        if len(parts) == 2:
+                            receiver_var = parts[0]
+                            if state.is_tainted(receiver_var):
+                                state.propagate_taint(receiver_var, ret_var)
+                else:
+                    # For methods without return values (like set/add/append/update),
+                    # propagate taint from arguments to the receiver object
+                    if '.' in func_name:
+                        parts = func_name.rsplit('.', 1)
+                        if len(parts) == 2:
+                            receiver_var = parts[0]
+                            method_name = parts[1].lower()
+                            # Check if any tainted argument is being stored
+                            for arg_idx in spec.taint_propagates:
+                                if arg_idx < len(instr.args):
+                                    arg_exp, _ = instr.args[arg_idx]
+                                    arg_vars = self._get_exp_vars(arg_exp)
+                                    for arg_var in arg_vars:
+                                        if state.is_tainted(arg_var):
+                                            state.propagate_taint(arg_var, receiver_var)
+
+        else:
+            # No spec found - apply default taint propagation for unknown functions
+            # This is conservative: if any argument is tainted, the return is tainted
+            # This catches cases like helper.doSomething(tainted_param) -> tainted_result
+            if instr.ret:
                 ret_var = str(instr.ret[0])
-                for arg_idx in spec.taint_propagates:
-                    if arg_idx < len(instr.args):
-                        arg_exp, _ = instr.args[arg_idx]
-                        arg_vars = self._get_exp_vars(arg_exp)
-                        for arg_var in arg_vars:
-                            if state.is_tainted(arg_var):
-                                state.propagate_taint(arg_var, ret_var)
+                for arg_exp, _ in instr.args:
+                    arg_vars = self._get_exp_vars(arg_exp)
+                    for arg_var in arg_vars:
+                        if state.is_tainted(arg_var):
+                            state.propagate_taint(arg_var, ret_var)
+                            break  # One taint source is enough
+
+                # Also propagate from receiver for method calls
+                if '.' in func_name:
+                    parts = func_name.rsplit('.', 1)
+                    if len(parts) == 2:
+                        receiver_var = parts[0]
+                        if state.is_tainted(receiver_var):
+                            state.propagate_taint(receiver_var, ret_var)
+
+        # Handle container modification (e.g., list.__setitem__, dict.__setitem__)
+        # When tainted data is stored in a container, the container becomes tainted
+        if '__setitem__' in func_name or 'append' in func_name or 'extend' in func_name:
+            # Extract receiver (container) from function name
+            parts = func_name.rsplit('.', 1)
+            if len(parts) == 2:
+                container_var = parts[0]
+                # Check if any argument (especially the value) is tainted
+                for arg_exp, _ in instr.args:
+                    arg_vars = self._get_exp_vars(arg_exp)
+                    for arg_var in arg_vars:
+                        if state.is_tainted(arg_var):
+                            # Taint the container
+                            state.propagate_taint(arg_var, container_var)
+                            break
 
         # Default: store return value
         if instr.ret:
@@ -743,6 +929,46 @@ class SILTranslator:
             state.asserted_safe[var] = [s.value for s in instr.for_sinks] if instr.for_sinks else []
         return state
 
+    def _exec_return(
+        self,
+        instr: Return,
+        state: SymbolicState,
+        proc_name: str
+    ) -> Tuple[List[VulnerabilityCheck], SymbolicState]:
+        """
+        Execute return statement.
+
+        For web applications, returning tainted data is XSS if the response
+        goes to a client. This is a conservative check.
+        """
+        checks = []
+
+        if instr.value:
+            return_vars = self._get_exp_vars(instr.value)
+
+            for var in return_vars:
+                if state.is_tainted(var):
+                    # Only flag XSS if taint originated from user input, not database
+                    taint_info = state.get_taint_info(var)
+                    is_user_taint = (
+                        taint_info and
+                        taint_info.source_kind and
+                        taint_info.source_kind.value in ("user", "file", "env")
+                    )
+
+                    if is_user_taint:
+                        # Check if sanitized for XSS
+                        if not state.is_sanitized_for(var, "html"):
+                            if not state.is_asserted_safe_for(var, "html"):
+                                # Returning tainted data - potential XSS
+                                check = self._create_taint_check(
+                                    instr, state, proc_name,
+                                    var, SinkKind.HTML_OUTPUT
+                                )
+                                checks.append(check)
+
+        return checks, state
+
     # =========================================================================
     # Vulnerability Check Creation
     # =========================================================================
@@ -792,6 +1018,45 @@ class SILTranslator:
             sink_type=sink_kind.value,
             procedure_name=proc_name,
             data_flow_path=taint_info.propagation_path if taint_info else [],
+        )
+
+    def _create_usage_based_check(
+        self,
+        instr: Instr,
+        state: SymbolicState,
+        proc_name: str,
+        sink_kind: SinkKind
+    ) -> VulnerabilityCheck:
+        """
+        Create a vulnerability check for usage-based sinks.
+
+        For vulnerabilities like weak random or weak hash, the mere usage
+        of the function is the vulnerability - no taint flow required.
+        """
+        from frame.core.ast import True_
+
+        # Get vulnerability type
+        vuln_type = VulnType.from_sink_kind(sink_kind)
+
+        # Get function name for description
+        func_name = ""
+        if isinstance(instr, Call):
+            func_name = instr.get_full_name()
+
+        # Simple formula - just indicates the usage
+        formula = True_()
+
+        return VulnerabilityCheck(
+            formula=formula,
+            vuln_type=vuln_type,
+            location=instr.loc,
+            description=f"Insecure function usage: {func_name} ({sink_kind.value})",
+            tainted_var="",
+            source_var="",
+            source_location=None,
+            sink_type=sink_kind.value,
+            procedure_name=proc_name,
+            data_flow_path=[],
         )
 
     def _check_null_deref(
@@ -911,6 +1176,54 @@ class SILTranslator:
                 result.extend(self._get_exp_vars(arg))
             return result
         return []
+
+    def _get_sanitizer_calls(self, exp: Exp) -> List[Tuple[str, List[str]]]:
+        """
+        Extract all function calls from an expression that might be sanitizers.
+
+        Returns list of (func_name, arg_vars) tuples for each call found.
+        """
+        result = []
+
+        if isinstance(exp, ExpCall):
+            # Get function name
+            if isinstance(exp.func, ExpConst):
+                func_name = str(exp.func.value)
+            elif isinstance(exp.func, ExpVar):
+                func_name = self._get_var_name(exp.func.var)
+            else:
+                func_name = str(exp.func)
+
+            # Get argument variables
+            arg_vars = []
+            for arg in exp.args:
+                arg_vars.extend(self._get_exp_vars(arg))
+
+            result.append((func_name, arg_vars))
+
+            # Recurse into arguments
+            for arg in exp.args:
+                result.extend(self._get_sanitizer_calls(arg))
+
+        elif isinstance(exp, ExpBinOp):
+            result.extend(self._get_sanitizer_calls(exp.left))
+            result.extend(self._get_sanitizer_calls(exp.right))
+
+        elif isinstance(exp, ExpUnOp):
+            result.extend(self._get_sanitizer_calls(exp.operand))
+
+        elif isinstance(exp, ExpStringConcat):
+            for part in exp.parts:
+                result.extend(self._get_sanitizer_calls(part))
+
+        elif isinstance(exp, ExpIndex):
+            result.extend(self._get_sanitizer_calls(exp.base))
+            result.extend(self._get_sanitizer_calls(exp.index))
+
+        elif isinstance(exp, ExpFieldAccess):
+            result.extend(self._get_sanitizer_calls(exp.base))
+
+        return result
 
     def _exp_to_formula(self, exp: Exp) -> Formula:
         """Convert SIL expression to Frame formula"""

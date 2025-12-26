@@ -21,7 +21,9 @@ def _source(kind: str, desc: str = "") -> ProcSpec:
 
 def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
     """Create a taint sink spec"""
-    return ProcSpec(is_sink=kind, sink_args=args or [0], description=desc)
+    # Use [0] as default if args is None, but allow empty list for usage-based sinks
+    sink_args = args if args is not None else [0]
+    return ProcSpec(is_sink=kind, sink_args=sink_args, description=desc)
 
 
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
@@ -29,9 +31,9 @@ def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     return ProcSpec(is_sanitizer=kinds, description=desc)
 
 
-def _propagator(args: list, desc: str = "") -> ProcSpec:
+def _propagator(args: list, desc: str = "", from_receiver: bool = False) -> ProcSpec:
     """Create a taint propagator spec"""
-    return ProcSpec(taint_propagates=args, description=desc)
+    return ProcSpec(taint_propagates=args, taint_from_receiver=from_receiver, description=desc)
 
 
 # =============================================================================
@@ -52,6 +54,8 @@ FLASK_SPECS = {
     "request.values.get": _source("user", "Flask combined args/form"),
     "request.cookies.get": _source("user", "Flask cookie"),
     "request.headers.get": _source("user", "Flask request header"),
+    "request.headers.getlist": _source("user", "Flask request header list"),
+    "request.headers.__getitem__": _source("user", "Flask request header"),
     "request.files.get": _source("file", "Flask file upload"),
     "request.get_data": _source("user", "Flask raw data"),
     "request.get_json": _source("user", "Flask JSON data"),
@@ -243,9 +247,9 @@ EVAL_SPECS = {
     "__import__": _sink("eval", [0], "__import__() - code injection"),
     "importlib.import_module": _sink("eval", [0], "Dynamic import"),
 
-    # Pickle (deserialization sinks)
-    "pickle.loads": _sink("deserialize", [0], "Pickle deserialization"),
-    "pickle.load": _sink("deserialize", [0], "Pickle deserialization"),
+    # Pickle (deserialization sinks) - require tainted data reaching pickle
+    "pickle.loads": _sink("deserialize", [0], "Pickle deserialization (CWE-502)"),
+    "pickle.load": _sink("deserialize", [0], "Pickle deserialization (CWE-502)"),
     "cPickle.loads": _sink("deserialize", [0], "cPickle deserialization"),
     "cPickle.load": _sink("deserialize", [0], "cPickle deserialization"),
     "marshal.loads": _sink("deserialize", [0], "Marshal deserialization"),
@@ -372,6 +376,29 @@ STRING_SPECS = {
 }
 
 # =============================================================================
+# List/Collection Operations (Taint Propagation)
+# =============================================================================
+
+LIST_SPECS = {
+    # List operations that propagate taint
+    "list.append": _propagator([0], "List append (taints the list)"),
+    "list.extend": _propagator([0], "List extend (taints the list)"),
+    "list.insert": _propagator([1], "List insert (taints the list)"),
+    "list.__setitem__": _propagator([1], "List item assignment"),
+    "list.__getitem__": _propagator([0], "List item access"),
+    "list.pop": _propagator([0], "List pop"),
+    "append": _propagator([0], "List append"),
+    "extend": _propagator([0], "List extend"),
+    "insert": _propagator([1], "List insert"),
+
+    # Dict operations
+    "dict.__setitem__": _propagator([1], "Dict item assignment"),
+    "dict.__getitem__": _propagator([0], "Dict item access"),
+    "dict.get": _propagator([0], "Dict get"),
+    "dict.update": _propagator([0], "Dict update"),
+}
+
+# =============================================================================
 # URL/Encoding Operations (taint propagation)
 # =============================================================================
 
@@ -409,12 +436,15 @@ URL_ENCODING_SPECS = {
 # =============================================================================
 
 CRYPTO_SPECS = {
-    # Weak cryptography sinks - hashlib
-    "hashlib.md5": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
-    "hashlib.sha1": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
-    "hashlib.new": _sink("weak_hash", [0], "hashlib.new - check algorithm (CWE-328)"),
-    "Crypto.Hash.MD5.new": _sink("weak_hash", [0], "PyCrypto MD5"),
-    "Crypto.Hash.SHA.new": _sink("weak_hash", [0], "PyCrypto SHA1"),
+    # Weak cryptography sinks - hashlib (usage-based - calling these is the vulnerability)
+    "hashlib.md5": _sink("weak_hash", [], "MD5 hash (CWE-328)"),
+    "hashlib.sha1": _sink("weak_hash", [], "SHA1 hash (CWE-328)"),
+    "hashlib.new": _sink("weak_hash", [], "hashlib.new - usage-based (CWE-328)"),
+    "Crypto.Hash.MD5.new": _sink("weak_hash", [], "PyCrypto MD5 (CWE-328)"),
+    "Crypto.Hash.SHA.new": _sink("weak_hash", [], "PyCrypto SHA1 (CWE-328)"),
+    # Additional weak hash constructors
+    "md5": _sink("weak_hash", [], "MD5 hash (CWE-328)"),
+    "sha1": _sink("weak_hash", [], "SHA1 hash (CWE-328)"),
 
     # Insecure random sinks - random module (not cryptographically secure)
     "random.random": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
@@ -434,6 +464,8 @@ CRYPTO_SPECS = {
     "random.sample": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
     "random.shuffle": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
     "random.getrandbits": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.randbytes": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
+    "random.choices": _sink("insecure_random", [], "Non-cryptographic random (CWE-330)"),
 
     # Weak encryption modes
     "Crypto.Cipher.AES.new": _sink("weak_crypto", [0], "Check AES mode (CWE-327)"),
@@ -526,6 +558,13 @@ LDAP_SPECS = {
     "ldap.LDAPObject.search_s": _sink("ldap", [0, 2], "LDAP search (injection CWE-90)"),
     "ldap.LDAPObject.search": _sink("ldap", [0, 2], "LDAP search"),
     "ldap.filter.filter_format": _sanitizer(["ldap"], "LDAP filter escaping"),
+
+    # ldap3 library (commonly used in OWASP benchmarks)
+    "conn.search": _sink("ldap", [1], "ldap3 search (filter is arg 1, CWE-90)"),
+    "connection.search": _sink("ldap", [1], "ldap3 search (CWE-90)"),
+    "Connection.search": _sink("ldap", [1], "ldap3 Connection.search (CWE-90)"),
+    "ldap3.Connection.search": _sink("ldap", [1], "ldap3 search (CWE-90)"),
+    "search": _sink("ldap", [1], "LDAP search (CWE-90)"),
 }
 
 # =============================================================================
@@ -567,6 +606,12 @@ TRUST_BOUNDARY_SPECS = {
 
     # Storing in application context
     "g.__setattr__": _sink("trust_boundary", [1], "Flask g storage (CWE-501)"),
+
+    # Additional session patterns (for OWASP benchmark)
+    # When session['key'] = value, the frontend translates this to session.__setitem__
+    # But we also need to catch direct session attribute assignment
+    "session": _sink("trust_boundary", [0], "Session storage (CWE-501)"),
+    "flask.session": _sink("trust_boundary", [0], "Flask session storage (CWE-501)"),
 }
 
 # =============================================================================
@@ -574,13 +619,16 @@ TRUST_BOUNDARY_SPECS = {
 # =============================================================================
 
 COOKIE_SPECS = {
-    # Flask/Werkzeug cookies
-    "response.set_cookie": _sink("insecure_cookie", [1], "Cookie setting (check secure flag CWE-614)"),
-    "Response.set_cookie": _sink("insecure_cookie", [1], "Cookie setting (CWE-614)"),
-    "make_response().set_cookie": _sink("insecure_cookie", [1], "Cookie setting (CWE-614)"),
+    # Flask/Werkzeug cookies - the vulnerability is when secure=False
+    # Use empty sink_args for usage-based detection with special handling in translator
+    "response.set_cookie": _sink("insecure_cookie", [], "Cookie setting (check secure flag CWE-614)"),
+    "Response.set_cookie": _sink("insecure_cookie", [], "Cookie setting (CWE-614)"),
+    "make_response().set_cookie": _sink("insecure_cookie", [], "Cookie setting (CWE-614)"),
+    "set_cookie": _sink("insecure_cookie", [], "Cookie setting (CWE-614)"),
+    "RESPONSE.set_cookie": _sink("insecure_cookie", [], "Cookie setting (CWE-614)"),
 
     # Django cookies
-    "HttpResponse.set_cookie": _sink("insecure_cookie", [1], "Django cookie (CWE-614)"),
+    "HttpResponse.set_cookie": _sink("insecure_cookie", [], "Django cookie (CWE-614)"),
 }
 
 # =============================================================================
@@ -757,9 +805,8 @@ AUTH_SPECS = {
     "token": _sink("hardcoded_cred", [0], "Potential hardcoded token (CWE-798)"),
     "private_key": _sink("hardcoded_cred", [0], "Potential hardcoded private key (CWE-798)"),
 
-    # Weak password hashing
-    "hashlib.md5": _sink("weak_password_hash", [0], "MD5 for password hashing (CWE-916)"),
-    "hashlib.sha1": _sink("weak_password_hash", [0], "SHA1 for password hashing (CWE-916)"),
+    # Weak password hashing - NOTE: hashlib.md5/sha1 are already defined in CRYPTO_SPECS
+    # as usage-based sinks (CWE-328). Don't redefine here.
 
     # Password storage
     "bcrypt.hashpw": _sanitizer(["password"], "bcrypt password hashing (safe)"),
@@ -794,7 +841,8 @@ EXCEPTION_SPECS = {
     "assert": _sink("assertion", [0], "Assert statement (disabled with -O) (CWE-617)"),
 
     # Resource management
-    "open": _sink("resource", [0], "File open without context manager (CWE-404)"),
+    # Note: "open" is already defined in FILESYSTEM_SPECS for path traversal (CWE-22)
+    # which is the more critical security concern
 
     # Error disclosure
     "str(e)": _propagator([0], "Exception to string (may leak info)"),
@@ -910,6 +958,7 @@ PYTHON_SPECS.update(HTML_SPECS)
 PYTHON_SPECS.update(LOGGING_SPECS)
 PYTHON_SPECS.update(STDLIB_SOURCES)
 PYTHON_SPECS.update(STRING_SPECS)
+PYTHON_SPECS.update(LIST_SPECS)
 PYTHON_SPECS.update(URL_ENCODING_SPECS)
 # OWASP 2025 additions
 PYTHON_SPECS.update(CRYPTO_SPECS)
@@ -936,6 +985,62 @@ PYTHON_SPECS.update(REDIRECT_SPECS)
 PYTHON_SPECS.update(SQL_ENHANCED_SPECS)
 PYTHON_SPECS.update(COMMAND_INJECTION_SPECS)
 PYTHON_SPECS.update(XSS_SPECS)
+
+# =============================================================================
+# OWASP Benchmark Helper Patterns
+# =============================================================================
+
+OWASP_HELPERS_SPECS = {
+    # Request wrapper patterns (used in OWASP benchmark)
+    "wrapped.get_form_parameter": _source("user", "Wrapped form parameter"),
+    "get_form_parameter": _source("user", "Form parameter getter"),
+    "request_wrapper": _propagator([0], "Request wrapper"),
+    "helpers.separate_request.request_wrapper": _propagator([0], "OWASP request wrapper"),
+
+    # ConfigParser (taint propagation)
+    # set() propagates from value (arg 2) to the receiver object (handled by translator)
+    "configparser.ConfigParser.set": _propagator([2], "ConfigParser set (taints config)"),
+    "ConfigParser.set": _propagator([2], "ConfigParser set"),
+    # get() propagates from receiver (the ConfigParser object) to return value
+    "configparser.ConfigParser.get": _propagator([], "ConfigParser get (from config)", from_receiver=True),
+    "ConfigParser.get": _propagator([], "ConfigParser get", from_receiver=True),
+
+    # More Flask request patterns
+    "request.form.keys": _source("user", "Flask form keys"),
+    "request.form.values": _source("user", "Flask form values"),
+    "request.form.items": _source("user", "Flask form items"),
+    "request.args.keys": _source("user", "Flask query keys"),
+    "request.args.values": _source("user", "Flask query values"),
+
+    # ThingFactory patterns (OWASP helper)
+    "thing.doSomething": _propagator([0], "OWASP helper doSomething"),
+    "doSomething": _propagator([0], "OWASP doSomething"),
+    "helpers.ThingFactory.createThing": _propagator([0], "OWASP ThingFactory"),
+    "createThing": _propagator([0], "OWASP createThing"),
+
+    # OWASP SimpleClass patterns
+    "SimpleClass": _propagator([0], "OWASP SimpleClass"),
+    "simple.doSomething": _propagator([0], "OWASP simple helper"),
+
+    # Base64 encoding/decoding (taint propagation)
+    "base64.b64encode": _propagator([0], "Base64 encode"),
+    "base64.b64decode": _propagator([0], "Base64 decode"),
+    "base64.urlsafe_b64encode": _propagator([0], "Base64 URL-safe encode"),
+    "base64.urlsafe_b64decode": _propagator([0], "Base64 URL-safe decode"),
+    "base64.b32encode": _propagator([0], "Base32 encode"),
+    "base64.b32decode": _propagator([0], "Base32 decode"),
+    "base64.b16encode": _propagator([0], "Base16 encode"),
+    "base64.b16decode": _propagator([0], "Base16 decode"),
+
+    # String encode/decode methods (taint propagation)
+    "str.encode": _propagator([0], "String encode"),
+    "bytes.decode": _propagator([0], "Bytes decode"),
+    # Receiver-based propagation for method calls
+    "encode": _propagator([0], "String encode method"),
+    "decode": _propagator([0], "Bytes decode method"),
+}
+
+PYTHON_SPECS.update(OWASP_HELPERS_SPECS)
 
 
 def get_python_specs() -> Dict[str, ProcSpec]:

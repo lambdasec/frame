@@ -399,14 +399,31 @@ class Program:
 
         Looks up in order:
         1. User-defined procedure specs
-        2. Library specs
+        2. Library specs (exact match)
+        3. Library specs (method name match for var.method patterns)
         """
         # Check user procedures first
         if func_name in self.procedures:
             return self.procedures[func_name].spec
 
-        # Check library specs
-        return self.library_specs.get(func_name)
+        # Check library specs (exact match)
+        spec = self.library_specs.get(func_name)
+        if spec:
+            return spec
+
+        # For method calls like "var.method", try matching just the method name
+        # This handles cases like "__nested_4.decode" matching "str.decode" or "bytes.decode"
+        if '.' in func_name:
+            method_name = func_name.split('.')[-1]
+            # Try common type prefixes for the method
+            for prefix in ['str', 'bytes', 'list', 'dict', 'set', 'object',
+                           'ConfigParser', 'configparser.ConfigParser']:
+                qualified_name = f"{prefix}.{method_name}"
+                spec = self.library_specs.get(qualified_name)
+                if spec:
+                    return spec
+
+        return None
 
     def add_library_spec(self, func_name: str, spec: ProcSpec) -> None:
         """Add a library specification"""
