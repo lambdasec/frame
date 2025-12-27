@@ -1028,8 +1028,52 @@ class PythonFrontend:
                     self._translate_block(body)
 
     def _translate_with(self, node: TSNode) -> None:
-        """Translate with statement"""
-        # Just translate the body
+        """Translate with statement: with expr as var: body"""
+        loc = self._get_location(node)
+
+        # Translate the context manager expression(s) in with_clause
+        # Pattern: with open(file, 'rb') as fd: ...
+        for child in node.children:
+            if child.type == "with_clause":
+                for item in child.children:
+                    if item.type == "with_item":
+                        # with_item can contain:
+                        # 1. Direct call: with open(...): ...
+                        # 2. as_pattern: with open(...) as fd: ...
+                        call_node = None
+                        alias_name = None
+
+                        for subchild in item.children:
+                            if subchild.type == "call":
+                                call_node = subchild
+                            elif subchild.type == "as_pattern":
+                                # as_pattern contains: call "as" identifier
+                                for as_child in subchild.children:
+                                    if as_child.type == "call":
+                                        call_node = as_child
+                                    elif as_child.type == "as_pattern_target":
+                                        for target_child in as_child.children:
+                                            if target_child.type == "identifier":
+                                                alias_name = self._get_text(target_child)
+
+                        if call_node:
+                            # Translate the call (e.g., open(fileName, 'wb'))
+                            instrs = self._translate_call_expr(call_node)
+                            self._add_instrs(instrs)
+
+                            # If there's an alias, assign the result to it
+                            if alias_name and instrs:
+                                last_instr = instrs[-1]
+                                if hasattr(last_instr, 'ret') and last_instr.ret:
+                                    ret_var = str(last_instr.ret[0])
+                                    assign = Assign(
+                                        Ident(alias_name, self._next_id()),
+                                        ExpVar(PVar(ret_var)),
+                                        loc
+                                    )
+                                    self._add_instr(assign)
+
+        # Translate the body
         body = node.child_by_field_name("body")
         if body:
             self._translate_block(body)
