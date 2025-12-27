@@ -23,6 +23,51 @@ python -m benchmarks run --curated
   - 500 QF_AX (array theory) - 100% correct, 0 errors
   - 250 QF_BV (bitvector theory) - 89.2% correct, 0 errors
 
+### SAST Security Benchmarks (1000 tests)
+
+```bash
+# Run OWASP Python benchmark (500 curated security tests)
+python -m benchmarks run --division owasp_python_curated
+
+# Run OWASP Java benchmark (500 security tests)
+python -m benchmarks run --division owasp_java
+
+# Results: ~30 seconds each, comprehensive security coverage
+```
+
+**OWASP Python Benchmark Results** (500 tests, 194 vulnerabilities):
+
+| Metric | Frame | Semgrep | Bandit |
+|--------|-------|---------|--------|
+| **True Positives** | 162 | 62 | 56 |
+| **False Positives** | 8 | 84 | 60 |
+| **Precision** | **95.3%** | 42.5% | 48.3% |
+| **Recall** | **83.5%** | 32.0% | 28.9% |
+| **OWASP Score** | **80.9%** | 4.5% | 9.3% |
+
+**OWASP Java Benchmark Results** (500 tests, 289 vulnerabilities):
+
+| Metric | Frame | Semgrep | FindSecBugs |
+|--------|-------|---------|-------------|
+| **True Positives** | 245 | 1279 | ~145 |
+| **False Positives** | 7 | 991 | ~65 |
+| **Precision** | **97.2%** | 56.3% | 68.9% |
+| **Recall** | 84.8% | **90.4%** | 50% |
+| **F1 Score** | **90.6%** | 69.4% | 52.1% |
+| **OWASP Score** | **81.5%** | 15.7% | 39% |
+
+Frame achieves **80.9% OWASP Score** on Python and **81.5% OWASP Score** on Java (TPR - FPR), outperforming:
+- Semgrep by +76.4 points (Python) and +65.8 points (Java)
+- FindSecBugs by +42.5 points (Java) - the best open-source Java SAST tool
+- Bandit by +71.6 points (Python)
+
+**Why Frame performs better:**
+- Taint analysis with full data flow tracking
+- Constant folding eliminates dead branches
+- Context-sensitive validation pattern recognition
+- Per-element collection tracking with separation logic
+- Sanitizer propagation through assignments
+
 ### Full Benchmarks (Comprehensive - ~20k tests)
 
 ```bash
@@ -63,6 +108,33 @@ python -m benchmarks run --division qf_shls_entl
 
 **Total Curated: 4,742 tests**
 - **Overall: 96.0% correct (4552/4742), 0 errors, avg 970ms/test**
+
+### SAST Security Benchmarks
+
+**OWASP Python Curated: 500 tests**
+- Industry-standard security benchmark from OWASP
+- 194 true vulnerabilities across 11 categories
+- Categories: SQL Injection, XSS, Command Injection, Path Traversal, LDAP Injection, XPath Injection, Weak Crypto, Weak Hash, XXE, Deserialization, Open Redirect
+- **Results: 95.3% precision, 83.5% recall, 80.9% OWASP Score**
+
+**OWASP Java: 500 tests**
+- Industry-standard Java security benchmark from OWASP
+- 289 true vulnerabilities across multiple categories
+- Categories: SQL Injection, XSS, Command Injection, Path Traversal, Weak Crypto, Weak Hash, XXE, LDAP Injection, XPath Injection, Trust Boundary
+- **Results: 97.2% precision, 84.8% recall, 81.5% OWASP Score**
+
+| Vulnerability Type | Python Tests | Java Tests | Description |
+|-------------------|--------------|------------|-------------|
+| SQL Injection | 89 | ~90 | Database query injection |
+| XSS | 50 | ~80 | Cross-site scripting |
+| Command Injection | 94 | ~50 | OS command execution |
+| Path Traversal | 22 | ~25 | Directory traversal attacks |
+| XPath Injection | 50 | ~10 | XML path injection |
+| LDAP Injection | 90 | ~25 | Directory service injection |
+| Weak Crypto | 28 | ~30 | Insecure cryptographic algorithms |
+| Weak Hash | 50 | ~50 | Insecure hash functions (MD5, SHA1) |
+| XXE | 11 | ~10 | XML External Entity attacks |
+| Deserialization | 16 | ~10 | Insecure object deserialization |
 
 ### Full Sets (19,801 tests)
 

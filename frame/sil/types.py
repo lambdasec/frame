@@ -229,10 +229,11 @@ class ExpConst(Exp):
         if self.value is None:
             return "null"
         if isinstance(self.value, str):
-            # Escape for display
+            # Escape for display (but keep enough for pattern matching)
             escaped = self.value.replace('\\', '\\\\').replace('"', '\\"')
-            if len(escaped) > 50:
-                escaped = escaped[:47] + "..."
+            # Increased limit from 50 to 200 to preserve method chain names for sanitizer detection
+            if len(escaped) > 200:
+                escaped = escaped[:197] + "..."
             return f'"{escaped}"'
         if isinstance(self.value, bool):
             return "true" if self.value else "false"

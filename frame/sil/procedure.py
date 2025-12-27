@@ -414,10 +414,31 @@ class Program:
         # For method calls like "var.method", try matching just the method name
         # This handles cases like "__nested_4.decode" matching "str.decode" or "bytes.decode"
         if '.' in func_name:
-            method_name = func_name.split('.')[-1]
-            # Try common type prefixes for the method
+            # First try suffix match for chained patterns like getWriter().format
+            # This gives priority to more specific patterns like getWriter().format over String.format
+            parts = func_name.split('.')
+            for i in range(1, len(parts)):
+                suffix = '.'.join(parts[i:])
+                spec = self.library_specs.get(suffix)
+                if spec:
+                    return spec
+
+            method_name = parts[-1]
+            # Try common type prefixes for the method (Python and Java)
             for prefix in ['str', 'bytes', 'list', 'dict', 'set', 'object',
-                           'ConfigParser', 'configparser.ConfigParser']:
+                           'ConfigParser', 'configparser.ConfigParser',
+                           # Java prefixes
+                           'request', 'response', 'session', 'connection',
+                           'statement', 'PreparedStatement', 'Statement',
+                           'Runtime', 'runtime', 'ProcessBuilder', 'processBuilder',
+                           'URLDecoder', 'URLEncoder', 'java.net.URLDecoder', 'java.net.URLEncoder',
+                           'Base64', 'java.util.Base64',
+                           'String', 'StringBuilder', 'StringBuffer',
+                           'MessageDigest', 'Cipher', 'SecretKeySpec',
+                           'ObjectInputStream', 'ObjectOutputStream',
+                           'FileInputStream', 'FileOutputStream', 'File',
+                           'DocumentBuilder', 'SAXParser', 'XMLReader',
+                           'XPath', 'xpath', 'DirContext', 'ldapTemplate']:
                 qualified_name = f"{prefix}.{method_name}"
                 spec = self.library_specs.get(qualified_name)
                 if spec:

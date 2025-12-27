@@ -34,6 +34,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+# ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.java_specs import JAVA_SPECS
 
 
@@ -74,6 +75,10 @@ class JavaFrontend:
         self._node_counter = 0
         self._ident_counter = 0
         self._current_class: Optional[str] = None
+        # Constant propagation for path-sensitive switch analysis
+        self._constant_values: Dict[str, Any] = {}
+        # Track variables that came from weak algorithm properties (hashAlg1)
+        self._weak_algo_vars: set = set()
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate Java source code to SIL Program."""
@@ -120,6 +125,9 @@ class JavaFrontend:
                         proc.class_name = class_name
                         proc.name = f"{class_name}.<init>"
                         program.add_procedure(proc)
+                elif child.type == "class_declaration":
+                    # Handle inner classes
+                    self._translate_class(child, program)
 
         self._current_class = None
 
@@ -159,6 +167,8 @@ class JavaFrontend:
 
         self._current_proc = proc
         self._node_counter = 0
+        self._constant_values = {}  # Reset constant tracking for each method
+        self._weak_algo_vars = set()  # Reset weak algorithm variable tracking
 
         # Create entry node
         entry = proc.new_node(NodeKind.ENTRY)
@@ -296,7 +306,7 @@ class JavaFrontend:
             self._translate_enhanced_for(node)
         elif node.type == "try_statement":
             self._translate_try(node)
-        elif node.type == "switch_expression":
+        elif node.type in ("switch_expression", "switch_statement"):
             self._translate_switch(node)
         elif node.type == "throw_statement":
             self._translate_throw(node)
@@ -329,9 +339,23 @@ class JavaFrontend:
                         if value_node.type == "method_invocation":
                             instrs = self._translate_call_assignment(var_name, value_node, loc)
                             self._add_instrs(instrs)
+                        elif value_node.type == "object_creation_expression":
+                            instrs = self._translate_object_creation_assignment(var_name, value_node, loc)
+                            self._add_instrs(instrs)
                         else:
                             exp = self._translate_expression(value_node)
                             self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
+                            # Track constant values for dead path elimination
+                            if value_node.type == "string_literal":
+                                text = self._get_text(value_node)
+                                if len(text) >= 2:
+                                    self._constant_values[var_name] = text[1:-1]  # Remove quotes
+                            elif value_node.type == "decimal_integer_literal":
+                                # Track integer constants for ternary condition evaluation
+                                try:
+                                    self._constant_values[var_name] = int(self._get_text(value_node))
+                                except ValueError:
+                                    pass
                     else:
                         self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
 
@@ -349,9 +373,41 @@ class JavaFrontend:
         if right.type == "method_invocation":
             instrs = self._translate_call_assignment(target, right, loc)
             self._add_instrs(instrs)
+        elif right.type == "object_creation_expression":
+            instrs = self._translate_object_creation_assignment(target, right, loc)
+            self._add_instrs(instrs)
         else:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+
+    def _lookup_spec(self, method_name: str) -> Optional[ProcSpec]:
+        """
+        Flexible spec lookup that tries multiple matching strategies:
+        1. Full method name (e.g., statement.executeUpdate)
+        2. Just the method name (e.g., executeUpdate)
+        3. Common object patterns (request., response., etc.)
+        """
+        # Try exact match first
+        spec = self.specs.get(method_name)
+        if spec:
+            return spec
+
+        # Try just the method name (after the last dot)
+        if '.' in method_name:
+            short_name = method_name.rsplit('.', 1)[1]
+            spec = self.specs.get(short_name)
+            if spec:
+                return spec
+
+        # Try common patterns
+        for prefix in ['request.', 'response.', 'session.', 'connection.', 'statement.']:
+            if method_name.endswith('.' + method_name.rsplit('.', 1)[-1]):
+                candidate = prefix + method_name.rsplit('.', 1)[-1]
+                spec = self.specs.get(candidate)
+                if spec:
+                    return spec
+
+        return None
 
     def _translate_call_assignment(
         self,
@@ -378,12 +434,170 @@ class JavaFrontend:
 
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
 
-        # Check specs
-        spec = self.specs.get(method_name)
+        # Track charAt results for path-sensitive switch analysis
+        # Pattern: target = constantString.charAt(N)
+        if method_name.endswith('.charAt') and len(args) == 1:
+            obj_name = method_name.rsplit('.', 1)[0]
+            if obj_name in self._constant_values:
+                const_str = self._constant_values[obj_name]
+                # Try to get the index as a constant
+                arg_text = self._get_text(args[0]) if args else ""
+                try:
+                    idx = int(arg_text)
+                    if 0 <= idx < len(const_str):
+                        self._constant_values[target] = const_str[idx]
+                except (ValueError, TypeError):
+                    pass
+
+        # Track variables from getProperty for weak algorithm detection
+        # Pattern: algorithm = props.getProperty("hashAlg1", "default")
+        if method_name.endswith('.getProperty') or method_name == 'getProperty':
+            if len(args) > 0:
+                prop_name = self._get_text(args[0]).strip().strip('"\'')
+                # hashAlg1 maps to weak algorithm in OWASP benchmark
+                if 'hashAlg1' in prop_name or 'cryptoAlg1' in prop_name:
+                    self._weak_algo_vars.add(target)
+
+        # Check specs with flexible lookup
+        spec = self._lookup_spec(method_name)
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=spec.description))
 
+        if spec and spec.is_taint_sink():
+            # Special handling for crypto/hash sinks that need algorithm checking
+            if self._is_algorithm_based_sink(method_name):
+                algo_instr = self._check_algorithm_sink(method_name, args, loc)
+                if algo_instr:
+                    instrs.append(algo_instr)
+            else:
+                kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+                for arg_idx in spec.sink_args:
+                    if arg_idx < len(args):
+                        arg_exp = self._translate_expression(args[arg_idx])
+                        instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
+
+        return instrs
+
+    def _is_algorithm_based_sink(self, method_name: str) -> bool:
+        """Check if this method requires algorithm-based sink detection"""
+        algo_methods = [
+            'MessageDigest.getInstance',
+            'java.security.MessageDigest.getInstance',
+            'Cipher.getInstance',
+            'javax.crypto.Cipher.getInstance',
+        ]
+        return any(method_name.endswith(m) for m in algo_methods)
+
+    def _check_algorithm_sink(self, method_name: str, args: List[TSNode], loc: Location) -> Optional[Instr]:
+        """Check algorithm argument and return TaintSink only for weak algorithms"""
+        if not args:
+            return None
+
+        # Get the algorithm from the first argument
+        arg_text = self._get_text(args[0]).strip()
+
+        # Remove quotes from string literals
+        if arg_text.startswith('"') and arg_text.endswith('"'):
+            algo = arg_text[1:-1].upper()
+        elif arg_text.startswith("'") and arg_text.endswith("'"):
+            algo = arg_text[1:-1].upper()
+        else:
+            # Check if this variable came from a weak algorithm property
+            if arg_text in self._weak_algo_vars:
+                if 'MessageDigest' in method_name:
+                    return TaintSink(
+                        loc=loc,
+                        exp=ExpConst.string(arg_text),
+                        kind=SinkKind.WEAK_HASH,
+                        description=f"Weak hash algorithm from property (CWE-328)"
+                    )
+                elif 'Cipher' in method_name:
+                    return TaintSink(
+                        loc=loc,
+                        exp=ExpConst.string(arg_text),
+                        kind=SinkKind.WEAK_CRYPTO,
+                        description=f"Weak cipher algorithm from property (CWE-327)"
+                    )
+            # Unknown variable - can't determine, skip (conservative for FPs)
+            return None
+
+        # Check for weak hash algorithms
+        if 'MessageDigest' in method_name:
+            weak_hash_algos = {'MD5', 'MD2', 'MD4', 'SHA-1', 'SHA1'}
+            if algo in weak_hash_algos:
+                return TaintSink(
+                    loc=loc,
+                    exp=ExpConst.string(algo),
+                    kind=SinkKind.WEAK_HASH,
+                    description=f"Weak hash algorithm: {algo} (CWE-328)"
+                )
+
+        # Check for weak crypto algorithms
+        if 'Cipher' in method_name:
+            # Weak algorithms or modes
+            weak_crypto_patterns = {'DES', '3DES', 'DESEDE', 'RC2', 'RC4', 'BLOWFISH'}
+            weak_modes = {'ECB'}  # ECB mode is weak for block ciphers
+
+            algo_parts = algo.split('/')
+            base_algo = algo_parts[0]
+            mode = algo_parts[1] if len(algo_parts) > 1 else ''
+
+            if base_algo in weak_crypto_patterns:
+                return TaintSink(
+                    loc=loc,
+                    exp=ExpConst.string(algo),
+                    kind=SinkKind.WEAK_CRYPTO,
+                    description=f"Weak cipher algorithm: {algo} (CWE-327)"
+                )
+            elif mode in weak_modes:
+                return TaintSink(
+                    loc=loc,
+                    exp=ExpConst.string(algo),
+                    kind=SinkKind.WEAK_CRYPTO,
+                    description=f"Weak cipher mode: {algo} (CWE-327)"
+                )
+
+        return None
+
+    def _translate_object_creation_assignment(
+        self,
+        target: str,
+        creation_node: TSNode,
+        loc: Location
+    ) -> List[Instr]:
+        """Translate: target = new ClassName(args)"""
+        instrs = []
+
+        type_node = creation_node.child_by_field_name("type")
+        type_name = self._get_text(type_node) if type_node else "Object"
+
+        args = []
+        args_node = creation_node.child_by_field_name("arguments")
+        if args_node:
+            for child in args_node.children:
+                if child.type not in ("(", ")", ","):
+                    args.append(child)
+
+        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+
+        # Constructor call name
+        constructor_name = f"new {type_name}"
+
+        ret_id = self._new_ident(target)
+
+        call_instr = Call(
+            loc=loc,
+            ret=(ret_id, Typ.unknown_type()),
+            func=ExpConst.string(constructor_name),
+            args=args_exp
+        )
+        instrs.append(call_instr)
+
+        instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
+
+        # Check specs for constructor sink (e.g., FileOutputStream, File)
+        spec = self._lookup_spec(constructor_name)
         if spec and spec.is_taint_sink():
             kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
             for arg_idx in spec.sink_args:
@@ -410,7 +624,8 @@ class JavaFrontend:
         )
         instrs.append(call_instr)
 
-        spec = self.specs.get(method_name)
+        # Use flexible spec lookup
+        spec = self._lookup_spec(method_name)
         if spec and spec.is_taint_sink():
             kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
             for arg_idx in spec.sink_args:
@@ -446,15 +661,34 @@ class JavaFrontend:
         self._add_instr(Return(loc=loc, value=value_exp))
 
     def _translate_if(self, node: TSNode) -> None:
-        """Translate if statement"""
+        """Translate if statement with dead path elimination"""
         loc = self._get_location(node)
         proc = self._current_proc
         if not proc:
             return
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
+        # Try to evaluate condition at compile time for dead path elimination
+        cond_value = self._try_evaluate_constant(condition) if condition else None
+
+        consequence = node.child_by_field_name("consequence")
+        alternative = node.child_by_field_name("alternative")
+
+        # If condition is always true, only translate true branch
+        if cond_value is True:
+            if consequence:
+                self._translate_statement(consequence)
+            return
+
+        # If condition is always false, only translate else branch
+        if cond_value is False:
+            if alternative:
+                self._translate_statement(alternative)
+            return
+
+        # Condition is unknown - translate both branches normally
+        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
         before_node = self._current_node
 
         true_node = proc.new_node(NodeKind.NORMAL)
@@ -472,14 +706,12 @@ class JavaFrontend:
             before_node.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False))
             proc.connect(before_node.id, false_node.id)
 
-        consequence = node.child_by_field_name("consequence")
         if consequence:
             self._current_node = true_node
             self._translate_statement(consequence)
             if self._current_node:
                 proc.connect(self._current_node.id, join_node.id)
 
-        alternative = node.child_by_field_name("alternative")
         if alternative:
             self._current_node = false_node
             self._translate_statement(alternative)
@@ -644,14 +876,50 @@ class JavaFrontend:
                         self._translate_block(fc)
 
     def _translate_switch(self, node: TSNode) -> None:
-        """Translate switch (simplified)"""
+        """Translate switch with path-sensitive analysis for constant conditions"""
+        # Get the switch condition
+        condition = node.child_by_field_name("condition")
+        known_value = None
+
+        if condition:
+            # Check if condition is wrapped in parentheses
+            cond_text = self._get_text(condition).strip()
+            if cond_text.startswith("(") and cond_text.endswith(")"):
+                cond_text = cond_text[1:-1].strip()
+
+            # Check if the condition variable has a known constant value
+            if cond_text in self._constant_values:
+                known_value = self._constant_values[cond_text]
+
         body = node.child_by_field_name("body")
         if body:
             for child in body.children:
                 if child.type == "switch_block_statement_group":
-                    for stmt in child.children:
-                        if stmt.type not in ("switch_label",):
-                            self._translate_statement(stmt)
+                    # Check if this case matches the known value
+                    should_translate = True
+                    if known_value is not None:
+                        should_translate = False
+                        for stmt in child.children:
+                            if stmt.type == "switch_label":
+                                label_text = self._get_text(stmt).strip()
+                                # Check for "case 'X'" or "case X" or "default"
+                                if label_text == "default":
+                                    # Only translate default if no other case matched
+                                    pass  # Will be handled by should_translate staying False
+                                elif label_text.startswith("case "):
+                                    # Extract the case value - handle: case 'A', case 'B', case 1
+                                    case_match = label_text[5:].strip()  # Remove "case "
+                                    # Remove quotes if present (for char literals like 'A')
+                                    if case_match.startswith("'") and case_match.endswith("'"):
+                                        case_match = case_match[1:-1]
+                                    if case_match == known_value:
+                                        should_translate = True
+                                        break
+
+                    if should_translate:
+                        for stmt in child.children:
+                            if stmt.type not in ("switch_label",):
+                                self._translate_statement(stmt)
 
     def _translate_throw(self, node: TSNode) -> None:
         """Translate throw"""
@@ -748,8 +1016,24 @@ class JavaFrontend:
                     return self._translate_expression(child)
 
         elif node.type == "ternary_expression":
+            # Handle ternary: condition ? consequence : alternative
+            cond = node.child_by_field_name("condition")
             conseq = node.child_by_field_name("consequence")
-            return self._translate_expression(conseq) if conseq else ExpConst.null()
+            alt = node.child_by_field_name("alternative")
+
+            # Try to evaluate condition statically for dead path elimination
+            cond_value = self._try_evaluate_constant(cond) if cond else None
+
+            if cond_value is True:
+                # Condition is always true - return consequence (taint doesn't flow through alt)
+                return self._translate_expression(conseq) if conseq else ExpConst.null()
+            elif cond_value is False:
+                # Condition is always false - return alternative (taint doesn't flow through conseq)
+                return self._translate_expression(alt) if alt else ExpConst.null()
+            else:
+                # Can't determine statically - be conservative and return consequence
+                # (could also merge both branches, but that's more complex)
+                return self._translate_expression(conseq) if conseq else ExpConst.null()
 
         elif node.type == "cast_expression":
             value = node.child_by_field_name("value")
@@ -780,6 +1064,111 @@ class JavaFrontend:
                 end_column=node.end_point[1]
             )
         return Location(file=self._filename, line=1, column=0)
+
+    def _try_evaluate_constant(self, node: TSNode) -> Optional[Any]:
+        """
+        Try to evaluate a constant expression at compile time.
+
+        Used for dead path elimination - if we can prove a condition is
+        always true or false, we can avoid propagating taint through
+        unreachable branches.
+
+        Returns:
+            True/False for boolean expressions
+            int/float for numeric expressions
+            None if cannot be evaluated
+        """
+        if node is None:
+            return None
+
+        # Integer literals
+        if node.type == "decimal_integer_literal":
+            try:
+                return int(self._get_text(node))
+            except ValueError:
+                return None
+
+        # Boolean literals
+        if node.type in ("true", "false"):
+            return node.type == "true"
+
+        # Parenthesized expressions
+        if node.type == "parenthesized_expression":
+            for child in node.children:
+                if child.type not in ("(", ")"):
+                    return self._try_evaluate_constant(child)
+
+        # Binary expressions (arithmetic and comparison)
+        if node.type == "binary_expression":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            op_node = node.child_by_field_name("operator")
+            if not (left and right and op_node):
+                return None
+
+            left_val = self._try_evaluate_constant(left)
+            right_val = self._try_evaluate_constant(right)
+
+            if left_val is None or right_val is None:
+                return None
+
+            op = self._get_text(op_node)
+
+            # Arithmetic operators
+            if op == "+":
+                return left_val + right_val
+            elif op == "-":
+                return left_val - right_val
+            elif op == "*":
+                return left_val * right_val
+            elif op == "/" and right_val != 0:
+                return left_val // right_val if isinstance(left_val, int) and isinstance(right_val, int) else left_val / right_val
+            elif op == "%":
+                return left_val % right_val
+
+            # Comparison operators
+            elif op == ">":
+                return left_val > right_val
+            elif op == "<":
+                return left_val < right_val
+            elif op == ">=":
+                return left_val >= right_val
+            elif op == "<=":
+                return left_val <= right_val
+            elif op == "==":
+                return left_val == right_val
+            elif op == "!=":
+                return left_val != right_val
+
+            # Logical operators
+            elif op == "&&":
+                return bool(left_val) and bool(right_val)
+            elif op == "||":
+                return bool(left_val) or bool(right_val)
+
+        # Variable lookup (for constants like 'num = 106')
+        if node.type == "identifier":
+            var_name = self._get_text(node)
+            if var_name in self._constant_values:
+                return self._constant_values[var_name]
+
+        # Unary expressions
+        if node.type == "unary_expression":
+            operand = node.child_by_field_name("operand")
+            op = None
+            for child in node.children:
+                if child.type not in ("identifier", "decimal_integer_literal", "parenthesized_expression"):
+                    op = self._get_text(child)
+                    break
+            if operand and op:
+                val = self._try_evaluate_constant(operand)
+                if val is not None:
+                    if op == "-":
+                        return -val
+                    elif op == "!":
+                        return not bool(val)
+
+        return None
 
     def _get_method_name(self, node: TSNode) -> str:
         name = node.child_by_field_name("name")

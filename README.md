@@ -2,7 +2,7 @@
 
 **A Static Analysis Tool for Memory Safety and Security**
 
-[![Tests](https://img.shields.io/badge/tests-1330%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![Benchmarks](https://img.shields.io/badge/benchmarks-96.0%25%20(4742)-blue)](benchmarks/)
+[![Tests](https://img.shields.io/badge/tests-1330%20passed-green)](tests/) [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE) [![OWASP Score](https://img.shields.io/badge/OWASP%20Score-80.9%25-brightgreen)](benchmarks/) [![Benchmarks](https://img.shields.io/badge/benchmarks-96.0%25%20(4742)-blue)](benchmarks/)
 
 ## What is Frame?
 
@@ -574,9 +574,40 @@ overflow = BitVecExpr("bvadd", [BitVecVal(255, 8), BitVecVal(1, 8)], 8)
 
 ## Benchmarks
 
-Frame is validated against industry-standard benchmark suites. "Accuracy" measures how often Frame produces the correct answer (valid/invalid) compared to the expected result.
+Frame is validated against industry-standard benchmark suites.
 
-### Curated Results (4,742 tests, ~15-20 min)
+### Security Scanner (OWASP Benchmark)
+
+Frame's security scanner is tested against industry-standard OWASP benchmarks:
+
+**Python Benchmark** (500 tests, 194 vulnerabilities):
+
+| Metric | Frame | Semgrep | Bandit |
+|--------|-------|---------|--------|
+| **Precision** | **95.3%** | 42.5% | 48.3% |
+| **Recall** | **83.5%** | 32.0% | 28.9% |
+| **OWASP Score** | **80.9%** | 4.5% | 9.3% |
+
+**Java Benchmark** (500 tests, 289 vulnerabilities):
+
+| Metric | Frame | Semgrep | FindSecBugs |
+|--------|-------|---------|-------------|
+| **Precision** | **97.2%** | 56.3% | 68.9% |
+| **Recall** | 84.8% | **90.4%** | 50% |
+| **F1 Score** | **90.6%** | 69.4% | 52.1% |
+| **OWASP Score** | **81.5%** | 15.7% | 39% |
+
+Frame achieves **80.9% OWASP Score** on Python and **81.5% OWASP Score** on Java (TPR - FPR), significantly outperforming both pattern-matching tools and traditional static analyzers.
+
+```bash
+# Run security benchmarks
+python -m benchmarks run --division owasp_python_curated
+python -m benchmarks run --division owasp_java
+```
+
+### Logic Solver (SMT-LIB/SL-COMP)
+
+**Curated Results** (4,742 tests, ~5 minutes):
 
 | Theory | Tests | Accuracy | Avg Time |
 |--------|-------|----------|----------|
@@ -586,7 +617,7 @@ Frame is validated against industry-standard benchmark suites. "Accuracy" measur
 | Bitvector (QF_BV) | 250 | 89.2% | 0.025s |
 | **Total** | **4,742** | **96.0%** | 970ms |
 
-### Full Results (19,801 tests, ~2+ hours)
+**Full Results** (19,801 tests, ~2+ hours):
 
 | Theory | Tests | Accuracy | Avg Time |
 |--------|-------|----------|----------|
@@ -596,26 +627,18 @@ Frame is validated against industry-standard benchmark suites. "Accuracy" measur
 | Bitvector (QF_BV) | 250 | 76.4% | 0.025s |
 | **Total** | **19,801** | **83.9%** | 0.8s |
 
-### Running Benchmarks
-
 ```bash
-# Quick validation (~15-20 min)
+# Run curated benchmarks (~5 minutes)
 python -m benchmarks run --curated
 
-# Full validation (~2+ hours)
+# Run full benchmarks (~2+ hours)
 python -m benchmarks run --all
-
-# By theory
-python -m benchmarks run --division slcomp_curated
-python -m benchmarks run --division qf_s_curated
-python -m benchmarks run --division qf_ax_curated
-python -m benchmarks run --division qf_bv_curated
 ```
 
 **Benchmark Sources:**
-- SL-COMP 2024: Official separation logic competition benchmarks
-- SMT-LIB 2024: QF_S (Kaluza, PISA, PyEx), QF_AX, QF_BV from Zenodo release
-- Custom: Security-focused regression tests for cross-theory vulnerabilities
+- **OWASP Benchmark**: Industry-standard security test suite
+- **SL-COMP 2024**: Official separation logic competition
+- **SMT-LIB 2024**: QF_S, QF_AX, QF_BV from Zenodo release
 
 See [benchmarks/README.md](benchmarks/README.md) for detailed methodology.
 

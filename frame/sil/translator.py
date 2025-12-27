@@ -65,7 +65,7 @@ class VulnType(Enum):
     # Note: Requires SCA tools, out of scope for SAST/taint analysis
 
     # A04: Cryptographic Failures
-    WEAK_CRYPTOGRAPHY = "weak_cryptography"     # CWE-327
+    WEAK_CRYPTOGRAPHY = "weak_crypto"     # CWE-327 (OWASP expects "weak_crypto")
     HARDCODED_SECRET = "hardcoded_secret"       # CWE-798
     INSECURE_RANDOM = "insecure_random"         # CWE-330
     WEAK_HASH = "weak_hash"                     # CWE-328
@@ -596,6 +596,95 @@ class SILTranslator:
         self.program = program or Program()
         self.verbose = verbose
         self.vulnerability_checks: List[VulnerabilityCheck] = []
+        # Cache for procedures that always return constants
+        self._constant_return_procs: Dict[str, bool] = {}
+
+    def _proc_always_returns_constant(self, proc_name: str) -> bool:
+        """
+        Check if a procedure always returns a constant value.
+
+        This is used for inter-procedural dead path elimination.
+        If a procedure only has Return instructions with constant values
+        (and no parameter references), calling it won't propagate taint.
+        """
+        # Check cache first
+        if proc_name in self._constant_return_procs:
+            return self._constant_return_procs[proc_name]
+
+        # Try to find the procedure with various name patterns
+        proc = None
+        # Try exact match
+        if proc_name in self.program.procedures:
+            proc = self.program.procedures[proc_name]
+        else:
+            # Try matching by method name suffix (e.g., "new Test().doSomething" -> "Test.doSomething")
+            method_suffix = proc_name.split('.')[-1] if '.' in proc_name else proc_name
+            for pname, p in self.program.procedures.items():
+                if pname.endswith('.' + method_suffix):
+                    proc = p
+                    break
+
+        if proc is None:
+            self._constant_return_procs[proc_name] = False
+            return False
+
+        # Track variable assignments to constants
+        # A variable "always contains a constant" if it's only ever assigned constants
+        var_is_constant: Dict[str, bool] = {}
+
+        # First pass: collect all assignments
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if isinstance(instr, Assign):
+                    var_name = str(instr.id)
+                    value_str = str(instr.exp)
+                    # Check if assigned value is a constant
+                    is_constant = (
+                        (value_str.startswith('"') and value_str.endswith('"')) or
+                        (value_str.startswith("'") and value_str.endswith("'")) or
+                        value_str.replace('.', '', 1).replace('-', '', 1).isdigit() or
+                        value_str in ('true', 'false', 'null', 'None', 'null')
+                    )
+                    # If already marked as non-constant, keep it that way
+                    if var_name in var_is_constant and not var_is_constant[var_name]:
+                        continue
+                    var_is_constant[var_name] = is_constant
+
+        # Check all return instructions
+        # A procedure returns a constant if:
+        # 1. It returns a literal constant, OR
+        # 2. It returns a variable that only contains constants
+        all_returns_constant = True
+        found_return = False
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if isinstance(instr, Return):
+                    found_return = True
+                    if instr.value is None:
+                        # Void return - doesn't propagate taint
+                        continue
+                    value_str = str(instr.value)
+                    # Check if the return value is a literal constant
+                    is_constant = (
+                        (value_str.startswith('"') and value_str.endswith('"')) or
+                        (value_str.startswith("'") and value_str.endswith("'")) or
+                        value_str.replace('.', '', 1).replace('-', '', 1).isdigit() or
+                        value_str in ('true', 'false', 'null', 'None')
+                    )
+                    # Or check if it's a variable that only contains constants
+                    if not is_constant and value_str in var_is_constant:
+                        is_constant = var_is_constant[value_str]
+
+                    if not is_constant:
+                        all_returns_constant = False
+                        break
+            if not all_returns_constant:
+                break
+
+        result = found_return and all_returns_constant
+        self._constant_return_procs[proc_name] = result
+        return result
 
     def translate_program(self, program: Program = None) -> List[VulnerabilityCheck]:
         """
@@ -882,6 +971,58 @@ class SILTranslator:
                             state.set_constant(target, val[1:-1])
                 return checks, state  # Skip normal taint propagation
 
+        # Detect Java-style Map.get() call: bar = "map.get"("key")
+        # Pattern: "container.get"("key") - quotes around method name due to SIL encoding
+        java_get_match = re.match(r'^"([a-zA-Z_][a-zA-Z0-9_]*)\.get"\("([^"]+)"\)$', exp_str)
+        if java_get_match:
+            container_var = java_get_match.group(1)
+            key = java_get_match.group(2)
+
+            # Check if container is a tracked dictionary (separation logic)
+            if state.is_tracked_dict(container_var):
+                # Use per-key taint from separation logic
+                key_taint = state.get_dict_key_taint(container_var, key)
+                if key_taint:
+                    state.tainted[target] = key_taint
+                    if self.verbose:
+                        print(f"[Translator] Map.get (assign): {container_var}.get({key}) -> {target} (TAINTED)")
+                else:
+                    # Key is NOT tainted - clear any existing taint on target
+                    if target in state.tainted:
+                        del state.tainted[target]
+                    result = state.dict_get(container_var, key)
+                    if result:
+                        val, _ = result
+                        # Track constant value
+                        if val.startswith('"') or val.startswith("'"):
+                            state.set_constant(target, val[1:-1])
+                    if self.verbose:
+                        print(f"[Translator] Map.get (assign): {container_var}.get({key}) -> {target} (safe)")
+                return checks, state  # Skip normal taint propagation
+
+        # Detect Java-style List.get(index) call: bar = "list.get"(1)
+        # Pattern: "container.get"(index) where index is a number
+        java_list_get_match = re.match(r'^"([a-zA-Z_][a-zA-Z0-9_]*)\.get"\((\d+)\)$', exp_str)
+        if java_list_get_match:
+            container_var = java_list_get_match.group(1)
+            index = int(java_list_get_match.group(2))
+
+            # Check if container is a tracked list (separation logic)
+            if state.is_tracked_list(container_var):
+                # Use per-element taint from separation logic
+                elem_taint = state.get_list_element_taint(container_var, index)
+                if elem_taint:
+                    state.tainted[target] = elem_taint
+                    if self.verbose:
+                        print(f"[Translator] List.get (assign): {container_var}.get({index}) -> {target} (TAINTED)")
+                else:
+                    # Element is NOT tainted - clear any existing taint on target
+                    if target in state.tainted:
+                        del state.tainted[target]
+                    if self.verbose:
+                        print(f"[Translator] List.get (assign): {container_var}.get({index}) -> {target} (safe)")
+                return checks, state  # Skip normal taint propagation
+
         # Detect subscript access: bar = lst[i] or guess = possible[1]
         # Pattern: "lst[0]" or "possible[1]" etc.
         subscript_match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\[(\d+)\]$', exp_str)
@@ -927,6 +1068,15 @@ class SILTranslator:
             if state.is_tainted(src_var):
                 state.propagate_taint(src_var, target)
                 break  # Only need one taint source
+
+        # Also propagate sanitization even if source isn't tainted
+        # This handles cases like: bar = sanitize(param)
+        # where bar might get tainted later or where we're tracking
+        # sanitized data that flows to sinks
+        for src_var in source_vars:
+            if src_var in state.sanitized:
+                existing = state.sanitized.get(target, [])
+                state.sanitized[target] = list(set(existing) | set(state.sanitized[src_var]))
 
         # Check for path operations with tainted data
         # Only detect clear pathlib-style division operations: p = path / tainted_var
@@ -1178,6 +1328,44 @@ class SILTranslator:
                                     instr, state, proc_name, sink_kind
                                 )
                                 checks.append(check)
+                    # Special handling for Java MessageDigest.getInstance - check algorithm
+                    # But NOT SecureRandom.getInstance which is safe
+                    elif func_name.endswith("MessageDigest.getInstance") and "SecureRandom" not in func_name:
+                        if len(instr.args) > 0:
+                            arg_exp, _ = instr.args[0]
+                            arg_str = str(arg_exp).strip("'\"").upper()
+                            # Weak hash algorithms - only flag known weak algorithms
+                            weak_hashes = {'MD5', 'MD4', 'MD2', 'SHA-1', 'SHA1', 'SHA'}
+                            # Only flag if we can confirm it's a weak algorithm
+                            # Don't flag variables/dynamic algorithms (too many FPs)
+                            if arg_str in weak_hashes:
+                                check = self._create_usage_based_check(
+                                    instr, state, proc_name, sink_kind
+                                )
+                                checks.append(check)
+                    # Special handling for Java Cipher.getInstance - check algorithm
+                    elif func_name.endswith("Cipher.getInstance"):
+                        if len(instr.args) > 0:
+                            arg_exp, _ = instr.args[0]
+                            arg_str = str(arg_exp).strip("'\"").upper()
+                            # Weak encryption algorithms (inherently insecure)
+                            weak_ciphers = ['DES', 'DESEDE', '3DES', 'RC2', 'RC4', 'BLOWFISH']
+                            # ECB mode is always weak (no IV, patterns preserved)
+                            # NOPADDING is weak ONLY when NOT using authenticated modes (GCM, CCM)
+                            # GCM and CCM provide integrity, so NOPADDING is safe with them
+                            is_weak_cipher = any(weak in arg_str for weak in weak_ciphers)
+                            is_ecb = 'ECB' in arg_str
+                            is_nopadding_without_auth = (
+                                'NOPADDING' in arg_str and
+                                'GCM' not in arg_str and
+                                'CCM' not in arg_str
+                            )
+                            is_weak = is_weak_cipher or is_ecb or is_nopadding_without_auth
+                            if is_weak:
+                                check = self._create_usage_based_check(
+                                    instr, state, proc_name, sink_kind
+                                )
+                                checks.append(check)
                     # Special handling for set_cookie - only flag when secure=False
                     elif func_name.endswith("set_cookie"):
                         # Check if any arg is False (indicating secure=False)
@@ -1192,6 +1380,20 @@ class SILTranslator:
                                 instr, state, proc_name, sink_kind
                             )
                             checks.append(check)
+                    # Special handling for setSecure - Java Cookie.setSecure(false) - CWE-614
+                    elif func_name.endswith("setSecure") or func_name.endswith(".setSecure"):
+                        # Only flag if argument is false
+                        if len(instr.args) >= 1:
+                            arg_exp, _ = instr.args[0]
+                            arg_str = str(arg_exp).lower().strip()
+                            if arg_str == "false":
+                                check = self._create_usage_based_check(
+                                    instr, state, proc_name, sink_kind
+                                )
+                                checks.append(check)
+                    # Skip SecureRandom.getInstance - this is safe, not a weak hash
+                    elif "SecureRandom" in func_name:
+                        pass  # SecureRandom is secure, don't flag
                     else:
                         # Create a usage-based vulnerability check
                         check = self._create_usage_based_check(
@@ -1234,6 +1436,8 @@ class SILTranslator:
                                 # Check for inline .replace() sanitization in argument
                                 import re
                                 inline_sanitized_vars = set()
+                                inline_sanitized_for = {}  # var -> set of sink types
+
                                 if spec.is_sink == 'xpath':
                                     xpath_sanitize_match = re.findall(
                                         r'(\w+)\.replace\([^)]*&apos;[^)]*\)',
@@ -1242,6 +1446,40 @@ class SILTranslator:
                                     for var in xpath_sanitize_match:
                                         inline_sanitized_vars.add(var)
 
+                                # Check for embedded sanitizer calls (ESAPI, OWASP Encoder, etc.)
+                                embedded_sanitizer_patterns = [
+                                    # ESAPI sanitizers
+                                    (r'encodeForHTML["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'encodeForJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'encodeForCSS["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'encodeForURL["\']?\s*\(([^)]+)\)', ['url', 'redirect']),
+                                    (r'encodeForXML["\']?\s*\(([^)]+)\)', ['xml', 'xxe']),
+                                    (r'encodeForXPath["\']?\s*\(([^)]+)\)', ['xpath']),
+                                    (r'encodeForSQL["\']?\s*\(([^)]+)\)', ['sql']),
+                                    (r'encodeForLDAP["\']?\s*\(([^)]+)\)', ['ldap']),
+                                    (r'encodeForOS["\']?\s*\(([^)]+)\)', ['command', 'shell']),
+                                    # OWASP Encoder
+                                    (r'forHtml["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'forHtmlContent["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'forHtmlAttribute["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'forJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    # Apache Commons
+                                    (r'escapeHtml[4]?["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                    (r'escapeXml["\']?\s*\(([^)]+)\)', ['xml', 'html', 'xss']),
+                                    (r'escapeSql["\']?\s*\(([^)]+)\)', ['sql']),
+                                    # Spring
+                                    (r'htmlEscape["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+                                ]
+
+                                for pattern, sink_types in embedded_sanitizer_patterns:
+                                    for match in re.finditer(pattern, arg_str, re.IGNORECASE):
+                                        sanitized_arg = match.group(1).strip()
+                                        matched_vars = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', sanitized_arg)
+                                        for matched_var in matched_vars:
+                                            if matched_var not in inline_sanitized_for:
+                                                inline_sanitized_for[matched_var] = set()
+                                            inline_sanitized_for[matched_var].update(sink_types)
+
                                 for arg_var in arg_vars:
                                     if state.is_tainted(arg_var):
                                         if not state.is_sanitized_for(arg_var, spec.is_sink):
@@ -1249,6 +1487,10 @@ class SILTranslator:
                                                 # Skip xpath sinks for vars with inline .replace() sanitization
                                                 if spec.is_sink == 'xpath' and arg_var in inline_sanitized_vars:
                                                     continue
+                                                # Skip sinks for variables sanitized by embedded sanitizer calls
+                                                if arg_var in inline_sanitized_for:
+                                                    if spec.is_sink in inline_sanitized_for[arg_var]:
+                                                        continue
                                                 check = self._create_taint_check(
                                                     instr, state, proc_name,
                                                     arg_var, sink_kind
@@ -1315,7 +1557,14 @@ class SILTranslator:
             # No spec found - apply default taint propagation for unknown functions
             # This is conservative: if any argument is tainted, the return is tainted
             # This catches cases like helper.doSomething(tainted_param) -> tainted_result
-            if instr.ret:
+
+            # First, check if this is a procedure in our program that always returns a constant
+            # This enables inter-procedural dead path elimination
+            if self._proc_always_returns_constant(func_name):
+                # Procedure always returns a constant, so taint is NOT propagated
+                if self.verbose:
+                    print(f"[Translator] Skipping taint propagation for constant-returning proc: {func_name}")
+            elif instr.ret:
                 ret_var = str(instr.ret[0])
                 for arg_exp, _ in instr.args:
                     arg_vars = self._get_exp_vars(arg_exp)
@@ -1498,6 +1747,125 @@ class SILTranslator:
                             if val.startswith('"') or val.startswith("'"):
                                 state.set_constant(ret_var, val[1:-1])
 
+        # Handle Java Map.put(key, value) - per-key taint tracking using separation logic
+        # This enables precise tracking: put("keyA", safe) and put("keyB", tainted)
+        # allows get("keyA") to return safe data even though the map contains tainted data
+        method_name = func_name.split('.')[-1] if '.' in func_name else func_name
+        if method_name == 'put' and len(instr.args) >= 2:
+            parts = func_name.rsplit('.', 1)
+            if len(parts) == 2:
+                receiver_var = parts[0]
+                key_exp, _ = instr.args[0]
+                value_exp, _ = instr.args[1]
+
+                # Get key as string if it's a constant
+                key_str = str(key_exp).strip('"').strip("'")
+
+                # Get value variables and check if tainted
+                value_vars = self._get_exp_vars(value_exp)
+                value_taint = None
+                for val_var in value_vars:
+                    if state.is_tainted(val_var):
+                        value_taint = state.get_taint_info(val_var)
+                        break
+
+                # Initialize dict tracking if not already done
+                if not state.is_tracked_dict(receiver_var):
+                    state.init_dict(receiver_var)
+
+                # Set key with per-key taint tracking (separation logic)
+                # In separation logic terms: MapPointsTo(map, key, value, taint)
+                state.dict_set(receiver_var, key_str, str(value_exp), value_taint)
+
+                if self.verbose:
+                    print(f"[Translator] Map.put: {receiver_var}[{key_str}] = {value_exp}, tainted={value_taint is not None}")
+
+        # Handle Java Map.get(key) or List.get(index) - per-element taint tracking using separation logic
+        # Only return tainted data if the SPECIFIC key/index was tainted
+        elif method_name == 'get' and instr.ret and len(instr.args) >= 1:
+            parts = func_name.rsplit('.', 1)
+            if len(parts) == 2:
+                receiver_var = parts[0]
+                arg_exp, _ = instr.args[0]
+                arg_str = str(arg_exp).strip('"').strip("'")
+                ret_var = str(instr.ret[0])
+
+                # Check if it's a tracked dictionary (Map)
+                if state.is_tracked_dict(receiver_var):
+                    key_taint = state.get_dict_key_taint(receiver_var, arg_str)
+
+                    if key_taint:
+                        state.tainted[ret_var] = key_taint
+                        if self.verbose:
+                            print(f"[Translator] Map.get: {receiver_var}[{arg_str}] -> {ret_var} (TAINTED)")
+                    else:
+                        # Key is NOT tainted - clear any existing taint on target
+                        # This is the key benefit of separation logic: precise per-key tracking
+                        if ret_var in state.tainted:
+                            del state.tainted[ret_var]
+                        if self.verbose:
+                            print(f"[Translator] Map.get: {receiver_var}[{arg_str}] -> {ret_var} (safe)")
+
+                # Check if it's a tracked list (ArrayList)
+                elif state.is_tracked_list(receiver_var):
+                    try:
+                        index = int(arg_str)
+                        elem_taint = state.get_list_element_taint(receiver_var, index)
+
+                        if elem_taint:
+                            state.tainted[ret_var] = elem_taint
+                            if self.verbose:
+                                print(f"[Translator] List.get: {receiver_var}[{index}] -> {ret_var} (TAINTED)")
+                        else:
+                            # Element is NOT tainted - clear any existing taint on target
+                            if ret_var in state.tainted:
+                                del state.tainted[ret_var]
+                            if self.verbose:
+                                print(f"[Translator] List.get: {receiver_var}[{index}] -> {ret_var} (safe)")
+                    except ValueError:
+                        pass  # Non-constant index, fall back to default propagation
+
+        # Handle Java List.add(value) with per-element tracking
+        elif method_name == 'add' and len(instr.args) >= 1:
+            parts = func_name.rsplit('.', 1)
+            if len(parts) == 2:
+                container_var = parts[0]
+                value_exp, _ = instr.args[0]
+                value_vars = self._get_exp_vars(value_exp)
+
+                # Check if value is tainted
+                value_taint = None
+                for val_var in value_vars:
+                    if state.is_tainted(val_var):
+                        value_taint = state.get_taint_info(val_var)
+                        break
+
+                # Track per-element
+                if not state.is_tracked_list(container_var):
+                    state.init_list(container_var)
+                state.list_append(container_var, str(value_exp), value_taint)
+
+                if self.verbose:
+                    print(f"[Translator] List.add: {container_var}.add({value_exp}), tainted={value_taint is not None}")
+
+        # Handle Java List.remove(index) - removes element and shifts remaining indices
+        elif method_name == 'remove' and len(instr.args) >= 1:
+            parts = func_name.rsplit('.', 1)
+            if len(parts) == 2:
+                container_var = parts[0]
+                if state.is_tracked_list(container_var):
+                    # Get the index being removed
+                    idx_exp, _ = instr.args[0]
+                    idx_str = str(idx_exp)
+                    try:
+                        remove_index = int(idx_str)
+                        # Use list_pop to remove element and shift indices
+                        state.list_pop(container_var, remove_index)
+                        if self.verbose:
+                            print(f"[Translator] List.remove: {container_var}.remove({remove_index})")
+                    except ValueError:
+                        pass  # Non-constant index, can't track precisely
+
         # Default: store return value
         if instr.ret:
             ret_var = str(instr.ret[0])
@@ -1617,10 +1985,27 @@ class SILTranslator:
         sink_vars = self._get_exp_vars(instr.exp)
         exp_str = str(instr.exp)
 
+        # Usage-based sinks (weak_hash, weak_crypto) don't need taint flow
+        # The mere usage of the function is the vulnerability
+        usage_based_kinds = {'weak_hash', 'weak_crypto', 'insecure_random', 'insecure_cookie'}
+        if instr.kind.value in usage_based_kinds:
+            # For insecure_cookie, we need to check the description for setSecure(false)
+            if instr.kind.value == 'insecure_cookie':
+                # Only flag if the description mentions setSecure (handled by translator)
+                # The frontend should only create this sink for setSecure(false) calls
+                pass  # Let it fall through to create the check
+            # Create check directly - no taint flow required
+            check = self._create_usage_based_check_from_sink(
+                instr, state, proc_name
+            )
+            checks.append(check)
+            return checks, state
+
         # Check for inline .replace() sanitization patterns in the expression
         # Pattern: var.replace("'", "&apos;") - XPath apostrophe escaping
         import re
         inline_sanitized_vars = set()
+        inline_sanitized_for = {}  # var -> list of sink types sanitized for
 
         # XPath sanitization: replacing apostrophes with &apos;
         # Simple pattern that matches var.replace(...&apos;...)
@@ -1628,6 +2013,44 @@ class SILTranslator:
         if xpath_sanitize_match:
             for var in xpath_sanitize_match:
                 inline_sanitized_vars.add(var)
+
+        # Check for embedded sanitizer calls in the expression
+        # Pattern: encodeForHTML(var), Encode.forHtml(var), escapeHtml(var), etc.
+        # This handles string concatenation like: "text" + encodeForHTML(tainted) + "more text"
+        # Note: In SIL expressions, method names may be quoted: "method.name"(args)
+        embedded_sanitizer_patterns = [
+            # ESAPI sanitizers (handle quoted method names)
+            (r'encodeForHTML["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'encodeForJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'encodeForCSS["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'encodeForURL["\']?\s*\(([^)]+)\)', ['url', 'redirect']),
+            (r'encodeForXML["\']?\s*\(([^)]+)\)', ['xml', 'xxe']),
+            (r'encodeForXPath["\']?\s*\(([^)]+)\)', ['xpath']),
+            (r'encodeForSQL["\']?\s*\(([^)]+)\)', ['sql']),
+            (r'encodeForLDAP["\']?\s*\(([^)]+)\)', ['ldap']),
+            (r'encodeForOS["\']?\s*\(([^)]+)\)', ['command']),
+            # OWASP Encoder
+            (r'forHtml["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'forHtmlContent["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'forHtmlAttribute["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'forJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            # Apache Commons
+            (r'escapeHtml[4]?["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+            (r'escapeXml["\']?\s*\(([^)]+)\)', ['xml', 'html', 'xss']),
+            (r'escapeSql["\']?\s*\(([^)]+)\)', ['sql']),
+            # Spring
+            (r'htmlEscape["\']?\s*\(([^)]+)\)', ['html', 'xss']),
+        ]
+
+        for pattern, sink_types in embedded_sanitizer_patterns:
+            for match in re.finditer(pattern, exp_str, re.IGNORECASE):
+                sanitized_arg = match.group(1).strip()
+                # Extract variable names from the argument
+                arg_vars = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', sanitized_arg)
+                for arg_var in arg_vars:
+                    if arg_var not in inline_sanitized_for:
+                        inline_sanitized_for[arg_var] = set()
+                    inline_sanitized_for[arg_var].update(sink_types)
 
         for var in sink_vars:
             # Skip xml sinks for variables that have been safely processed
@@ -1641,6 +2064,11 @@ class SILTranslator:
             # Skip xpath sinks for variables with inline .replace() sanitization
             if instr.kind.value == 'xpath' and var in inline_sanitized_vars:
                 continue
+
+            # Skip sinks for variables sanitized by embedded sanitizer calls
+            if var in inline_sanitized_for:
+                if instr.kind.value in inline_sanitized_for[var]:
+                    continue
 
             if state.is_tainted(var):
                 if not state.is_sanitized_for(var, instr.kind.value):
@@ -1801,6 +2229,39 @@ class SILTranslator:
             data_flow_path=[],
         )
 
+    def _create_usage_based_check_from_sink(
+        self,
+        instr: TaintSink,
+        state: SymbolicState,
+        proc_name: str
+    ) -> VulnerabilityCheck:
+        """
+        Create a vulnerability check from a TaintSink for usage-based vulnerabilities.
+
+        For vulnerabilities like weak_hash or weak_crypto, the mere usage
+        of the function is the vulnerability - no taint flow required.
+        """
+        from frame.core.ast import True_
+
+        # Get vulnerability type
+        vuln_type = VulnType.from_sink_kind(instr.kind)
+
+        # Simple formula - just indicates the usage
+        formula = True_()
+
+        return VulnerabilityCheck(
+            formula=formula,
+            vuln_type=vuln_type,
+            location=instr.loc,
+            description=instr.description,
+            tainted_var="",
+            source_var="",
+            source_location=None,
+            sink_type=instr.kind.value,
+            procedure_name=proc_name,
+            data_flow_path=[],
+        )
+
     def _check_null_deref(
         self,
         instr: Instr,
@@ -1896,7 +2357,27 @@ class SILTranslator:
     def _get_exp_vars(self, exp: Exp) -> List[str]:
         """Get all variable names referenced in expression"""
         if isinstance(exp, ExpVar):
-            return [self._get_var_name(exp.var)]
+            var_name = self._get_var_name(exp.var)
+            # Check if this is an array literal like "{bar, "b"}"
+            if var_name.startswith('{') and var_name.endswith('}'):
+                # Parse array literal to extract variable names
+                import re
+                inner = var_name[1:-1]  # Remove { }
+                result = []
+                # Split on commas, but be careful with strings
+                parts = re.split(r',\s*', inner)
+                for part in parts:
+                    part = part.strip()
+                    # Skip string literals
+                    if part.startswith('"') or part.startswith("'"):
+                        continue
+                    # Skip null, numbers, etc.
+                    if part in ('null', 'true', 'false') or part.replace('.', '').replace('-', '').isdigit():
+                        continue
+                    # This is a variable name
+                    result.append(part)
+                return result
+            return [var_name]
         if isinstance(exp, ExpConst):
             return []
         if isinstance(exp, ExpBinOp):

@@ -216,3 +216,4 @@ failure_analysis_results.json
 **/benchmark_results.json
 **/comprehensive_results.json
 benchmarks/cache/
+/.benchmark_cache
