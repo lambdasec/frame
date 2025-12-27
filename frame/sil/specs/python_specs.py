@@ -404,6 +404,10 @@ LIST_SPECS = {
     "dict.__getitem__": _propagator([0], "Dict item access"),
     "dict.get": _propagator([0], "Dict get"),
     "dict.update": _propagator([0], "Dict update"),
+
+    # Iterator operations
+    "next": _propagator([0], "Iterator next"),
+    "iter": _propagator([0], "Iterator creation"),
 }
 
 # =============================================================================
