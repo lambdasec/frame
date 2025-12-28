@@ -121,6 +121,13 @@ class VulnType(Enum):
     BUFFER_OVERFLOW = "buffer_overflow"         # CWE-120
     DOUBLE_FREE = "double_free"                 # CWE-415
     MEMORY_LEAK = "memory_leak"                 # CWE-401
+    FORMAT_STRING = "format_string"             # CWE-134
+    INTEGER_OVERFLOW = "integer_overflow"       # CWE-190
+    UNINITIALIZED_VAR = "uninitialized_var"     # CWE-457
+    DANGEROUS_FUNCTION = "dangerous_function"   # CWE-676
+    DIVIDE_BY_ZERO = "divide_by_zero"           # CWE-369
+    TYPE_CONFUSION = "type_confusion"           # CWE-843
+    ASSERTION_FAILURE = "assertion_failure"     # CWE-617
 
     # Generic taint flow
     TAINT_FLOW = "taint_flow"

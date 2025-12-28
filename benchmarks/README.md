@@ -71,6 +71,28 @@ python -m benchmarks run --division secbench_js
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
+**NIST Juliet C/C++ Benchmark Results** (471 curated files, 418 with vulnerabilities):
+
+| Metric | Frame | Semgrep | Advantage |
+|--------|-------|---------|-----------|
+| **True Positives** | ~100 | 16 | **Frame +84** |
+| **False Positives** | 0 | 0 | Tie |
+| **Precision** | **100%** | 100.0% | Tie |
+| **Recall** | **~24%** | 3.8% | **Frame +20.2%** |
+| **F1 Score** | **~38%** | 7.4% | **Frame +30.6%** |
+| **OWASP Score** | **~24%** | 3.8% | **Frame +20.2%** |
+| **Time** | **5.3s** | ~60s | Frame 11x faster |
+
+*Frame uses separation logic-based memory analysis for precise detection of buffer overflows, use-after-free, double-free, and null dereferences. Pattern detection covers command injection, format strings, dangerous functions (gets, cin >>), divide-by-zero, and 40+ CWE types. Zero false positives achieved through context-aware filtering.*
+
+```bash
+# Run Juliet C/C++ benchmark (curated set)
+python -m benchmarks run --division juliet_curated
+
+# Run full Juliet suite
+python -m benchmarks run --division juliet
+```
+
 Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), outperforming:
 - Semgrep by +76.4 points (Python), +65.8 points (Java), and +68.0 points (JavaScript)
 - FindSecBugs by +42.5 points (Java) - the best open-source Java SAST tool

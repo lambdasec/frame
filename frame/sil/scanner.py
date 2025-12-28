@@ -26,11 +26,314 @@ import json
 import time
 
 import re
+from typing import Tuple
 
 from frame.sil.procedure import Program
+
+
+class BufferSizeTracker:
+    """
+    Tracks buffer sizes using separation logic principles.
+
+    Models heap/stack regions as: var |-> (size, initialized_bytes)
+    Uses this to verify if buffer copies are safe (source <= dest).
+
+    This enables context-aware vulnerability detection:
+    - Bad code: strcpy(small_buf, large_source)  -> VULNERABLE
+    - Good code: strcpy(large_buf, small_source) -> SAFE (filter out)
+    """
+
+    def __init__(self, source_code: str):
+        self.lines = source_code.split('\n')
+        # Map: variable_name -> (declared_size, initialized_size)
+        self.buffer_sizes: Dict[str, Tuple[int, int]] = {}
+        self._analyze_buffer_sizes()
+
+    def _analyze_buffer_sizes(self):
+        """Analyze source code to extract buffer size declarations."""
+        for line_num, line in enumerate(self.lines):
+            # Pattern 1: Array declaration - char buf[100]
+            array_match = re.search(r'(\w+)\s*\[\s*(\d+)\s*\]', line)
+            if array_match:
+                var_name = array_match.group(1)
+                size = int(array_match.group(2))
+                self.buffer_sizes[var_name] = (size, 0)
+
+            # Pattern 2: malloc/calloc allocation - ptr = malloc(100)
+            alloc_match = re.search(r'(\w+)\s*=\s*(?:\([^)]*\*\))?\s*malloc\s*\(\s*(\d+)\s*\)', line)
+            if alloc_match:
+                var_name = alloc_match.group(1)
+                size = int(alloc_match.group(2))
+                self.buffer_sizes[var_name] = (size, 0)
+
+            # Pattern 3: calloc - ptr = calloc(count, size)
+            calloc_match = re.search(r'(\w+)\s*=\s*(?:\([^)]*\*\))?\s*calloc\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)', line)
+            if calloc_match:
+                var_name = calloc_match.group(1)
+                size = int(calloc_match.group(2)) * int(calloc_match.group(3))
+                self.buffer_sizes[var_name] = (size, 0)
+
+            # Pattern 4: memset initialization - memset(buf, 'A', N-1)
+            # This tells us how much data is being written
+            memset_match = re.search(r'memset\s*\(\s*(\w+)\s*,\s*[^,]+,\s*(\d+)(?:\s*-\s*(\d+))?\s*\)', line)
+            if memset_match:
+                var_name = memset_match.group(1)
+                init_size = int(memset_match.group(2))
+                if memset_match.group(3):
+                    init_size -= int(memset_match.group(3))
+                init_size += 1  # Account for null terminator
+                if var_name in self.buffer_sizes:
+                    declared_size, _ = self.buffer_sizes[var_name]
+                    self.buffer_sizes[var_name] = (declared_size, init_size)
+                else:
+                    self.buffer_sizes[var_name] = (init_size, init_size)
+
+            # Pattern 5: String literal initialization with explicit size
+            # For char buf[50] = "", use 50 as the size (not the literal length)
+            str_init_match = re.search(r'(\w+)\s*\[\s*(\d+)\s*\]\s*=\s*"([^"]*)"', line)
+            if str_init_match:
+                var_name = str_init_match.group(1)
+                array_size = int(str_init_match.group(2))  # Use declared size
+                str_len = len(str_init_match.group(3)) + 1  # +1 for null terminator
+                # Use the declared array size, initialized with the string length
+                self.buffer_sizes[var_name] = (array_size, str_len)
+
+    def is_copy_safe(self, dest: str, source: str, line_num: int) -> bool:
+        """
+        Check if a buffer copy from source to dest is safe.
+
+        Uses separation logic reasoning:
+        - If dest |-> (dest_size, _) and source |-> (_, src_init)
+        - Copy is safe if src_init <= dest_size
+
+        Returns True if copy is provably safe (should NOT flag).
+        Returns False if copy is potentially dangerous (should flag).
+        """
+        dest_size = self._get_dest_size(dest, line_num)
+        src_init = self._get_source_init_size(source, line_num)
+
+        # If we know both sizes and source fits in dest, it's safe
+        if dest_size > 0 and src_init > 0:
+            return src_init <= dest_size
+
+        # Unknown sizes - be conservative and flag
+        return False
+
+    def _get_dest_size(self, var: str, line_num: int) -> int:
+        """Get the declared size of destination buffer."""
+        # Check direct variable name
+        if var in self.buffer_sizes:
+            return self.buffer_sizes[var][0]
+
+        # Check in local context (nearby lines)
+        context_start = max(0, line_num - 15)
+        context_end = min(len(self.lines), line_num + 5)
+
+        for i in range(context_start, context_end):
+            line = self.lines[i]
+            # Look for array declaration with this name
+            match = re.search(rf'{re.escape(var)}\s*\[\s*(\d+)\s*\]', line)
+            if match:
+                return int(match.group(1))
+
+        return 0
+
+    def _get_source_init_size(self, var: str, line_num: int) -> int:
+        """Get the initialized size of source buffer."""
+        # Check direct variable name
+        if var in self.buffer_sizes:
+            _, init_size = self.buffer_sizes[var]
+            if init_size > 0:
+                return init_size
+
+        # Check in local context for memset of this variable
+        context_start = max(0, line_num - 15)
+        context_end = line_num
+
+        for i in range(context_start, context_end):
+            line = self.lines[i]
+            # Look for memset(var, ..., N-1)
+            memset_match = re.search(rf'memset\s*\(\s*{re.escape(var)}\s*,\s*[^,]+,\s*(\d+)(?:\s*-\s*(\d+))?\s*\)', line)
+            if memset_match:
+                init_size = int(memset_match.group(1))
+                if memset_match.group(2):
+                    init_size -= int(memset_match.group(2))
+                return init_size + 1  # +1 for null terminator
+
+        return 0
+
+    def get_context_sizes(self, line_num: int) -> Tuple[int, int]:
+        """
+        Get buffer sizes from the context around a copy operation.
+        Returns (dest_size, source_size) if found in context.
+        """
+        context_start = max(0, line_num - 15)
+        context_end = min(len(self.lines), line_num + 5)
+
+        dest_size = 0
+        source_size = 0
+
+        for i in range(context_start, context_end):
+            line = self.lines[i]
+
+            # Look for dest array declaration
+            dest_match = re.search(r'dest\s*\[\s*(\d+)\s*\]', line)
+            if dest_match:
+                dest_size = int(dest_match.group(1))
+
+            # Look for source array declaration
+            source_match = re.search(r'source\s*\[\s*(\d+)\s*\]', line)
+            if source_match:
+                source_size = int(source_match.group(1))
+
+            # Look for data initialization via memset
+            data_memset = re.search(r'memset\s*\(\s*data\s*,\s*[^,]+,\s*(\d+)(?:\s*-\s*(\d+))?\s*\)', line)
+            if data_memset:
+                size = int(data_memset.group(1))
+                if data_memset.group(2):
+                    size -= int(data_memset.group(2))
+                source_size = size + 1
+
+        return (dest_size, source_size)
+
+
 from frame.sil.translator import SILTranslator, VulnerabilityCheck, VulnType
 from frame.checking.incorrectness import IncorrectnessChecker, BugReport, BugWitness
 
+
+# Pattern-based vulnerability detection for C/C++
+# These patterns detect common memory safety and security vulnerabilities
+# IMPORTANT: Only flag HIGH-CONFIDENCE patterns to minimize false positives
+# Patterns that flag mere presence of functions (like malloc, free) are removed
+# because "good" code also uses these functions safely
+C_VULNERABILITY_PATTERNS = {
+    # Buffer Overflow - CWE-121 (Stack), CWE-122 (Heap), CWE-120 (Classic), CWE-123, CWE-124, CWE-126, CWE-127
+    # NOTE: Most buffer overflow detection is handled by the SL analyzer which tracks
+    # buffer sizes and detects actual overflows. Pattern matching here is limited to
+    # HIGH-CONFIDENCE patterns that don't require size tracking.
+    VulnType.BUFFER_OVERFLOW: [
+        # Inherently dangerous functions - ALWAYS unsafe regardless of context
+        (r'\bgets\s*\(', 'CWE-242', 'Use of gets (inherently dangerous)'),
+        # scanf family with %s (unbounded string read) - ALWAYS unsafe
+        (r'\bfscanf\s*\([^)]*,\s*"[^"]*%s', 'CWE-120', 'fscanf %s (no bounds check)'),
+        (r'\bsscanf\s*\([^)]*,\s*"[^"]*%s', 'CWE-120', 'sscanf %s (no bounds check)'),
+        (r'\bscanf\s*\(\s*"[^"]*%s', 'CWE-120', 'scanf %s (no bounds check)'),
+        (r'\bwscanf\s*\(\s*L"[^"]*%s', 'CWE-120', 'wscanf %s (no bounds check)'),
+        # REMOVED: recv patterns - recv() with casts is used in both good and bad code
+        # Buffer underwrite/underread (CWE-124, CWE-127) - ALWAYS unsafe
+        (r'\[\s*-\s*\d+\s*\]', 'CWE-124', 'Negative array index (buffer underwrite)'),
+        # NOTE: strcpy, strcat, memcpy etc. are handled by SL analyzer
+        # which provides precise detection with actual buffer size verification
+    ],
+    # Use After Free - CWE-416
+    # SL analyzer handles actual UAF, but we need to track free for context
+    VulnType.USE_AFTER_FREE: [],
+    # Double Free - CWE-415
+    # SL analyzer handles this
+    VulnType.DOUBLE_FREE: [],
+    # Null Pointer Dereference - CWE-476, CWE-690
+    # Detected by SL analyzer for tracked pointers - keep patterns minimal to avoid FPs
+    VulnType.NULL_DEREFERENCE: [],
+    # Format String - CWE-134
+    # NOTE: printf(var) patterns appear in BOTH good and bad code. The difference
+    # is whether 'var' comes from untrusted input. Need taint analysis to distinguish.
+    VulnType.FORMAT_STRING: [
+        # REMOVED: All printf patterns - they match safe code too
+    ],
+    # Integer Overflow - CWE-190, CWE-191
+    # NOTE: Assignment operators (+=, -=, *=) appear everywhere in normal code.
+    # Integer overflow detection requires understanding the data types and ranges.
+    VulnType.INTEGER_OVERFLOW: [
+        # REMOVED: All patterns cause too many FPs without proper type analysis
+    ],
+    # Command Injection - CWE-78
+    # NOTE: system(), popen(), exec*() are used in BOTH good and bad code.
+    # Detecting actual command injection requires taint analysis to track
+    # if user input flows to these functions. Pattern matching causes massive FPs.
+    VulnType.COMMAND_INJECTION: [
+        # REMOVED: All function call patterns - they appear in safe code too
+        # Would need taint analysis to detect actual injection
+    ],
+    # Path Traversal - CWE-22, CWE-23
+    # NOTE: Most file operations appear in BOTH good and bad code.
+    # Only flag actual path traversal sequences in strings.
+    VulnType.PATH_TRAVERSAL: [
+        # Actual path traversal strings - these are suspicious
+        (r'"\.\./\.\."', 'CWE-23', 'Path traversal sequence in string literal'),
+        (r'"\.\.[\\/]"', 'CWE-23', 'Path traversal in string'),
+        # REMOVED: LoadLibrary, fopen, freopen, putenv etc. - appear in good code
+    ],
+    # SQL Injection - CWE-89, CWE-90
+    # NOTE: Database functions appear in all code - need taint analysis for actual injection
+    VulnType.SQL_INJECTION: [
+        # REMOVED: sqlite3_exec, mysql_query, ldap_search appear in safe code
+    ],
+    # Weak Crypto - CWE-327, CWE-328
+    # These are genuinely weak algorithms, but only flag specific init functions
+    VulnType.WEAK_CRYPTOGRAPHY: [
+        (r'\bMD5_Init\s*\(', 'CWE-328', 'Use of MD5 (weak hash) - use SHA-256'),
+        (r'\bSHA1_Init\s*\(', 'CWE-328', 'Use of SHA-1 (weak hash) - use SHA-256'),
+        (r'\bDES_set_key\s*\(', 'CWE-327', 'Use of DES (weak encryption) - use AES'),
+        # REMOVED: MD5(), SHA1(), DES_, RC4, RC2 - too broad
+    ],
+    # Race Condition - CWE-367, CWE-377
+    # NOTE: signal(), pthread_mutex, CreateThread are used in BOTH good and bad code
+    # Detecting race conditions requires data flow analysis, not pattern matching
+    VulnType.RACE_CONDITION: [
+        # These temp file functions are genuinely unsafe - use mkstemp/tmpfile instead
+        (r'\bmktemp\s*\(', 'CWE-377', 'Use of mktemp() - use mkstemp() instead'),
+        (r'\btmpnam\s*\(', 'CWE-377', 'Use of tmpnam() - use tmpfile() instead'),
+        # REMOVED: signal, pthread_mutex, CreateThread - appear in good code too
+    ],
+    # Hardcoded Credentials - CWE-259, CWE-321, CWE-798, CWE-256, CWE-319
+    VulnType.HARDCODED_SECRET: [
+        (r'password\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
+        (r'Password\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
+        (r'PASSWORD\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
+        (r'CRYPT_KEY\s*=\s*"', 'CWE-321', 'Hardcoded cryptographic key'),
+        (r'SECRET\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
+        (r'secret\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
+        (r'api_key\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded API key'),
+    ],
+    # Memory Leak - CWE-401
+    # NOTE: malloc/calloc/realloc appear in ALL code - SL analyzer handles leak detection
+    VulnType.MEMORY_LEAK: [
+        # REMOVED: All allocation patterns - SL analyzer tracks actual leaks
+    ],
+    # Uninitialized Variable - CWE-457, CWE-665
+    # Requires data flow analysis - pattern matching has too many FPs
+    VulnType.UNINITIALIZED_VAR: [],
+    # Dangerous function use - CWE-676, CWE-242
+    # Only functions with NO safe usage pattern
+    VulnType.DANGEROUS_FUNCTION: [
+        # gets() is ALWAYS dangerous - no way to use safely
+        (r'\bgets\s*\(', 'CWE-676', 'Use of gets() - always dangerous, use fgets()'),
+        # getwd() has buffer overflow issues - use getcwd()
+        (r'\bgetwd\s*\(', 'CWE-676', 'Use of getwd() - use getcwd() instead'),
+        # REMOVED: chown, chmod, setuid, setgid, realpath, cin >>
+        # These are used safely in many programs
+    ],
+    # Divide by Zero - CWE-369
+    # NOTE: Division operations appear everywhere - /\s*var matches almost any division
+    VulnType.DIVIDE_BY_ZERO: [
+        # REMOVED: Too broad - would need data flow to check if divisor can be zero
+    ],
+    # Information Exposure - CWE-200, CWE-319
+    # NOTE: send(), printf() appear in all code - can't detect exposure without data flow
+    VulnType.SENSITIVE_DATA_EXPOSURE: [
+        # REMOVED: send(), printf() patterns - too many FPs
+    ],
+    # Type Confusion - CWE-843
+    # NOTE: union{} is valid C - not a vulnerability by itself
+    VulnType.TYPE_CONFUSION: [
+        # REMOVED: union is valid syntax
+    ],
+    # Assertion Failure - CWE-617
+    # NOTE: abort() and assert() are used in safe code too
+    VulnType.ASSERTION_FAILURE: [
+        # REMOVED: abort/assert are valid in good code
+    ],
+}
 
 # Pattern-based vulnerability detection for JavaScript/TypeScript
 # These patterns detect common vulnerability signatures without taint flow analysis
@@ -404,6 +707,13 @@ class FrameScanner:
         VulnType.BUFFER_OVERFLOW: Severity.CRITICAL,
         VulnType.DOUBLE_FREE: Severity.HIGH,
         VulnType.MEMORY_LEAK: Severity.LOW,
+        VulnType.FORMAT_STRING: Severity.HIGH,
+        VulnType.INTEGER_OVERFLOW: Severity.HIGH,
+        VulnType.UNINITIALIZED_VAR: Severity.MEDIUM,
+        VulnType.DANGEROUS_FUNCTION: Severity.MEDIUM,
+        VulnType.DIVIDE_BY_ZERO: Severity.MEDIUM,
+        VulnType.TYPE_CONFUSION: Severity.HIGH,
+        VulnType.ASSERTION_FAILURE: Severity.MEDIUM,
 
         # Generic
         VulnType.TAINT_FLOW: Severity.MEDIUM,
@@ -485,6 +795,13 @@ class FrameScanner:
         VulnType.BUFFER_OVERFLOW: "CWE-120",
         VulnType.DOUBLE_FREE: "CWE-415",
         VulnType.MEMORY_LEAK: "CWE-401",
+        VulnType.FORMAT_STRING: "CWE-134",
+        VulnType.INTEGER_OVERFLOW: "CWE-190",
+        VulnType.UNINITIALIZED_VAR: "CWE-457",
+        VulnType.DANGEROUS_FUNCTION: "CWE-676",
+        VulnType.DIVIDE_BY_ZERO: "CWE-369",
+        VulnType.TYPE_CONFUSION: "CWE-843",
+        VulnType.ASSERTION_FAILURE: "CWE-617",
     }
 
     def __init__(
@@ -592,11 +909,18 @@ class FrameScanner:
                     result.vulnerabilities.append(vuln)
 
             # Step 4: Pattern-based detection (for vulnerabilities without taint flow)
-            if self.language in ('javascript', 'typescript'):
+            if self.language in ('javascript', 'typescript', 'c', 'cpp', 'c++'):
                 pattern_vulns = self._scan_patterns(source_code, filename)
                 result.vulnerabilities.extend(pattern_vulns)
                 if self.verbose:
                     print(f"[Scanner] Pattern matching found {len(pattern_vulns)} additional vulnerabilities")
+
+            # Step 4b: Memory safety analysis for C/C++ using separation logic
+            if self.language in ('c', 'cpp', 'c++'):
+                memory_vulns = self._analyze_memory_safety(source_code, filename)
+                result.vulnerabilities.extend(memory_vulns)
+                if self.verbose:
+                    print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
 
             # Step 5: Deduplicate vulnerabilities
             result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
@@ -873,10 +1197,15 @@ class FrameScanner:
 
     def _scan_patterns(self, source_code: str, filename: str) -> List[Vulnerability]:
         """
-        Scan source code using pattern-based detection.
+        Scan source code using pattern-based detection with context-aware verification.
 
         This complements taint-flow analysis by detecting vulnerabilities
         that don't require data flow tracking (e.g., use of dangerous functions).
+
+        Uses separation logic principles for buffer size verification:
+        - Tracks buffer sizes from declarations (buf |-> size)
+        - Verifies if copies are safe (source_size <= dest_size)
+        - Only flags truly dangerous patterns, filtering out safe uses
 
         Args:
             source_code: Source code string
@@ -887,19 +1216,35 @@ class FrameScanner:
         """
         vulnerabilities = []
 
-        # Only apply JS patterns for JavaScript/TypeScript
-        if self.language not in ('javascript', 'typescript'):
+        # Select appropriate patterns based on language
+        if self.language in ('javascript', 'typescript'):
+            patterns_dict = JS_VULNERABILITY_PATTERNS
+            skip_comments = ('//', '/*')
+            buffer_tracker = None
+        elif self.language in ('c', 'cpp', 'c++'):
+            patterns_dict = C_VULNERABILITY_PATTERNS
+            skip_comments = ('//', '/*', '#')  # Also skip preprocessor directives
+            # Initialize buffer size tracker for context-aware verification
+            buffer_tracker = BufferSizeTracker(source_code)
+        else:
             return vulnerabilities
 
         lines = source_code.split('\n')
 
+        # Buffer copy functions that need context-aware verification
+        buffer_copy_funcs = {
+            'strcpy', 'strcat', 'strncpy', 'strncat', 'memcpy', 'memmove',
+            'wcscpy', 'wcscat', 'wcsncpy', 'wcsncat', 'wmemcpy',
+            '_mbscpy', '_mbscat', 'sprintf', 'vsprintf', 'swprintf'
+        }
+
         for line_num, line in enumerate(lines, start=1):
             # Skip comments and empty lines
             stripped = line.strip()
-            if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
+            if not stripped or any(stripped.startswith(c) for c in skip_comments):
                 continue
 
-            for vuln_type, patterns in JS_VULNERABILITY_PATTERNS.items():
+            for vuln_type, patterns in patterns_dict.items():
                 for pattern, cwe_id, description in patterns:
                     # JavaScript is case-sensitive, so don't use IGNORECASE
                     if re.search(pattern, line):
@@ -924,6 +1269,102 @@ class FrameScanner:
                         vulnerabilities.append(vuln)
                         # Only match one pattern per vuln_type per line
                         break
+
+        return vulnerabilities
+
+    def _analyze_memory_safety(self, source_code: str, filename: str) -> List[Vulnerability]:
+        """
+        Analyze C/C++ source code for memory safety vulnerabilities.
+
+        Uses TWO analyzers for comprehensive coverage:
+        1. SLMemoryAnalyzer - Separation logic-based analysis for precise heap tracking
+        2. MemorySafetyAnalyzer - Pattern-based analysis for additional coverage
+
+        The SL analyzer provides more precise detection of UAF, double-free by
+        tracking actual heap state through symbolic execution.
+
+        Args:
+            source_code: Source code string
+            filename: Filename for reporting
+
+        Returns:
+            List of memory safety vulnerabilities
+        """
+        from frame.sil.analyzers.memory_safety import analyze_c_memory_safety
+        from frame.sil.analyzers.sl_memory_analyzer import analyze_with_separation_logic
+
+        vulnerabilities = []
+        seen_locations = set()  # (line, vuln_type) to deduplicate
+
+        # First, run separation logic-based analyzer (more precise)
+        try:
+            sl_vulns = analyze_with_separation_logic(source_code, filename, verbose=self.verbose)
+
+            for mem_vuln in sl_vulns:
+                key = (mem_vuln.location.line, mem_vuln.vuln_type.value)
+                if key in seen_locations:
+                    continue
+                seen_locations.add(key)
+
+                severity = self.SEVERITY_MAP.get(mem_vuln.vuln_type, Severity.MEDIUM)
+
+                vuln = Vulnerability(
+                    type=mem_vuln.vuln_type,
+                    severity=severity,
+                    location=filename,
+                    line=mem_vuln.location.line,
+                    column=mem_vuln.location.column,
+                    description=mem_vuln.description,
+                    procedure="<sl-memory-safety>",
+                    source_var=mem_vuln.var_name,
+                    source_location=str(mem_vuln.alloc_loc.line) if mem_vuln.alloc_loc else "",
+                    sink_type=mem_vuln.vuln_type.value,
+                    data_flow=[],
+                    witness=None,
+                    confidence=mem_vuln.confidence,
+                    cwe_id=mem_vuln.cwe_id,
+                )
+                vulnerabilities.append(vuln)
+
+        except Exception as e:
+            if self.verbose:
+                print(f"[Scanner] SL memory analysis error: {e}")
+
+        # Second, run traditional pattern-based analyzer for additional coverage
+        try:
+            mem_vulns = analyze_c_memory_safety(source_code, filename, verbose=self.verbose)
+
+            for mem_vuln in mem_vulns:
+                key = (mem_vuln.location.line, mem_vuln.vuln_type.value)
+                if key in seen_locations:
+                    continue  # Already found by SL analyzer
+                seen_locations.add(key)
+
+                severity = self.SEVERITY_MAP.get(mem_vuln.vuln_type, Severity.MEDIUM)
+
+                vuln = Vulnerability(
+                    type=mem_vuln.vuln_type,
+                    severity=severity,
+                    location=filename,
+                    line=mem_vuln.location.line,
+                    column=mem_vuln.location.column,
+                    description=mem_vuln.description,
+                    procedure="<memory-safety>",
+                    source_var=mem_vuln.var_name,
+                    source_location=str(mem_vuln.alloc_location.line) if mem_vuln.alloc_location else "",
+                    sink_type=mem_vuln.vuln_type.value,
+                    data_flow=[],
+                    witness=None,
+                    confidence=mem_vuln.confidence,
+                    cwe_id=mem_vuln.cwe_id,
+                )
+                vulnerabilities.append(vuln)
+
+        except Exception as e:
+            if self.verbose:
+                print(f"[Scanner] Memory safety analysis error: {e}")
+                import traceback
+                traceback.print_exc()
 
         return vulnerabilities
 
