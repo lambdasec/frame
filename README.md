@@ -626,7 +626,7 @@ Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, *
 python -m benchmarks run --division owasp_python_curated
 python -m benchmarks run --division owasp_java
 python -m benchmarks run --division secbench_js
-python benchmarks/run_juliet.py  # C/C++ (NIST Juliet)
+python -m benchmarks run --division juliet  # C/C++ (NIST Juliet)
 ```
 
 ### Logic Solver (SMT-LIB/SL-COMP)
