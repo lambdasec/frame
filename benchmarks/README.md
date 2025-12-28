@@ -71,27 +71,20 @@ python -m benchmarks run --division secbench_js
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
-**NIST Juliet C/C++ Benchmark Results** (471 curated files, 418 with vulnerabilities):
+**NIST Juliet C/C++ Benchmark** (1000 curated files):
 
-| Metric | Frame | Semgrep | Advantage |
-|--------|-------|---------|-----------|
-| **True Positives** | ~100 | 16 | **Frame +84** |
-| **False Positives** | 0 | 0 | Tie |
-| **Precision** | **100%** | 100.0% | Tie |
-| **Recall** | **~24%** | 3.8% | **Frame +20.2%** |
-| **F1 Score** | **~38%** | 7.4% | **Frame +30.6%** |
-| **OWASP Score** | **~24%** | 3.8% | **Frame +20.2%** |
-| **Time** | **5.3s** | ~60s | Frame 11x faster |
+The Juliet test suite focuses on **inter-procedural data flow** - vulnerabilities where data flows through class methods, parameters, and virtual calls. Frame's current C/C++ analyzer provides:
 
-*Frame uses separation logic-based memory analysis for precise detection of buffer overflows, use-after-free, double-free, and null dereferences. Pattern detection covers command injection, format strings, dangerous functions (gets, cin >>), divide-by-zero, and 40+ CWE types. Zero false positives achieved through context-aware filtering.*
+- **Separation Logic Memory Analysis**: Tracks heap state (allocations, frees) to detect use-after-free and double-free within functions
+- **Buffer Size Tracking**: Detects buffer overflows when source size exceeds destination size
+- **Low False Positives**: Conservative detection avoids flagging safe patterns
 
 ```bash
-# Run Juliet C/C++ benchmark (curated set)
+# Run Juliet C/C++ benchmark
 python -m benchmarks run --division juliet_curated
-
-# Run full Juliet suite
-python -m benchmarks run --division juliet
 ```
+
+*Note: Full inter-procedural analysis (tracking data across class methods, callbacks, and file boundaries) is planned for future releases.*
 
 Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), outperforming:
 - Semgrep by +76.4 points (Python), +65.8 points (Java), and +68.0 points (JavaScript)
