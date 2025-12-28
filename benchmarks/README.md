@@ -23,7 +23,7 @@ python -m benchmarks run --curated
   - 500 QF_AX (array theory) - 100% correct, 0 errors
   - 250 QF_BV (bitvector theory) - 89.2% correct, 0 errors
 
-### SAST Security Benchmarks (1000 tests)
+### SAST Security Benchmarks (1244 tests)
 
 ```bash
 # Run OWASP Python benchmark (500 curated security tests)
@@ -31,6 +31,9 @@ python -m benchmarks run --division owasp_python_curated
 
 # Run OWASP Java benchmark (500 security tests)
 python -m benchmarks run --division owasp_java
+
+# Run SecBench.js JavaScript/TypeScript benchmark (244 files)
+python -m benchmarks run --division secbench_js
 
 # Results: ~30 seconds each, comprehensive security coverage
 ```
@@ -56,8 +59,20 @@ python -m benchmarks run --division owasp_java
 | **F1 Score** | **90.6%** | 69.4% | 52.1% |
 | **OWASP Score** | **81.5%** | 15.7% | 39% |
 
-Frame achieves **80.9% OWASP Score** on Python and **81.5% OWASP Score** on Java (TPR - FPR), outperforming:
-- Semgrep by +76.4 points (Python) and +65.8 points (Java)
+**SecBench.js JavaScript/TypeScript Benchmark Results** (166 files, 138 with vulnerabilities):
+
+| Metric | Frame | Semgrep |
+|--------|-------|---------|
+| **TP (files)** | 112 | 28 |
+| **FP (files)** | 1 | 3 |
+| **Precision** | **99.1%** | 90.3% |
+| **Recall** | **81.2%** | 20.3% |
+| **F1 Score** | **89.2%** | 33.1% |
+| **OWASP Score** | **77.6%** | 9.6% |
+| **Time** | **1.2s** | 63.0s |
+
+Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), outperforming:
+- Semgrep by +76.4 points (Python), +65.8 points (Java), and +68.0 points (JavaScript)
 - FindSecBugs by +42.5 points (Java) - the best open-source Java SAST tool
 - Bandit by +71.6 points (Python)
 
@@ -123,18 +138,25 @@ python -m benchmarks run --division qf_shls_entl
 - Categories: SQL Injection, XSS, Command Injection, Path Traversal, Weak Crypto, Weak Hash, XXE, LDAP Injection, XPath Injection, Trust Boundary
 - **Results: 97.2% precision, 84.8% recall, 81.5% OWASP Score**
 
-| Vulnerability Type | Python Tests | Java Tests | Description |
-|-------------------|--------------|------------|-------------|
-| SQL Injection | 89 | ~90 | Database query injection |
-| XSS | 50 | ~80 | Cross-site scripting |
-| Command Injection | 94 | ~50 | OS command execution |
-| Path Traversal | 22 | ~25 | Directory traversal attacks |
-| XPath Injection | 50 | ~10 | XML path injection |
-| LDAP Injection | 90 | ~25 | Directory service injection |
-| Weak Crypto | 28 | ~30 | Insecure cryptographic algorithms |
-| Weak Hash | 50 | ~50 | Insecure hash functions (MD5, SHA1) |
-| XXE | 11 | ~10 | XML External Entity attacks |
-| Deserialization | 16 | ~10 | Insecure object deserialization |
+**SecBench.js: 166 files** (JavaScript/TypeScript)
+- Real-world vulnerabilities from ICSE 2023 SecBench.js dataset
+- 138 files with vulnerabilities (SQL injection, XSS, etc.) in Node.js apps
+- Sources: Juice Shop, NodeGoat, DVNA, OpenSSF CVE samples
+- **Results: 99.1% precision, 81.2% recall, 77.6% OWASP Score**
+- Frame is **52x faster** than Semgrep (1.2s vs 63s)
+
+| Vulnerability Type | Python Tests | Java Tests | JS/TS Tests | Description |
+|-------------------|--------------|------------|-------------|-------------|
+| SQL Injection | 89 | ~90 | ~200 | Database query injection |
+| XSS | 50 | ~80 | ~20 | Cross-site scripting |
+| Command Injection | 94 | ~50 | - | OS command execution |
+| Path Traversal | 22 | ~25 | - | Directory traversal attacks |
+| XPath Injection | 50 | ~10 | - | XML path injection |
+| LDAP Injection | 90 | ~25 | - | Directory service injection |
+| Weak Crypto | 28 | ~30 | - | Insecure cryptographic algorithms |
+| Weak Hash | 50 | ~50 | - | Insecure hash functions (MD5, SHA1) |
+| XXE | 11 | ~10 | - | XML External Entity attacks |
+| Deserialization | 16 | ~10 | - | Insecure object deserialization |
 
 ### Full Sets (19,801 tests)
 

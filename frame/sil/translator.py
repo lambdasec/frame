@@ -88,6 +88,7 @@ class VulnType(Enum):
 
     # A06: Insecure Design
     MASS_ASSIGNMENT = "mass_assignment"         # CWE-915
+    PROTOTYPE_POLLUTION = "prototype_pollution" # CWE-1321
     BUSINESS_LOGIC_FLAW = "business_logic_flaw" # CWE-840
     RACE_CONDITION = "race_condition"           # CWE-362
 

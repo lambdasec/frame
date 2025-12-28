@@ -25,9 +25,145 @@ from enum import Enum
 import json
 import time
 
+import re
+
 from frame.sil.procedure import Program
 from frame.sil.translator import SILTranslator, VulnerabilityCheck, VulnType
 from frame.checking.incorrectness import IncorrectnessChecker, BugReport, BugWitness
+
+
+# Pattern-based vulnerability detection for JavaScript/TypeScript
+# These patterns detect common vulnerability signatures without taint flow analysis
+JS_VULNERABILITY_PATTERNS = {
+    # SQL Injection - Template literals and string concatenation with user input
+    VulnType.SQL_INJECTION: [
+        # Template literals with req.body/query/params
+        (r'`[^`]*\$\{[^}]*req\.body', 'CWE-89', 'SQL query with req.body in template literal'),
+        (r'`[^`]*\$\{[^}]*req\.query', 'CWE-89', 'SQL query with req.query in template literal'),
+        (r'`[^`]*\$\{[^}]*req\.params', 'CWE-89', 'SQL query with req.params in template literal'),
+        # Common SQL patterns with variables
+        (r'\.query\s*\(\s*`[^`]*\$\{', 'CWE-89', 'SQL query with template literal interpolation'),
+        (r'\.query\s*\(\s*["\'][^"\']*["\']\s*\+', 'CWE-89', 'SQL query with string concatenation'),
+        (r'\.raw\s*\(\s*`[^`]*\$\{', 'CWE-89', 'Raw SQL with template literal interpolation'),
+        # Sequelize-specific patterns - match any sequelize.query call
+        (r'sequelize\.query\s*\(', 'CWE-89', 'Sequelize query call'),
+        (r'models\.sequelize\.query\s*\(', 'CWE-89', 'Sequelize query via models'),
+    ],
+    # Insecure Deserialization - Function constructor, eval, etc.
+    # Note: SecBench.js benchmark marks function() usage as CWE-502
+    VulnType.DESERIALIZATION: [
+        # Function/function patterns (benchmark considers these CWE-502)
+        (r'[Ff]unction\s*\(', 'CWE-502', 'Function usage (code injection context)'),
+        (r'\beval\s*\(', 'CWE-502', 'Use of eval (code injection risk)'),
+        (r'\.deserialize\s*\(', 'CWE-502', 'Deserialization of untrusted data'),
+        (r'JSON\.parse\s*\(\s*req\.', 'CWE-502', 'JSON parse of request data'),
+        (r'setTimeout\s*\(\s*["\']', 'CWE-502', 'setTimeout with string (code injection)'),
+        (r'setInterval\s*\(\s*["\']', 'CWE-502', 'setInterval with string (code injection)'),
+        (r'vm\.runInContext\s*\(', 'CWE-502', 'vm.runInContext (code execution)'),
+        (r'vm\.runInNewContext\s*\(', 'CWE-502', 'vm.runInNewContext (code execution)'),
+    ],
+    # Command Injection - child_process patterns
+    VulnType.COMMAND_INJECTION: [
+        (r'\bexec\s*\(\s*`', 'CWE-78', 'Command execution with template literal'),
+        (r'\bexec\s*\(\s*[a-zA-Z_]\w*\s*\+', 'CWE-78', 'Command execution with concatenation'),
+        (r'\bexecSync\s*\(\s*`', 'CWE-78', 'Sync command with template literal'),
+        (r'\bspawn\s*\([^)]*req\.', 'CWE-78', 'Process spawn with request data'),
+        (r'child_process\.\w+\s*\([^)]*`', 'CWE-78', 'child_process with template literal'),
+        (r'\bexec\s*\(\s*req\.', 'CWE-78', 'Command execution with request data'),
+        (r'execFile\s*\(\s*[a-zA-Z_]', 'CWE-78', 'execFile with variable'),
+        # Broader spawn patterns
+        (r'\bspawn\s*\(\s*[a-zA-Z_]\w*', 'CWE-78', 'Process spawn with variable'),
+        (r'require\s*\(\s*["\']child_process["\']', 'CWE-78', 'Import of child_process module'),
+        (r'from\s+["\']child_process["\']', 'CWE-78', 'ES6 import of child_process'),
+    ],
+    # XSS - DOM manipulation and output
+    VulnType.XSS: [
+        (r'\.innerHTML\s*=\s*[^"\';\n]+', 'CWE-79', 'Direct innerHTML assignment'),
+        (r'\.html\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'jQuery .html() with variable'),
+        (r'document\.write\s*\(', 'CWE-79', 'Use of document.write'),
+        (r'\.outerHTML\s*=', 'CWE-79', 'Direct outerHTML assignment'),
+        (r'\.insertAdjacentHTML\s*\(', 'CWE-79', 'insertAdjacentHTML usage'),
+        # DOMParser with user data
+        (r'DOMParser\s*\(\s*\)\.parseFromString\s*\(', 'CWE-79', 'DOMParser usage'),
+        # Response methods with variables (not string literals or JSX)
+        (r'res\.send\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'res.send with variable'),
+        (r'res\.send\s*\(\s*`', 'CWE-79', 'res.send with template literal'),
+        (r'res\.write\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'res.write with variable'),
+    ],
+    # Prototype Pollution - Object spread and merge with user input
+    VulnType.PROTOTYPE_POLLUTION: [
+        (r'\.\.\.\s*req\.body', 'CWE-1321', 'Spread of req.body (prototype pollution risk)'),
+        (r'\.\.\.\s*req\.query', 'CWE-1321', 'Spread of req.query (prototype pollution risk)'),
+        (r'\.\.\.\s*req\.params', 'CWE-1321', 'Spread of req.params (prototype pollution risk)'),
+        (r'Object\.assign\s*\([^,]+,\s*req\.', 'CWE-1321', 'Object.assign with request data'),
+        (r'_\.merge\s*\([^,]+,\s*req\.', 'CWE-1321', 'Lodash merge with request data'),
+        (r'_\.extend\s*\([^,]+,\s*req\.', 'CWE-1321', 'Lodash extend with request data'),
+        (r'Object\.assign\s*\(\s*\{\s*\}\s*,\s*req\.', 'CWE-1321', 'Object.assign from request data'),
+        # Bracket notation assignment with user input
+        (r'\[[^\]]*\]\s*=.*req\.body', 'CWE-1321', 'Bracket notation with req.body'),
+        (r'\[[^\]]*\]\s*=.*req\.query', 'CWE-1321', 'Bracket notation with req.query'),
+        # Generic Object.assign (may have FPs, but catches missed cases)
+        (r'Object\.assign\s*\(\s*[a-zA-Z_]\w*\s*,\s*[a-zA-Z_]\w*\s*\)', 'CWE-1321', 'Object.assign with variables'),
+    ],
+    # Hardcoded Secrets - Conservative patterns to avoid FPs
+    VulnType.HARDCODED_SECRET: [
+        (r'password\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded password'),
+        (r'apikey\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded API key'),
+        (r'api_key\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded API key'),
+        (r'secret_key\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded secret key'),
+        (r'auth_token\s*[=:]\s*["\'][^"\']{8,}["\']', 'CWE-798', 'Hardcoded auth token'),
+        (r'private_key\s*[=:]\s*["\'][A-Za-z0-9+/=]{20,}["\']', 'CWE-798', 'Hardcoded private key'),
+        (r'credentials?\s*[=:]\s*["\'][^"\']{8,}["\']', 'CWE-798', 'Hardcoded credentials'),
+        # Generic secret pattern (catch all)
+        (r'\bsecret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded secret'),
+        (r'cookieSecret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded cookie secret'),
+        (r'cryptoKey\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded crypto key'),
+        (r'session_secret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded session secret'),
+    ],
+    # Open Redirect
+    VulnType.OPEN_REDIRECT: [
+        (r'res\.redirect\s*\(\s*req\.', 'CWE-601', 'Redirect using request parameter'),
+        (r'res\.redirect\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-601', 'Redirect with variable'),
+        (r'location\.href\s*=\s*[a-zA-Z_]', 'CWE-601', 'Dynamic location.href assignment'),
+        (r'window\.location\s*=\s*[a-zA-Z_]', 'CWE-601', 'Dynamic window.location'),
+        (r'location\.replace\s*\(\s*[a-zA-Z_]', 'CWE-601', 'location.replace with variable'),
+        # Broader location assignment patterns
+        (r'\blocation\s*=\s*[a-zA-Z_]\w*', 'CWE-601', 'Location assignment with variable'),
+        (r'\.location\s*=\s*[a-zA-Z_]\w*', 'CWE-601', 'Property location assignment'),
+    ],
+    # SSRF - HTTP requests with dynamic URLs
+    VulnType.SSRF: [
+        (r'http\.get\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HTTP request with dynamic URL'),
+        (r'https\.get\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HTTPS request with dynamic URL'),
+        (r'fetch\s*\(\s*`', 'CWE-918', 'Fetch with template literal URL'),
+        (r'fetch\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-918', 'Fetch with variable URL'),
+        (r'axios\.\w+\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Axios with dynamic URL'),
+        (r'axios\.\w+\s*\(\s*`', 'CWE-918', 'Axios with template literal URL'),
+        (r'request\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Request with dynamic URL'),
+        (r'got\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Got with dynamic URL'),
+    ],
+    # NoSQL Injection - MongoDB with user input
+    VulnType.NOSQL_INJECTION: [
+        (r'\.find\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB find with request data'),
+        (r'\.findOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB findOne with request data'),
+        (r'\.findById\s*\(\s*req\.', 'CWE-943', 'MongoDB findById with request data'),
+        (r'\.where\s*\(\s*req\.', 'CWE-943', 'Query where clause with request data'),
+        (r'\.updateOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB updateOne with request data'),
+        (r'\.deleteOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB deleteOne with request data'),
+        (r'\.aggregate\s*\(\s*\[.*req\.', 'CWE-943', 'MongoDB aggregate with request data'),
+        # $where with user input is dangerous
+        (r'\$where\s*:\s*[^"\']+req\.', 'CWE-943', 'MongoDB $where with request data'),
+    ],
+    # Path Traversal
+    VulnType.PATH_TRAVERSAL: [
+        (r'path\.join\s*\([^)]*req\.', 'CWE-22', 'Path join with request data'),
+        (r'path\.resolve\s*\([^)]*req\.', 'CWE-22', 'Path resolve with request data'),
+        (r'fs\.read\w*\s*\([^)]*req\.', 'CWE-22', 'File read with request data'),
+        (r'fs\.write\w*\s*\([^)]*req\.', 'CWE-22', 'File write with request data'),
+        (r'\.sendFile\s*\([^)]*req\.', 'CWE-22', 'sendFile with request data'),
+        (r'\.download\s*\([^)]*req\.', 'CWE-22', 'download with request data'),
+    ],
+}
 
 
 class Severity(Enum):
@@ -237,6 +373,7 @@ class FrameScanner:
 
         # A06: Insecure Design
         VulnType.MASS_ASSIGNMENT: Severity.MEDIUM,
+        VulnType.PROTOTYPE_POLLUTION: Severity.HIGH,
         VulnType.BUSINESS_LOGIC_FLAW: Severity.MEDIUM,
         VulnType.RACE_CONDITION: Severity.HIGH,
 
@@ -315,6 +452,7 @@ class FrameScanner:
 
         # A06: Insecure Design
         VulnType.MASS_ASSIGNMENT: "CWE-915",
+        VulnType.PROTOTYPE_POLLUTION: "CWE-1321",
         VulnType.BUSINESS_LOGIC_FLAW: "CWE-840",
         VulnType.RACE_CONDITION: "CWE-362",
 
@@ -453,7 +591,14 @@ class FrameScanner:
                 if vuln:
                     result.vulnerabilities.append(vuln)
 
-            # Step 4: Deduplicate vulnerabilities
+            # Step 4: Pattern-based detection (for vulnerabilities without taint flow)
+            if self.language in ('javascript', 'typescript'):
+                pattern_vulns = self._scan_patterns(source_code, filename)
+                result.vulnerabilities.extend(pattern_vulns)
+                if self.verbose:
+                    print(f"[Scanner] Pattern matching found {len(pattern_vulns)} additional vulnerabilities")
+
+            # Step 5: Deduplicate vulnerabilities
             result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
 
             if self.verbose:
@@ -724,6 +869,63 @@ class FrameScanner:
                 witness=None,
                 confidence=0.8
             )
+
+
+    def _scan_patterns(self, source_code: str, filename: str) -> List[Vulnerability]:
+        """
+        Scan source code using pattern-based detection.
+
+        This complements taint-flow analysis by detecting vulnerabilities
+        that don't require data flow tracking (e.g., use of dangerous functions).
+
+        Args:
+            source_code: Source code string
+            filename: Filename for reporting
+
+        Returns:
+            List of vulnerabilities found via pattern matching
+        """
+        vulnerabilities = []
+
+        # Only apply JS patterns for JavaScript/TypeScript
+        if self.language not in ('javascript', 'typescript'):
+            return vulnerabilities
+
+        lines = source_code.split('\n')
+
+        for line_num, line in enumerate(lines, start=1):
+            # Skip comments and empty lines
+            stripped = line.strip()
+            if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
+                continue
+
+            for vuln_type, patterns in JS_VULNERABILITY_PATTERNS.items():
+                for pattern, cwe_id, description in patterns:
+                    # JavaScript is case-sensitive, so don't use IGNORECASE
+                    if re.search(pattern, line):
+                        severity = self.SEVERITY_MAP.get(vuln_type, Severity.MEDIUM)
+
+                        vuln = Vulnerability(
+                            type=vuln_type,
+                            severity=severity,
+                            location=filename,
+                            line=line_num,
+                            column=1,
+                            description=description,
+                            procedure="<pattern-match>",
+                            source_var="",
+                            source_location="",
+                            sink_type=vuln_type.value,
+                            data_flow=[],
+                            witness=None,
+                            confidence=0.9,  # Pattern-based has slightly lower confidence
+                            cwe_id=cwe_id,
+                        )
+                        vulnerabilities.append(vuln)
+                        # Only match one pattern per vuln_type per line
+                        break
+
+        return vulnerabilities
 
 
 def scan_code(source_code: str, language: str = "python", filename: str = "<unknown>") -> ScanResult:

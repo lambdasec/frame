@@ -467,9 +467,8 @@ SENSITIVE_DATA_SPECS = {
     "bunyan.info": _sink("sensitive_log", [0], "Bunyan info log (CWE-532)"),
     "pino.info": _sink("sensitive_log", [0], "Pino info log (CWE-532)"),
 
-    # Response data
+    # Response data (note: res.send is defined as HTML sink in EXPRESS_SPECS)
     "res.json": _propagator([0], "JSON response (check for sensitive data)"),
-    "res.send": _propagator([0], "Send response (check for sensitive data)"),
 }
 
 # =============================================================================

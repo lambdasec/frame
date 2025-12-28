@@ -338,6 +338,23 @@ def run_secbench_js_division(
         rel_path = os.path.relpath(filepath, src_dir) if src_dir in filepath else os.path.basename(filepath)
         file_info = manifest.get('files', {}).get(rel_path, {})
 
+        # For curated files (e.g., 0039_juice_shop_unionSqlInjectionChallenge_1.ts),
+        # we need to search for the original filename in manifest keys
+        if not file_info and 'curated' in division:
+            basename = os.path.basename(filepath)
+            # Skip the numeric prefix (NNNN_) and try progressively shorter suffixes
+            # This handles source names with underscores (e.g., juice_shop)
+            # Format: NNNN_source_originalfilename.ext
+            for idx in range(5, len(basename)):  # Start after "NNNN_"
+                if basename[idx] == '_':
+                    possible_suffix = basename[idx + 1:]
+                    for manifest_key in manifest.get('files', {}):
+                        if manifest_key.endswith(possible_suffix):
+                            file_info = manifest['files'][manifest_key]
+                            break
+                    if file_info:
+                        break
+
         expected_vulns = []
         for vuln in file_info.get('vulnerabilities', []):
             cwe = vuln.get('cwe', 'unknown')

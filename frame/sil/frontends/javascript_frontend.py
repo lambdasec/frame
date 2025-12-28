@@ -44,6 +44,78 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
 
+# Mapping from spec sink type strings to SinkKind enum
+# Available SinkKind values: SQL_QUERY, HTML_OUTPUT, SHELL_COMMAND, LDAP_QUERY,
+# XPATH_QUERY, EVAL, TEMPLATE, NOSQL_QUERY, XML_PARSE, REGEX, ORM_QUERY,
+# EXPRESSION_LANG, FILE_PATH, REDIRECT, SSRF, AUTHZ_CHECK, CORS, HEADER,
+# SECRET_EXPOSURE, DEBUG_INFO, WEAK_CRYPTO, HARDCODED_SECRET, INSECURE_RANDOM,
+# WEAK_HASH, CREDENTIAL, SESSION, PASSWORD_STORE, TRUST_BOUNDARY, INSECURE_COOKIE,
+# DESERIALIZATION, LOG, SENSITIVE_LOG, ERROR_DISCLOSURE, XSS, COMMAND, MEMORY
+SINK_TYPE_MAP = {
+    # Direct matches
+    "sql": SinkKind.SQL_QUERY,
+    "html": SinkKind.HTML_OUTPUT,
+    "xss": SinkKind.XSS,
+    "command": SinkKind.COMMAND,
+    "shell": SinkKind.SHELL_COMMAND,
+    "ldap": SinkKind.LDAP_QUERY,
+    "xpath": SinkKind.XPATH_QUERY,
+    "eval": SinkKind.EVAL,
+    "template": SinkKind.TEMPLATE,
+    "redirect": SinkKind.REDIRECT,
+    "ssrf": SinkKind.SSRF,
+    "deserialize": SinkKind.DESERIALIZATION,
+
+    # Path/filesystem
+    "path": SinkKind.FILE_PATH,
+    "filesystem": SinkKind.FILE_PATH,
+    "file": SinkKind.FILE_PATH,
+
+    # NoSQL
+    "nosql": SinkKind.NOSQL_QUERY,
+
+    # Crypto
+    "weak_crypto": SinkKind.WEAK_CRYPTO,
+    "weak_hash": SinkKind.WEAK_HASH,
+    "hardcoded_secret": SinkKind.HARDCODED_SECRET,
+    "hardcoded_cred": SinkKind.CREDENTIAL,
+    "insecure_random": SinkKind.INSECURE_RANDOM,
+
+    # Auth/session
+    "auth": SinkKind.AUTHZ_CHECK,
+    "session": SinkKind.SESSION,
+
+    # Headers
+    "header": SinkKind.HEADER,
+    "header_injection": SinkKind.HEADER,
+
+    # Logging
+    "sensitive_log": SinkKind.SENSITIVE_LOG,
+    "log_injection": SinkKind.LOG,
+
+    # Misc
+    "code": SinkKind.EVAL,
+    "config": SinkKind.SECRET_EXPOSURE,
+    "cors": SinkKind.CORS,
+    "ssl": SinkKind.WEAK_CRYPTO,
+    "exception": SinkKind.ERROR_DISCLOSURE,
+    "info_disclosure": SinkKind.DEBUG_INFO,
+    "prototype_pollution": SinkKind.EVAL,  # Closest match
+    "redos": SinkKind.REGEX,
+}
+
+
+def _get_sink_kind(spec_type: str) -> SinkKind:
+    """Convert spec sink type string to SinkKind enum"""
+    if spec_type in SINK_TYPE_MAP:
+        return SINK_TYPE_MAP[spec_type]
+    # Try direct conversion
+    try:
+        return SinkKind(spec_type)
+    except ValueError:
+        return SinkKind.SQL_QUERY  # Default fallback
+
+
 class JavaScriptFrontend:
     """
     Translates JavaScript/TypeScript source code to Frame SIL.
@@ -426,6 +498,9 @@ class JavaScriptFrontend:
                     else:
                         exp = self._translate_expression(value_node)
                         self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp))
+                        # Check if this is a property access that's a taint source
+                        taint_instrs = self._check_expression_for_taint_source(value_node, target_name, loc)
+                        self._add_instrs(taint_instrs)
                 else:
                     # Uninitialized variable
                     self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=ExpConst.null()))
@@ -450,6 +525,9 @@ class JavaScriptFrontend:
         else:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp))
+            # Check if this expression contains a taint source
+            taint_instrs = self._check_expression_for_taint_source(right, target_name, loc)
+            self._add_instrs(taint_instrs)
 
     def _translate_call_assignment(
         self,
@@ -496,7 +574,7 @@ class JavaScriptFrontend:
 
         # Check if this is a sink
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -510,11 +588,38 @@ class JavaScriptFrontend:
         return instrs
 
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
-        """Translate standalone call: func(args)"""
+        """Translate standalone call: func(args)
+
+        Handles chained method calls like: query(...).then(...).catch(...)
+        Each call in the chain is translated separately.
+        """
         instrs = []
         loc = self._get_location(call_node)
 
-        func_name = self._get_call_name(call_node)
+        # Get the function node
+        func_node = call_node.child_by_field_name("function")
+
+        # Check if this is a chained method call (e.g., query(...).then(...))
+        if func_node and func_node.type == "member_expression":
+            obj_node = func_node.child_by_field_name("object")
+            prop_node = func_node.child_by_field_name("property")
+
+            # If the object is a call_expression, translate it first
+            if obj_node and obj_node.type == "call_expression":
+                # Recursively translate the inner call
+                inner_instrs = self._translate_call_expr(obj_node)
+                instrs.extend(inner_instrs)
+
+                # Now translate this call with just the method name
+                method_name = self._get_text(prop_node) if prop_node else ""
+                func_name = method_name
+            else:
+                # Regular method call (e.g., obj.method())
+                func_name = self._get_call_name(call_node)
+        else:
+            # Simple function call
+            func_name = self._get_call_name(call_node)
+
         args = self._get_call_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 
@@ -527,10 +632,19 @@ class JavaScriptFrontend:
         )
         instrs.append(call_instr)
 
-        # Check if this is a sink
+        # Check if this is a sink (with suffix matching for chained calls)
         spec = self.specs.get(func_name)
+        if not spec and '.' in func_name:
+            # Try suffix matching: models.sequelize.query -> sequelize.query
+            parts = func_name.split('.')
+            for i in range(1, len(parts)):
+                suffix = '.'.join(parts[i:])
+                spec = self.specs.get(suffix)
+                if spec:
+                    break
+
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -626,7 +740,20 @@ class JavaScriptFrontend:
 
         for child in node.children:
             if child.type not in ("return", ";"):
-                value_exp = self._translate_expression(child)
+                # Check if returning an arrow function - inline its body
+                if child.type == "arrow_function" or child.type == "function":
+                    # Get the arrow function's body and translate it inline
+                    body_node = child.child_by_field_name("body")
+                    if body_node:
+                        if body_node.type == "statement_block":
+                            self._translate_block(body_node)
+                        else:
+                            # Expression body: () => expr
+                            exp = self._translate_expression(body_node)
+                            self._add_instr(Return(loc=self._get_location(body_node), value=exp))
+                    return  # Don't add another return statement
+                else:
+                    value_exp = self._translate_expression(child)
                 break
 
         self._add_instr(Return(loc=loc, value=value_exp))
@@ -985,10 +1112,23 @@ class JavaScriptFrontend:
 
         elif node.type == "ternary_expression" or node.type == "conditional_expression":
             # condition ? true : false
+            # For taint tracking, we need to consider both branches
+            # Simplified: prefer alternative if it looks like a taint source, otherwise consequence
             cond = node.child_by_field_name("condition")
             conseq = node.child_by_field_name("consequence")
             alt = node.child_by_field_name("alternative")
-            # Simplified: return consequence
+
+            # Check if alternative contains a taint source pattern
+            alt_chain = self._get_member_chain(alt) if alt else ""
+            if alt_chain and any(alt_chain.startswith(src) for src in ["req.", "request."]):
+                return self._translate_expression(alt) if alt else ExpConst.null()
+
+            # Check if consequence contains a taint source pattern
+            conseq_chain = self._get_member_chain(conseq) if conseq else ""
+            if conseq_chain and any(conseq_chain.startswith(src) for src in ["req.", "request."]):
+                return self._translate_expression(conseq) if conseq else ExpConst.null()
+
+            # Default: return consequence
             return self._translate_expression(conseq) if conseq else ExpConst.null()
 
         elif node.type == "await_expression":
@@ -1045,6 +1185,163 @@ class JavaScriptFrontend:
         if func:
             return self._get_text(func)
         return ""
+
+    def _get_member_chain(self, node: TSNode) -> str:
+        """
+        Get the full member access chain as a string.
+        E.g., req.body.name -> "req.body.name"
+        Also handles binary expressions to extract the left-hand taint source.
+        """
+        if node is None:
+            return ""
+        if node.type == "identifier":
+            return self._get_text(node)
+        elif node.type == "member_expression":
+            obj = node.child_by_field_name("object")
+            prop = node.child_by_field_name("property")
+            obj_chain = self._get_member_chain(obj)
+            prop_name = self._get_text(prop) if prop else ""
+            if obj_chain:
+                return f"{obj_chain}.{prop_name}"
+            return prop_name
+        elif node.type == "subscript_expression":
+            obj = node.child_by_field_name("object")
+            return self._get_member_chain(obj)
+        elif node.type == "binary_expression":
+            # For ?? and || operators, check the left side for taint source
+            left = node.child_by_field_name("left")
+            return self._get_member_chain(left)
+        elif node.type == "parenthesized_expression":
+            # Unwrap parentheses
+            for child in node.children:
+                if child.type not in ("(", ")"):
+                    return self._get_member_chain(child)
+            return ""
+        else:
+            return self._get_text(node)
+
+    def _check_property_taint_source(
+        self,
+        node: TSNode,
+        target: str,
+        loc: Location
+    ) -> List[Instr]:
+        """
+        Check if a property access expression is a taint source.
+        Returns TaintSource instructions if the expression matches a known source pattern.
+
+        Examples:
+            req.body -> TaintSource(user)
+            req.query.id -> TaintSource(user)
+            req.params.userId -> TaintSource(user)
+        """
+        instrs = []
+
+        if node is None:
+            return instrs
+
+        # For binary expressions, extract the left-hand side
+        actual_node = node
+        if node.type == "binary_expression":
+            left = node.child_by_field_name("left")
+            if left:
+                actual_node = left
+
+        # Get the full member chain
+        chain = self._get_member_chain(actual_node)
+        if not chain:
+            return instrs
+
+        # Check if the full chain matches a source
+        spec = self.specs.get(chain)
+        if spec and spec.is_taint_source():
+            kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+            instrs.append(TaintSource(
+                loc=loc,
+                var=PVar(target),
+                kind=kind,
+                description=spec.description or f"Taint from {chain}"
+            ))
+            return instrs
+
+        # Check prefixes - e.g., req.body.name should match req.body
+        parts = chain.split(".")
+        for i in range(len(parts), 0, -1):
+            prefix = ".".join(parts[:i])
+            spec = self.specs.get(prefix)
+            if spec and spec.is_taint_source():
+                kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+                instrs.append(TaintSource(
+                    loc=loc,
+                    var=PVar(target),
+                    kind=kind,
+                    description=spec.description or f"Taint from {prefix}"
+                ))
+                return instrs
+
+        return instrs
+
+    def _check_expression_for_taint_source(
+        self,
+        node: TSNode,
+        target: str,
+        loc: Location
+    ) -> List[Instr]:
+        """
+        Recursively check any expression for taint sources.
+        Handles member_expression, binary_expression, ternary_expression, etc.
+
+        This is more comprehensive than _check_property_taint_source as it
+        handles complex expressions like:
+            - req.query.q ?? ""
+            - condition ? req.body.x : default
+            - (req.params.id)
+        """
+        if node is None:
+            return []
+
+        node_type = node.type
+
+        # Direct member expression - delegate to existing method
+        if node_type == "member_expression":
+            return self._check_property_taint_source(node, target, loc)
+
+        # Binary expressions (??. ||, etc.) - check left side
+        elif node_type == "binary_expression":
+            left = node.child_by_field_name("left")
+            if left:
+                return self._check_expression_for_taint_source(left, target, loc)
+
+        # Ternary expression - check both branches
+        elif node_type == "ternary_expression":
+            consequence = node.child_by_field_name("consequence")
+            alternative = node.child_by_field_name("alternative")
+
+            # Check consequence first
+            if consequence:
+                instrs = self._check_expression_for_taint_source(consequence, target, loc)
+                if instrs:
+                    return instrs
+
+            # Check alternative
+            if alternative:
+                instrs = self._check_expression_for_taint_source(alternative, target, loc)
+                if instrs:
+                    return instrs
+
+        # Parenthesized expression - unwrap
+        elif node_type == "parenthesized_expression":
+            for child in node.children:
+                if child.type not in ("(", ")"):
+                    return self._check_expression_for_taint_source(child, target, loc)
+
+        # Subscript expression - check the object being accessed
+        elif node_type == "subscript_expression":
+            obj = node.child_by_field_name("object")
+            if obj:
+                return self._check_expression_for_taint_source(obj, target, loc)
+
+        return []
 
     def _get_call_args(self, call_node: TSNode) -> List[TSNode]:
         """Get argument nodes from call"""

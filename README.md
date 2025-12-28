@@ -597,12 +597,23 @@ Frame's security scanner is tested against industry-standard OWASP benchmarks:
 | **F1 Score** | **90.6%** | 69.4% | 52.1% |
 | **OWASP Score** | **81.5%** | 15.7% | 39% |
 
-Frame achieves **80.9% OWASP Score** on Python and **81.5% OWASP Score** on Java (TPR - FPR), significantly outperforming both pattern-matching tools and traditional static analyzers.
+**JavaScript/TypeScript Benchmark** (SecBench.js - 166 files, 138 with vulnerabilities):
+
+| Metric | Frame | Semgrep |
+|--------|-------|---------|
+| **Precision** | **99.1%** | 90.3% |
+| **Recall** | **81.2%** | 20.3% |
+| **F1 Score** | **89.2%** | 33.1% |
+| **OWASP Score** | **77.6%** | 9.6% |
+| **Time** | **1.2s** | 63.0s |
+
+Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), significantly outperforming both pattern-matching tools and traditional static analyzers. Frame is **52x faster** than Semgrep on JavaScript benchmarks.
 
 ```bash
 # Run security benchmarks
 python -m benchmarks run --division owasp_python_curated
 python -m benchmarks run --division owasp_java
+python -m benchmarks run --division secbench_js
 ```
 
 ### Logic Solver (SMT-LIB/SL-COMP)
