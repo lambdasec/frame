@@ -222,6 +222,9 @@ class SLMemoryAnalyzer:
     def _analyze_line(self, line: str, loc: Location, all_lines: List[str], line_num: int):
         """Analyze a single line for memory operations."""
 
+        # Check for array declarations: char buf[100]
+        self._check_array_declaration(line, loc)
+
         # Check for allocations: ptr = malloc(...)
         self._check_allocation(line, loc)
 
@@ -233,6 +236,35 @@ class SLMemoryAnalyzer:
 
         # Check for pointer assignments (NULL assignment)
         self._check_assignment(line, loc)
+
+        # Check for buffer copy operations that may overflow
+        self._check_buffer_copy(line, loc, all_lines, line_num)
+
+        # Track data initialization (memset) for size tracking
+        self._track_data_init(line, loc)
+
+    def _check_array_declaration(self, line: str, loc: Location):
+        """
+        Track stack-allocated arrays.
+
+        In separation logic: buf[N] means buf |-> (data, N)
+        """
+        # Pattern: type name[size] or type name[size] = ...
+        array_match = re.search(r'(\w+)\s+(\w+)\s*\[\s*(\d+)\s*\]', line)
+        if array_match:
+            var_type = array_match.group(1)
+            var_name = array_match.group(2)
+            size = int(array_match.group(3))
+
+            # Track the array with its size
+            self.heap[var_name] = HeapRegion(
+                name=var_name,
+                state=HeapState.VALID,
+                alloc_loc=loc,
+                size=size
+            )
+            if self.verbose:
+                print(f"[SL] Array: {var_name} |-> (data, {size}) at line {loc.line}")
 
     def _check_allocation(self, line: str, loc: Location):
         """Track memory allocation - adds ptr |-> val to heap."""
@@ -423,6 +455,128 @@ class SLMemoryAnalyzer:
                     name=var_name,
                     state=HeapState.NULL
                 )
+
+    def _track_data_init(self, line: str, loc: Location):
+        """
+        Track data initialization to know source sizes.
+
+        When we see memset(src, 'A', N-1), we know src contains N bytes of data.
+        This is crucial for detecting buffer overflow in copy operations.
+        """
+        # memset(var, char, size) - tracks initialized size
+        memset_match = re.search(r'memset\s*\(\s*(\w+)\s*,\s*[^,]+,\s*(\d+)(?:\s*-\s*(\d+))?\s*\)', line)
+        if memset_match:
+            var_name = memset_match.group(1)
+            init_size = int(memset_match.group(2))
+            if memset_match.group(3):
+                init_size -= int(memset_match.group(3))
+            init_size += 1  # Account for null terminator
+
+            # Update or create region with initialized size
+            if var_name in self.heap:
+                # Keep the allocated size, update with data size info
+                pass  # Size already tracked from declaration/allocation
+            else:
+                self.heap[var_name] = HeapRegion(
+                    name=var_name,
+                    state=HeapState.VALID,
+                    alloc_loc=loc,
+                    size=init_size
+                )
+
+            if self.verbose:
+                print(f"[SL] Memset: {var_name} initialized with {init_size} bytes at line {loc.line}")
+
+    def _check_buffer_copy(self, line: str, loc: Location, all_lines: List[str], line_num: int):
+        """
+        Check buffer copy operations for overflow using separation logic.
+
+        For strcpy(dest, src):
+        - We need: dest |-> (data, dest_size) * src |-> (data, src_size)
+        - Safe if: src_size <= dest_size
+        - Overflow if: src_size > dest_size
+
+        This is the key separation logic reasoning:
+        - If we can't prove dest has enough space for src, it's a potential overflow
+        """
+        copy_funcs = {
+            'strcpy': (1, 2),   # (dest_arg, src_arg)
+            'strcat': (1, 2),
+            'wcscpy': (1, 2),
+            'wcscat': (1, 2),
+            'memcpy': (1, 2),
+            'memmove': (1, 2),
+        }
+
+        for func, (dest_idx, src_idx) in copy_funcs.items():
+            # Match function call and extract arguments
+            pattern = rf'\b{func}\s*\(\s*([^,]+)\s*,\s*([^,)]+)'
+            match = re.search(pattern, line)
+            if match:
+                dest_arg = match.group(1).strip()
+                src_arg = match.group(2).strip()
+
+                # Get destination size from our heap tracking
+                dest_size = self._get_buffer_size(dest_arg)
+
+                # Get source size - look for memset or array declaration in context
+                src_size = self._get_source_size(src_arg, all_lines, line_num)
+
+                if self.verbose:
+                    print(f"[SL] {func}: dest={dest_arg}({dest_size}), src={src_arg}({src_size}) at line {loc.line}")
+
+                # If we know both sizes and source > dest, it's an overflow
+                if dest_size and src_size and src_size > dest_size:
+                    self._add_vuln(MemoryVuln(
+                        vuln_type=VulnType.BUFFER_OVERFLOW,
+                        cwe_id="CWE-122",
+                        location=loc,
+                        var_name=dest_arg,
+                        description=f"Buffer overflow: {func} copies {src_size} bytes to {dest_size}-byte buffer '{dest_arg}'. Heap ⊬ {dest_arg} |-> (_, {src_size})",
+                        confidence=0.90,
+                    ))
+                    if self.verbose:
+                        print(f"[SL] BUFFER OVERFLOW: {func} at line {loc.line}")
+
+    def _get_buffer_size(self, var_name: str) -> Optional[int]:
+        """Get buffer size from heap tracking."""
+        if var_name in self.heap:
+            return self.heap[var_name].size
+        return None
+
+    def _get_source_size(self, var_name: str, all_lines: List[str], line_num: int) -> Optional[int]:
+        """
+        Get source data size by looking at how it was initialized.
+
+        Look for:
+        1. memset(var, ..., N) - initialized with N bytes
+        2. var[N] declaration - array of N elements
+        """
+        # Check if we already track this variable
+        if var_name in self.heap and self.heap[var_name].size:
+            return self.heap[var_name].size
+
+        # Look in surrounding context for memset or declaration
+        context_start = max(0, line_num - 15)
+        context_end = line_num
+
+        for i in range(context_start, context_end):
+            ctx_line = all_lines[i] if i < len(all_lines) else ""
+
+            # Look for memset
+            memset_match = re.search(rf'memset\s*\(\s*{re.escape(var_name)}\s*,\s*[^,]+,\s*(\d+)(?:\s*-\s*(\d+))?\s*\)', ctx_line)
+            if memset_match:
+                size = int(memset_match.group(1))
+                if memset_match.group(2):
+                    size -= int(memset_match.group(2))
+                return size + 1  # +1 for null terminator
+
+            # Look for array declaration
+            array_match = re.search(rf'{re.escape(var_name)}\s*\[\s*(\d+)\s*\]', ctx_line)
+            if array_match:
+                return int(array_match.group(1))
+
+        return None
 
 
 def analyze_with_separation_logic(source: str, filename: str = "<unknown>",
