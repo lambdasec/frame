@@ -607,19 +607,18 @@ Frame's security scanner is tested against industry-standard OWASP benchmarks:
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
-**C/C++ Benchmark** (NIST Juliet - 471 curated files, 418 with vulnerabilities):
+**C/C++ Benchmark** (NIST Juliet - 200 curated files, 63 vulnerabilities):
 
-| Metric | Frame | Semgrep | Advantage |
-|--------|-------|---------|-----------|
-| **Precision** | **95.4%** | 100.0% | Semgrep +4.6% |
-| **Recall** | **80.1%** | 3.8% | **Frame +76.3%** |
-| **F1 Score** | **87.1%** | 7.4% | **Frame +79.7%** |
-| **OWASP Score** | **50.0%** | 3.8% | **Frame +46.2%** |
-| **Time** | 5.3s | ~60s | Frame 11x faster |
+| Metric | Frame |
+|--------|-------|
+| **Precision** | **82.5%** |
+| **Recall** | **82.5%** |
+| **F1 Score** | **82.5%** |
+| **OWASP Score** | **65.0%** |
 
-*Frame detects 21x more vulnerabilities than Semgrep (335 vs 16 TPs) with 95.4% precision. Coverage includes buffer overflows, integer overflows, command injection, format strings, divide-by-zero, and 40+ CWE types.*
+*Frame uses semantic analysis to detect buffer overflows, integer overflows/underflows, command injection, format strings, and other memory safety vulnerabilities through bounds-aware taint tracking.*
 
-Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **50.0% OWASP Score** on C/C++. Frame is **11-52x faster** than Semgrep across benchmarks.
+Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **65.0% OWASP Score** on C/C++.
 
 ```bash
 # Run security benchmarks

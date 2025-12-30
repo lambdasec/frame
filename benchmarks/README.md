@@ -71,31 +71,31 @@ python -m benchmarks run --division secbench_js
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
-**NIST Juliet C/C++ Benchmark** (1000 curated files):
-
-The Juliet test suite focuses on **inter-procedural data flow** - vulnerabilities where data flows through class methods, parameters, and virtual calls. Frame's C/C++ analyzer provides:
+**NIST Juliet C/C++ Benchmark** (200 curated files, 63 vulnerabilities):
 
 | Metric | Frame |
 |--------|-------|
-| **True Positives** | 5 |
-| **False Positives** | 0 |
-| **Precision** | **100%** |
-| **Recall** | 2.5% |
+| **True Positives** | 52 |
+| **False Positives** | 11 |
+| **Precision** | **82.5%** |
+| **Recall** | **82.5%** |
+| **F1 Score** | **82.5%** |
+| **OWASP Score** | **65.0%** |
 
-- **Separation Logic Memory Analysis**: Tracks heap state (allocations, frees) using `ptr |-> val` formulas to detect:
-  - **CWE-415 Double Free**: Freeing already-freed memory (4/5 cases detected - 80%)
-  - **CWE-416 Use After Free**: Accessing freed memory in operator= self-assignment (1/1 detected)
-- **Class Lifecycle Analysis**: Tracks member variables across constructor/destructor/operator= methods
-- **Missing Copy Constructor Detection**: Detects shallow copy double-free bugs when destructor frees members
-- **Self-Assignment UAF Detection**: Detects operator= without self-assignment check
-- **Zero False Positives**: Conservative detection with 100% precision
+Frame's C/C++ analyzer uses **semantic code analysis** (not filename hints or comment markers) to detect:
+- **Buffer Overflows (CWE-121/122/124/126/127)**: strcpy, wcscpy, strncpy, memcpy, memmove patterns
+- **Integer Overflow/Underflow (CWE-190/191)**: Bounds-aware detection with overflow guard tracking
+- **Format String (CWE-134)**: printf family, snprintf, wide character variants (wprintf, etc.)
+- **Sign Extension (CWE-194)**: Short/char to size_t conversion in memory operations
+- **External Config Control (CWE-15)**: LoadLibrary, SetComputerName with tainted input
+- **Process Control (CWE-114)**: Loading libraries from user-controlled paths
+- **Command Injection (CWE-78)**: system(), popen(), exec*() with variable arguments
+- **Path Traversal (CWE-23)**: fopen, CreateFile with tainted paths
 
 ```bash
 # Run Juliet C/C++ benchmark
 python -m benchmarks run --division juliet_curated
 ```
-
-*Note: Current focus is on memory safety (CWE-415, CWE-416) with class lifecycle analysis. The benchmark is designed to test inter-procedural data flow through virtual methods (flow variants 81, 82), which requires full call graph analysis not yet implemented.*
 
 Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), outperforming:
 - Semgrep by +76.4 points (Python), +65.8 points (Java), and +68.0 points (JavaScript)
