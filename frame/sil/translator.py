@@ -123,11 +123,15 @@ class VulnType(Enum):
     MEMORY_LEAK = "memory_leak"                 # CWE-401
     FORMAT_STRING = "format_string"             # CWE-134
     INTEGER_OVERFLOW = "integer_overflow"       # CWE-190
+    INTEGER_UNDERFLOW = "integer_underflow"     # CWE-191
     UNINITIALIZED_VAR = "uninitialized_var"     # CWE-457
     DANGEROUS_FUNCTION = "dangerous_function"   # CWE-676
     DIVIDE_BY_ZERO = "divide_by_zero"           # CWE-369
     TYPE_CONFUSION = "type_confusion"           # CWE-843
     ASSERTION_FAILURE = "assertion_failure"     # CWE-617
+    SIGN_EXTENSION = "sign_extension"           # CWE-194
+    UNICODE_HANDLING = "unicode_handling"       # CWE-176
+    CONFIG_INJECTION = "config_injection"       # CWE-15
 
     # Generic taint flow
     TAINT_FLOW = "taint_flow"
@@ -180,6 +184,13 @@ class VulnType(Enum):
             # Aliases for flexibility
             SinkKind.XSS: cls.XSS,
             SinkKind.COMMAND: cls.COMMAND_INJECTION,
+            SinkKind.FORMAT_STRING: cls.FORMAT_STRING,
+            SinkKind.FORMAT: cls.FORMAT_STRING,
+            # Memory safety
+            SinkKind.BUFFER_OVERFLOW: cls.BUFFER_OVERFLOW,
+            SinkKind.INTEGER_OVERFLOW: cls.INTEGER_OVERFLOW,
+            SinkKind.NULL_DEREF: cls.NULL_DEREFERENCE,
+            SinkKind.DIVIDE_BY_ZERO: cls.DIVIDE_BY_ZERO,
         }
         return mapping.get(sink_kind, cls.TAINT_FLOW)
 
@@ -296,6 +307,11 @@ class SymbolicState:
     # Each key is tracked separately for precise taint tracking
     dict_elements: Dict[str, Dict[str, Tuple[str, Optional[TaintInfo]]]] = field(default_factory=dict)
 
+    # Class member tracking for inter-procedural analysis (CWE-415/416)
+    # Tracks: object_var -> {member_name -> allocation_state}
+    # allocation_state: "allocated", "freed", or "unknown"
+    object_members: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
     def copy(self) -> 'SymbolicState':
         """Create a deep copy for branching"""
         return SymbolicState(
@@ -315,6 +331,7 @@ class SymbolicState:
             safe_for_xml_sink=set(self.safe_for_xml_sink),
             validated_for_eval=set(self.validated_for_eval),
             dict_elements={k: dict(v) for k, v in self.dict_elements.items()},
+            object_members={k: dict(v) for k, v in self.object_members.items()},
         )
 
     def set_constant(self, var: str, value: any) -> None:
@@ -577,6 +594,96 @@ class SymbolicState:
         self.allocated[var] = True
         self.freed.discard(var)
 
+    def set_member_state(self, obj_var: str, member: str, state: str) -> None:
+        """Track class member allocation state: 'allocated', 'freed', or 'unknown'"""
+        if obj_var not in self.object_members:
+            self.object_members[obj_var] = {}
+        self.object_members[obj_var][member] = state
+
+    def get_member_state(self, obj_var: str, member: str) -> Optional[str]:
+        """Get class member allocation state"""
+        if obj_var not in self.object_members:
+            return None
+        return self.object_members[obj_var].get(member)
+
+    def is_member_freed(self, obj_var: str, member: str) -> bool:
+        """Check if object member has been freed"""
+        return self.get_member_state(obj_var, member) == "freed"
+
+    def is_member_allocated(self, obj_var: str, member: str) -> bool:
+        """Check if object member is allocated"""
+        return self.get_member_state(obj_var, member) == "allocated"
+
+
+# =============================================================================
+# Procedure Summary for Inter-Procedural Analysis
+# =============================================================================
+
+@dataclass
+class ParameterEffect:
+    """Effect of a procedure on a parameter"""
+    param_index: int           # Which parameter (0-indexed)
+    param_name: str           # Parameter name
+    is_freed: bool = False    # Does procedure free this parameter?
+    is_dereferenced: bool = False  # Does procedure dereference this parameter?
+    is_returned: bool = False # Is this parameter returned?
+    is_stored_to_member: bool = False  # Stored to class member?
+    member_name: Optional[str] = None  # Which member it's stored to
+
+
+@dataclass
+class ProcedureSummary:
+    """
+    Summary of a procedure's effects for inter-procedural analysis.
+
+    This enables tracking data flow across procedure boundaries:
+    - Which parameters are freed (for double-free detection)
+    - Which parameters are dereferenced (for use-after-free detection)
+    - Which parameters flow to return value
+    - Class member effects (for constructor/destructor analysis)
+    """
+    proc_name: str
+
+    # Parameter effects
+    param_effects: List[ParameterEffect] = field(default_factory=list)
+
+    # Does this procedure allocate and return the result?
+    returns_allocation: bool = False
+
+    # Does this procedure free a class member?
+    frees_member: Optional[str] = None
+
+    # Does this procedure allocate to a class member?
+    allocates_member: Optional[str] = None
+
+    # Is this a constructor?
+    is_constructor: bool = False
+
+    # Is this a destructor?
+    is_destructor: bool = False
+
+    # Which class members become tainted (e.g., from user input sources)
+    # Maps member name -> taint source kind
+    taints_member: Dict[str, str] = field(default_factory=dict)
+
+    # Which class members are used as sinks
+    # Maps member name -> sink type
+    uses_member_as_sink: Dict[str, str] = field(default_factory=dict)
+
+    def frees_param(self, param_idx: int) -> bool:
+        """Check if this procedure frees the given parameter"""
+        for effect in self.param_effects:
+            if effect.param_index == param_idx and effect.is_freed:
+                return True
+        return False
+
+    def derefs_param(self, param_idx: int) -> bool:
+        """Check if this procedure dereferences the given parameter"""
+        for effect in self.param_effects:
+            if effect.param_index == param_idx and effect.is_dereferenced:
+                return True
+        return False
+
 
 # =============================================================================
 # SIL Translator
@@ -606,6 +713,13 @@ class SILTranslator:
         self.vulnerability_checks: List[VulnerabilityCheck] = []
         # Cache for procedures that always return constants
         self._constant_return_procs: Dict[str, bool] = {}
+        # Inter-procedural analysis: procedure summaries
+        self._proc_summaries: Dict[str, ProcedureSummary] = {}
+        # Track which parameters are freed at each call site
+        self._param_freed_at_callsite: Dict[str, Set[int]] = {}
+        # Track tainted class members across methods (for format string, etc.)
+        # Maps: class_name -> {member_name -> taint_source_kind}
+        self._class_member_taints: Dict[str, Dict[str, str]] = {}
 
     def _proc_always_returns_constant(self, proc_name: str) -> bool:
         """
@@ -694,6 +808,256 @@ class SILTranslator:
         self._constant_return_procs[proc_name] = result
         return result
 
+    def _build_procedure_summaries(self) -> None:
+        """
+        Build summaries for all procedures (first pass of inter-procedural analysis).
+
+        For each procedure, determine:
+        - Which parameters are freed
+        - Which parameters are dereferenced
+        - Whether it's a constructor/destructor
+        - Effects on class members
+        """
+        for proc_name, proc in self.program.procedures.items():
+            summary = ProcedureSummary(proc_name=proc_name)
+
+            # Get parameter names
+            param_names = [str(p) for p in proc.params] if proc.params else []
+
+            # Check if constructor/destructor (C++ naming)
+            if '::' in proc_name:
+                parts = proc_name.split('::')
+                if len(parts) >= 2:
+                    class_name = parts[-2]
+                    method_name = parts[-1]
+                    if method_name == class_name:
+                        summary.is_constructor = True
+                    elif method_name == f'~{class_name}':
+                        summary.is_destructor = True
+
+            # Initialize parameter effects
+            for i, param_name in enumerate(param_names):
+                summary.param_effects.append(ParameterEffect(
+                    param_index=i,
+                    param_name=param_name
+                ))
+
+            # Analyze each instruction
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    self._analyze_instr_for_summary(instr, summary, param_names)
+
+            self._proc_summaries[proc_name] = summary
+
+            if self.verbose and (summary.is_constructor or summary.is_destructor or
+                                any(e.is_freed or e.is_dereferenced for e in summary.param_effects)):
+                freed_params = [e.param_name for e in summary.param_effects if e.is_freed]
+                deref_params = [e.param_name for e in summary.param_effects if e.is_dereferenced]
+                print(f"[IPA] Summary for {proc_name}:")
+                if summary.is_constructor:
+                    print(f"  - Is constructor")
+                if summary.is_destructor:
+                    print(f"  - Is destructor")
+                if freed_params:
+                    print(f"  - Frees params: {freed_params}")
+                if deref_params:
+                    print(f"  - Derefs params: {deref_params}")
+                if summary.frees_member:
+                    print(f"  - Frees member: {summary.frees_member}")
+                if summary.allocates_member:
+                    print(f"  - Allocates member: {summary.allocates_member}")
+
+    def _extract_constructor_taints(self, proc: Procedure) -> None:
+        """
+        Extract class member taints from a constructor.
+
+        Analyzes the constructor to find which class members become tainted
+        from user input sources (getenv, scanf, etc.). Records these for
+        other methods to use during their analysis.
+        """
+        if not proc.class_name:
+            return
+
+        class_name = proc.class_name
+
+        # Run simplified taint analysis on constructor
+        state = SymbolicState()
+
+        # Mark parameters as symbolic
+        for param, typ in proc.params:
+            param_name = param.name
+            state.heap[param_name] = f"param_{param_name}"
+
+        # Simple forward taint analysis through constructor
+        for node in proc.cfg_iter():
+            for instr in node.instrs:
+                if isinstance(instr, Call):
+                    func_name = instr.get_full_name()
+                    spec = self.program.get_spec(func_name)
+
+                    # Check for taint source
+                    if spec and spec.is_taint_source() and instr.ret:
+                        ret_var = str(instr.ret[0])
+                        state.add_taint(ret_var, TaintInfo(
+                            source_kind=TaintKind.USER_INPUT,
+                            source_var=ret_var,
+                            source_location=instr.loc or Location.unknown(),
+                        ))
+
+                    # Check for dest taint propagation (strncat, strcpy, etc.)
+                    if spec and spec.taint_to_dest and len(instr.args) > 0:
+                        dest_exp, _ = instr.args[0]
+                        dest_str = self._exp_to_str(dest_exp)
+                        # Extract base variable from pointer arithmetic
+                        # e.g., "(data + offset)" -> "data"
+                        if '+' in dest_str:
+                            dest_str = dest_str.split('+')[0].strip()
+                        # Remove parentheses
+                        dest_str = dest_str.strip('()')
+
+                        for src_idx in spec.taint_to_dest:
+                            if src_idx < len(instr.args):
+                                src_exp, _ = instr.args[src_idx]
+                                src_vars = self._get_exp_vars(src_exp)
+                                for src_var in src_vars:
+                                    if state.is_tainted(src_var):
+                                        state.add_taint(dest_str, state.get_taint_info(src_var))
+
+                elif isinstance(instr, Assign):
+                    target = str(instr.id)
+                    value = str(instr.exp)
+
+                    # Propagate taint through assignments
+                    value_vars = self._get_exp_vars(instr.exp)
+                    for var in value_vars:
+                        if state.is_tainted(var):
+                            state.propagate_taint(var, target)
+
+        # Record tainted class members
+        if class_name not in self._class_member_taints:
+            self._class_member_taints[class_name] = {}
+
+        for var, taint_info in state.tainted.items():
+            # Check if this is a class member (direct name without locals, or this->member)
+            is_member = False
+            member_name = var
+
+            if var.startswith('this->') or var.startswith('this.'):
+                is_member = True
+                member_name = var.replace('this->', '').replace('this.', '')
+            elif '.' not in var and var not in [p.name for p, _ in proc.params]:
+                # Direct member access without 'this->' (common in C++)
+                is_member = True
+                member_name = var
+
+            if is_member:
+                self._class_member_taints[class_name][member_name] = taint_info.source_kind.value
+                if self.verbose:
+                    print(f"[IPA] Found tainted member: {class_name}::{member_name}")
+
+    def _analyze_instr_for_summary(
+        self,
+        instr: Instr,
+        summary: ProcedureSummary,
+        param_names: List[str]
+    ) -> None:
+        """Analyze an instruction to update procedure summary."""
+
+        # Check for Call instructions (free, delete, malloc, new)
+        if isinstance(instr, Call):
+            func_name = instr.get_full_name()
+            spec = self.program.get_spec(func_name)
+
+            if spec and spec.is_deallocator() and len(instr.args) > 0:
+                # This call frees something
+                arg_exp, _ = instr.args[0]
+                arg_str = self._exp_to_str(arg_exp)
+
+                # Check if freeing a parameter
+                for i, param_name in enumerate(param_names):
+                    if arg_str == param_name or arg_str.startswith(f'{param_name}.'):
+                        for effect in summary.param_effects:
+                            if effect.param_index == i:
+                                effect.is_freed = True
+                                break
+
+                # Check if freeing a member (this->member or just member)
+                if arg_str.startswith('this->') or arg_str.startswith('this.'):
+                    summary.frees_member = arg_str.replace('this->', '').replace('this.', '')
+                elif summary.is_destructor and '.' not in arg_str and arg_str not in param_names:
+                    # In destructor, assume non-param, non-dotted names are members
+                    summary.frees_member = arg_str
+
+            if spec and spec.is_allocator() and instr.ret:
+                # This call allocates something
+                ret_var = str(instr.ret[0])
+                summary.returns_allocation = True
+
+        # Check for Free instructions
+        elif isinstance(instr, Free):
+            arg_str = self._exp_to_str(instr.exp)
+
+            for i, param_name in enumerate(param_names):
+                if arg_str == param_name:
+                    for effect in summary.param_effects:
+                        if effect.param_index == i:
+                            effect.is_freed = True
+                            break
+
+        # Check for Load instructions (dereference)
+        elif isinstance(instr, Load):
+            addr_str = self._exp_to_str(instr.exp)
+
+            for i, param_name in enumerate(param_names):
+                if addr_str == param_name or addr_str.startswith(f'*{param_name}'):
+                    for effect in summary.param_effects:
+                        if effect.param_index == i:
+                            effect.is_dereferenced = True
+                            break
+
+        # Check for Store instructions (dereference for write)
+        elif isinstance(instr, Store):
+            addr_str = self._exp_to_str(instr.addr)
+
+            for i, param_name in enumerate(param_names):
+                if addr_str == param_name or addr_str.startswith(f'*{param_name}'):
+                    for effect in summary.param_effects:
+                        if effect.param_index == i:
+                            effect.is_dereferenced = True
+                            break
+
+        # Check for Assign to this->member (constructor pattern)
+        elif isinstance(instr, Assign):
+            target = str(instr.id)
+            value = str(instr.exp)
+
+            if target.startswith('this->') or target.startswith('this.'):
+                member_name = target.replace('this->', '').replace('this.', '')
+                # Check if assigning a parameter to a member
+                for i, param_name in enumerate(param_names):
+                    if value == param_name:
+                        for effect in summary.param_effects:
+                            if effect.param_index == i:
+                                effect.is_stored_to_member = True
+                                effect.member_name = member_name
+                                break
+
+            # Track if member is assigned from a class field that may become tainted
+            # This helps track data flow from constructor to destructor
+            if target.startswith('this.') or target.startswith('this->'):
+                member = target.replace('this.', '').replace('this->', '')
+                # The member's value comes from 'value' - track this for data flow
+                # Don't mark as tainted here - we'll do that during actual analysis
+                pass
+
+            # Also check for class member assignments without 'this->' (common in C++)
+            # These are direct assignments to member variables
+            if summary.is_constructor or summary.is_destructor:
+                # In constructor/destructor, non-local non-param assignments may be members
+                if target not in param_names and '(' not in target:
+                    # Could be a class member - track it
+                    pass
+
     def translate_program(self, program: Program = None) -> List[VulnerabilityCheck]:
         """
         Translate entire program to vulnerability checks.
@@ -709,13 +1073,38 @@ class SILTranslator:
 
         self.vulnerability_checks = []
 
+        # First pass: Build procedure summaries for inter-procedural analysis
+        # This enables tracking data flow across procedure boundaries
+        self._build_procedure_summaries()
+
+        if self.verbose and self._proc_summaries:
+            print(f"[Translator] Built summaries for {len(self._proc_summaries)} procedures")
+
+        # Sort procedures: analyze constructors first to capture class member taints
+        # This ensures other methods can use the taint information
+        def sort_key(item):
+            proc_name, proc = item
+            summary = self._proc_summaries.get(proc_name)
+            if summary and summary.is_constructor:
+                return 0  # Constructors first
+            elif summary and summary.is_destructor:
+                return 2  # Destructors last
+            return 1  # Other methods in between
+
+        sorted_procs = sorted(self.program.procedures.items(), key=sort_key)
+
         # Translate each procedure
-        for proc_name, proc in self.program.procedures.items():
+        for proc_name, proc in sorted_procs:
             if self.verbose:
                 print(f"[Translator] Analyzing procedure: {proc_name}")
 
             checks = self.translate_procedure(proc)
             self.vulnerability_checks.extend(checks)
+
+            # After analyzing constructor, extract class member taints
+            summary = self._proc_summaries.get(proc_name)
+            if summary and summary.is_constructor and proc.class_name:
+                self._extract_constructor_taints(proc)
 
         if self.verbose:
             print(f"[Translator] Generated {len(self.vulnerability_checks)} vulnerability checks")
@@ -810,6 +1199,22 @@ class SILTranslator:
                     source_var=param_name,
                     source_location=proc.loc or Location.unknown(),
                 ))
+
+        # For methods, initialize class member taints from inter-procedural analysis
+        # If a constructor taints a class member, other methods should see it as tainted
+        if proc.is_method and proc.class_name:
+            class_name = proc.class_name
+            if class_name in self._class_member_taints:
+                for member_name, taint_source in self._class_member_taints[class_name].items():
+                    # Initialize the member as tainted (for both 'data' and 'this->data')
+                    for var_name in [member_name, f"this->{member_name}", f"this.{member_name}"]:
+                        state.add_taint(var_name, TaintInfo(
+                            source_kind=TaintKind.USER_INPUT,
+                            source_var=f"{class_name}::{member_name}",
+                            source_location=proc.loc or Location.unknown(),
+                        ))
+                    if self.verbose:
+                        print(f"[IPA] Initialized class member taint: {class_name}::{member_name}")
 
         return state
 
@@ -1561,6 +1966,28 @@ class SILTranslator:
                                         if state.is_tainted(arg_var):
                                             state.propagate_taint(arg_var, receiver_var)
 
+            # Handle destination taint propagation (for strcpy, strncat, etc.)
+            # These functions copy taint from source arg to destination arg (arg 0)
+            if spec.taint_to_dest and len(instr.args) > 0:
+                dest_exp, _ = instr.args[0]
+                dest_vars = self._get_exp_vars(dest_exp)
+                # Also handle pointer arithmetic (data+offset -> data)
+                dest_str = self._exp_to_str(dest_exp)
+                if '+' in dest_str:
+                    base_var = dest_str.split('+')[0].strip()
+                    dest_vars.append(base_var)
+
+                for src_idx in spec.taint_to_dest:
+                    if src_idx < len(instr.args):
+                        src_exp, _ = instr.args[src_idx]
+                        src_vars = self._get_exp_vars(src_exp)
+                        for src_var in src_vars:
+                            if state.is_tainted(src_var):
+                                for dest_var in dest_vars:
+                                    state.propagate_taint(src_var, dest_var)
+                                    if self.verbose:
+                                        print(f"[Translator] Dest taint: {src_var} -> {dest_var}")
+
         else:
             # No spec found - apply default taint propagation for unknown functions
             # This is conservative: if any argument is tainted, the return is tainted
@@ -1873,6 +2300,121 @@ class SILTranslator:
                             print(f"[Translator] List.remove: {container_var}.remove({remove_index})")
                     except ValueError:
                         pass  # Non-constant index, can't track precisely
+
+        # =================================================================
+        # Memory Safety: Track allocations and deallocations
+        # =================================================================
+
+        if spec:
+            # Handle memory allocation (malloc, new, etc.)
+            if spec.is_allocator() and instr.ret:
+                ret_var = str(instr.ret[0])
+                state.mark_allocated(ret_var)
+                if self.verbose:
+                    print(f"[Translator] Allocation: {ret_var} = {func_name}()")
+
+            # Handle memory deallocation (free, delete, etc.)
+            if spec.is_deallocator() and len(instr.args) > 0:
+                arg_exp, _ = instr.args[0]
+                freed_var = self._exp_to_str(arg_exp)
+
+                # Check for double-free: freeing already freed memory
+                if state.is_freed(freed_var):
+                    check = self._create_double_free_check(instr, state, proc_name, freed_var)
+                    checks.append(check)
+                    if self.verbose:
+                        print(f"[Translator] DOUBLE-FREE detected: {func_name}({freed_var})")
+
+                # Mark as freed for use-after-free detection
+                state.mark_freed(freed_var)
+                if self.verbose:
+                    print(f"[Translator] Deallocation: {func_name}({freed_var})")
+
+        # =================================================================
+        # Inter-procedural Analysis: Apply procedure summaries
+        # =================================================================
+
+        # Check if this is a call to a user-defined procedure with a summary
+        summary = self._proc_summaries.get(func_name)
+
+        # Try qualified names (ClassName::MethodName)
+        if summary is None and '.' in func_name:
+            # Try method name only
+            method_name = func_name.split('.')[-1]
+            for sname, s in self._proc_summaries.items():
+                if sname.endswith('::' + method_name) or sname.endswith('.' + method_name):
+                    summary = s
+                    break
+
+        if summary:
+            if self.verbose:
+                print(f"[IPA] Applying summary for {summary.proc_name}")
+
+            # Map actual arguments to parameter indices
+            for i, (arg_exp, _) in enumerate(instr.args):
+                arg_var = self._exp_to_str(arg_exp)
+
+                # Check if this parameter is freed by the callee
+                if summary.frees_param(i):
+                    # Check for double-free: arg was already freed before this call
+                    if state.is_freed(arg_var):
+                        check = self._create_double_free_check(instr, state, proc_name, arg_var)
+                        checks.append(check)
+                        if self.verbose:
+                            print(f"[IPA] DOUBLE-FREE via callee: {func_name} frees arg {i} ({arg_var})")
+
+                    # Mark arg as freed (the callee frees it)
+                    state.mark_freed(arg_var)
+                    if self.verbose:
+                        print(f"[IPA] Callee {func_name} frees arg {i} ({arg_var})")
+
+                # Check if parameter is dereferenced after being freed
+                if summary.derefs_param(i) and state.is_freed(arg_var):
+                    # This is a use-after-free: passing freed ptr to function that derefs it
+                    check = self._create_uaf_check(instr, state, proc_name, arg_var)
+                    checks.append(check)
+                    if self.verbose:
+                        print(f"[IPA] UAF via callee: {func_name} derefs freed arg {i} ({arg_var})")
+
+            # Handle class member effects (for this->member patterns)
+            if summary.frees_member:
+                # If this is a method call on an object, mark that member as freed
+                if '.' in func_name:
+                    obj_var = func_name.rsplit('.', 1)[0]
+                    member_var = f"{obj_var}.{summary.frees_member}"
+                    # Check for double-free on member
+                    if state.is_member_freed(obj_var, summary.frees_member):
+                        check = self._create_double_free_check(instr, state, proc_name, member_var)
+                        checks.append(check)
+                        if self.verbose:
+                            print(f"[IPA] DOUBLE-FREE on member: {member_var}")
+                    state.mark_freed(member_var)
+                    state.set_member_state(obj_var, summary.frees_member, "freed")
+                    if self.verbose:
+                        print(f"[IPA] Callee frees member: {member_var}")
+
+            # Handle constructor: track member allocations
+            if summary.is_constructor and summary.allocates_member:
+                if len(instr.args) > 0:
+                    # First arg is usually 'this' or the object being constructed
+                    obj_exp, _ = instr.args[0]
+                    obj_var = self._exp_to_str(obj_exp)
+                    state.set_member_state(obj_var, summary.allocates_member, "allocated")
+                    if self.verbose:
+                        print(f"[IPA] Constructor allocates member: {obj_var}.{summary.allocates_member}")
+
+            # Handle destructor: check for UAF if member was already freed externally
+            if summary.is_destructor:
+                if len(instr.args) > 0:
+                    obj_exp, _ = instr.args[0]
+                    obj_var = self._exp_to_str(obj_exp)
+                    # If destructor frees a member that was already freed, it's double-free
+                    if summary.frees_member and state.is_member_freed(obj_var, summary.frees_member):
+                        member_var = f"{obj_var}.{summary.frees_member}"
+                        check = self._create_double_free_check(instr, state, proc_name, member_var)
+                        checks.append(check)
+                        if self.verbose:
+                            print(f"[IPA] DOUBLE-FREE in destructor: {member_var}")
 
         # Default: store return value
         if instr.ret:
@@ -2278,22 +2820,13 @@ class SILTranslator:
         addr: str
     ) -> Optional[VulnerabilityCheck]:
         """Check for potential null dereference"""
-        # Only flag if we can't prove it's allocated
-        if not state.is_allocated(addr):
-            formula = And(
-                Eq(Var(addr), Const(None)),
-                NullDeref(Var(addr))
-            )
-
-            return VulnerabilityCheck(
-                formula=formula,
-                vuln_type=VulnType.NULL_DEREFERENCE,
-                location=instr.loc,
-                description=f"Potential null pointer dereference of '{addr}'",
-                tainted_var=addr,
-                procedure_name=proc_name,
-            )
-
+        # NOTE: Disabled due to high false positive rate.
+        # The check `not state.is_allocated(addr)` is too broad - most pointers
+        # aren't tracked as allocated, leading to FPs on every pointer deref.
+        # Proper null dereference detection requires data flow analysis to track
+        # which pointers could actually be NULL (e.g., from malloc failures,
+        # explicit NULL assignments, or NULL returns from functions).
+        # The SL memory analyzers provide more precise null checking.
         return None
 
     def _create_uaf_check(

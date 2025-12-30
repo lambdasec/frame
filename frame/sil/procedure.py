@@ -77,6 +77,11 @@ class ProcSpec:
     # If [0, 1], then if arg0 or arg1 is tainted, return is tainted
     taint_propagates: List[int] = field(default_factory=list)
 
+    # Taint propagation to destination: which args propagate taint to dest (arg 0)
+    # For functions like strncat(dest, src, n) - src taint flows to dest
+    # If [1], then if arg1 is tainted, arg0 becomes tainted
+    taint_to_dest: List[int] = field(default_factory=list)
+
     # Does this function propagate taint from receiver (self/this)?
     taint_from_receiver: bool = False
 
@@ -118,6 +123,14 @@ class ProcSpec:
     def propagates_taint(self) -> bool:
         """Check if this function can propagate taint"""
         return len(self.taint_propagates) > 0 or self.taint_from_receiver
+
+    def is_allocator(self) -> bool:
+        """Check if this function allocates memory (malloc, new, etc.)"""
+        return self.allocates
+
+    def is_deallocator(self) -> bool:
+        """Check if this function frees memory (free, delete, etc.)"""
+        return self.frees
 
 
 # =============================================================================

@@ -128,9 +128,15 @@ class SinkKind(Enum):
     # Additional injection types (aliases for flexibility)
     XSS = "xss"                 # XSS alias for HTML_OUTPUT (CWE-79)
     COMMAND = "command"         # Command injection alias (CWE-78)
+    FORMAT_STRING = "format_string"  # Format string vulnerability (CWE-134)
+    FORMAT = "format"           # Format string alias (CWE-134)
 
     # Memory Safety (not in OWASP web but critical for native)
     MEMORY = "memory"           # Memory safety sink
+    BUFFER_OVERFLOW = "buffer_overflow"  # Buffer overflow (CWE-122)
+    INTEGER_OVERFLOW = "integer_overflow"  # Integer overflow (CWE-190)
+    NULL_DEREF = "null_deref"   # NULL pointer dereference (CWE-476)
+    DIVIDE_BY_ZERO = "divide_by_zero"  # Division by zero (CWE-369)
 
     def __str__(self) -> str:
         return self.value

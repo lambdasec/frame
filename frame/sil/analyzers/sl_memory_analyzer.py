@@ -45,6 +45,13 @@ class HeapState(Enum):
     NULL = "null"         # ptr = null
 
 
+class AllocKind(Enum):
+    """Kind of allocation for tracking memory source"""
+    HEAP = "heap"         # malloc/new allocated on heap
+    STACK = "stack"       # Stack-allocated (local array, alloca)
+    UNKNOWN = "unknown"   # Unknown allocation source
+
+
 @dataclass
 class HeapRegion:
     """A symbolic heap region tracked by separation logic"""
@@ -54,6 +61,7 @@ class HeapRegion:
     free_loc: Optional[Location] = None
     size: Optional[int] = None
     aliases: Set[str] = field(default_factory=set)
+    alloc_kind: AllocKind = AllocKind.UNKNOWN  # Heap vs stack allocation
 
 
 @dataclass
@@ -248,6 +256,7 @@ class SLMemoryAnalyzer:
         Track stack-allocated arrays.
 
         In separation logic: buf[N] means buf |-> (data, N)
+        Stack arrays cannot be freed (CWE-590 if attempted).
         """
         # Pattern: type name[size] or type name[size] = ...
         array_match = re.search(r'(\w+)\s+(\w+)\s*\[\s*(\d+)\s*\]', line)
@@ -256,15 +265,29 @@ class SLMemoryAnalyzer:
             var_name = array_match.group(2)
             size = int(array_match.group(3))
 
-            # Track the array with its size
+            # Track the array with its size - mark as STACK allocated
             self.heap[var_name] = HeapRegion(
                 name=var_name,
                 state=HeapState.VALID,
                 alloc_loc=loc,
-                size=size
+                size=size,
+                alloc_kind=AllocKind.STACK  # Stack-allocated, cannot be freed
             )
             if self.verbose:
-                print(f"[SL] Array: {var_name} |-> (data, {size}) at line {loc.line}")
+                print(f"[SL] Stack Array: {var_name} |-> (data, {size}) at line {loc.line}")
+
+        # Also check for alloca() - stack allocation
+        alloca_match = re.search(r'(\w+)\s*=\s*(?:\([^)]*\))?\s*alloca\s*\(', line)
+        if alloca_match:
+            var_name = alloca_match.group(1)
+            self.heap[var_name] = HeapRegion(
+                name=var_name,
+                state=HeapState.VALID,
+                alloc_loc=loc,
+                alloc_kind=AllocKind.STACK  # alloca allocates on stack
+            )
+            if self.verbose:
+                print(f"[SL] Alloca: {var_name} |-> (stack) at line {loc.line}")
 
     def _check_allocation(self, line: str, loc: Location):
         """Track memory allocation - adds ptr |-> val to heap."""
@@ -281,11 +304,12 @@ class SLMemoryAnalyzer:
                     name=var_name,
                     state=HeapState.VALID,
                     alloc_loc=loc,
-                    size=size
+                    size=size,
+                    alloc_kind=AllocKind.HEAP  # Heap-allocated
                 )
 
                 if self.verbose:
-                    print(f"[SL] Alloc: {var_name} |-> val at line {loc.line}")
+                    print(f"[SL] Heap Alloc: {var_name} |-> val at line {loc.line}")
                 return
 
         # C++ new
@@ -295,7 +319,8 @@ class SLMemoryAnalyzer:
             self.heap[var_name] = HeapRegion(
                 name=var_name,
                 state=HeapState.VALID,
-                alloc_loc=loc
+                alloc_loc=loc,
+                alloc_kind=AllocKind.HEAP  # Heap-allocated
             )
             if self.verbose:
                 print(f"[SL] New: {var_name} |-> val at line {loc.line}")
@@ -334,10 +359,27 @@ class SLMemoryAnalyzer:
         Before free: heap contains ptr |-> val
         After free: heap becomes emp at ptr's location (ptr is dangling)
 
-        Double-free check: If heap already doesn't contain ptr |-> val, it's a double-free.
+        Checks:
+        - CWE-590: Free of non-heap memory (stack-allocated)
+        - CWE-415: Double-free (freeing already freed pointer)
         """
         if var_name in self.heap:
             region = self.heap[var_name]
+
+            # Check for CWE-590: Freeing stack-allocated memory
+            if region.alloc_kind == AllocKind.STACK:
+                self._add_vuln(MemoryVuln(
+                    vuln_type=VulnType.DOUBLE_FREE,  # Use DOUBLE_FREE as closest type
+                    cwe_id="CWE-590",
+                    location=loc,
+                    var_name=var_name,
+                    description=f"Free of non-heap memory: '{var_name}' is stack-allocated at line {region.alloc_loc.line if region.alloc_loc else '?'}",
+                    alloc_loc=region.alloc_loc,
+                    confidence=0.95,
+                ))
+                if self.verbose:
+                    print(f"[SL] FREE NON-HEAP: {var_name} at line {loc.line}")
+                return  # Don't update state for invalid free
 
             # Check for double-free using separation logic reasoning
             # If ptr is already freed, heap doesn't entail ptr |-> _

@@ -30,8 +30,27 @@ def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
 
 
 def _propagator(args: list, desc: str = "") -> ProcSpec:
-    """Create a taint propagator spec"""
+    """Create a taint propagator spec (propagates to return value)"""
     return ProcSpec(taint_propagates=args, description=desc)
+
+
+def _dest_propagator(args: list, desc: str = "") -> ProcSpec:
+    """Create a dest taint propagator (propagates to arg 0/destination)
+
+    Used for functions like strncat(dest, src, n) where taint from src
+    flows to dest, not just to return value.
+    """
+    return ProcSpec(taint_to_dest=args, description=desc)
+
+
+def _allocator(desc: str = "", may_return_null: bool = True) -> ProcSpec:
+    """Create a memory allocator spec (malloc, new, etc.)"""
+    return ProcSpec(allocates=True, may_return_null=may_return_null, description=desc)
+
+
+def _deallocator(desc: str = "") -> ProcSpec:
+    """Create a memory deallocator spec (free, delete, etc.)"""
+    return ProcSpec(frees=True, description=desc)
 
 
 # =============================================================================
@@ -56,6 +75,7 @@ STDIO_INPUT_SPECS = {
 
     # Environment (taint sources)
     "getenv": _source("env", "getenv() - environment variable"),
+    "GETENV": _source("env", "GETENV macro - environment variable"),
     "secure_getenv": _source("env", "secure_getenv() - secure environment variable"),
 
     # Command line (main arguments are sources)
@@ -91,11 +111,13 @@ STDIO_OUTPUT_SPECS = {
 # =============================================================================
 
 STRING_SPECS = {
-    # Unsafe string functions (buffer overflow sinks)
-    "strcpy": _sink("buffer", [1], "strcpy() - unsafe string copy (buffer overflow)"),
-    "strcat": _sink("buffer", [1], "strcat() - unsafe string concat (buffer overflow)"),
-    "strncpy": _propagator([1], "strncpy() - bounded string copy"),
-    "strncat": _propagator([1], "strncat() - bounded string concat"),
+    # Unsafe string functions (buffer overflow sinks + dest propagation)
+    "strcpy": ProcSpec(is_sink="buffer", sink_args=[1], taint_to_dest=[1],
+                       description="strcpy() - copies taint from src to dest"),
+    "strcat": ProcSpec(is_sink="buffer", sink_args=[1], taint_to_dest=[1],
+                       description="strcat() - copies taint from src to dest"),
+    "strncpy": _dest_propagator([1], "strncpy() - bounded copy, taint to dest"),
+    "strncat": _dest_propagator([1], "strncat() - bounded concat, taint to dest"),
 
     # String manipulation (propagators)
     "strlen": _propagator([0], "strlen() - string length"),
@@ -122,17 +144,33 @@ STRING_SPECS = {
 # =============================================================================
 
 MEMORY_SPECS = {
-    # Allocation
-    "malloc": _propagator([0], "malloc() - dynamic allocation"),
-    "calloc": _propagator([0, 1], "calloc() - zeroed allocation"),
-    "realloc": _propagator([0, 1], "realloc() - resize allocation"),
-    "free": _propagator([0], "free() - deallocate"),
+    # C allocation functions (allocates=True, may_return_null=True)
+    "malloc": _allocator("malloc() - dynamic allocation"),
+    "calloc": _allocator("calloc() - zeroed allocation"),
+    "realloc": _allocator("realloc() - resize allocation"),
+    "strdup": _allocator("strdup() - string duplication"),
+    "strndup": _allocator("strndup() - bounded string duplication"),
+    "aligned_alloc": _allocator("aligned_alloc() - aligned allocation"),
+    "memalign": _allocator("memalign() - aligned allocation"),
+    "posix_memalign": _allocator("posix_memalign() - POSIX aligned allocation"),
+    "valloc": _allocator("valloc() - page-aligned allocation"),
+    "pvalloc": _allocator("pvalloc() - page-aligned allocation"),
+    "alloca": _allocator("alloca() - stack allocation", may_return_null=False),
 
-    # C++ allocation
-    "new": _propagator([0], "new - C++ allocation"),
-    "delete": _propagator([0], "delete - C++ deallocation"),
-    "new[]": _propagator([0], "new[] - C++ array allocation"),
-    "delete[]": _propagator([0], "delete[] - C++ array deallocation"),
+    # C deallocation (frees=True)
+    "free": _deallocator("free() - deallocate heap memory"),
+
+    # C++ allocation (allocates=True)
+    "new": _allocator("new - C++ heap allocation", may_return_null=False),
+    "new[]": _allocator("new[] - C++ array allocation", may_return_null=False),
+    "operator new": _allocator("operator new - C++ allocation", may_return_null=False),
+    "operator new[]": _allocator("operator new[] - C++ array allocation", may_return_null=False),
+
+    # C++ deallocation (frees=True)
+    "delete": _deallocator("delete - C++ deallocation"),
+    "delete[]": _deallocator("delete[] - C++ array deallocation"),
+    "operator delete": _deallocator("operator delete - C++ deallocation"),
+    "operator delete[]": _deallocator("operator delete[] - C++ array deallocation"),
 }
 
 # =============================================================================
@@ -527,15 +565,97 @@ RACE_CONDITION_SPECS = {
 # Use After Free / Double Free (A10 related)
 # =============================================================================
 
-MEMORY_SAFETY_SPECS = {
-    # Free operations
-    "free": _sink("memory", [0], "free (check for UAF/double-free CWE-416/CWE-415)"),
-    "delete": _sink("memory", [0], "delete (check for UAF CWE-416)"),
-    "delete[]": _sink("memory", [0], "delete[] (check for UAF CWE-416)"),
+# Note: These specs combine is_sink for taint tracking with allocates/frees flags
+# for memory safety analysis. Both are needed for complete coverage.
 
-    # Uninitialized memory
-    "malloc": _sink("memory", [0], "malloc (returns uninitialized CWE-457)"),
-    "alloca": _sink("memory", [0], "alloca (stack allocation CWE-770)"),
+MEMORY_SAFETY_SPECS = {
+    # Free operations - mark as deallocators AND sinks for double-free/UAF detection
+    "free": ProcSpec(
+        frees=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="free (check for UAF/double-free CWE-416/CWE-415)"
+    ),
+    "delete": ProcSpec(
+        frees=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="delete (check for UAF CWE-416)"
+    ),
+    "delete[]": ProcSpec(
+        frees=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="delete[] (check for UAF CWE-416)"
+    ),
+    "operator delete": ProcSpec(
+        frees=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="operator delete (C++ deallocation)"
+    ),
+    "operator delete[]": ProcSpec(
+        frees=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="operator delete[] (C++ array deallocation)"
+    ),
+
+    # Allocation operations - mark as allocators AND sinks for tracking
+    "malloc": ProcSpec(
+        allocates=True,
+        may_return_null=True,
+        is_sink="memory",
+        sink_args=[0],
+        description="malloc (dynamic allocation, may return NULL)"
+    ),
+    "calloc": ProcSpec(
+        allocates=True,
+        may_return_null=True,
+        description="calloc (zeroed allocation)"
+    ),
+    "realloc": ProcSpec(
+        allocates=True,
+        may_return_null=True,
+        description="realloc (resize allocation)"
+    ),
+    "new": ProcSpec(
+        allocates=True,
+        may_return_null=False,
+        description="new (C++ heap allocation)"
+    ),
+    "new[]": ProcSpec(
+        allocates=True,
+        may_return_null=False,
+        description="new[] (C++ array allocation)"
+    ),
+    "operator new": ProcSpec(
+        allocates=True,
+        may_return_null=False,
+        description="operator new (C++ allocation)"
+    ),
+    "operator new[]": ProcSpec(
+        allocates=True,
+        may_return_null=False,
+        description="operator new[] (C++ array allocation)"
+    ),
+    "alloca": ProcSpec(
+        allocates=True,
+        may_return_null=False,
+        is_sink="memory",
+        sink_args=[0],
+        description="alloca (stack allocation CWE-770)"
+    ),
+    "strdup": ProcSpec(
+        allocates=True,
+        may_return_null=True,
+        description="strdup (string duplication)"
+    ),
+    "strndup": ProcSpec(
+        allocates=True,
+        may_return_null=True,
+        description="strndup (bounded string duplication)"
+    ),
 }
 
 # =============================================================================

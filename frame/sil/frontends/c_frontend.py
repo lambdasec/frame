@@ -97,11 +97,33 @@ class CFrontend:
 
     def _translate_translation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C translation unit (file)"""
-        for child in root.children:
+        self._translate_node_children(root, program)
+
+    def _translate_node_children(self, node: TSNode, program: Program) -> None:
+        """Recursively translate children, handling C++ namespaces and classes."""
+        for child in node.children:
             if child.type == "function_definition":
                 proc = self._translate_function(child)
                 if proc:
                     program.add_procedure(proc)
+            elif child.type == "namespace_definition":
+                # C++ namespace - recurse into body to find functions
+                body = child.child_by_field_name("body")
+                if body:
+                    self._translate_node_children(body, program)
+            elif child.type == "class_specifier":
+                # C++ class - recurse into body to find inline methods
+                body = child.child_by_field_name("body")
+                if body:
+                    self._translate_node_children(body, program)
+            elif child.type == "struct_specifier":
+                # C/C++ struct - recurse into body to find inline methods
+                body = child.child_by_field_name("body")
+                if body:
+                    self._translate_node_children(body, program)
+            elif child.type == "declaration_list":
+                # Recurse into declaration lists (namespace bodies, class bodies)
+                self._translate_node_children(child, program)
             elif child.type == "declaration":
                 # Global variable declaration - skip for now
                 pass
@@ -111,6 +133,9 @@ class CFrontend:
             elif child.type == "preproc_define":
                 # Handle defines - skip for now
                 pass
+            elif child.type == "preproc_ifdef" or child.type == "preproc_ifndef":
+                # Recurse into ifdef/ifndef blocks
+                self._translate_node_children(child, program)
 
     def _translate_function(self, node: TSNode) -> Optional[Procedure]:
         """Translate function definition"""
@@ -181,6 +206,9 @@ class CFrontend:
             if inner:
                 if inner.type == "identifier":
                     return self._get_text(inner)
+                elif inner.type == "qualified_identifier":
+                    # C++ class method: Class::method
+                    return self._get_text(inner)
                 elif inner.type == "pointer_declarator":
                     # Handle pointer return type
                     return self._get_function_name(inner)
@@ -189,6 +217,9 @@ class CFrontend:
             if inner:
                 return self._get_function_name(inner)
         elif declarator.type == "identifier":
+            return self._get_text(declarator)
+        elif declarator.type == "qualified_identifier":
+            # C++ qualified name like Class::method
             return self._get_text(declarator)
         return None
 
@@ -889,6 +920,21 @@ class CppFrontend(CFrontend):
             if child.type == "function_definition":
                 proc = self._translate_function(child)
                 if proc:
+                    # Detect class methods defined outside class body (e.g., ClassName::MethodName)
+                    if '::' in proc.name:
+                        parts = proc.name.split('::')
+                        if len(parts) >= 2:
+                            # Last part is method name, second-to-last is class name
+                            method_name = parts[-1]
+                            class_name = parts[-2]
+                            proc.class_name = class_name
+                            proc.is_method = True
+                            # Detect constructor: ClassName::ClassName
+                            if method_name == class_name:
+                                proc.is_constructor = True
+                            # Detect destructor: ClassName::~ClassName
+                            elif method_name == f'~{class_name}':
+                                proc.is_constructor = False
                     program.add_procedure(proc)
             elif child.type == "class_specifier":
                 self._translate_class(child, program)
@@ -896,6 +942,12 @@ class CppFrontend(CFrontend):
                 self._translate_class(child, program)
             elif child.type == "namespace_definition":
                 self._translate_namespace(child, program)
+            elif child.type == "preproc_ifdef" or child.type == "preproc_ifndef":
+                # Recurse into preprocessor conditional blocks
+                self._translate_translation_unit(child, program)
+            elif child.type == "declaration_list":
+                # Recurse into declaration lists (e.g., namespace bodies)
+                self._translate_translation_unit(child, program)
             elif child.type == "declaration":
                 pass  # Skip global declarations
 

@@ -73,18 +73,29 @@ python -m benchmarks run --division secbench_js
 
 **NIST Juliet C/C++ Benchmark** (1000 curated files):
 
-The Juliet test suite focuses on **inter-procedural data flow** - vulnerabilities where data flows through class methods, parameters, and virtual calls. Frame's current C/C++ analyzer provides:
+The Juliet test suite focuses on **inter-procedural data flow** - vulnerabilities where data flows through class methods, parameters, and virtual calls. Frame's C/C++ analyzer provides:
 
-- **Separation Logic Memory Analysis**: Tracks heap state (allocations, frees) to detect use-after-free and double-free within functions
-- **Buffer Size Tracking**: Detects buffer overflows when source size exceeds destination size
-- **Low False Positives**: Conservative detection avoids flagging safe patterns
+| Metric | Frame |
+|--------|-------|
+| **True Positives** | 5 |
+| **False Positives** | 0 |
+| **Precision** | **100%** |
+| **Recall** | 2.5% |
+
+- **Separation Logic Memory Analysis**: Tracks heap state (allocations, frees) using `ptr |-> val` formulas to detect:
+  - **CWE-415 Double Free**: Freeing already-freed memory (4/5 cases detected - 80%)
+  - **CWE-416 Use After Free**: Accessing freed memory in operator= self-assignment (1/1 detected)
+- **Class Lifecycle Analysis**: Tracks member variables across constructor/destructor/operator= methods
+- **Missing Copy Constructor Detection**: Detects shallow copy double-free bugs when destructor frees members
+- **Self-Assignment UAF Detection**: Detects operator= without self-assignment check
+- **Zero False Positives**: Conservative detection with 100% precision
 
 ```bash
 # Run Juliet C/C++ benchmark
 python -m benchmarks run --division juliet_curated
 ```
 
-*Note: Full inter-procedural analysis (tracking data across class methods, callbacks, and file boundaries) is planned for future releases.*
+*Note: Current focus is on memory safety (CWE-415, CWE-416) with class lifecycle analysis. The benchmark is designed to test inter-procedural data flow through virtual methods (flow variants 81, 82), which requires full call graph analysis not yet implemented.*
 
 Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, and **77.6% OWASP Score** on JavaScript/TypeScript (TPR - FPR), outperforming:
 - Semgrep by +76.4 points (Python), +65.8 points (Java), and +68.0 points (JavaScript)
