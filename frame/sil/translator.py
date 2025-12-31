@@ -135,6 +135,18 @@ class VulnType(Enum):
     UNICODE_HANDLING = "unicode_handling"       # CWE-176
     CONFIG_INJECTION = "config_injection"       # CWE-15
 
+    # Additional memory safety and resource management
+    RESOURCE_EXHAUSTION = "resource_exhaustion" # CWE-400
+    UNCHECKED_RETURN = "unchecked_return"       # CWE-252/253
+    INSECURE_TEMP_FILE = "insecure_temp_file"   # CWE-377
+    INCOMPLETE_CLEANUP = "incomplete_cleanup"   # CWE-459
+    DEAD_STORE = "dead_store"                   # CWE-563
+    IMPROPER_LOCK = "improper_lock"             # CWE-591
+    UNCHECKED_LOOP = "unchecked_loop"           # CWE-606
+    IMPROPER_INITIALIZATION = "improper_init"   # CWE-665
+    UNTRUSTED_SEARCH_PATH = "untrusted_path"    # CWE-426/427
+    DATA_SENTINEL = "data_sentinel"             # CWE-464
+
     # Generic taint flow
     TAINT_FLOW = "taint_flow"
 
