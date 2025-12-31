@@ -121,6 +121,8 @@ class VulnType(Enum):
     BUFFER_OVERFLOW = "buffer_overflow"         # CWE-120
     DOUBLE_FREE = "double_free"                 # CWE-415
     MEMORY_LEAK = "memory_leak"                 # CWE-401
+    INVALID_FREE = "invalid_free"               # CWE-590 (free of non-heap memory)
+    RESOURCE_LEAK = "resource_leak"             # CWE-404 (improper resource shutdown)
     FORMAT_STRING = "format_string"             # CWE-134
     INTEGER_OVERFLOW = "integer_overflow"       # CWE-190
     INTEGER_UNDERFLOW = "integer_underflow"     # CWE-191

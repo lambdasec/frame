@@ -217,6 +217,8 @@ class SLMemoryAnalyzer:
             if in_function:
                 brace_depth += stripped.count('{') - stripped.count('}')
                 if brace_depth <= 0:
+                    # Function is ending - check for memory leaks (CWE-401)
+                    self._check_memory_leaks(loc)
                     in_function = False
                     self.current_function = ""
                     self.heap = {}
@@ -480,7 +482,8 @@ class SLMemoryAnalyzer:
                     alloc_loc=region.alloc_loc,
                     free_loc=region.free_loc,
                     size=region.size,
-                    aliases={src}
+                    aliases={src},
+                    alloc_kind=region.alloc_kind  # Propagate allocation kind for CWE-590
                 )
 
         # NULL assignment: ptr = NULL
@@ -619,6 +622,35 @@ class SLMemoryAnalyzer:
                 return int(array_match.group(1))
 
         return None
+
+    def _check_memory_leaks(self, loc: Location):
+        """
+        Check for memory leaks at function exit (CWE-401).
+
+        In separation logic terms:
+        - At function exit, heap should be emp (all allocated regions freed)
+        - If heap contains ptr |-> val where ptr was heap-allocated, it's a leak
+
+        We only report leaks for HEAP allocations (not stack/alloca).
+        """
+        for var_name, region in self.heap.items():
+            # Only check heap allocations (not stack)
+            if region.alloc_kind != AllocKind.HEAP:
+                continue
+
+            # If the region is still VALID (not freed), it's a memory leak
+            if region.state == HeapState.VALID:
+                self._add_vuln(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,  # No MEMORY_LEAK type, use closest
+                    cwe_id="CWE-401",
+                    location=loc,
+                    var_name=var_name,
+                    description=f"Memory leak: '{var_name}' allocated at line {region.alloc_loc.line if region.alloc_loc else '?'} is never freed. Heap ⊨ {var_name} |-> _ at function exit",
+                    alloc_loc=region.alloc_loc,
+                    confidence=0.85,
+                ))
+                if self.verbose:
+                    print(f"[SL] MEMORY LEAK: {var_name} at function exit (line {loc.line})")
 
 
 def analyze_with_separation_logic(source: str, filename: str = "<unknown>",

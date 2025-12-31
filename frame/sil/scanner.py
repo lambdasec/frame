@@ -901,35 +901,25 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] Generated {len(checks)} potential vulnerabilities")
 
-            # Step 3: Verify each check (optional)
-            # For Juliet benchmark: skip checks for combined files (without _bad suffix)
-            # Combined files contain both good and bad code, but file-level classification
-            # expects no detections since the file as a whole isn't "bad"
-            is_combined_file = '_bad' not in filename.lower()
-
-            if not is_combined_file or self.language not in ('c', 'cpp', 'c++'):
-                for check in checks:
-                    vuln = self._process_check(check)
-                    if vuln:
-                        result.vulnerabilities.append(vuln)
+            # Step 3: Verify each check
+            for check in checks:
+                vuln = self._process_check(check)
+                if vuln:
+                    result.vulnerabilities.append(vuln)
 
             # Step 4: Pattern-based detection (for vulnerabilities without taint flow)
-            # Skip for combined/good files in C/C++ to avoid FPs on safe code
             if self.language in ('javascript', 'typescript', 'c', 'cpp', 'c++'):
-                if not is_combined_file or self.language not in ('c', 'cpp', 'c++'):
-                    pattern_vulns = self._scan_patterns(source_code, filename)
-                    result.vulnerabilities.extend(pattern_vulns)
-                    if self.verbose:
-                        print(f"[Scanner] Pattern matching found {len(pattern_vulns)} additional vulnerabilities")
+                pattern_vulns = self._scan_patterns(source_code, filename)
+                result.vulnerabilities.extend(pattern_vulns)
+                if self.verbose:
+                    print(f"[Scanner] Pattern matching found {len(pattern_vulns)} additional vulnerabilities")
 
             # Step 4b: Memory safety analysis for C/C++ using separation logic
-            # Skip for combined/good files to avoid FPs on safe code
             if self.language in ('c', 'cpp', 'c++'):
-                if not is_combined_file:
-                    memory_vulns = self._analyze_memory_safety(source_code, filename)
-                    result.vulnerabilities.extend(memory_vulns)
-                    if self.verbose:
-                        print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
+                memory_vulns = self._analyze_memory_safety(source_code, filename)
+                result.vulnerabilities.extend(memory_vulns)
+                if self.verbose:
+                    print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
 
             # Step 5: Deduplicate vulnerabilities
             result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
@@ -1274,7 +1264,6 @@ class FrameScanner:
         in_multiline_comment = False
 
         # Track current function for function-aware detection
-        # Only flag vulnerabilities in 'bad' functions, not in 'good' functions
         current_function = None
         function_brace_depth = 0
 
@@ -1342,31 +1331,10 @@ class FrameScanner:
                     current_function = func_match.group(1)
                     function_brace_depth = stripped.count('{') - stripped.count('}')
 
-            # Skip vulnerabilities in 'good' functions (Juliet benchmark pattern)
-            # Also skip if the file doesn't have '_bad' in its name (combined file)
-            # This matches benchmark expectations for file-level vulnerability classification
-            in_good_function = (
-                current_function and
-                ('good' in current_function.lower() or
-                 current_function.lower().startswith('fix'))
-            )
-
-            # For Juliet benchmark: combined files (without _bad suffix) should have no detections
-            # because the benchmark classifies at file level, not function level
-            is_combined_file = '_bad' not in filename.lower()
-
             for vuln_type, patterns in patterns_dict.items():
                 for pattern, cwe_id, description in patterns:
-                    # JavaScript is case-sensitive, so don't use IGNORECASE
                     # Use stripped (comment-free) version for matching
                     if re.search(pattern, stripped):
-                        # Skip if we're in a 'good' function (Juliet benchmark)
-                        if in_good_function:
-                            continue
-                        # Skip if this is a combined file (no _bad suffix) for Juliet benchmark
-                        if is_combined_file and self.language in ('c', 'cpp', 'c++'):
-                            continue
-
                         severity = self.SEVERITY_MAP.get(vuln_type, Severity.MEDIUM)
 
                         vuln = Vulnerability(
@@ -1417,11 +1385,8 @@ class FrameScanner:
         vulnerabilities = []
         seen_locations = set()  # (line, vuln_type) to deduplicate
 
-        # For Juliet benchmark: skip combined files (without _bad suffix) at file level
-        # This matches benchmark expectations for file-level vulnerability classification
-        is_combined_file = '_bad' not in filename.lower()
-        if is_combined_file:
-            return vulnerabilities  # No detections for combined files
+        # Analyze ALL files - combined files contain vulnerable code paths
+        # and must be analyzed for proper vulnerability detection
 
         # First, run inter-procedural analyzer for class lifecycle analysis
         try:

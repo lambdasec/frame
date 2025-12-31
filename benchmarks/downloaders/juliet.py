@@ -83,8 +83,13 @@ def parse_juliet_testcase(filepath: str) -> Tuple[str, bool, str]:
     Parse Juliet test case metadata from filepath.
 
     Juliet naming convention:
-    - CWE###_<name>/s##/CWE###_..._bad.c -> vulnerable
-    - CWE###_<name>/s##/CWE###_..._good.c -> safe
+    - Files with ONLY 'good' in name (e.g., _good.c, _goodG2B.cpp) -> safe
+    - Files with '_bad' in name -> vulnerable
+    - Combined files (contain both bad and good code) -> vulnerable
+
+    Combined files are the most common and contain both vulnerable (_bad function)
+    and safe (_good function) code in the same file. These are still vulnerable
+    as they contain exploitable code paths.
 
     Returns:
         Tuple of (cwe_id, is_vulnerable, language)
@@ -101,7 +106,21 @@ def parse_juliet_testcase(filepath: str) -> Tuple[str, bool, str]:
             break
 
     # Determine if vulnerable (bad) or safe (good)
-    is_vulnerable = '_bad' in filename.lower() or filename.endswith('_bad.c') or filename.endswith('_bad.cpp')
+    # Key insight: Files are ONLY safe if they have 'good' pattern but NOT 'bad'
+    # Combined files (most common) have neither suffix but ARE vulnerable
+    filename_lower = filename.lower()
+
+    # Check for good-only patterns (safe files)
+    is_good_only = (
+        '_good.' in filename_lower or           # ends with _good.c/.cpp
+        '_goodg2b' in filename_lower or         # goodG2B pattern
+        '_goodb2g' in filename_lower or         # goodB2G pattern
+        'good_' in filename_lower               # good_ prefix pattern
+    ) and '_bad' not in filename_lower
+
+    # File is vulnerable if it's NOT a good-only file
+    # This includes: _bad files, combined files, and other test files
+    is_vulnerable = not is_good_only
 
     # Determine language
     language = 'cpp' if filename.endswith('.cpp') else 'c'
