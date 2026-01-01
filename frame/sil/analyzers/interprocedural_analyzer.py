@@ -1111,11 +1111,11 @@ def analyze_interprocedural(source: str, filename: str = "<unknown>",
     for vuln in analyzer.analyze_source(source, filename):
         add_unique_vuln(vuln)
 
-    # Phase 4: Fallback pattern detection (only for CWEs not covered by SL)
-    # Skip buffer overflow CWEs as they're handled by SL analyzer
+    # Phase 4: Fallback pattern detection for CWEs that SL analyzer may miss
+    # Include CWE-122/126 as SL analyzer may not catch simple regex patterns
     for vuln in _detect_semantic_cwes(source, filename, verbose):
-        # Only add if not a memory safety CWE (those are handled by SL)
-        if vuln.cwe_id not in ('CWE-121', 'CWE-122', 'CWE-415', 'CWE-416', 'CWE-590', 'CWE-401'):
+        # Skip only CWEs that are reliably handled by SL (UAF, double-free, etc.)
+        if vuln.cwe_id not in ('CWE-415', 'CWE-416', 'CWE-590', 'CWE-401'):
             add_unique_vuln(vuln)
 
     return vulns
@@ -3031,22 +3031,20 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             ))
 
         # Pattern: strlen on potentially non-null-terminated buffer
-        # Only flag when there's clear evidence of non-null-terminated data
-        # (e.g., from recv/read/memcpy without null termination)
-        # Skip to reduce false positives - strlen(data) alone is not enough evidence
-        # strlen_match = re.search(r'\bstrlen\s*\(\s*(\w+)\s*\)', stripped)
-        # if strlen_match:
-        #     buf_var = strlen_match.group(1)
-        #     # Check if buffer came from memcpy/read without null termination
-        #     if buf_var == 'data' or buf_var in tainted_vars:
-        #         vulns.append(MemoryVuln(
-        #             vuln_type=VulnType.BUFFER_OVERFLOW,
-        #             cwe_id="CWE-126",
-        #             location=loc,
-        #             var_name=buf_var,
-        #             description="Buffer over-read - strlen on potentially non-null-terminated buffer",
-        #             confidence=0.7,
-        #         ))
+        # Flag when buffer is tainted (e.g., function parameter named 'data')
+        strlen_match = re.search(r'\bstrlen\s*\(\s*(\w+)\s*\)', stripped)
+        if strlen_match:
+            buf_var = strlen_match.group(1)
+            # Check if buffer is tainted (parameter 'data' or tracked tainted var)
+            if buf_var == 'data' or buf_var in tainted_vars:
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,
+                    cwe_id="CWE-126",
+                    location=loc,
+                    var_name=buf_var,
+                    description="Buffer over-read - strlen on potentially non-null-terminated buffer",
+                    confidence=0.7,
+                ))
 
         # Pattern: memcpy(dest, src, LARGE_SIZE) reading past src bounds
         memcpy_large_match = re.search(r'\bmemcpy\s*\(\s*\w+\s*,\s*(\w+)\s*,\s*(\d+)\s*\)', stripped)
