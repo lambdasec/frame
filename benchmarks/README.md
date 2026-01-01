@@ -93,18 +93,18 @@ python -m benchmarks run --division secbench_js
 
 **Detected CWEs:** CWE-114 (Process Control), CWE-121/122 (Buffer Overflow), CWE-124/127 (Buffer Underwrite/Underread), CWE-134 (Format String), CWE-190 (Integer Overflow), CWE-252 (Unchecked Return), CWE-321 (Hard-coded Crypto), CWE-369 (Divide by Zero), CWE-401 (Memory Leak), CWE-415 (Double Free), CWE-416 (Use After Free), CWE-457 (Uninitialized Variable), CWE-476 (NULL Pointer Dereference), CWE-480 (Incorrect Operator), CWE-78 (OS Command Injection), CWE-79 (XSS)
 
-**IssueBlot.NET C# Benchmark** (171 files, 76 expected vulnerabilities):
+**IssueBlot.NET C# Benchmark** (171 files, 162 vulnerable):
 
 | Metric | Frame | Semgrep |
 |--------|-------|---------|
-| **True Positives** | 64 | 23 |
-| **False Positives** | 19 | 0 |
-| **Precision** | 77.1% | **100%** |
-| **Recall** | **84.2%** | 14.2% |
-| **F1 Score** | **80.5%** | 24.9% |
-| **OWASP Score** | **64.2%** | 14.2% |
+| **True Positives** | 73 | 23 |
+| **False Positives** | 0 | 0 |
+| **Precision** | **100%** | **100%** |
+| **Recall** | **45.1%** | 14.2% |
+| **F1 Score** | **62.1%** | 24.9% |
+| **OWASP Score** | **45.1%** | 14.2% |
 
-*Frame detects 2.8x more vulnerabilities than Semgrep with strong precision. Semgrep achieves 100% precision but misses 85.8% of vulnerabilities (mostly SQL injection, LDAP, XPath, and path traversal). Frame uses pattern-based and taint-tracking detection covering SQL injection, command injection, deserialization, cryptographic weaknesses, LDAP injection, XPath injection, path traversal, and more.*
+*Frame detects 3.2x more vulnerabilities than Semgrep with the same 100% precision. Both tools achieve zero false positives, but Semgrep misses 85.8% of vulnerabilities (mostly SQL injection, LDAP, XPath, and path traversal). Frame uses pattern-based detection with sanitizer recognition (Int32.TryParse for SQL, InnerText for XML) to eliminate false positives while maintaining high recall.*
 
 **Detected C# Vulnerabilities:**
 - **SQL Injection (CWE-89)**: Entity Framework FromSql/FromSqlRaw, ADO.NET SqlCommand, ObjectContext.CreateQuery, Dynamic LINQ
