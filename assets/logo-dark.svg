@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <defs>
+    <linearGradient id="darkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#818CF8"/>
+      <stop offset="50%" style="stop-color:#A78BFA"/>
+      <stop offset="100%" style="stop-color:#C4B5FD"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon: Stylized frame brackets with separation -->
+  <g transform="translate(10, 10)">
+    <!-- Left bracket -->
+    <path d="M20 10 L8 10 Q2 10 2 16 L2 84 Q2 90 8 90 L20 90"
+          fill="none" stroke="url(#darkGradient)" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Right bracket -->
+    <path d="M80 10 L92 10 Q98 10 98 16 L98 84 Q98 90 92 90 L80 90"
+          fill="none" stroke="url(#darkGradient)" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Left memory cell -->
+    <rect x="24" y="30" width="22" height="40" rx="4" fill="url(#darkGradient)" opacity="0.85"/>
+
+    <!-- Separating conjunction dot -->
+    <circle cx="50" cy="50" r="4" fill="url(#darkGradient)"/>
+
+    <!-- Right memory cell -->
+    <rect x="54" y="30" width="22" height="40" rx="4" fill="url(#darkGradient)" opacity="0.85"/>
+  </g>
+
+  <!-- Text: Frame -->
+  <text x="130" y="78" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="56" font-weight="600" fill="url(#darkGradient)" letter-spacing="-1">Frame</text>
+</svg>
