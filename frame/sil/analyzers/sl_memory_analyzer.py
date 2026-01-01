@@ -641,7 +641,7 @@ class SLMemoryAnalyzer:
             # If the region is still VALID (not freed), it's a memory leak
             if region.state == HeapState.VALID:
                 self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,  # No MEMORY_LEAK type, use closest
+                    vuln_type=VulnType.MEMORY_LEAK,
                     cwe_id="CWE-401",
                     location=loc,
                     var_name=var_name,

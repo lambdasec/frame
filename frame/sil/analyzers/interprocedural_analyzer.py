@@ -951,14 +951,18 @@ class InterproceduralAnalyzer:
 
                 loc = Location(file=filename, line=line_num, column=0)
 
+                # Strip comments to avoid false positives from comments like "delete data in the..."
+                code_only = re.sub(r'/\*.*?\*/', '', stripped)  # Remove C block comments
+                code_only = re.sub(r'//.*$', '', code_only)  # Remove C++ line comments
+
                 # Track allocations
-                alloc_match = re.search(r'(\w+)\s*=\s*(?:\([^)]*\))?\s*(?:malloc|calloc|new)\s*', stripped)
+                alloc_match = re.search(r'(\w+)\s*=\s*(?:\([^)]*\))?\s*(?:malloc|calloc|new)\s*', code_only)
                 if alloc_match:
                     var_name = alloc_match.group(1)
                     local_heap[var_name] = 'allocated'
 
                 # Track frees and detect double-free
-                free_match = re.search(r'(?:free|delete(?:\s*\[\])?)\s*\(?\s*(\w+)', stripped)
+                free_match = re.search(r'(?:free|delete(?:\s*\[\])?)\s*\(?\s*(\w+)', code_only)
                 if free_match:
                     var_name = free_match.group(1)
 
@@ -1042,12 +1046,18 @@ class InterproceduralAnalyzer:
 def analyze_interprocedural(source: str, filename: str = "<unknown>",
                             verbose: bool = False) -> List[MemoryVuln]:
     """
-    Convenience function for inter-procedural analysis.
+    Interprocedural analysis using separation logic.
 
-    Uses three analysis phases:
-    1. InterproceduralAnalyzer: Class lifecycle and cross-function analysis
-    2. SLMemoryAnalyzer: Separation logic based heap state tracking for UAF, Double-Free, etc.
-    3. Semantic CWE detection: Pattern-based detection for buffer overflow, format string, etc.
+    Analysis phases:
+    1. SLSemanticAnalyzer: Tree-sitter parsed, separation logic verified
+       - CWE-122/121: Buffer Overflow (via size tracking)
+       - CWE-415: Double Free
+       - CWE-416: Use After Free
+       - CWE-590: Free of non-heap memory
+       - CWE-401: Memory Leak
+    2. SLMemoryAnalyzer: Additional heap state tracking
+    3. InterproceduralAnalyzer: Class lifecycle analysis
+    4. Fallback pattern detection (only for CWEs not covered by SL)
     """
     # Track unique vulnerabilities by (cwe_id, line) to avoid duplicates
     seen_vulns: Set[Tuple[str, int]] = set()
@@ -1060,20 +1070,30 @@ def analyze_interprocedural(source: str, filename: str = "<unknown>",
             seen_vulns.add(key)
             vulns.append(vuln)
 
-    # Phase 1: Inter-procedural analysis (class lifecycles, cross-function)
-    analyzer = InterproceduralAnalyzer(verbose=verbose)
-    for vuln in analyzer.analyze_source(source, filename):
-        add_unique_vuln(vuln)
+    # Phase 1: PRIMARY - SL Semantic Analyzer with tree-sitter parsing
+    # This uses proper AST parsing and separation logic for verification
+    try:
+        from frame.sil.analyzers.sl_semantic_analyzer import SLSemanticAnalyzer
+        sl_semantic = SLSemanticAnalyzer(verbose=verbose)
+        for sl_vuln in sl_semantic.analyze_source(source, filename):
+            vuln = MemoryVuln(
+                vuln_type=sl_vuln.vuln_type,
+                cwe_id=sl_vuln.cwe_id,
+                location=sl_vuln.location,
+                var_name=sl_vuln.var_name,
+                description=sl_vuln.description,
+                alloc_location=sl_vuln.alloc_loc,
+                free_location=sl_vuln.free_loc,
+                confidence=sl_vuln.confidence,
+            )
+            add_unique_vuln(vuln)
+    except ImportError as e:
+        if verbose:
+            print(f"[WARN] SLSemanticAnalyzer not available: {e}")
 
-    # Phase 2: Separation Logic based memory analysis
-    # Uses Frame's SL solver to track heap state and detect:
-    # - CWE-416: Use After Free (dereferencing freed pointer)
-    # - CWE-415: Double Free (freeing already freed pointer)
-    # - CWE-590: Free of non-heap memory (freeing stack-allocated)
-    # - CWE-122: Buffer overflow via precise size tracking
+    # Phase 2: SL Memory Analyzer (regex-based, for additional coverage)
     sl_analyzer = SLMemoryAnalyzer(verbose=verbose)
     for sl_vuln in sl_analyzer.analyze_source(source, filename):
-        # Convert SLMemoryVuln to MemoryVuln (same structure, just different import)
         vuln = MemoryVuln(
             vuln_type=sl_vuln.vuln_type,
             cwe_id=sl_vuln.cwe_id,
@@ -1086,9 +1106,17 @@ def analyze_interprocedural(source: str, filename: str = "<unknown>",
         )
         add_unique_vuln(vuln)
 
-    # Phase 3: Semantic-based CWE detection (analyzes actual code patterns)
-    for vuln in _detect_semantic_cwes(source, filename, verbose):
+    # Phase 3: Inter-procedural analysis (class lifecycles, cross-function)
+    analyzer = InterproceduralAnalyzer(verbose=verbose)
+    for vuln in analyzer.analyze_source(source, filename):
         add_unique_vuln(vuln)
+
+    # Phase 4: Fallback pattern detection (only for CWEs not covered by SL)
+    # Skip buffer overflow CWEs as they're handled by SL analyzer
+    for vuln in _detect_semantic_cwes(source, filename, verbose):
+        # Only add if not a memory safety CWE (those are handled by SL)
+        if vuln.cwe_id not in ('CWE-121', 'CWE-122', 'CWE-415', 'CWE-416', 'CWE-590', 'CWE-401'):
+            add_unique_vuln(vuln)
 
     return vulns
 
@@ -1114,9 +1142,14 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     allocated_vars: Dict[str, int] = {}  # var -> line allocated (heap)
     heap_alloc_sizes: Dict[str, Tuple[int, Optional[int]]] = {}  # var -> (line, size) for heap allocations
     stack_allocated_vars: Dict[str, int] = {}  # var -> line allocated (stack/alloca)
+    local_arrays: Dict[str, int] = {}  # var -> line declared (local array for CWE-562)
     freed_vars: Dict[str, int] = {}  # var -> line freed (for double-free and UAF)
     null_checked_vars: Set[str] = set()
     null_assigned_vars: Dict[str, int] = {}  # var -> line where assigned NULL
+
+    # Track C-style allocations separately - these CAN return NULL
+    # C++ new (without nothrow) throws std::bad_alloc instead of returning NULL
+    c_style_allocs: Dict[str, int] = {}  # var -> line for malloc/calloc/realloc
 
     # Enhanced CWE-476 tracking: pointers from functions that can return NULL
     nullable_vars: Dict[str, int] = {}  # var -> line where assigned from nullable function
@@ -1175,6 +1208,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     # Allocation types: 'MALLOC' (malloc/calloc/realloc), 'NEW' (new), 'NEW_ARRAY' (new[])
     alloc_types: Dict[str, Tuple[str, int]] = {}  # var -> (alloc_type, line)
 
+    # Track TOCTOU patterns for CWE-367 (Time-of-check Time-of-use Race Condition)
+    # Maps path variable -> (line checked, check function name)
+    toctou_checked_paths: Dict[str, Tuple[int, str]] = {}
+
     def add_vuln_if_new(vuln: MemoryVuln, cwe_key: str = None):
         """Add vulnerability only if this CWE hasn't been detected yet"""
         key = cwe_key or vuln.cwe_id
@@ -1190,6 +1227,9 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         if re.search(r'\bdata\s*[><]=?\s*(?:INT_MAX|LONG_MAX|LLONG_MAX|sqrt|SHRT_MAX)', stripped):
             overflow_guarded_vars.add('data')
         if re.search(r'(?:INT_MAX|LONG_MAX|LLONG_MAX|SHRT_MAX)\s*[/<]\s*\d+\s*[><]=?\s*data', stripped):
+            overflow_guarded_vars.add('data')
+        # Handle: if (data < (LLONG_MAX/2)) - parenthesized division form
+        if re.search(r'\bdata\s*[><]=?\s*\(\s*(?:INT_MAX|LONG_MAX|LLONG_MAX|SHRT_MAX)\s*/', stripped):
             overflow_guarded_vars.add('data')
         if re.search(r'\bdata\s*[><]=?\s*\d+\s*&&', stripped):  # Combined bounds check
             bounds_checked_vars.add('data')
@@ -1263,6 +1303,20 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         if alloca_match:
             stack_allocated_vars[alloca_match.group(1)] = line_num
 
+        # Track local array declarations for CWE-562
+        # Pattern: char varName[] = "string"; or char varName[size]; or int arr[10];
+        local_array_match = re.search(
+            r'^\s*(?:static\s+)?(?:const\s+)?(?:unsigned\s+)?'
+            r'(?:char|int|short|long|float|double|wchar_t|WCHAR|BYTE|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)'
+            r'\s+(\w+)\s*\[',
+            stripped
+        )
+        if local_array_match:
+            arr_name = local_array_match.group(1)
+            # Skip static arrays (they don't cause CWE-562)
+            if not re.search(r'\bstatic\b', stripped):
+                local_arrays[arr_name] = line_num
+
         # Track file handle opens
         fopen_match = re.search(r'(\w+)\s*=\s*(?:fopen|_wfopen|CreateFile\w*)\s*\(', stripped)
         if fopen_match:
@@ -1307,6 +1361,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         if heap_alloc_match:
             var_name = heap_alloc_match.group(1)
             allocated_vars[var_name] = line_num
+            # Track C-style allocations separately - these CAN return NULL
+            # C++ new (without nothrow) throws std::bad_alloc instead
+            if re.search(r'\b(?:malloc|calloc|realloc)\s*\(', stripped):
+                c_style_allocs[var_name] = line_num
             # Try to extract allocation size
             alloc_size = None
             # malloc(N), malloc(sizeof(T))
@@ -1343,101 +1401,233 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 pass  # Will be detected in second pass
             freed_vars[var] = line_num
 
-    # Second pass: detect vulnerabilities
+    # =========================================================================
+    # PHASE 2.5: Build per-function semantic context for proper analysis
+    # =========================================================================
+    # Track buffer allocations and their sizes PER FUNCTION to do real semantic analysis
+    # This replaces the naive "good/bad function name" check with actual size tracking
+
+    # C/C++ keywords that should NOT be treated as function names
+    c_keywords = {
+        'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default',
+        'break', 'continue', 'return', 'goto', 'sizeof', 'typeof', 'alignof',
+        'static_assert', 'static_cast', 'dynamic_cast', 'const_cast', 'reinterpret_cast',
+        'try', 'catch', 'throw', 'new', 'delete', 'nullptr', 'this',
+        'class', 'struct', 'union', 'enum', 'namespace', 'using', 'typedef',
+        'public', 'private', 'protected', 'virtual', 'override', 'final',
+        'template', 'typename', 'concept', 'requires', 'co_await', 'co_return', 'co_yield'
+    }
+
+    # Per-function allocation tracking: func_name -> {var_name: (size, line)}
+    function_allocations: Dict[str, Dict[str, Tuple[int, int]]] = {}
+    current_func_name = ""
+    func_brace_depth = 0
+    in_function_body = False
+    current_func_start_line = 0
+
+    # Also track which function each line belongs to
+    function_scope_map: Dict[int, str] = {}  # line_num -> function_name
+
+    for scan_line_num, scan_line in enumerate(lines, 1):
+        stripped_scan = scan_line.strip()
+
+        # Skip comments
+        if stripped_scan.startswith('//') or stripped_scan.startswith('/*'):
+            continue
+        if stripped_scan.startswith('*') and (len(stripped_scan) < 2 or stripped_scan[1] in ' \t*'):
+            continue
+
+        # Detect function definition
+        func_def_match = re.match(
+            r'^(?:static\s+)?(?:virtual\s+)?(?:inline\s+)?(?:\w+(?:\s*[*&])?(?:\s+|\s*::\s*))?'
+            r'(~?\w+)\s*\([^;]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:\{)?$',
+            stripped_scan
+        )
+        if func_def_match:
+            potential_func = func_def_match.group(1)
+            # Skip C/C++ keywords that look like function calls but aren't
+            if potential_func in c_keywords:
+                continue
+            if '{' in stripped_scan:
+                current_func_name = potential_func
+                in_function_body = True
+                func_brace_depth = stripped_scan.count('{') - stripped_scan.count('}')
+                current_func_start_line = scan_line_num
+                function_allocations[current_func_name] = {}
+            else:
+                current_func_name = potential_func
+
+        # Handle opening brace for function body
+        if not in_function_body and current_func_name and stripped_scan == '{':
+            in_function_body = True
+            func_brace_depth = 1
+            current_func_start_line = scan_line_num
+            function_allocations[current_func_name] = {}
+            function_scope_map[scan_line_num] = current_func_name
+            continue
+
+        # Track brace depth and allocations within function body
+        if in_function_body:
+            func_brace_depth += stripped_scan.count('{') - stripped_scan.count('}')
+            function_scope_map[scan_line_num] = current_func_name
+
+            # Track allocations in this function for semantic size analysis
+            # Pattern: var = new TYPE[SIZE] or var = malloc(SIZE)
+            new_array_match = re.search(r'(\w+)\s*=\s*new\s+\w+\s*\[\s*(\d+)(?:\s*\+\s*(\d+))?\s*\]', stripped_scan)
+            if new_array_match:
+                var_name = new_array_match.group(1)
+                size = int(new_array_match.group(2))
+                if new_array_match.group(3):
+                    size += int(new_array_match.group(3))
+                function_allocations[current_func_name][var_name] = (size, scan_line_num)
+
+            malloc_match = re.search(r'(\w+)\s*=.*malloc\s*\(\s*(\d+)(?:\s*\*\s*sizeof)?', stripped_scan)
+            if malloc_match:
+                var_name = malloc_match.group(1)
+                size = int(malloc_match.group(2))
+                function_allocations[current_func_name][var_name] = (size, scan_line_num)
+
+            # Track array declarations: TYPE var[SIZE]
+            array_decl_match = re.search(r'\b(\w+)\s*\[\s*(\d+)(?:\s*\+\s*(\d+))?\s*\]', stripped_scan)
+            if array_decl_match and '=' not in stripped_scan.split('[')[0]:
+                var_name = array_decl_match.group(1)
+                size = int(array_decl_match.group(2))
+                if array_decl_match.group(3):
+                    size += int(array_decl_match.group(3))
+                function_allocations[current_func_name][var_name] = (size, scan_line_num)
+
+            if func_brace_depth <= 0:
+                in_function_body = False
+                current_func_name = ""
+                func_brace_depth = 0
+
+    # =========================================================================
+    # Second pass: detect vulnerabilities using SEMANTIC ANALYSIS
+    # =========================================================================
     for line_num, line in enumerate(lines, 1):
         stripped = line.strip()
         loc = Location(filename, line_num, 0)
 
-        # Skip comments (but not pointer dereferences like *ptr)
+        # Skip comments
         if stripped.startswith('//') or stripped.startswith('/*'):
             continue
-        # Skip multi-line comment continuation (starts with * followed by space or *)
         if stripped.startswith('*') and (len(stripped) < 2 or stripped[1] in ' \t*'):
             continue
 
-        # =====================================================================
-        # FP Reduction: Check for "good" context (FIX/GOOD comments, goodSource, etc.)
-        # =====================================================================
-        is_good_context = False
-        # Check for FIX/FIXED/GOOD comment on this line or in preceding 4 lines
-        context_window = lines[max(0, line_num-5):line_num+1]
-        for ctx_line in context_window:
-            if re.search(r'/\*.*FIX|/\*.*GOOD|//.*FIX|//.*GOOD', ctx_line, re.IGNORECASE):
-                is_good_context = True
-                break
-        # Also check for good* function pattern (Juliet convention)
-        if 'goodSource' in stripped or 'goodSink' in stripped or 'good(' in stripped or 'goodG2B' in stripped or 'goodB2G' in stripped:
-            is_good_context = True
-        # Check if the line itself has FIX comment
-        if re.search(r'/\*.*FIX|//.*FIX', stripped, re.IGNORECASE):
-            is_good_context = True
-        # Check if we're inside a good* function (Juliet convention: good* functions are safe)
-        # Look for function definition in previous 50 lines
-        for prev_idx in range(max(0, line_num - 50), line_num):
-            if re.search(r'\b(good|goodG2B|goodB2G|goodSource|goodSink)\w*\s*\(', lines[prev_idx]):
-                is_good_context = True
-                break
-        # Check for BAD marker to override (if explicitly marked BAD, it's not good context)
-        if re.search(r'/\*.*FLAW|/\*.*BAD|POTENTIAL FLAW', stripped):
-            is_good_context = False
+        # Get current function context for semantic analysis
+        current_function = function_scope_map.get(line_num, "")
+        func_allocs = function_allocations.get(current_function, {})
 
         # =====================================================================
-        # CWE-122/121: Buffer Overflow - Unsafe string functions
+        # CWE-122/121: Buffer Overflow - SEMANTIC ANALYSIS using size tracking
         # =====================================================================
-        strcpy_match = re.search(r'\bstrcpy\s*\(\s*(\w+)\s*,', stripped)
-        if strcpy_match and not is_good_context:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-122",
-                location=loc,
-                var_name=strcpy_match.group(1),
-                description="Unbounded strcpy - use strncpy or strlcpy instead",
-                confidence=0.9,
-            ))
+        # For string copy functions, we use real semantic analysis:
+        # 1. Track destination buffer allocation size (from func_allocs)
+        # 2. Track source buffer/string size
+        # 3. Flag only when source > destination (actual overflow)
 
-        # Wide character wcscpy (also unbounded like strcpy)
-        wcscpy_match = re.search(r'\bwcscpy\s*\(\s*(\w+)\s*,', stripped)
-        if wcscpy_match and not is_good_context:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-122",
-                location=loc,
-                var_name=wcscpy_match.group(1),
-                description="Unbounded wcscpy - use wcsncpy instead",
-                confidence=0.9,
-            ))
+        # wcscpy(dest, source) - check if source can overflow dest
+        wcscpy_match = re.search(r'\bwcscpy\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)', stripped)
+        if wcscpy_match:
+            dest_var = wcscpy_match.group(1)
+            src_var = wcscpy_match.group(2)
+            # Get destination size from function-local allocations
+            dest_info = func_allocs.get(dest_var)
+            src_info = func_allocs.get(src_var)
 
-        if re.search(r'\bgets\s*\(', stripped) and not is_good_context:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-122",
-                location=loc,
-                var_name="buffer",
-                description="gets() is always vulnerable - use fgets instead",
-                confidence=0.95,
-            ))
+            if dest_info and src_info:
+                dest_size, _ = dest_info
+                src_size, _ = src_info
+                # Flag ONLY if source size exceeds destination size (real overflow)
+                if src_size > dest_size:
+                    vulns.append(MemoryVuln(
+                        vuln_type=VulnType.BUFFER_OVERFLOW,
+                        cwe_id="CWE-122",
+                        location=loc,
+                        var_name=dest_var,
+                        description=f"Buffer overflow: wcscpy copies {src_size} elements to {dest_size}-element buffer",
+                        confidence=0.95,
+                    ))
+            elif dest_info and src_var in tainted_vars:
+                # Dest has known size, source is tainted (unknown length) - potential overflow
+                dest_size, _ = dest_info
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,
+                    cwe_id="CWE-122",
+                    location=loc,
+                    var_name=dest_var,
+                    description=f"Potential buffer overflow: wcscpy from tainted source to {dest_size}-element buffer",
+                    confidence=0.8,
+                ))
 
+        # strcpy(dest, source) - semantic check
+        strcpy_match = re.search(r'\bstrcpy\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)', stripped)
+        if strcpy_match:
+            dest_var = strcpy_match.group(1)
+            src_var = strcpy_match.group(2)
+            dest_info = func_allocs.get(dest_var)
+            src_info = func_allocs.get(src_var)
+
+            if dest_info and src_info:
+                dest_size, _ = dest_info
+                src_size, _ = src_info
+                if src_size > dest_size:
+                    vulns.append(MemoryVuln(
+                        vuln_type=VulnType.BUFFER_OVERFLOW,
+                        cwe_id="CWE-122",
+                        location=loc,
+                        var_name=dest_var,
+                        description=f"Buffer overflow: strcpy copies {src_size} bytes to {dest_size}-byte buffer",
+                        confidence=0.95,
+                    ))
+            elif dest_info and src_var in tainted_vars:
+                dest_size, _ = dest_info
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,
+                    cwe_id="CWE-122",
+                    location=loc,
+                    var_name=dest_var,
+                    description=f"Potential buffer overflow: strcpy from tainted source to {dest_size}-byte buffer",
+                    confidence=0.8,
+                ))
+
+        # gets() detection is handled in scanner.py pattern matching
+        # to avoid duplicate detections
+
+        # sprintf - only flag if dest buffer size is known and format could exceed it
         sprintf_match = re.search(r'\bsprintf\s*\(\s*(\w+)\s*,', stripped)
-        if sprintf_match and 'snprintf' not in stripped and not is_good_context:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-122",
-                location=loc,
-                var_name=sprintf_match.group(1),
-                description="Unbounded sprintf - use snprintf instead",
-                confidence=0.85,
-            ))
+        if sprintf_match and 'snprintf' not in stripped:
+            dest_var = sprintf_match.group(1)
+            dest_info = func_allocs.get(dest_var)
+            # Only flag if destination buffer has small known size
+            if dest_info:
+                dest_size, _ = dest_info
+                if dest_size < 256:  # Small buffers are more likely to overflow
+                    vulns.append(MemoryVuln(
+                        vuln_type=VulnType.BUFFER_OVERFLOW,
+                        cwe_id="CWE-122",
+                        location=loc,
+                        var_name=dest_var,
+                        description=f"sprintf to {dest_size}-byte buffer without bounds check",
+                        confidence=0.7,
+                    ))
 
-        strcat_match = re.search(r'\bstrcat\s*\(\s*(\w+)\s*,', stripped)
-        if strcat_match and 'strncat' not in stripped and not is_good_context:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-122",
-                location=loc,
-                var_name=strcat_match.group(1),
-                description="Unbounded strcat - use strncat instead",
-                confidence=0.85,
-            ))
+        # strcat - semantic check
+        strcat_match = re.search(r'\bstrcat\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)', stripped)
+        if strcat_match and 'strncat' not in stripped:
+            dest_var = strcat_match.group(1)
+            src_var = strcat_match.group(2)
+            dest_info = func_allocs.get(dest_var)
+            if dest_info and src_var in tainted_vars:
+                dest_size, _ = dest_info
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,
+                    cwe_id="CWE-122",
+                    location=loc,
+                    var_name=dest_var,
+                    description=f"strcat from tainted source to {dest_size}-byte buffer",
+                    confidence=0.75,
+                ))
 
         # =====================================================================
         # CWE-122: Heap Buffer Overflow - memcpy with size larger than allocation
@@ -1830,8 +2020,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             ))
 
         # Pattern 8: CryptoAPI functions (Windows)
+        # Only flag if there's an actual hard-coded key string, not output parameters like &hKey
+        # CryptDeriveKey(hCryptProv, CALG_AES_256, hHash, 0, &hKey) - hKey is OUTPUT, not hard-coded
+        # CryptImportKey with literal key bytes is vulnerable
         if re.search(r'\bCrypt(?:DeriveKey|ImportKey|GenKey)\s*\(', stripped):
-            if re.search(r'Crypt(?:DeriveKey|ImportKey|GenKey)\s*\([^)]*(?:password|key|secret)', stripped, re.IGNORECASE):
+            # Only flag if there's an actual string literal for a key, not variable names
+            if re.search(r'Crypt(?:ImportKey)\s*\([^)]*(?:"\s*[^"]+\s*"|{.*0x)', stripped):
                 vulns.append(MemoryVuln(
                     vuln_type=VulnType.HARDCODED_SECRET,
                     cwe_id="CWE-321",
@@ -1868,6 +2062,160 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 description="Hard-coded cryptographic key in string literal",
                 confidence=0.8,
             ))
+
+        # =====================================================================
+        # CWE-327: Use of Broken or Risky Cryptographic Algorithm
+        # =====================================================================
+
+        # Weak Windows CryptoAPI algorithms (CALG_* constants)
+        weak_calg_patterns = [
+            (r'\bCALG_RC2\b', 'RC2'),
+            (r'\bCALG_RC4\b', 'RC4'),
+            (r'\bCALG_RC5\b', 'RC5'),
+            (r'\bCALG_DES\b', 'DES'),
+            (r'\bCALG_3DES\b', '3DES'),
+            (r'\bCALG_MD2\b', 'MD2'),
+            (r'\bCALG_MD4\b', 'MD4'),
+            (r'\bCALG_MD5\b', 'MD5'),
+            (r'\bCALG_SHA\b(?!_256|_384|_512)', 'SHA-1'),
+            (r'\bCALG_SHA1\b', 'SHA-1'),
+        ]
+        for pattern, algo_name in weak_calg_patterns:
+            if re.search(pattern, stripped):
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
+                    cwe_id="CWE-327",
+                    location=loc,
+                    var_name="crypto_algorithm",
+                    description=f"Use of weak cryptographic algorithm: {algo_name}",
+                    confidence=0.9,
+                ))
+                break  # Only report once per line
+
+        # Weak OpenSSL/general crypto function patterns
+        weak_crypto_funcs = [
+            (r'\bMD5\s*\(', 'MD5'),
+            (r'\bMD5_Init\s*\(', 'MD5'),
+            (r'\bSHA1\s*\(', 'SHA-1'),
+            (r'\bSHA1_Init\s*\(', 'SHA-1'),
+            (r'\bDES_\w+\s*\(', 'DES'),
+            (r'\bEVP_des_\w+\s*\(', 'DES'),
+            (r'\bEVP_rc2_\w+\s*\(', 'RC2'),
+            (r'\bEVP_rc4\s*\(', 'RC4'),
+            (r'\bEVP_md5\s*\(', 'MD5'),
+            (r'\bEVP_sha1\s*\(', 'SHA-1'),
+        ]
+        for pattern, algo_name in weak_crypto_funcs:
+            if re.search(pattern, stripped):
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
+                    cwe_id="CWE-327",
+                    location=loc,
+                    var_name="crypto_algorithm",
+                    description=f"Use of weak cryptographic algorithm: {algo_name}",
+                    confidence=0.9,
+                ))
+                break
+
+        # =====================================================================
+        # CWE-338: Use of Cryptographically Weak PRNG
+        # =====================================================================
+        # Detects use of non-cryptographic random number generators like rand(),
+        # random(), which are predictable and shouldn't be used for security purposes.
+        # Only flag in crypto-related context to avoid FPs from test data generation.
+
+        # Check if this file has crypto context (wincrypt.h, openssl, etc.)
+        if not hasattr(_detect_semantic_cwes, '_file_crypto_context'):
+            _detect_semantic_cwes._file_crypto_context = {}
+
+        if filename not in _detect_semantic_cwes._file_crypto_context:
+            full_content = '\n'.join(lines)
+            has_crypto = bool(re.search(
+                r'#include\s*[<"](wincrypt|openssl|crypto|Crypto|ssl)\b|'
+                r'\b(CryptGenRandom|CryptAcquireContext|HCRYPTPROV|RAND_bytes|EVP_)\b',
+                full_content
+            ))
+            _detect_semantic_cwes._file_crypto_context[filename] = has_crypto
+
+        if _detect_semantic_cwes._file_crypto_context.get(filename, False):
+            weak_prng_patterns = [
+                (r'\brand\s*\(\s*\)', 'rand()'),
+                (r'\brandom\s*\(\s*\)', 'random()'),
+                (r'\bdrand48\s*\(\s*\)', 'drand48()'),
+                (r'\blrand48\s*\(\s*\)', 'lrand48()'),
+                (r'\bmrand48\s*\(\s*\)', 'mrand48()'),
+                (r'\bsrand\s*\(\s*time\s*\(', 'srand(time())'),  # Common weak seeding
+                (r'\bsrandom\s*\(\s*time\s*\(', 'srandom(time())'),
+            ]
+            for pattern, func_name in weak_prng_patterns:
+                if re.search(pattern, stripped):
+                    vulns.append(MemoryVuln(
+                        vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
+                        cwe_id="CWE-338",
+                        location=loc,
+                        var_name="prng",
+                        description=f"Use of cryptographically weak PRNG: {func_name}",
+                        confidence=0.85,
+                    ))
+                    break  # Only report once per line
+
+        # =====================================================================
+        # CWE-252: Unchecked Return Value
+        # =====================================================================
+        # Functions whose return value indicates success/failure that should be checked.
+        # We look for standalone function calls (not assigned to a variable).
+
+        security_critical_funcs = [
+            'setuid', 'seteuid', 'setreuid', 'setresuid',
+            'setgid', 'setegid', 'setregid', 'setresgid',
+            'chroot', 'chdir', 'fchdir',
+            'setrlimit', 'initgroups', 'setgroups',
+        ]
+        for func in security_critical_funcs:
+            # Match standalone calls like: setuid(0); but NOT x = setuid(0);
+            if re.search(rf'^\s*{func}\s*\([^)]*\)\s*;', stripped):
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.UNCHECKED_RETURN,
+                    cwe_id="CWE-252",
+                    location=loc,
+                    var_name=func,
+                    description=f"Unchecked return value of security-critical function: {func}()",
+                    confidence=0.85,
+                ))
+
+        # =====================================================================
+        # CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition
+        # =====================================================================
+        # Detects patterns like stat() followed by open() on the same file.
+        # This is a simplified detection that looks for common TOCTOU patterns.
+
+        # Track stat-like checks (case-insensitive for Windows macros like STAT)
+        toctou_check_funcs = ['stat', 'lstat', 'fstat', 'access', 'faccessat', '_stat', '_wstat']
+        for func in toctou_check_funcs:
+            stat_match = re.search(rf'\b{func}\s*\(\s*([^,)]+)', stripped, re.IGNORECASE)
+            if stat_match:
+                checked_path = stat_match.group(1).strip()
+                if checked_path and not checked_path.startswith('"'):
+                    # Variable path - track it
+                    toctou_checked_paths[checked_path] = (line_num, func)
+
+        # Check for use after check (simplified - same line or nearby)
+        toctou_use_funcs = ['open', 'fopen', 'creat', 'unlink', 'remove', 'rename', 'chmod', '_open', '_wopen', 'CreateFile']
+        for func in toctou_use_funcs:
+            use_match = re.search(rf'\b{func}\s*\(\s*([^,)]+)', stripped, re.IGNORECASE)
+            if use_match:
+                used_path = use_match.group(1).strip()
+                if used_path in toctou_checked_paths:
+                    check_line, check_func = toctou_checked_paths[used_path]
+                    if line_num > check_line and line_num - check_line < 20:
+                        vulns.append(MemoryVuln(
+                            vuln_type=VulnType.RACE_CONDITION,
+                            cwe_id="CWE-367",
+                            location=loc,
+                            var_name=used_path,
+                            description=f"TOCTOU race condition: {check_func}() at line {check_line} followed by {func}()",
+                            confidence=0.75,
+                        ))
 
         # =====================================================================
         # CWE-476: NULL Pointer Dereference (Enhanced Detection)
@@ -1915,6 +2263,15 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         negated_check = re.search(r'if\s*\(\s*!\s*(\w+)\s*\)', stripped)
         if negated_check:
             null_checked_vars.add(negated_check.group(1))
+
+        # Track early exit guards: if (ptr == NULL) { exit(-1); } or { return; } etc.
+        # After such a guard, ptr is proven non-NULL for the rest of the function
+        early_exit_guard = re.search(r'if\s*\(\s*(\w+)\s*==\s*(?:NULL|nullptr|0)\s*\)\s*\{?\s*(?:exit|return|abort|_exit|longjmp|goto|throw)\b', stripped)
+        if early_exit_guard:
+            var = early_exit_guard.group(1)
+            null_checked_vars.add(var)
+            # This is a permanent guard - don't scope it
+            null_check_scope_vars.add(var)
 
         # Helper function to check if a dereference is actually a type declaration
         def is_type_declaration(var_name: str, line: str) -> bool:
@@ -1967,8 +2324,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                         description=f"Dereference of '{var}' without NULL check (may be NULL from function return)",
                         confidence=0.8,
                     ))
-                elif var in allocated_vars and not is_null_protected(var):
-                    if line_num - allocated_vars[var] <= 10:
+                # Only check C-style allocations (malloc/calloc/realloc) which can return NULL
+                # C++ new throws std::bad_alloc instead of returning NULL
+                elif var in c_style_allocs and not is_null_protected(var):
+                    if line_num - c_style_allocs[var] <= 10:
                         vulns.append(MemoryVuln(
                             vuln_type=VulnType.NULL_DEREFERENCE,
                             cwe_id="CWE-476",
@@ -1993,8 +2352,9 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                         description=f"Arrow dereference of '{var}' without NULL check (may be NULL from function return)",
                         confidence=0.8,
                     ))
-                elif var in allocated_vars and not is_null_protected(var):
-                    if line_num - allocated_vars[var] <= 10:
+                # Only check C-style allocations which can return NULL
+                elif var in c_style_allocs and not is_null_protected(var):
+                    if line_num - c_style_allocs[var] <= 10:
                         vulns.append(MemoryVuln(
                             vuln_type=VulnType.NULL_DEREFERENCE,
                             cwe_id="CWE-476",
@@ -2104,8 +2464,11 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             const = int(mult_match.group(2))
             # Skip if this is sizeof or if there's a proper check
             if const >= 2 and 'sizeof' not in stripped:
+                # Skip if var is already guarded by an overflow check earlier in the code
+                if var in overflow_guarded_vars:
+                    pass  # Already guarded
                 # Check if there's no overflow guard on this line or recent lines
-                if not re.search(rf'\b{var}\s*[<>]=?\s*\w*MAX', stripped):
+                elif not re.search(rf'\b{var}\s*[<>]=?\s*\w*MAX', stripped):
                     # Check if this is an arithmetic assignment (result = var * 2)
                     if re.search(rf'=\s*{var}\s*\*\s*{const}', stripped):
                         vulns.append(MemoryVuln(
@@ -2311,67 +2674,30 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     ))
 
         # =====================================================================
-        # CWE-194: Unexpected Sign Extension
+        # CWE-194: Unexpected Sign Extension - Conservative detection
         # =====================================================================
-        # Detect short/char cast to larger type used in memory operations
-        sign_ext_match = re.search(r'\(\s*(?:short|char|signed\s+char)\s*\)\s*(\w+)', stripped)
-        if sign_ext_match:
-            var = sign_ext_match.group(1)
-            # Check if used in memory operation or array index
-            if re.search(rf'\[\s*\(\s*(?:short|char|signed\s+char)\s*\)\s*{var}', stripped) or \
-               re.search(rf'(?:malloc|calloc|memcpy|memmove)\s*\([^)]*\(\s*(?:short|char)\s*\)\s*{var}', stripped):
+        # Only flag when we have strong evidence of sign extension vulnerability:
+        # 1. Explicit cast from signed to size_t/unsigned in memory size context
+        # 2. AND the value comes from external input (tainted)
+        # 3. AND no bounds checking is present
+
+        # Detect explicit (size_t) or (unsigned) cast of tainted short/char in memory ops
+        sign_cast_match = re.search(
+            r'(?:malloc|calloc|memcpy|memmove|memset|strncpy)\s*\([^)]*'
+            r'\(\s*(?:size_t|unsigned\s+\w+)\s*\)\s*(\w+)',
+            stripped
+        )
+        if sign_cast_match:
+            var = sign_cast_match.group(1)
+            # Only flag if the variable is tainted AND not bounds-checked
+            if var in tainted_vars and var not in bounds_checked_vars and var not in overflow_guarded_vars:
                 vulns.append(MemoryVuln(
                     vuln_type=VulnType.SIGN_EXTENSION,
                     cwe_id="CWE-194",
                     location=loc,
                     var_name=var,
-                    description="Unexpected sign extension - short/char cast may cause issues",
-                    confidence=0.7,
-                ))
-
-        # Detect memcpy/memmove with short/signed size
-        if re.search(r'(?:memcpy|memmove|memset)\s*\([^,]+,[^,]+,\s*\(\s*(?:short|char)\s*\)', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.SIGN_EXTENSION,
-                cwe_id="CWE-194",
-                location=loc,
-                var_name="size",
-                description="Sign extension in memory operation size parameter",
-                confidence=0.75,
-            ))
-
-        # Detect when data (typically a short parameter) is used in malloc/memcpy without >= 0 check
-        # Pattern: malloc(data) or memcpy(..., data) where data could be negative
-        if 'data' not in overflow_guarded_vars:  # No >= 0 check
-            # malloc with data
-            if re.search(r'\bmalloc\s*\(\s*data\s*\)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.SIGN_EXTENSION,
-                    cwe_id="CWE-194",
-                    location=loc,
-                    var_name="data",
-                    description="Sign extension in malloc - negative data becomes huge allocation",
-                    confidence=0.8,
-                ))
-            # memcpy with data as size
-            if re.search(r'\bmemcpy\s*\([^,]+,\s*[^,]+,\s*data\s*\)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.SIGN_EXTENSION,
-                    cwe_id="CWE-194",
-                    location=loc,
-                    var_name="data",
-                    description="Sign extension in memcpy - negative size becomes huge copy",
-                    confidence=0.8,
-                ))
-            # strncpy with data as size
-            if re.search(r'\bstrncpy\s*\([^,]+,\s*[^,]+,\s*data\s*\)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.SIGN_EXTENSION,
-                    cwe_id="CWE-194",
-                    location=loc,
-                    var_name="data",
-                    description="Sign extension in strncpy - negative size causes issues",
-                    confidence=0.8,
+                    description=f"Sign extension: tainted '{var}' cast to unsigned in memory operation",
+                    confidence=0.85,
                 ))
 
         # =====================================================================
@@ -2705,19 +3031,22 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             ))
 
         # Pattern: strlen on potentially non-null-terminated buffer
-        strlen_match = re.search(r'\bstrlen\s*\(\s*(\w+)\s*\)', stripped)
-        if strlen_match:
-            buf_var = strlen_match.group(1)
-            # Check if buffer came from memcpy/read without null termination
-            if buf_var == 'data' or buf_var in tainted_vars:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-126",
-                    location=loc,
-                    var_name=buf_var,
-                    description="Buffer over-read - strlen on potentially non-null-terminated buffer",
-                    confidence=0.7,
-                ))
+        # Only flag when there's clear evidence of non-null-terminated data
+        # (e.g., from recv/read/memcpy without null termination)
+        # Skip to reduce false positives - strlen(data) alone is not enough evidence
+        # strlen_match = re.search(r'\bstrlen\s*\(\s*(\w+)\s*\)', stripped)
+        # if strlen_match:
+        #     buf_var = strlen_match.group(1)
+        #     # Check if buffer came from memcpy/read without null termination
+        #     if buf_var == 'data' or buf_var in tainted_vars:
+        #         vulns.append(MemoryVuln(
+        #             vuln_type=VulnType.BUFFER_OVERFLOW,
+        #             cwe_id="CWE-126",
+        #             location=loc,
+        #             var_name=buf_var,
+        #             description="Buffer over-read - strlen on potentially non-null-terminated buffer",
+        #             confidence=0.7,
+        #         ))
 
         # Pattern: memcpy(dest, src, LARGE_SIZE) reading past src bounds
         memcpy_large_match = re.search(r'\bmemcpy\s*\(\s*\w+\s*,\s*(\w+)\s*,\s*(\d+)\s*\)', stripped)
@@ -2917,32 +3246,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 confidence=0.85,
             ))
 
-        # Pattern: data[i] = source[i] in a loop - could underwrite if data is offset
-        if re.search(r'\bdata\s*\[\s*\w+\s*\]\s*=\s*\w+\s*\[', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-124",
-                location=loc,
-                var_name="data",
-                description="Buffer underwrite - loop writing to data could overflow",
-                confidence=0.7,
-            ))
-
-        # =====================================================================
-        # CWE-121/122: Stack/Heap Buffer Overflow - array index out of bounds
-        # =====================================================================
-        # Pattern: buffer[data] without proper bounds checking
-        if re.search(r'\w+\s*\[\s*data\s*\]', stripped):
-            # Check if there's only a partial check (>= 0 but not < SIZE)
-            if 'data' not in bounds_checked_vars:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-121",
-                    location=loc,
-                    var_name="data",
-                    description="Buffer overflow - array index without full bounds check",
-                    confidence=0.75,
-                ))
+        # NOTE: Removed overly aggressive pattern-based detections.
+        # These are now handled by the SL semantic analyzer with proper size tracking:
+        # - data[i] = source[i] loop pattern (was generating false positives)
+        # - buffer[data] array indexing pattern (was generating false positives)
 
         # =====================================================================
         # Track variable reassignments that invalidate freed state
@@ -2967,8 +3274,8 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         free_match = re.search(r'\b(?:free|delete(?:\s*\[\])?)\s*\(?\s*(\w+)', stripped)
         if free_match:
             var = free_match.group(1)
-            # FP reduction: Skip if in good context
-            if not is_good_context and var in freed_vars:
+            # Semantic check: has this variable been freed before without reassignment?
+            if var in freed_vars:
                 # FP reduction: Check if variable was reassigned between frees
                 prev_free_line = freed_vars[var]
                 was_reassigned = False
@@ -3068,6 +3375,27 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     location=loc,
                     var_name=var,
                     description=f"Free of stack memory - '{var}' was allocated with alloca at line {stack_allocated_vars[var]}",
+                    confidence=0.95,
+                ))
+
+        # =====================================================================
+        # CWE-562: Return of Stack Variable Address
+        # =====================================================================
+        # Detects returning address of local stack-allocated arrays/variables.
+        # Pattern: return localVar; where localVar is a local array
+
+        return_match = re.search(r'\breturn\s+(\w+)\s*;', stripped)
+        if return_match:
+            returned_var = return_match.group(1)
+            # Check if this variable is a local array (declared in this function)
+            if returned_var in local_arrays:
+                decl_line = local_arrays[returned_var]
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.USE_AFTER_FREE,  # Using dangling pointer
+                    cwe_id="CWE-562",
+                    location=loc,
+                    var_name=returned_var,
+                    description=f"Return of stack variable address - '{returned_var}' is a local array declared at line {decl_line}",
                     confidence=0.95,
                 ))
 
@@ -3298,13 +3626,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # =====================================================================
         # CWE-476: NULL Pointer Dereference (enhanced)
         # =====================================================================
-        # Check for dereference of NULL-assigned variable
+        # Semantic check: dereference of NULL-assigned variable without reassignment
         for var, null_line in null_assigned_vars.items():
             if line_num > null_line:
-                # FP reduction: Skip if in good context
-                if is_good_context:
-                    continue
-                # Check for dereference without NULL check
+                # Semantic check: was variable checked for NULL or reassigned?
                 if var not in null_checked_vars:
                     # FP reduction: Check if variable was reassigned between null assign and here
                     was_reassigned = False
@@ -3330,16 +3655,16 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                         ))
 
         # =====================================================================
-        # CWE-401: Memory Leak tracking
+        # CWE-401: Memory Leak tracking - Semantic analysis
         # =====================================================================
-        if re.search(r'\breturn\b', stripped) and allocated_vars and not is_good_context:
+        # Check for return statements where allocated memory might not be freed
+        if re.search(r'\breturn\b', stripped) and allocated_vars:
             for var, alloc_line in allocated_vars.items():
                 if var not in freed_vars:
-                    # FP reduction: Check if the variable is being returned (transferred ownership)
+                    # Semantic check: Is the variable being returned (ownership transferred)?
                     if re.search(rf'\breturn\s+{re.escape(var)}\b', stripped):
                         continue
-                    # FP reduction: Check if variable is assigned to an output parameter or global
-                    # by looking at previous lines
+                    # Semantic check: Was variable assigned to output param, member, or global?
                     was_transferred = False
                     for check_line in lines[max(0, alloc_line):line_num]:
                         # Output param assignment: *out_param = var
@@ -3356,9 +3681,7 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                             break
                     if was_transferred:
                         continue
-                    # FP reduction: Skip in good context
-                    if is_good_context:
-                        continue
+                    # Semantic check: Only flag if allocation was recent (within same block)
                     if line_num - alloc_line < 50:
                         vulns.append(MemoryVuln(
                             vuln_type=VulnType.MEMORY_LEAK,
@@ -3370,13 +3693,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                         ))
 
         # =====================================================================
-        # CWE-457: Use of Uninitialized Variable
+        # CWE-457: Use of Uninitialized Variable - Semantic tracking
         # =====================================================================
         # Track variable declarations without initialization
         # Patterns: int x; | char *ptr; | int arr[10]; | float val;
-
-        # FP reduction: Use the is_good_context computed at the start of the loop
-        # (no need to redefine it here - it's already set correctly)
 
         # Scalar/pointer declaration without initialization
         decl_match = re.match(
@@ -3387,7 +3707,7 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             r'\s*(\*+)?\s*(\w+)\s*;',
             stripped
         )
-        if decl_match and not is_good_context:
+        if decl_match:
             var_type = decl_match.group(1)
             is_pointer = decl_match.group(2) is not None
             var_name = decl_match.group(3)
@@ -3419,12 +3739,23 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         assign_match = re.search(r'(?<!\*)\b(\w+)\s*=\s*[^=]', stripped)
         if assign_match:
             var_name = assign_match.group(1)
-            # Also exclude array element assignments like arr[i] = x
+            # Array element assignments like arr[i] = x (the array name is being used)
             is_array_access = re.search(rf'\b{re.escape(var_name)}\s*\[', stripped)
             if var_name in declared_vars and var_name not in initialized_vars and not is_array_access:
                 initialized_vars.add(var_name)
                 if verbose:
                     print(f"[CWE-457] Initialized var '{var_name}' at line {line_num}")
+
+        # Track array element assignments: arr[0] = x; arr[i] = y;
+        # When any element is assigned, consider the array as being initialized
+        # This is conservative but reduces FPs for element-by-element initialization
+        array_elem_match = re.search(r'\b(\w+)\s*\[\s*\w*\s*\]\s*=\s*[^=]', stripped)
+        if array_elem_match:
+            arr_name = array_elem_match.group(1)
+            if arr_name in declared_vars and arr_name not in initialized_vars:
+                initialized_vars.add(arr_name)
+                if verbose:
+                    print(f"[CWE-457] Array '{arr_name}' initialized via element assignment at line {line_num}")
 
         # Also track initialization in declarations: int x = 5;
         init_decl_match = re.match(
@@ -3456,6 +3787,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             var_name = memset_match.group(1)
             initialized_vars.add(var_name)
 
+        # Input functions that write to their first argument (fgets, gets, read, recv, fread)
+        input_write_match = re.search(r'(?:fgets|gets|gets_s|fread|read|recv|recvfrom|recvmsg|ReadFile|ReadConsole)\s*\(\s*(\w+)', stripped)
+        if input_write_match:
+            var_name = input_write_match.group(1)
+            initialized_vars.add(var_name)
+
         # Detect use of uninitialized variable
         for var_name, (decl_line, var_type) in list(declared_vars.items()):
             if var_name in initialized_vars:
@@ -3463,23 +3800,21 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             if line_num <= decl_line:
                 continue
 
-            # FP reduction: Skip if this line is in a "good" context
-            if is_good_context:
-                continue
-
-            # FP reduction: Check if variable was assigned between declaration and use
+            # Semantic check: Was variable assigned between declaration and use?
             # by looking at all lines in between
             was_assigned = False
             for check_line in lines[decl_line:line_num-1]:
                 if re.search(rf'\b{re.escape(var_name)}\s*=\s*[^=]', check_line):
                     was_assigned = True
                     break
-                # Also check for scanf(&var), which initializes the variable
-                if re.search(rf'scanf\s*\([^)]*&\s*{re.escape(var_name)}\b', check_line):
+                # Check for output parameter pattern: &var in function argument
+                # This handles scanf, LogonUser, and other functions that write to output params
+                # Use simple pattern since func call may span multiple lines
+                if re.search(rf'&\s*{re.escape(var_name)}\b', check_line):
                     was_assigned = True
                     break
-                # memset/memcpy to the variable
-                if re.search(rf'(?:memset|memcpy|bzero)\s*\([^)]*{re.escape(var_name)}', check_line):
+                # memset/memcpy/input functions to the variable
+                if re.search(rf'(?:memset|memcpy|memmove|bzero|ZeroMemory|SecureZeroMemory|fgets|gets|gets_s|fread|read|recv|recvfrom|recvmsg|ReadFile|ReadConsole)\s*\([^)]*{re.escape(var_name)}', check_line):
                     was_assigned = True
                     break
             if was_assigned:
@@ -3492,6 +3827,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             # Check for use before initialization
             # Pattern 1: Direct use as rvalue: y = x; or return x;
             rvalue_use = re.search(rf'(?:=\s*|return\s+|\(\s*)(?:\([^)]*\)\s*)?{re.escape(var_name)}\s*[;,)\]]', stripped)
+            # Exclude C++ reference declarations: Type &ref = var; (binding a reference, not reading value)
+            if rvalue_use and re.search(rf'&\s*\w+\s*=\s*{re.escape(var_name)}', stripped):
+                rvalue_use = None
+            # Also exclude sizeof(var) which doesn't use the value
+            if rvalue_use and re.search(rf'sizeof\s*\([^)]*{re.escape(var_name)}', stripped):
+                rvalue_use = None
 
             # Pattern 2: Pointer dereference: *ptr or ptr->field
             deref_use = is_pointer and (
@@ -3503,19 +3844,23 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             array_use = is_array and re.search(rf'\b{re.escape(var_name)}\s*\[', stripped)
 
             # Pattern 4: Passing to function (not as output parameter with &)
-            func_arg_use = re.search(rf'\w+\s*\([^)]*\b{re.escape(var_name)}\b[^&]', stripped)
+            # First, strip string literals to avoid matching variable names inside strings
+            # e.g., printLine("Enter the password: ") should NOT match 'password'
+            stripped_no_strings = re.sub(r'"[^"]*"', '""', stripped)
+            stripped_no_strings = re.sub(r"'[^']*'", "''", stripped_no_strings)
+            func_arg_use = re.search(rf'\w+\s*\([^)]*\b{re.escape(var_name)}\b[^&]', stripped_no_strings)
             # Exclude cases where variable is being assigned: func(&var)
-            if func_arg_use and re.search(rf'&\s*{re.escape(var_name)}\b', stripped):
+            if func_arg_use and re.search(rf'&\s*{re.escape(var_name)}\b', stripped_no_strings):
                 func_arg_use = None
             # Also exclude sizeof(var) which doesn't use the value
-            if func_arg_use and re.search(rf'sizeof\s*\([^)]*{re.escape(var_name)}', stripped):
+            if func_arg_use and re.search(rf'sizeof\s*\([^)]*{re.escape(var_name)}', stripped_no_strings):
                 func_arg_use = None
 
             # Pattern 5: Arithmetic use: x + 1, x * 2, etc.
             arith_use = re.search(rf'\b{re.escape(var_name)}\s*[+\-*/%]', stripped) or \
                         re.search(rf'[+\-*/%]\s*{re.escape(var_name)}\b', stripped)
 
-            if (rvalue_use or deref_use or array_use or func_arg_use or arith_use) and not is_good_context:
+            if rvalue_use or deref_use or array_use or func_arg_use or arith_use:
                 # Determine the specific vulnerability type
                 if deref_use:
                     description = f"Dereference of uninitialized pointer '{var_name}' declared at line {decl_line}"
@@ -3678,6 +4023,59 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     var_name="tempfile",
                     description="Insecure temp file - GetTempFileName result should be opened immediately",
                     confidence=0.75,
+                ))
+
+        # =====================================================================
+        # CWE-242/676: Use of Inherently Dangerous Function
+        # =====================================================================
+        # Note: gets() detection is already handled in sl_semantic_analyzer.py
+        # to avoid duplicate detections
+
+        # Pattern: Other potentially dangerous functions
+        # DISABLED: Too many false positives - requires proper buffer size tracking
+        # dangerous_funcs = {
+        #     'sprintf': 'CWE-676',
+        #     'vsprintf': 'CWE-676',
+        #     'strcat': 'CWE-676',
+        #     'strcpy': 'CWE-676',
+        #     'wcscpy': 'CWE-676',
+        #     'wcscat': 'CWE-676',
+        #     '_mbscpy': 'CWE-676',
+        #     '_mbscat': 'CWE-676',
+        # }
+        # for func, cwe in dangerous_funcs.items():
+        #     if re.search(rf'\b{func}\s*\(', stripped):
+        #         ...  # Too aggressive without proper size tracking
+
+        # =====================================================================
+        # CWE-484: Omitted Break Statement in Switch
+        # =====================================================================
+        # Track switch/case structure for missing break detection
+        if re.search(r'\bcase\s+\d+\s*:', stripped) or re.search(r'\bcase\s+\'.\'\s*:', stripped):
+            # Check if previous case (looking back) had a break/return/continue
+            # Look at the lines between current case and previous case
+            found_prev_case = False
+            found_break = False
+            for back_idx in range(line_num - 2, max(0, line_num - 20), -1):
+                if back_idx < len(lines):
+                    back_line = lines[back_idx].strip()
+                    if re.search(r'\bcase\s+|default\s*:', back_line):
+                        found_prev_case = True
+                        break
+                    if re.search(r'\b(?:break|return|continue|exit|goto)\s*[;(]', back_line):
+                        found_break = True
+                        break
+                    # Skip empty lines and comments
+                    if not back_line or back_line.startswith('//') or back_line.startswith('/*'):
+                        continue
+            if found_prev_case and not found_break:
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUSINESS_LOGIC_FLAW,
+                    cwe_id="CWE-484",
+                    location=loc,
+                    var_name="switch",
+                    description="Omitted break statement - case falls through to next case",
+                    confidence=0.85,
                 ))
 
         # =====================================================================
@@ -3864,6 +4262,77 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             ))
 
         # =====================================================================
+        # CWE-587: Assignment of Fixed Address to Pointer
+        # =====================================================================
+        # Pattern: Casting a hex constant to a pointer type
+        # e.g., char *charPointer = (char*)0x400000;
+        fixed_addr_match = re.search(
+            r'(?:char|int|void|short|long|wchar_t|BYTE|WORD|DWORD)\s*\*\s*\w*\s*=\s*\([^)]*\*\)\s*0[xX][0-9a-fA-F]+',
+            stripped
+        )
+        if fixed_addr_match:
+            vulns.append(MemoryVuln(
+                vuln_type=VulnType.BUFFER_OVERFLOW,  # Memory access issue
+                cwe_id="CWE-587",
+                location=loc,
+                var_name="pointer",
+                description="Assignment of fixed address to pointer - may access invalid memory",
+                confidence=0.95,
+            ))
+
+        # Also check for direct cast assignment without declaration
+        # e.g., ptr = (char*)0x400000;
+        if re.search(r'\w+\s*=\s*\([^)]*\*\)\s*0[xX][0-9a-fA-F]+', stripped):
+            if 'CWE-587' not in [v.cwe_id for v in vulns if v.location.line == line_num]:
+                vulns.append(MemoryVuln(
+                    vuln_type=VulnType.BUFFER_OVERFLOW,
+                    cwe_id="CWE-587",
+                    location=loc,
+                    var_name="pointer",
+                    description="Assignment of fixed address to pointer - may access invalid memory",
+                    confidence=0.95,
+                ))
+
+        # =====================================================================
+        # CWE-526: Exposure of Sensitive Information Through Environment Variables
+        # =====================================================================
+        # Pattern: printLine(getenv("...")); or printf(..., getenv(...))
+        if re.search(r'\bprintLine\s*\(\s*getenv\s*\(', stripped) or \
+           re.search(r'\bprintf\s*\([^)]*getenv\s*\(', stripped) or \
+           re.search(r'\bfprintf\s*\([^,]+,[^)]*getenv\s*\(', stripped) or \
+           re.search(r'\bputs\s*\(\s*getenv\s*\(', stripped):
+            vulns.append(MemoryVuln(
+                vuln_type=VulnType.SENSITIVE_DATA_EXPOSURE,
+                cwe_id="CWE-526",
+                location=loc,
+                var_name="environment",
+                description="Information exposure - environment variable printed to output",
+                confidence=0.9,
+            ))
+
+        # =====================================================================
+        # CWE-467: Use of sizeof() on Pointer Type
+        # =====================================================================
+        # Pattern: sizeof(pointer) when buffer size was intended
+        # This is commonly misused like: memcpy(dest, src, sizeof(dest)) where dest is a pointer
+        sizeof_ptr_match = re.search(r'\bsizeof\s*\(\s*(\w+)\s*\)', stripped)
+        if sizeof_ptr_match:
+            var_in_sizeof = sizeof_ptr_match.group(1)
+            # Check if this variable is a pointer (was declared as pointer)
+            if var_in_sizeof in declared_vars:
+                _, var_type = declared_vars[var_in_sizeof]
+                if '*' in var_type:
+                    # sizeof on a pointer - likely wrong
+                    vulns.append(MemoryVuln(
+                        vuln_type=VulnType.BUFFER_OVERFLOW,
+                        cwe_id="CWE-467",
+                        location=loc,
+                        var_name=var_in_sizeof,
+                        description=f"sizeof() on pointer - '{var_in_sizeof}' is a pointer, sizeof returns pointer size not buffer size",
+                        confidence=0.85,
+                    ))
+
+        # =====================================================================
         # CWE-591: Sensitive Data in Improperly Locked Memory
         # =====================================================================
         # DISABLED: Too many false positives - requires whole-program analysis
@@ -4024,712 +4493,3 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     return list(seen_cwes.values())
 
 
-def _detect_juliet_cwes_OLD(source: str, filename: str, verbose: bool = False) -> List[MemoryVuln]:
-    """
-    DEPRECATED: This function used filename hints for detection.
-    Kept for reference but not used.
-    """
-    vulns = []
-    return vulns
-
-
-def _detect_juliet_cwes(source: str, filename: str, verbose: bool = False) -> List[MemoryVuln]:
-    """
-    Detect CWEs specifically for Juliet benchmark files.
-
-    This function uses the CWE ID from the filename to guide detection,
-    ensuring high precision by only detecting the expected CWE type.
-    """
-    vulns = []
-
-    # Extract CWE ID from filename (e.g., CWE259_Hard_Coded_Password__...bad.cpp -> 259)
-    cwe_match = re.search(r'CWE(\d+)', filename)
-    if not cwe_match:
-        return vulns
-
-    cwe_num = int(cwe_match.group(1))
-    lines = source.split('\n')
-
-    # CWE-259/256/321: Hardcoded secrets or plaintext password storage
-    if cwe_num in (259, 256, 321):
-        for line_num, line in enumerate(lines, 1):
-            # Look for HARDCODED pattern (Juliet uses this marker)
-            if 'HARDCODED' in line.upper() or 'hardcoded' in line.lower():
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="password",
-                    description="Hardcoded credential detected",
-                    confidence=0.9,
-                ))
-                break
-            # POTENTIAL FLAW pattern for plaintext storage (CWE-256)
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="password",
-                    description="Password handling vulnerability",
-                    confidence=0.9,
-                ))
-                break
-            # Also look for password assignments with string literals
-            if re.search(r'password\s*=\s*["\'][^"\']+["\']', line, re.IGNORECASE):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="password",
-                    description="Hardcoded password detected",
-                    confidence=0.9,
-                ))
-                break
-
-    # CWE-134: Format string - handled by main taint analysis, only add if POTENTIAL FLAW found
-    # and no other detection occurred (to avoid duplicates)
-    elif cwe_num == 134:
-        # Skip - CWE-134 is already detected by main taint analysis
-        # Only detect via Juliet patterns if the main analysis misses it
-        pass
-
-    # CWE-121/122/123/124/126/127: Buffer overflows
-    elif cwe_num in (121, 122, 123, 124, 126, 127):
-        for line_num, line in enumerate(lines, 1):
-            # POTENTIAL FLAW comment is Juliet's marker
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="buffer",
-                    description="Buffer overflow vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-190/191/680: Integer overflow
-    elif cwe_num in (190, 191, 680):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INTEGER_OVERFLOW,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="int",
-                    description="Integer overflow vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-476: NULL pointer dereference
-    elif cwe_num == 476:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.NULL_DEREFERENCE,
-                    cwe_id="CWE-476",
-                    location=Location(filename, line_num, 0),
-                    var_name="ptr",
-                    description="NULL pointer dereference",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-401: Memory leak
-    elif cwe_num == 401:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.MEMORY_LEAK,
-                    cwe_id="CWE-401",
-                    location=Location(filename, line_num, 0),
-                    var_name="mem",
-                    description="Memory leak - allocated memory not freed",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-369: Divide by zero
-    elif cwe_num == 369:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.DIVIDE_BY_ZERO,
-                    cwe_id="CWE-369",
-                    location=Location(filename, line_num, 0),
-                    var_name="divisor",
-                    description="Potential divide by zero",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-400: Resource exhaustion
-    elif cwe_num == 400:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.RESOURCE_EXHAUSTION,
-                    cwe_id="CWE-400",
-                    location=Location(filename, line_num, 0),
-                    var_name="resource",
-                    description="Resource exhaustion vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-404: Improper resource shutdown
-    elif cwe_num == 404:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.RESOURCE_EXHAUSTION,
-                    cwe_id="CWE-404",
-                    location=Location(filename, line_num, 0),
-                    var_name="resource",
-                    description="Improper resource shutdown",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-114: Process control
-    elif cwe_num == 114:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line or 'LoadLibrary' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.COMMAND_INJECTION,
-                    cwe_id="CWE-114",
-                    location=Location(filename, line_num, 0),
-                    var_name="library",
-                    description="Process control vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-319: Cleartext transmission
-    elif cwe_num == 319:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line or 'send(' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.SENSITIVE_DATA_EXPOSURE,
-                    cwe_id="CWE-319",
-                    location=Location(filename, line_num, 0),
-                    var_name="data",
-                    description="Cleartext transmission of sensitive data",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-23/36: Path traversal
-    elif cwe_num in (23, 36):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.PATH_TRAVERSAL,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="path",
-                    description="Path traversal vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-426/427: Untrusted search path
-    elif cwe_num in (426, 427):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.PATH_TRAVERSAL,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="path",
-                    description="Untrusted search path vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-176: Unicode encoding issues
-    elif cwe_num == 176:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.PATH_TRAVERSAL,
-                    cwe_id="CWE-176",
-                    location=Location(filename, line_num, 0),
-                    var_name="unicode",
-                    description="Improper handling of Unicode encoding",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-15: External control of system settings
-    elif cwe_num == 15:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.COMMAND_INJECTION,
-                    cwe_id="CWE-15",
-                    location=Location(filename, line_num, 0),
-                    var_name="setting",
-                    description="External control of system settings",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-194/195/196/197: Numeric conversion issues
-    elif cwe_num in (194, 195, 196, 197):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INTEGER_OVERFLOW,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="value",
-                    description="Numeric conversion vulnerability",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-457/665: Uninitialized variable
-    elif cwe_num in (457, 665):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.UNINITIALIZED_VAR,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="var",
-                    description="Use of uninitialized variable",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-563: Unused variable
-    elif cwe_num == 563:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.UNUSED_VAR,
-                    cwe_id="CWE-563",
-                    location=Location(filename, line_num, 0),
-                    var_name="var",
-                    description="Assignment to variable without use",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-415: Double free - handled by main analysis
-    elif cwe_num == 415:
-        # Skip - CWE-415 is already detected by interprocedural analyzer
-        pass
-
-    # CWE-416: Use after free - handled by main analysis
-    elif cwe_num == 416:
-        # Skip - CWE-416 is already detected by interprocedural analyzer
-        pass
-
-    # CWE-590/591: Free issues
-    elif cwe_num in (590, 591):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="ptr",
-                    description="Free of invalid pointer",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-606: Unchecked loop condition
-    elif cwe_num == 606:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.RESOURCE_EXHAUSTION,
-                    cwe_id="CWE-606",
-                    location=Location(filename, line_num, 0),
-                    var_name="loop",
-                    description="Unchecked loop condition from user input",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-617: Reachable assertion
-    elif cwe_num == 617:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line or 'assert(' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.ASSERTION_FAILURE,
-                    cwe_id="CWE-617",
-                    location=Location(filename, line_num, 0),
-                    var_name="assert",
-                    description="Reachable assertion failure",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-672: Operation after resource release
-    elif cwe_num == 672:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.USE_AFTER_FREE,
-                    cwe_id="CWE-672",
-                    location=Location(filename, line_num, 0),
-                    var_name="resource",
-                    description="Operation on resource after release",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-675: Duplicate operations on resource
-    elif cwe_num == 675:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id="CWE-675",
-                    location=Location(filename, line_num, 0),
-                    var_name="resource",
-                    description="Duplicate operations on resource",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-681: Incorrect conversion between numeric types
-    elif cwe_num == 681:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INTEGER_OVERFLOW,
-                    cwe_id="CWE-681",
-                    location=Location(filename, line_num, 0),
-                    var_name="value",
-                    description="Incorrect numeric type conversion",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-685/688: Function call issues
-    elif cwe_num in (685, 688):
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id=f"CWE-{cwe_num}",
-                    location=Location(filename, line_num, 0),
-                    var_name="func",
-                    description="Function call with incorrect arguments",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-588: Attempt to access child of a non-structure pointer
-    elif cwe_num == 588:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.NULL_DEREFERENCE,
-                    cwe_id="CWE-588",
-                    location=Location(filename, line_num, 0),
-                    var_name="ptr",
-                    description="Access to child of non-structure pointer",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-464: Addition of data structure sentinel
-    elif cwe_num == 464:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-464",
-                    location=Location(filename, line_num, 0),
-                    var_name="sentinel",
-                    description="Missing data structure sentinel",
-                    confidence=0.85,
-                ))
-                break
-
-    # CWE-500: Public static field not final
-    elif cwe_num == 500:
-        for line_num, line in enumerate(lines, 1):
-            if 'POTENTIAL FLAW' in line:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.SECRET_EXPOSURE,
-                    cwe_id="CWE-500",
-                    location=Location(filename, line_num, 0),
-                    var_name="field",
-                    description="Public static field not marked final",
-                    confidence=0.85,
-                ))
-                break
-
-    return vulns
-
-
-def _detect_additional_cwes(source: str, filename: str, verbose: bool = False) -> List[MemoryVuln]:
-    """
-    Detect additional CWE types beyond double-free and UAF.
-
-    This covers:
-    - CWE-121/122/123/124/126/127: Buffer overflows
-    - CWE-190/191/680: Integer overflows
-    - CWE-256/259/321: Hardcoded secrets
-    - CWE-369: Divide by zero
-    - CWE-400: Resource exhaustion
-    - CWE-401: Memory leak
-    - CWE-457/665: Uninitialized variables
-    - CWE-476: NULL pointer dereference
-    - CWE-563: Unused variable
-    - CWE-590: Free of non-heap memory
-    - CWE-606: Unchecked loop condition
-    - CWE-617: Reachable assertion
-    - CWE-672: Operation after resource release
-    """
-    vulns = []
-    lines = source.split('\n')
-
-    # Track state
-    allocated_vars = set()  # Variables that have been allocated
-    freed_vars = set()      # Variables that have been freed
-    null_checked_vars = set()  # Variables that have been NULL-checked
-    initialized_vars = set()   # Variables that have been initialized
-
-    for line_num, line in enumerate(lines, 1):
-        stripped = line.strip()
-        loc = Location(filename, line_num, 0)
-
-        # Skip comments
-        if stripped.startswith('//') or stripped.startswith('/*'):
-            continue
-
-        # =====================================================================
-        # CWE-476: NULL Pointer Dereference
-        # =====================================================================
-        # Pattern: dereferencing without NULL check
-        deref_match = re.search(r'\*\s*(\w+)', stripped)
-        if deref_match:
-            var = deref_match.group(1)
-            # Check if this is after malloc without NULL check
-            if var in allocated_vars and var not in null_checked_vars:
-                # Look backwards to see if there's a NULL check
-                has_null_check = False
-                for prev_line in lines[max(0, line_num-5):line_num-1]:
-                    if re.search(rf'{var}\s*[!=]=\s*NULL|{var}\s*[!=]=\s*nullptr|!\s*{var}|{var}\s*==\s*0', prev_line):
-                        has_null_check = True
-                        break
-                if not has_null_check:
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.NULL_DEREFERENCE,
-                        cwe_id="CWE-476",
-                        location=loc,
-                        var_name=var,
-                        description=f"Potential NULL pointer dereference: '{var}' may be NULL",
-                        confidence=0.7,
-                    ))
-
-        # =====================================================================
-        # CWE-369: Divide by Zero
-        # =====================================================================
-        div_match = re.search(r'[/\\%]\s*(\w+)', stripped)
-        if div_match and not stripped.startswith('//'):
-            divisor = div_match.group(1)
-            # Check if divisor could be zero (not validated)
-            if not re.search(rf'{divisor}\s*[!=]=\s*0|{divisor}\s*>\s*0', ''.join(lines[max(0, line_num-5):line_num])):
-                # Don't flag if divisor is a constant or obviously non-zero
-                if not re.match(r'^[1-9]\d*$', divisor):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.DIVIDE_BY_ZERO,
-                        cwe_id="CWE-369",
-                        location=loc,
-                        var_name=divisor,
-                        description=f"Potential divide by zero: divisor '{divisor}' not checked",
-                        confidence=0.6,
-                    ))
-
-        # =====================================================================
-        # CWE-190/191: Integer Overflow/Underflow
-        # =====================================================================
-        # Pattern: arithmetic without bounds checking
-        int_overflow_patterns = [
-            (r'(\w+)\s*\+\s*(\w+)', "addition"),
-            (r'(\w+)\s*\*\s*(\w+)', "multiplication"),
-            (r'(\w+)\s*-\s*(\w+)', "subtraction"),
-        ]
-        for pattern, op_type in int_overflow_patterns:
-            match = re.search(pattern, stripped)
-            if match and 'sizeof' not in stripped and '==' not in stripped:
-                # Check if result is used in memory allocation or array index
-                if re.search(r'malloc|new|alloc|\[', stripped):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.INTEGER_OVERFLOW,
-                        cwe_id="CWE-190" if op_type != "subtraction" else "CWE-191",
-                        location=loc,
-                        var_name=match.group(1),
-                        description=f"Potential integer overflow in {op_type} used for allocation/indexing",
-                        confidence=0.65,
-                    ))
-                    break
-
-        # =====================================================================
-        # CWE-122/126/127: Buffer Overflow
-        # =====================================================================
-        # Pattern: unsafe string/memory operations
-        unsafe_funcs = [
-            ('strcpy', 'CWE-122', 'Unbounded strcpy'),
-            ('strcat', 'CWE-122', 'Unbounded strcat'),
-            ('sprintf', 'CWE-122', 'Unbounded sprintf'),
-            ('gets', 'CWE-122', 'Unbounded gets'),
-            ('memcpy', 'CWE-122', 'memcpy without bounds check'),
-            ('memmove', 'CWE-122', 'memmove without bounds check'),
-        ]
-        for func, cwe, desc in unsafe_funcs:
-            if re.search(rf'\b{func}\s*\(', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id=cwe,
-                    location=loc,
-                    var_name=func,
-                    description=f"{desc} - potential buffer overflow",
-                    confidence=0.75,
-                ))
-
-        # Array access without bounds check
-        array_access = re.search(r'(\w+)\s*\[\s*(\w+)\s*\]', stripped)
-        if array_access and '==' not in stripped and 'for' not in stripped:
-            arr_name = array_access.group(1)
-            index_var = array_access.group(2)
-            # Check if index is validated
-            if not re.search(rf'{index_var}\s*<|{index_var}\s*>=', ''.join(lines[max(0, line_num-3):line_num])):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-126",
-                    location=loc,
-                    var_name=arr_name,
-                    description=f"Array access '{arr_name}[{index_var}]' without bounds check",
-                    confidence=0.5,
-                ))
-
-        # =====================================================================
-        # CWE-256/259/321: Hardcoded Secrets
-        # =====================================================================
-        # Pattern: hardcoded passwords, keys, secrets
-        secret_patterns = [
-            (r'password\s*=\s*["\'][^"\']+["\']', 'CWE-259', 'Hardcoded password'),
-            (r'passwd\s*=\s*["\'][^"\']+["\']', 'CWE-259', 'Hardcoded password'),
-            (r'pwd\s*=\s*["\'][^"\']+["\']', 'CWE-259', 'Hardcoded password'),
-            (r'key\s*=\s*["\'][^"\']+["\']', 'CWE-321', 'Hardcoded cryptographic key'),
-            (r'secret\s*=\s*["\'][^"\']+["\']', 'CWE-798', 'Hardcoded secret'),
-            (r'api_key\s*=\s*["\'][^"\']+["\']', 'CWE-798', 'Hardcoded API key'),
-            (r'HARDCODED', 'CWE-259', 'Hardcoded credential'),
-            # CWE-321: Additional crypto key patterns
-            (r'\bAES_set_(?:encrypt|decrypt)_key\s*\(', 'CWE-321', 'Hard-coded key in AES key setup'),
-            (r'\bDES_(?:key_sched|set_key)\s*\(', 'CWE-321', 'Hard-coded key in DES key schedule'),
-            (r'\bEVP_(?:Encrypt|Decrypt)Init(?:_ex)?\s*\(', 'CWE-321', 'Hard-coded key in EVP encryption'),
-            (r'\b(?:BF_set_key|RC4_set_key|RC2_set_key|CAST_set_key)\s*\(', 'CWE-321', 'Hard-coded cipher key'),
-            (r'(?:crypto|encryption|cipher|aes|des|hmac|signing)[\w]*[Kk]ey\s*=\s*["\'][^"\']+["\']', 'CWE-321', 'Hard-coded cryptographic key'),
-            (r'#\s*define\s+(?:CRYPTO_KEY|AES_KEY|DES_KEY|ENCRYPTION_KEY|CIPHER_KEY|SECRET_KEY)\s+["\'{]', 'CWE-321', 'Hard-coded key constant'),
-        ]
-        for pattern, cwe, desc in secret_patterns:
-            if re.search(pattern, stripped, re.IGNORECASE):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id=cwe,
-                    location=loc,
-                    var_name="credential",
-                    description=desc,
-                    confidence=0.8,
-                ))
-                break
-
-        # =====================================================================
-        # CWE-401: Memory Leak (track allocations)
-        # =====================================================================
-        alloc_match = re.search(r'(\w+)\s*=\s*(?:malloc|new|calloc|realloc)\s*\(', stripped)
-        if alloc_match:
-            var = alloc_match.group(1)
-            allocated_vars.add(var)
-
-        # Track frees
-        free_match = re.search(r'(?:free|delete)\s*\(?\s*(\w+)', stripped)
-        if free_match:
-            var = free_match.group(1)
-            freed_vars.add(var)
-
-        # Track NULL checks
-        null_check = re.search(r'(\w+)\s*[!=]=\s*(?:NULL|nullptr|0)', stripped)
-        if null_check:
-            null_checked_vars.add(null_check.group(1))
-
-        # =====================================================================
-        # CWE-457/665: Uninitialized Variable
-        # =====================================================================
-        # DISABLED: This pattern has too many false positives
-        # The main _detect_semantic_cwes function handles this more accurately
-        # Pattern: variable declared but used before initialization
-        # decl_match = re.search(r'^\s*(?:int|char|float|double|long|short|unsigned|void)\s*\*?\s*(\w+)\s*;', stripped)
-        # if decl_match:
-        #     var = decl_match.group(1)
-        #     if var not in initialized_vars:
-        #         # Check if used before assignment in next few lines
-        #         for future_line in lines[line_num:min(line_num+5, len(lines))]:
-        #             if re.search(rf'{var}\s*=', future_line):
-        #                 initialized_vars.add(var)
-        #                 break
-        #             if re.search(rf'[^=]\s*{var}[^\s=]', future_line) and '=' not in future_line.split(var)[0]:
-        #                 vulns.append(MemoryVuln(
-        #                     vuln_type=VulnType.UNINITIALIZED_VAR,
-        #                     cwe_id="CWE-457",
-        #                     location=loc,
-        #                     var_name=var,
-        #                     description=f"Variable '{var}' may be used uninitialized",
-        #                     confidence=0.6,
-        #                 ))
-        #                 break
-
-        # =====================================================================
-        # CWE-617: Reachable Assertion
-        # =====================================================================
-        if re.search(r'\bassert\s*\(\s*(?:0|false|FALSE)\s*\)', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.ASSERTION_FAILURE,
-                cwe_id="CWE-617",
-                location=loc,
-                var_name="assert",
-                description="Reachable assertion that always fails",
-                confidence=0.9,
-            ))
-
-        # =====================================================================
-        # CWE-590: Free of Non-Heap Memory
-        # =====================================================================
-        # Pattern: free of stack variable or static
-        if re.search(r'free\s*\(&', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.DOUBLE_FREE,  # Closest type
-                cwe_id="CWE-590",
-                location=loc,
-                var_name="stack_var",
-                description="Free of non-heap memory (address-of operator)",
-                confidence=0.85,
-            ))
-
-    # Check for memory leaks at end (allocated but not freed)
-    for var in allocated_vars - freed_vars:
-        # Only report if function appears to return/exit without freeing
-        if any(re.search(r'\breturn\b|\bexit\b', line) for line in lines):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.MEMORY_LEAK,
-                cwe_id="CWE-401",
-                location=Location(filename, 1, 0),
-                var_name=var,
-                description=f"Memory leak: '{var}' allocated but not freed",
-                confidence=0.5,
-            ))
-
-    return vulns

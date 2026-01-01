@@ -71,22 +71,66 @@ python -m benchmarks run --division secbench_js
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
-**NIST Juliet C/C++ Benchmark** (200 curated files, 63 vulnerabilities):
+**NIST Juliet C/C++ Benchmark** (1000 tests, 952 expected vulnerabilities):
 
-| Metric | Frame |
-|--------|-------|
-| **True Positives** | 52 |
-| **False Positives** | 11 |
-| **Precision** | **82.5%** |
-| **Recall** | **82.5%** |
-| **F1 Score** | **82.5%** |
-| **OWASP Score** | **65.0%** |
+| Metric | Frame (Overall) | C Only | C++ Only |
+|--------|-----------------|--------|----------|
+| **True Positives** | 576 | 456 | 120 |
+| **False Positives** | 65 | 17 | 48 |
+| **Precision** | **89.9%** | **96.4%** | 71.4% |
+| **Recall** | **60.5%** | **62.6%** | 53.6% |
+| **F1 Score** | **72.3%** | **75.9%** | 61.2% |
+| **OWASP Score** | **54.4%** | **60.4%** | 38.6% |
 
-Frame's C/C++ analyzer uses **semantic code analysis** (not filename hints or comment markers) to detect:
+*Note: C++ has lower coverage due to complex template patterns and additional FPs from pattern matching.*
+
+**Detected CWEs:** CWE-114 (Process Control), CWE-121/122 (Buffer Overflow), CWE-124/127 (Buffer Underwrite/Underread), CWE-134 (Format String), CWE-190 (Integer Overflow), CWE-252 (Unchecked Return), CWE-321 (Hard-coded Crypto), CWE-369 (Divide by Zero), CWE-401 (Memory Leak), CWE-415 (Double Free), CWE-416 (Use After Free), CWE-457 (Uninitialized Variable), CWE-476 (NULL Pointer Dereference), CWE-480 (Incorrect Operator), CWE-78 (OS Command Injection), CWE-79 (XSS)
+
+**Analysis architecture:**
+
+1. **Path-Sensitive Memory Safety** (`frame/sil/analyzers/path_sensitive_analyzer.py`):
+   - Uses separation logic to track heap state along control flow paths
+   - Handles NULL checks in conditionals to avoid FPs in "good" code paths
+   - Supports both C (malloc/free) and C++ (new/delete) memory operations
+   - Formally verifies memory safety: `current_heap |- ptr |-> _` (pointer validity)
+
+2. **Separation Logic Semantic Analysis** (`frame/sil/analyzers/sl_semantic_analyzer.py`):
+   - Models heap regions as SL formulas: `ptr |-> (val, size)`
+   - Tracks allocation/deallocation with formal state transitions
+   - Detects double-free via entailment: `emp ⊬ ptr |-> _`
+
+3. **Multi-File Chain Analysis** (`frame/sil/analyzers/multifile_chain_analyzer.py`):
+   - Discovers Juliet test patterns (_51a/_51b, _54a-e chains)
+   - Tracks taint flow across file boundaries
+   - Matches sources in first file to sinks in subsequent files
+
+4. **Interprocedural Analysis** with call graph, function summaries, and cross-function taint tracking
+
+**Improvements implemented:**
+- Window-based deduplication (5-line window) to merge duplicate detections
+- Confidence-based filtering with function-aware analysis
+- Comment stripping to avoid false positives from code in comments
+- C++ AST handling (condition_clause, new_expression)
+
+**Detected vulnerability types:**
 - **Buffer Overflows (CWE-121/122/124/126/127)**: strcpy, wcscpy, strncpy, memcpy, memmove patterns
 - **Integer Overflow/Underflow (CWE-190/191)**: Bounds-aware detection with overflow guard tracking
 - **Format String (CWE-134)**: printf family, snprintf, wide character variants (wprintf, etc.)
 - **Sign Extension (CWE-194)**: Short/char to size_t conversion in memory operations
+- **NULL Dereference (CWE-476)**: Pointer dereference after NULL check or without initialization
+- **Use After Free (CWE-416)**: Using freed memory, tracked across function scope
+- **Double Free (CWE-415)**: Freeing memory that was already freed
+- **Memory Leak (CWE-401)**: Allocated memory not freed before function exit
+- **Uninitialized Variable (CWE-457)**: Use of uninitialized variables
+- **Hardcoded Credentials (CWE-259/321)**: Hardcoded passwords and cryptographic keys
+- **Weak Cryptography (CWE-327)**: Use of broken/weak cryptographic algorithms
+- **Dangerous Function (CWE-242)**: gets() and other inherently dangerous functions
+- **Omitted Break (CWE-484)**: Missing break in switch statement causing fallthrough
+- **Return Stack Address (CWE-562)**: Returning address of local stack variable
+- **Fixed Address Pointer (CWE-587)**: Assigning fixed memory address to pointer
+- **Environment Exposure (CWE-526)**: Printing environment variables to output
+- **TOCTOU (CWE-367)**: stat() followed by open() race conditions
+- **Weak PRNG (CWE-338)**: Use of rand() in cryptographic context
 - **External Config Control (CWE-15)**: LoadLibrary, SetComputerName with tainted input
 - **Process Control (CWE-114)**: Loading libraries from user-controlled paths
 - **Command Injection (CWE-78)**: system(), popen(), exec*() with variable arguments

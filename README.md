@@ -607,20 +607,20 @@ Frame's security scanner is tested against industry-standard OWASP benchmarks:
 | **OWASP Score** | **77.6%** | 9.6% |
 | **Time** | **1.2s** | 63.0s |
 
-**C/C++ Benchmark** (NIST Juliet - 1000 curated files, 945 with vulnerabilities):
+**C/C++ Benchmark** (NIST Juliet - 1000 tests, 952 expected vulnerabilities):
 
-| Metric | Frame | Semgrep |
-|--------|-------|---------|
-| **True Positives** | **78** | 32 |
-| **False Positives** | 0 | 0 |
-| **Precision** | **100%** | 100% |
-| **Recall** | **8.3%** | 3.4% |
-| **F1 Score** | **15.2%** | 6.6% |
-| **OWASP Score** | **8.3%** | 3.4% |
+| Metric | Frame (Overall) | Frame (C) | Frame (C++) |
+|--------|-----------------|-----------|-------------|
+| **True Positives** | 576 | 456 | 120 |
+| **False Positives** | 65 | 17 | 48 |
+| **Precision** | **89.9%** | **96.4%** | 71.4% |
+| **Recall** | **60.5%** | **62.6%** | 53.6% |
+| **F1 Score** | **72.3%** | **75.9%** | 61.2% |
+| **OWASP Score** | **54.4%** | **60.4%** | 38.6% |
 
-*Frame detects 2.4x more vulnerabilities than Semgrep with zero false positives. Both tools have low recall due to the diversity of CWE types in Juliet (100+ types). Frame uses semantic taint analysis for buffer overflows, integer overflows/underflows, format strings, and process control vulnerabilities.*
+*Frame uses path-sensitive analysis with separation logic for memory safety (double-free, use-after-free, NULL deref, buffer overflow) and taint analysis for injection vulnerabilities. Detected CWEs include: 78, 79, 114, 121/122, 124/127, 134, 190, 252, 321, 369, 401, 415, 416, 457, 476, 480.*
 
-Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **8.3% OWASP Score** on C/C++.
+Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **54.4% OWASP Score** on C/C++.
 
 ```bash
 # Run security benchmarks

@@ -119,6 +119,7 @@ class VulnType(Enum):
     NULL_DEREFERENCE = "null_dereference"       # CWE-476
     USE_AFTER_FREE = "use_after_free"           # CWE-416
     BUFFER_OVERFLOW = "buffer_overflow"         # CWE-120
+    BUFFER_UNDERFLOW = "buffer_underflow"       # CWE-124/127 (underread/underwrite)
     DOUBLE_FREE = "double_free"                 # CWE-415
     MEMORY_LEAK = "memory_leak"                 # CWE-401
     INVALID_FREE = "invalid_free"               # CWE-590 (free of non-heap memory)
