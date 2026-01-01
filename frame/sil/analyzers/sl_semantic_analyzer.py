@@ -1272,10 +1272,6 @@ class SLSemanticAnalyzer:
         Detects array accesses with negative or potentially negative indices.
         Uses tree-sitter AST to find subscript_expression nodes.
         """
-        # Skip good functions
-        if 'good' in self.current_function.lower():
-            return
-
         # Recursively find all subscript expressions in this statement
         self._find_and_check_subscripts(node, loc)
 
@@ -1360,10 +1356,6 @@ class SLSemanticAnalyzer:
 
         Detects patterns like: if (x = 5) instead of if (x == 5)
         """
-        # Skip good functions
-        if 'good' in self.current_function.lower():
-            return
-
         # Get the condition part of the if statement
         condition = self._find_child(node, 'parenthesized_expression') or \
                     self._find_child(node, 'condition_clause')
@@ -1396,10 +1388,6 @@ class SLSemanticAnalyzer:
 
         Detects patterns where malloc/calloc/new returns are used without NULL check.
         """
-        # Skip good functions
-        if 'good' in self.current_function.lower():
-            return
-
         for var_name, alloc_loc in self.unchecked_allocs.items():
             # If the variable was not proven non-NULL (via early exit guard or explicit check),
             # and it's not in null_pointers (which means it was used without crashing),

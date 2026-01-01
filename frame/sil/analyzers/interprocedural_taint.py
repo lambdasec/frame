@@ -6,8 +6,8 @@ This module implements cross-function taint tracking using:
 2. Function taint summaries (which params are sources/sinks)
 3. Taint propagation through call sites
 
-Key insight: Many Juliet tests have vulnerabilities that span function boundaries.
-For example, main.cpp calls badSink(data) where data was tainted in badSource().
+Key insight: Many vulnerabilities span function boundaries.
+For example, main() calls sink_function(data) where data was tainted in source_function().
 This requires tracking taint flow through function calls.
 """
 

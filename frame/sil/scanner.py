@@ -1567,8 +1567,7 @@ class FrameScanner:
         Filter vulnerabilities by confidence threshold and context.
 
         1. Apply confidence threshold (default 0.7)
-        2. Reduce confidence for detections in "good" function paths
-           (Juliet benchmark convention: "good" functions are safe)
+        2. Reduce confidence for detections with safe patterns nearby
         3. Filter out low-confidence results
 
         Args:
@@ -1583,26 +1582,9 @@ class FrameScanner:
 
         MIN_CONFIDENCE = 0.7
 
-        # Parse function boundaries to determine which line is in which function
-        function_at_line = self._map_lines_to_functions(source_code)
-
         filtered = []
         for vuln in vulns:
             adjusted_confidence = vuln.confidence
-
-            # Check if vulnerability is in a "good" function (Juliet convention)
-            func_name = function_at_line.get(vuln.line, "")
-
-            # Reduce confidence for detections in "good" functions
-            # These are intended to be safe code paths in Juliet
-            if func_name:
-                func_lower = func_name.lower()
-                if 'good' in func_lower:
-                    # Significantly reduce confidence for "good" functions
-                    adjusted_confidence *= 0.5
-                elif 'bad' in func_lower:
-                    # Slightly boost confidence for "bad" functions
-                    adjusted_confidence = min(1.0, adjusted_confidence * 1.1)
 
             # Check for common "safe" patterns that reduce confidence
             # Pattern: variable is checked before use
@@ -1624,44 +1606,6 @@ class FrameScanner:
                 filtered.append(vuln)
 
         return filtered
-
-    def _map_lines_to_functions(self, source_code: str) -> Dict[int, str]:
-        """
-        Map line numbers to function names for context analysis.
-
-        Returns:
-            Dict mapping line number -> function name
-        """
-        lines = source_code.split('\n')
-        line_to_func = {}
-        current_func = ""
-        brace_depth = 0
-
-        for i, line in enumerate(lines, start=1):
-            stripped = line.strip()
-
-            # Detect function definition (simplified pattern)
-            # Matches: type funcName(...) or type funcName(...)  {
-            func_match = re.match(
-                r'^(?:static\s+)?(?:void|int|char|long|short|unsigned|bool|float|double|wchar_t|size_t|\w+\s*\*?)\s+(\w+)\s*\([^)]*\)\s*\{?\s*$',
-                stripped
-            )
-            if func_match:
-                current_func = func_match.group(1)
-                brace_depth = stripped.count('{') - stripped.count('}')
-                line_to_func[i] = current_func
-                continue
-
-            # Track brace depth
-            if current_func:
-                brace_depth += stripped.count('{') - stripped.count('}')
-                line_to_func[i] = current_func
-
-                if brace_depth <= 0:
-                    current_func = ""
-                    brace_depth = 0
-
-        return line_to_func
 
     def _verify_check(self, check: VulnerabilityCheck) -> BugReport:
         """Verify vulnerability check using Frame's incorrectness checker
@@ -2057,50 +2001,7 @@ class FrameScanner:
                 import traceback
                 traceback.print_exc()
 
-        # Run MULTI-FILE CHAIN analysis for Juliet-style test patterns
-        try:
-            from frame.sil.analyzers.multifile_chain_analyzer import analyze_multifile_chain
-            import os
-
-            search_dir = os.path.dirname(filename) if filename else None
-            chain, chain_vulns = analyze_multifile_chain(filename, search_dir, verbose=self.verbose)
-
-            for cv in chain_vulns:
-                key = (cv.location.line, cv.cwe_id)
-                if key in seen_locations:
-                    continue
-                seen_locations.add(key)
-
-                severity = self.SEVERITY_MAP.get(cv.vuln_type, Severity.MEDIUM)
-
-                vuln = Vulnerability(
-                    type=cv.vuln_type,
-                    severity=severity,
-                    location=filename,
-                    line=cv.location.line,
-                    column=cv.location.column,
-                    description=cv.description,
-                    procedure=f"<chain:{len(chain)}-files>",
-                    source_var="",
-                    source_location="",
-                    sink_type="chain_flow",
-                    data_flow=cv.data_flow,
-                    witness=None,
-                    confidence=cv.confidence,
-                    cwe_id=cv.cwe_id,
-                )
-                vulnerabilities.append(vuln)
-
-            if self.verbose and chain_vulns:
-                print(f"[Scanner] Multi-file chain analysis found {len(chain_vulns)} issues in {len(chain)}-file chain")
-
-        except Exception as e:
-            if self.verbose:
-                print(f"[Scanner] Multi-file chain analysis error: {e}")
-                import traceback
-                traceback.print_exc()
-
-        # Second, run separation logic-based analyzer (more precise)
+        # Run separation logic-based analyzer (more precise)
         try:
             sl_vulns = analyze_with_separation_logic(source_code, filename, verbose=self.verbose)
 

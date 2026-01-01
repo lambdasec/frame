@@ -862,11 +862,6 @@ class PathSensitiveAnalyzer:
                 ptr_info.source == AllocSource.HEAP and
                 ptr_info.alloc_loc):
 
-                # Only flag as leak if allocated in this function and not freed
-                # Skip if this is a "good" function (likely remediated code)
-                if 'good' in self.current_function.lower():
-                    continue
-
                 # Check if variable might be returned or stored
                 if f'return {var}' in body_text or f'return({var})' in body_text:
                     continue
@@ -898,10 +893,6 @@ class PathSensitiveAnalyzer:
         """
         for var, ptr_info in self.current_state.pointers.items():
             if ptr_info.is_return_value and not ptr_info.return_checked:
-                # Skip if in good function
-                if 'good' in self.current_function.lower():
-                    continue
-
                 loc = ptr_info.alloc_loc or Location(filename, 0, 0)
                 self._add_vuln(MemoryVuln(
                     vuln_type=VulnType.UNCHECKED_RETURN,
