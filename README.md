@@ -7,7 +7,6 @@
     <a href="tests/"><img src="https://img.shields.io/badge/tests-1497%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
-    <a href="benchmarks/"><img src="https://img.shields.io/badge/OWASP%20Score-81.5%25-brightgreen" alt="OWASP Score"></a>
   </p>
 </p>
 
@@ -17,15 +16,17 @@ Frame is a static analysis tool powered by **separation logic** that finds secur
 
 ## Highlights
 
-| | Frame | Semgrep | Difference |
-|---|:---:|:---:|:---:|
+**OWASP Score** (True Positive Rate - False Positive Rate):
+
+| Benchmark | Frame | Semgrep | Difference |
+|-----------|:---:|:---:|:---:|
 | **Python** (OWASP) | 80.9% | 4.5% | +76.4 pts |
 | **Java** (OWASP) | 81.5% | 15.7% | +65.8 pts |
 | **JavaScript** (SecBench.js) | 77.6% | 9.6% | +68.0 pts |
 | **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
 | **C#** (IssueBlot.NET) | 45.1% | 14.2% | +30.9 pts |
 
-<sub>OWASP Score = True Positive Rate - False Positive Rate. Higher is better. See [benchmarks/](benchmarks/) for methodology.</sub>
+<sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methodology and results.</sub>
 
 ## Installation
 
@@ -239,10 +240,6 @@ frame/
 - O'Hearn (2020). [Incorrectness Logic](https://doi.org/10.1145/3371078)
 
 **Related:** [Infer](https://fbinfer.com/), [Semgrep](https://semgrep.dev/), [CodeQL](https://codeql.github.com/)
-
-## License
-
-Apache 2.0 - See [LICENSE](LICENSE)
 
 ---
 
