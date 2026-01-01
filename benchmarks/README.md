@@ -14,10 +14,10 @@ python -m benchmarks run --curated
 ```
 
 **Curated sets provide:**
-- ✅ **Representative sampling:** Stratified across all sources/divisions
-- ✅ **Fast iteration:** ~20 minutes vs. 2+ hours for full set
-- ✅ **Reproducible:** Fixed seed (42) ensures consistent samples
-- ✅ **Complete coverage:** 4742 tests across all 4 theory divisions
+- **Representative sampling:** Stratified across all sources/divisions
+- **Fast iteration:** ~20 minutes vs. 2+ hours for full set
+- **Reproducible:** Fixed seed (42) ensures consistent samples
+- **Complete coverage:** 4742 tests across all 4 theory divisions
   - 692 SL-COMP (separation logic) - 79.9% correct, 0 errors
   - 3300 QF_S (string theory) - 99.3% correct, 0 errors
   - 500 QF_AX (array theory) - 100% correct, 0 errors
