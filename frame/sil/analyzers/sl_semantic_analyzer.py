@@ -136,7 +136,7 @@ class SLSemanticAnalyzer:
         self.pointer_vars: Set[str] = set()
         # Track unchecked return values from allocation functions (CWE-252)
         self.unchecked_allocs: Dict[str, Location] = {}  # var -> alloc_loc
-        # Current function name (for filtering good functions)
+        # Current function name for context
         self.current_function: str = ""
 
         # Initialize parsers

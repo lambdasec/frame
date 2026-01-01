@@ -759,10 +759,9 @@ EXCEPTION_SPECS = {
 # =============================================================================
 
 SENSITIVE_DATA_SPECS = {
-    # Logging sensitive data - disabled for OWASP benchmark compatibility
-    # These cause false positives because OWASP doesn't track them as vulnerabilities
-    # "System.out.println": _sink("sensitive_log", [0], "Console output (CWE-532)"),
-    # "System.err.println": _sink("sensitive_log", [0], "Error output (CWE-532)"),
+    # Logging sensitive data
+    "System.out.println": _sink("sensitive_log", [0], "Console output (CWE-532)"),
+    "System.err.println": _sink("sensitive_log", [0], "Error output (CWE-532)"),
 
     # Response body
     "PrintWriter.write": _propagator([0], "Response write"),
