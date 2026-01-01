@@ -95,16 +95,16 @@ python -m benchmarks run --division secbench_js
 
 **IssueBlot.NET C# Benchmark** (171 files, 76 expected vulnerabilities):
 
-| Metric | Frame |
-|--------|-------|
-| **True Positives** | 64 |
-| **False Positives** | 19 |
-| **Precision** | 77.1% |
-| **Recall** | **84.2%** |
-| **F1 Score** | **80.5%** |
-| **OWASP Score** | **64.2%** |
+| Metric | Frame | Semgrep |
+|--------|-------|---------|
+| **True Positives** | 64 | 23 |
+| **False Positives** | 19 | 0 |
+| **Precision** | 77.1% | **100%** |
+| **Recall** | **84.2%** | 14.2% |
+| **F1 Score** | **80.5%** | 24.9% |
+| **OWASP Score** | **64.2%** | 14.2% |
 
-*C# SAST with pattern-based and taint-tracking detection. Analyzes IssueBlot.NET benchmark covering .NET Core MVC, .NET MVC, WCF, and WebForms applications. Detects vulnerabilities across SQL injection, command injection, deserialization, cryptographic weaknesses, and more.*
+*Frame detects 2.8x more vulnerabilities than Semgrep with strong precision. Semgrep achieves 100% precision but misses 85.8% of vulnerabilities (mostly SQL injection, LDAP, XPath, and path traversal). Frame uses pattern-based and taint-tracking detection covering SQL injection, command injection, deserialization, cryptographic weaknesses, LDAP injection, XPath injection, path traversal, and more.*
 
 **Detected C# Vulnerabilities:**
 - **SQL Injection (CWE-89)**: Entity Framework FromSql/FromSqlRaw, ADO.NET SqlCommand, ObjectContext.CreateQuery, Dynamic LINQ
