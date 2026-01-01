@@ -611,14 +611,14 @@ Frame's security scanner is tested against industry-standard OWASP benchmarks:
 
 | Metric | Frame | Semgrep |
 |--------|-------|---------|
-| **True Positives** | **576** | 228 |
-| **False Positives** | 65 | **0** |
-| **Precision** | 89.9% | **100%** |
-| **Recall** | **60.5%** | 22.8% |
-| **F1 Score** | **72.3%** | 37.1% |
-| **OWASP Score** | **54.4%** | 22.8% |
+| **True Positives** | **576** | 82 |
+| **False Positives** | **65** | 324 |
+| **Precision** | **89.9%** | 20.2% |
+| **Recall** | **60.5%** | 9.6% |
+| **F1 Score** | **72.3%** | 13.0% |
+| **OWASP Score** | **54.4%** | -14.9% |
 
-*Frame detects 2.5x more vulnerabilities than Semgrep. Frame uses path-sensitive analysis with separation logic for memory safety and taint analysis for injections. Detected CWEs: 78, 79, 114, 121/122, 124/127, 134, 190, 252, 321, 369, 401, 415, 416, 457, 476, 480.*
+*Frame detects 7x more vulnerabilities than Semgrep with 4.5x better precision. Semgrep's pattern rules flag strcpy/strcat in both vulnerable AND safe code, causing high FPs. Frame uses semantic analysis to distinguish safe vs unsafe usage.*
 
 Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **54.4% OWASP Score** on C/C++.
 
