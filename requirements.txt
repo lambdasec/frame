@@ -4,6 +4,12 @@ z3-solver>=4.8.0
 # For security scanning (tree-sitter based frontend)
 tree-sitter>=0.21.0
 tree-sitter-python>=0.21.0
+tree-sitter-c>=0.21.0
+tree-sitter-cpp>=0.22.0
+tree-sitter-java>=0.21.0
+tree-sitter-javascript>=0.21.0
+tree-sitter-typescript>=0.21.0
+tree-sitter-c-sharp>=0.21.0
 
 # For downloading benchmark sets
 requests>=2.25.0   # For downloading benchmarks from web sources
