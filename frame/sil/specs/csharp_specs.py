@@ -35,6 +35,34 @@ def _propagator(args: list, desc: str = "") -> ProcSpec:
 
 
 # =============================================================================
+# Console Input - Taint Sources
+# =============================================================================
+
+CONSOLE_SOURCE_SPECS = {
+    # Console input (taint sources)
+    "Console.ReadLine": _source("user", "Console input (ReadLine)"),
+    "Console.Read": _source("user", "Console input (Read)"),
+    "Console.ReadKey": _source("user", "Console input (ReadKey)"),
+    "Console.In": _source("user", "Console input stream"),
+    "System.Console.ReadLine": _source("user", "Console input (ReadLine)"),
+    "System.Console.Read": _source("user", "Console input (Read)"),
+    "Console.OpenStandardInput": _source("user", "Console standard input"),
+    # Environment variables
+    "Environment.GetEnvironmentVariable": _source("env", "Environment variable"),
+    "Environment.GetCommandLineArgs": _source("user", "Command line arguments"),
+    # File input
+    "File.ReadAllText": _source("file", "File contents"),
+    "File.ReadAllLines": _source("file", "File contents"),
+    "File.ReadAllBytes": _source("file", "File contents"),
+    "StreamReader.ReadLine": _source("file", "Stream reader line"),
+    "StreamReader.ReadToEnd": _source("file", "Stream reader contents"),
+    "StreamReader.Read": _source("file", "Stream reader character"),
+    # Network input
+    "HttpClient.GetStringAsync": _source("network", "HTTP response"),
+    "WebClient.DownloadString": _source("network", "HTTP response"),
+}
+
+# =============================================================================
 # ASP.NET Core - Taint Sources
 # =============================================================================
 
@@ -95,6 +123,19 @@ EF_SPECS = {
     "FromSqlRaw": _sink("sql", [0], "EF FromSqlRaw (SQL injection)"),
     "ExecuteSqlRaw": _sink("sql", [0], "EF ExecuteSqlRaw (SQL injection)"),
     "ExecuteSqlRawAsync": _sink("sql", [0], "EF ExecuteSqlRawAsync (SQL injection)"),
+    # Legacy EF methods (before EF Core 3.0)
+    "ExecuteSqlCommand": _sink("sql", [0], "EF ExecuteSqlCommand (SQL injection)"),
+    "ExecuteSqlCommandAsync": _sink("sql", [0], "EF ExecuteSqlCommandAsync (SQL injection)"),
+    "FromSql": _sink("sql", [0], "EF FromSql (SQL injection)"),
+
+    # ObjectContext (EF 4.x / pre-Core)
+    "ObjectContext.CreateQuery": _sink("sql", [0], "ObjectContext.CreateQuery (SQL injection CWE-89)"),
+    "CreateQuery": _sink("sql", [0], "ObjectContext.CreateQuery (SQL injection CWE-89)"),
+    "ExecuteStoreCommand": _sink("sql", [0], "ExecuteStoreCommand (SQL injection CWE-89)"),
+    "ExecuteStoreQuery": _sink("sql", [0], "ExecuteStoreQuery (SQL injection CWE-89)"),
+
+    # SharePoint/FullText
+    "FullTextSqlQuery": _sink("sql", [0], "FullTextSqlQuery (SQL injection CWE-89)"),
 
     # Interpolated SQL (safer but still track)
     "FromSqlInterpolated": _propagator([0], "EF FromSqlInterpolated (parameterized)"),
@@ -136,31 +177,31 @@ ADONET_SPECS = {
 # =============================================================================
 
 IO_SPECS = {
-    # File operations (path traversal)
-    "File.ReadAllText": _sink("path", [0], "File.ReadAllText (path traversal)"),
-    "File.ReadAllTextAsync": _sink("path", [0], "File.ReadAllTextAsync (path traversal)"),
-    "File.ReadAllBytes": _sink("path", [0], "File.ReadAllBytes (path traversal)"),
-    "File.ReadAllLines": _sink("path", [0], "File.ReadAllLines (path traversal)"),
-    "File.WriteAllText": _sink("path", [0], "File.WriteAllText (path traversal)"),
-    "File.WriteAllTextAsync": _sink("path", [0], "File.WriteAllTextAsync (path traversal)"),
-    "File.WriteAllBytes": _sink("path", [0], "File.WriteAllBytes (path traversal)"),
-    "File.Delete": _sink("path", [0], "File.Delete (path traversal)"),
-    "File.Copy": _sink("path", [0, 1], "File.Copy (path traversal)"),
-    "File.Move": _sink("path", [0, 1], "File.Move (path traversal)"),
-    "File.Exists": _sink("path", [0], "File.Exists (path traversal)"),
-    "File.Open": _sink("path", [0], "File.Open (path traversal)"),
-    "File.Create": _sink("path", [0], "File.Create (path traversal)"),
+    # File operations (path traversal) - use "filesystem" to match SinkKind.FILE_PATH
+    "File.ReadAllText": _sink("filesystem", [0], "File.ReadAllText (path traversal)"),
+    "File.ReadAllTextAsync": _sink("filesystem", [0], "File.ReadAllTextAsync (path traversal)"),
+    "File.ReadAllBytes": _sink("filesystem", [0], "File.ReadAllBytes (path traversal)"),
+    "File.ReadAllLines": _sink("filesystem", [0], "File.ReadAllLines (path traversal)"),
+    "File.WriteAllText": _sink("filesystem", [0], "File.WriteAllText (path traversal)"),
+    "File.WriteAllTextAsync": _sink("filesystem", [0], "File.WriteAllTextAsync (path traversal)"),
+    "File.WriteAllBytes": _sink("filesystem", [0], "File.WriteAllBytes (path traversal)"),
+    "File.Delete": _sink("filesystem", [0], "File.Delete (path traversal)"),
+    "File.Copy": _sink("filesystem", [0, 1], "File.Copy (path traversal)"),
+    "File.Move": _sink("filesystem", [0, 1], "File.Move (path traversal)"),
+    "File.Exists": _sink("filesystem", [0], "File.Exists (path traversal)"),
+    "File.Open": _sink("filesystem", [0], "File.Open (path traversal)"),
+    "File.Create": _sink("filesystem", [0], "File.Create (path traversal)"),
 
     # FileStream
-    "FileStream": _sink("path", [0], "FileStream (path traversal)"),
-    "StreamReader": _sink("path", [0], "StreamReader (path traversal)"),
-    "StreamWriter": _sink("path", [0], "StreamWriter (path traversal)"),
+    "FileStream": _sink("filesystem", [0], "FileStream (path traversal)"),
+    "StreamReader": _sink("filesystem", [0], "StreamReader (path traversal)"),
+    "StreamWriter": _sink("filesystem", [0], "StreamWriter (path traversal)"),
 
     # Directory
-    "Directory.GetFiles": _sink("path", [0], "Directory.GetFiles (path traversal)"),
-    "Directory.GetDirectories": _sink("path", [0], "Directory.GetDirectories (path traversal)"),
-    "Directory.Delete": _sink("path", [0], "Directory.Delete (path traversal)"),
-    "Directory.CreateDirectory": _sink("path", [0], "Directory.CreateDirectory (path traversal)"),
+    "Directory.GetFiles": _sink("filesystem", [0], "Directory.GetFiles (path traversal)"),
+    "Directory.GetDirectories": _sink("filesystem", [0], "Directory.GetDirectories (path traversal)"),
+    "Directory.Delete": _sink("filesystem", [0], "Directory.Delete (path traversal)"),
+    "Directory.CreateDirectory": _sink("filesystem", [0], "Directory.CreateDirectory (path traversal)"),
 
     # Path
     "Path.Combine": _propagator([0, 1], "Path.Combine"),
@@ -173,7 +214,9 @@ IO_SPECS = {
 
 PROCESS_SPECS = {
     # Process (command injection)
-    "Process.Start": _sink("command", [0], "Process.Start (command injection)"),
+    # Process.Start(fileName) or Process.Start(fileName, arguments)
+    # Both arguments can be injection vectors
+    "Process.Start": _sink("command", [0, 1], "Process.Start (command injection)"),
     "ProcessStartInfo": _sink("command", [0], "ProcessStartInfo (command injection)"),
     "ProcessStartInfo.FileName": _sink("command", [0], "ProcessStartInfo.FileName (command injection)"),
     "ProcessStartInfo.Arguments": _sink("command", [0], "ProcessStartInfo.Arguments (command injection)"),
@@ -224,6 +267,10 @@ XML_SPECS = {
     "XmlReader.Create": _propagator([0], "XmlReader.Create"),
     "XmlTextReader": _sink("xxe", [0], "XmlTextReader (XXE - legacy)"),
 
+    # XmlWriter - raw XML injection
+    "XmlWriter.WriteRaw": _sink("xxe", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
+    "WriteRaw": _sink("xxe", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
+
     # XSLT
     "XslCompiledTransform.Load": _sink("xxe", [0], "XslCompiledTransform.Load (XXE)"),
     "XslCompiledTransform.Transform": _sink("xxe", [0, 1], "XslCompiledTransform.Transform (XXE)"),
@@ -241,6 +288,11 @@ XML_SPECS = {
 SERIALIZATION_SPECS = {
     # BinaryFormatter (unsafe)
     "BinaryFormatter.Deserialize": _sink("deserialize", [0], "BinaryFormatter.Deserialize (unsafe)"),
+    "BinaryFormatter": _sink("deserialize", [0], "BinaryFormatter (CWE-502)"),
+
+    # BinaryMessageFormatter (MSMQ - unsafe)
+    "BinaryMessageFormatter": _sink("deserialize", [0], "BinaryMessageFormatter (CWE-502)"),
+    "MessageQueue.Formatter": _sink("deserialize", [0], "MessageQueue.Formatter assignment (CWE-502)"),
 
     # JavaScriptSerializer
     "JavaScriptSerializer.Deserialize": _sink("deserialize", [0], "JavaScriptSerializer.Deserialize (unsafe)"),
@@ -254,6 +306,16 @@ SERIALIZATION_SPECS = {
 
     # XmlSerializer
     "XmlSerializer.Deserialize": _sink("deserialize", [0], "XmlSerializer.Deserialize"),
+
+    # NetDataContractSerializer (unsafe)
+    "NetDataContractSerializer": _sink("deserialize", [0], "NetDataContractSerializer (CWE-502)"),
+    "NetDataContractSerializer.ReadObject": _sink("deserialize", [0], "NetDataContractSerializer.ReadObject (CWE-502)"),
+
+    # LosFormatter (unsafe)
+    "LosFormatter.Deserialize": _sink("deserialize", [0], "LosFormatter.Deserialize (CWE-502)"),
+
+    # ObjectStateFormatter (unsafe)
+    "ObjectStateFormatter.Deserialize": _sink("deserialize", [0], "ObjectStateFormatter.Deserialize (CWE-502)"),
 }
 
 # =============================================================================
@@ -582,10 +644,38 @@ OBJECT_MANIPULATION_SPECS = {
 }
 
 # =============================================================================
+# Code Injection (CWE-94)
+# =============================================================================
+
+CODE_INJECTION_SPECS = {
+    # AppDomain execution
+    "AppDomain.ExecuteAssembly": _sink("code", [0], "AppDomain.ExecuteAssembly (CWE-94)"),
+    "ExecuteAssembly": _sink("code", [0], "AppDomain.ExecuteAssembly (CWE-94)"),
+    "AppDomain.CreateInstance": _sink("code", [0], "AppDomain.CreateInstance (CWE-94)"),
+    "AppDomain.CreateInstanceAndUnwrap": _sink("code", [0], "AppDomain.CreateInstanceAndUnwrap (CWE-94)"),
+
+    # RazorEngine template injection
+    "RazorEngine.Razor.RunCompile": _sink("code", [0], "RazorEngine template injection (CWE-94)"),
+    "Razor.RunCompile": _sink("code", [0], "RazorEngine template injection (CWE-94)"),
+    "Engine.Razor.RunCompile": _sink("code", [0], "RazorEngine template injection (CWE-94)"),
+    "RazorEngineService.RunCompile": _sink("code", [0], "RazorEngine template injection (CWE-94)"),
+
+    # Roslyn scripting
+    "CSharpScript.RunAsync": _sink("code", [0], "CSharpScript execution (CWE-94)"),
+    "CSharpScript.EvaluateAsync": _sink("code", [0], "CSharpScript evaluation (CWE-94)"),
+    "ScriptEngine.Execute": _sink("code", [0], "ScriptEngine execution (CWE-94)"),
+
+    # PowerShell
+    "PowerShell.Create": _sink("code", [0], "PowerShell execution (CWE-94)"),
+    "AddScript": _sink("code", [0], "PowerShell.AddScript (CWE-94)"),
+}
+
+# =============================================================================
 # Combined C# Specs
 # =============================================================================
 
 CSHARP_SPECS: Dict[str, ProcSpec] = {}
+CSHARP_SPECS.update(CONSOLE_SOURCE_SPECS)
 CSHARP_SPECS.update(ASPNET_SOURCE_SPECS)
 CSHARP_SPECS.update(ASPNET_SINK_SPECS)
 CSHARP_SPECS.update(EF_SPECS)
@@ -611,3 +701,4 @@ CSHARP_SPECS.update(SENSITIVE_DATA_ENHANCED_SPECS)
 CSHARP_SPECS.update(HEADER_SECURITY_SPECS)
 CSHARP_SPECS.update(SSRF_ENHANCED_SPECS)
 CSHARP_SPECS.update(OBJECT_MANIPULATION_SPECS)
+CSHARP_SPECS.update(CODE_INJECTION_SPECS)

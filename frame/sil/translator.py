@@ -1614,6 +1614,55 @@ class SILTranslator:
                 )
                 checks.append(check)
 
+        # Check for property assignment sinks
+        # E.g., sqlComm.CommandText = "SELECT ... " + userInput
+        # The property name (CommandText) may be a registered sink
+        if '.' in target:
+            # Extract property name (last part after .)
+            prop_name = target.split('.')[-1]
+            spec = self.program.get_spec(prop_name)
+            if spec and spec.is_taint_sink():
+                sink_kind_str = spec.is_sink
+                sink_kind_map = {
+                    'sql': SinkKind.SQL_QUERY,
+                    'command': SinkKind.SHELL_COMMAND,
+                    'html': SinkKind.HTML_OUTPUT,
+                    'path': SinkKind.FILE_PATH,
+                    'ssrf': SinkKind.SSRF,
+                    'redirect': SinkKind.REDIRECT,
+                    'xpath': SinkKind.XPATH_QUERY,
+                    'ldap': SinkKind.LDAP_QUERY,
+                    'deserialize': SinkKind.DESERIALIZATION,
+                }
+                sink_enum = sink_kind_map.get(sink_kind_str, SinkKind.SQL_QUERY)
+
+                # Check if expression contains tainted variables
+                for src_var in source_vars:
+                    if state.is_tainted(src_var):
+                        check = self._create_taint_check(
+                            instr, state, proc_name,
+                            src_var, sink_enum
+                        )
+                        checks.append(check)
+
+                # Check for embedded taint source calls in the expression
+                embedded_sources = self._get_embedded_source_calls(instr.exp)
+                for func_name, source_kind_str in embedded_sources:
+                    check = VulnerabilityCheck(
+                        formula=And(
+                            Source(Var(func_name), source_kind_str),
+                            Sink(Var(func_name), sink_kind_str)
+                        ),
+                        vuln_type=VulnType.from_sink_kind(sink_enum),
+                        location=instr.loc or Location.unknown(),
+                        description=f"Tainted data from '{func_name}' flows to {sink_kind_str} sink via property assignment",
+                        source_var=func_name,
+                        source_location=instr.loc or Location.unknown(),
+                        sink_type=sink_kind_str,
+                        procedure_name=proc_name,
+                    )
+                    checks.append(check)
+
         return checks, state
 
     def _exec_load(
@@ -2643,6 +2692,28 @@ class SILTranslator:
                             var, instr.kind
                         )
                         checks.append(check)
+
+        # Check for embedded taint source calls in the sink expression
+        # E.g., Process.Start("cmd", "/C " + Console.ReadLine()) - the ReadLine() is a source
+        # flowing directly to the sink without going through a variable
+        embedded_sources = self._get_embedded_source_calls(instr.exp)
+        for func_name, source_kind_str in embedded_sources:
+            # This is a direct taint source -> sink flow
+            # Create vulnerability check for this direct flow
+            check = VulnerabilityCheck(
+                formula=And(
+                    Source(Var(func_name), source_kind_str),
+                    Sink(Var(func_name), instr.kind.value)
+                ),
+                vuln_type=VulnType.from_sink_kind(instr.kind),
+                location=instr.loc or Location.unknown(),
+                description=f"Tainted data from '{func_name}' flows to {instr.kind.value} sink",
+                source_var=func_name,
+                source_location=instr.loc or Location.unknown(),
+                sink_type=instr.kind.value,
+                procedure_name=proc_name,
+            )
+            checks.append(check)
 
         return checks, state
 

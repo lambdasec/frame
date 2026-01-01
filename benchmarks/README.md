@@ -93,6 +93,39 @@ python -m benchmarks run --division secbench_js
 
 **Detected CWEs:** CWE-114 (Process Control), CWE-121/122 (Buffer Overflow), CWE-124/127 (Buffer Underwrite/Underread), CWE-134 (Format String), CWE-190 (Integer Overflow), CWE-252 (Unchecked Return), CWE-321 (Hard-coded Crypto), CWE-369 (Divide by Zero), CWE-401 (Memory Leak), CWE-415 (Double Free), CWE-416 (Use After Free), CWE-457 (Uninitialized Variable), CWE-476 (NULL Pointer Dereference), CWE-480 (Incorrect Operator), CWE-78 (OS Command Injection), CWE-79 (XSS)
 
+**IssueBlot.NET C# Benchmark** (171 files, 76 expected vulnerabilities):
+
+| Metric | Frame |
+|--------|-------|
+| **True Positives** | 64 |
+| **False Positives** | 19 |
+| **Precision** | 77.1% |
+| **Recall** | **84.2%** |
+| **F1 Score** | **80.5%** |
+| **OWASP Score** | **64.2%** |
+
+*C# SAST with pattern-based and taint-tracking detection. Analyzes IssueBlot.NET benchmark covering .NET Core MVC, .NET MVC, WCF, and WebForms applications. Detects vulnerabilities across SQL injection, command injection, deserialization, cryptographic weaknesses, and more.*
+
+**Detected C# Vulnerabilities:**
+- **SQL Injection (CWE-89)**: Entity Framework FromSql/FromSqlRaw, ADO.NET SqlCommand, ObjectContext.CreateQuery, Dynamic LINQ
+- **Command Injection (CWE-78)**: Process.Start, ProcessStartInfo with user input or concatenation
+- **Path Traversal (CWE-22)**: File.Read/Write/Open, FileStream, StreamReader/Writer, FilePathResult
+- **Deserialization (CWE-502)**: BinaryFormatter, JsonConvert (TypeNameHandling), XmlSerializer, fastJSON, FsPickler
+- **Weak Cryptography (CWE-327/328)**: MD5, SHA1, DES, ECB mode, CBC without auth, RijndaelManaged
+- **Weak Key Size (CWE-326)**: RSA 512/1024-bit keys
+- **Weak PBKDF2 (CWE-916)**: Iterations < 10000, MD5/SHA1 hash algorithms
+- **Insecure Random (CWE-330)**: System.Random for security purposes
+- **SSL Validation Bypass (CWE-295)**: Custom certificate validation returning true
+- **LDAP Injection (CWE-90)**: DirectorySearcher filter concatenation, DirectoryEntry with user input
+- **LDAP SimpleBind (CWE-522)**: Cleartext credential transmission
+- **XPath Injection (CWE-643)**: SelectNodes/SelectSingleNode with concatenation
+- **XML Injection (CWE-91)**: XmlWriter.WriteRaw with user input
+- **XXE (CWE-611)**: XmlDocument, XmlTextReader, DTD processing enabled
+- **Log Injection (CWE-117)**: Log4Net, NLog with concatenation
+- **Header Injection (CWE-113)**: Cookie/Header with user-controlled values
+- **Open Redirect (CWE-601)**: Response.Redirect with variable URL
+- **XSS (CWE-79)**: Request data to HTML output, Html.Raw, Response.Write
+
 **Analysis architecture:**
 
 1. **Path-Sensitive Memory Safety** (`frame/sil/analyzers/path_sensitive_analyzer.py`):

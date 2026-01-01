@@ -98,6 +98,8 @@ def parse_issueblot_testcase(filepath: str, content: str) -> Tuple[str, bool, Li
     Parse IssueBlot.NET test case metadata.
 
     IssueBlot uses naming conventions and comments to indicate vulnerabilities:
+    - CTSECISSUE: comments indicate vulnerable code
+    - CTSECNONISSUE/CTNONSECISSUE: comments indicate safe code
     - Files with 'Vulnerable', 'Unsafe', 'Bad' in name/path are vulnerable
     - Comments may contain CWE references
 
@@ -107,6 +109,11 @@ def parse_issueblot_testcase(filepath: str, content: str) -> Tuple[str, bool, Li
     filename = os.path.basename(filepath).lower()
     path_lower = filepath.lower()
 
+    # Check for explicit vulnerability markers in comments
+    has_ctsecissue = bool(re.search(r'CTSECISSUE\s*:', content, re.IGNORECASE))
+    has_ctsecnonissue = bool(re.search(r'CT(SEC)?NONSECISSUE\s*:', content, re.IGNORECASE) or
+                             re.search(r'CTSECNONISSUE\s*:', content, re.IGNORECASE))
+
     # Check for vulnerability indicators in path/filename
     vuln_indicators = ['vulnerable', 'unsafe', 'bad', 'insecure', 'weak']
     safe_indicators = ['safe', 'secure', 'fixed', 'good']
@@ -114,8 +121,16 @@ def parse_issueblot_testcase(filepath: str, content: str) -> Tuple[str, bool, Li
     is_vulnerable = any(ind in path_lower for ind in vuln_indicators)
     is_safe = any(ind in path_lower for ind in safe_indicators)
 
+    # CTSECNONISSUE overrides everything - file is NOT vulnerable
+    if has_ctsecnonissue and not has_ctsecissue:
+        is_vulnerable = False
+        is_safe = True
+    # CTSECISSUE marks file as vulnerable
+    elif has_ctsecissue:
+        is_vulnerable = True
+        is_safe = False
     # Default to vulnerable if not clearly marked as safe
-    if not is_safe and not is_vulnerable:
+    elif not is_safe and not is_vulnerable:
         is_vulnerable = True  # IssueBlot is primarily vulnerable code
 
     # Extract CWEs from content
@@ -124,7 +139,85 @@ def parse_issueblot_testcase(filepath: str, content: str) -> Tuple[str, bool, Li
     for match in re.finditer(cwe_pattern, content, re.IGNORECASE):
         cwes.append(f"CWE-{match.group(1)}")
 
-    # Infer CWE from vulnerability type in path
+    # Extract vulnerability types from CTSECISSUE comments
+    # Match multi-word types like "Command Injection" or single words
+    # Use [ \t]+ instead of \s+ to avoid matching across lines
+    vuln_type_pattern = r'CTSECISSUE\s*:\s*([A-Za-z]+(?:[ \t]+[A-Za-z]+)*)'
+    for match in re.finditer(vuln_type_pattern, content, re.IGNORECASE):
+        # Remove spaces and lowercase for lookup
+        vuln_type = match.group(1).lower().replace(' ', '')
+        # Map vulnerability type to CWE
+        type_to_cwe = {
+            # SQL Injection
+            'sqlinjection': 'CWE-89',
+            'sql': 'CWE-89',
+            # Command Injection
+            'commandinjection': 'CWE-78',
+            'command': 'CWE-78',
+            'oscommandinjection': 'CWE-78',
+            # Code Injection
+            'codeinjection': 'CWE-94',
+            'code': 'CWE-94',
+            # XSS
+            'xss': 'CWE-79',
+            'crosssitescripting': 'CWE-79',
+            # Path Traversal
+            'pathtraversal': 'CWE-22',
+            'directorytraversal': 'CWE-22',
+            'path': 'CWE-22',
+            # XXE / XML Injection
+            'xxe': 'CWE-611',
+            'xmlexternalentity': 'CWE-611',
+            'xmlexternalentityparsing': 'CWE-611',
+            'xmlinjection': 'CWE-91',
+            # Deserialization
+            'deserialization': 'CWE-502',
+            'insecuredeserialization': 'CWE-502',
+            # LDAP
+            'ldapinjection': 'CWE-90',
+            'ldap': 'CWE-90',
+            'insecureldapsimplebind': 'CWE-522',
+            # XPath
+            'xpathinjection': 'CWE-643',
+            'xpath': 'CWE-643',
+            # SSRF
+            'ssrf': 'CWE-918',
+            # Log Injection
+            'log4netforging': 'CWE-117',
+            'nlogforging': 'CWE-117',
+            'logforging': 'CWE-117',
+            'loginjection': 'CWE-117',
+            # Header
+            'headermanipulation': 'CWE-113',
+            'header': 'CWE-113',
+            'httpparameterpollution': 'CWE-235',
+            # Redirect
+            'openredirect': 'CWE-601',
+            'redirect': 'CWE-601',
+            # Crypto
+            'customsslvalidation': 'CWE-295',
+            'sslvalidation': 'CWE-295',
+            'insecurecbc': 'CWE-327',
+            'insecureecb': 'CWE-327',
+            'insecurehash': 'CWE-328',
+            'insecurerandom': 'CWE-330',
+            'insecurersapadding': 'CWE-780',
+            'insufficientkeysize': 'CWE-326',
+            'insufficientencryptionkeysize': 'CWE-326',
+            'insecurepbeworkfactor': 'CWE-916',
+            'insecuresymmetricencryptionmode': 'CWE-327',
+            # JSON
+            'jsoninjection': 'CWE-94',
+            'json': 'CWE-94',
+            # Hardcoded
+            'hardcoded': 'CWE-798',
+        }
+        mapped_cwe = type_to_cwe.get(vuln_type)
+        if mapped_cwe and mapped_cwe not in cwes:
+            cwes.append(mapped_cwe)
+
+    # Infer CWE from vulnerability type in path - but only if we don't have CWEs from CTSECISSUE
+    # This avoids adding incorrect generic CWEs when we have specific ones
     cwe_hints = {
         'sql': 'CWE-89',
         'xss': 'CWE-79',
@@ -134,14 +227,37 @@ def parse_issueblot_testcase(filepath: str, content: str) -> Tuple[str, bool, Li
         'deserialization': 'CWE-502',
         'xxe': 'CWE-611',
         'crypto': 'CWE-327',
-        'injection': 'CWE-89',
+        'codeinjection': 'CWE-94',  # Code injection (before generic injection)
         'ldap': 'CWE-90',
         'xpath': 'CWE-643',
+        'ssrf': 'CWE-918',
+        'log4net': 'CWE-117',
+        'nlog': 'CWE-117',
+        'logforging': 'CWE-117',
+        'header': 'CWE-113',
+        'json': 'CWE-94',
+        'oscommand': 'CWE-78',
+        'redirect': 'CWE-601',
+        'random': 'CWE-330',
+        'hash': 'CWE-328',
+        'sslvalidation': 'CWE-295',
+        'keysize': 'CWE-326',
+        'rsapadding': 'CWE-780',
+        'cbc': 'CWE-327',
+        'pbeworkfactor': 'CWE-916',
     }
 
-    for hint, cwe in cwe_hints.items():
-        if hint in path_lower and cwe not in cwes:
-            cwes.append(cwe)
+    # Only use path hints if:
+    # 1. We don't already have CWEs from CTSECISSUE markers
+    # 2. The file is marked as vulnerable (don't add CWEs for safe files)
+    if not cwes and is_vulnerable:
+        for hint, cwe in cwe_hints.items():
+            if hint in path_lower and cwe not in cwes:
+                cwes.append(cwe)
+
+    # If file is not vulnerable, clear any CWEs
+    if not is_vulnerable:
+        cwes = []
 
     primary_cwe = cwes[0] if cwes else 'CWE-unknown'
 

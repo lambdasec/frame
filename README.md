@@ -620,7 +620,20 @@ Frame's security scanner is tested against industry-standard OWASP benchmarks:
 
 *Frame detects 7x more vulnerabilities than Semgrep with 4.5x better precision. Semgrep's pattern rules flag strcpy/strcat in both vulnerable AND safe code, causing high FPs. Frame uses semantic analysis to distinguish safe vs unsafe usage.*
 
-Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, and **54.4% OWASP Score** on C/C++.
+**C# Benchmark** (IssueBlot.NET - 171 files, 76 expected vulnerabilities):
+
+| Metric | Frame |
+|--------|-------|
+| **True Positives** | 64 |
+| **False Positives** | 19 |
+| **Precision** | **77.1%** |
+| **Recall** | **84.2%** |
+| **F1 Score** | **80.5%** |
+| **OWASP Score** | **64.2%** |
+
+*C# SAST with pattern-based and taint-tracking detection. Covers SQL injection, command injection, deserialization, cryptographic weaknesses, LDAP injection, XPath injection, path traversal, and more.*
+
+Frame achieves **80.9% OWASP Score** on Python, **81.5% OWASP Score** on Java, **77.6% OWASP Score** on JavaScript/TypeScript, **54.4% OWASP Score** on C/C++, and **64.2% OWASP Score** on C#.
 
 ```bash
 # Run security benchmarks

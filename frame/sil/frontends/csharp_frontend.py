@@ -204,6 +204,17 @@ class CSharpFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
+        # Mark Main method args as taint source (command line arguments)
+        if method_name == "Main":
+            for param, _ in params:
+                if param.name == "args":
+                    self._add_instr(TaintSource(
+                        loc=self._get_location(node),
+                        var=param,
+                        kind=TaintKind.USER_INPUT,
+                        description="Command line argument"
+                    ))
+
         # Process attributes for taint sources
         self._process_param_attributes(attributes, params, proc)
 
@@ -443,12 +454,23 @@ class CSharpFrontend:
                                     break
 
                         value_node = None
+                        # First check for equals_value_clause (some tree-sitter versions)
                         for nc in decl.children:
                             if nc.type == "equals_value_clause":
                                 for vc in nc.children:
                                     if vc.type != "=":
                                         value_node = vc
                                         break
+                        # Also check for direct invocation/expression child
+                        # Note: Don't match 'identifier' here as it's the variable name, not the value
+                        if not value_node:
+                            for nc in decl.children:
+                                if nc.type in ("invocation_expression", "object_creation_expression",
+                                              "await_expression", "binary_expression",
+                                              "literal_expression", "string_literal", "interpolated_string_expression",
+                                              "member_access_expression"):
+                                    value_node = nc
+                                    break
 
                         if name_node:
                             var_name = self._get_text(name_node)
@@ -510,8 +532,13 @@ class CSharpFrontend:
         instrs.append(call_instr)
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
 
-        # Check specs
+        # Check specs - try full method name first, then just the last part
         spec = self.specs.get(method_name)
+        if not spec and '.' in method_name:
+            # Try the last part of the method chain (e.g., ExecuteSqlCommand from context.Database.ExecuteSqlCommand)
+            short_name = method_name.split('.')[-1]
+            spec = self.specs.get(short_name)
+
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=spec.description))
@@ -542,7 +569,12 @@ class CSharpFrontend:
         )
         instrs.append(call_instr)
 
+        # Check specs - try full method name first, then just the last part
         spec = self.specs.get(method_name)
+        if not spec and '.' in method_name:
+            short_name = method_name.split('.')[-1]
+            spec = self.specs.get(short_name)
+
         if spec and spec.is_taint_sink():
             kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
             for arg_idx in spec.sink_args:
@@ -861,6 +893,30 @@ class CSharpFrontend:
 
     def _translate_using(self, node: TSNode) -> None:
         """Translate using statement"""
+        # Translate the variable declaration in the using clause
+        for child in node.children:
+            if child.type == "variable_declaration":
+                # Create a fake local_declaration_statement node to reuse translation
+                for decl in child.children:
+                    if decl.type == "variable_declarator":
+                        name_node = None
+                        value_node = None
+                        for nc in decl.children:
+                            if nc.type == "identifier":
+                                name_node = nc
+                            elif nc.type in ("invocation_expression", "object_creation_expression"):
+                                value_node = nc
+                        if name_node:
+                            var_name = self._get_text(name_node)
+                            loc = self._get_location(decl)
+                            if value_node and value_node.type == "invocation_expression":
+                                instrs = self._translate_call_assignment(var_name, value_node, loc)
+                                self._add_instrs(instrs)
+                            elif value_node:
+                                exp = self._translate_expression(value_node)
+                                self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
+
+        # Translate the body
         body = node.child_by_field_name("body")
         if body:
             self._translate_statement(body)

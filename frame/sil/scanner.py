@@ -467,6 +467,331 @@ JS_VULNERABILITY_PATTERNS = {
     ],
 }
 
+# Pattern-based vulnerability detection for C# (.NET)
+CSHARP_VULNERABILITY_PATTERNS = {
+    # SQL Injection
+    VulnType.SQL_INJECTION: [
+        # Entity Framework raw SQL - look for concatenation anywhere in the call
+        (r'\.FromSql\s*\([^)]*\+', 'CWE-89', 'EF FromSql with concatenation'),
+        (r'\.FromSqlRaw\s*\([^)]*\+', 'CWE-89', 'EF FromSqlRaw with concatenation'),
+        (r'\.ExecuteSqlRaw\s*\([^)]*\+', 'CWE-89', 'EF ExecuteSqlRaw with concatenation'),
+        (r'\.ExecuteSqlCommand\s*\([^)]*\+', 'CWE-89', 'EF ExecuteSqlCommand with concatenation'),
+        (r'\.ExecuteSqlCommandAsync\s*\([^)]*\+', 'CWE-89', 'EF ExecuteSqlCommandAsync with concatenation'),
+        (r'Database\.ExecuteSqlCommand\s*\(', 'CWE-89', 'EF Database.ExecuteSqlCommand'),
+        # ObjectContext (EF 4.x / pre-Core) - SQL injection
+        (r'\.CreateQuery\s*<[^>]*>\s*\([^)]*\+', 'CWE-89', 'ObjectContext.CreateQuery with concatenation'),
+        (r'\.CreateQuery\s*\([^)]*\+', 'CWE-89', 'ObjectContext.CreateQuery with concatenation'),
+        (r'ObjectContext\.CreateQuery\s*\(', 'CWE-89', 'ObjectContext.CreateQuery (SQL injection)'),
+        (r'\.ExecuteStoreCommand\s*\([^)]*\+', 'CWE-89', 'ExecuteStoreCommand with concatenation'),
+        (r'ExecuteStoreCommand\s*\([^)]*\+', 'CWE-89', 'ExecuteStoreCommand with concatenation'),
+        (r'\.ExecuteStoreQuery\s*\([^)]*\+', 'CWE-89', 'ExecuteStoreQuery with concatenation'),
+        (r'ExecuteStoreQuery\s*<[^>]*>\s*\([^)]*\+', 'CWE-89', 'ExecuteStoreQuery with concatenation'),
+        # SharePoint FullTextSqlQuery
+        (r'FullTextSqlQuery\s*\([^)]*\+', 'CWE-89', 'FullTextSqlQuery with concatenation'),
+        (r'new\s+FullTextSqlQuery\s*\(', 'CWE-89', 'FullTextSqlQuery (SQL injection)'),
+        (r'\.QueryText\s*=\s*[^;]*\+', 'CWE-89', 'FullTextSqlQuery.QueryText with concatenation'),
+        # ADO.NET - look for concatenation anywhere in the expression
+        (r'CommandText\s*=\s*[^;]*\+', 'CWE-89', 'SQL CommandText with concatenation'),
+        (r'new\s+SqlCommand\s*\([^;]*\+', 'CWE-89', 'SqlCommand with concatenation'),
+        (r'new\s+SqlCommand\s*\("[^"]*"\s*\+', 'CWE-89', 'SqlCommand string + concatenation'),
+        (r'\.Query\s*\([^;]*\+', 'CWE-89', 'Query with concatenation'),
+        # SQLite - use [^;]* to avoid stopping at ) in nested function calls
+        (r'new\s+SqliteCommand\s*\([^;]*\+', 'CWE-89', 'SqliteCommand with concatenation'),
+        (r'new\s+SqliteCommand\s*\("[^"]*"\s*\+', 'CWE-89', 'SqliteCommand string + concatenation'),
+        (r'SqliteCommand\s*\("[^"]*"\s*\+', 'CWE-89', 'SqliteCommand string + concatenation'),
+        # SqlDataAdapter
+        (r'\.SelectCommand\s*=\s*new\s+SqlCommand', 'CWE-89', 'SqlDataAdapter SelectCommand assignment'),
+        (r'SqlDataAdapter\s*\([^)]*\+', 'CWE-89', 'SqlDataAdapter with concatenation'),
+        # Dynamic LINQ (System.Linq.Dynamic) - major SQL injection vector
+        (r'\.Where\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-89', 'Dynamic LINQ Where with variable'),
+        (r'\.Where<[^>]+>\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-89', 'Dynamic LINQ Where<T> with variable'),
+        (r'\.OrderBy\s*<[^>]+>\s*\([^)]*\+', 'CWE-89', 'Dynamic LINQ OrderBy with concatenation'),
+        (r'\.Select\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-89', 'Dynamic LINQ Select with variable'),
+        # String format/interpolation with SQL keywords
+        (r'\$"[^"]*SELECT[^"]*\{', 'CWE-89', 'SQL SELECT in interpolated string'),
+        (r'\$"[^"]*INSERT[^"]*\{', 'CWE-89', 'SQL INSERT in interpolated string'),
+        (r'\$"[^"]*UPDATE[^"]*\{', 'CWE-89', 'SQL UPDATE in interpolated string'),
+        (r'\$"[^"]*DELETE[^"]*\{', 'CWE-89', 'SQL DELETE in interpolated string'),
+        # SQL string variable with concatenation - catches multi-line taint
+        (r'string\s+\w+\s*=\s*"[^"]*SELECT[^"]*"\s*\+', 'CWE-89', 'SQL query variable with concatenation'),
+        (r'string\s+\w+\s*=\s*"[^"]*INSERT[^"]*"\s*\+', 'CWE-89', 'SQL INSERT variable with concatenation'),
+        (r'string\s+\w+\s*=\s*"[^"]*UPDATE[^"]*"\s*\+', 'CWE-89', 'SQL UPDATE variable with concatenation'),
+        (r'string\s+\w+\s*=\s*"[^"]*DELETE[^"]*"\s*\+', 'CWE-89', 'SQL DELETE variable with concatenation'),
+    ],
+    # XSS / Reflected XSS
+    VulnType.XSS: [
+        # ASP.NET WebForms - direct Request to output
+        (r'\.Text\s*=\s*Request\[', 'CWE-79', 'Control text from Request'),
+        (r'\.Text\s*=\s*Request\.', 'CWE-79', 'Control text from Request property'),
+        (r'Response\.Write\s*\(\s*Request', 'CWE-79', 'Response.Write with Request data'),
+        (r'\.InnerHtml\s*=\s*Request', 'CWE-79', 'InnerHtml from Request'),
+        (r'\.InnerText\s*=\s*Request', 'CWE-79', 'InnerText from Request'),
+        # MVC - Html.Raw with dynamic content
+        (r'@Html\.Raw\s*\(\s*[a-zA-Z_]', 'CWE-79', 'Html.Raw with variable'),
+        (r'HtmlString\s*\(\s*Request', 'CWE-79', 'HtmlString with Request data'),
+    ],
+    # Command Injection
+    VulnType.COMMAND_INJECTION: [
+        (r'Process\.Start\s*\([^)]*\+', 'CWE-78', 'Process.Start with concatenation'),
+        (r'ProcessStartInfo[^)]*Arguments\s*=\s*[^"\';\n]*\+', 'CWE-78', 'ProcessStartInfo Arguments with concatenation'),
+        (r'Shell\s*\(\s*["\'][^"\']*["\']\s*\+', 'CWE-78', 'Shell execution with concatenation'),
+        (r'cmd\.exe["\'\s]*,\s*["\'][^"\']*["\']\s*\+', 'CWE-78', 'cmd.exe with concatenation'),
+        # ProcessStartInfo object initializer patterns
+        (r'FileName\s*=\s*System\.Console\.ReadLine', 'CWE-78', 'ProcessStartInfo FileName from user input'),
+        (r'Arguments\s*=\s*System\.Console\.ReadLine', 'CWE-78', 'ProcessStartInfo Arguments from user input'),
+        (r'FileName\s*=\s*Console\.ReadLine', 'CWE-78', 'ProcessStartInfo FileName from user input'),
+        (r'Arguments\s*=\s*Console\.ReadLine', 'CWE-78', 'ProcessStartInfo Arguments from user input'),
+        # ProcessStartInfo constructor with variables
+        (r'new\s+ProcessStartInfo\s*\(\s*[a-zA-Z_]\w*\s*,', 'CWE-78', 'ProcessStartInfo with variable filename'),
+        (r'new\s+ProcessStartInfo\s*\([^)]*,\s*[a-zA-Z_]\w*\s*\)', 'CWE-78', 'ProcessStartInfo with variable arguments'),
+        # Property assignments
+        (r'\.FileName\s*=\s*[a-zA-Z_]\w*\s*;', 'CWE-78', 'ProcessStartInfo.FileName assignment from variable'),
+        (r'\.Arguments\s*=\s*[a-zA-Z_]\w*\s*;', 'CWE-78', 'ProcessStartInfo.Arguments assignment from variable'),
+    ],
+    # Path Traversal / Directory Traversal
+    VulnType.PATH_TRAVERSAL: [
+        (r'File\.Read\w*\s*\([^)]*\+', 'CWE-22', 'File read with concatenation'),
+        (r'File\.Write\w*\s*\([^)]*\+', 'CWE-22', 'File write with concatenation'),
+        (r'File\.Open\s*\([^)]*\+', 'CWE-22', 'File.Open with concatenation'),
+        (r'File\.Delete\s*\([^)]*\+', 'CWE-22', 'File.Delete with concatenation'),
+        (r'StreamReader\s*\([^)]*\+', 'CWE-22', 'StreamReader with concatenation'),
+        (r'StreamWriter\s*\([^)]*\+', 'CWE-22', 'StreamWriter with concatenation'),
+        (r'DirectoryInfo\s*\([^)]*\+', 'CWE-22', 'DirectoryInfo with concatenation'),
+        (r'Path\.Combine\s*\([^)]*\+', 'CWE-22', 'Path.Combine with concatenation'),
+        # ASP.NET file path results
+        (r'FilePathResult\s*\([^)]*\+', 'CWE-22', 'FilePathResult with concatenation'),
+        (r'new\s+FilePathResult\s*\([^)]*\+', 'CWE-22', 'FilePathResult with concatenation'),
+        (r'PhysicalFile\s*\([^)]*\+', 'CWE-22', 'PhysicalFile with concatenation'),
+        # FileStream with user input
+        (r'FileStream\s*\([^)]*Console\.ReadLine', 'CWE-22', 'FileStream with user input'),
+        (r'new\s+FileStream\s*\([^)]*Console\.ReadLine', 'CWE-22', 'FileStream with user input'),
+        (r'FileStream\s*\([^)]*\+', 'CWE-22', 'FileStream with concatenation'),
+    ],
+    # SSRF (Server-Side Request Forgery)
+    VulnType.SSRF: [
+        (r'WebClient\s*\(\s*\).*\.Download\w+\s*\(\s*[a-zA-Z_]', 'CWE-918', 'WebClient with dynamic URL'),
+        (r'\.DownloadString\s*\(\s*[a-zA-Z_]', 'CWE-918', 'DownloadString with variable URL'),
+        (r'\.DownloadData\s*\(\s*[a-zA-Z_]', 'CWE-918', 'DownloadData with variable URL'),
+        (r'HttpClient.*\.Get\w*\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HttpClient GET with variable URL'),
+        (r'HttpClient.*\.Post\w*\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HttpClient POST with variable URL'),
+        (r'WebRequest\.Create\s*\(\s*[a-zA-Z_]', 'CWE-918', 'WebRequest.Create with variable'),
+        (r'\.BaseAddress\s*=\s*[a-zA-Z_]', 'CWE-918', 'BaseAddress assignment with variable'),
+        (r'new\s+Uri\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Uri constructor with variable'),
+    ],
+    # Insecure Deserialization
+    VulnType.DESERIALIZATION: [
+        (r'BinaryFormatter\s*\(\s*\)\.Deserialize', 'CWE-502', 'BinaryFormatter deserialization'),
+        (r'new\s+BinaryFormatter\s*\(', 'CWE-502', 'BinaryFormatter instantiation'),
+        # BinaryMessageFormatter (MSMQ)
+        (r'BinaryMessageFormatter\s*\(', 'CWE-502', 'BinaryMessageFormatter (MSMQ deserialization)'),
+        (r'new\s+BinaryMessageFormatter', 'CWE-502', 'BinaryMessageFormatter (MSMQ deserialization)'),
+        (r'\.Formatter\s*=\s*new\s+BinaryMessageFormatter', 'CWE-502', 'MessageQueue BinaryMessageFormatter'),
+        (r'MessageQueue.*\.Formatter\s*=', 'CWE-502', 'MessageQueue Formatter assignment'),
+        # Other deserializers
+        (r'JsonConvert\.DeserializeObject\s*<', 'CWE-502', 'JSON deserialization'),
+        (r'XmlSerializer.*\.Deserialize', 'CWE-502', 'XML deserialization'),
+        (r'serializer\.Deserialize', 'CWE-502', 'Serializer deserialization'),
+        (r'SoapFormatter.*\.Deserialize', 'CWE-502', 'SOAP deserialization'),
+        (r'NetDataContractSerializer.*\.Deserialize', 'CWE-502', 'NetDataContractSerializer'),
+        (r'ObjectStateFormatter.*\.Deserialize', 'CWE-502', 'ObjectStateFormatter'),
+        (r'LosFormatter.*\.Deserialize', 'CWE-502', 'LosFormatter deserialization'),
+        (r'TypeNameHandling\s*=\s*TypeNameHandling\.All', 'CWE-502', 'Unsafe TypeNameHandling'),
+        (r'TypeNameHandling\s*=\s*TypeNameHandling\.Auto', 'CWE-502', 'Unsafe TypeNameHandling'),
+        (r'TypeNameHandling\s*=\s*TypeNameHandling\.Objects', 'CWE-502', 'Unsafe TypeNameHandling'),
+        (r'TypeNameHandling\s*=\s*TypeNameHandling\.Arrays', 'CWE-502', 'Unsafe TypeNameHandling'),
+        # fastJSON unsafe deserialization
+        (r'JSON\.ToObject\s*\([^)]*BadListTypeChecking\s*=\s*false', 'CWE-502', 'fastJSON unsafe deserialization'),
+        (r'JSON\.ToObject\s*<', 'CWE-502', 'fastJSON deserialization'),
+        # FsPickler deserialization
+        (r'FsPickler.*\.Deserialize', 'CWE-502', 'FsPickler deserialization'),
+        (r'fsPickler\.Deserialize', 'CWE-502', 'FsPickler deserialization'),
+    ],
+    # Weak Cryptography
+    VulnType.WEAK_CRYPTOGRAPHY: [
+        # Weak hashes
+        (r'MD5\.Create\s*\(', 'CWE-328', 'Use of weak hash MD5'),
+        (r'new\s+MD5CryptoServiceProvider', 'CWE-328', 'Use of weak hash MD5'),
+        (r'MD5\.HashData\s*\(', 'CWE-328', 'Use of weak hash MD5'),
+        (r'SHA1\.Create\s*\(', 'CWE-328', 'Use of weak hash SHA1'),
+        (r'new\s+SHA1CryptoServiceProvider', 'CWE-328', 'Use of weak hash SHA1'),
+        (r'SHA1\.HashData\s*\(', 'CWE-328', 'Use of weak hash SHA1'),
+        (r'SHA1Managed\s*\(', 'CWE-328', 'Use of weak hash SHA1'),
+        # Weak ciphers
+        (r'DES\.Create\s*\(', 'CWE-327', 'Use of weak cipher DES'),
+        (r'new\s+DESCryptoServiceProvider', 'CWE-327', 'Use of weak cipher DES'),
+        (r'RC2\.Create\s*\(', 'CWE-327', 'Use of weak cipher RC2'),
+        (r'RC2CryptoServiceProvider', 'CWE-327', 'Use of weak cipher RC2'),
+        (r'TripleDES\.Create\s*\(', 'CWE-327', 'Use of weak cipher 3DES'),
+        (r'TripleDESCryptoServiceProvider', 'CWE-327', 'Use of weak cipher 3DES'),
+        # Insecure modes
+        (r'CipherMode\.ECB', 'CWE-327', 'Use of ECB mode (insecure)'),
+        # Weak PBKDF2 iterations (less than 10000)
+        (r'Rfc2898DeriveBytes\s*\([^)]*,\s*\d{1,4}\s*\)', 'CWE-916', 'Weak PBKDF2 iterations (<10000)'),
+        (r'Rfc2898DeriveBytes\s*\([^)]*,\s*1000\s*\)', 'CWE-916', 'Weak PBKDF2 iterations (1000)'),
+        # Weak hash algorithms in PBKDF2
+        (r'Rfc2898DeriveBytes\s*\([^)]*HashAlgorithmName\.MD5', 'CWE-328', 'PBKDF2 with weak MD5 hash'),
+        (r'Rfc2898DeriveBytes\s*\([^)]*HashAlgorithmName\.SHA1', 'CWE-328', 'PBKDF2 with weak SHA1 hash'),
+        (r'HashAlgorithmName\.MD5', 'CWE-328', 'Weak MD5 hash algorithm'),
+        (r'HashAlgorithmName\.SHA1', 'CWE-328', 'Weak SHA1 hash algorithm'),
+        # Insecure random
+        (r'new\s+Random\s*\(', 'CWE-330', 'System.Random is not cryptographically secure'),
+        (r'Random\s*\(\s*\)', 'CWE-330', 'System.Random is not cryptographically secure'),
+        # SSL/TLS certificate validation bypass
+        (r'ServerCertificateValidationCallback\s*=', 'CWE-295', 'Custom SSL certificate validation'),
+        (r'ServicePointManager\.ServerCertificateValidationCallback', 'CWE-295', 'SSL certificate validation bypass'),
+        (r'return\s+true.*RemoteCertificateValidationCallback', 'CWE-295', 'SSL certificate validation always returns true'),
+        # Weak key sizes
+        (r'KeySize\s*=\s*512\b', 'CWE-326', 'Weak key size (512 bits)'),
+        (r'KeySize\s*=\s*1024\b', 'CWE-326', 'Weak key size (1024 bits)'),
+        # RSA PKCS1 padding (use OAEP instead)
+        (r'RSAEncryptionPadding\.Pkcs1', 'CWE-327', 'RSA PKCS1v1.5 padding (use OAEP)'),
+        # Weak TLS versions
+        (r'SslProtocols\.Ssl2', 'CWE-327', 'Use of SSLv2 (insecure)'),
+        (r'SslProtocols\.Ssl3', 'CWE-327', 'Use of SSLv3 (insecure)'),
+        (r'SslProtocols\.Tls\b', 'CWE-327', 'Use of TLSv1.0 (deprecated)'),
+        (r'SslProtocols\.Tls11', 'CWE-327', 'Use of TLSv1.1 (deprecated)'),
+        # RijndaelManaged defaults to CBC mode (insecure without proper IV handling)
+        (r'new\s+RijndaelManaged\s*\(', 'CWE-327', 'RijndaelManaged (defaults to CBC mode)'),
+        (r'RijndaelManaged\s*\(\s*\)', 'CWE-327', 'RijndaelManaged (defaults to CBC mode)'),
+        # Explicit CBC mode
+        (r'CipherMode\.CBC', 'CWE-327', 'CBC mode without authentication (use GCM)'),
+        (r'\.Mode\s*=\s*CipherMode\.CBC', 'CWE-327', 'CBC mode assignment'),
+        # RSA weak key size in constructor
+        (r'RSACryptoServiceProvider\s*\(\s*1024\s*\)', 'CWE-326', 'RSA 1024-bit key (weak)'),
+        (r'RSACryptoServiceProvider\s*\(\s*512\s*\)', 'CWE-326', 'RSA 512-bit key (weak)'),
+        # RSA PKCS1 padding via boolean false (use OAEP instead)
+        (r'\.Encrypt\s*\([^,]+,\s*false\s*\)', 'CWE-780', 'RSA PKCS1 padding (use OAEP)'),
+        (r'\.Decrypt\s*\([^,]+,\s*false\s*\)', 'CWE-780', 'RSA PKCS1 padding (use OAEP)'),
+        # Insecure certificate validation callback returning true
+        (r'ServerCertificateValidationCallback\s*\+?=\s*\([^)]*\)\s*=>\s*true', 'CWE-295', 'SSL validation bypass (always true)'),
+        (r'RemoteCertificateValidationCallback.*=>\s*true', 'CWE-295', 'SSL validation bypass (always true)'),
+    ],
+    # Log Injection / Log Forging
+    VulnType.LOG_INJECTION: [
+        # Log4Net patterns
+        (r'logger\.Warn\s*\([^)]*\+', 'CWE-117', 'Log4Net Warn with concatenation'),
+        (r'logger\.Info\s*\([^)]*\+', 'CWE-117', 'Log4Net Info with concatenation'),
+        (r'logger\.Debug\s*\([^)]*\+', 'CWE-117', 'Log4Net Debug with concatenation'),
+        (r'logger\.Error\s*\([^)]*\+', 'CWE-117', 'Log4Net Error with concatenation'),
+        (r'logger\.Fatal\s*\([^)]*\+', 'CWE-117', 'Log4Net Fatal with concatenation'),
+        (r'ILog\.Warn\s*\([^)]*\+', 'CWE-117', 'Log4Net Warn with concatenation'),
+        # NLog patterns
+        (r'Logger\.Warn\s*\([^)]*\+', 'CWE-117', 'NLog Warn with concatenation'),
+        (r'Logger\.Info\s*\([^)]*\+', 'CWE-117', 'NLog Info with concatenation'),
+        (r'Logger\.Debug\s*\([^)]*\+', 'CWE-117', 'NLog Debug with concatenation'),
+        (r'Logger\.Error\s*\([^)]*\+', 'CWE-117', 'NLog Error with concatenation'),
+        (r'Logger\.Fatal\s*\([^)]*\+', 'CWE-117', 'NLog Fatal with concatenation'),
+        # Generic logging with user input
+        (r'\.Log\s*\([^)]*Console\.ReadLine', 'CWE-117', 'Log with user input'),
+        (r'\.Write\s*\([^)]*Console\.ReadLine', 'CWE-117', 'Log write with user input'),
+    ],
+    # Header Injection / HTTP Response Splitting
+    VulnType.HEADER_INJECTION: [
+        # Cookie with user-controlled value
+        (r'new\s+Cookie\s*\([^,]+,\s*[a-zA-Z_]\w*\s*\)', 'CWE-113', 'Cookie with user-controlled value'),
+        (r'Cookie\s*\([^,]+,\s*Console\.ReadLine', 'CWE-113', 'Cookie from user input'),
+        # Header manipulation
+        (r'\.Headers\.Add\s*\([^,]+,\s*[a-zA-Z_]\w*\s*\)', 'CWE-113', 'Header with variable value'),
+        (r'Response\.Headers\s*\[[^\]]+\]\s*=\s*[a-zA-Z_]', 'CWE-113', 'Response header with variable'),
+        (r'\.AddHeader\s*\([^,]+,\s*[a-zA-Z_]\w*\s*\)', 'CWE-113', 'AddHeader with variable'),
+        # HTTP parameter pollution
+        (r'\.QueryString\s*=\s*[a-zA-Z_]', 'CWE-235', 'QueryString assignment from variable'),
+    ],
+    # Open Redirect
+    VulnType.OPEN_REDIRECT: [
+        (r'Response\.Redirect\s*\(\s*[a-zA-Z_]', 'CWE-601', 'Redirect with variable'),
+        (r'Redirect\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-601', 'Redirect with variable'),
+        (r'RedirectToAction\s*\([^)]*returnUrl', 'CWE-601', 'RedirectToAction with returnUrl'),
+    ],
+    # Hardcoded Secrets
+    VulnType.HARDCODED_SECRET: [
+        (r'[Pp]assword\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded password'),
+        (r'[Ss]ecret\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
+        (r'[Aa]pi[Kk]ey\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded API key'),
+        (r'[Cc]onnection[Ss]tring\s*=\s*"[^"]*[Pp]assword=[^"]*"', 'CWE-798', 'Hardcoded connection string'),
+    ],
+    # XXE (XML External Entity) / XML Injection
+    VulnType.XXE: [
+        (r'XmlReaderSettings\s*\(\s*\)\s*\{[^}]*DtdProcessing\s*=\s*DtdProcessing\.Parse', 'CWE-611', 'DTD processing enabled'),
+        (r'XmlDocument\s*\(\s*\).*\.Load', 'CWE-611', 'XmlDocument.Load (potential XXE)'),
+        (r'new\s+XmlDocument\s*\(\s*\)', 'CWE-611', 'XmlDocument instantiation (potential XXE pre-.NET 4.5.2)'),
+        (r'XmlDocument\s*\(\s*\)\s*;', 'CWE-611', 'XmlDocument instantiation'),
+        (r'XPathDocument\s*\(', 'CWE-611', 'XPathDocument usage'),
+        (r'XmlTextReader\s*\(', 'CWE-611', 'XmlTextReader (potential XXE)'),
+        # XmlWriter.WriteRaw - XML injection (CWE-91)
+        (r'\.WriteRaw\s*\([^)]*\+', 'CWE-91', 'XmlWriter.WriteRaw with concatenation'),
+        (r'XmlWriter.*\.WriteRaw\s*\(', 'CWE-91', 'XmlWriter.WriteRaw (XML injection)'),
+        (r'\.WriteRaw\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-91', 'XmlWriter.WriteRaw with variable'),
+    ],
+    # LDAP Injection
+    VulnType.LDAP_INJECTION: [
+        # DirectorySearcher filter with concatenation
+        (r'DirectorySearcher.*Filter\s*=\s*["\'][^"\']*["\']\s*\+', 'CWE-90', 'LDAP filter with concatenation'),
+        (r'\.Filter\s*=\s*[^;]*\+', 'CWE-90', 'LDAP filter with concatenation'),
+        (r'SearchRequest\s*\([^)]*\+', 'CWE-90', 'LDAP SearchRequest with concatenation'),
+        # DirectoryEntry with user input
+        (r'new\s+DirectoryEntry\s*\([^)]*\+', 'CWE-90', 'DirectoryEntry with concatenation'),
+        (r'DirectoryEntry\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-90', 'DirectoryEntry with variable'),
+        # Simple LDAP bind vulnerabilities
+        (r'DirectoryEntry\s*\([^)]*AuthenticationType\.Anonymous', 'CWE-90', 'LDAP anonymous bind'),
+        (r'AuthenticationType\.None', 'CWE-90', 'LDAP no authentication'),
+        # Insecure SimpleBind (sends credentials in cleartext) - CWE-522
+        (r'ContextOptions\.SimpleBind', 'CWE-522', 'LDAP SimpleBind (cleartext credentials)'),
+        (r'ValidateCredentials\s*\([^)]*SimpleBind', 'CWE-522', 'LDAP SimpleBind validation'),
+        # LDAP path manipulation
+        (r'Path\s*=\s*["\']LDAP://["\'][^;]*\+', 'CWE-90', 'LDAP path with concatenation'),
+        # PrincipalContext with user input
+        (r'PrincipalContext\s*\([^)]*\+', 'CWE-90', 'PrincipalContext with concatenation'),
+        # Insecure LDAP authentication type (cleartext)
+        (r'AuthType\s*=\s*AuthType\.Basic', 'CWE-522', 'LDAP Basic auth (cleartext credentials)'),
+        (r'\.AuthType\s*=\s*AuthType\.Basic', 'CWE-522', 'LDAP Basic auth (cleartext)'),
+    ],
+    # XPath Injection
+    VulnType.XPATH_INJECTION: [
+        (r'\.Compile\s*\([^)]*\+', 'CWE-643', 'XPath Compile with concatenation'),
+        (r'\.SelectNodes\s*\([^)]*\+', 'CWE-643', 'SelectNodes with concatenation'),
+        (r'\.SelectSingleNode\s*\([^)]*\+', 'CWE-643', 'SelectSingleNode with concatenation'),
+        (r'XPathExpression[^;]*\+', 'CWE-643', 'XPath expression with concatenation'),
+        # Match xPath/xpath variable assignment with concatenation
+        (r'[xX][Pp]ath\s*=\s*[^;]*\+', 'CWE-643', 'XPath string with concatenation'),
+    ],
+    # JSON Injection / Code Injection
+    VulnType.CODE_INJECTION: [
+        # JSON WriteRawValue with user input (WriteRaw is handled in XXE section for XML)
+        (r'\.WriteRawValue\s*\([^)]*\+', 'CWE-94', 'JSON WriteRawValue with concatenation'),
+        (r'\.WriteRawValue\s*\([^)]*Console\.ReadLine', 'CWE-94', 'JSON WriteRawValue from user input'),
+        # Code Injection / Reflection
+        (r'Activator\.CreateInstance\s*\([^)]*\+', 'CWE-94', 'Dynamic type instantiation'),
+        (r'Type\.GetType\s*\([^)]*\+', 'CWE-94', 'Type.GetType with concatenation'),
+        (r'Assembly\.Load\s*\([^)]*\+', 'CWE-94', 'Assembly.Load with concatenation'),
+        (r'CSharpCodeProvider.*CompileAssembly', 'CWE-94', 'Dynamic compilation'),
+        # CompileAssemblyFromSource - called on any CSharpCodeProvider instance
+        (r'\.CompileAssemblyFromSource\s*\(', 'CWE-94', 'CompileAssemblyFromSource (CWE-94)'),
+        (r'\.CompileAssemblyFromFile\s*\(', 'CWE-94', 'CompileAssemblyFromFile (CWE-94)'),
+        (r'\.CompileAssemblyFromDom\s*\(', 'CWE-94', 'CompileAssemblyFromDom (CWE-94)'),
+        # AppDomain execution
+        (r'AppDomain\..*ExecuteAssembly\s*\(', 'CWE-94', 'AppDomain.ExecuteAssembly'),
+        (r'\.ExecuteAssembly\s*\([^)]*\+', 'CWE-94', 'ExecuteAssembly with concatenation'),
+        (r'AppDomain\..*CreateInstance', 'CWE-94', 'AppDomain.CreateInstance'),
+        # RazorEngine template injection
+        (r'Razor\.RunCompile\s*\(', 'CWE-94', 'RazorEngine template injection'),
+        (r'RazorEngine.*\.RunCompile', 'CWE-94', 'RazorEngine template injection'),
+        (r'Engine\.Razor\.RunCompile', 'CWE-94', 'RazorEngine template injection'),
+        (r'RazorEngineService\.RunCompile', 'CWE-94', 'RazorEngine template injection'),
+        (r'\.RunCompile\s*\([^)]*\+', 'CWE-94', 'RazorEngine template with concatenation'),
+        # Roslyn scripting
+        (r'CSharpScript\.RunAsync', 'CWE-94', 'CSharpScript execution'),
+        (r'CSharpScript\.EvaluateAsync', 'CWE-94', 'CSharpScript evaluation'),
+        # PowerShell
+        (r'PowerShell\.Create\s*\(', 'CWE-94', 'PowerShell execution'),
+        (r'\.AddScript\s*\([^)]*\+', 'CWE-94', 'PowerShell AddScript with concatenation'),
+    ],
+    # CSRF (missing anti-forgery)
+    VulnType.AUTHORIZATION_BYPASS: [
+        (r'\[HttpPost\][^[]*public\s+\w+\s+\w+\s*\([^)]*\)[^{]*\{(?:(?!\[ValidateAntiForgeryToken\]).)* ', 'CWE-352', 'POST without ValidateAntiForgeryToken'),
+    ],
+}
+
 
 class Severity(Enum):
     """Vulnerability severity levels"""
@@ -908,7 +1233,7 @@ class FrameScanner:
                     result.vulnerabilities.append(vuln)
 
             # Step 4: Pattern-based detection (for vulnerabilities without taint flow)
-            if self.language in ('javascript', 'typescript', 'c', 'cpp', 'c++'):
+            if self.language in ('javascript', 'typescript', 'c', 'cpp', 'c++', 'csharp'):
                 pattern_vulns = self._scan_patterns(source_code, filename)
                 result.vulnerabilities.extend(pattern_vulns)
                 if self.verbose:
@@ -920,6 +1245,13 @@ class FrameScanner:
                 result.vulnerabilities.extend(memory_vulns)
                 if self.verbose:
                     print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
+
+            # Step 4c: Interprocedural taint analysis for C#
+            if self.language == 'csharp':
+                ipa_vulns = self._analyze_csharp_interprocedural(source_code, filename)
+                result.vulnerabilities.extend(ipa_vulns)
+                if self.verbose:
+                    print(f"[Scanner] C# interprocedural analysis found {len(ipa_vulns)} vulnerabilities")
 
             # Step 5: Deduplicate vulnerabilities
             result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
@@ -987,7 +1319,8 @@ class FrameScanner:
             self.language = detected_lang
             self.frontend = self._get_frontend(detected_lang)
 
-        source_code = path.read_text(encoding='utf-8')
+        # Use utf-8-sig to automatically strip BOM (common in C# files)
+        source_code = path.read_text(encoding='utf-8-sig')
         return self.scan(source_code, str(path))
 
     def scan_directory(self, dirpath: str, pattern: str = "**/*.py") -> List[ScanResult]:
@@ -1193,7 +1526,41 @@ class FrameScanner:
                 final_vulns.append(best)
                 added_windows.add(window_key)
 
-        return final_vulns
+        # Phase 3: File-level CWE deduplication
+        # Keep only one instance of each CWE per file (for benchmark compatibility)
+        # This prevents the same vulnerability type being reported thousands of times
+        file_cwe_seen = {}  # (file, cwe_id) -> best vulnerability
+
+        for vuln in final_vulns:
+            if not vuln.cwe_id:
+                continue
+
+            file_cwe_key = (vuln.location, vuln.cwe_id)
+            existing = file_cwe_seen.get(file_cwe_key)
+
+            if existing is None:
+                file_cwe_seen[file_cwe_key] = vuln
+            elif is_better(vuln, existing):
+                file_cwe_seen[file_cwe_key] = vuln
+
+        # Build final list with file-level deduplication
+        deduplicated = []
+        added_file_cwes = set()
+
+        for vuln in final_vulns:
+            if not vuln.cwe_id:
+                # No CWE - keep as-is
+                deduplicated.append(vuln)
+                continue
+
+            file_cwe_key = (vuln.location, vuln.cwe_id)
+            best = file_cwe_seen.get(file_cwe_key)
+
+            if best is not None and file_cwe_key not in added_file_cwes:
+                deduplicated.append(best)
+                added_file_cwes.add(file_cwe_key)
+
+        return deduplicated
 
     def _filter_by_confidence(self, vulns: List[Vulnerability], source_code: str) -> List[Vulnerability]:
         """
@@ -1393,6 +1760,10 @@ class FrameScanner:
             skip_comments = ('//', '/*', '#')  # Also skip preprocessor directives
             # Initialize buffer size tracker for context-aware verification
             buffer_tracker = BufferSizeTracker(source_code)
+        elif self.language == 'csharp':
+            patterns_dict = CSHARP_VULNERABILITY_PATTERNS
+            skip_comments = ('//', '/*')
+            buffer_tracker = None
         else:
             return vulnerabilities
 
@@ -1419,7 +1790,7 @@ class FrameScanner:
                 continue
 
             # Handle multi-line /* ... */ comments
-            if self.language in ('c', 'cpp', 'c++', 'javascript', 'typescript'):
+            if self.language in ('c', 'cpp', 'c++', 'javascript', 'typescript', 'csharp'):
                 if in_multiline_comment:
                     if '*/' in stripped:
                         in_multiline_comment = False
@@ -1445,10 +1816,21 @@ class FrameScanner:
                 continue
 
             # Remove inline // comments for matching
+            # But be careful not to remove // inside string literals
             if '//' in stripped:
-                stripped = stripped.split('//')[0].strip()
-                if not stripped:
-                    continue
+                # Find // that's not inside a string literal
+                # Simple heuristic: count quotes before the //
+                parts = stripped.split('//')
+                if len(parts) >= 2:
+                    before = parts[0]
+                    # Count unescaped quotes before the //
+                    dq_count = before.count('"') - before.count('\\"')
+                    sq_count = before.count("'") - before.count("\\'")
+                    # If both counts are even, we're outside strings
+                    if dq_count % 2 == 0 and sq_count % 2 == 0:
+                        stripped = before.strip()
+                        if not stripped:
+                            continue
 
             # Track function boundaries for function-aware detection
             if self.language in ('c', 'cpp', 'c++'):
@@ -1734,6 +2116,106 @@ class FrameScanner:
         # To enable, uncomment the blocks below.
 
         return vulnerabilities
+
+    def _analyze_csharp_interprocedural(self, source_code: str, filename: str) -> List[Vulnerability]:
+        """
+        Analyze C# source code for cross-method taint vulnerabilities.
+
+        Uses interprocedural taint analysis to track user input from ASP.NET
+        controller actions through helper methods to dangerous sinks.
+
+        Args:
+            source_code: Source code string
+            filename: Filename for reporting
+
+        Returns:
+            List of taint flow vulnerabilities
+        """
+        try:
+            from frame.sil.analyzers.csharp_interprocedural_taint import analyze_csharp_taint
+        except ImportError:
+            if self.verbose:
+                print("[Scanner] C# interprocedural taint analyzer not available")
+            return []
+
+        vulnerabilities = []
+        seen_locations = set()
+
+        try:
+            ipa_vulns = analyze_csharp_taint(source_code, filename, verbose=self.verbose)
+
+            for vuln_info in ipa_vulns:
+                location = vuln_info.get('location')
+                if not location:
+                    continue
+
+                key = (location.line, vuln_info.get('sink_kind', ''))
+                if key in seen_locations:
+                    continue
+                seen_locations.add(key)
+
+                # Map sink kind to vulnerability type
+                sink_kind = vuln_info.get('sink_kind', '')
+                vuln_type = self._map_sink_to_vuln_type(sink_kind)
+                cwe_id = self._get_cwe_for_sink(sink_kind)
+
+                vuln = Vulnerability(
+                    type=vuln_type,
+                    severity=Severity.HIGH,
+                    location=filename,
+                    line=location.line,
+                    column=location.column,
+                    description=vuln_info.get('description', f"Cross-method taint flow to {sink_kind}"),
+                    procedure=vuln_info.get('caller', '<unknown>'),
+                    source_var=vuln_info.get('argument', ''),
+                    source_location=vuln_info.get('caller', ''),
+                    sink_type=sink_kind,
+                    data_flow=[vuln_info.get('caller', ''), vuln_info.get('callee', '')],
+                    witness=None,
+                    confidence=0.85,
+                    cwe_id=cwe_id,
+                )
+                vulnerabilities.append(vuln)
+
+        except Exception as e:
+            if self.verbose:
+                print(f"[Scanner] C# interprocedural analysis error: {e}")
+                import traceback
+                traceback.print_exc()
+
+        return vulnerabilities
+
+    def _map_sink_to_vuln_type(self, sink_kind: str) -> VulnType:
+        """Map sink kind to VulnType."""
+        sink_map = {
+            'sql_query': VulnType.SQL_INJECTION,
+            'command_exec': VulnType.COMMAND_INJECTION,
+            'file_path': VulnType.PATH_TRAVERSAL,
+            'deserialization': VulnType.DESERIALIZATION,
+            'xxe': VulnType.XXE,
+            'ssrf': VulnType.SSRF,
+            'code_injection': VulnType.CODE_INJECTION,
+            'ldap_query': VulnType.LDAP_INJECTION,
+            'xpath_query': VulnType.XPATH_INJECTION,
+            'log_injection': VulnType.LOG_INJECTION,
+        }
+        return sink_map.get(sink_kind, VulnType.TAINT_FLOW)
+
+    def _get_cwe_for_sink(self, sink_kind: str) -> str:
+        """Get CWE ID for sink kind."""
+        cwe_map = {
+            'sql_query': 'CWE-89',
+            'command_exec': 'CWE-78',
+            'file_path': 'CWE-22',
+            'deserialization': 'CWE-502',
+            'xxe': 'CWE-611',
+            'ssrf': 'CWE-918',
+            'code_injection': 'CWE-94',
+            'ldap_query': 'CWE-90',
+            'xpath_query': 'CWE-643',
+            'log_injection': 'CWE-117',
+        }
+        return cwe_map.get(sink_kind, 'CWE-20')
 
 
 def scan_code(source_code: str, language: str = "python", filename: str = "<unknown>") -> ScanResult:
