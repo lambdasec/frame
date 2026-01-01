@@ -73,16 +73,23 @@ python -m benchmarks run --division secbench_js
 
 **NIST Juliet C/C++ Benchmark** (1000 tests, 952 expected vulnerabilities):
 
-| Metric | Frame (Overall) | C Only | C++ Only |
-|--------|-----------------|--------|----------|
-| **True Positives** | 576 | 456 | 120 |
-| **False Positives** | 65 | 17 | 48 |
-| **Precision** | **89.9%** | **96.4%** | 71.4% |
-| **Recall** | **60.5%** | **62.6%** | 53.6% |
-| **F1 Score** | **72.3%** | **75.9%** | 61.2% |
-| **OWASP Score** | **54.4%** | **60.4%** | 38.6% |
+| Metric | Frame | Semgrep |
+|--------|-------|---------|
+| **True Positives** | **576** | 228 |
+| **False Positives** | 65 | **0** |
+| **Precision** | 89.9% | **100%** |
+| **Recall** | **60.5%** | 22.8% |
+| **F1 Score** | **72.3%** | 37.1% |
+| **OWASP Score** | **54.4%** | 22.8% |
 
-*Note: C++ has lower coverage due to complex template patterns and additional FPs from pattern matching.*
+**Frame Results by Language:**
+
+| Language | TP | FP | Precision | Recall | F1 | OWASP |
+|----------|----|----|-----------|--------|-----|-------|
+| **C** | 456 | 17 | **96.4%** | **62.6%** | **75.9%** | **60.4%** |
+| **C++** | 120 | 48 | 71.4% | 53.6% | 61.2% | 38.6% |
+
+*Frame detects 2.5x more vulnerabilities than Semgrep. Semgrep's C/C++ rules focus on unsafe function patterns (strcpy, sprintf) while Frame uses semantic analysis with separation logic for memory safety.*
 
 **Detected CWEs:** CWE-114 (Process Control), CWE-121/122 (Buffer Overflow), CWE-124/127 (Buffer Underwrite/Underread), CWE-134 (Format String), CWE-190 (Integer Overflow), CWE-252 (Unchecked Return), CWE-321 (Hard-coded Crypto), CWE-369 (Divide by Zero), CWE-401 (Memory Leak), CWE-415 (Double Free), CWE-416 (Use After Free), CWE-457 (Uninitialized Variable), CWE-476 (NULL Pointer Dereference), CWE-480 (Incorrect Operator), CWE-78 (OS Command Injection), CWE-79 (XSS)
 
