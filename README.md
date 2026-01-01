@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Frame</h1>
+  <img src="assets/logo.svg" alt="Frame" width="400">
   <p align="center">
     <strong>Static Analysis for Memory Safety and Security</strong>
   </p>
