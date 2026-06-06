@@ -134,6 +134,9 @@ NODE_SPECS = {
     # Synthetic marker emitted by the frontend for a catastrophic-backtracking
     # regex literal / new RegExp(...) -- usage-based, no taint (CWE-1333).
     "__redos__": _sink("regex", [], "Catastrophic-backtracking regex (ReDoS, CWE-1333)"),
+    # Synthetic marker for an unguarded computed-property write (obj[key]=val)
+    # whose key is attacker-influenced -- prototype pollution (CWE-1321).
+    "__proto_pollution__": _sink("prototype_pollution", [], "Prototype pollution (CWE-1321)"),
 }
 
 # =============================================================================

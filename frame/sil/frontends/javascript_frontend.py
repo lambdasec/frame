@@ -200,6 +200,8 @@ class JavaScriptFrontend:
 
         # Whole-file ReDoS pass (covers module-level regex constants too).
         self._scan_redos(tree.root_node, program)
+        # Whole-file prototype-pollution pass.
+        self._scan_proto_pollution(tree.root_node, program)
 
         return program
 
@@ -593,17 +595,148 @@ class JavaScriptFrontend:
                                 break
             stack.extend(n.children)
 
+        self._emit_findings_proc(program, "<module-redos>", "__redos__", hits)
+
+    # A genuine guard COMPARES a key against a dangerous name or keeps a denylist
+    # -- distinct from merely mentioning __proto__ (which vulnerable code does
+    # too, e.g. when it sets that key or in a comment).
+    _PROTO_GUARD_RE = re.compile(
+        r"""(?x)
+        (?:===|!==|==|!=|indexOf|includes|\bhas\b)\s*\(?\s*['"](?:__proto__|constructor|prototype)['"]
+        | ['"](?:__proto__|constructor|prototype)['"]\s*(?:===|!==|==|!=)
+        | \[[^\]]*['"](?:__proto__|constructor|prototype)['"][^\]]*\]
+        """)
+
+    def _scan_proto_pollution(self, root: TSNode, program: Program) -> None:
+        """Whole-file pass: flag an unguarded computed-property write
+        ``obj[key] = value`` whose key is attacker-influenced (a for-in/for-of
+        loop variable, a path element, or -- in library mode -- any non-constant
+        key). Prototype pollution (CWE-1321).
+
+        The precision lever mirrors how these CVEs are fixed: a function that
+        already checks the key against __proto__/constructor/prototype is treated
+        as guarded and not flagged."""
+        # Proto-awareness is a file-level signal: a patched module *checks* a key
+        # against __proto__/constructor/prototype (the guard often lives in a
+        # helper or a module-level denylist, not inline at the write).
+        self._proto_guarded = bool(self._PROTO_GUARD_RE.search(self._source))
+
+        hits = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type != "assignment_expression":
+                continue
+            left = n.child_by_field_name("left")
+            if left is None or left.type != "subscript_expression":
+                continue
+            index = left.child_by_field_name("index")
+            if index is None or index.type in ("number", "string", "template_string"):
+                continue  # constant/numeric key cannot pollute the prototype
+
+            # Is the key attacker-influenced?
+            loop_vars = self._enclosing_loop_vars(n)
+            counter_vars = self._enclosing_c_for_vars(n)
+            key_txt = self._get_text(index)
+            params = self._enclosing_param_names(n)
+            if index.type == "identifier" and key_txt in counter_vars:
+                continue  # numeric C-style for-loop counter -> array index, safe
+            key_like = (
+                index.type in ("subscript_expression", "member_expression")
+                or key_txt in loop_vars
+                or key_txt in params
+                or key_txt in self._enclosing_path_key_vars(n)
+            )
+            if not key_like:
+                continue
+
+            # Guarded? A patched setter checks the key against __proto__/
+            # constructor/prototype -- but the check often lives in a helper
+            # (isValidKey) or a module-level denylist rather than inline, so a
+            # reference anywhere in the file means the code is proto-aware.
+            if self._proto_guarded:
+                continue
+
+            hits.append(self._get_location(n))
+
+        self._emit_findings_proc(program, "<module-proto-pollution>",
+                                 "__proto_pollution__", hits)
+
+    def _enclosing_loop_vars(self, node: TSNode) -> set:
+        """Loop variables of every for-in / for-of enclosing `node`."""
+        names = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type in ("for_in_statement", "for_of_statement"):
+                left = cur.child_by_field_name("left")
+                if left is not None:
+                    names |= self._referenced_identifiers(left)
+            cur = cur.parent
+        return names
+
+    def _enclosing_path_key_vars(self, node: TSNode) -> set:
+        """Local variables in the enclosing function that hold a path/key element
+        -- assigned from an index expression (keys[i], a[n-1]) or a string split
+        (path.split('.')...). Such variables are the keys in nested setters like
+        obj[lastKey] = value, a common prototype-pollution shape."""
+        fn = self._nearest_enclosing_function(node)
+        if fn is None:
+            return set()
+        names = set()
+        stack = [fn]
+        while stack:
+            cur = stack.pop()
+            stack.extend(cur.children)
+            target = value = None
+            if cur.type == "variable_declarator":
+                target = cur.child_by_field_name("name")
+                value = cur.child_by_field_name("value")
+            elif cur.type == "assignment_expression":
+                target = cur.child_by_field_name("left")
+                value = cur.child_by_field_name("right")
+            if target is None or value is None or target.type != "identifier":
+                continue
+            vtext = self._get_text(value)
+            if (value.type == "subscript_expression"
+                    or ".split(" in vtext or ".shift(" in vtext or ".pop(" in vtext):
+                names.add(self._get_text(target))
+        return names
+
+    def _enclosing_c_for_vars(self, node: TSNode) -> set:
+        """Counter variables of enclosing C-style for-loops (for(i=0;...)) -- these
+        index numerically and never pollute a prototype."""
+        names = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type == "for_statement":
+                init = cur.child_by_field_name("initializer")
+                if init is not None:
+                    names |= self._referenced_identifiers(init)
+            cur = cur.parent
+        return names
+
+    def _nearest_enclosing_function(self, node: TSNode) -> Optional[TSNode]:
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                return cur
+            cur = cur.parent
+        return None
+
+    def _emit_findings_proc(self, program: Program, name: str,
+                            sink_name: str, hits: list) -> None:
+        """Add a synthetic procedure holding one usage-sink Call per finding."""
         if not hits:
             return
-        proc = Procedure(name="<module-redos>", params=[],
-                         ret_type=Typ.unknown_type(),
+        proc = Procedure(name=name, params=[], ret_type=Typ.unknown_type(),
                          loc=hits[0], is_method=False)
         entry = proc.new_node(NodeKind.ENTRY)
         proc.add_node(entry)
         proc.entry_node = entry.id
         for loc in hits:
             entry.add_instr(Call(loc=loc, ret=None,
-                                 func=ExpConst.string("__redos__"), args=[]))
+                                 func=ExpConst.string(sink_name), args=[]))
         exit_node = proc.new_node(NodeKind.EXIT)
         proc.add_node(exit_node)
         proc.exit_node = exit_node.id
