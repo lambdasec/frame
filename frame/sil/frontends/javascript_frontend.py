@@ -12,6 +12,7 @@ using tree-sitter for parsing. It handles:
 - Object destructuring
 """
 
+import re
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -196,6 +197,9 @@ class JavaScriptFrontend:
 
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
+
+        # Whole-file ReDoS pass (covers module-level regex constants too).
+        self._scan_redos(tree.root_node, program)
 
         return program
 
@@ -441,17 +445,33 @@ class JavaScriptFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
+        # Find and translate body
+        body_node = node.child_by_field_name("body")
+
         # Treat the function's parameters as untrusted input (pure-SL recall
         # lever for real-world JS where the attack surface is exported APIs).
         if self.taint_function_params:
+            own = {str(param) for param, _ in proc.params}
             for param, _ in proc.params:
                 self._add_instr(TaintSource(
                     loc=proc.loc, var=param,
                     kind=TaintKind.USER_INPUT,
                     description="function parameter (untrusted input)"))
 
-        # Find and translate body
-        body_node = node.child_by_field_name("body")
+            # Closure capture: a nested function (callback, Promise executor,
+            # ...) sees its enclosing functions' parameters as free variables.
+            # When those params are untrusted, the capture carries the taint --
+            # e.g. promistify(cmd){ new Promise((res, rej) => exec(cmd)) }. Taint
+            # any enclosing param referenced here that this function doesn't
+            # shadow with its own parameter.
+            enclosing = self._enclosing_param_names(node) - own
+            if enclosing and body_node is not None:
+                referenced = self._referenced_identifiers(body_node)
+                for nm in sorted(enclosing & referenced):
+                    self._add_instr(TaintSource(
+                        loc=proc.loc, var=PVar(nm),
+                        kind=TaintKind.USER_INPUT,
+                        description="captured untrusted variable (closure)"))
         if body_node:
             if body_node.type == "statement_block":
                 self._translate_block(body_node)
@@ -471,6 +491,169 @@ class JavaScriptFrontend:
 
         self._current_proc = None
         return proc
+
+    _FUNC_LIKE = {"arrow_function", "function", "function_declaration",
+                  "function_expression", "method_definition",
+                  "generator_function", "generator_function_declaration"}
+
+    @staticmethod
+    def _has_unbounded_quant(body: str) -> bool:
+        """True if `body` contains an unescaped unbounded quantifier (*, +, {n,})."""
+        i, n = 0, len(body)
+        while i < n:
+            c = body[i]
+            if c == '\\':
+                i += 2
+                continue
+            if c in '*+':
+                return True
+            if c == '{':
+                j = body.find('}', i)
+                if j != -1 and ',' in body[i:j]:
+                    return True
+            i += 1
+        return False
+
+    def _is_redos_pattern(self, pattern: str) -> bool:
+        """Heuristic detector for super-linear (ReDoS) regex patterns: a group
+        that is itself quantified (*, +, {n,}) AND whose body contains an
+        unbounded inner quantifier or an alternation -- the classic
+        catastrophic-backtracking shape: (a+)+, (.*,)+, (\\d+)*, ([a-z]+)*,
+        (a|aa)+, (?:(?:\\s*;\\s*)|x)*. Bracket-matching handles nested groups.
+        A plain quantified group like (abc)+ is NOT flagged, keeping precision
+        high."""
+        if not pattern:
+            return False
+        n = len(pattern)
+        i = 0
+        while i < n:
+            c = pattern[i]
+            if c == '\\':
+                i += 2
+                continue
+            if c == ')':
+                nxt = pattern[i + 1] if i + 1 < n else ''
+                quantified = nxt in '*+' or nxt == '{'
+                if quantified:
+                    # Find the matching '(' by backward bracket-matching.
+                    depth = 0
+                    k = i
+                    while k >= 0:
+                        ck = pattern[k]
+                        escaped = k > 0 and pattern[k - 1] == '\\'
+                        if not escaped and ck == ')':
+                            depth += 1
+                        elif not escaped and ck == '(':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        k -= 1
+                    if k >= 0:
+                        body = pattern[k + 1:i]
+                        for pfx in ('?:', '?=', '?!', '?<=', '?<!'):
+                            if body.startswith(pfx):
+                                body = body[len(pfx):]
+                                break
+                        # Catastrophic when the quantified group's body has an
+                        # unbounded inner quantifier (nested quantifier, e.g.
+                        # (\d+)*) or an alternation (overlap-prone under a
+                        # quantifier, e.g. (a|aa)+). A plain (abc)+ is neither.
+                        if '|' in body or self._has_unbounded_quant(body):
+                            return True
+            i += 1
+        return False
+
+    def _scan_redos(self, root: TSNode, program: Program) -> None:
+        """Whole-file pass: collect every catastrophic-backtracking regex
+        (literal or `new RegExp("...")`/`RegExp("...")`) and emit a usage-based
+        ReDoS finding for each into a synthetic procedure. Doing this at file
+        scope (rather than per-expression) covers module-level regex constants,
+        which are where most real-world ReDoS lives."""
+        hits = []  # list of Location
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "regex":
+                pat = n.child_by_field_name("pattern")
+                if pat is not None and self._is_redos_pattern(self._get_text(pat)):
+                    hits.append(self._get_location(n))
+            elif n.type in ("new_expression", "call_expression"):
+                callee = (n.child_by_field_name("constructor")
+                          if n.type == "new_expression"
+                          else n.child_by_field_name("function"))
+                if callee is not None and self._get_text(callee) in ("RegExp", "global.RegExp"):
+                    args_node = n.child_by_field_name("arguments")
+                    if args_node is not None:
+                        for child in args_node.children:
+                            if child.type in ("string", "template_string"):
+                                raw = self._get_text(child)
+                                inner = raw[1:-1] if len(raw) >= 2 else raw
+                                if self._is_redos_pattern(inner):
+                                    hits.append(self._get_location(n))
+                                break
+            stack.extend(n.children)
+
+        if not hits:
+            return
+        proc = Procedure(name="<module-redos>", params=[],
+                         ret_type=Typ.unknown_type(),
+                         loc=hits[0], is_method=False)
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        for loc in hits:
+            entry.add_instr(Call(loc=loc, ret=None,
+                                 func=ExpConst.string("__redos__"), args=[]))
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        proc.connect(entry.id, exit_node.id)
+        program.add_procedure(proc)
+
+    def _func_param_names(self, func_node: TSNode) -> set:
+        """Identifier names of a function node's formal parameters."""
+        names = set()
+        params = func_node.child_by_field_name("parameters")
+        if params is not None:
+            for child in params.children:
+                if child.type == "identifier":
+                    names.add(self._get_text(child))
+                elif child.type in ("required_parameter", "optional_parameter"):
+                    pat = child.child_by_field_name("pattern")
+                    if pat is not None:
+                        names.add(self._get_text(pat))
+                elif child.type == "assignment_pattern":
+                    left = child.child_by_field_name("left")
+                    if left is not None:
+                        names.add(self._get_text(left))
+        else:
+            # Arrow with a single bare identifier parameter: x => ...
+            for child in func_node.children:
+                if child.type == "identifier":
+                    names.add(self._get_text(child))
+                    break
+        return names
+
+    def _enclosing_param_names(self, node: TSNode) -> set:
+        """Parameter names of every function lexically enclosing `node`."""
+        names = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                names |= self._func_param_names(cur)
+            cur = cur.parent
+        return names
+
+    def _referenced_identifiers(self, node: TSNode) -> set:
+        """All identifier names referenced in a subtree (bounded walk)."""
+        refs = set()
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if cur.type in ("identifier", "shorthand_property_identifier"):
+                refs.add(self._get_text(cur))
+            stack.extend(cur.children)
+        return refs
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
@@ -1234,6 +1417,14 @@ class JavaScriptFrontend:
                     if child.type not in ("(", ")", ","):
                         args.append(self._translate_expression(child))
             return ExpCall(func_exp, args)
+
+        elif node.type == "regex":
+            # ReDoS is detected by a dedicated whole-file pass (_scan_redos), so
+            # module-level regex constants are covered too; here just yield the
+            # literal as an opaque string value.
+            pat_node = node.child_by_field_name("pattern")
+            pattern = self._get_text(pat_node) if pat_node else ""
+            return ExpConst.string(f"/{pattern}/")
 
         elif node.type == "parenthesized_expression":
             for child in node.children:

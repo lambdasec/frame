@@ -19,8 +19,11 @@ def _source(kind: str, desc: str = "") -> ProcSpec:
 
 
 def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
-    """Create a taint sink spec"""
-    return ProcSpec(is_sink=kind, sink_args=args or [0], description=desc)
+    """Create a taint sink spec. Pass args=[] for a usage-based sink (the call
+    itself is the vulnerability, no taint required)."""
+    return ProcSpec(is_sink=kind,
+                    sink_args=[0] if args is None else args,
+                    description=desc)
 
 
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
@@ -127,6 +130,10 @@ NODE_SPECS = {
     "setInterval": _sink("code", [0], "setInterval with string (code injection)"),
     "vm.runInThisContext": _sink("code", [0], "vm.runInThisContext (code injection)"),
     "vm.runInNewContext": _sink("code", [0], "vm.runInNewContext (code injection)"),
+
+    # Synthetic marker emitted by the frontend for a catastrophic-backtracking
+    # regex literal / new RegExp(...) -- usage-based, no taint (CWE-1333).
+    "__redos__": _sink("regex", [], "Catastrophic-backtracking regex (ReDoS, CWE-1333)"),
 }
 
 # =============================================================================

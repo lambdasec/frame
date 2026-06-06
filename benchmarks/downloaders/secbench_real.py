@@ -79,6 +79,31 @@ def _fetch_package(cache_dir: str, pkg: str, ver: str) -> Optional[str]:
         return None
 
 
+def _resolve_sink_file(root: Optional[str], rel_file: str) -> Optional[str]:
+    """Locate the sink file inside a fetched package. The benchmark's `sink`
+    path is often a basename or partial path (e.g. `util.js`) while the npm
+    package ships it deeper (e.g. `lib/compile/util.js`), so fall back to a
+    recursive basename search (preferring lib/ or src/ over dist/browser)."""
+    if not root:
+        return None
+    exact = os.path.join(root, rel_file)
+    if os.path.exists(exact):
+        return exact
+    base = os.path.basename(rel_file)
+    matches = glob.glob(os.path.join(root, "**", base), recursive=True)
+    if not matches:
+        return None
+
+    def rank(p: str) -> int:
+        r = os.path.relpath(p, root)
+        if r.startswith(("lib/", "src/")):
+            return 0
+        if "browser" in r or "umd" in r:
+            return 2
+        return 1
+    return sorted(matches, key=rank)[0]
+
+
 def get_secbench_real_entries(
     cache_dir: str,
     categories: Optional[List[str]] = None,
@@ -119,18 +144,13 @@ def get_secbench_real_entries(
                 sink_line = None
 
             vuln_root = _fetch_package(cache_dir, pkg, ver)
-            vuln_file = (os.path.join(vuln_root, rel_file)
-                         if vuln_root and os.path.exists(os.path.join(vuln_root, rel_file))
-                         else None)
+            vuln_file = _resolve_sink_file(vuln_root, rel_file)
 
             fixed_version = meta.get("fixedVersion", "n/a")
             fixed_file = None
             if with_patched and fixed_version and fixed_version != "n/a":
                 fixed_root = _fetch_package(cache_dir, pkg, fixed_version)
-                if fixed_root:
-                    cand = os.path.join(fixed_root, rel_file)
-                    if os.path.exists(cand):
-                        fixed_file = cand
+                fixed_file = _resolve_sink_file(fixed_root, rel_file)
 
             entries.append({
                 "category": cat,
