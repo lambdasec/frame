@@ -144,6 +144,42 @@ class SinkKind(Enum):
         return self.value
 
 
+# Spec sink-kind strings that don't equal a SinkKind value but mean a specific
+# kind. Without this map they silently fell back to SQL_QUERY (spurious CWE-89).
+_SINK_KIND_ALIASES = {
+    "code": "eval",                  # code injection
+    "xxe": "xml",                    # XML external entity
+    "info_disclosure": "debug",
+    "exception": "error_disclosure",
+    "hardcoded_cred": "credential",
+    "auth": "authz",
+    "header_injection": "header",
+    "ssl": "weak_crypto",
+    "config": "secret",
+    "weak_password_hash": "weak_hash",
+    "path": "filesystem",
+    "shell_command": "shell",
+    "html_output": "html",
+}
+
+
+def resolve_sink_kind(kind_str, default: "SinkKind" = None) -> "SinkKind":
+    """Resolve a spec sink-kind string to a SinkKind, honoring aliases.
+
+    Returns ``default`` (SinkKind.SQL_QUERY if not given) only for a genuinely
+    unknown kind -- known alias strings like 'code'/'xxe' resolve correctly
+    instead of silently becoming SQL.
+    """
+    if default is None:
+        default = SinkKind.SQL_QUERY
+    if kind_str in _SINK_KIND_ALIASES:
+        kind_str = _SINK_KIND_ALIASES[kind_str]
+    try:
+        return SinkKind(kind_str)
+    except (ValueError, TypeError):
+        return default
+
+
 # =============================================================================
 # Base Instruction
 # =============================================================================

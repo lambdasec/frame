@@ -32,7 +32,7 @@ from frame.sil.types import (
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
     TaintSource, TaintSink, Sanitize,
-    TaintKind, SinkKind, PruneKind
+    TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
@@ -661,7 +661,7 @@ class CSharpFrontend:
             instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=spec.description))
 
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -690,7 +690,7 @@ class CSharpFrontend:
 
         spec = self.specs.get(type_name)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     instrs.append(TaintSink(
@@ -722,7 +722,7 @@ class CSharpFrontend:
             spec = self.specs.get(short_name)
 
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])

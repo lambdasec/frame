@@ -33,7 +33,7 @@ from .types import (
 from .instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign,
     TaintSource, TaintSink, Sanitize, AssertSafe, Return,
-    TaintKind, SinkKind
+    TaintKind, SinkKind, resolve_sink_kind
 )
 from .procedure import Procedure, Node, Program, ProcSpec
 
@@ -1788,7 +1788,7 @@ class SILTranslator:
 
             # Handle taint sink
             if spec.is_taint_sink():
-                sink_kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+                sink_kind = resolve_sink_kind(spec.is_sink)
 
                 # For sinks with empty sink_args (e.g., insecure_random, weak_hash),
                 # the function usage itself is the vulnerability - no taint required
