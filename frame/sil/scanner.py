@@ -268,23 +268,9 @@ C_VULNERABILITY_PATTERNS = {
     VulnType.SQL_INJECTION: [
         # REMOVED: sqlite3_exec, mysql_query, ldap_search appear in safe code
     ],
-    # Weak Crypto - CWE-327, CWE-328
-    # These are genuinely weak algorithms, but only flag specific init functions
-    VulnType.WEAK_CRYPTOGRAPHY: [
-        (r'\bMD5_Init\s*\(', 'CWE-328', 'Use of MD5 (weak hash) - use SHA-256'),
-        (r'\bSHA1_Init\s*\(', 'CWE-328', 'Use of SHA-1 (weak hash) - use SHA-256'),
-        (r'\bDES_set_key\s*\(', 'CWE-327', 'Use of DES (weak encryption) - use AES'),
-        # REMOVED: MD5(), SHA1(), DES_, RC4, RC2 - too broad
-    ],
-    # Race Condition - CWE-367, CWE-377
-    # NOTE: signal(), pthread_mutex, CreateThread are used in BOTH good and bad code
-    # Detecting race conditions requires data flow analysis, not pattern matching
-    VulnType.RACE_CONDITION: [
-        # These temp file functions are genuinely unsafe - use mkstemp/tmpfile instead
-        (r'\bmktemp\s*\(', 'CWE-377', 'Use of mktemp() - use mkstemp() instead'),
-        (r'\btmpnam\s*\(', 'CWE-377', 'Use of tmpnam() - use tmpfile() instead'),
-        # REMOVED: signal, pthread_mutex, CreateThread - appear in good code too
-    ],
+    # Weak Crypto (CWE-327/328) and insecure temp files (CWE-377) are now
+    # detected by the separation-logic taint engine as usage-based sinks
+    # (see frame/sil/specs/c_specs.py: MD5/SHA1/DES_*, mktemp/tmpnam).
     # Hardcoded Credentials - CWE-259, CWE-321, CWE-798, CWE-256, CWE-319
     VulnType.HARDCODED_SECRET: [
         (r'password\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
@@ -870,6 +856,7 @@ class FrameScanner:
         VulnType.PROTOTYPE_POLLUTION: Severity.HIGH,
         VulnType.BUSINESS_LOGIC_FLAW: Severity.MEDIUM,
         VulnType.RACE_CONDITION: Severity.HIGH,
+        VulnType.INSECURE_TEMP_FILE: Severity.MEDIUM,
 
         # A07: Authentication Failures
         VulnType.BROKEN_AUTHENTICATION: Severity.CRITICAL,
@@ -956,6 +943,7 @@ class FrameScanner:
         VulnType.PROTOTYPE_POLLUTION: "CWE-1321",
         VulnType.BUSINESS_LOGIC_FLAW: "CWE-840",
         VulnType.RACE_CONDITION: "CWE-362",
+        VulnType.INSECURE_TEMP_FILE: "CWE-377",
 
         # A07: Authentication Failures
         VulnType.BROKEN_AUTHENTICATION: "CWE-287",

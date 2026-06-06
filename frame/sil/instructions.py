@@ -107,6 +107,7 @@ class SinkKind(Enum):
     HARDCODED_SECRET = "hardcoded_secret"  # Hardcoded credentials (CWE-798)
     INSECURE_RANDOM = "insecure_random"    # Insecure randomness (CWE-330)
     WEAK_HASH = "weak_hash"     # Weak hashing (CWE-328)
+    INSECURE_TEMP_FILE = "insecure_temp_file"  # Insecure temp file / race (CWE-377)
 
     # A07: Authentication Failures
     CREDENTIAL = "credential"   # Credential handling (CWE-522)

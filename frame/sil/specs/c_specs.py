@@ -24,6 +24,13 @@ def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
     return ProcSpec(is_sink=kind, sink_args=args or [0], description=desc)
 
 
+def _usage_sink(kind: str, desc: str = "") -> ProcSpec:
+    """Create a usage-based sink: the call itself is the vulnerability (no taint
+    required), e.g. weak crypto (MD5/DES) or insecure temp files (mktemp). The
+    translator fires these whenever the function is called (empty sink_args)."""
+    return ProcSpec(is_sink=kind, sink_args=[], description=desc)
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -361,17 +368,18 @@ XML_SPECS = {
 # =============================================================================
 
 CRYPTO_SPECS = {
-    # Weak hash functions
-    "MD5": _propagator([0], "MD5 - weak hash (deprecated)"),
-    "MD5_Init": _propagator([0], "MD5_Init - weak hash"),
-    "MD5_Update": _propagator([0, 1], "MD5_Update - weak hash"),
-    "MD5_Final": _propagator([0], "MD5_Final - weak hash"),
-    "SHA1": _propagator([0], "SHA1 - weak hash (deprecated)"),
-    "SHA1_Init": _propagator([0], "SHA1_Init - weak hash"),
+    # Weak hash functions (usage-based: presence is the vulnerability, CWE-328)
+    "MD5": _usage_sink("weak_hash", "MD5 - weak hash (CWE-328), use SHA-256"),
+    "MD5_Init": _usage_sink("weak_hash", "MD5_Init - weak hash (CWE-328)"),
+    "MD5_Update": _usage_sink("weak_hash", "MD5_Update - weak hash (CWE-328)"),
+    "MD5_Final": _usage_sink("weak_hash", "MD5_Final - weak hash (CWE-328)"),
+    "SHA1": _usage_sink("weak_hash", "SHA1 - weak hash (CWE-328), use SHA-256"),
+    "SHA1_Init": _usage_sink("weak_hash", "SHA1_Init - weak hash (CWE-328)"),
 
-    # DES (weak encryption)
-    "DES_ecb_encrypt": _propagator([0], "DES_ecb_encrypt - weak encryption"),
-    "DES_cbc_encrypt": _propagator([0], "DES_cbc_encrypt - weak encryption"),
+    # DES (weak encryption, usage-based: CWE-327)
+    "DES_ecb_encrypt": _usage_sink("weak_crypto", "DES_ecb_encrypt - weak encryption (CWE-327), use AES"),
+    "DES_cbc_encrypt": _usage_sink("weak_crypto", "DES_cbc_encrypt - weak encryption (CWE-327), use AES"),
+    "DES_set_key": _usage_sink("weak_crypto", "DES_set_key - weak encryption (CWE-327), use AES"),
 
     # Random (weak randomness)
     "rand": _propagator([0], "rand() - weak random (not cryptographically secure)"),
@@ -546,9 +554,9 @@ RACE_CONDITION_SPECS = {
     "lstat": _sink("race", [0], "lstat() TOCTOU (CWE-367)"),
 
     # File creation
-    "mktemp": _sink("race", [0], "mktemp race condition (CWE-377)"),
+    "mktemp": _usage_sink("insecure_temp_file", "mktemp race condition (CWE-377), use mkstemp"),
     "tempnam": _sink("race", [0], "tempnam race condition (CWE-377)"),
-    "tmpnam": _sink("race", [0], "tmpnam race condition (CWE-377)"),
+    "tmpnam": _usage_sink("insecure_temp_file", "tmpnam race condition (CWE-377), use tmpfile"),
 
     # Safe alternatives
     "mkstemp": _sanitizer(["race"], "mkstemp (safe temp file)"),

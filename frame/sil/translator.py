@@ -183,6 +183,7 @@ class VulnType(Enum):
             SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
             SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
             SinkKind.WEAK_HASH: cls.WEAK_HASH,
+            SinkKind.INSECURE_TEMP_FILE: cls.INSECURE_TEMP_FILE,
             # A07: Authentication Failures
             SinkKind.CREDENTIAL: cls.BROKEN_AUTHENTICATION,
             SinkKind.SESSION: cls.SESSION_FIXATION,
