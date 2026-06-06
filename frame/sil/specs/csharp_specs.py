@@ -750,6 +750,19 @@ _MIGRATION_BACKFILL_SPECS = {
     "Request.UrlReferrer": _source("user", "Request referrer (user-controlled)"),
     "Request.UserAgent": _source("user", "Request user-agent (user-controlled)"),
     "Request.Headers": _source("user", "Request headers (user-controlled)"),
+    # Insecure configuration values referenced in code (usage-based, the value
+    # itself is the issue). Emitted by the frontend's member-access hook.
+    "HashAlgorithmName.MD5": _usage_sink("weak_hash", "MD5 (CWE-328)"),
+    "HashAlgorithmName.SHA1": _usage_sink("weak_hash", "SHA1 (CWE-328)"),
+    "CipherMode.ECB": _usage_sink("weak_crypto", "ECB cipher mode (CWE-327)"),
+    "TypeNameHandling.All": _usage_sink("deserialize", "Json.NET TypeNameHandling.All (CWE-502)"),
+    "TypeNameHandling.Auto": _usage_sink("deserialize", "Json.NET TypeNameHandling.Auto (CWE-502)"),
+    "TypeNameHandling.Objects": _usage_sink("deserialize", "Json.NET TypeNameHandling.Objects (CWE-502)"),
+    "TypeNameHandling.Arrays": _usage_sink("deserialize", "Json.NET TypeNameHandling.Arrays (CWE-502)"),
+    # Path traversal: new FilePathResult("..." + tainted, ...) returns a file
+    # whose path includes user input (CWE-22).
+    "FilePathResult": _sink("filesystem", [0], "new FilePathResult(path) (path traversal)"),
+    "PhysicalFileResult": _sink("filesystem", [0], "new PhysicalFileResult(path) (path traversal)"),
     # LDAP injection: new DirectoryEntry("LDAP://..." + tainted) (CWE-90)
     "DirectoryEntry": _sink("ldap", [0], "new DirectoryEntry(path) (LDAP injection)"),
     # User-controlled hash algorithm name -> weak hash (CWE-328)

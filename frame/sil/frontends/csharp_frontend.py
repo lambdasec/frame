@@ -76,13 +76,12 @@ class CSharpFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._current_namespace: Optional[str] = None
-        # Member-access values whose mere reference is insecure config. Kinds
-        # must be usage-based (weak_hash/weak_crypto/insecure_random) so the
-        # taint engine fires on use without requiring a taint flow.
+        # Member-access values whose mere reference is insecure config. Emitted
+        # as a Call so the usage-based sink path fires regardless of kind.
         self._DANGEROUS_MEMBER_VALUES = {
-            "HashAlgorithmName.MD5": ("weak_hash", "MD5 in PBKDF2/hash (CWE-328)"),
-            "HashAlgorithmName.SHA1": ("weak_hash", "SHA1 in PBKDF2/hash (CWE-328)"),
-            "CipherMode.ECB": ("weak_crypto", "ECB cipher mode (CWE-327)"),
+            "HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMode.ECB",
+            "TypeNameHandling.All", "TypeNameHandling.Auto", "TypeNameHandling.Objects",
+            "TypeNameHandling.Arrays",
         }
         # Treat public web-handler action parameters as request-bound taint
         # sources. This is the recall lever for pure-SL mode (regex removed):
@@ -689,6 +688,17 @@ class CSharpFrontend:
         args = self._get_method_args(node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 
+        # Object initializer: new T { Prop = value, ... }. Translate the value
+        # expressions so dangerous configuration values (e.g.
+        # TypeNameHandling = TypeNameHandling.All) are seen by the member hook.
+        init = node.child_by_field_name("initializer")
+        if init:
+            for child in init.children:
+                if child.type == "assignment_expression":
+                    rhs = child.child_by_field_name("right")
+                    if rhs:
+                        self._translate_expression(rhs)
+
         # Emit a Call named after the type so the translator's usage-based sink
         # path (empty sink_args) can fire on the constructor.
         instrs.append(Call(loc=loc, ret=None,
@@ -1155,16 +1165,13 @@ class CSharpFrontend:
             name = node.child_by_field_name("name")
             # Some member-access values are inherently insecure configuration
             # (e.g. TypeNameHandling.All, HashAlgorithmName.MD5, CipherMode.ECB).
-            # Their mere reference is the vulnerability -> emit a usage sink.
+            # Emit a Call named after the value so the usage-based sink path
+            # (its spec has empty sink_args) fires on the mere reference.
             chain = self._get_member_chain(node)
-            danger = self._DANGEROUS_MEMBER_VALUES.get(chain)
-            if danger is None and "." in chain:
-                danger = self._DANGEROUS_MEMBER_VALUES.get(".".join(chain.split(".")[-2:]))
-            if danger:
-                kind_str, desc = danger
-                self._add_instr(TaintSink(
-                    loc=self._get_location(node), exp=ExpConst.string(chain),
-                    kind=resolve_sink_kind(kind_str), description=desc, arg_index=0))
+            short = ".".join(chain.split(".")[-2:]) if "." in chain else chain
+            if chain in self._DANGEROUS_MEMBER_VALUES or short in self._DANGEROUS_MEMBER_VALUES:
+                self._add_instr(Call(loc=self._get_location(node), ret=None,
+                                     func=ExpConst.string(short), args=[]))
             return ExpFieldAccess(self._translate_expression(expr), self._get_text(name) if name else "")
 
         elif node.type == "element_access_expression":
