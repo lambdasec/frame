@@ -710,3 +710,33 @@ CSHARP_SPECS.update(HEADER_SECURITY_SPECS)
 CSHARP_SPECS.update(SSRF_ENHANCED_SPECS)
 CSHARP_SPECS.update(OBJECT_MANIPULATION_SPECS)
 CSHARP_SPECS.update(CODE_INJECTION_SPECS)
+
+# Backfill of sink/source variants found missing while measuring SL-only recall
+# against IssueBlot.NET (data-driven; each entry closes a real false negative).
+_MIGRATION_BACKFILL_SPECS = {
+    # ADO.NET command/adapter constructors (SQL injection sinks, arg 0 = query)
+    "SqliteCommand": _sink("sql", [0], "new SqliteCommand(query) (SQL injection)"),
+    "MySqlCommand": _sink("sql", [0], "new MySqlCommand(query) (SQL injection)"),
+    "NpgsqlCommand": _sink("sql", [0], "new NpgsqlCommand(query) (SQL injection)"),
+    "OleDbCommand": _sink("sql", [0], "new OleDbCommand(query) (SQL injection)"),
+    "OdbcCommand": _sink("sql", [0], "new OdbcCommand(query) (SQL injection)"),
+    "SqlDataAdapter": _sink("sql", [0], "new SqlDataAdapter(query) (SQL injection)"),
+    "SqlCeCommand": _sink("sql", [0], "new SqlCeCommand(query) (SQL injection)"),
+    # Path sinks
+    "Server.MapPath": _sink("filesystem", [0], "Server.MapPath(path) (path traversal)"),
+    "File.WriteAllLines": _sink("filesystem", [0], "File.WriteAllLines (path traversal)"),
+    "File.AppendAllText": _sink("filesystem", [0], "File.AppendAllText (path traversal)"),
+    # Code injection via CodeDom
+    "CSharpCodeProvider.CompileAssemblyFromSource": _sink("code", [1], "CodeDom compile (code injection)"),
+    "VBCodeProvider.CompileAssemblyFromSource": _sink("code", [1], "CodeDom compile (code injection)"),
+    "ICodeCompiler.CompileAssemblyFromSource": _sink("code", [1], "CodeDom compile (code injection)"),
+    # Property / indexer taint sources (request-derived)
+    "PostedFile.FileName": _source("user", "Uploaded file name (user-controlled)"),
+    "Request.Url": _source("user", "Request URL (user-controlled)"),
+    "Request.Url.Authority": _source("user", "Request URL authority (user-controlled)"),
+    "Request.RawUrl": _source("user", "Request raw URL (user-controlled)"),
+    "Request.UrlReferrer": _source("user", "Request referrer (user-controlled)"),
+    "Request.UserAgent": _source("user", "Request user-agent (user-controlled)"),
+    "Request.Headers": _source("user", "Request headers (user-controlled)"),
+}
+CSHARP_SPECS.update(_MIGRATION_BACKFILL_SPECS)
