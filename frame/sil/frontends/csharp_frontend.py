@@ -217,11 +217,11 @@ class CSharpFrontend:
 
         # Process attributes for taint sources
         self._process_param_attributes(attributes, params, proc)
-        # Note: inferring ASP.NET action/handler parameters as request-bound
-        # sources lifts SL-only recall but its false positives (e.g. tainted
-        # params flowing to Razor-auto-encoded ViewBag, or through redirect
-        # validators) require framework modeling to suppress, not spec tweaks.
-        # Measured to cost combined precision; deferred. See git history.
+        # Note: ASP.NET action/handler parameters as request-bound sources lifts
+        # SL-only recall but needs fuller framework modeling (redirect/Url.Content
+        # flows beyond inline encoder sanitizers) to be net-positive in the
+        # shipping config. Inline spec-sanitizer recognition is now in place
+        # (translator); the remaining suppression work is deferred.
 
         # Translate body
         body = node.child_by_field_name("body")

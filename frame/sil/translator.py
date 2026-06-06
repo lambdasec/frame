@@ -1969,6 +1969,17 @@ class SILTranslator:
                                                 inline_sanitized_for[matched_var] = set()
                                             inline_sanitized_for[matched_var].update(sink_types)
 
+                                # Spec-based inline sanitizers: a sanitizer call
+                                # (per language specs) wrapping a variable inside
+                                # the sink argument neutralizes it (e.g. C#'s
+                                # HttpUtility.HtmlEncode / Uri.EscapeDataString).
+                                for s_func, s_args in self._get_sanitizer_calls(arg_exp):
+                                    s_spec = self.program.get_spec(s_func)
+                                    if not s_spec or not s_spec.is_taint_sanitizer():
+                                        continue
+                                    for s_var in s_args:
+                                        inline_sanitized_for.setdefault(s_var, set()).update(s_spec.is_sanitizer)
+
                                 for arg_var in arg_vars:
                                     if state.is_tainted(arg_var):
                                         if not state.is_sanitized_for(arg_var, spec.is_sink):
@@ -2677,6 +2688,17 @@ class SILTranslator:
                     if arg_var not in inline_sanitized_for:
                         inline_sanitized_for[arg_var] = set()
                     inline_sanitized_for[arg_var].update(sink_types)
+
+        # Spec-based inline sanitizers: any sanitizer call (from the language
+        # specs) wrapping a variable inside the sink expression neutralizes that
+        # variable for the sanitizer's sink kinds. This is language-agnostic and
+        # covers, e.g., C#'s HttpUtility.HtmlEncode / Uri.EscapeDataString.
+        for func_name, arg_vars in self._get_sanitizer_calls(instr.exp):
+            spec = self.program.get_spec(func_name)
+            if not spec or not spec.is_taint_sanitizer():
+                continue
+            for arg_var in arg_vars:
+                inline_sanitized_for.setdefault(arg_var, set()).update(spec.is_sanitizer)
 
         for var in sink_vars:
             # Skip xml sinks for variables that have been safely processed

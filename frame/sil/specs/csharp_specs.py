@@ -416,21 +416,33 @@ STRING_SPECS = {
 # =============================================================================
 
 SANITIZER_SPECS = {
-    # HTML encoding
-    "HtmlEncoder.Encode": _sanitizer(["html"], "HtmlEncoder.Encode"),
-    "WebUtility.HtmlEncode": _sanitizer(["html"], "WebUtility.HtmlEncode"),
-    "HttpUtility.HtmlEncode": _sanitizer(["html"], "HttpUtility.HtmlEncode"),
+    # HTML encoding neutralizes HTML/XSS output (and, in a URL/redirect attribute
+    # context, the encoded data can't break out either).
+    "HtmlEncoder.Encode": _sanitizer(["html", "xss"], "HtmlEncoder.Encode"),
+    "WebUtility.HtmlEncode": _sanitizer(["html", "xss"], "WebUtility.HtmlEncode"),
+    "HttpUtility.HtmlEncode": _sanitizer(["html", "xss"], "HttpUtility.HtmlEncode"),
+    "Server.HtmlEncode": _sanitizer(["html", "xss"], "Server.HtmlEncode"),
+    "AntiXss.HtmlEncode": _sanitizer(["html", "xss"], "AntiXSS HtmlEncode"),
+    "AntiXssEncoder.HtmlEncode": _sanitizer(["html", "xss"], "AntiXSS HtmlEncode"),
 
-    # URL encoding
-    "WebUtility.UrlEncode": _sanitizer(["url"], "WebUtility.UrlEncode"),
-    "HttpUtility.UrlEncode": _sanitizer(["url"], "HttpUtility.UrlEncode"),
-    "Uri.EscapeDataString": _sanitizer(["url"], "Uri.EscapeDataString"),
+    # URL/percent encoding neutralizes injection in html/xss/url/redirect contexts
+    # (special characters become %XX and cannot break out).
+    "WebUtility.UrlEncode": _sanitizer(["url", "html", "xss", "redirect"], "WebUtility.UrlEncode"),
+    "HttpUtility.UrlEncode": _sanitizer(["url", "html", "xss", "redirect"], "HttpUtility.UrlEncode"),
+    "Uri.EscapeDataString": _sanitizer(["url", "html", "xss", "redirect"], "Uri.EscapeDataString"),
+    "Uri.EscapeUriString": _sanitizer(["url", "html", "xss", "redirect"], "Uri.EscapeUriString"),
+    "Server.UrlEncode": _sanitizer(["url", "html", "xss", "redirect"], "Server.UrlEncode"),
 
     # JavaScript encoding
     "JavaScriptEncoder.Encode": _sanitizer(["html", "xss"], "JavaScriptEncoder.Encode"),
 
+    # Open-redirect validators: a local-URL check neutralizes the redirect.
+    "Url.IsLocalUrl": _sanitizer(["redirect"], "Url.IsLocalUrl (local redirect check)"),
+    "IsLocalUrl": _sanitizer(["redirect"], "IsLocalUrl (local redirect check)"),
+    "Url.Content": _sanitizer(["redirect"], "Url.Content (app-relative URL)"),
+
     # Path sanitization
-    "Path.GetFileName": _sanitizer(["path"], "Path.GetFileName (extracts filename only)"),
+    "Path.GetFileName": _sanitizer(["path", "filesystem"], "Path.GetFileName (extracts filename only)"),
 }
 
 # =============================================================================
