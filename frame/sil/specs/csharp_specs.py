@@ -172,6 +172,9 @@ ADONET_SPECS = {
     # Command text assignment
     "CommandText": _sink("sql", [0], "CommandText assignment (SQL injection)"),
 
+    # EF migration raw SQL (DbMigration.Sql / MigrationStatement.Sql)
+    "Sql": _sink("sql", [0], "EF migration Sql() raw statement (SQL injection)"),
+
     # Parameters (sanitizers)
     "Parameters.Add": _sanitizer(["sql"], "SqlParameter.Add (parameterized)"),
     "Parameters.AddWithValue": _sanitizer(["sql"], "AddWithValue (parameterized)"),
@@ -285,6 +288,9 @@ XML_SPECS = {
     "SelectSingleNode": _sink("xpath", [0], "SelectSingleNode (XPath injection)"),
     "SelectNodes": _sink("xpath", [0], "SelectNodes (XPath injection)"),
     "XPathNavigator.Evaluate": _sink("xpath", [0], "XPathNavigator.Evaluate (XPath injection)"),
+    # XPathNavigator.Compile(expr): only fires on a tainted XPath string, so
+    # benign Expression.Compile()/no-arg compiles never trigger it.
+    "Compile": _sink("xpath", [0], "XPathNavigator.Compile (XPath injection)"),
 }
 
 # =============================================================================
@@ -555,6 +561,9 @@ AUTH_ENHANCED_SPECS = {
 
     # Weak password hashing
     "FormsAuthentication.HashPasswordForStoringInConfigFile": _sink("weak_password_hash", [0], "Weak hash for password (CWE-916)"),
+
+    # Cookie value built from untrusted input -> header/response splitting
+    "Cookie": _sink("header_injection", [1], "Cookie value (header manipulation CWE-113)"),
 
     # Session/Cookie security
     "CookieOptions": _propagator([0], "Cookie options"),

@@ -83,6 +83,12 @@ class CSharpFrontend:
             "TypeNameHandling.All", "TypeNameHandling.Auto", "TypeNameHandling.Objects",
             "TypeNameHandling.Arrays",
         }
+        # Property assignments that flow the RHS into a sink (obj.Prop = value).
+        self._ASSIGNMENT_SINK_PROPS = {
+            "CommandText": "sql",
+            "Sql": "sql",              # EF MigrationStatement.Sql = "..."+input
+            "InnerHtml": "html", "InnerHTML": "html",
+        }
         # Treat public web-handler action parameters as request-bound taint
         # sources. This is the recall lever for pure-SL mode (regex removed):
         # it lifts IssueBlot.NET SL recall 36.8% -> 51.3% at ~81% precision.
@@ -632,6 +638,18 @@ class CSharpFrontend:
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
             self._emit_member_source(right, target, loc)
 
+        # Assignment to a sink property (e.g. cmd.CommandText = "..."+input)
+        # flows the right-hand value into a sink.
+        prop = (left.child_by_field_name("name")
+                if left.type == "member_access_expression" else None)
+        sink_kind_str = self._ASSIGNMENT_SINK_PROPS.get(self._get_text(prop)) if prop else None
+        if sink_kind_str and right.type not in ("invocation_expression",
+                                                "object_creation_expression"):
+            self._add_instr(TaintSink(
+                loc=loc, exp=self._translate_expression(right),
+                kind=resolve_sink_kind(sink_kind_str),
+                description=f"assignment to {self._get_text(prop)} sink", arg_index=0))
+
     def _translate_call_assignment(
         self,
         target: str,
@@ -674,6 +692,7 @@ class CSharpFrontend:
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
 
+        instrs.extend(self._receiver_chain_instrs(call_node))
         return instrs
 
     def _translate_object_creation(self, node: TSNode, target: Optional[str],
@@ -716,6 +735,39 @@ class CSharpFrontend:
                         kind=kind, description=spec.description, arg_index=arg_idx))
         return instrs
 
+    def _receiver_chain_instrs(self, call_node: TSNode) -> List[Instr]:
+        """Emit sinks for nested invocations buried in a method-chain receiver --
+        e.g. `ctx.Students.FromSql(q).ToList()` must still flag the FromSql sink
+        even though the outer call is the benign ToList(). Emits TaintSink only
+        (the outer caller already emits the Call) to avoid double-counting."""
+        instrs: List[Instr] = []
+        func = call_node.child_by_field_name("function")
+        recv = func.child_by_field_name("expression") if (
+            func and func.type == "member_access_expression") else None
+        while recv is not None:
+            if recv.type == "invocation_expression":
+                loc = self._get_location(recv)
+                name = self._get_method_name(recv)
+                spec = self.specs.get(name)
+                if not spec and '.' in name:
+                    spec = self.specs.get(name.split('.')[-1])
+                if spec and spec.is_taint_sink():
+                    kind = resolve_sink_kind(spec.is_sink)
+                    rargs = self._get_method_args(recv)
+                    for arg_idx in spec.sink_args:
+                        if arg_idx < len(rargs):
+                            instrs.append(TaintSink(
+                                loc=loc, exp=self._translate_expression(rargs[arg_idx]),
+                                kind=kind, description=spec.description, arg_index=arg_idx))
+                f = recv.child_by_field_name("function")
+                recv = f.child_by_field_name("expression") if (
+                    f and f.type == "member_access_expression") else None
+            elif recv.type == "member_access_expression":
+                recv = recv.child_by_field_name("expression")
+            else:
+                break
+        return instrs
+
     def _translate_invocation(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone method invocation"""
         instrs = []
@@ -746,6 +798,7 @@ class CSharpFrontend:
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description, arg_index=arg_idx))
 
+        instrs.extend(self._receiver_chain_instrs(call_node))
         return instrs
 
     def _translate_await(self, node: TSNode) -> None:
