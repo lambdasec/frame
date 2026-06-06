@@ -217,11 +217,11 @@ class CSharpFrontend:
 
         # Process attributes for taint sources
         self._process_param_attributes(attributes, params, proc)
-        # Note: treating ASP.NET action/handler parameters as request-bound
-        # sources was evaluated and measured to raise SL-only recall (36.8% ->
-        # 42.1%) but, because the regex backstop already covers those cases, it
-        # only added false positives in the shipping combined config (precision
-        # 79.0% -> 74.4%). Deferred until the regex backstop is removed.
+        # Note: inferring ASP.NET action/handler parameters as request-bound
+        # sources lifts SL-only recall but its false positives (e.g. tainted
+        # params flowing to Razor-auto-encoded ViewBag, or through redirect
+        # validators) require framework modeling to suppress, not spec tweaks.
+        # Measured to cost combined precision; deferred. See git history.
 
         # Translate body
         body = node.child_by_field_name("body")
