@@ -165,6 +165,11 @@ class JavaScriptFrontend:
         self._node_counter = 0
         self._ident_counter = 0
         self._current_class: Optional[str] = None
+        # Treat function parameters as untrusted input. In Node.js packages the
+        # exported API is the attack surface (callers pass attacker-controlled
+        # data), so this is the pure-SL recall lever for real-world JS, mirroring
+        # the C# action-parameter lever.
+        self.taint_function_params: bool = False
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """
@@ -355,6 +360,15 @@ class JavaScriptFrontend:
         proc.add_node(entry)
         proc.entry_node = entry.id
         self._current_node = entry
+
+        # Treat the function's parameters as untrusted input (pure-SL recall
+        # lever for real-world JS where the attack surface is exported APIs).
+        if self.taint_function_params:
+            for param, _ in proc.params:
+                self._add_instr(TaintSource(
+                    loc=proc.loc, var=param,
+                    kind=TaintKind.USER_INPUT,
+                    description="function parameter (untrusted input)"))
 
         # Find and translate body
         body_node = node.child_by_field_name("body")
