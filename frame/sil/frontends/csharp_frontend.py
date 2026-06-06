@@ -76,6 +76,14 @@ class CSharpFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._current_namespace: Optional[str] = None
+        # Member-access values whose mere reference is insecure config. Kinds
+        # must be usage-based (weak_hash/weak_crypto/insecure_random) so the
+        # taint engine fires on use without requiring a taint flow.
+        self._DANGEROUS_MEMBER_VALUES = {
+            "HashAlgorithmName.MD5": ("weak_hash", "MD5 in PBKDF2/hash (CWE-328)"),
+            "HashAlgorithmName.SHA1": ("weak_hash", "SHA1 in PBKDF2/hash (CWE-328)"),
+            "CipherMode.ECB": ("weak_crypto", "ECB cipher mode (CWE-327)"),
+        }
         # Treat public web-handler action parameters as request-bound taint
         # sources. This is the recall lever for pure-SL mode (regex removed):
         # it lifts IssueBlot.NET SL recall 36.8% -> 51.3% at ~81% precision.
@@ -1145,6 +1153,18 @@ class CSharpFrontend:
         elif node.type == "member_access_expression":
             expr = node.child_by_field_name("expression")
             name = node.child_by_field_name("name")
+            # Some member-access values are inherently insecure configuration
+            # (e.g. TypeNameHandling.All, HashAlgorithmName.MD5, CipherMode.ECB).
+            # Their mere reference is the vulnerability -> emit a usage sink.
+            chain = self._get_member_chain(node)
+            danger = self._DANGEROUS_MEMBER_VALUES.get(chain)
+            if danger is None and "." in chain:
+                danger = self._DANGEROUS_MEMBER_VALUES.get(".".join(chain.split(".")[-2:]))
+            if danger:
+                kind_str, desc = danger
+                self._add_instr(TaintSink(
+                    loc=self._get_location(node), exp=ExpConst.string(chain),
+                    kind=resolve_sink_kind(kind_str), description=desc, arg_index=0))
             return ExpFieldAccess(self._translate_expression(expr), self._get_text(name) if name else "")
 
         elif node.type == "element_access_expression":
