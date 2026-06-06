@@ -29,6 +29,8 @@ import re
 from typing import Tuple
 
 from frame.sil.procedure import Program
+from frame.sil.instructions import Assign
+from frame.sil.types import ExpConst
 
 
 class BufferSizeTracker:
@@ -271,16 +273,8 @@ C_VULNERABILITY_PATTERNS = {
     # Weak Crypto (CWE-327/328) and insecure temp files (CWE-377) are now
     # detected by the separation-logic taint engine as usage-based sinks
     # (see frame/sil/specs/c_specs.py: MD5/SHA1/DES_*, mktemp/tmpnam).
-    # Hardcoded Credentials - CWE-259, CWE-321, CWE-798, CWE-256, CWE-319
-    VulnType.HARDCODED_SECRET: [
-        (r'password\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
-        (r'Password\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
-        (r'PASSWORD\s*=\s*"[^"]{4,}"', 'CWE-259', 'Hardcoded password'),
-        (r'CRYPT_KEY\s*=\s*"', 'CWE-321', 'Hardcoded cryptographic key'),
-        (r'SECRET\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
-        (r'secret\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
-        (r'api_key\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded API key'),
-    ],
+    # Hardcoded secrets are now detected by the Tier-2 SIL literal scanner
+    # (FrameScanner._scan_literals), language-agnostic and syntax-aware.
     # Memory Leak - CWE-401
     # NOTE: malloc/calloc/realloc appear in ALL code - SL analyzer handles leak detection
     VulnType.MEMORY_LEAK: [
@@ -556,13 +550,8 @@ CSHARP_VULNERABILITY_PATTERNS = {
         (r'Redirect\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-601', 'Redirect with variable'),
         (r'RedirectToAction\s*\([^)]*returnUrl', 'CWE-601', 'RedirectToAction with returnUrl'),
     ],
-    # Hardcoded Secrets
-    VulnType.HARDCODED_SECRET: [
-        (r'[Pp]assword\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded password'),
-        (r'[Ss]ecret\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded secret'),
-        (r'[Aa]pi[Kk]ey\s*=\s*"[^"]{4,}"', 'CWE-798', 'Hardcoded API key'),
-        (r'[Cc]onnection[Ss]tring\s*=\s*"[^"]*[Pp]assword=[^"]*"', 'CWE-798', 'Hardcoded connection string'),
-    ],
+    # Hardcoded secrets (incl. connection strings) are now detected by the
+    # Tier-2 SIL literal scanner (FrameScanner._scan_literals).
     # XXE (XML External Entity) / XML Injection
     VulnType.XXE: [
         (r'XmlReaderSettings\s*\(\s*\)\s*\{[^}]*DtdProcessing\s*=\s*DtdProcessing\.Parse', 'CWE-611', 'DTD processing enabled'),
@@ -1087,6 +1076,15 @@ class FrameScanner:
                 if vuln:
                     result.vulnerabilities.append(vuln)
 
+            # Step 3b: Tier-2 structural scan over the SIL (all languages).
+            # AST/IR-based detection for code-shape vulnerabilities that are not
+            # data flows -- currently hardcoded secrets. Replaces the per-
+            # language hardcoded_secret regexes.
+            literal_vulns = self._scan_literals(program, filename)
+            result.vulnerabilities.extend(literal_vulns)
+            if self.verbose:
+                print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
+
             # Step 4: Pattern-based detection (legacy regex fallback).
             # JavaScript/TypeScript have been fully migrated to the separation-
             # logic taint engine (source/taint/sink specs + frontend sink
@@ -1530,6 +1528,78 @@ class FrameScanner:
                 confidence=0.8
             )
 
+
+    # Tier 2 (structural / AST-level) detection for hardcoded secrets.
+    # Credential-named assignment targets whose value is a literal string.
+    # Matched against the SIL (the normalized IR), so one rule covers every
+    # language and only real `name = "literal"` assignments are flagged -- never
+    # text inside comments or unrelated code.
+    _SECRET_NAME_RULES = [
+        # (regex on target name, cwe, label)
+        (re.compile(r'(?i)(^|[._])(pass(word|wd)?|pwd)([._]|$)'), 'CWE-259', 'Hardcoded password'),
+        (re.compile(r'(?i)(crypt|secret|private|signing)[._]?key'), 'CWE-321', 'Hardcoded cryptographic key'),
+        (re.compile(r'(?i)(^|[._])(api[._]?key|access[._]?key|secret|token|client[._]?secret|auth[._]?token)([._]|$)'),
+         'CWE-798', 'Hardcoded secret'),
+    ]
+    # An embedded credential inside a value, e.g. a connection string
+    # "Server=db;Password=s3cret;". Requires a non-trivial value after '='.
+    _CONNSTR_SECRET = re.compile(r'(?i)(password|pwd)\s*=\s*\S{3,}')
+    # Values that are obviously not real secrets (placeholders / templates).
+    _SECRET_VALUE_PLACEHOLDERS = {
+        '', 'password', 'changeme', 'change_me', 'your_password', 'your_password_here',
+        'xxx', 'xxxx', 'todo', 'none', 'null', 'example', 'test', 'placeholder',
+    }
+
+    def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
+        """Tier-2 structural scan over the SIL for hardcoded secrets (CWE-798/
+        259/321): a credential-named assignment target bound to a literal string.
+
+        This is the principled, AST/IR-based replacement for the per-language
+        `hardcoded_secret` regexes -- language-agnostic and syntax-aware.
+        """
+        vulns: List[Vulnerability] = []
+        for proc in program.procedures.values():
+            for node in proc.cfg_iter():
+                for instr in node.instrs:
+                    if not isinstance(instr, Assign):
+                        continue
+                    if not isinstance(instr.exp, ExpConst) or not isinstance(instr.exp.value, str):
+                        continue
+
+                    target = str(instr.id)
+                    value = instr.exp.value
+                    if len(value) < 4 or value.strip().lower() in self._SECRET_VALUE_PLACEHOLDERS:
+                        continue
+                    # Skip template / interpolation / env placeholders.
+                    if '${' in value or '{{' in value or value.startswith('%'):
+                        continue
+
+                    cwe = label = None
+                    # Rule A: credential-named target bound to a literal.
+                    for pattern, c, lbl in self._SECRET_NAME_RULES:
+                        if pattern.search(target):
+                            cwe, label = c, lbl
+                            break
+                    # Rule B: value embeds a credential (e.g. connection string
+                    # "...;Password=secret;..."), regardless of the target name.
+                    if cwe is None and self._CONNSTR_SECRET.search(value):
+                        cwe, label = 'CWE-798', 'Hardcoded credential in connection string'
+
+                    if cwe is not None:
+                        loc = instr.loc
+                        vulns.append(Vulnerability(
+                            type=VulnType.HARDCODED_SECRET,
+                            severity=self.SEVERITY_MAP.get(VulnType.HARDCODED_SECRET, Severity.HIGH),
+                            location=filename,
+                            line=loc.line if loc else 0,
+                            column=loc.column if loc else 0,
+                            description=f"{label}: '{target}' is assigned a literal value",
+                            procedure=proc.name,
+                            sink_type="hardcoded_secret",
+                            confidence=0.9,
+                            cwe_id=cwe,
+                        ))
+        return vulns
 
     def _scan_patterns(self, source_code: str, filename: str) -> List[Vulnerability]:
         """

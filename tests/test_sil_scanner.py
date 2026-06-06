@@ -161,6 +161,34 @@ def safe():
         assert isinstance(checks, list)
 
 
+class TestLiteralScanner:
+    """Tier-2 structural scan (SIL literal scanner) for hardcoded secrets."""
+
+    def test_hardcoded_secret_detected(self):
+        from frame.sil.scanner import FrameScanner, VulnType
+        scanner = FrameScanner(language="python", verify=False)
+        result = scanner.scan('def f():\n    api_key = "sk_live_abcd1234"\n', "t.py")
+        hs = [v for v in result.vulnerabilities if v.type == VulnType.HARDCODED_SECRET]
+        assert len(hs) == 1 and hs[0].cwe_id == "CWE-798"
+
+    def test_hardcoded_password_cwe259(self):
+        from frame.sil.scanner import FrameScanner, VulnType
+        scanner = FrameScanner(language="python", verify=False)
+        result = scanner.scan('def f():\n    password = "hunter2pass"\n', "t.py")
+        hs = [v for v in result.vulnerabilities if v.type == VulnType.HARDCODED_SECRET]
+        assert len(hs) == 1 and hs[0].cwe_id == "CWE-259"
+
+    def test_placeholder_and_nonsecret_not_flagged(self):
+        from frame.sil.scanner import FrameScanner, VulnType
+        scanner = FrameScanner(language="python", verify=False)
+        for code in ('def f():\n    password = "changeme"\n',
+                     'def f():\n    name = "Alice Cooper"\n',
+                     'def f():\n    api_key = "${ENV_KEY}"\n'):
+            result = scanner.scan(code, "t.py")
+            assert not [v for v in result.vulnerabilities
+                        if v.type == VulnType.HARDCODED_SECRET], f"false positive on {code!r}"
+
+
 class TestFrameScanner:
     """Test the high-level scanner interface"""
 
