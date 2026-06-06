@@ -292,36 +292,30 @@ XML_SPECS = {
 # =============================================================================
 
 SERIALIZATION_SPECS = {
-    # BinaryFormatter (unsafe)
-    "BinaryFormatter.Deserialize": _sink("deserialize", [0], "BinaryFormatter.Deserialize (unsafe)"),
-    "BinaryFormatter": _sink("deserialize", [0], "BinaryFormatter (CWE-502)"),
+    # Inherently unsafe formatters (known RCE gadget sinks): the mere use is the
+    # vulnerability regardless of whether the input is provably tainted, so they
+    # are usage-based sinks (CWE-502), matching how SAST tools flag them.
+    "BinaryFormatter": _usage_sink("deserialize", "BinaryFormatter (CWE-502)"),
+    "BinaryFormatter.Deserialize": _usage_sink("deserialize", "BinaryFormatter.Deserialize (CWE-502)"),
+    "BinaryMessageFormatter": _usage_sink("deserialize", "BinaryMessageFormatter (CWE-502)"),
+    "MessageQueue.Formatter": _usage_sink("deserialize", "MessageQueue.Formatter (CWE-502)"),
+    "SoapFormatter": _usage_sink("deserialize", "SoapFormatter (CWE-502)"),
+    "SoapFormatter.Deserialize": _usage_sink("deserialize", "SoapFormatter.Deserialize (CWE-502)"),
+    "JavaScriptSerializer.Deserialize": _usage_sink("deserialize", "JavaScriptSerializer.Deserialize (CWE-502)"),
+    "NetDataContractSerializer": _usage_sink("deserialize", "NetDataContractSerializer (CWE-502)"),
+    "NetDataContractSerializer.ReadObject": _usage_sink("deserialize", "NetDataContractSerializer.ReadObject (CWE-502)"),
+    "LosFormatter": _usage_sink("deserialize", "LosFormatter (CWE-502)"),
+    "LosFormatter.Deserialize": _usage_sink("deserialize", "LosFormatter.Deserialize (CWE-502)"),
+    "ObjectStateFormatter": _usage_sink("deserialize", "ObjectStateFormatter (CWE-502)"),
+    "ObjectStateFormatter.Deserialize": _usage_sink("deserialize", "ObjectStateFormatter.Deserialize (CWE-502)"),
+    "FsPickler.CreateBinarySerializer": _usage_sink("deserialize", "FsPickler binary (CWE-502)"),
 
-    # BinaryMessageFormatter (MSMQ - unsafe)
-    "BinaryMessageFormatter": _sink("deserialize", [0], "BinaryMessageFormatter (CWE-502)"),
-    "MessageQueue.Formatter": _sink("deserialize", [0], "MessageQueue.Formatter assignment (CWE-502)"),
-
-    # JavaScriptSerializer
-    "JavaScriptSerializer.Deserialize": _sink("deserialize", [0], "JavaScriptSerializer.Deserialize (unsafe)"),
-
-    # Json.NET
+    # Safe-by-default serializers: only dangerous with tainted input / unsafe
+    # settings, so keep them taint-required (sink on the data argument).
     "JsonConvert.DeserializeObject": _propagator([0], "JsonConvert.DeserializeObject"),
     "JsonSerializer.Deserialize": _propagator([0], "JsonSerializer.Deserialize"),
-
-    # DataContractSerializer
     "DataContractSerializer.ReadObject": _sink("deserialize", [0], "DataContractSerializer.ReadObject"),
-
-    # XmlSerializer
     "XmlSerializer.Deserialize": _sink("deserialize", [0], "XmlSerializer.Deserialize"),
-
-    # NetDataContractSerializer (unsafe)
-    "NetDataContractSerializer": _sink("deserialize", [0], "NetDataContractSerializer (CWE-502)"),
-    "NetDataContractSerializer.ReadObject": _sink("deserialize", [0], "NetDataContractSerializer.ReadObject (CWE-502)"),
-
-    # LosFormatter (unsafe)
-    "LosFormatter.Deserialize": _sink("deserialize", [0], "LosFormatter.Deserialize (CWE-502)"),
-
-    # ObjectStateFormatter (unsafe)
-    "ObjectStateFormatter.Deserialize": _sink("deserialize", [0], "ObjectStateFormatter.Deserialize (CWE-502)"),
 }
 
 # =============================================================================
@@ -511,6 +505,13 @@ CRYPTO_ENHANCED_SPECS = {
     "DESCryptoServiceProvider": _usage_sink("weak_crypto", "DES encryption (CWE-327)"),
     "TripleDESCryptoServiceProvider": _usage_sink("weak_crypto", "3DES encryption (CWE-327)"),
     "RC2CryptoServiceProvider": _usage_sink("weak_crypto", "RC2 encryption (CWE-327)"),
+    "RijndaelManaged": _usage_sink("weak_crypto", "RijndaelManaged - non-standard/ECB-prone (CWE-327)"),
+    "HMACMD5": _usage_sink("weak_hash", "HMAC-MD5 (CWE-328)"),
+    "HMACSHA1": _usage_sink("weak_hash", "HMAC-SHA1 (CWE-328)"),
+    "MD5Cng": _usage_sink("weak_hash", "MD5Cng (CWE-328)"),
+    "SHA1Cng": _usage_sink("weak_hash", "SHA1Cng (CWE-328)"),
+    "RC4": _usage_sink("weak_crypto", "RC4 stream cipher (CWE-327)"),
+    "ARC4": _usage_sink("weak_crypto", "ARC4 stream cipher (CWE-327)"),
 
     # ECB mode
     "CipherMode.ECB": _sink("weak_crypto", [0], "ECB mode (CWE-327)"),
