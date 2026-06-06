@@ -24,6 +24,12 @@ def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
     return ProcSpec(is_sink=kind, sink_args=args or [0], description=desc)
 
 
+def _usage_sink(kind: str, desc: str = "") -> ProcSpec:
+    """Usage-based sink: the call/constructor itself is the vulnerability (no
+    taint required), e.g. instantiating MD5/DES. Fired on use (empty sink_args)."""
+    return ProcSpec(is_sink=kind, sink_args=[], description=desc)
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -370,10 +376,10 @@ LOGGING_SPECS = {
 
 CRYPTO_SPECS = {
     # Weak algorithms
-    "MD5.Create": _propagator([0], "MD5.Create (weak hash)"),
-    "SHA1.Create": _propagator([0], "SHA1.Create (weak hash)"),
-    "DES.Create": _propagator([0], "DES.Create (weak encryption)"),
-    "TripleDES.Create": _propagator([0], "TripleDES.Create (deprecated)"),
+    "MD5.Create": _usage_sink("weak_hash", "MD5.Create - weak hash (CWE-328)"),
+    "SHA1.Create": _usage_sink("weak_hash", "SHA1.Create - weak hash (CWE-328)"),
+    "DES.Create": _usage_sink("weak_crypto", "DES.Create - weak encryption (CWE-327)"),
+    "TripleDES.Create": _usage_sink("weak_crypto", "TripleDES.Create - weak encryption (CWE-327)"),
 
     # Strong algorithms
     "SHA256.Create": _propagator([0], "SHA256.Create"),
@@ -498,12 +504,12 @@ MISCONFIGURATION_SPECS = {
 
 CRYPTO_ENHANCED_SPECS = {
     # Weak algorithms (more specific)
-    "MD5CryptoServiceProvider": _sink("weak_hash", [0], "MD5 hash (CWE-328)"),
-    "SHA1CryptoServiceProvider": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
-    "SHA1Managed": _sink("weak_hash", [0], "SHA1 hash (CWE-328)"),
-    "DESCryptoServiceProvider": _sink("weak_crypto", [0], "DES encryption (CWE-327)"),
-    "TripleDESCryptoServiceProvider": _sink("weak_crypto", [0], "3DES encryption (CWE-327)"),
-    "RC2CryptoServiceProvider": _sink("weak_crypto", [0], "RC2 encryption (CWE-327)"),
+    "MD5CryptoServiceProvider": _usage_sink("weak_hash", "MD5 hash (CWE-328)"),
+    "SHA1CryptoServiceProvider": _usage_sink("weak_hash", "SHA1 hash (CWE-328)"),
+    "SHA1Managed": _usage_sink("weak_hash", "SHA1 hash (CWE-328)"),
+    "DESCryptoServiceProvider": _usage_sink("weak_crypto", "DES encryption (CWE-327)"),
+    "TripleDESCryptoServiceProvider": _usage_sink("weak_crypto", "3DES encryption (CWE-327)"),
+    "RC2CryptoServiceProvider": _usage_sink("weak_crypto", "RC2 encryption (CWE-327)"),
 
     # ECB mode
     "CipherMode.ECB": _sink("weak_crypto", [0], "ECB mode (CWE-327)"),
