@@ -373,54 +373,87 @@ def run_secbench_js_division(
     return results
 
 
-def run_js_sast_division(
+def run_secbench_real_division(
     cache_dir: str,
-    division: str = 'js_sast',
-    max_tests: Optional[int] = None
-) -> List[SASTBenchmarkResult]:
-    """Run the hand-authored semantic JavaScript/TypeScript SAST benchmark.
+    division: str = 'secbench_real',
+    categories: Optional[List[str]] = None,
+    max_per_cat: Optional[int] = None,
+) -> Dict:
+    """Run the real SecBench.js benchmark (Staicu et al., ICSE 2023).
 
-    Ground truth is labelled by data-flow semantics (not regex), so this is a
-    valid measure of the SL taint engine -- unlike the circular secbench_js
-    division. Vulnerable files expect one finding of their CWE; safe files
-    expect none.
+    Scans each vulnerable package's ground-truth sink file in library mode
+    (exported-function params are untrusted) and checks for the category's CWE
+    (recall); scans the patched version's same file for precision. Returns a
+    dict of per-category and overall TP/FP/FN/precision/recall.
     """
-    from benchmarks.downloaders.js_sast import (
-        build_js_sast_corpus,
-        get_js_sast_files,
-        load_js_sast_manifest,
+    from benchmarks.downloaders.secbench_real import (
+        get_secbench_real_entries, CATEGORY_CWE,
     )
+    from frame.sil import FrameScanner
 
-    build_js_sast_corpus(cache_dir)
-    test_files = get_js_sast_files(cache_dir)
-    manifest = load_js_sast_manifest(cache_dir)
+    entries = get_secbench_real_entries(
+        cache_dir, categories=categories, max_per_cat=max_per_cat)
 
-    if max_tests:
-        test_files = test_files[:max_tests]
-    if not test_files:
-        print(f"No test files found for {division}")
-        return []
+    # vuln_type substrings that count as a match for each category's CWE.
+    CAT_MATCH = {
+        'command-injection': 'command_injection',
+        'code-injection': 'code_injection',
+        'path-traversal': 'path_traversal',
+        'prototype-pollution': 'prototype_pollution',
+        'redos': 'regex_dos',
+    }
 
-    print(f"\nRunning {division}: {len(test_files)} benchmarks")
+    def scan(path: str):
+        if not path:
+            return None
+        lang = 'typescript' if path.endswith('.ts') else 'javascript'
+        try:
+            sc = FrameScanner(language=lang, verify=False, library_mode=True)
+            res = sc.scan_file(path)
+            return {v.type.value for v in res.vulnerabilities}
+        except Exception:
+            return set()
+
+    cats = {c: {'tp': 0, 'fp': 0, 'fn': 0, 'skip': 0} for c in CATEGORY_CWE}
+    print(f"\nRunning {division}: {len(entries)} real vulnerabilities")
     print("=" * 80)
+    for i, e in enumerate(entries, 1):
+        cat = e['category']
+        want = CAT_MATCH[cat]
+        if not e['vuln_file']:
+            cats[cat]['skip'] += 1
+            continue
+        found = scan(e['vuln_file'])
+        hit = any(want in t for t in found)
+        if hit:
+            cats[cat]['tp'] += 1
+        else:
+            cats[cat]['fn'] += 1
+        # Precision: the patched version must NOT flag the same category.
+        if e['fixed_file']:
+            pf = scan(e['fixed_file'])
+            if any(want in t for t in pf):
+                cats[cat]['fp'] += 1
+        if i % 25 == 0:
+            print(f"  [{i}/{len(entries)}] processed")
 
-    results = []
-    total = len(test_files)
-    for i, filepath in enumerate(test_files, 1):
-        info = manifest.get('files', {}).get(os.path.basename(filepath), {})
-        expected_vulns = []
-        if info.get('vulnerable'):
-            cwe = info['cwe']
-            expected_vulns.append(ExpectedVulnerability(
-                cwe_id=cwe,
-                category=cwe_to_category(cwe.replace('CWE-', '')),
-            ))
-        lang = 'typescript' if filepath.endswith('.ts') else 'javascript'
-        result = run_sast_benchmark(filepath, expected_vulns, 'js_sast', division, lang)
-        results.append(result)
-        _print_progress(i, total, result)
-
-    return results
+    overall = {'tp': 0, 'fp': 0, 'fn': 0, 'skip': 0}
+    print("\nSecBench.js results by category:")
+    for c, d in cats.items():
+        for k in overall:
+            overall[k] += d[k]
+        tp, fp, fn = d['tp'], d['fp'], d['fn']
+        p = tp / (tp + fp) if (tp + fp) else 0.0
+        r = tp / (tp + fn) if (tp + fn) else 0.0
+        d['precision'], d['recall'] = p, r
+        print(f"  {c:22} TP={tp:3} FP={fp:3} FN={fn:3} skip={d['skip']:3} "
+              f"P={p:.0%} R={r:.0%}")
+    tp, fp, fn = overall['tp'], overall['fp'], overall['fn']
+    overall['precision'] = tp / (tp + fp) if (tp + fp) else 0.0
+    overall['recall'] = tp / (tp + fn) if (tp + fn) else 0.0
+    print(f"  {'OVERALL':22} TP={tp:3} FP={fp:3} FN={fn:3} skip={overall['skip']:3} "
+          f"P={overall['precision']:.0%} R={overall['recall']:.0%}")
+    return {'by_category': cats, 'overall': overall}
 
 
 def _print_progress(i: int, total: int, result: SASTBenchmarkResult):

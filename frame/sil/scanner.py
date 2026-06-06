@@ -555,7 +555,8 @@ class FrameScanner:
         language: str = "python",
         verify: bool = True,
         timeout: int = 5000,
-        verbose: bool = False
+        verbose: bool = False,
+        library_mode: bool = False
     ):
         """
         Initialize the scanner.
@@ -565,11 +566,15 @@ class FrameScanner:
             verify: Whether to verify findings with Frame (slower but no FPs)
             timeout: Verification timeout in milliseconds
             verbose: Enable verbose output
+            library_mode: Treat exported-function parameters as untrusted input.
+                Correct threat model when analyzing a *library* (its public API
+                receives attacker-controlled data) rather than an application.
         """
         self.language = language
         self.verify = verify
         self.timeout = timeout
         self.verbose = verbose
+        self.library_mode = library_mode
 
         # Initialize frontend
         self.frontend = self._get_frontend(language)
@@ -587,10 +592,14 @@ class FrameScanner:
             return PythonFrontend()
         elif language == "javascript":
             from frame.sil.frontends.javascript_frontend import JavaScriptFrontend
-            return JavaScriptFrontend()
+            fe = JavaScriptFrontend()
+            fe.taint_function_params = self.library_mode
+            return fe
         elif language == "typescript":
             from frame.sil.frontends.javascript_frontend import TypeScriptFrontend
-            return TypeScriptFrontend()
+            fe = TypeScriptFrontend()
+            fe.taint_function_params = self.library_mode
+            return fe
         elif language == "java":
             from frame.sil.frontends.java_frontend import JavaFrontend
             return JavaFrontend()
