@@ -330,6 +330,7 @@ SERIALIZATION_SPECS = {
 
 LDAP_SPECS = {
     # DirectorySearcher (LDAP injection)
+    "DirectorySearcher": _sink("ldap", [0], "new DirectorySearcher(filter) (LDAP injection)"),
     "DirectorySearcher.Filter": _sink("ldap", [0], "DirectorySearcher.Filter (LDAP injection)"),
     "DirectorySearcher.FindAll": _sink("ldap", [0], "DirectorySearcher.FindAll (LDAP injection)"),
     "DirectorySearcher.FindOne": _sink("ldap", [0], "DirectorySearcher.FindOne (LDAP injection)"),

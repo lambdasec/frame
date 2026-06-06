@@ -429,6 +429,9 @@ class CSharpFrontend:
             if child.type == "invocation_expression":
                 instrs = self._translate_invocation(child)
                 self._add_instrs(instrs)
+            elif child.type == "object_creation_expression":
+                self._add_instrs(self._translate_object_creation(
+                    child, None, self._get_location(child)))
             elif child.type == "assignment_expression":
                 self._translate_assignment(child)
             elif child.type == "postfix_unary_expression" or child.type == "prefix_unary_expression":
@@ -468,7 +471,7 @@ class CSharpFrontend:
                                 if nc.type in ("invocation_expression", "object_creation_expression",
                                               "await_expression", "binary_expression",
                                               "literal_expression", "string_literal", "interpolated_string_expression",
-                                              "member_access_expression"):
+                                              "member_access_expression", "element_access_expression"):
                                     value_node = nc
                                     break
 
@@ -480,13 +483,67 @@ class CSharpFrontend:
                                 if value_node.type == "invocation_expression":
                                     instrs = self._translate_call_assignment(var_name, value_node, loc)
                                     self._add_instrs(instrs)
+                                elif value_node.type == "object_creation_expression":
+                                    self._add_instrs(self._translate_object_creation(value_node, var_name, loc))
                                 elif value_node.type == "await_expression":
                                     self._translate_await_assignment(var_name, value_node, loc)
                                 else:
                                     exp = self._translate_expression(value_node)
                                     self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
+                                    self._emit_member_source(value_node, var_name, loc)
                             else:
                                 self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+
+    def _get_member_chain(self, node: TSNode) -> str:
+        """Extract a dotted member chain (e.g. 'Request.QueryString') from a
+        member/element access expression, identifier, or invocation receiver."""
+        if node is None:
+            return ""
+        t = node.type
+        if t == "identifier":
+            return self._get_text(node)
+        if t == "member_access_expression":
+            expr = node.child_by_field_name("expression")
+            name = node.child_by_field_name("name")
+            base = self._get_member_chain(expr)
+            nm = self._get_text(name) if name else ""
+            return f"{base}.{nm}" if base else nm
+        if t == "element_access_expression":
+            return self._get_member_chain(node.child_by_field_name("expression"))
+        if t == "parenthesized_expression":
+            for c in node.children:
+                if c.type not in ("(", ")"):
+                    return self._get_member_chain(c)
+        return ""
+
+    def _emit_member_source(self, value_node: TSNode, target: str, loc: Location) -> None:
+        """Emit a TaintSource if value_node is a property/indexer taint source
+        (e.g. Request.QueryString[...], Request.Form[...], User.Identity.Name).
+
+        C# web sources are property/indexer accesses, not method calls, so the
+        invocation path never tainted them -- this is the keystone fix that lets
+        SQL/command/path/LDAP/etc. taint flows be detected at all.
+        """
+        if value_node is None or value_node.type not in (
+            "member_access_expression", "element_access_expression"
+        ):
+            return
+        chain = self._get_member_chain(value_node)
+        if not chain:
+            return
+        spec = self.specs.get(chain)
+        if not spec and '.' in chain:
+            parts = chain.split('.')
+            for i in range(1, len(parts)):
+                spec = self.specs.get('.'.join(parts[i:]))
+                if spec:
+                    break
+        if spec and spec.is_taint_source():
+            kind = (TaintKind(spec.is_source)
+                    if spec.is_source in [t.value for t in TaintKind]
+                    else TaintKind.USER_INPUT)
+            self._add_instr(TaintSource(loc=loc, var=PVar(target),
+                                        kind=kind, description=spec.description))
 
     def _translate_assignment(self, node: TSNode) -> None:
         """Translate assignment expression"""
@@ -502,11 +559,14 @@ class CSharpFrontend:
         if right.type == "invocation_expression":
             instrs = self._translate_call_assignment(target, right, loc)
             self._add_instrs(instrs)
+        elif right.type == "object_creation_expression":
+            self._add_instrs(self._translate_object_creation(right, target, loc))
         elif right.type == "await_expression":
             self._translate_await_assignment(target, right, loc)
         else:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+            self._emit_member_source(right, target, loc)
 
     def _translate_call_assignment(
         self,
@@ -550,6 +610,35 @@ class CSharpFrontend:
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
 
+        return instrs
+
+    def _translate_object_creation(self, node: TSNode, target: Optional[str],
+                                   loc: Location) -> List[Instr]:
+        """Translate `new Type(args)` so constructor sinks fire: usage-based
+        sinks (new MD5CryptoServiceProvider(), new BinaryFormatter()) via the
+        emitted Call, and taint-arg sinks (new SqlCommand(q),
+        new DirectorySearcher(filter)) via an explicit TaintSink."""
+        instrs = []
+        type_node = node.child_by_field_name("type")
+        type_name = self._get_text(type_node) if type_node else "Object"
+        args = self._get_method_args(node)
+        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+
+        # Emit a Call named after the type so the translator's usage-based sink
+        # path (empty sink_args) can fire on the constructor.
+        instrs.append(Call(loc=loc, ret=None,
+                           func=ExpConst.string(type_name), args=args_exp))
+        if target is not None:
+            instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpConst.null()))
+
+        spec = self.specs.get(type_name)
+        if spec and spec.is_taint_sink():
+            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            for arg_idx in spec.sink_args:
+                if arg_idx < len(args):
+                    instrs.append(TaintSink(
+                        loc=loc, exp=self._translate_expression(args[arg_idx]),
+                        kind=kind, description=spec.description, arg_index=arg_idx))
         return instrs
 
     def _translate_invocation(self, call_node: TSNode) -> List[Instr]:

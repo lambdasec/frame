@@ -1288,6 +1288,35 @@ void read_input() {
 # =============================================================================
 
 @pytest.mark.skipif(not CSHARP_AVAILABLE, reason="tree-sitter-c-sharp not installed")
+class TestCSharpTaintEngine:
+    """C# taint flows via the SL engine (property/indexer sources + ctor sinks)."""
+
+    def _cwes(self, code):
+        from frame.sil.scanner import FrameScanner
+        res = FrameScanner(language="csharp", verify=False).scan(code, "t.cs")
+        return {v.cwe_id for v in res.vulnerabilities}
+
+    def test_sql_from_request_source(self):
+        code = 'class C { void f(){ var id=Request.QueryString["id"]; cmd.ExecuteReader("SELECT "+id); } }'
+        assert "CWE-89" in self._cwes(code)
+
+    def test_command_from_request_source(self):
+        code = 'class C { void f(){ var u=Request.Form["u"]; Process.Start("cmd "+u); } }'
+        assert "CWE-78" in self._cwes(code)
+
+    def test_ldap_via_constructor_sink(self):
+        code = 'class C { void f(){ var u=Request.Form["u"]; var s=new DirectorySearcher("(cn="+u+")"); } }'
+        assert "CWE-90" in self._cwes(code)
+
+    def test_weak_crypto_constructor_usage_sink(self):
+        assert "CWE-328" in self._cwes('class C { void f(){ new MD5CryptoServiceProvider(); } }')
+
+    def test_constant_arg_not_flagged(self):
+        code = 'class C { void f(){ var x="const"; cmd.ExecuteReader(x); } }'
+        assert "CWE-89" not in self._cwes(code)
+
+
+@pytest.mark.skipif(not CSHARP_AVAILABLE, reason="tree-sitter-c-sharp not installed")
 class TestCSharpFrontendParsing:
     """Test C# frontend parsing capabilities"""
 
