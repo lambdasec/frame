@@ -1169,6 +1169,12 @@ class FrameScanner:
             ScanResult with vulnerabilities found
         """
         start_time = time.time()
+        # Strip a leading UTF-8 BOM if present. scan_file() reads with utf-8-sig
+        # and strips it, but callers of scan() with raw text may not -- a stray
+        # BOM (common in C#/.NET files) corrupts the first token and silently
+        # suppresses findings, making scan() and scan_file() disagree.
+        if source_code.startswith('﻿'):
+            source_code = source_code[1:]
         result = ScanResult(filename=filename)
         result.lines_scanned = source_code.count('\n') + 1
 
