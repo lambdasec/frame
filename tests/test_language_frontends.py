@@ -565,6 +565,25 @@ function Footer() {
         safe_xss = [v for v in safe_result.vulnerabilities if v.type == VulnType.XSS]
         assert len(safe_xss) == 0, f"Expected no XSS on constant html, got: {safe_xss}"
 
+    def test_js_express_route_handler_callbacks(self):
+        """Express route-handler callbacks are analyzed; req.* flows are caught."""
+        from frame.sil.scanner import FrameScanner, VulnType
+        sc = FrameScanner(language="javascript", verify=False)
+
+        def cwes(code):
+            return {v.cwe_id for v in sc.scan(code, "t.js").vulnerabilities}
+
+        # function callback, command injection via req.body
+        assert "CWE-78" in cwes(
+            'app.post("/x", function(req,res){ cp.exec("ls " + req.body.cmd); });')
+        # arrow callback, SQL injection via req.query (inline source in sink)
+        assert "CWE-89" in cwes(
+            'app.get("/x", (req,res) => { db.query("SELECT " + req.query.id); });')
+        # nested router handler
+        assert len(cwes('router.get("/u/:id", (req,res)=>{ fs.readFile("/d/"+req.params.id); });')) > 0
+        # a constant-only handler must stay clean
+        assert "CWE-78" not in cwes('app.post("/x", (req,res)=>{ cp.exec("ls -la"); });')
+
     def test_js_assignment_sink_innerhtml_precision(self):
         """Taint engine handles `el.innerHTML = x` assignment sinks precisely."""
         from frame.sil.scanner import FrameScanner, VulnType
