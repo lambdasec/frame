@@ -582,15 +582,17 @@ function Footer() {
         assert not any(v.type == VulnType.XSS for v in res2.vulnerabilities), \
             f"Expected no XSS on constant innerHTML, got: {res2.vulnerabilities}"
 
-    def test_js_no_regex_pattern_match_findings(self):
-        """JavaScript no longer uses the regex layer: no <pattern-match> findings."""
-        from frame.sil.scanner import FrameScanner
-
-        # eval of a constant is NOT a vulnerability; the old regex flagged it.
+    def test_js_taint_engine_is_primary_for_dom_xss(self):
+        """The SL taint engine (not regex) drives precise DOM-XSS detection:
+        tainted innerHTML flagged, constant innerHTML clean. (The regex layer is
+        retained as a recall backstop for real-world JS, validated on SecBench.js.)"""
+        from frame.sil.scanner import FrameScanner, VulnType
         scanner = FrameScanner(language="javascript", verify=False)
-        res = scanner.scan("function f(){ eval('1+1'); (function(d){return d})(document); }", "t.js")
-        assert all(v.procedure != "<pattern-match>" for v in res.vulnerabilities)
-        assert len(res.vulnerabilities) == 0, f"Expected no findings, got: {res.vulnerabilities}"
+        tainted = scanner.scan("function f(){ const h=location.hash; el.innerHTML=h; }", "t.js")
+        assert any(v.type == VulnType.XSS for v in tainted.vulnerabilities)
+        # A constant innerHTML must not be flagged (precision).
+        safe = scanner.scan('function f(){ el.innerHTML = "<b>ok</b>"; }', "s.js")
+        assert not any(v.type == VulnType.XSS for v in safe.vulnerabilities)
 
 
 # =============================================================================

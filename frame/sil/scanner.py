@@ -303,6 +303,146 @@ C_VULNERABILITY_PATTERNS = {
     ],
 }
 
+# Pattern-based vulnerability detection for JavaScript/TypeScript
+# These patterns detect common vulnerability signatures without taint flow analysis
+JS_VULNERABILITY_PATTERNS = {
+    # SQL Injection - Template literals and string concatenation with user input
+    VulnType.SQL_INJECTION: [
+        # Template literals with req.body/query/params
+        (r'`[^`]*\$\{[^}]*req\.body', 'CWE-89', 'SQL query with req.body in template literal'),
+        (r'`[^`]*\$\{[^}]*req\.query', 'CWE-89', 'SQL query with req.query in template literal'),
+        (r'`[^`]*\$\{[^}]*req\.params', 'CWE-89', 'SQL query with req.params in template literal'),
+        # Common SQL patterns with variables
+        (r'\.query\s*\(\s*`[^`]*\$\{', 'CWE-89', 'SQL query with template literal interpolation'),
+        (r'\.query\s*\(\s*["\'][^"\']*["\']\s*\+', 'CWE-89', 'SQL query with string concatenation'),
+        (r'\.raw\s*\(\s*`[^`]*\$\{', 'CWE-89', 'Raw SQL with template literal interpolation'),
+        # Sequelize-specific patterns - match any sequelize.query call
+        (r'sequelize\.query\s*\(', 'CWE-89', 'Sequelize query call'),
+        (r'models\.sequelize\.query\s*\(', 'CWE-89', 'Sequelize query via models'),
+    ],
+    # Insecure Deserialization - Function constructor, eval, etc.
+    # Note: SecBench.js benchmark marks function() usage as CWE-502
+    VulnType.DESERIALIZATION: [
+        # The Function CONSTRUCTOR (e.g. `new Function(...)` / `Function("...")`)
+        # builds code from strings and is a genuine code-injection sink. Match
+        # only the capital-F constructor with a word boundary so the `function`
+        # keyword (declarations, expressions, IIFEs, callbacks) is NOT flagged.
+        (r'\bFunction\s*\(', 'CWE-502', 'Function constructor (code injection risk)'),
+        (r'\beval\s*\(', 'CWE-502', 'Use of eval (code injection risk)'),
+        (r'\.deserialize\s*\(', 'CWE-502', 'Deserialization of untrusted data'),
+        (r'JSON\.parse\s*\(\s*req\.', 'CWE-502', 'JSON parse of request data'),
+        (r'setTimeout\s*\(\s*["\']', 'CWE-502', 'setTimeout with string (code injection)'),
+        (r'setInterval\s*\(\s*["\']', 'CWE-502', 'setInterval with string (code injection)'),
+        (r'vm\.runInContext\s*\(', 'CWE-502', 'vm.runInContext (code execution)'),
+        (r'vm\.runInNewContext\s*\(', 'CWE-502', 'vm.runInNewContext (code execution)'),
+    ],
+    # Command Injection - child_process patterns
+    VulnType.COMMAND_INJECTION: [
+        (r'\bexec\s*\(\s*`', 'CWE-78', 'Command execution with template literal'),
+        (r'\bexec\s*\(\s*[a-zA-Z_]\w*\s*\+', 'CWE-78', 'Command execution with concatenation'),
+        (r'\bexecSync\s*\(\s*`', 'CWE-78', 'Sync command with template literal'),
+        (r'\bspawn\s*\([^)]*req\.', 'CWE-78', 'Process spawn with request data'),
+        (r'child_process\.\w+\s*\([^)]*`', 'CWE-78', 'child_process with template literal'),
+        (r'\bexec\s*\(\s*req\.', 'CWE-78', 'Command execution with request data'),
+        (r'execFile\s*\(\s*[a-zA-Z_]', 'CWE-78', 'execFile with variable'),
+        # Broader spawn patterns
+        (r'\bspawn\s*\(\s*[a-zA-Z_]\w*', 'CWE-78', 'Process spawn with variable'),
+        (r'require\s*\(\s*["\']child_process["\']', 'CWE-78', 'Import of child_process module'),
+        (r'from\s+["\']child_process["\']', 'CWE-78', 'ES6 import of child_process'),
+    ],
+    # XSS - DOM manipulation and output
+    VulnType.XSS: [
+        (r'\.innerHTML\s*=\s*[a-zA-Z_$][\w$.\[\]]*', 'CWE-79', 'Direct innerHTML assignment'),
+        # Note: React dangerouslySetInnerHTML is handled by the taint engine
+        # (javascript_frontend._scan_jsx_for_sinks), which reports it only when
+        # the injected __html value is actually attacker-tainted, rather than
+        # flagging every occurrence here.
+        (r'\.html\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'jQuery .html() with variable'),
+        (r'document\.write\s*\(', 'CWE-79', 'Use of document.write'),
+        (r'\.outerHTML\s*=', 'CWE-79', 'Direct outerHTML assignment'),
+        (r'\.insertAdjacentHTML\s*\(', 'CWE-79', 'insertAdjacentHTML usage'),
+        # DOMParser with user data
+        (r'DOMParser\s*\(\s*\)\.parseFromString\s*\(', 'CWE-79', 'DOMParser usage'),
+        # Response methods with variables (not string literals or JSX)
+        (r'res\.send\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'res.send with variable'),
+        (r'res\.send\s*\(\s*`', 'CWE-79', 'res.send with template literal'),
+        (r'res\.write\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'res.write with variable'),
+    ],
+    # Prototype Pollution - Object spread and merge with user input
+    VulnType.PROTOTYPE_POLLUTION: [
+        (r'\.\.\.\s*req\.body', 'CWE-1321', 'Spread of req.body (prototype pollution risk)'),
+        (r'\.\.\.\s*req\.query', 'CWE-1321', 'Spread of req.query (prototype pollution risk)'),
+        (r'\.\.\.\s*req\.params', 'CWE-1321', 'Spread of req.params (prototype pollution risk)'),
+        (r'Object\.assign\s*\([^,]+,\s*req\.', 'CWE-1321', 'Object.assign with request data'),
+        (r'_\.merge\s*\([^,]+,\s*req\.', 'CWE-1321', 'Lodash merge with request data'),
+        (r'_\.extend\s*\([^,]+,\s*req\.', 'CWE-1321', 'Lodash extend with request data'),
+        (r'Object\.assign\s*\(\s*\{\s*\}\s*,\s*req\.', 'CWE-1321', 'Object.assign from request data'),
+        # Bracket notation assignment with user input
+        (r'\[[^\]]*\]\s*=.*req\.body', 'CWE-1321', 'Bracket notation with req.body'),
+        (r'\[[^\]]*\]\s*=.*req\.query', 'CWE-1321', 'Bracket notation with req.query'),
+        # Generic Object.assign (may have FPs, but catches missed cases)
+        (r'Object\.assign\s*\(\s*[a-zA-Z_]\w*\s*,\s*[a-zA-Z_]\w*\s*\)', 'CWE-1321', 'Object.assign with variables'),
+    ],
+    # Hardcoded Secrets - Conservative patterns to avoid FPs
+    VulnType.HARDCODED_SECRET: [
+        (r'password\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded password'),
+        (r'apikey\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded API key'),
+        (r'api_key\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded API key'),
+        (r'secret_key\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded secret key'),
+        (r'auth_token\s*[=:]\s*["\'][^"\']{8,}["\']', 'CWE-798', 'Hardcoded auth token'),
+        (r'private_key\s*[=:]\s*["\'][A-Za-z0-9+/=]{20,}["\']', 'CWE-798', 'Hardcoded private key'),
+        (r'credentials?\s*[=:]\s*["\'][^"\']{8,}["\']', 'CWE-798', 'Hardcoded credentials'),
+        # Generic secret pattern (catch all)
+        (r'\bsecret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded secret'),
+        (r'cookieSecret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded cookie secret'),
+        (r'cryptoKey\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded crypto key'),
+        (r'session_secret\s*[=:]\s*["\'][^"\']{4,}["\']', 'CWE-798', 'Hardcoded session secret'),
+    ],
+    # Open Redirect
+    VulnType.OPEN_REDIRECT: [
+        (r'res\.redirect\s*\(\s*req\.', 'CWE-601', 'Redirect using request parameter'),
+        (r'res\.redirect\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-601', 'Redirect with variable'),
+        (r'location\.href\s*=\s*[a-zA-Z_]', 'CWE-601', 'Dynamic location.href assignment'),
+        (r'window\.location\s*=\s*[a-zA-Z_]', 'CWE-601', 'Dynamic window.location'),
+        (r'location\.replace\s*\(\s*[a-zA-Z_]', 'CWE-601', 'location.replace with variable'),
+        # Broader location assignment patterns
+        (r'\blocation\s*=\s*[a-zA-Z_]\w*', 'CWE-601', 'Location assignment with variable'),
+        (r'\.location\s*=\s*[a-zA-Z_]\w*', 'CWE-601', 'Property location assignment'),
+    ],
+    # SSRF - HTTP requests with dynamic URLs
+    VulnType.SSRF: [
+        (r'http\.get\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HTTP request with dynamic URL'),
+        (r'https\.get\s*\(\s*[a-zA-Z_]', 'CWE-918', 'HTTPS request with dynamic URL'),
+        (r'fetch\s*\(\s*`', 'CWE-918', 'Fetch with template literal URL'),
+        (r'fetch\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-918', 'Fetch with variable URL'),
+        (r'axios\.\w+\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Axios with dynamic URL'),
+        (r'axios\.\w+\s*\(\s*`', 'CWE-918', 'Axios with template literal URL'),
+        (r'request\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Request with dynamic URL'),
+        (r'got\s*\(\s*[a-zA-Z_]', 'CWE-918', 'Got with dynamic URL'),
+    ],
+    # NoSQL Injection - MongoDB with user input
+    VulnType.NOSQL_INJECTION: [
+        (r'\.find\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB find with request data'),
+        (r'\.findOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB findOne with request data'),
+        (r'\.findById\s*\(\s*req\.', 'CWE-943', 'MongoDB findById with request data'),
+        (r'\.where\s*\(\s*req\.', 'CWE-943', 'Query where clause with request data'),
+        (r'\.updateOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB updateOne with request data'),
+        (r'\.deleteOne\s*\(\s*\{[^}]*req\.', 'CWE-943', 'MongoDB deleteOne with request data'),
+        (r'\.aggregate\s*\(\s*\[.*req\.', 'CWE-943', 'MongoDB aggregate with request data'),
+        # $where with user input is dangerous
+        (r'\$where\s*:\s*[^"\']+req\.', 'CWE-943', 'MongoDB $where with request data'),
+    ],
+    # Path Traversal
+    VulnType.PATH_TRAVERSAL: [
+        (r'path\.join\s*\([^)]*req\.', 'CWE-22', 'Path join with request data'),
+        (r'path\.resolve\s*\([^)]*req\.', 'CWE-22', 'Path resolve with request data'),
+        (r'fs\.read\w*\s*\([^)]*req\.', 'CWE-22', 'File read with request data'),
+        (r'fs\.write\w*\s*\([^)]*req\.', 'CWE-22', 'File write with request data'),
+        (r'\.sendFile\s*\([^)]*req\.', 'CWE-22', 'sendFile with request data'),
+        (r'\.download\s*\([^)]*req\.', 'CWE-22', 'download with request data'),
+    ],
+}
+
 # Pattern-based vulnerability detection for C# (.NET)
 CSHARP_VULNERABILITY_PATTERNS = {
     # SQL Injection
@@ -1074,11 +1214,12 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
 
-            # Step 4: Pattern-based detection (legacy regex fallback).
-            # JavaScript/TypeScript have been fully migrated to the separation-
-            # logic taint engine (source/taint/sink specs + frontend sink
-            # emission) and intentionally do NOT use the regex layer.
-            if self.language in ('c', 'cpp', 'c++', 'csharp'):
+            # Step 4: Pattern-based detection (Tier-2 regex backstop).
+            # The SL taint engine is the primary detector, but for languages
+            # whose frontends can't yet do interprocedural / real-world taint
+            # (validated on SecBench.js and IssueBlot.NET), the regex layer is
+            # retained as a recall backstop until the SL engine reaches parity.
+            if self.language in ('javascript', 'typescript', 'c', 'cpp', 'c++', 'csharp'):
                 pattern_vulns = self._scan_patterns(source_code, filename)
                 result.vulnerabilities.extend(pattern_vulns)
                 if self.verbose:
@@ -1612,9 +1753,11 @@ class FrameScanner:
         vulnerabilities = []
 
         # Select appropriate patterns based on language.
-        # JavaScript/TypeScript are intentionally absent: they are handled
-        # entirely by the separation-logic taint engine.
-        if self.language in ('c', 'cpp', 'c++'):
+        if self.language in ('javascript', 'typescript'):
+            patterns_dict = JS_VULNERABILITY_PATTERNS
+            skip_comments = ('//', '/*')
+            buffer_tracker = None
+        elif self.language in ('c', 'cpp', 'c++'):
             patterns_dict = C_VULNERABILITY_PATTERNS
             skip_comments = ('//', '/*', '#')  # Also skip preprocessor directives
             # Initialize buffer size tracker for context-aware verification
