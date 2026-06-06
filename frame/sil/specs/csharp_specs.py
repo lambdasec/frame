@@ -755,8 +755,10 @@ _MIGRATION_BACKFILL_SPECS = {
     # User-controlled hash algorithm name -> weak hash (CWE-328)
     "HashAlgorithm.Create": _sink("weak_hash", [0], "HashAlgorithm.Create(userAlgo)"),
     "CryptoConfig.CreateFromName": _sink("weak_hash", [0], "CryptoConfig.CreateFromName(userAlgo)"),
-    # XXE: XmlDocument.Load / XmlReader without secure settings (usage-based).
-    # Registered on the bare method too (called on an instance variable xd.Load).
+    # XXE: an XmlDocument loaded without secure DTD settings resolves external
+    # entities (default in older .NET). Flag the construction (usage-based) so
+    # the subsequent xd.Load(...) -- called on an instance variable -- is caught.
+    "XmlDocument": _usage_sink("xxe", "new XmlDocument() loaded without secure settings (XXE, CWE-611)"),
     "XmlDocument.Load": _usage_sink("xxe", "XmlDocument.Load (XXE, CWE-611)"),
     "XmlDocument.LoadXml": _usage_sink("xxe", "XmlDocument.LoadXml (XXE, CWE-611)"),
     # CodeDom dynamic compilation (CWE-94): the code argument is the sink, and
