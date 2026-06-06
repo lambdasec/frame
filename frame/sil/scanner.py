@@ -384,9 +384,10 @@ JS_VULNERABILITY_PATTERNS = {
     # XSS - DOM manipulation and output
     VulnType.XSS: [
         (r'\.innerHTML\s*=\s*[^"\';\n]+', 'CWE-79', 'Direct innerHTML assignment'),
-        # React: dangerouslySetInnerHTML is an inherent XSS sink (bypasses
-        # React's auto-escaping), matching how mainstream SAST tools flag it.
-        (r'dangerouslySetInnerHTML\s*=\s*\{\{', 'CWE-79', 'React dangerouslySetInnerHTML (XSS)'),
+        # Note: React dangerouslySetInnerHTML is handled by the taint engine
+        # (javascript_frontend._scan_jsx_for_sinks), which reports it only when
+        # the injected __html value is actually attacker-tainted, rather than
+        # flagging every occurrence here.
         (r'\.html\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'jQuery .html() with variable'),
         (r'document\.write\s*\(', 'CWE-79', 'Use of document.write'),
         (r'\.outerHTML\s*=', 'CWE-79', 'Direct outerHTML assignment'),

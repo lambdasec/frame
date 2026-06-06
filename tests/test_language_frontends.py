@@ -497,6 +497,74 @@ function query(sql) {
         # Verify the call is captured correctly
         assert has_instruction_type(proc, Call)
 
+    def test_jsx_dangerously_set_inner_html_emits_taint_sink(self):
+        """React dangerouslySetInnerHTML JSX attribute becomes an html TaintSink."""
+        from frame.sil.instructions import TaintSink, SinkKind
+
+        code = """
+function Comment() {
+  const evil = location.hash;
+  return <div dangerouslySetInnerHTML={{ __html: evil }} />;
+}
+"""
+        frontend = JavaScriptFrontend()
+        program = frontend.translate(code, "test.js")
+
+        proc = program.procedures["Comment"]
+        sinks = [i for n in proc.cfg_iter() for i in n.instrs
+                 if isinstance(i, TaintSink)]
+        assert len(sinks) == 1
+        assert sinks[0].kind == SinkKind.HTML_OUTPUT
+        # The sink tracks the injected __html expression, not the wrapper object.
+        assert "evil" in str(sinks[0].exp)
+
+    def test_jsx_dangerously_set_inner_html_constant_no_sink_flow(self):
+        """A constant __html value is a sink but carries no taint (no source)."""
+        from frame.sil.instructions import TaintSink, TaintSource
+
+        code = """
+function Footer() {
+  const safe = "<p>static</p>";
+  return <div dangerouslySetInnerHTML={{ __html: safe }} />;
+}
+"""
+        frontend = JavaScriptFrontend()
+        program = frontend.translate(code, "test.js")
+
+        proc = program.procedures["Footer"]
+        # The sink is still emitted, but nothing taints `safe`, so the taint
+        # engine will not report it (asserted at scan level elsewhere).
+        sources = [i for n in proc.cfg_iter() for i in n.instrs
+                   if isinstance(i, TaintSource)]
+        assert len(sources) == 0
+
+    def test_jsx_xss_precision_tainted_vs_safe(self):
+        """End-to-end: tainted __html is flagged XSS; constant __html is not."""
+        from frame.sil.scanner import FrameScanner, VulnType
+
+        tainted = """
+function Comment() {
+  const evil = location.hash;
+  return <div dangerouslySetInnerHTML={{ __html: evil }} />;
+}
+"""
+        safe = """
+function Footer() {
+  const safe = "<p>static</p>";
+  return <div dangerouslySetInnerHTML={{ __html: safe }} />;
+}
+"""
+        scanner = FrameScanner(language="javascript", verify=False)
+
+        tainted_result = scanner.scan(tainted, "tainted.js")
+        xss = [v for v in tainted_result.vulnerabilities if v.type == VulnType.XSS]
+        assert len(xss) >= 1, f"Expected XSS, got: {[v.type for v in tainted_result.vulnerabilities]}"
+        assert any(v.cwe_id == "CWE-79" for v in xss)
+
+        safe_result = scanner.scan(safe, "safe.js")
+        safe_xss = [v for v in safe_result.vulnerabilities if v.type == VulnType.XSS]
+        assert len(safe_xss) == 0, f"Expected no XSS on constant html, got: {safe_xss}"
+
 
 # =============================================================================
 # TypeScript Frontend Tests

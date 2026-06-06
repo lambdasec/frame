@@ -1146,9 +1146,100 @@ class JavaScriptFrontend:
                         args.append(self._translate_expression(child))
             return ExpCall(ExpConst.string(f"new {cons_name}"), args)
 
+        elif node.type in ("jsx_element", "jsx_self_closing_element", "jsx_fragment"):
+            # JSX evaluates to a React element (opaque value for taint), but its
+            # attributes may carry taint sinks (e.g. dangerouslySetInnerHTML).
+            # Walk the whole subtree and emit any TaintSink instructions.
+            self._scan_jsx_for_sinks(node)
+            return ExpConst.null()
+
         # Default
         text = self._get_text(node)
         return ExpVar(PVar(text)) if text else ExpConst.null()
+
+    def _scan_jsx_for_sinks(self, node: TSNode) -> None:
+        """Recursively walk a JSX subtree and emit TaintSink instructions for
+        sink-bearing attributes such as React's ``dangerouslySetInnerHTML``.
+
+        JSX sinks are attributes nested arbitrarily deep in the element tree, so
+        we walk every descendant here rather than relying on the (non-recursing)
+        ``_translate_expression`` dispatch on the JSX root.
+        """
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if cur.type == "jsx_attribute":
+                self._emit_jsx_attribute_sink(cur)
+            for child in cur.children:
+                stack.append(child)
+
+    def _emit_jsx_attribute_sink(self, attr_node: TSNode) -> None:
+        """If a JSX attribute is a known taint sink, emit a TaintSink for the
+        value it injects so the taint engine confirms whether that value is
+        actually attacker-tainted (only then is it reported as a vulnerability).
+        """
+        # Attribute name is the leading property_identifier child.
+        name_node = next(
+            (c for c in attr_node.children if c.type == "property_identifier"),
+            None,
+        )
+        if name_node is None:
+            return
+
+        spec = self.specs.get(self._get_text(name_node))
+        if not spec or not spec.is_taint_sink():
+            return
+
+        # Attribute value lives in a JSX expression container: ={ ... }.
+        # (tree-sitter-javascript names this node "jsx_expression"; some
+        # grammar versions use "jsx_expression_container".)
+        container = next(
+            (c for c in attr_node.children
+             if c.type in ("jsx_expression", "jsx_expression_container")),
+            None,
+        )
+        if container is None:
+            return
+
+        value_node = self._extract_jsx_sink_value(container)
+        if value_node is None:
+            return
+
+        self._add_instr(TaintSink(
+            loc=self._get_location(attr_node),
+            exp=self._translate_expression(value_node),
+            kind=_get_sink_kind(spec.is_sink),
+            description=spec.description,
+            arg_index=0,
+        ))
+
+    def _extract_jsx_sink_value(self, container_node: TSNode) -> Optional[TSNode]:
+        """Extract the taint-relevant value from a JSX expression container.
+
+        For ``dangerouslySetInnerHTML={{ __html: EXPR }}`` returns the ``EXPR``
+        node of the ``__html`` property. Falls back to the container's inner
+        expression when there is no inline ``__html`` object (e.g. ``={x}``).
+        """
+        inner = next(
+            (c for c in container_node.children if c.type not in ("{", "}")),
+            None,
+        )
+        if inner is None:
+            return None
+
+        # Inline object literal: { __html: EXPR }
+        if inner.type == "object":
+            for child in inner.children:
+                if child.type != "pair":
+                    continue
+                key_node = child.child_by_field_name("key")
+                key_text = self._get_text(key_node).strip("\"'") if key_node else ""
+                if key_text == "__html":
+                    return child.child_by_field_name("value")
+            return None
+
+        # Otherwise the inner expression itself is the injected value.
+        return inner
 
     # =========================================================================
     # Helpers
