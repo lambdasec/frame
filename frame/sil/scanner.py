@@ -354,8 +354,11 @@ JS_VULNERABILITY_PATTERNS = {
     # Insecure Deserialization - Function constructor, eval, etc.
     # Note: SecBench.js benchmark marks function() usage as CWE-502
     VulnType.DESERIALIZATION: [
-        # Function/function patterns (benchmark considers these CWE-502)
-        (r'[Ff]unction\s*\(', 'CWE-502', 'Function usage (code injection context)'),
+        # The Function CONSTRUCTOR (e.g. `new Function(...)` / `Function("...")`)
+        # builds code from strings and is a genuine code-injection sink. Match
+        # only the capital-F constructor with a word boundary so the `function`
+        # keyword (declarations, expressions, IIFEs, callbacks) is NOT flagged.
+        (r'\bFunction\s*\(', 'CWE-502', 'Function constructor (code injection risk)'),
         (r'\beval\s*\(', 'CWE-502', 'Use of eval (code injection risk)'),
         (r'\.deserialize\s*\(', 'CWE-502', 'Deserialization of untrusted data'),
         (r'JSON\.parse\s*\(\s*req\.', 'CWE-502', 'JSON parse of request data'),
@@ -381,6 +384,9 @@ JS_VULNERABILITY_PATTERNS = {
     # XSS - DOM manipulation and output
     VulnType.XSS: [
         (r'\.innerHTML\s*=\s*[^"\';\n]+', 'CWE-79', 'Direct innerHTML assignment'),
+        # React: dangerouslySetInnerHTML is an inherent XSS sink (bypasses
+        # React's auto-escaping), matching how mainstream SAST tools flag it.
+        (r'dangerouslySetInnerHTML\s*=\s*\{\{', 'CWE-79', 'React dangerouslySetInnerHTML (XSS)'),
         (r'\.html\s*\(\s*[a-zA-Z_]\w*\s*\)', 'CWE-79', 'jQuery .html() with variable'),
         (r'document\.write\s*\(', 'CWE-79', 'Use of document.write'),
         (r'\.outerHTML\s*=', 'CWE-79', 'Direct outerHTML assignment'),

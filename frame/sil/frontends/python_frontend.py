@@ -104,8 +104,31 @@ class PythonFrontend:
 
         return program
 
+    # Top-level statement node types that carry executable code worth analyzing
+    # as a synthetic module procedure (mirrors the cases _translate_statement
+    # actually handles).
+    _MODULE_STMT_TYPES = frozenset({
+        "expression_statement",
+        "assignment",
+        "augmented_assignment",
+        "if_statement",
+        "while_statement",
+        "for_statement",
+        "try_statement",
+        "with_statement",
+        "match_statement",
+    })
+
     def _translate_module(self, root: TSNode, program: Program) -> None:
-        """Translate module-level definitions"""
+        """Translate module-level definitions and top-level executable code.
+
+        Function/class definitions each become their own procedure. Any
+        remaining top-level statements (the module body, including
+        ``if __name__ == "__main__":`` guards) are collected into a synthetic
+        ``<module>`` procedure, so taint flowing through top-level code is still
+        analyzed instead of being silently dropped.
+        """
+        module_stmts = []
         for child in root.children:
             if child.type == "function_definition":
                 proc = self._translate_function(child, program=program)
@@ -130,6 +153,60 @@ class PythonFrontend:
                             program.add_procedure(proc)
                     elif definition.type == "class_definition":
                         self._translate_class(definition, program)
+
+            elif child.type in self._MODULE_STMT_TYPES:
+                # Top-level executable statement (assignment, call, if-guard,
+                # loop, with, ...). Collected into the synthetic <module> proc.
+                module_stmts.append(child)
+
+        if module_stmts:
+            proc = self._translate_module_body(module_stmts, program=program)
+            if proc:
+                program.add_procedure(proc)
+
+    def _translate_module_body(
+        self, stmts: List[TSNode], program: Program = None
+    ) -> Optional[Procedure]:
+        """Build a synthetic ``<module>`` procedure from top-level statements."""
+        proc = Procedure(
+            name="<module>",
+            params=[],
+            ret_type=Typ.unknown_type(),
+            loc=self._get_location(stmts[0]),
+        )
+
+        self._current_proc = proc
+        self._node_counter = 0
+
+        # Entry node
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+
+        # Translate each top-level statement in order. Nested function/class
+        # definitions appearing inside these statements are handled by the
+        # statement translators themselves.
+        for stmt in stmts:
+            self._translate_statement(stmt)
+
+        # Exit node
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+
+        self._current_proc = None
+
+        # Don't emit a procedure for modules whose top level produced no
+        # executable instructions (e.g. only docstrings, constants, or bare
+        # imports) — there is nothing to analyze.
+        if next(proc.get_all_instrs(), None) is None:
+            return None
+
+        return proc
 
     def _translate_class(self, node: TSNode, program: Program) -> None:
         """Translate class definition"""
