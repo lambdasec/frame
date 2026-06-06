@@ -76,6 +76,10 @@ class CSharpFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._current_namespace: Optional[str] = None
+        # Treat public web-handler action parameters as request-bound taint
+        # sources. OFF by default; enable for pure-SL mode (regex removed) once
+        # the framework-modeling false positives are suppressed.
+        self.taint_action_params: bool = False
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
@@ -217,12 +221,31 @@ class CSharpFrontend:
 
         # Process attributes for taint sources
         self._process_param_attributes(attributes, params, proc)
-        # ASP.NET action/handler parameters as request-bound sources lift SL-only
-        # recall (36.8% -> 42%) but their residual false positives need further
-        # framework modeling (Razor output encoding for ViewBag/View, redirect
-        # validators, sanitized-concat in redirects) before they are net-positive
-        # in the shipping config. Inline spec-sanitizer recognition is in place
-        # (translator); the remaining modeling is the next increment.
+
+        # ASP.NET MVC/WebAPI/SignalR: a public action/handler's parameters are
+        # model-bound from the HTTP request, hence attacker-controlled. This is
+        # the recall lever for pure-SL mode, gated to public web-facing classes
+        # and to injectable (string/object/model) param types. It is OFF by
+        # default because, while the regex backstop is active, it only adds
+        # false positives (each needs framework modeling: Razor output encoding,
+        # redirect validators, correct path/CWE sink resolution). Enable via
+        # taint_action_params=True once that modeling lands and the regex is
+        # being removed.
+        if self.taint_action_params:
+            cls = self._current_class or ""
+            is_web_handler = any(s in cls for s in
+                                 ("Controller", "Hub", "WebService", "Handler", "Endpoint"))
+            is_public = any(c.type == "modifier" and self._get_text(c) == "public"
+                            for c in node.children)
+            if is_web_handler and is_public and method_name != "Main":
+                injectable = self._injectable_param_names(node)
+                for param, _ in params:
+                    if param.name not in injectable:
+                        continue
+                    self._add_instr(TaintSource(
+                        loc=self._get_location(node), var=param,
+                        kind=TaintKind.USER_INPUT,
+                        description="ASP.NET action/handler parameter (request-bound)"))
 
         # Translate body
         body = node.child_by_field_name("body")
@@ -385,6 +408,34 @@ class CSharpFrontend:
                         param_name = self._get_text(name_node)
                         params.append((PVar(param_name), Typ.unknown_type()))
         return params
+
+    # C# value types cannot carry an injection payload, so model-bound params of
+    # these types are not treated as taint sources (only string/object/models).
+    _NON_INJECTABLE_TYPES = frozenset({
+        "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort",
+        "bool", "double", "float", "decimal", "char", "nint", "nuint",
+        "Guid", "DateTime", "DateTimeOffset", "TimeSpan", "Int32", "Int64",
+        "Boolean", "Double", "Decimal",
+    })
+
+    def _injectable_param_names(self, method_node: TSNode) -> set:
+        """Names of parameters whose declared type can carry an injection
+        payload (string/object/model classes), excluding C# value types."""
+        result = set()
+        params_node = method_node.child_by_field_name("parameters")
+        if not params_node:
+            return result
+        for child in params_node.children:
+            if child.type != "parameter":
+                continue
+            name_node = child.child_by_field_name("name")
+            type_node = child.child_by_field_name("type")
+            if not name_node:
+                continue
+            type_txt = self._get_text(type_node).rstrip("?").strip() if type_node else ""
+            if type_txt not in self._NON_INJECTABLE_TYPES:
+                result.add(self._get_text(name_node))
+        return result
 
     def _translate_block(self, node: TSNode) -> None:
         """Translate block of statements"""
