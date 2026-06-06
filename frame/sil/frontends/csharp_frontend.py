@@ -217,6 +217,11 @@ class CSharpFrontend:
 
         # Process attributes for taint sources
         self._process_param_attributes(attributes, params, proc)
+        # Note: treating ASP.NET action/handler parameters as request-bound
+        # sources was evaluated and measured to raise SL-only recall (36.8% ->
+        # 42.1%) but, because the regex backstop already covers those cases, it
+        # only added false positives in the shipping combined config (precision
+        # 79.0% -> 74.4%). Deferred until the regex backstop is removed.
 
         # Translate body
         body = node.child_by_field_name("body")
