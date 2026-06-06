@@ -1236,7 +1236,24 @@ class JavaScriptFrontend:
             return elements[0] if elements else ExpConst.null()
 
         elif node.type == "object":
-            return ExpConst.null()
+            # Aggregate the property values so taint flows through an object,
+            # e.g. User.find({ $where: req.body.q }) or res.json(req.body).
+            parts = []
+            for child in node.children:
+                if child.type == "pair":
+                    val = child.child_by_field_name("value")
+                    if val is not None:
+                        parts.append(self._translate_expression(val))
+                elif child.type in ("shorthand_property_identifier",
+                                    "shorthand_property_identifier_pattern"):
+                    parts.append(ExpVar(PVar(self._get_text(child))))
+                elif child.type == "spread_element":
+                    for c in child.children:
+                        if c.type not in ("...",):
+                            parts.append(self._translate_expression(c))
+            if not parts:
+                return ExpConst.null()
+            return ExpStringConcat(parts) if len(parts) > 1 else parts[0]
 
         elif node.type == "ternary_expression" or node.type == "conditional_expression":
             # condition ? true : false
