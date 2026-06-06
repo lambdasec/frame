@@ -82,7 +82,12 @@ SERVLET_SPECS = {
     "getTheParameter": _source("user", "OWASP Benchmark wrapper - getParameter"),
     "getTheValue": _source("user", "OWASP Benchmark wrapper - getValue"),
     "getTheName": _source("user", "OWASP Benchmark wrapper - getName"),
-    "getValue": _source("user", "Cookie/request value"),
+    # getValue() propagates the receiver's taint rather than being an
+    # unconditional source: request-cookie values (request.getCookies()[i]
+    # .getValue()) stay tainted, but a freshly created cookie
+    # (new Cookie(name, safeValue).getValue()) does not -- this was the dominant
+    # OWASP Benchmark XSS false positive.
+    "getValue": _propagator_from_receiver("getValue() - propagates receiver taint"),
     "nextElement": _source("user", "Enumeration element (from headers/params)"),
 
     # Common user input patterns
@@ -466,7 +471,11 @@ SANITIZER_SPECS = {
     "encodeForLDAP": _sanitizer(["ldap"], "ESAPI encodeForLDAP"),
     "encodeForDN": _sanitizer(["ldap"], "ESAPI encodeForDN"),
     "encodeForOS": _sanitizer(["command"], "ESAPI encodeForOS (command injection)"),
-    "encodeForBase64": _sanitizer([], "ESAPI encodeForBase64"),  # encoding, not security sanitization
+    # Base64-encoded output cannot carry HTML/JS metacharacters, so it
+    # neutralizes XSS/HTML injection (matches OWASP Benchmark safe cases).
+    "encodeForBase64": _sanitizer(["html", "xss"], "ESAPI encodeForBase64"),
+    "ESAPI.encoder().encodeForBase64": _sanitizer(["html", "xss"], "ESAPI encodeForBase64"),
+    "encodeForHTMLAttribute": _sanitizer(["html", "xss"], "ESAPI encodeForHTMLAttribute"),
     "ESAPI.encoder().encodeForHTML": _sanitizer(["html", "xss"], "ESAPI encodeForHTML (XSS)"),
     "ESAPI.encoder().encodeForJavaScript": _sanitizer(["html", "xss"], "ESAPI encodeForJavaScript (XSS)"),
     "org.owasp.esapi.ESAPI.encoder().encodeForHTML": _sanitizer(["html", "xss"], "ESAPI encodeForHTML (XSS)"),
@@ -681,22 +690,22 @@ CRYPTO_SPECS = {
     "Cipher.getInstance": _sink("weak_crypto", [], "Cipher (algorithm check required)"),
     "javax.crypto.Cipher.getInstance": _sink("weak_crypto", [], "Cipher (algorithm check required)"),
 
-    # Insecure random - categorized as weak_crypto to match OWASP benchmark
-    "java.util.Random": _sink("weak_crypto", [], "Insecure random (CWE-330)"),
-    "Math.random": _sink("weak_crypto", [], "Math.random (CWE-330)"),
-    "Random.nextFloat": _sink("weak_crypto", [], "Random.nextFloat (CWE-330)"),
-    "Random.nextDouble": _sink("weak_crypto", [], "Random.nextDouble (CWE-330)"),
-    "Random.nextInt": _sink("weak_crypto", [], "Random.nextInt (CWE-330)"),
-    "Random.nextLong": _sink("weak_crypto", [], "Random.nextLong (CWE-330)"),
-    "Random.nextBoolean": _sink("weak_crypto", [], "Random.nextBoolean (CWE-330)"),
-    "Random.nextGaussian": _sink("weak_crypto", [], "Random.nextGaussian (CWE-330)"),
-    "Random.nextBytes": _sink("weak_crypto", [], "Random.nextBytes (CWE-330)"),
-    "new java.util.Random": _sink("weak_crypto", [], "new Random() (CWE-330)"),
-    "nextFloat": _sink("weak_crypto", [], "Random.nextFloat (CWE-330)"),
-    "nextDouble": _sink("weak_crypto", [], "Random.nextDouble (CWE-330)"),
-    "nextInt": _sink("weak_crypto", [], "Random.nextInt (CWE-330)"),
-    "nextLong": _sink("weak_crypto", [], "Random.nextLong (CWE-330)"),
-    "nextGaussian": _sink("weak_crypto", [], "Random.nextGaussian (CWE-330)"),
+    # Insecure randomness is CWE-330 (insecure_random), NOT CWE-327 (weak crypto).
+    "java.util.Random": _sink("insecure_random", [], "Insecure random (CWE-330)"),
+    "Math.random": _sink("insecure_random", [], "Math.random (CWE-330)"),
+    "Random.nextFloat": _sink("insecure_random", [], "Random.nextFloat (CWE-330)"),
+    "Random.nextDouble": _sink("insecure_random", [], "Random.nextDouble (CWE-330)"),
+    "Random.nextInt": _sink("insecure_random", [], "Random.nextInt (CWE-330)"),
+    "Random.nextLong": _sink("insecure_random", [], "Random.nextLong (CWE-330)"),
+    "Random.nextBoolean": _sink("insecure_random", [], "Random.nextBoolean (CWE-330)"),
+    "Random.nextGaussian": _sink("insecure_random", [], "Random.nextGaussian (CWE-330)"),
+    "Random.nextBytes": _sink("insecure_random", [], "Random.nextBytes (CWE-330)"),
+    "new java.util.Random": _sink("insecure_random", [], "new Random() (CWE-330)"),
+    "nextFloat": _sink("insecure_random", [], "Random.nextFloat (CWE-330)"),
+    "nextDouble": _sink("insecure_random", [], "Random.nextDouble (CWE-330)"),
+    "nextInt": _sink("insecure_random", [], "Random.nextInt (CWE-330)"),
+    "nextLong": _sink("insecure_random", [], "Random.nextLong (CWE-330)"),
+    "nextGaussian": _sink("insecure_random", [], "Random.nextGaussian (CWE-330)"),
 
     # Secure random - sanitizer
     "SecureRandom": _sanitizer(["random"], "Secure random"),
