@@ -779,6 +779,9 @@ _MIGRATION_BACKFILL_SPECS = {
     "CompileAssemblyFromSource": _sink("code", [1], "CodeDom CompileAssemblyFromSource (code injection)"),
     "CompileAssemblyFromFile": _sink("code", [1], "CodeDom CompileAssemblyFromFile (code injection)"),
     "CompileAssemblyFromDom": _sink("code", [1], "CodeDom CompileAssemblyFromDom (code injection)"),
+    # JSON injection: writing raw, unescaped data into a JSON document (CWE-94).
+    "WriteRawValue": _sink("code", [0], "JsonWriter.WriteRawValue(raw) (JSON injection)"),
+    "JsonTextWriter.WriteRawValue": _sink("code", [0], "WriteRawValue (JSON injection)"),
     # Insecure randomness (usage-based, CWE-330): System.Random is not crypto-safe
     "Random": _usage_sink("insecure_random", "System.Random - not cryptographically secure (CWE-330)"),
     # Open redirect sink (Response.Redirect with user-controlled URL)
