@@ -750,5 +750,18 @@ _MIGRATION_BACKFILL_SPECS = {
     "Request.UrlReferrer": _source("user", "Request referrer (user-controlled)"),
     "Request.UserAgent": _source("user", "Request user-agent (user-controlled)"),
     "Request.Headers": _source("user", "Request headers (user-controlled)"),
+    # Insecure randomness (usage-based, CWE-330): System.Random is not crypto-safe
+    "Random": _usage_sink("insecure_random", "System.Random - not cryptographically secure (CWE-330)"),
+    # Open redirect sink (Response.Redirect with user-controlled URL)
+    "Response.Redirect": _sink("redirect", [0], "Response.Redirect (open redirect)"),
+    "HttpResponse.Redirect": _sink("redirect", [0], "Response.Redirect (open redirect)"),
 }
+# Log injection (CWE-117): common log4net / NLog logger instances + methods.
+# Tainted data written to a log without neutralization allows log forging.
+_LOG_METHODS = ["Info", "InfoFormat", "Warn", "WarnFormat", "Error", "ErrorFormat",
+                "Debug", "DebugFormat", "Fatal", "FatalFormat", "Trace", "Log"]
+_LOG_RECEIVERS = ["log", "logger", "_log", "_logger", "Log", "Logger", "_logger.Value"]
+for _r in _LOG_RECEIVERS:
+    for _m in _LOG_METHODS:
+        _MIGRATION_BACKFILL_SPECS[f"{_r}.{_m}"] = _sink("log", [0], f"{_r}.{_m} (log injection)")
 CSHARP_SPECS.update(_MIGRATION_BACKFILL_SPECS)
