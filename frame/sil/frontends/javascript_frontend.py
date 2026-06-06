@@ -520,6 +520,136 @@ class JavaScriptFrontend:
             i += 1
         return False
 
+    _WORD_CHARS = frozenset('0123456789abcdefghijklmnopqrstuvwxyz'
+                            'ABCDEFGHIJKLMNOPQRSTUVWXYZ_')
+    _DIGIT_CHARS = frozenset('0123456789')
+    _SPACE_CHARS = frozenset(' \t\n\r\f\v')
+
+    @classmethod
+    def _expand_class(cls, inner: str) -> frozenset:
+        """Expand a char-class body (without [ ]) to its set of chars, resolving
+        ranges (a-z) and the common \\d/\\w/\\s escapes."""
+        chars = set()
+        i = 0
+        while i < len(inner):
+            c = inner[i]
+            if c == '\\' and i + 1 < len(inner):
+                e = inner[i + 1]
+                chars |= {'d': cls._DIGIT_CHARS, 'w': cls._WORD_CHARS,
+                          's': cls._SPACE_CHARS}.get(e, frozenset(e))
+                i += 2
+                continue
+            if (i + 2 < len(inner) and inner[i + 1] == '-'
+                    and inner[i + 2] != ']'):
+                try:
+                    for o in range(ord(c), ord(inner[i + 2]) + 1):
+                        chars.add(chr(o))
+                except ValueError:
+                    pass
+                i += 3
+                continue
+            chars.add(c)
+            i += 1
+        return frozenset(chars)
+
+    @classmethod
+    def _branch_first_set(cls, branch: str):
+        """First-character matcher for a regex branch, as a (negated, set) pair;
+        set==None means 'matches any character' (the '.' case)."""
+        branch = branch.lstrip('^')
+        if not branch:
+            return (False, frozenset())
+        c = branch[0]
+        if c == '\\' and len(branch) > 1:
+            esc = branch[1]
+            pos = {'d': cls._DIGIT_CHARS, 'w': cls._WORD_CHARS,
+                   's': cls._SPACE_CHARS}
+            if esc in pos:
+                return (False, pos[esc])
+            if esc == 'D':
+                return (True, cls._DIGIT_CHARS)
+            if esc == 'W':
+                return (True, cls._WORD_CHARS)
+            if esc == 'S':
+                return (True, cls._SPACE_CHARS)
+            return (False, frozenset(esc))
+        if c == '.':
+            return (False, None)
+        if c == '[':
+            end = branch.find(']', 2 if branch[1:2] == '^' else 1)
+            inner = branch[1:end] if end != -1 else branch[1:]
+            if inner.startswith('^'):
+                return (True, cls._expand_class(inner[1:]))
+            return (False, cls._expand_class(inner))
+        if c in '(*+?':
+            return (False, None)  # nested group / quantifier -- be conservative
+        return (False, frozenset(c))
+
+    @staticmethod
+    def _first_sets_overlap(a, b) -> bool:
+        """Whether two (negated, set) first-character matchers can match a common
+        character."""
+        na, sa = a
+        nb, sb = b
+        if sa is None or sb is None:        # '.' matches anything
+            return True
+        if not na and not nb:
+            return bool(sa & sb)
+        if na and nb:
+            return True                      # two negated sets always share chars
+        # one positive, one negated: positive has a char outside the negated set
+        pos, neg = (sa, sb) if not na else (sb, sa)
+        return bool(pos - neg)
+
+    def _alternation_overlaps(self, body: str) -> bool:
+        """True if a top-level alternation has overlapping branches (so a string
+        can be matched more than one way -- the source of catastrophic
+        backtracking when the group is quantified)."""
+        # Split on top-level '|' (ignore '|' inside nested groups / classes).
+        branches, depth, in_class, cur = [], 0, False, []
+        i = 0
+        while i < len(body):
+            ch = body[i]
+            if ch == '\\':
+                cur.append(body[i:i + 2])
+                i += 2
+                continue
+            if ch == '[':
+                in_class = True
+            elif ch == ']':
+                in_class = False
+            elif ch == '(' and not in_class:
+                depth += 1
+            elif ch == ')' and not in_class:
+                depth -= 1
+            elif ch == '|' and depth == 0 and not in_class:
+                branches.append(''.join(cur))
+                cur = []
+                i += 1
+                continue
+            cur.append(ch)
+            i += 1
+        branches.append(''.join(cur))
+        if len(branches) < 2:
+            return False
+        stripped = [b.lstrip('^') for b in branches]
+        sets = [self._branch_first_set(b) for b in branches]
+        for a in range(len(branches)):
+            for b in range(a + 1, len(branches)):
+                (na, sa), (nb, sb) = sets[a], sets[b]
+                if sa is None or sb is None or na or nb:
+                    # A '.'/negated branch is broad; fall back to set overlap.
+                    if self._first_sets_overlap(sets[a], sets[b]):
+                        return True
+                    continue
+                # Two positive branches are ambiguous under a quantifier only
+                # when one can be a prefix of the other (a|ab, \d|\d\d) -- sharing
+                # just a first character (~0|~1) is disambiguated by later chars.
+                if sa & sb and (stripped[a].startswith(stripped[b])
+                                or stripped[b].startswith(stripped[a])):
+                    return True
+        return False
+
     def _is_redos_pattern(self, pattern: str) -> bool:
         """Heuristic detector for super-linear (ReDoS) regex patterns: a group
         that is itself quantified (*, +, {n,}) AND whose body contains an
@@ -562,9 +692,13 @@ class JavaScriptFrontend:
                                 break
                         # Catastrophic when the quantified group's body has an
                         # unbounded inner quantifier (nested quantifier, e.g.
-                        # (\d+)*) or an alternation (overlap-prone under a
-                        # quantifier, e.g. (a|aa)+). A plain (abc)+ is neither.
-                        if '|' in body or self._has_unbounded_quant(body):
+                        # (\d+)*) or an overlapping alternation under the
+                        # quantifier (e.g. (a|aa)+, (.|x)*, \d|\d\d). A clearly
+                        # disjoint alternation like ([a-z0-9]|-)* or (~0|~1)+ is
+                        # linear and is not flagged, keeping precision high.
+                        if self._has_unbounded_quant(body):
+                            return True
+                        if '|' in body and self._alternation_overlaps(body):
                             return True
             i += 1
         return False
