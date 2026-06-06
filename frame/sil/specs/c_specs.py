@@ -31,6 +31,12 @@ def _usage_sink(kind: str, desc: str = "") -> ProcSpec:
     return ProcSpec(is_sink=kind, sink_args=[], description=desc)
 
 
+def _source_usage_sink(src_kind: str, sink_kind: str, desc: str = "") -> ProcSpec:
+    """Both a taint source and a usage-based sink: functions like gets()/scanf()
+    read external input AND are inherently unsafe (unbounded reads)."""
+    return ProcSpec(is_source=src_kind, is_sink=sink_kind, sink_args=[], description=desc)
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -66,14 +72,21 @@ def _deallocator(desc: str = "") -> ProcSpec:
 
 STDIO_INPUT_SPECS = {
     # User input functions (taint sources)
-    "gets": _source("user", "gets() - reads line from stdin (UNSAFE)"),
+    # gets() is always an unbounded read -> source AND usage-based buffer sink.
+    "gets": _source_usage_sink("user", "buffer_overflow", "gets() - unbounded read (CWE-120), use fgets"),
     "fgets": _source("user", "fgets() - reads line from stream"),
     "getchar": _source("user", "getchar() - reads char from stdin"),
     "getc": _source("user", "getc() - reads char from stream"),
     "fgetc": _source("user", "fgetc() - reads char from stream"),
-    "scanf": _source("user", "scanf() - formatted input from stdin"),
-    "fscanf": _source("user", "fscanf() - formatted input from stream"),
-    "sscanf": _source("user", "sscanf() - formatted input from string"),
+    # scanf family: source + usage buffer sink, fired only for unbounded %s
+    # (the translator checks the format argument; %d etc. are safe).
+    "scanf": _source_usage_sink("user", "buffer_overflow", "scanf() - unbounded %s read (CWE-120)"),
+    "fscanf": _source_usage_sink("user", "buffer_overflow", "fscanf() - unbounded %s read (CWE-120)"),
+    "sscanf": _source_usage_sink("user", "buffer_overflow", "sscanf() - unbounded %s read (CWE-120)"),
+    "wscanf": _source_usage_sink("user", "buffer_overflow", "wscanf() - unbounded %s read (CWE-120)"),
+    "swscanf": _source_usage_sink("user", "buffer_overflow", "swscanf() - unbounded %s read (CWE-120)"),
+    "fwscanf": _source_usage_sink("user", "buffer_overflow", "fwscanf() - unbounded %s read (CWE-120)"),
+    "getwd": _usage_sink("dangerous_function", "getwd() - no bounds check (CWE-676), use getcwd"),
     "fread": _source("user", "fread() - reads from stream"),
     "getline": _source("user", "getline() - reads line from stream"),
     "getdelim": _source("user", "getdelim() - reads delimited from stream"),

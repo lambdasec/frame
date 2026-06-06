@@ -13,6 +13,7 @@ Key insight: We generate formulas only at security-relevant points (sinks),
 not for every instruction. This keeps formulas small and verification fast.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Any
 from enum import Enum, auto
@@ -204,6 +205,7 @@ class VulnType(Enum):
             SinkKind.FORMAT: cls.FORMAT_STRING,
             # Memory safety
             SinkKind.BUFFER_OVERFLOW: cls.BUFFER_OVERFLOW,
+            SinkKind.DANGEROUS_FUNCTION: cls.DANGEROUS_FUNCTION,
             SinkKind.INTEGER_OVERFLOW: cls.INTEGER_OVERFLOW,
             SinkKind.NULL_DEREF: cls.NULL_DEREFERENCE,
             SinkKind.DIVIDE_BY_ZERO: cls.DIVIDE_BY_ZERO,
@@ -1872,6 +1874,15 @@ class SILTranslator:
                     # Skip SecureRandom.getInstance - this is safe, not a weak hash
                     elif "SecureRandom" in func_name:
                         pass  # SecureRandom is secure, don't flag
+                    # scanf family: unbounded read only when the format string
+                    # uses %s/%[ without a field width (e.g. scanf("%d") is safe).
+                    elif func_name in ("scanf", "fscanf", "sscanf",
+                                       "wscanf", "swscanf", "fwscanf"):
+                        if any(self._is_unbounded_scanf_format(a) for a, _ in instr.args):
+                            check = self._create_usage_based_check(
+                                instr, state, proc_name, sink_kind
+                            )
+                            checks.append(check)
                     else:
                         # Create a usage-based vulnerability check
                         check = self._create_usage_based_check(
@@ -2826,6 +2837,17 @@ class SILTranslator:
             procedure_name=proc_name,
             data_flow_path=taint_info.propagation_path if taint_info else [],
         )
+
+    # Matches an unbounded conversion in a scanf format string: %s / %[ / %ls
+    # with no field width (e.g. "%s", "%[^\n]"), but NOT a bounded "%9s".
+    _UNBOUNDED_SCANF = re.compile(r'%(?!\d)\*?l?[s\[]')
+
+    def _is_unbounded_scanf_format(self, arg_exp) -> bool:
+        """True if a scanf argument is a literal format string with an
+        unbounded %s/%[ conversion (the actual buffer-overflow trigger)."""
+        if isinstance(arg_exp, ExpConst) and isinstance(arg_exp.value, str):
+            return bool(self._UNBOUNDED_SCANF.search(arg_exp.value))
+        return False
 
     def _create_usage_based_check(
         self,

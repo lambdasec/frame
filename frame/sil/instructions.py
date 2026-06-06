@@ -138,6 +138,7 @@ class SinkKind(Enum):
     INTEGER_OVERFLOW = "integer_overflow"  # Integer overflow (CWE-190)
     NULL_DEREF = "null_deref"   # NULL pointer dereference (CWE-476)
     DIVIDE_BY_ZERO = "divide_by_zero"  # Division by zero (CWE-369)
+    DANGEROUS_FUNCTION = "dangerous_function"  # Inherently unsafe API (CWE-676)
 
     def __str__(self) -> str:
         return self.value

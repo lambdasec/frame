@@ -214,18 +214,12 @@ C_VULNERABILITY_PATTERNS = {
     # buffer sizes and detects actual overflows. Pattern matching here is limited to
     # HIGH-CONFIDENCE patterns that don't require size tracking.
     VulnType.BUFFER_OVERFLOW: [
-        # Inherently dangerous functions - ALWAYS unsafe regardless of context
-        (r'\bgets\s*\(', 'CWE-242', 'Use of gets (inherently dangerous)'),
-        # scanf family with %s (unbounded string read) - ALWAYS unsafe
-        (r'\bfscanf\s*\([^)]*,\s*"[^"]*%s', 'CWE-120', 'fscanf %s (no bounds check)'),
-        (r'\bsscanf\s*\([^)]*,\s*"[^"]*%s', 'CWE-120', 'sscanf %s (no bounds check)'),
-        (r'\bscanf\s*\(\s*"[^"]*%s', 'CWE-120', 'scanf %s (no bounds check)'),
-        (r'\bwscanf\s*\(\s*L"[^"]*%s', 'CWE-120', 'wscanf %s (no bounds check)'),
-        # REMOVED: recv patterns - recv() with casts is used in both good and bad code
-        # Buffer underwrite/underread (CWE-124, CWE-127) - ALWAYS unsafe
+        # gets() and scanf-family %s are now usage-based buffer sinks in the
+        # taint engine (frame/sil/specs/c_specs.py), which also clears bounded
+        # %9s and %d (no false positives). strcpy/strcat/memcpy are handled by
+        # the SL memory analyzer. Only the structural negative-index pattern
+        # (a Tier-2 candidate) remains here.
         (r'\[\s*-\s*\d+\s*\]', 'CWE-124', 'Negative array index (buffer underwrite)'),
-        # NOTE: strcpy, strcat, memcpy etc. are handled by SL analyzer
-        # which provides precise detection with actual buffer size verification
     ],
     # Use After Free - CWE-416
     # SL analyzer handles actual UAF, but we need to track free for context
@@ -257,14 +251,11 @@ C_VULNERABILITY_PATTERNS = {
         # Would need taint analysis to detect actual injection
     ],
     # Path Traversal - CWE-22, CWE-23
-    # NOTE: Most file operations appear in BOTH good and bad code.
-    # Only flag actual path traversal sequences in strings.
-    VulnType.PATH_TRAVERSAL: [
-        # Actual path traversal strings - these are suspicious
-        (r'"\.\./\.\."', 'CWE-23', 'Path traversal sequence in string literal'),
-        (r'"\.\.[\\/]"', 'CWE-23', 'Path traversal in string'),
-        # REMOVED: More complex patterns cause FPs
-    ],
+    # Real path traversal is a data-flow vulnerability (tainted input -> file
+    # path), handled by the Tier-1 taint engine's FILE_PATH sink. Flagging
+    # hardcoded "../" string literals is low-value and false-positive prone, so
+    # it has been dropped rather than ported.
+    VulnType.PATH_TRAVERSAL: [],
     # SQL Injection - CWE-89, CWE-90
     # NOTE: Database functions appear in all code - need taint analysis for actual injection
     VulnType.SQL_INJECTION: [
@@ -283,12 +274,10 @@ C_VULNERABILITY_PATTERNS = {
     # Uninitialized Variable - CWE-457, CWE-665
     # Requires data flow analysis - pattern matching has too many FPs
     VulnType.UNINITIALIZED_VAR: [],
-    # Dangerous function use - CWE-676, CWE-242
-    # Only functions with NO safe usage pattern
-    # NOTE: gets() already covered under BUFFER_OVERFLOW with CWE-242
+    # Dangerous function use - CWE-676
+    # getwd() is now a usage-based dangerous_function sink in the taint engine
+    # (frame/sil/specs/c_specs.py).
     VulnType.DANGEROUS_FUNCTION: [
-        # getwd() has buffer overflow issues - use getcwd()
-        (r'\bgetwd\s*\(', 'CWE-676', 'Use of getwd() - use getcwd() instead'),
         # REMOVED: chown, chmod, setuid, setgid, realpath, cin >>
         # These are used safely in many programs
     ],

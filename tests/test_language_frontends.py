@@ -903,6 +903,28 @@ public class Database {
 # =============================================================================
 
 @pytest.mark.skipif(not C_AVAILABLE, reason="tree-sitter-c not installed")
+class TestCDangerousFunctionSinks:
+    """C dangerous-function detection via usage-based taint-engine sinks."""
+
+    def _cwes(self, code):
+        from frame.sil.scanner import FrameScanner
+        res = FrameScanner(language="c", verify=False).scan(code, "t.c")
+        return {v.cwe_id for v in res.vulnerabilities}
+
+    def test_gets_flagged(self):
+        assert "CWE-120" in self._cwes('void f(){ char b[8]; gets(b); }')
+
+    def test_scanf_percent_s_flagged_but_percent_d_safe(self):
+        assert "CWE-120" in self._cwes('void f(){ char b[8]; scanf("%s", b); }')
+        assert "CWE-120" not in self._cwes('void f(){ int n; scanf("%d", &n); }')
+        # Bounded width is safe.
+        assert "CWE-120" not in self._cwes('void f(){ char b[8]; scanf("%9s", b); }')
+
+    def test_getwd_flagged_dangerous_function(self):
+        assert "CWE-676" in self._cwes('void f(){ char b[256]; getwd(b); }')
+
+
+@pytest.mark.skipif(not C_AVAILABLE, reason="tree-sitter-c not installed")
 class TestCFrontendParsing:
     """Test C frontend parsing capabilities"""
 
