@@ -79,7 +79,7 @@ class CSharpFrontend:
         # Treat public web-handler action parameters as request-bound taint
         # sources. This is the recall lever for pure-SL mode (regex removed):
         # it lifts IssueBlot.NET SL recall 36.8% -> 51.3% at ~81% precision.
-        self.taint_action_params: bool = False
+        self.taint_action_params: bool = True
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
