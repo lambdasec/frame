@@ -37,7 +37,7 @@ python -m benchmarks run --curated
 # Security benchmarks only
 python -m benchmarks run --division owasp_python_curated  # Python (500 tests)
 python -m benchmarks run --division owasp_java            # Java (500 tests)
-python -m benchmarks run --division secbench_real         # JavaScript (real SecBench.js)
+python -m benchmarks run --division secbench         # JavaScript (real SecBench.js)
 python -m benchmarks run --division juliet_curated        # C/C++ (1000 tests)
 
 # Logic solver benchmarks
@@ -163,7 +163,7 @@ input-length mitigations, so a patched-version flag counts as a false positive
 only when the patch actually changed the flagged regex.
 
 ```bash
-python -m benchmarks run --division secbench_real
+python -m benchmarks run --division secbench
 ```
 
 ---

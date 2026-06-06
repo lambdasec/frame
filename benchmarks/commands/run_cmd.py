@@ -9,7 +9,7 @@ SAST_DIVISIONS = {
     'owasp_java', 'owasp_java_curated',
     'juliet', 'juliet_curated',
     'issueblot', 'issueblot_curated',
-    'secbench_real',
+    'secbench',
 }
 
 
@@ -31,7 +31,7 @@ def cmd_run(args, orchestrator):
             orchestrator.run_owasp_java_division('owasp_java_curated', max_tests=args.max_tests)
             orchestrator.run_juliet_division('juliet_curated', max_tests=args.max_tests)
             orchestrator.run_issueblot_division('issueblot_curated', max_tests=args.max_tests)
-            orchestrator.run_secbench_real_division('secbench_real', max_tests=args.max_tests or 15)
+            orchestrator.run_secbench_real_division('secbench', max_tests=args.max_tests or 15)
         else:
             print("Running CURATED benchmark sets (~4000+ total: 700 SL-COMP + 3300 QF_S + QF_AX + QF_BV)")
             print("(QF_AX and QF_BV counts depend on available full benchmarks from SMT-LIB 2024)")
@@ -82,7 +82,7 @@ def cmd_run(args, orchestrator):
         elif 'issueblot' in division:
             orchestrator.run_issueblot_division(args.division, max_tests=args.max_tests)
         elif 'secbench' in division:
-            orchestrator.run_secbench_real_division('secbench_real', max_tests=args.max_tests)
+            orchestrator.run_secbench_real_division('secbench', max_tests=args.max_tests)
         # SMT divisions
         elif args.division in ['slcomp_curated'] or \
            args.division.startswith('qf_sh') or args.division.startswith('qf_bsl') or \
@@ -108,7 +108,7 @@ def cmd_run(args, orchestrator):
             print("  Java: owasp_java, owasp_java_curated")
             print("  C/C++: juliet, juliet_curated")
             print("  C#: issueblot, issueblot_curated")
-            print("  JavaScript: secbench_real")
+            print("  JavaScript: secbench")
             return
 
     # --all: Run ALL benchmarks (full suites)
@@ -123,7 +123,7 @@ def cmd_run(args, orchestrator):
             orchestrator.run_owasp_java_division('owasp_java', max_tests=args.max_tests)
             orchestrator.run_juliet_division('juliet', max_tests=args.max_tests)
             orchestrator.run_issueblot_division('issueblot', max_tests=args.max_tests)
-            orchestrator.run_secbench_real_division('secbench_real', max_tests=args.max_tests)
+            orchestrator.run_secbench_real_division('secbench', max_tests=args.max_tests)
         else:
             print("Running ALL SMT benchmark sets (~20k total: SL-COMP + QF_S + QF_AX + QF_BV)")
             print("=" * 80)

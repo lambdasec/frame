@@ -261,7 +261,7 @@ class BenchmarkOrchestrator:
         self.sast_results.extend(results)
         return results
 
-    def run_secbench_real_division(self, division: str = 'secbench_real',
+    def run_secbench_real_division(self, division: str = 'secbench',
                                    max_tests: Optional[int] = None) -> dict:
         """Run the real SecBench.js benchmark (npm packages, library mode).
 

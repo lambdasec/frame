@@ -375,7 +375,7 @@ def run_secbench_js_division(
 
 def run_secbench_real_division(
     cache_dir: str,
-    division: str = 'secbench_real',
+    division: str = 'secbench',
     categories: Optional[List[str]] = None,
     max_per_cat: Optional[int] = None,
 ) -> Dict:
