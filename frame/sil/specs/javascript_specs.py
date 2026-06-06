@@ -132,6 +132,9 @@ NODE_SPECS = {
     "setInterval": _sink("code", [0], "setInterval with string (code injection)"),
     "vm.runInThisContext": _sink("code", [0], "vm.runInThisContext (code injection)"),
     "vm.runInNewContext": _sink("code", [0], "vm.runInNewContext (code injection)"),
+    "vm.runInContext": _sink("code", [0], "vm.runInContext (code injection)"),
+    "vm.compileFunction": _sink("code", [0], "vm.compileFunction (code injection)"),
+    "runInContext": _sink("code", [0], "runInContext (code injection)"),
 
     # Synthetic marker emitted by the frontend for a catastrophic-backtracking
     # regex literal / new RegExp(...) -- usage-based, no taint (CWE-1333).

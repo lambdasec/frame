@@ -185,11 +185,12 @@ class JavaScriptFrontend:
         """
         self._filename = filename
         self._source = source_code
+        self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
 
         # Parse source code
-        tree = self.parser.parse(bytes(source_code, "utf8"))
+        tree = self.parser.parse(self._source_bytes)
 
         # Create program with library specs
         program = Program(library_specs=self.specs.copy())
@@ -1934,10 +1935,16 @@ class JavaScriptFrontend:
     # =========================================================================
 
     def _get_text(self, node: TSNode) -> str:
-        """Get text of a node"""
+        """Get text of a node.
+
+        tree-sitter reports byte offsets into the UTF-8-encoded source, so slice
+        the byte buffer -- slicing the str directly desynchronizes on any
+        multi-byte character (e.g. non-ASCII comments/strings, common in real
+        npm packages) and corrupts every node extracted after it."""
         if node is None:
             return ""
-        return self._source[node.start_byte:node.end_byte]
+        return self._source_bytes[node.start_byte:node.end_byte].decode(
+            "utf-8", errors="replace")
 
     def _get_string_content(self, node: TSNode) -> str:
         """Extract string content (without quotes)"""
