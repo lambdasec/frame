@@ -394,13 +394,15 @@ def run_secbench_real_division(
     entries = get_secbench_real_entries(
         cache_dir, categories=categories, max_per_cat=max_per_cat)
 
-    # vuln_type substrings that count as a match for each category's CWE.
+    # vuln_type substrings that count as a match for each category. SecBench's
+    # "code-injection" set is Arbitrary Code Execution, which includes exec-based
+    # RCE -- Frame reports those as command_injection, an equally correct label.
     CAT_MATCH = {
-        'command-injection': 'command_injection',
-        'code-injection': 'code_injection',
-        'path-traversal': 'path_traversal',
-        'prototype-pollution': 'prototype_pollution',
-        'redos': 'regex_dos',
+        'command-injection': ('command_injection',),
+        'code-injection': ('code_injection', 'command_injection'),
+        'path-traversal': ('path_traversal',),
+        'prototype-pollution': ('prototype_pollution',),
+        'redos': ('regex_dos',),
     }
 
     def scan(path: str):
@@ -424,7 +426,7 @@ def run_secbench_real_division(
             cats[cat]['skip'] += 1
             continue
         found = scan(e['vuln_file'])
-        hit = any(want in t for t in found)
+        hit = any(w in t for t in found for w in want)
         if hit:
             cats[cat]['tp'] += 1
         else:
@@ -432,7 +434,7 @@ def run_secbench_real_division(
         # Precision: the patched version must NOT flag the same category.
         if e['fixed_file']:
             pf = scan(e['fixed_file'])
-            if any(want in t for t in pf):
+            if any(w in t for t in pf for w in want):
                 cats[cat]['fp'] += 1
         if i % 25 == 0:
             print(f"  [{i}/{len(entries)}] processed")

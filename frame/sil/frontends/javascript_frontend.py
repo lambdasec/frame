@@ -461,12 +461,16 @@ class JavaScriptFrontend:
                     description="function parameter (untrusted input)"))
 
             # Closure capture: a nested function (callback, Promise executor,
-            # ...) sees its enclosing functions' parameters as free variables.
-            # When those params are untrusted, the capture carries the taint --
-            # e.g. promistify(cmd){ new Promise((res, rej) => exec(cmd)) }. Taint
-            # any enclosing param referenced here that this function doesn't
-            # shadow with its own parameter.
-            enclosing = self._enclosing_param_names(node) - own
+            # ...) sees its enclosing functions' parameters AND locals as free
+            # variables. In library mode those outer values are untrusted, so the
+            # capture carries the taint -- e.g.
+            #   function file(req,res){ var fp = path.join(dir, req.url);
+            #     fs.exists(fp, () => fs.readFile(fp, cb)); }
+            # where the readFile sink sits two callbacks deep from where `fp` is
+            # a tainted local. Taint any captured outer name referenced here that
+            # this function doesn't shadow with its own parameter.
+            enclosing = (self._enclosing_param_names(node)
+                         | self._enclosing_local_names(node)) - own
             if enclosing and body_node is not None:
                 referenced = self._referenced_identifiers(body_node)
                 for nm in sorted(enclosing & referenced):
@@ -774,6 +778,28 @@ class JavaScriptFrontend:
         while cur is not None:
             if cur.type in self._FUNC_LIKE:
                 names |= self._func_param_names(cur)
+            cur = cur.parent
+        return names
+
+    def _enclosing_local_names(self, node: TSNode) -> set:
+        """Local (var/let/const) names declared in functions enclosing `node`.
+        These are captured free variables in a nested function; in library mode
+        an outer local often holds attacker-derived data (e.g. a filepath built
+        from req.url) that flows into a sink several callbacks deep."""
+        names = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                body = cur.child_by_field_name("body")
+                if body is not None:
+                    stack = [body]
+                    while stack:
+                        c = stack.pop()
+                        if c.type == "variable_declarator":
+                            nm = c.child_by_field_name("name")
+                            if nm is not None and nm.type == "identifier":
+                                names.add(self._get_text(nm))
+                        stack.extend(c.children)
             cur = cur.parent
         return names
 
@@ -1113,6 +1139,28 @@ class JavaScriptFrontend:
                     ))
 
         return instrs
+
+    def _emit_nested_call_sink(self, call_node: TSNode, args: List[Exp]) -> None:
+        """Emit a TaintSink for a call appearing inside a larger expression
+        (return value, argument, concatenation) so nested sinks like
+        `return eval(x)` are not lost. Standalone-statement calls go through
+        _translate_call_expr instead, so this avoids double emission."""
+        func_name = self._get_call_name(call_node)
+        spec = self.specs.get(func_name)
+        if not spec and '.' in func_name:
+            parts = func_name.split('.')
+            for i in range(1, len(parts)):
+                spec = self.specs.get('.'.join(parts[i:]))
+                if spec:
+                    break
+        if spec and spec.is_taint_sink():
+            kind = _get_sink_kind(spec.is_sink)
+            loc = self._get_location(call_node)
+            for arg_idx in spec.sink_args:
+                if arg_idx < len(args):
+                    self._add_instr(TaintSink(
+                        loc=loc, exp=args[arg_idx], kind=kind,
+                        description=spec.description, arg_index=arg_idx))
 
     def _translate_template_assignment(
         self,
@@ -1549,6 +1597,10 @@ class JavaScriptFrontend:
                 for child in args_node.children:
                     if child.type not in ("(", ")", ","):
                         args.append(self._translate_expression(child))
+            # A call nested inside another expression (e.g. `return eval(x)`,
+            # `f(exec(y))`) is still a sink -- emit its TaintSink as a side effect
+            # so it is not missed just because it is not a standalone statement.
+            self._emit_nested_call_sink(node, args)
             return ExpCall(func_exp, args)
 
         elif node.type == "regex":

@@ -125,7 +125,9 @@ NODE_SPECS = {
 
     # Eval (code injection)
     "eval": _sink("code", [0], "eval (code injection)"),
-    "Function": _sink("code", [0], "Function constructor (code injection)"),
+    # new Function(argName1, ..., body): the code is the LAST argument, so flag
+    # any argument -- they all influence the generated function body.
+    "Function": _sink("code", [0, 1, 2, 3], "Function constructor (code injection)"),
     "setTimeout": _sink("code", [0], "setTimeout with string (code injection)"),
     "setInterval": _sink("code", [0], "setInterval with string (code injection)"),
     "vm.runInThisContext": _sink("code", [0], "vm.runInThisContext (code injection)"),
