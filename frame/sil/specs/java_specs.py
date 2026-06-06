@@ -768,9 +768,11 @@ EXCEPTION_SPECS = {
 # =============================================================================
 
 SENSITIVE_DATA_SPECS = {
-    # Logging sensitive data
-    "System.out.println": _sink("sensitive_log", [0], "Console output (CWE-532)"),
-    "System.err.println": _sink("sensitive_log", [0], "Error output (CWE-532)"),
+    # Note: System.out/err.println are NOT treated as sensitive-data-logging
+    # (CWE-532) sinks. CWE-532 concerns secrets/PII written to a log file;
+    # echoing a tainted value (e.g. a filename) in a console/error message is
+    # not that, and flagging every println(tainted) is a large false-positive
+    # source. Real logging-of-secrets is caught via the dedicated logger sinks.
 
     # Response body
     "PrintWriter.write": _propagator([0], "Response write"),
