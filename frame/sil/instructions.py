@@ -139,6 +139,7 @@ class SinkKind(Enum):
     NULL_DEREF = "null_deref"   # NULL pointer dereference (CWE-476)
     DIVIDE_BY_ZERO = "divide_by_zero"  # Division by zero (CWE-369)
     DANGEROUS_FUNCTION = "dangerous_function"  # Inherently unsafe API (CWE-676)
+    PROTOTYPE_POLLUTION = "prototype_pollution"  # JS prototype pollution (CWE-1321)
 
     def __str__(self) -> str:
         return self.value
