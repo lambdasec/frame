@@ -750,6 +750,11 @@ _MIGRATION_BACKFILL_SPECS = {
     "Request.UrlReferrer": _source("user", "Request referrer (user-controlled)"),
     "Request.UserAgent": _source("user", "Request user-agent (user-controlled)"),
     "Request.Headers": _source("user", "Request headers (user-controlled)"),
+    # CodeDom dynamic compilation (CWE-94): the code argument is the sink, and
+    # the call is on a provider instance variable, so register the bare methods.
+    "CompileAssemblyFromSource": _sink("code", [1], "CodeDom CompileAssemblyFromSource (code injection)"),
+    "CompileAssemblyFromFile": _sink("code", [1], "CodeDom CompileAssemblyFromFile (code injection)"),
+    "CompileAssemblyFromDom": _sink("code", [1], "CodeDom CompileAssemblyFromDom (code injection)"),
     # Insecure randomness (usage-based, CWE-330): System.Random is not crypto-safe
     "Random": _usage_sink("insecure_random", "System.Random - not cryptographically secure (CWE-330)"),
     # Open redirect sink (Response.Redirect with user-controlled URL)
