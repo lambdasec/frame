@@ -565,6 +565,33 @@ function Footer() {
         safe_xss = [v for v in safe_result.vulnerabilities if v.type == VulnType.XSS]
         assert len(safe_xss) == 0, f"Expected no XSS on constant html, got: {safe_xss}"
 
+    def test_js_assignment_sink_innerhtml_precision(self):
+        """Taint engine handles `el.innerHTML = x` assignment sinks precisely."""
+        from frame.sil.scanner import FrameScanner, VulnType
+
+        scanner = FrameScanner(language="javascript", verify=False)
+
+        tainted = "function f(){ const h = location.hash; el.innerHTML = h; }"
+        res = scanner.scan(tainted, "t.js")
+        assert any(v.type == VulnType.XSS and v.cwe_id == "CWE-79"
+                   for v in res.vulnerabilities), \
+            f"Expected XSS on tainted innerHTML, got: {[v.type for v in res.vulnerabilities]}"
+
+        safe = "function f(){ el.innerHTML = '<b>static</b>'; }"
+        res2 = scanner.scan(safe, "s.js")
+        assert not any(v.type == VulnType.XSS for v in res2.vulnerabilities), \
+            f"Expected no XSS on constant innerHTML, got: {res2.vulnerabilities}"
+
+    def test_js_no_regex_pattern_match_findings(self):
+        """JavaScript no longer uses the regex layer: no <pattern-match> findings."""
+        from frame.sil.scanner import FrameScanner
+
+        # eval of a constant is NOT a vulnerability; the old regex flagged it.
+        scanner = FrameScanner(language="javascript", verify=False)
+        res = scanner.scan("function f(){ eval('1+1'); (function(d){return d})(document); }", "t.js")
+        assert all(v.procedure != "<pattern-match>" for v in res.vulnerabilities)
+        assert len(res.vulnerabilities) == 0, f"Expected no findings, got: {res.vulnerabilities}"
+
 
 # =============================================================================
 # TypeScript Frontend Tests

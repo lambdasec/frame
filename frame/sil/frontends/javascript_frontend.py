@@ -529,6 +529,47 @@ class JavaScriptFrontend:
             taint_instrs = self._check_expression_for_taint_source(right, target_name, loc)
             self._add_instrs(taint_instrs)
 
+        # Assignment to a sink property (e.g. `el.innerHTML = x`, `script.src = x`)
+        # flows the right-hand value into a taint sink. We sink on the assigned
+        # target, which carries the right-hand side's taint via the source check
+        # above (inline sources) or assignment propagation (already-tainted
+        # vars). The taint engine then reports it only when that value is
+        # actually attacker-tainted; a constant right-hand side stays untainted.
+        sink_spec = self._assignment_sink_spec(left)
+        if sink_spec:
+            self._add_instr(TaintSink(
+                loc=loc,
+                exp=ExpVar(PVar(target_name)),
+                kind=_get_sink_kind(sink_spec.is_sink),
+                description=sink_spec.description,
+            ))
+
+    def _assignment_sink_spec(self, left_node: TSNode):
+        """Return the sink ProcSpec if an assignment target is a known sink
+        property (e.g. ``el.innerHTML``, ``script.src``), else None.
+
+        Matches the full member chain, its suffixes, and the bare property
+        name against the taint specs (mirroring call-sink suffix matching).
+        """
+        if left_node is None or left_node.type != "member_expression":
+            return None
+
+        prop_node = left_node.child_by_field_name("property")
+        prop_name = self._get_text(prop_node) if prop_node else ""
+        chain = self._get_member_chain(left_node) or ""
+
+        candidates = [chain]
+        if "." in chain:
+            parts = chain.split(".")
+            candidates += [".".join(parts[i:]) for i in range(1, len(parts))]
+        candidates.append(prop_name)
+
+        for key in candidates:
+            spec = self.specs.get(key)
+            if spec and spec.is_taint_sink():
+                return spec
+        return None
+
     def _translate_call_assignment(
         self,
         target: str,
