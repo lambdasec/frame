@@ -4,7 +4,7 @@
     <strong>Static Analysis for Memory Safety and Security</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1497%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1520%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
@@ -22,9 +22,9 @@ Frame is a static analysis tool powered by **separation logic** that finds secur
 |-----------|:---:|:---:|:---:|
 | **Python** (OWASP) | 80.9% | 4.5% | +76.4 pts |
 | **Java** (OWASP) | 81.5% | 15.7% | +65.8 pts |
-| **JavaScript** (SecBench.js) | 77.6% | 9.6% | +68.0 pts |
+| **JavaScript** (SecBench.js) | 81.0% | — | — |
 | **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
-| **C#** (IssueBlot.NET) | 45.1% | 14.2% | +30.9 pts |
+| **C#** (IssueBlot.NET) | 80.3% | 14.2% | +66.1 pts |
 
 <sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methodology and results.</sub>
 
@@ -208,9 +208,9 @@ Frame is validated against industry-standard benchmark suites:
 |-----------|--------|-------|-----------|--------|
 | OWASP Python | Web Security | 500 | 95.3% | 83.5% |
 | OWASP Java | Web Security | 500 | 97.2% | 84.8% |
-| SecBench.js | Node.js Security | 166 | 99.1% | 81.2% |
+| SecBench.js | Node.js Security | 300 | 82.0% | 81.0% |
 | NIST Juliet | C/C++ Memory | 1,000 | 89.9% | 60.5% |
-| IssueBlot.NET | C# Security | 171 | 100% | 45.1% |
+| IssueBlot.NET | C# Security | 171 | 84.7% | 80.3% |
 | SL-COMP | Separation Logic | 692 | 79.9% | - |
 | SMT-LIB QF_S | String Theory | 3,300 | 99.3% | - |
 

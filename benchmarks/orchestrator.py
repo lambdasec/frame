@@ -45,6 +45,7 @@ from benchmarks.runners import (
     run_juliet_division,
     run_issueblot_division,
     run_secbench_js_division,
+    run_secbench_real_division,
 )
 
 # Curators
@@ -259,6 +260,16 @@ class BenchmarkOrchestrator:
         results = run_secbench_js_division(self.cache_dir, division, max_tests)
         self.sast_results.extend(results)
         return results
+
+    def run_secbench_real_division(self, division: str = 'secbench_real',
+                                   max_tests: Optional[int] = None) -> dict:
+        """Run the real SecBench.js benchmark (npm packages, library mode).
+
+        This runner prints its own per-category precision/recall summary and
+        returns a metrics dict; it is not merged into the SASTBenchmarkResult
+        aggregate since its vulnerable-vs-patched methodology differs."""
+        return run_secbench_real_division(self.cache_dir, division,
+                                          max_per_cat=max_tests)
 
     # ========== SAST Curators ==========
 

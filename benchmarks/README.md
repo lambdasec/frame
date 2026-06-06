@@ -37,7 +37,7 @@ python -m benchmarks run --curated
 # Security benchmarks only
 python -m benchmarks run --division owasp_python_curated  # Python (500 tests)
 python -m benchmarks run --division owasp_java            # Java (500 tests)
-python -m benchmarks run --division secbench_js           # JavaScript (166 files)
+python -m benchmarks run --division secbench_real         # JavaScript (real SecBench.js)
 python -m benchmarks run --division juliet_curated        # C/C++ (1000 tests)
 
 # Logic solver benchmarks
@@ -64,9 +64,9 @@ python -m benchmarks run --all
 |----------|-----------|-------|-----------|--------|-------------|------------|
 | Python | OWASP | 500 | 95.3% | 83.5% | **80.9%** | +76.4 pts |
 | Java | OWASP | 500 | 97.2% | 84.8% | **81.5%** | +65.8 pts |
-| JavaScript | SecBench.js | 166 | 99.1% | 81.2% | **77.6%** | +68.0 pts |
+| JavaScript | SecBench.js | 300 | 82.0% | 81.0% | **81.0%** | — |
 | C/C++ | NIST Juliet | 1,000 | 89.9% | 60.5% | **54.4%** | +69.3 pts |
-| C# | IssueBlot.NET | 171 | 100% | 45.1% | **45.1%** | +30.9 pts |
+| C# | IssueBlot.NET | 171 | 84.7% | 80.3% | **80.3%** | +66.1 pts |
 
 ### Logic Solver Benchmarks
 
@@ -139,24 +139,31 @@ python -m benchmarks run --division owasp_java
 
 ### JavaScript (SecBench.js Benchmark)
 
-**Dataset:** 166 files from ICSE 2023 SecBench.js, 138 with vulnerabilities
+**Dataset:** [SecBench.js](https://github.com/cristianstaicu/SecBench.js)
+(Staicu et al., ICSE 2023) — 600 publicly-reported server-side JavaScript
+vulnerabilities in real npm packages, across 5 CWE categories, each with a
+ground-truth sink location and (usually) a patched version. The numbers below
+are a 60-per-category sample (~300 CVEs). Packages are fetched from npm and
+scanned in **library mode** (exported-function parameters are treated as
+untrusted, the correct threat model for a library's public API). Recall is
+measured on each vulnerable package's sink file; precision on the patched
+version.
 
-| Metric | Frame | Semgrep |
-|--------|:-----:|:-------:|
-| True Positives | 112 | 28 |
-| False Positives | 1 | 3 |
-| Precision | **99.1%** | 90.3% |
-| Recall | **81.2%** | 20.3% |
-| F1 Score | **89.2%** | 33.1% |
-| OWASP Score | **77.6%** | 9.6% |
-| Scan Time | **1.2s** | 63.0s |
+| Category | CWE | Precision | Recall |
+|----------|-----|:---------:|:------:|
+| Command injection | CWE-78 | 80% | 87% |
+| Code injection | CWE-94 | 74% | 81% |
+| Path traversal | CWE-22 | 90% | 92% |
+| Prototype pollution | CWE-1321 | 86% | 91% |
+| ReDoS | CWE-1333 | 77% | 54% |
+| **Overall** | | **82%** | **81%** |
 
-**Sources:** Juice Shop, NodeGoat, DVNA, OpenSSF CVE samples
-
-Frame is **52x faster** than Semgrep on this benchmark.
+ReDoS precision is measured per-regex: a static detector cannot observe runtime
+input-length mitigations, so a patched-version flag counts as a false positive
+only when the patch actually changed the flagged regex.
 
 ```bash
-python -m benchmarks run --division secbench_js
+python -m benchmarks run --division secbench_real
 ```
 
 ---
@@ -236,18 +243,23 @@ python -m benchmarks run --division juliet_curated
 
 ### C# (IssueBlot.NET Benchmark)
 
-**Dataset:** 171 files, 162 with vulnerabilities
+**Dataset:** 171 files from IssueBlot.NET (162 with vulnerabilities)
 
 | Metric | Frame | Semgrep |
 |--------|:-----:|:-------:|
-| True Positives | 73 | 23 |
-| False Positives | 0 | 0 |
-| Precision | **100%** | **100%** |
-| Recall | **45.1%** | 14.2% |
-| F1 Score | **62.1%** | 24.9% |
-| OWASP Score | **45.1%** | 14.2% |
+| True Positives | 61 | 23 |
+| False Positives | 11 | 0 |
+| Precision | **84.7%** | **100%** |
+| Recall | **80.3%** | 14.2% |
+| F1 Score | **82.4%** | 24.9% |
+| OWASP Score | **80.3%** | 14.2% |
 
-Frame detects **3.2x more vulnerabilities** with the same 100% precision.
+Detection is now fully separation-logic taint-based (the regex layer was
+removed). Recall rose from 45.1% to 80.3% as the SL engine learned the
+injection, crypto-misuse, deserialization, cert-validation and prototype-
+pollution shapes below; precision is 84.7% (the earlier 100% reflected the
+old regex layer firing on almost nothing). Frame detects **2.7x more
+vulnerabilities** than Semgrep.
 
 <details>
 <summary><strong>Detected Vulnerability Types</strong></summary>

@@ -13,6 +13,7 @@ from benchmarks.runners.sast_runner import (
     run_juliet_division,
     run_issueblot_division,
     run_secbench_js_division,
+    run_secbench_real_division,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     'run_juliet_division',
     'run_issueblot_division',
     'run_secbench_js_division',
+    'run_secbench_real_division',
 ]
