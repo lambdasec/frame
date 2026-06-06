@@ -1997,6 +1997,24 @@ class SILTranslator:
                                                 )
                                                 checks.append(check)
 
+                                # Inline member sources used directly in the sink
+                                # argument, e.g. db.query("..." + req.query.id).
+                                for src_chain, src_kind in self._get_embedded_member_sources(arg_exp):
+                                    if (src_chain in inline_sanitized_for
+                                            and spec.is_sink in inline_sanitized_for[src_chain]):
+                                        continue
+                                    checks.append(VulnerabilityCheck(
+                                        formula=And(Source(Var(src_chain), src_kind),
+                                                    Sink(Var(src_chain), spec.is_sink)),
+                                        vuln_type=VulnType.from_sink_kind(sink_kind),
+                                        location=instr.loc or Location.unknown(),
+                                        description=f"Tainted data from '{src_chain}' flows to {spec.is_sink} sink",
+                                        source_var=src_chain,
+                                        source_location=instr.loc or Location.unknown(),
+                                        sink_type=spec.is_sink,
+                                        procedure_name=proc_name,
+                                    ))
+
             # Handle sanitizer
             # Sanitizers should BOTH:
             # 1. Propagate taint from input to output (data still flows through)
@@ -3184,6 +3202,44 @@ class SILTranslator:
         elif isinstance(exp, ExpFieldAccess):
             result.extend(self._get_embedded_source_calls(exp.base))
 
+        return result
+
+    def _get_embedded_member_sources(self, exp: Exp) -> List[Tuple[str, str]]:
+        """Find member-access chains in an expression that match a taint source
+        spec (e.g. `req.query.id` matching the `req.query` source), so inline
+        sources used directly in a sink -- `db.query("..." + req.query.id)` --
+        are detected without an intermediate assignment. Returns (chain, kind).
+        """
+        result = []
+        if isinstance(exp, ExpFieldAccess):
+            parts = []
+            cur = exp
+            while isinstance(cur, ExpFieldAccess):
+                parts.insert(0, cur.field_name)
+                cur = cur.base
+            if isinstance(cur, ExpVar):
+                parts.insert(0, self._get_var_name(cur.var))
+            # Longest matching prefix wins (req.query before req).
+            for i in range(len(parts), 0, -1):
+                spec = self.program.get_spec('.'.join(parts[:i]))
+                if spec and spec.is_taint_source():
+                    result.append(('.'.join(parts[:i]), spec.is_source))
+                    break
+            result.extend(self._get_embedded_member_sources(exp.base))
+        elif isinstance(exp, ExpBinOp):
+            result.extend(self._get_embedded_member_sources(exp.left))
+            result.extend(self._get_embedded_member_sources(exp.right))
+        elif isinstance(exp, ExpUnOp):
+            result.extend(self._get_embedded_member_sources(exp.operand))
+        elif isinstance(exp, ExpStringConcat):
+            for part in exp.parts:
+                result.extend(self._get_embedded_member_sources(part))
+        elif isinstance(exp, ExpCall):
+            for arg in exp.args:
+                result.extend(self._get_embedded_member_sources(arg))
+        elif isinstance(exp, ExpIndex):
+            result.extend(self._get_embedded_member_sources(exp.base))
+            result.extend(self._get_embedded_member_sources(exp.index))
         return result
 
     def _get_embedded_sink_calls(self, exp: Exp, state: 'SymbolicState') -> List[Tuple[str, str, List[str]]]:

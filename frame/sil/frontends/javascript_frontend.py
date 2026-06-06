@@ -199,29 +199,92 @@ class JavaScriptFrontend:
 
         return program
 
-    def _translate_module(self, root: TSNode, program: Program) -> None:
-        """Translate module-level definitions"""
-        for child in root.children:
-            self._translate_top_level(child, program)
+    # Every function-like node becomes its own procedure -- including callbacks
+    # and route handlers like `app.post(path, (req,res) => {...})`, which are
+    # the dominant entry points in real Node.js/Express code.
+    _FUNC_NODE_TYPES = (
+        "function_declaration", "function_expression", "function",
+        "arrow_function", "generator_function", "generator_function_declaration",
+        "method_definition",
+    )
 
-    def _translate_top_level(self, node: TSNode, program: Program) -> None:
+    def _translate_module(self, root: TSNode, program: Program) -> None:
+        """Translate module-level definitions and every nested function.
+
+        First the original top-level handling (named declarations, exports,
+        IIFEs), then a recursive sweep that translates any remaining function
+        expression -- callbacks, route handlers, object methods, promise
+        chains -- as its own procedure so their bodies are analyzed.
+        """
+        seen_ids = set()
+        for child in root.children:
+            self._translate_top_level(child, program, seen_ids)
+        self._collect_nested_functions(root, program, seen_ids)
+
+    def _collect_nested_functions(self, node: TSNode, program: Program,
+                                  seen_ids: set) -> None:
+        """Recursively translate every function-like node not already handled."""
+        stack = list(node.children)
+        while stack:
+            cur = stack.pop()
+            # Guard with a body field: the bare `function` keyword is also a
+            # node of type "function" but has no body, and would otherwise
+            # produce an empty procedure that overwrites the real one.
+            if (cur.type in self._FUNC_NODE_TYPES and cur.id not in seen_ids
+                    and cur.child_by_field_name("body") is not None):
+                seen_ids.add(cur.id)
+                if cur.type == "method_definition":
+                    proc = self._translate_method(cur)
+                else:
+                    proc = self._translate_function(cur, name=self._infer_func_name(cur))
+                if proc:
+                    program.add_procedure(proc)
+            stack.extend(cur.children)
+
+    def _infer_func_name(self, node: TSNode) -> str:
+        """Best-effort name for an anonymous function/arrow (from a containing
+        declarator, assignment, or object property), else 'anonymous'."""
+        name_node = node.child_by_field_name("name")
+        if name_node:
+            return self._get_text(name_node)
+        parent = node.parent
+        if parent is not None:
+            if parent.type == "variable_declarator":
+                nm = parent.child_by_field_name("name")
+                if nm:
+                    return self._get_text(nm)
+            if parent.type == "pair":
+                key = parent.child_by_field_name("key")
+                if key:
+                    return self._get_text(key)
+            if parent.type == "assignment_expression":
+                left = parent.child_by_field_name("left")
+                if left:
+                    return self._get_text(left)
+        return "anonymous"
+
+    def _translate_top_level(self, node: TSNode, program: Program,
+                             seen_ids: set = None) -> None:
         """Translate a top-level statement"""
+        if seen_ids is None:
+            seen_ids = set()
         if node.type == "function_declaration":
+            seen_ids.add(node.id)
             proc = self._translate_function(node)
             if proc:
                 program.add_procedure(proc)
 
         elif node.type == "class_declaration":
-            self._translate_class(node, program)
+            self._translate_class(node, program, seen_ids)
 
         elif node.type == "lexical_declaration" or node.type == "variable_declaration":
             # const/let/var declarations - check for function expressions
-            self._translate_variable_declaration(node, program)
+            self._translate_variable_declaration(node, program, seen_ids)
 
         elif node.type == "export_statement":
             # Handle exports
             for child in node.children:
-                self._translate_top_level(child, program)
+                self._translate_top_level(child, program, seen_ids)
 
         elif node.type == "expression_statement":
             # Check for IIFE or function expressions
@@ -229,12 +292,16 @@ class JavaScriptFrontend:
                 if child.type == "call_expression":
                     func = child.child_by_field_name("function")
                     if func and func.type in ("arrow_function", "function"):
+                        seen_ids.add(func.id)
                         proc = self._translate_function(func, name="anonymous")
                         if proc:
                             program.add_procedure(proc)
 
-    def _translate_variable_declaration(self, node: TSNode, program: Program) -> None:
+    def _translate_variable_declaration(self, node: TSNode, program: Program,
+                                        seen_ids: set = None) -> None:
         """Translate variable declarations, extracting function expressions"""
+        if seen_ids is None:
+            seen_ids = set()
         for child in node.children:
             if child.type == "variable_declarator":
                 name_node = child.child_by_field_name("name")
@@ -243,12 +310,16 @@ class JavaScriptFrontend:
                 if name_node and value_node:
                     var_name = self._get_text(name_node)
                     if value_node.type in ("arrow_function", "function"):
+                        seen_ids.add(value_node.id)
                         proc = self._translate_function(value_node, name=var_name)
                         if proc:
                             program.add_procedure(proc)
 
-    def _translate_class(self, node: TSNode, program: Program) -> None:
+    def _translate_class(self, node: TSNode, program: Program,
+                         seen_ids: set = None) -> None:
         """Translate class definition"""
+        if seen_ids is None:
+            seen_ids = set()
         name_node = node.child_by_field_name("name")
         class_name = self._get_text(name_node) if name_node else "UnknownClass"
 
@@ -259,6 +330,7 @@ class JavaScriptFrontend:
         if body_node:
             for child in body_node.children:
                 if child.type == "method_definition":
+                    seen_ids.add(child.id)
                     proc = self._translate_method(child)
                     if proc:
                         proc.class_name = class_name
@@ -271,6 +343,7 @@ class JavaScriptFrontend:
                     if value and value.type == "arrow_function":
                         name_node = child.child_by_field_name("property")
                         if name_node:
+                            seen_ids.add(value.id)
                             method_name = self._get_text(name_node)
                             proc = self._translate_function(value, name=method_name, is_method=True)
                             if proc:
