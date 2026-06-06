@@ -771,6 +771,13 @@ class CSharpFrontend:
 
         for child in node.children:
             if child.type not in ("return", ";"):
+                # A call/constructor in the returned value must still be analyzed
+                # as a sink -- e.g. `return File.ReadAllText("../" + tainted)` is
+                # a path traversal, not just a returned value.
+                if child.type == "invocation_expression":
+                    self._add_instrs(self._translate_invocation(child))
+                elif child.type == "object_creation_expression":
+                    self._add_instrs(self._translate_object_creation(child, None, loc))
                 value_exp = self._translate_expression(child)
                 break
 
