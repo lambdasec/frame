@@ -37,7 +37,7 @@ python -m benchmarks run --curated
 # Security benchmarks only
 python -m benchmarks run --division owasp_python_curated  # Python (500 tests)
 python -m benchmarks run --division owasp_java            # Java (500 tests)
-python -m benchmarks run --division secbench         # JavaScript (real SecBench.js)
+python -m benchmarks run --division secbench              # JavaScript (SecBench.js)
 python -m benchmarks run --division juliet_curated        # C/C++ (1000 tests)
 
 # Logic solver benchmarks
@@ -64,7 +64,7 @@ python -m benchmarks run --all
 |----------|-----------|-------|-----------|--------|-------------|------------|
 | Python | OWASP | 500 | 95.3% | 83.5% | **80.9%** | +76.4 pts |
 | Java | OWASP | 500 | 97.2% | 84.8% | **81.5%** | +65.8 pts |
-| JavaScript | SecBench.js | 300 | 82.0% | 81.0% | **81.0%** | — |
+| JavaScript | SecBench.js | 300 | 82.0% | 81.0% | **43.0%** | +33 pts |
 | C/C++ | NIST Juliet | 1,000 | 89.9% | 60.5% | **54.4%** | +69.3 pts |
 | C# | IssueBlot.NET | 171 | 84.7% | 80.3% | **80.3%** | +66.1 pts |
 
@@ -149,6 +149,19 @@ untrusted, the correct threat model for a library's public API). Recall is
 measured on each vulnerable package's sink file; precision on the patched
 version.
 
+| Metric | Frame | Semgrep |
+|--------|:-----:|:-------:|
+| Precision | **82%** | 75% |
+| Recall | **81%** | 35% |
+| OWASP Score (TPR−FPR) | **+43%** | +10% |
+
+Semgrep is run with its out-of-the-box ruleset (`p/default`) under the identical
+methodology. Frame's recall lead (81% vs 35%) comes from library-mode SL taint
+analysis catching the inter-procedural, closure-captured and library-parameter
+flows that rule-based matching misses.
+
+**Frame by category:**
+
 | Category | CWE | Precision | Recall |
 |----------|-----|:---------:|:------:|
 | Command injection | CWE-78 | 80% | 87% |
@@ -161,6 +174,11 @@ version.
 ReDoS precision is measured per-regex: a static detector cannot observe runtime
 input-length mitigations, so a patched-version flag counts as a false positive
 only when the patch actually changed the flagged regex.
+
+```bash
+# Reproduce the Semgrep comparison (requires: pip install semgrep)
+python -m benchmarks.runners.semgrep_secbench 60
+```
 
 ```bash
 python -m benchmarks run --division secbench

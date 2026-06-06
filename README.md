@@ -22,7 +22,7 @@ Frame is a static analysis tool powered by **separation logic** that finds secur
 |-----------|:---:|:---:|:---:|
 | **Python** (OWASP) | 80.9% | 4.5% | +76.4 pts |
 | **Java** (OWASP) | 81.5% | 15.7% | +65.8 pts |
-| **JavaScript** (SecBench.js) | 81.0% | — | — |
+| **JavaScript** (SecBench.js) | 43.0% | 10.0% | +33 pts |
 | **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
 | **C#** (IssueBlot.NET) | 80.3% | 14.2% | +66.1 pts |
 

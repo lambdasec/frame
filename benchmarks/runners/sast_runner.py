@@ -416,7 +416,7 @@ def run_secbench_real_division(
         except Exception:
             return set()
 
-    cats = {c: {'tp': 0, 'fp': 0, 'fn': 0, 'skip': 0} for c in CATEGORY_CWE}
+    cats = {c: {'tp': 0, 'fp': 0, 'fn': 0, 'neg': 0, 'skip': 0} for c in CATEGORY_CWE}
     print(f"\nRunning {division}: {len(entries)} real vulnerabilities")
     print("=" * 80)
     for i, e in enumerate(entries, 1):
@@ -433,6 +433,7 @@ def run_secbench_real_division(
             cats[cat]['fn'] += 1
         # Precision: the patched version must NOT flag the same category.
         if e['fixed_file']:
+            cats[cat]['neg'] += 1
             pf = scan(e['fixed_file'])
             patched_flags = any(w in t for t in pf for w in want)
             if patched_flags and cat == 'redos':
@@ -453,7 +454,7 @@ def run_secbench_real_division(
         if i % 25 == 0:
             print(f"  [{i}/{len(entries)}] processed")
 
-    overall = {'tp': 0, 'fp': 0, 'fn': 0, 'skip': 0}
+    overall = {'tp': 0, 'fp': 0, 'fn': 0, 'neg': 0, 'skip': 0}
     print("\nSecBench.js results by category:")
     for c, d in cats.items():
         for k in overall:
@@ -461,14 +462,18 @@ def run_secbench_real_division(
         tp, fp, fn = d['tp'], d['fp'], d['fn']
         p = tp / (tp + fp) if (tp + fp) else 0.0
         r = tp / (tp + fn) if (tp + fn) else 0.0
-        d['precision'], d['recall'] = p, r
+        fpr = fp / d['neg'] if d['neg'] else 0.0
+        d['precision'], d['recall'], d['score'] = p, r, r - fpr
         print(f"  {c:22} TP={tp:3} FP={fp:3} FN={fn:3} skip={d['skip']:3} "
-              f"P={p:.0%} R={r:.0%}")
+              f"P={p:.0%} R={r:.0%} TPR-FPR={r - fpr:+.0%}")
     tp, fp, fn = overall['tp'], overall['fp'], overall['fn']
     overall['precision'] = tp / (tp + fp) if (tp + fp) else 0.0
     overall['recall'] = tp / (tp + fn) if (tp + fn) else 0.0
+    o_fpr = fp / overall['neg'] if overall['neg'] else 0.0
+    overall['score'] = overall['recall'] - o_fpr
     print(f"  {'OVERALL':22} TP={tp:3} FP={fp:3} FN={fn:3} skip={overall['skip']:3} "
-          f"P={overall['precision']:.0%} R={overall['recall']:.0%}")
+          f"P={overall['precision']:.0%} R={overall['recall']:.0%} "
+          f"TPR-FPR={overall['score']:+.0%}")
     return {'by_category': cats, 'overall': overall}
 
 
