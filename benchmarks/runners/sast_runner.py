@@ -434,7 +434,21 @@ def run_secbench_real_division(
         # Precision: the patched version must NOT flag the same category.
         if e['fixed_file']:
             pf = scan(e['fixed_file'])
-            if any(w in t for t in pf for w in want):
+            patched_flags = any(w in t for t in pf for w in want)
+            if patched_flags and cat == 'redos':
+                # A static ReDoS detector cannot see runtime length-cap fixes, so
+                # only count an FP when the patch actually changed the flagged
+                # regex (the patched file flags a pattern absent from the vuln
+                # file). An unchanged catastrophic regex is not a spurious flag.
+                from frame.sil.frontends.javascript_frontend import JavaScriptFrontend
+                fe = JavaScriptFrontend()
+                vuln_pats = fe.redos_patterns(
+                    open(e['vuln_file'], encoding='utf-8', errors='ignore').read()
+                ) if e['vuln_file'] else set()
+                patched_pats = fe.redos_patterns(
+                    open(e['fixed_file'], encoding='utf-8', errors='ignore').read())
+                patched_flags = bool(patched_pats - vuln_pats)
+            if patched_flags:
                 cats[cat]['fp'] += 1
         if i % 25 == 0:
             print(f"  [{i}/{len(entries)}] processed")

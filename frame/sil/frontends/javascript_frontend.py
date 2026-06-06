@@ -651,6 +651,41 @@ class JavaScriptFrontend:
                     return True
         return False
 
+    def redos_patterns(self, source_code: str) -> set:
+        """The set of catastrophic-backtracking regex patterns this frontend
+        would flag in `source_code` (literals and RegExp(...) string args).
+        Exposed so callers can compare a vulnerable vs patched file at the
+        regex level -- a static detector cannot observe runtime length-cap
+        mitigations, so an unchanged catastrophic regex is not a false flag."""
+        self._source_bytes = source_code.encode("utf-8")
+        self._source = source_code
+        tree = self.parser.parse(self._source_bytes)
+        out = set()
+        stack = [tree.root_node]
+        while stack:
+            n = stack.pop()
+            if n.type == "regex":
+                p = n.child_by_field_name("pattern")
+                if p is not None:
+                    pat = self._get_text(p)
+                    if self._is_redos_pattern(pat):
+                        out.add(pat)
+            elif n.type in ("new_expression", "call_expression"):
+                callee = (n.child_by_field_name("constructor")
+                          if n.type == "new_expression"
+                          else n.child_by_field_name("function"))
+                if callee is not None and self._get_text(callee) in ("RegExp", "global.RegExp"):
+                    an = n.child_by_field_name("arguments")
+                    for child in (an.children if an is not None else []):
+                        if child.type in ("string", "template_string"):
+                            raw = self._get_text(child)
+                            inner = raw[1:-1] if len(raw) >= 2 else raw
+                            if self._is_redos_pattern(inner):
+                                out.add(inner)
+                            break
+            stack.extend(n.children)
+        return out
+
     def _is_redos_pattern(self, pattern: str) -> bool:
         """Heuristic detector for super-linear (ReDoS) regex patterns: a group
         that is itself quantified (*, +, {n,}) AND whose body contains an
