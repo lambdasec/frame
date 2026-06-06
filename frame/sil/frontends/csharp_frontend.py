@@ -82,6 +82,18 @@ class CSharpFrontend:
             "HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMode.ECB",
             "TypeNameHandling.All", "TypeNameHandling.Auto", "TypeNameHandling.Objects",
             "TypeNameHandling.Arrays",
+            "ContextOptions.SimpleBind",   # LDAP simple bind (CWE-522)
+            "AuthType.Basic",              # LDAP basic auth in cleartext (CWE-522)
+        }
+        # Members whose assignment disables TLS certificate validation (CWE-295).
+        self._CERT_CALLBACK_MEMBERS = {
+            "ServerCertificateValidationCallback",
+            "ServerCertificateCustomValidationCallback",
+        }
+        # Asymmetric-crypto providers whose ctor int arg is a key size (CWE-326).
+        self._WEAK_KEYSIZE_TYPES = {
+            "RSACryptoServiceProvider", "DSACryptoServiceProvider",
+            "RSACng", "DSACng",
         }
         # Property assignments that flow the RHS into a sink (obj.Prop = value).
         self._ASSIGNMENT_SINK_PROPS = {
@@ -642,6 +654,12 @@ class CSharpFrontend:
         # flows the right-hand value into a sink.
         prop = (left.child_by_field_name("name")
                 if left.type == "member_access_expression" else None)
+        # Overriding a TLS certificate-validation callback (= or += an always-true
+        # delegate) is improper certificate validation regardless of the RHS.
+        if prop and self._get_text(prop) in self._CERT_CALLBACK_MEMBERS:
+            self._add_instr(Call(loc=loc, ret=None,
+                                 func=ExpConst.string("ServerCertificateValidationCallback"),
+                                 args=[]))
         sink_kind_str = self._ASSIGNMENT_SINK_PROPS.get(self._get_text(prop)) if prop else None
         if sink_kind_str and right.type not in ("invocation_expression",
                                                 "object_creation_expression"):
@@ -693,6 +711,7 @@ class CSharpFrontend:
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
 
         instrs.extend(self._receiver_chain_instrs(call_node))
+        instrs.extend(self._rsa_padding_instrs(call_node, loc))
         return instrs
 
     def _translate_object_creation(self, node: TSNode, target: Optional[str],
@@ -733,7 +752,37 @@ class CSharpFrontend:
                     instrs.append(TaintSink(
                         loc=loc, exp=self._translate_expression(args[arg_idx]),
                         kind=kind, description=spec.description, arg_index=arg_idx))
+
+        # Insufficient asymmetric key size: new RSACryptoServiceProvider(1024)
+        # etc. with an integer-literal key size below 2048 bits (CWE-326).
+        short_type = type_name.split('.')[-1]
+        if short_type in self._WEAK_KEYSIZE_TYPES and args:
+            ksize = self._int_literal(args[0])
+            if ksize is not None and ksize < 2048:
+                instrs.append(Call(loc=loc, ret=None,
+                                   func=ExpConst.string("__weak_key_size__"), args=[]))
         return instrs
+
+    def _rsa_padding_instrs(self, call_node: TSNode, loc: Location) -> List[Instr]:
+        """rsa.Encrypt(data, fOAEP=false) selects PKCS#1 v1.5 padding, which is
+        vulnerable to padding-oracle attacks (CWE-780)."""
+        name = self._get_method_name(call_node)
+        if name.split('.')[-1] != "Encrypt":
+            return []
+        args = self._get_method_args(call_node)
+        if len(args) == 2 and self._get_text(args[1]).strip() == "false":
+            return [Call(loc=loc, ret=None,
+                         func=ExpConst.string("__weak_rsa_padding__"), args=[])]
+        return []
+
+    def _int_literal(self, node: TSNode):
+        """Return the int value of a numeric-literal node, else None."""
+        if node is not None and node.type == "integer_literal":
+            try:
+                return int(self._get_text(node))
+            except ValueError:
+                return None
+        return None
 
     def _receiver_chain_instrs(self, call_node: TSNode) -> List[Instr]:
         """Emit sinks for nested invocations buried in a method-chain receiver --
@@ -799,6 +848,7 @@ class CSharpFrontend:
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description, arg_index=arg_idx))
 
         instrs.extend(self._receiver_chain_instrs(call_node))
+        instrs.extend(self._rsa_padding_instrs(call_node, loc))
         return instrs
 
     def _translate_await(self, node: TSNode) -> None:

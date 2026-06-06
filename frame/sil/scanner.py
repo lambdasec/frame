@@ -483,6 +483,10 @@ class FrameScanner:
         VulnType.HARDCODED_SECRET: "CWE-798",
         VulnType.INSECURE_RANDOM: "CWE-330",
         VulnType.WEAK_HASH: "CWE-328",
+        VulnType.IMPROPER_CERT_VALIDATION: "CWE-295",
+        VulnType.INSUFFICIENT_KEY_SIZE: "CWE-326",
+        VulnType.WEAK_RSA_PADDING: "CWE-780",
+        VulnType.INSUFFICIENT_CREDENTIAL_PROTECTION: "CWE-522",
         VulnType.MISSING_ENCRYPTION: "CWE-311",
         VulnType.SENSITIVE_DATA_EXPOSURE: "CWE-200",
 
@@ -492,6 +496,7 @@ class FrameScanner:
         VulnType.COMMAND_INJECTION: "CWE-78",
         VulnType.LDAP_INJECTION: "CWE-90",
         VulnType.XPATH_INJECTION: "CWE-643",
+        VulnType.XML_INJECTION: "CWE-91",
         VulnType.CODE_INJECTION: "CWE-94",
         VulnType.TEMPLATE_INJECTION: "CWE-1336",
         VulnType.NOSQL_INJECTION: "CWE-943",

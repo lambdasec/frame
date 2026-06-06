@@ -82,6 +82,7 @@ class SinkKind(Enum):
     SHELL_COMMAND = "shell"     # Shell command execution (CWE-78)
     LDAP_QUERY = "ldap"         # LDAP query (CWE-90)
     XPATH_QUERY = "xpath"       # XPath query (CWE-643)
+    XML_INJECTION = "xml_injection"  # XML injection via raw write (CWE-91)
     EVAL = "eval"               # Dynamic code evaluation (CWE-94)
     TEMPLATE = "template"       # Template injection (CWE-1336)
     NOSQL_QUERY = "nosql"       # NoSQL injection (CWE-943)
@@ -108,9 +109,13 @@ class SinkKind(Enum):
     INSECURE_RANDOM = "insecure_random"    # Insecure randomness (CWE-330)
     WEAK_HASH = "weak_hash"     # Weak hashing (CWE-328)
     INSECURE_TEMP_FILE = "insecure_temp_file"  # Insecure temp file / race (CWE-377)
+    CERT_VALIDATION = "cert_validation"  # Improper certificate validation (CWE-295)
+    WEAK_KEY_SIZE = "weak_key_size"      # Insufficient key size (CWE-326)
+    WEAK_RSA_PADDING = "weak_rsa_padding"  # RSA without OAEP padding (CWE-780)
 
     # A07: Authentication Failures
     CREDENTIAL = "credential"   # Credential handling (CWE-522)
+    INSECURE_AUTH = "insecure_auth"  # Insufficiently protected credentials (CWE-522)
     SESSION = "session"         # Session management (CWE-384)
     PASSWORD_STORE = "password" # Password storage (CWE-257)
     TRUST_BOUNDARY = "trust_boundary"  # Trust boundary violation (CWE-501)

@@ -70,6 +70,10 @@ class VulnType(Enum):
     HARDCODED_SECRET = "hardcoded_secret"       # CWE-798
     INSECURE_RANDOM = "insecure_random"         # CWE-330
     WEAK_HASH = "weak_hash"                     # CWE-328
+    IMPROPER_CERT_VALIDATION = "improper_cert_validation"  # CWE-295
+    INSUFFICIENT_KEY_SIZE = "insufficient_key_size"  # CWE-326
+    WEAK_RSA_PADDING = "weak_rsa_padding"       # CWE-780
+    INSUFFICIENT_CREDENTIAL_PROTECTION = "insufficient_credential_protection"  # CWE-522
     MISSING_ENCRYPTION = "missing_encryption"   # CWE-311
     SENSITIVE_DATA_EXPOSURE = "sensitive_data_exposure"  # CWE-200
 
@@ -79,6 +83,7 @@ class VulnType(Enum):
     COMMAND_INJECTION = "command_injection"     # CWE-78
     LDAP_INJECTION = "ldap_injection"           # CWE-90
     XPATH_INJECTION = "xpath_injection"         # CWE-643
+    XML_INJECTION = "xml_injection"             # CWE-91
     CODE_INJECTION = "code_injection"           # CWE-94
     TEMPLATE_INJECTION = "template_injection"   # CWE-1336
     NOSQL_INJECTION = "nosql_injection"         # CWE-943
@@ -162,6 +167,7 @@ class VulnType(Enum):
             SinkKind.SHELL_COMMAND: cls.COMMAND_INJECTION,
             SinkKind.LDAP_QUERY: cls.LDAP_INJECTION,
             SinkKind.XPATH_QUERY: cls.XPATH_INJECTION,
+            SinkKind.XML_INJECTION: cls.XML_INJECTION,
             SinkKind.EVAL: cls.CODE_INJECTION,
             SinkKind.TEMPLATE: cls.TEMPLATE_INJECTION,
             SinkKind.NOSQL_QUERY: cls.NOSQL_INJECTION,
@@ -184,6 +190,10 @@ class VulnType(Enum):
             SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
             SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
             SinkKind.WEAK_HASH: cls.WEAK_HASH,
+            SinkKind.CERT_VALIDATION: cls.IMPROPER_CERT_VALIDATION,
+            SinkKind.WEAK_KEY_SIZE: cls.INSUFFICIENT_KEY_SIZE,
+            SinkKind.WEAK_RSA_PADDING: cls.WEAK_RSA_PADDING,
+            SinkKind.INSECURE_AUTH: cls.INSUFFICIENT_CREDENTIAL_PROTECTION,
             SinkKind.INSECURE_TEMP_FILE: cls.INSECURE_TEMP_FILE,
             SinkKind.PROTOTYPE_POLLUTION: cls.PROTOTYPE_POLLUTION,
             # A07: Authentication Failures

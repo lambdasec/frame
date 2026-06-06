@@ -277,8 +277,8 @@ XML_SPECS = {
     "XmlTextReader": _sink("xxe", [0], "XmlTextReader (XXE - legacy)"),
 
     # XmlWriter - raw XML injection
-    "XmlWriter.WriteRaw": _sink("xxe", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
-    "WriteRaw": _sink("xxe", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
+    "XmlWriter.WriteRaw": _sink("xml_injection", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
+    "WriteRaw": _sink("xml_injection", [0], "XmlWriter.WriteRaw (XML injection CWE-91)"),
 
     # XSLT
     "XslCompiledTransform.Load": _sink("xxe", [0], "XslCompiledTransform.Load (XXE)"),
@@ -768,6 +768,17 @@ _MIGRATION_BACKFILL_SPECS = {
     "TypeNameHandling.Auto": _usage_sink("deserialize", "Json.NET TypeNameHandling.Auto (CWE-502)"),
     "TypeNameHandling.Objects": _usage_sink("deserialize", "Json.NET TypeNameHandling.Objects (CWE-502)"),
     "TypeNameHandling.Arrays": _usage_sink("deserialize", "Json.NET TypeNameHandling.Arrays (CWE-502)"),
+    # LDAP simple bind transmits credentials in cleartext (CWE-522).
+    "ContextOptions.SimpleBind": _usage_sink("insecure_auth", "LDAP SimpleBind (CWE-522)"),
+    "AuthType.Basic": _usage_sink("insecure_auth", "LDAP basic auth (CWE-522)"),
+    # Synthetic markers emitted by the frontend after a value check (an int key
+    # size < 2048, or RSA.Encrypt(..., fOAEP=false)). Usage-based, no taint.
+    "__weak_key_size__": _usage_sink("weak_key_size", "RSA/DSA key < 2048 bits (CWE-326)"),
+    "__weak_rsa_padding__": _usage_sink("weak_rsa_padding", "RSA without OAEP padding (CWE-780)"),
+    # Disabling TLS certificate validation (CWE-295). The frontend emits a Call
+    # named ServerCertificateValidationCallback when such a callback is assigned.
+    "ServerCertificateValidationCallback": _usage_sink("cert_validation", "TLS cert validation disabled (CWE-295)"),
+    "RemoteCertificateValidationCallback": _usage_sink("cert_validation", "TLS cert validation callback (CWE-295)"),
     # Path traversal: new FilePathResult("..." + tainted, ...) returns a file
     # whose path includes user input (CWE-22).
     "FilePathResult": _sink("filesystem", [0], "new FilePathResult(path) (path traversal)"),
