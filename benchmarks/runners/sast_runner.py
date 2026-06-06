@@ -373,6 +373,56 @@ def run_secbench_js_division(
     return results
 
 
+def run_js_sast_division(
+    cache_dir: str,
+    division: str = 'js_sast',
+    max_tests: Optional[int] = None
+) -> List[SASTBenchmarkResult]:
+    """Run the hand-authored semantic JavaScript/TypeScript SAST benchmark.
+
+    Ground truth is labelled by data-flow semantics (not regex), so this is a
+    valid measure of the SL taint engine -- unlike the circular secbench_js
+    division. Vulnerable files expect one finding of their CWE; safe files
+    expect none.
+    """
+    from benchmarks.downloaders.js_sast import (
+        build_js_sast_corpus,
+        get_js_sast_files,
+        load_js_sast_manifest,
+    )
+
+    build_js_sast_corpus(cache_dir)
+    test_files = get_js_sast_files(cache_dir)
+    manifest = load_js_sast_manifest(cache_dir)
+
+    if max_tests:
+        test_files = test_files[:max_tests]
+    if not test_files:
+        print(f"No test files found for {division}")
+        return []
+
+    print(f"\nRunning {division}: {len(test_files)} benchmarks")
+    print("=" * 80)
+
+    results = []
+    total = len(test_files)
+    for i, filepath in enumerate(test_files, 1):
+        info = manifest.get('files', {}).get(os.path.basename(filepath), {})
+        expected_vulns = []
+        if info.get('vulnerable'):
+            cwe = info['cwe']
+            expected_vulns.append(ExpectedVulnerability(
+                cwe_id=cwe,
+                category=cwe_to_category(cwe.replace('CWE-', '')),
+            ))
+        lang = 'typescript' if filepath.endswith('.ts') else 'javascript'
+        result = run_sast_benchmark(filepath, expected_vulns, 'js_sast', division, lang)
+        results.append(result)
+        _print_progress(i, total, result)
+
+    return results
+
+
 def _print_progress(i: int, total: int, result: SASTBenchmarkResult):
     """Print progress indicator"""
     status = "✓" if result.correct else "✗"

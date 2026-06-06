@@ -1611,6 +1611,56 @@ public class FileService {
         assert has_instruction_type(proc, Return)
 
 
+@pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not installed")
+class TestJavaScriptTaintRegressions:
+    """Regressions for JS/TS taint detection bugs found via the js_sast bench."""
+
+    def _scan(self, code, language="javascript"):
+        from frame.sil.scanner import scan_code
+        return [v.cwe_id for v in scan_code(code, language).vulnerabilities]
+
+    def test_nested_callback_does_not_overwrite_handler(self):
+        # The .then() arrow and the route handler are both anonymous; they must
+        # not collide and drop the handler that holds the axios.get sink.
+        code = ("const axios = require('axios');\n"
+                "app.get('/s', (req, res) => {\n"
+                "  axios.get(req.query.url).then(r => res.send(r.data));\n"
+                "});\n")
+        assert "CWE-918" in self._scan(code)
+
+    def test_trailing_callback_arg_keeps_sink(self):
+        code = ("const fs = require('fs');\n"
+                "app.get('/f', (req, res) => {\n"
+                "  fs.readFile(req.query.file, 'utf8', (e, d) => res.send(d));\n"
+                "});\n")
+        assert "CWE-22" in self._scan(code)
+
+    def test_new_function_is_code_injection_sink(self):
+        code = "app.post('/r', (req, res) => { const f = new Function(req.body.code); f(); });"
+        assert "CWE-94" in self._scan(code)
+
+    def test_inline_sanitizer_suppresses_finding(self):
+        code = ("app.post('/s', (req, res) => {\n"
+                "  connection.query(\"SELECT * FROM u WHERE n = '\" + mysql.escape(req.body.name) + \"'\");\n"
+                "});\n")
+        assert self._scan(code) == []
+
+    def test_path_basename_sanitizes_filesystem_sink(self):
+        code = ("const fs = require('fs'); const path = require('path');\n"
+                "app.get('/f', (req, res) => {\n"
+                "  fs.readFile(path.basename(req.query.file), 'utf8', (e, d) => res.send(d));\n"
+                "});\n")
+        assert self._scan(code) == []
+
+    @pytest.mark.skipif(TypeScriptFrontend is None, reason="tree-sitter-typescript not installed")
+    def test_typescript_as_cast_is_transparent_to_taint(self):
+        code = ("app.get('/u', (req, res) => {\n"
+                "  const id: string = req.query.id as string;\n"
+                "  db.query(\"SELECT * FROM users WHERE id = '\" + id + \"'\");\n"
+                "});\n")
+        assert "CWE-89" in self._scan(code, language="typescript")
+
+
 # =============================================================================
 # Cross-Language Tests
 # =============================================================================

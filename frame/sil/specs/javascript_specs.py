@@ -290,8 +290,10 @@ SERIALIZATION_SPECS = {
 # =============================================================================
 
 SANITIZER_SPECS = {
-    # HTML sanitizers
-    "escape": _sanitizer(["html"], "HTML escape"),
+    # HTML sanitizers. `escape` neutralizes both HTML and SQL contexts (a bare
+    # global escape / library escape is used for both); keep both kinds so the
+    # later "SQL sanitizers" entry below does not silently drop the html kind.
+    "escape": _sanitizer(["html", "sql"], "HTML/SQL escape"),
     "encodeURIComponent": _sanitizer(["url"], "URL encode"),
     "encodeURI": _sanitizer(["url"], "URI encode"),
     "DOMPurify.sanitize": _sanitizer(["html"], "DOMPurify sanitize"),
@@ -299,8 +301,7 @@ SANITIZER_SPECS = {
     "xss": _sanitizer(["html"], "xss filter"),
     "validator.escape": _sanitizer(["html"], "validator.escape"),
 
-    # SQL sanitizers
-    "escape": _sanitizer(["sql"], "SQL escape"),
+    # SQL sanitizers (note: bare `escape` is defined above with both kinds)
     "mysql.escape": _sanitizer(["sql"], "MySQL escape"),
     "pg.escapeLiteral": _sanitizer(["sql"], "PostgreSQL escape literal"),
     "pg.escapeIdentifier": _sanitizer(["sql"], "PostgreSQL escape identifier"),

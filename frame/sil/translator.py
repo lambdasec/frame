@@ -2011,8 +2011,13 @@ class SILTranslator:
                                 # Inline member sources used directly in the sink
                                 # argument, e.g. db.query("..." + req.query.id).
                                 for src_chain, src_kind in self._get_embedded_member_sources(arg_exp):
-                                    if (src_chain in inline_sanitized_for
-                                            and spec.is_sink in inline_sanitized_for[src_chain]):
+                                    # A sanitizer wrapping the source (e.g.
+                                    # mysql.escape(req.body.x)) records the root
+                                    # var ('req'); the chain is 'req.body', so
+                                    # match on any shared identifier, not equality.
+                                    src_ids = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', src_chain)
+                                    if any(spec.is_sink in inline_sanitized_for.get(v, set())
+                                           for v in src_ids):
                                         continue
                                     checks.append(VulnerabilityCheck(
                                         formula=And(Source(Var(src_chain), src_kind),
@@ -2640,6 +2645,24 @@ class SILTranslator:
         ))
         return state
 
+    def _sanitizes_kind(self, sanitized_kinds, sink_kind) -> bool:
+        """Whether any raw sanitizer-kind string neutralizes this sink kind,
+        comparing through the sink-kind alias map (e.g. a 'path' sanitizer
+        covers a 'filesystem' sink, 'header_injection' covers 'header')."""
+        if not sanitized_kinds:
+            return False
+        from .instructions import resolve_sink_kind
+        target = sink_kind.value if hasattr(sink_kind, "value") else sink_kind
+        for s in sanitized_kinds:
+            if s == target:
+                return True
+            try:
+                if resolve_sink_kind(s).value == target:
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _exec_taint_sink(
         self,
         instr: TaintSink,
@@ -2772,6 +2795,34 @@ class SILTranslator:
                 location=instr.loc or Location.unknown(),
                 description=f"Tainted data from '{func_name}' flows to {instr.kind.value} sink",
                 source_var=func_name,
+                source_location=instr.loc or Location.unknown(),
+                sink_type=instr.kind.value,
+                procedure_name=proc_name,
+            )
+            checks.append(check)
+
+        # Check for embedded member-access taint sources (e.g. req.body.code,
+        # req.query.id) appearing inline in the sink expression with no
+        # intermediate variable -- the via-variable case puts only the variable
+        # name in the sink exp, so this fires only for genuinely inline sources.
+        for src_chain, src_kind in self._get_embedded_member_sources(instr.exp):
+            # Respect inline sanitizers wrapping the source in this same exp.
+            # Sanitizer kinds are raw spec strings (e.g. 'path'); the sink kind
+            # is the resolved enum value (e.g. 'filesystem'), so compare through
+            # the alias map rather than by string equality.
+            chain_vars = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', src_chain)
+            if any(self._sanitizes_kind(inline_sanitized_for.get(v, set()), instr.kind)
+                   for v in chain_vars):
+                continue
+            check = VulnerabilityCheck(
+                formula=And(
+                    Source(Var(src_chain), src_kind),
+                    Sink(Var(src_chain), instr.kind.value)
+                ),
+                vuln_type=VulnType.from_sink_kind(instr.kind),
+                location=instr.loc or Location.unknown(),
+                description=f"Tainted data from '{src_chain}' flows to {instr.kind.value} sink",
+                source_var=src_chain,
                 source_location=instr.loc or Location.unknown(),
                 sink_type=instr.kind.value,
                 procedure_name=proc_name,

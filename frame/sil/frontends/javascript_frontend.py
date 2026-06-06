@@ -236,7 +236,14 @@ class JavaScriptFrontend:
                 if cur.type == "method_definition":
                     proc = self._translate_method(cur)
                 else:
-                    proc = self._translate_function(cur, name=self._infer_func_name(cur))
+                    name = self._infer_func_name(cur)
+                    # Distinct nested functions (e.g. a route handler and a
+                    # .then()/callback arrow inside it) would otherwise both be
+                    # 'anonymous' and collide in the procedures dict, silently
+                    # overwriting the handler that holds the sink. Disambiguate.
+                    if program.has_procedure(name):
+                        name = f"{name}_{cur.id}"
+                    proc = self._translate_function(cur, name=name)
                 if proc:
                     program.add_procedure(proc)
             stack.extend(cur.children)
@@ -561,6 +568,11 @@ class JavaScriptFrontend:
 
             elif child.type == "augmented_assignment_expression":
                 self._translate_augmented_assignment(child)
+
+            elif child.type == "new_expression":
+                # A bare `new Function(userCode)` statement is a sink; translating
+                # the expression emits the TaintSink as a side effect.
+                self._translate_expression(child)
 
     def _translate_var_declaration(self, node: TSNode) -> None:
         """Translate variable declaration: const/let/var x = value"""
@@ -1289,7 +1301,28 @@ class JavaScriptFrontend:
                 for child in args_node.children:
                     if child.type not in ("(", ")", ","):
                         args.append(self._translate_expression(child))
+            # A constructor can itself be a sink (e.g. new Function(userCode) is
+            # code injection). Emit the TaintSink as a side effect so it fires in
+            # any context (var initializer, argument, etc.).
+            spec = self.specs.get(cons_name) or self.specs.get(f"new {cons_name}")
+            if spec and spec.is_taint_sink():
+                kind = _get_sink_kind(spec.is_sink)
+                for arg_idx in spec.sink_args:
+                    if arg_idx < len(args):
+                        self._add_instr(TaintSink(
+                            loc=self._get_location(node), exp=args[arg_idx],
+                            kind=kind, description=spec.description, arg_index=arg_idx))
             return ExpCall(ExpConst.string(f"new {cons_name}"), args)
+
+        elif node.type in ("as_expression", "satisfies_expression",
+                            "non_null_expression"):
+            # TypeScript type assertions (`x as string`, `x satisfies T`, `x!`)
+            # are transparent to runtime values and taint -- translate the inner
+            # expression and drop the type so `req.query.id as string` stays a
+            # recognized source.
+            inner = node.named_child(0) if node.named_child_count else None
+            return (self._translate_expression(inner) if inner is not None
+                    else ExpConst.null())
 
         elif node.type in ("jsx_element", "jsx_self_closing_element", "jsx_fragment"):
             # JSX evaluates to a React element (opaque value for taint), but its
@@ -1570,6 +1603,13 @@ class JavaScriptFrontend:
             for child in node.children:
                 if child.type not in ("(", ")"):
                     return self._check_expression_for_taint_source(child, target, loc)
+
+        # TypeScript type assertions are transparent - unwrap the value
+        elif node_type in ("as_expression", "satisfies_expression",
+                           "non_null_expression"):
+            inner = node.named_child(0) if node.named_child_count else None
+            if inner is not None:
+                return self._check_expression_for_taint_source(inner, target, loc)
 
         # Subscript expression - check the object being accessed
         elif node_type == "subscript_expression":
