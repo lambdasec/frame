@@ -88,6 +88,20 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
         gt_by_repo[e["repo"]].append(
             (_rel(e.get("path"), e["repo"]), _norm_cwe(e.get("cwe")), int(e.get("line") or 0)))
 
+    # Semgrep reference (computed from judged verdicts / found_by -- Semgrep is
+    # not re-run). Recall vs the same pooled GT; precision from its adjudications.
+    sem_recall_repo: Counter = Counter()
+    for e in gt:
+        if "semgrep" in (e.get("found_by") or []):
+            sem_recall_repo[e["repo"]] += 1
+    sem_prec = Counter()
+    for c in cache:
+        if c.get("tool") == "semgrep":
+            if c.get("status") == "true_positive":
+                sem_prec["tp"] += 1
+            elif c.get("status") == "false_positive":
+                sem_prec["fp"] += 1
+
     total_gt = sum(len(v) for v in gt_by_repo.values())
     matched_gt = 0
     prec = Counter()  # cached_tp / cached_fp / unjudged
@@ -128,10 +142,13 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
                 rp["unjudged"] += 1
         prec.update(rp)
         per_repo[repo] = {
-            "findings": len(findings), "gt_vulns": len(gt_entries), "recall_hits": hit,
+            "findings": len(findings), "gt_vulns": len(gt_entries),
+            "frame_recall": hit, "semgrep_recall": sem_recall_repo.get(repo, 0),
             **dict(rp)}
 
     cached_dec = prec["cached_tp"] + prec["cached_fp"]
+    sem_dec = sem_prec["tp"] + sem_prec["fp"]
+    sem_matched = sum(sem_recall_repo.values())
     return {
         "recall": {
             "matched": matched_gt, "total_gt": total_gt,
@@ -140,6 +157,11 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
             "tp": prec["cached_tp"], "fp": prec["cached_fp"],
             "value": round(prec["cached_tp"] / cached_dec, 3) if cached_dec else None,
             "unjudged_new_findings": prec["unjudged"]},
+        "semgrep": {
+            "recall_matched": sem_matched, "total_gt": total_gt,
+            "recall": round(sem_matched / total_gt, 3) if total_gt else None,
+            "tp": sem_prec["tp"], "fp": sem_prec["fp"],
+            "precision": round(sem_prec["tp"] / sem_dec, 3) if sem_dec else None},
         "per_repo": per_repo,
     }
 
@@ -153,13 +175,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = p.parse_args(argv)
 
     r = measure(args.workspace, args.ground_truth, args.cache)
-    rc, pc = r["recall"], r["precision_cached"]
-    print(f"RECALL vs pooled GT: {rc['matched']}/{rc['total_gt']} = {rc['value']}")
-    print(f"PRECISION (cached verdicts only): {pc['tp']} TP / {pc['fp']} FP = {pc['value']}"
-          f"   (+{pc['unjudged_new_findings']} new findings not yet judged)")
-    print("per-repo:")
+    rc, pc, sem = r["recall"], r["precision_cached"], r["semgrep"]
+    frame_recall = f"{rc['matched']}/{rc['total_gt']} = {rc['value']}"
+    frame_prec = f"{pc['tp']}TP/{pc['fp']}FP = {pc['value']}"
+    sem_recall = f"{sem['recall_matched']}/{sem['total_gt']} = {sem['recall']}"
+    sem_prec = f"{sem['tp']}TP/{sem['fp']}FP = {sem['precision']}"
+    print("=== Frame vs Semgrep on the pooled real-world ground truth ===")
+    print(f"{'':<10}{'RECALL (of known vulns)':<28}{'PRECISION (judged)':<24}")
+    print(f"{'Frame':<10}{frame_recall:<28}{frame_prec:<24}")
+    print(f"{'Semgrep':<10}{sem_recall:<28}{sem_prec:<24}")
+    gap = sem["recall_matched"] - rc["matched"]
+    print(f"\nGap to Semgrep recall: Frame needs ~{gap} more of the known vulns "
+          f"({rc['value']} -> {sem['recall']}).")
+    print(f"Frame has +{pc['unjudged_new_findings']} new findings not yet judged "
+          f"(Frame precision above is on judged/cached findings only; Semgrep is fully judged).")
+    print("\nper-repo (frame / semgrep recall of gt_vulns):")
     for repo, s in r["per_repo"].items():
-        print(f"  {repo:<18} {s}")
+        print(f"  {repo:<18} frame={s.get('frame_recall', 0)}/{s['gt_vulns']}  "
+              f"semgrep={s.get('semgrep_recall', 0)}/{s['gt_vulns']}  "
+              f"(frame findings={s['findings']})")
     return 0
 
 
