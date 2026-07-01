@@ -124,6 +124,7 @@ class SinkKind(Enum):
 
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialize"  # Object deserialization (CWE-502)
+    DESERIALIZE_UNSAFE = "deserialize_unsafe"  # Inherently-unsafe deserializer, usage-based (CWE-502)
 
     # A09: Logging & Alerting Failures
     LOG = "log"                 # Log injection (CWE-117)

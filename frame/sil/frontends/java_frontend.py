@@ -95,6 +95,7 @@ class JavaFrontend:
         self._translate_compilation_unit(tree.root_node, program)
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
+        self._scan_deserialization(tree.root_node, program)
         return program
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
@@ -341,6 +342,30 @@ class JavaFrontend:
                                  "__cookie_no_httponly__", hits_httponly)
         self._emit_findings_proc(program, "<cookie-secure>",
                                  "__cookie_no_secure__", hits_secure)
+
+    # Deserializers that cannot safely handle untrusted data (unsafe by design).
+    _UNSAFE_DESERIALIZERS = {"ObjectInputStream", "XMLDecoder"}
+
+    def _scan_deserialization(self, root: TSNode, program: Program) -> None:
+        """Flag construction of an inherently-unsafe deserializer (CWE-502).
+
+        `new ObjectInputStream(...)` / `new XMLDecoder(...)` exist only to
+        deserialize with an API that has no safe mode for untrusted input, so
+        constructing one is the deserialization point. This is usage-based (the
+        dangerous API itself), keeping it precise and framework-general.
+        """
+        hits: List[Location] = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "object_creation_expression":
+                typ = n.child_by_field_name("type")
+                if typ is not None and \
+                        self._get_text(typ).split(".")[-1] in self._UNSAFE_DESERIALIZERS:
+                    hits.append(self._get_location(n))
+            stack.extend(n.children)
+        self._emit_findings_proc(program, "<unsafe-deserialize>",
+                                 "__unsafe_deserialize__", hits)
 
     def _emit_findings_proc(self, program: Program, name: str,
                             sink_name: str, hits: List[Location]) -> None:

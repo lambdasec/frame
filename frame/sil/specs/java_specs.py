@@ -139,6 +139,11 @@ SERVLET_SPECS = {
     # when the cookie's Secure / HttpOnly flag is not provably set to true.
     "__cookie_no_secure__": _sink("insecure_cookie", [], "Cookie added without Secure flag (CWE-614)"),
     "__cookie_no_httponly__": _sink("insecure_cookie_httponly", [], "Cookie added without HttpOnly flag (CWE-1004)"),
+
+    # Usage-based sink emitted by the deserialization pass (java_frontend.
+    # _scan_deserialization) at construction of an inherently-unsafe deserializer
+    # (ObjectInputStream / XMLDecoder), which cannot safely handle untrusted data.
+    "__unsafe_deserialize__": _sink("deserialize_unsafe", [], "Unsafe deserializer construction (CWE-502)"),
 }
 
 # =============================================================================

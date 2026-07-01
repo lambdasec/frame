@@ -206,6 +206,7 @@ class VulnType(Enum):
             SinkKind.INSECURE_COOKIE_HTTPONLY: cls.INSECURE_COOKIE_HTTPONLY,
             # A08: Software/Data Integrity Failures
             SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
+            SinkKind.DESERIALIZE_UNSAFE: cls.DESERIALIZATION,
             # A09: Logging Failures
             SinkKind.LOG: cls.LOG_INJECTION,
             SinkKind.SENSITIVE_LOG: cls.SENSITIVE_DATA_LOGGED,
@@ -2679,7 +2680,8 @@ class SILTranslator:
         # Usage-based sinks (weak_hash, weak_crypto) don't need taint flow
         # The mere usage of the function is the vulnerability
         usage_based_kinds = {'weak_hash', 'weak_crypto', 'insecure_random',
-                             'insecure_cookie', 'insecure_cookie_httponly'}
+                             'insecure_cookie', 'insecure_cookie_httponly',
+                             'deserialize_unsafe'}
         if instr.kind.value in usage_based_kinds:
             # For insecure_cookie, we need to check the description for setSecure(false)
             if instr.kind.value == 'insecure_cookie':
