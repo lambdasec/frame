@@ -1946,8 +1946,17 @@ class JavaScriptFrontend:
             return self._translate_expression(conseq) if conseq else ExpConst.null()
 
         elif node.type == "await_expression":
-            arg = node.child_by_field_name("argument")
-            return self._translate_expression(arg)
+            # await_expression has NO "argument" field -- the awaited expression
+            # is an unnamed child after the `await` keyword. Using the (missing)
+            # field dropped the inner call entirely, so every `await db.find(...)`
+            # / `await fs.readFile(...)` sink was invisible. Unwrap the real child.
+            inner = node.child_by_field_name("argument")
+            if inner is None:
+                for c in node.children:
+                    if c.type != "await":
+                        inner = c
+                        break
+            return self._translate_expression(inner) if inner is not None else ExpConst.null()
 
         elif node.type == "new_expression":
             cons = node.child_by_field_name("constructor")

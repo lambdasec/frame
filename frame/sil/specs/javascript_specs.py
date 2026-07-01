@@ -167,6 +167,12 @@ MONGODB_SPECS = {
     "findByIdAndDelete": _sink("nosql", [0], "MongoDB findByIdAndDelete (NoSQL injection)"),
     "updateOne": _sink("nosql", [0, 1], "MongoDB updateOne (NoSQL injection)"),
     "updateMany": _sink("nosql", [0, 1], "MongoDB updateMany (NoSQL injection)"),
+    # Legacy Mongoose/driver query filter methods (still widely used).
+    "update": _sink("nosql", [0, 1], "MongoDB/Mongoose update (NoSQL injection)"),
+    "remove": _sink("nosql", [0], "MongoDB/Mongoose remove (NoSQL injection)"),
+    "count": _sink("nosql", [0], "MongoDB count (NoSQL injection)"),
+    "countDocuments": _sink("nosql", [0], "MongoDB countDocuments (NoSQL injection)"),
+    "distinct": _sink("nosql", [1], "MongoDB distinct (NoSQL injection)"),
     "deleteOne": _sink("nosql", [0], "MongoDB deleteOne (NoSQL injection)"),
     "deleteMany": _sink("nosql", [0], "MongoDB deleteMany (NoSQL injection)"),
     "aggregate": _sink("nosql", [0], "MongoDB aggregate (NoSQL injection)"),
