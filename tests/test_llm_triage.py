@@ -78,6 +78,24 @@ def test_no_endpoint_configured_is_disabled():
     assert TriageConfig().enabled is False
 
 
+def test_response_format_modes():
+    assert LLMTriageClient(TriageConfig(json_mode="json_object"))._response_format() \
+        == {"type": "json_object"}
+    schema = LLMTriageClient(TriageConfig(json_mode="json_schema"))._response_format()
+    assert schema["type"] == "json_schema" and schema["json_schema"]["strict"] is True
+    assert LLMTriageClient(TriageConfig(json_mode="off"))._response_format() is None
+
+
+def test_reasoning_first_order_still_parses():
+    # Structured output emits reasoning before the verdict; parsing is key-order
+    # independent, and the confident-FP still drops.
+    client = _client(lambda _: {"reasoning": "url is a constant, not user input",
+                                "is_true_positive": False, "confidence": 0.9})
+    kept, _ = triage_vulnerabilities([_vuln(5, "CWE-601")], SRC, "js", "a.js",
+                                     TriageConfig(drop_threshold=0.75), client)
+    assert kept == []
+
+
 def test_extract_json_and_context():
     assert _extract_json_object('noise {"a": 1} tail')["a"] == 1
     assert _extract_json_object("no json here") is None

@@ -33,11 +33,26 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 SYSTEM_PROMPT = (
     "You are a precise application-security reviewer adjudicating static-analysis "
     "findings. You are given ONE finding and the surrounding code. Decide whether it "
-    "is a genuine, exploitable vulnerability (true positive) or not (false positive). "
+    "is a genuine, exploitable vulnerability (true positive) or a false positive. "
     "Judge only this finding; do not look for other issues. Prefer keeping a finding "
-    "when uncertain. Respond with ONLY a JSON object: "
-    '{"is_true_positive": true|false, "confidence": 0.0-1.0, "reasoning": "<one sentence>"}.'
+    "when uncertain. Respond with ONLY a JSON object, filling \"reasoning\" FIRST so "
+    "you analyze before you decide: "
+    '{"reasoning": "<1-2 sentences>", "is_true_positive": true|false, "confidence": 0.0-1.0}.'
 )
+
+# JSON schema for servers that support strict structured output (OpenAI
+# json_schema / many local servers). Reasoning is first so the model reasons
+# before committing to a verdict, within a bounded structured response.
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning": {"type": "string"},
+        "is_true_positive": {"type": "boolean"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["reasoning", "is_true_positive", "confidence"],
+    "additionalProperties": False,
+}
 
 
 @dataclass
@@ -46,9 +61,16 @@ class TriageConfig:
     api_key: str = ""               # bearer token (any string for most local servers)
     model: str = ""                 # served model name
     temperature: float = 0.0        # deterministic
-    # Verdict JSON is ~40-80 tokens; 128 is ample and keeps prompt+generation
-    # under a 1k context window (so a larger model with a small window can be used).
-    max_tokens: int = 128
+    # With structured output the verdict is a short JSON object (reasoning +
+    # boolean + number). 256 leaves room for a 1-2 sentence reasoning field while
+    # keeping prompt+generation (~490 + 256) under a 1k window -- so a larger
+    # model with a small context can be used. Raise it (and the window) only for
+    # longer free-form reasoning.
+    max_tokens: int = 256
+    # Structured output. "json_object" is widely supported by OpenAI-compatible
+    # servers (incl. local MLX/optillm/vLLM/llama.cpp); "json_schema" enforces the
+    # exact schema where supported; "off" falls back to prompt-only JSON.
+    json_mode: str = "json_object"  # "json_object" | "json_schema" | "off"
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around the finding
     max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
@@ -63,6 +85,8 @@ class TriageConfig:
             api_key=os.environ.get("FRAME_LLM_API_KEY", "sk-local"),
             model=os.environ.get("FRAME_LLM_MODEL", ""),
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
+            max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
+            json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_object"),
             drop_threshold=float(os.environ.get("FRAME_LLM_DROP_THRESHOLD", "0.75")),
             timeout=int(os.environ.get("FRAME_LLM_TIMEOUT", "60")),
             enabled=bool(base and os.environ.get("FRAME_LLM_MODEL")),
@@ -93,14 +117,27 @@ class LLMTriageClient:
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
 
+    def _response_format(self) -> Optional[Dict[str, Any]]:
+        mode = getattr(self.config, "json_mode", "json_object")
+        if mode == "json_object":
+            return {"type": "json_object"}
+        if mode == "json_schema":
+            return {"type": "json_schema", "json_schema": {
+                "name": "triage_verdict", "schema": VERDICT_SCHEMA, "strict": True}}
+        return None
+
     def _http_call(self, messages: List[Dict[str, str]]) -> str:
         url = f"{self.config.base_url}/chat/completions"
-        payload = json.dumps({
+        body: Dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
-        }).encode("utf-8")
+        }
+        rf = self._response_format()
+        if rf is not None:
+            body["response_format"] = rf   # structured output where supported
+        payload = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=payload, headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.api_key}",
