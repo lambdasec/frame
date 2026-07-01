@@ -133,6 +133,12 @@ SERVLET_SPECS = {
     "setSecure": _sink("insecure_cookie", [], "Cookie.setSecure (insecure cookie)"),
     "Cookie.setSecure": _sink("insecure_cookie", [], "Cookie.setSecure (insecure cookie)"),
     "cookie.setSecure": _sink("insecure_cookie", [], "Cookie.setSecure (insecure cookie)"),
+
+    # Usage-based sinks emitted by the cookie-flags typestate pass (see
+    # java_frontend._scan_cookie_flags). Emitted at response.addCookie(c) only
+    # when the cookie's Secure / HttpOnly flag is not provably set to true.
+    "__cookie_no_secure__": _sink("insecure_cookie", [], "Cookie added without Secure flag (CWE-614)"),
+    "__cookie_no_httponly__": _sink("insecure_cookie_httponly", [], "Cookie added without HttpOnly flag (CWE-1004)"),
 }
 
 # =============================================================================

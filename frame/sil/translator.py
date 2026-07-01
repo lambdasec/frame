@@ -105,6 +105,7 @@ class VulnType(Enum):
     WEAK_PASSWORD = "weak_password"             # CWE-521
     TRUST_BOUNDARY_VIOLATION = "trust_boundary_violation"  # CWE-501
     INSECURE_COOKIE = "insecure_cookie"         # CWE-614
+    INSECURE_COOKIE_HTTPONLY = "insecure_cookie_httponly"  # CWE-1004
 
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialization"         # CWE-502
@@ -202,6 +203,7 @@ class VulnType(Enum):
             SinkKind.PASSWORD_STORE: cls.WEAK_PASSWORD,
             SinkKind.TRUST_BOUNDARY: cls.TRUST_BOUNDARY_VIOLATION,
             SinkKind.INSECURE_COOKIE: cls.INSECURE_COOKIE,
+            SinkKind.INSECURE_COOKIE_HTTPONLY: cls.INSECURE_COOKIE_HTTPONLY,
             # A08: Software/Data Integrity Failures
             SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
             # A09: Logging Failures
@@ -2676,7 +2678,8 @@ class SILTranslator:
 
         # Usage-based sinks (weak_hash, weak_crypto) don't need taint flow
         # The mere usage of the function is the vulnerability
-        usage_based_kinds = {'weak_hash', 'weak_crypto', 'insecure_random', 'insecure_cookie'}
+        usage_based_kinds = {'weak_hash', 'weak_crypto', 'insecure_random',
+                             'insecure_cookie', 'insecure_cookie_httponly'}
         if instr.kind.value in usage_based_kinds:
             # For insecure_cookie, we need to check the description for setSecure(false)
             if instr.kind.value == 'insecure_cookie':

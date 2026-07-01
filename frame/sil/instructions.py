@@ -119,7 +119,8 @@ class SinkKind(Enum):
     SESSION = "session"         # Session management (CWE-384)
     PASSWORD_STORE = "password" # Password storage (CWE-257)
     TRUST_BOUNDARY = "trust_boundary"  # Trust boundary violation (CWE-501)
-    INSECURE_COOKIE = "insecure_cookie"  # Insecure cookie (CWE-614)
+    INSECURE_COOKIE = "insecure_cookie"  # Insecure cookie - missing Secure (CWE-614)
+    INSECURE_COOKIE_HTTPONLY = "insecure_cookie_httponly"  # Cookie missing HttpOnly (CWE-1004)
 
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialize"  # Object deserialization (CWE-502)

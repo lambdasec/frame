@@ -94,6 +94,7 @@ class JavaFrontend:
 
         self._translate_compilation_unit(tree.root_node, program)
         self._propagate_interprocedural_taint(tree.root_node, program)
+        self._scan_cookie_flags(tree.root_node, program)
         return program
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
@@ -250,6 +251,118 @@ class JavaFrontend:
                 entry.instrs.insert(0, TaintSource(
                     loc=proc.loc, var=pvar, kind=TaintKind.USER_INPUT,
                     description="Interprocedural: tainted argument passed from caller"))
+
+    # =========================================================================
+    # Cookie-flags typestate (CWE-1004 HttpOnly, CWE-614 Secure)
+    # =========================================================================
+
+    def _cookie_assignment_target(self, node: TSNode) -> Optional[str]:
+        """The variable a `new Cookie(...)` expression is assigned to, or None
+        (e.g. when it is passed inline to addCookie)."""
+        p = node.parent
+        while p is not None:
+            if p.type == "variable_declarator":
+                nm = p.child_by_field_name("name")
+                return self._get_text(nm) if nm is not None else None
+            if p.type == "assignment_expression":
+                left = p.child_by_field_name("left")
+                return self._get_text(left) if left is not None else None
+            if p.type in ("argument_list", "method_invocation"):
+                return None
+            p = p.parent
+        return None
+
+    def _scan_cookie_flags(self, root: TSNode, program: Program) -> None:
+        """Typestate check for insecure cookies.
+
+        Models each servlet Cookie object's security attributes and checks them
+        at the escape point `response.addCookie(c)`: a finding is emitted only
+        when the flag is NOT provably set to true (Servlet cookies default to
+        HttpOnly=false / Secure=false). If `setHttpOnly(true)` / `setSecure(true)`
+        is called on the cookie anywhere in the method, the corresponding finding
+        is suppressed -- so `setSecure(true)` alone yields CWE-1004 (missing
+        HttpOnly) but not CWE-614. Tracking per-object attribute state (rather
+        than matching a syntactic pattern) is what keeps this precise.
+        """
+        methods: List[TSNode] = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type in ("method_declaration", "constructor_declaration"):
+                methods.append(n)
+            stack.extend(n.children)
+
+        hits_httponly: List[Location] = []
+        hits_secure: List[Location] = []
+        for m in methods:
+            body = m.child_by_field_name("body")
+            if body is None:
+                continue
+            httponly_set: set = set()
+            secure_set: set = set()
+            addcookies: List[Tuple[Optional[str], Location]] = []
+            st = [body]
+            while st:
+                c = st.pop()
+                if c.type == "method_invocation":
+                    name_node = c.child_by_field_name("name")
+                    mname = self._get_text(name_node) if name_node is not None else ""
+                    obj = c.child_by_field_name("object")
+                    objname = self._get_text(obj) if obj is not None else ""
+                    args = c.child_by_field_name("arguments")
+                    arg0 = None
+                    if args is not None:
+                        for a in args.children:
+                            if a.type not in ("(", ")", ","):
+                                arg0 = a
+                                break
+                    if mname == "setHttpOnly" and arg0 is not None \
+                            and self._get_text(arg0) == "true" and objname:
+                        httponly_set.add(objname)
+                    elif mname == "setSecure" and arg0 is not None \
+                            and self._get_text(arg0) == "true" and objname:
+                        secure_set.add(objname)
+                    elif mname == "addCookie" and arg0 is not None:
+                        if arg0.type == "identifier":
+                            addcookies.append((self._get_text(arg0), self._get_location(c)))
+                        elif arg0.type == "object_creation_expression":
+                            typ = arg0.child_by_field_name("type")
+                            if typ is not None and self._get_text(typ).split(".")[-1] == "Cookie":
+                                addcookies.append((None, self._get_location(c)))
+                st.extend(c.children)
+
+            for var, loc in addcookies:
+                if var is None or var not in httponly_set:
+                    hits_httponly.append(loc)
+                if var is None or var not in secure_set:
+                    hits_secure.append(loc)
+
+        self._emit_findings_proc(program, "<cookie-httponly>",
+                                 "__cookie_no_httponly__", hits_httponly)
+        self._emit_findings_proc(program, "<cookie-secure>",
+                                 "__cookie_no_secure__", hits_secure)
+
+    def _emit_findings_proc(self, program: Program, name: str,
+                            sink_name: str, hits: List[Location]) -> None:
+        """Emit one synthetic procedure PER finding.
+
+        Each usage-based finding gets its own procedure so the scanner reports
+        them all -- multiple usage sinks in a single procedure get collapsed to
+        one finding.
+        """
+        for i, loc in enumerate(hits):
+            proc = Procedure(name=f"{name}-{i}", params=[], ret_type=Typ.unknown_type(),
+                             loc=loc, is_method=False)
+            entry = proc.new_node(NodeKind.ENTRY)
+            proc.add_node(entry)
+            proc.entry_node = entry.id
+            entry.add_instr(Call(loc=loc, ret=None,
+                                 func=ExpConst.string(sink_name), args=[]))
+            exit_node = proc.new_node(NodeKind.EXIT)
+            proc.add_node(exit_node)
+            proc.exit_node = exit_node.id
+            proc.connect(entry.id, exit_node.id)
+            program.add_procedure(proc)
 
     def _translate_method(self, node: TSNode) -> Optional[Procedure]:
         """Translate method definition"""

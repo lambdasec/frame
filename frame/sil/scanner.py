@@ -395,6 +395,8 @@ class FrameScanner:
         VulnType.WEAK_CRYPTOGRAPHY: Severity.HIGH,
         VulnType.HARDCODED_SECRET: Severity.CRITICAL,
         VulnType.INSECURE_RANDOM: Severity.MEDIUM,
+        VulnType.INSECURE_COOKIE: Severity.MEDIUM,
+        VulnType.INSECURE_COOKIE_HTTPONLY: Severity.MEDIUM,
         VulnType.WEAK_HASH: Severity.HIGH,
         VulnType.MISSING_ENCRYPTION: Severity.HIGH,
         VulnType.SENSITIVE_DATA_EXPOSURE: Severity.HIGH,
@@ -519,6 +521,7 @@ class FrameScanner:
         VulnType.WEAK_PASSWORD: "CWE-521",
         VulnType.TRUST_BOUNDARY_VIOLATION: "CWE-501",
         VulnType.INSECURE_COOKIE: "CWE-614",
+        VulnType.INSECURE_COOKIE_HTTPONLY: "CWE-1004",
 
         # A08: Software/Data Integrity Failures
         VulnType.DESERIALIZATION: "CWE-502",
@@ -1072,6 +1075,7 @@ class FrameScanner:
             VulnType.CRYPTO_WEAK_CIPHER,
             VulnType.CRYPTO_WEAK_RANDOM,
             VulnType.INSECURE_COOKIE,
+            VulnType.INSECURE_COOKIE_HTTPONLY,
             VulnType.TRUST_BOUNDARY,
             VulnType.SENSITIVE_DATA_EXPOSURE,
         }
