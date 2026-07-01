@@ -559,7 +559,9 @@ class FrameScanner:
         verify: bool = True,
         timeout: int = 5000,
         verbose: bool = False,
-        library_mode: bool = False
+        library_mode: bool = False,
+        llm_triage: bool = False,
+        llm_config: Any = None
     ):
         """
         Initialize the scanner.
@@ -577,6 +579,10 @@ class FrameScanner:
         self.verify = verify
         self.timeout = timeout
         self.verbose = verbose
+        # Optional neuro-symbolic LLM triage of findings (see frame/sil/llm_triage.py).
+        self.llm_triage = llm_triage
+        self._llm_config = llm_config
+        self._llm_client = None
         self.library_mode = library_mode
 
         # Initialize frontend
@@ -709,6 +715,15 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] After confidence filter: {len(result.vulnerabilities)} vulnerabilities")
 
+            # Step 7 (optional): neuro-symbolic LLM triage. The symbolic engine has
+            # already produced the findings; the LLM only drops confident false
+            # positives (precision up, recall preserved -- see frame/sil/llm_triage.py).
+            if self.llm_triage:
+                result.vulnerabilities = self._apply_llm_triage(
+                    result.vulnerabilities, source_code, filename)
+                if self.verbose:
+                    print(f"[Scanner] After LLM triage: {len(result.vulnerabilities)} vulnerabilities")
+
         except Exception as e:
             result.errors.append(f"Scan error: {str(e)}")
             if self.verbose:
@@ -722,6 +737,26 @@ class FrameScanner:
             print(f"[Scanner] Time: {result.scan_time_ms:.2f}ms")
 
         return result
+
+    def _apply_llm_triage(self, vulns, source_code: str, filename: str):
+        """Adjudicate findings with an OpenAI-compatible LLM, dropping confident
+        false positives. Lazily builds the client/config; on any import or config
+        problem it returns findings unchanged (fail-safe)."""
+        try:
+            from frame.sil.llm_triage import (
+                TriageConfig, LLMTriageClient, triage_vulnerabilities)
+        except ImportError:
+            return vulns
+        config = self._llm_config or TriageConfig.from_env()
+        if not getattr(config, "base_url", "") or not getattr(config, "model", ""):
+            if self.verbose:
+                print("[Scanner] LLM triage requested but no endpoint/model configured; skipping.")
+            return vulns
+        if self._llm_client is None:
+            self._llm_client = LLMTriageClient(config)
+        kept, self._llm_client = triage_vulnerabilities(
+            vulns, source_code, self.language, filename, config, self._llm_client)
+        return kept
 
     def scan_file(self, filepath: str) -> ScanResult:
         """
