@@ -84,14 +84,16 @@ class JavaFrontend:
         """Translate Java source code to SIL Program."""
         self._filename = filename
         self._source = source_code
+        self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
 
-        tree = self.parser.parse(bytes(source_code, "utf8"))
+        tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy())
         program.source_files.append(filename)
 
         self._translate_compilation_unit(tree.root_node, program)
+        self._propagate_interprocedural_taint(tree.root_node, program)
         return program
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
@@ -139,6 +141,116 @@ class JavaFrontend:
         """Translate enum (similar to class)"""
         self._translate_class(node, program)
 
+    # =========================================================================
+    # Interprocedural taint (one-hop, intra-file)
+    # =========================================================================
+
+    def _collect_calls(self, node: TSNode, calls: List[Tuple[str, List[Optional[str]]]]) -> None:
+        """Collect same-instance method calls: (callee_name, [arg identifiers|None])."""
+        if node.type == "method_invocation":
+            obj = node.child_by_field_name("object")
+            # Only same-instance helper calls (bare `foo(...)` or `this.foo(...)`)
+            # -- calls on other objects are sinks/library calls, not local helpers.
+            if obj is None or self._get_text(obj) == "this":
+                name_node = node.child_by_field_name("name")
+                callee = self._get_text(name_node) if name_node else None
+                args_node = node.child_by_field_name("arguments")
+                argnames: List[Optional[str]] = []
+                if args_node is not None:
+                    for a in args_node.children:
+                        if a.type in ("(", ")", ","):
+                            continue
+                        argnames.append(self._get_text(a) if a.type == "identifier" else None)
+                if callee:
+                    calls.append((callee, argnames))
+        for ch in node.children:
+            self._collect_calls(ch, calls)
+
+    def _propagate_interprocedural_taint(self, root: TSNode, program: Program) -> None:
+        """Propagate taint from request-bound params through same-file helper calls.
+
+        Real controllers split the source from the sink: an endpoint takes the
+        request-bound parameter and passes it to a private helper that builds and
+        runs the query. Without following that hop, the sink is never reached. We
+        do a lightweight, name-based, fixpoint propagation: if a caller passes one
+        of its tainted parameters straight into a same-class method, that method's
+        corresponding parameter becomes a taint source too.
+        """
+        methods: Dict[str, Dict[str, Any]] = {}
+
+        def collect(mnode: TSNode) -> None:
+            name_node = mnode.child_by_field_name("name")
+            if not name_node:
+                return
+            params_node = mnode.child_by_field_name("parameters")
+            pnames: List[Optional[str]] = []
+            req_bound: set = set()
+            if params_node is not None:
+                idx = 0
+                for ch in params_node.children:
+                    if ch.type in ("formal_parameter", "spread_parameter"):
+                        nn = ch.child_by_field_name("name")
+                        pnames.append(self._get_text(nn) if nn else None)
+                        anns = self._get_annotations(ch)
+                        if any(rb in a for a in anns for rb in self._REQUEST_BINDING_ANNOTATIONS):
+                            req_bound.add(idx)
+                        idx += 1
+            calls: List[Tuple[str, List[Optional[str]]]] = []
+            body = mnode.child_by_field_name("body")
+            if body is not None:
+                self._collect_calls(body, calls)
+            # Last definition wins on overload/name clash (best-effort, intra-file).
+            methods[self._get_text(name_node)] = {
+                "params": pnames, "req": set(req_bound),
+                "tainted": set(req_bound), "calls": calls}
+
+        def walk(n: TSNode) -> None:
+            if n.type == "method_declaration":
+                collect(n)
+            for ch in n.children:
+                walk(ch)
+        walk(root)
+        if not methods:
+            return
+
+        # Fixpoint: tainted arg passed to a helper taints the helper's param.
+        for _ in range(10):
+            changed = False
+            for info in methods.values():
+                tainted_names = {info["params"][i] for i in info["tainted"]
+                                 if i < len(info["params"]) and info["params"][i]}
+                for callee, argnames in info["calls"]:
+                    cinfo = methods.get(callee)
+                    if cinfo is None:
+                        continue
+                    for j, an in enumerate(argnames):
+                        if an and an in tainted_names and j < len(cinfo["params"]) \
+                                and j not in cinfo["tainted"]:
+                            cinfo["tainted"].add(j)
+                            changed = True
+            if not changed:
+                break
+
+        # Emit TaintSource for propagated params (request-bound ones already have one).
+        for proc in program.procedures.values():
+            simple = proc.name.split(".")[-1]
+            info = methods.get(simple)
+            if info is None or proc.entry_node is None:
+                continue
+            propagated = info["tainted"] - info["req"]
+            if not propagated:
+                continue
+            entry = proc.nodes.get(proc.entry_node)
+            if entry is None:
+                continue
+            for j in sorted(propagated):
+                if j >= len(proc.params):
+                    continue
+                pvar = proc.params[j][0]
+                entry.instrs.insert(0, TaintSource(
+                    loc=proc.loc, var=pvar, kind=TaintKind.USER_INPUT,
+                    description="Interprocedural: tainted argument passed from caller"))
+
     def _translate_method(self, node: TSNode) -> Optional[Procedure]:
         """Translate method definition"""
         name_node = node.child_by_field_name("name")
@@ -177,7 +289,7 @@ class JavaFrontend:
         self._current_node = entry
 
         # Mark annotated parameters as taint sources
-        self._process_param_annotations(annotations, params, proc)
+        self._process_param_annotations(node, params, proc)
 
         # Translate body
         body = node.child_by_field_name("body")
@@ -241,33 +353,50 @@ class JavaFrontend:
                         annotations.append(self._get_text(mod))
         return annotations
 
+    # Spring MVC request-binding annotations. These live on the *parameter*
+    # (e.g. `login(@RequestParam String user)`), NOT on the method, so they mark
+    # the untrusted attack surface of a controller endpoint. Modern Spring apps
+    # (and most real-world Java web code) receive untrusted input this way rather
+    # than through raw Servlet `request.getParameter()` calls.
+    _REQUEST_BINDING_ANNOTATIONS = (
+        "RequestParam", "PathVariable", "RequestBody", "RequestHeader",
+        "CookieValue", "ModelAttribute", "MatrixVariable", "RequestPart",
+    )
+
     def _process_param_annotations(
         self,
-        annotations: List[str],
+        method_node: TSNode,
         params: List[Tuple[PVar, Typ]],
         proc: Procedure
     ) -> None:
-        """Process parameter annotations for taint sources"""
-        # Spring annotations that mark parameters as taint sources
-        taint_annotations = {
-            "@RequestParam": TaintKind.USER_INPUT,
-            "@PathVariable": TaintKind.USER_INPUT,
-            "@RequestBody": TaintKind.USER_INPUT,
-            "@RequestHeader": TaintKind.USER_INPUT,
-            "@CookieValue": TaintKind.USER_INPUT,
-        }
+        """Mark Spring request-bound controller parameters as taint sources.
 
-        for ann in annotations:
-            for pattern, kind in taint_annotations.items():
-                if pattern in ann:
-                    # Mark all params as tainted (simplified)
-                    for param, _ in params:
-                        self._add_instr(TaintSource(
-                            loc=self._get_location(proc.nodes[proc.entry_node].instrs[0] if proc.nodes[proc.entry_node].instrs else proc),
-                            var=param,
-                            kind=kind,
-                            description=f"{pattern} annotation"
-                        ))
+        The binding annotation is attached to each formal parameter, so we read
+        every parameter's own annotations (not the method's) and taint the ones
+        bound to request data.
+        """
+        params_node = method_node.child_by_field_name("parameters")
+        if params_node is None:
+            return
+        by_name = {p.name: p for p, _ in params}
+        for child in params_node.children:
+            if child.type not in ("formal_parameter", "spread_parameter"):
+                continue
+            anns = self._get_annotations(child)
+            if not any(rb in a for a in anns for rb in self._REQUEST_BINDING_ANNOTATIONS):
+                continue
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                continue
+            pv = by_name.get(self._get_text(name_node))
+            if pv is None:
+                continue
+            self._add_instr(TaintSource(
+                loc=self._get_location(child),
+                var=pv,
+                kind=TaintKind.USER_INPUT,
+                description="Spring request parameter (annotated)",
+            ))
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate method parameters"""
@@ -306,6 +435,8 @@ class JavaFrontend:
             self._translate_enhanced_for(node)
         elif node.type == "try_statement":
             self._translate_try(node)
+        elif node.type == "try_with_resources_statement":
+            self._translate_try_with_resources(node)
         elif node.type in ("switch_expression", "switch_statement"):
             self._translate_switch(node)
         elif node.type == "throw_statement":
@@ -875,6 +1006,50 @@ class JavaFrontend:
                     if fc.type == "block":
                         self._translate_block(fc)
 
+    def _translate_try_with_resources(self, node: TSNode) -> None:
+        """Translate try-with-resources ``try (var x = ...) { ... }``.
+
+        Without this, the entire body (and its sinks) is dropped -- a major
+        recall gap on JDBC code, which conventionally opens the connection as a
+        resource (``try (var connection = dataSource.getConnection())``).
+        """
+        resources = node.child_by_field_name("resources")
+        if resources is not None:
+            for r in resources.children:
+                if r.type == "resource":
+                    self._translate_resource(r)
+
+        body = node.child_by_field_name("body")
+        if body:
+            self._translate_block(body)
+
+        for child in node.children:
+            if child.type == "catch_clause":
+                catch_body = child.child_by_field_name("body")
+                if catch_body:
+                    self._translate_block(catch_body)
+            elif child.type == "finally_clause":
+                for fc in child.children:
+                    if fc.type == "block":
+                        self._translate_block(fc)
+
+    def _translate_resource(self, node: TSNode) -> None:
+        """Translate a single try-with-resources resource (``var x = expr``) as
+        an assignment so taint flows through resources (e.g. request streams)."""
+        name_node = node.child_by_field_name("name")
+        value_node = node.child_by_field_name("value")
+        if name_node is None or value_node is None:
+            return
+        var_name = self._get_text(name_node)
+        loc = self._get_location(node)
+        if value_node.type == "method_invocation":
+            self._add_instrs(self._translate_call_assignment(var_name, value_node, loc))
+        elif value_node.type == "object_creation_expression":
+            self._add_instrs(self._translate_object_creation_assignment(var_name, value_node, loc))
+        else:
+            self._add_instr(Assign(loc=loc, id=PVar(var_name),
+                                   exp=self._translate_expression(value_node)))
+
     def _translate_switch(self, node: TSNode) -> None:
         """Translate switch with path-sensitive analysis for constant conditions"""
         # Get the switch condition
@@ -1052,7 +1227,13 @@ class JavaFrontend:
     def _get_text(self, node: TSNode) -> str:
         if node is None:
             return ""
-        return self._source[node.start_byte:node.end_byte]
+        # tree-sitter reports BYTE offsets. Slicing the source *string* by those
+        # offsets corrupts every identifier after any multi-byte character (a
+        # `©` in a copyright header, an accented name, unicode in a string), so
+        # slice the UTF-8 bytes and decode. Getting this wrong silently mangles
+        # sink/source names and destroys detection on such files.
+        return self._source_bytes[node.start_byte:node.end_byte].decode(
+            "utf-8", errors="replace")
 
     def _get_location(self, node) -> Location:
         if hasattr(node, 'start_point'):

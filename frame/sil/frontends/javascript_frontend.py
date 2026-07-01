@@ -199,12 +199,49 @@ class JavaScriptFrontend:
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
-        # Whole-file ReDoS pass (covers module-level regex constants too).
-        self._scan_redos(tree.root_node, program)
-        # Whole-file prototype-pollution pass.
-        self._scan_proto_pollution(tree.root_node, program)
+        # The whole-file ReDoS and prototype-pollution passes are structural
+        # heuristics, not taint-gated. On vendored third-party libraries and
+        # minified/generated bundles they produce almost only false positives
+        # (the code is not the application's own and is never going to be fixed
+        # here), so -- like mainstream SAST tools -- we skip these heuristics on
+        # such files. Taint-based detection still runs everywhere.
+        if not self._is_vendored_or_minified():
+            self._scan_redos(tree.root_node, program)
+            self._scan_proto_pollution(tree.root_node, program)
 
         return program
+
+    # Third-party library / generated-bundle detection: filename conventions
+    # plus a content check for minification. Used to suppress the structural
+    # ReDoS / prototype-pollution heuristics on non-application code.
+    _VENDOR_DIR_RE = re.compile(
+        r"/(?:lib|libs|vendor|vendors|plugins?|external|third[_-]?party|"
+        r"bower_components|node_modules|jspm_packages|dist|build|min)/", re.I)
+    _LIB_NAME_RE = re.compile(
+        r"(?:^|[-_.])(?:jquery|jquery-?ui|bootstrap|angular|backbone|underscore|"
+        r"lodash|moment|modernizr|d3|react|react-dom|vue|ember|knockout|prototype|"
+        r"mootools|dojo|extjs|tinymce|ckeditor|wysihtml5|select2|datatables|"
+        r"highcharts|chartjs|three|ace|requirejs|handlebars|mustache|popper|slick|"
+        r"swiper|flatpickr|axios|zepto|hammer|normalize|polyfill)(?:[-_.]|\d|$)",
+        re.I)
+    _VERSION_IN_NAME_RE = re.compile(r"[-_.]\d+\.\d+")
+
+    def _is_vendored_or_minified(self) -> bool:
+        """True for third-party libraries and minified/generated JS bundles."""
+        fn = (self._filename or "").replace("\\", "/")
+        low = fn.lower()
+        if ".min." in low or low.endswith((".bundle.js", ".map")):
+            return True
+        if self._VENDOR_DIR_RE.search("/" + fn.strip("/") + "/"):
+            return True
+        base = fn.rsplit("/", 1)[-1]
+        if self._VERSION_IN_NAME_RE.search(base) or self._LIB_NAME_RE.search(base):
+            return True
+        # Content minification: a very long physical line is the reliable signal.
+        for line in (self._source or "").splitlines():
+            if len(line) > 800:
+                return True
+        return False
 
     # Every function-like node becomes its own procedure -- including callbacks
     # and route handlers like `app.post(path, (req,res) => {...})`, which are
@@ -705,7 +742,12 @@ class JavaScriptFrontend:
                 continue
             if c == ')':
                 nxt = pattern[i + 1] if i + 1 < n else ''
-                quantified = nxt in '*+' or nxt == '{'
+                # NB: use tuple membership, not `nxt in '*+'` -- an empty `nxt`
+                # (a group closing at end-of-pattern) is a *substring* of any
+                # string, so `'' in '*+'` is True and would treat every
+                # pattern-final group like ([^;]+) as quantified (a major ReDoS
+                # false-positive source).
+                quantified = nxt in ('*', '+', '{')
                 if quantified:
                     # Find the matching '(' by backward bracket-matching.
                     depth = 0
@@ -816,9 +858,15 @@ class JavaScriptFrontend:
             params = self._enclosing_param_names(n)
             if index.type == "identifier" and key_txt in counter_vars:
                 continue  # numeric C-style for-loop counter -> array index, safe
+            # A key that is itself a member/subscript access (obj[item.name],
+            # obj[a[i]]) is almost always benign map-building from internal data
+            # (serializing form fields, indexing by a record id), not prototype
+            # pollution, so it is NOT treated as suspicious on its own. Real
+            # pollution flows through a loop/path/param key that could be
+            # "__proto__"; attacker-controlled member keys are still caught by the
+            # taint-based sinks.
             key_like = (
-                index.type in ("subscript_expression", "member_expression")
-                or key_txt in loop_vars
+                key_txt in loop_vars
                 or key_txt in params
                 or key_txt in self._enclosing_path_key_vars(n)
             )

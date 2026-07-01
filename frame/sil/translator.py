@@ -2853,41 +2853,18 @@ class SILTranslator:
         """
         Execute return statement.
 
-        For web applications, returning tainted data can be XSS if the response
-        goes to a client. However, we disable this check because:
-        1. It's too aggressive - causes many FPs for other vulnerability types
-        2. Real XSS is better caught at explicit sinks (render_template, response.set_data)
-        3. Most Flask routes return templates, not raw strings
+        Returning tainted data is NOT treated as XSS. A method's return value is
+        almost never reflected as raw HTML in practice: Spring @RestController /
+        @ResponseBody methods serialize to JSON, plain @Controller methods return
+        a view *name* (not the body), and Express handlers send JSON via res.json.
+        Flagging every tainted return as XSS produced almost only false positives
+        (JSON responses, view names, and flows that are really SSRF/other classes
+        mislabeled as XSS). Real reflected XSS is caught at explicit output sinks
+        (response.getWriter().print/write, render_template, res.send, etc.).
         """
-        checks = []
-
-        # XSS-on-return check - catch XSS when returning tainted strings
-        # This is filtered in post-processing if we find other vulnerabilities
-        if instr.value:
-            return_vars = self._get_exp_vars(instr.value)
-
-            for var in return_vars:
-                if state.is_tainted(var):
-                    # Only flag XSS if taint originated from user input, not database
-                    taint_info = state.get_taint_info(var)
-                    is_user_taint = (
-                        taint_info and
-                        taint_info.source_kind and
-                        taint_info.source_kind.value in ("user", "file", "env")
-                    )
-
-                    if is_user_taint:
-                        # Check if sanitized for XSS
-                        if not state.is_sanitized_for(var, "html"):
-                            if not state.is_asserted_safe_for(var, "html"):
-                                # Returning tainted data - potential XSS
-                                check = self._create_taint_check(
-                                    instr, state, proc_name,
-                                    var, SinkKind.HTML_OUTPUT
-                                )
-                                checks.append(check)
-
-        return checks, state
+        # Intentionally emits no checks -- see docstring. Real XSS is detected at
+        # explicit HTML output sinks, not at return statements.
+        return [], state
 
     # =========================================================================
     # Vulnerability Check Creation

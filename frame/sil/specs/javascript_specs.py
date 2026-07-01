@@ -88,10 +88,17 @@ NODE_SPECS = {
     "fs.accessSync": _sink("path", [0], "Node.js file access sync (path traversal)"),
     "fs.createReadStream": _sink("path", [0], "Node.js read stream (path traversal)"),
     "fs.createWriteStream": _sink("path", [0], "Node.js write stream (path traversal)"),
+    # Express serves a file by path -- path traversal if the path is attacker-controlled.
+    "res.sendFile": _sink("path", [0], "Express sendFile (path traversal)"),
+    "res.download": _sink("path", [0], "Express download (path traversal)"),
+    "sendFile": _sink("path", [0], "Express sendFile (path traversal)"),
 
     # Path module
-    "path.join": _propagator([0, 1], "Path join (propagates taint)"),
-    "path.resolve": _propagator([0], "Path resolve (propagates taint)"),
+    # path.join/resolve are variadic: taint in ANY component taints the result
+    # (e.g. path.resolve('ftp/', file) is tainted via arg 1, not arg 0).
+    "path.join": _propagator([0, 1, 2, 3, 4, 5], "Path join (propagates taint)"),
+    "path.resolve": _propagator([0, 1, 2, 3, 4, 5], "Path resolve (propagates taint)"),
+    "path.normalize": _propagator([0], "Path normalize (propagates taint)"),
     "path.normalize": _propagator([0], "Path normalize (propagates taint)"),
 
     # Child Process (command injection sinks)
