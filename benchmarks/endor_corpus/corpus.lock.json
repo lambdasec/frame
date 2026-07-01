@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-07-01T06:48:20.290125+00:00",
+  "note": "Commit SHAs of the corpus repos as cloned/checked out by this harness. These are NOT Endor's commits (Endor did not publish them).",
+  "repos": {
+    "anonymous-github": {
+      "url": "https://github.com/tdurieux/anonymous_github.git",
+      "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+      "branch": "main"
+    },
+    "demo-netflicks": {
+      "url": "https://github.com/Contrast-Security-OSS/demo-netflicks.git",
+      "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+      "branch": "main"
+    },
+    "doublestar": {
+      "url": "https://github.com/bmatcuk/doublestar.git",
+      "commit": "a9ad9e0ef4d6b7e4443090e9a7201d847a881711",
+      "branch": "HEAD"
+    },
+    "benchmarkjava": {
+      "url": "https://github.com/OWASP-Benchmark/BenchmarkJava.git",
+      "commit": "56f8b33f65ae2a3eb4be2bc161111ca1b2ec66ce",
+      "branch": "master"
+    },
+    "juice-shop": {
+      "url": "https://github.com/juice-shop/juice-shop.git",
+      "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+      "branch": "master"
+    },
+    "webgoat": {
+      "url": "https://github.com/WebGoat/WebGoat.git",
+      "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+      "branch": "main"
+    },
+    "shopizer": {
+      "url": "https://github.com/shopizer-ecommerce/shopizer.git",
+      "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+      "branch": "3.2.7"
+    },
+    "xbow-validation-benchmarks": {
+      "url": "https://github.com/xbow-engineering/validation-benchmarks.git",
+      "commit": "d8e455185c4cd4760f44aeecd75e1860b9606abb",
+      "branch": "main"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "by_repo": {
+    "anonymous-github": {
+      "confirmed_vulns": 8,
+      "frame:false_positive": 167,
+      "frame:error": 5,
+      "frame:true_positive": 1,
+      "semgrep:false_positive": 78,
+      "semgrep:uncertain": 5,
+      "semgrep:true_positive": 20
+    },
+    "demo-netflicks": {
+      "confirmed_vulns": 2,
+      "frame:false_positive": 48,
+      "frame:true_positive": 2,
+      "semgrep:false_positive": 32
+    },
+    "juice-shop": {
+      "confirmed_vulns": 40,
+      "frame:false_positive": 38,
+      "frame:true_positive": 12,
+      "semgrep:true_positive": 41,
+      "semgrep:false_positive": 19
+    },
+    "shopizer": {
+      "confirmed_vulns": 14,
+      "frame:false_positive": 22,
+      "frame:true_positive": 1,
+      "frame:uncertain": 1,
+      "semgrep:false_positive": 21,
+      "semgrep:true_positive": 13
+    },
+    "webgoat": {
+      "confirmed_vulns": 42,
+      "frame:false_positive": 34,
+      "frame:error": 1,
+      "semgrep:false_positive": 55,
+      "semgrep:true_positive": 58,
+      "semgrep:uncertain": 1
+    }
+  },
+  "by_cwe": {
+    "CWE-89": 20,
+    "CWE-489": 10,
+    "CWE-943": 8,
+    "CWE-352": 7,
+    "CWE-22": 6,
+    "CWE-79": 6,
+    "CWE-73": 5,
+    "CWE-1004": 5,
+    "CWE-548": 4,
+    "CWE-330": 4,
+    "CWE-1321": 3,
+    "CWE-798": 3,
+    "CWE-327": 3,
+    "CWE-614": 3,
+    "CWE-1333": 2,
+    "CWE-732": 2,
+    "CWE-601": 2,
+    "CWE-502": 2,
+    "CWE-319": 2,
+    "CWE-863": 1,
+    "CWE-1104": 1,
+    "CWE-522": 1,
+    "CWE-95": 1,
+    "CWE-94": 1,
+    "CWE-117": 1,
+    "CWE-326": 1,
+    "CWE-328": 1,
+    "CWE-918": 1
+  },
+  "totals": {
+    "confirmed_vulns": 106
+  },
+  "note": "Model-adjudicated (Claude Sonnet 5), pooled union of Frame + Semgrep true positives. NOT a complete labeling: supports recall of known vulns, not absolute precision. Validate via BenchmarkJava agreement."
+}

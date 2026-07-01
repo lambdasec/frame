@@ -1,0 +1,136 @@
+# Endor Labs AI-SAST public corpus manifest
+#
+# Source article (corpus list + context only, NOT ground-truth labels):
+#   https://www.endorlabs.com/learn/ai-sast-benchmark-2x-more-real-vulnerabilities
+#
+# This manifest lists the 8 public repositories that Endor Labs named as their
+# benchmark corpus. It is used by run_endor_corpus.py to clone/pin each repo and
+# to decide which language portions Frame can scan.
+#
+# IMPORTANT: This is NOT a reproduction of Endor's benchmark. Endor published the
+# corpus *list* but not commit SHAs, ground-truth labels, scanner configs, or
+# their verified findings database. See README.md.
+#
+# Each entry:
+#   name                 machine slug (used for output directory names)
+#   display_name         human-readable name
+#   url                  git clone URL
+#   checkout             optional pinned ref (null => use default branch HEAD;
+#                        actual SHAs are recorded in corpus.lock.json by --lock)
+#   supported_patterns   glob patterns for Frame-supported source files to scan
+#   unsupported_languages languages present that Frame cannot analyze (reported, not scanned)
+#   notes                free-form context, including any URL corrections
+
+# Frame currently supports: Python, Java, JavaScript, TypeScript, C, C++, C#.
+# Frame does NOT support: Go, PHP, Ruby (these are reported as unsupported).
+
+repos:
+  - name: anonymous-github
+    display_name: anonymous-github
+    url: https://github.com/tdurieux/anonymous_github.git
+    checkout: null
+    supported_patterns:
+      - "**/*.js"
+      - "**/*.ts"
+      - "**/*.jsx"
+      - "**/*.tsx"
+    unsupported_languages: []
+    notes: >-
+      Node.js/TypeScript + Vue web app for anonymizing GitHub repos. Frame
+      scans the JS/TS portions; .vue single-file components are not parsed.
+
+  - name: demo-netflicks
+    display_name: demo-netflicks
+    url: https://github.com/Contrast-Security-OSS/demo-netflicks.git
+    checkout: null
+    supported_patterns:
+      - "**/*.java"
+      - "**/*.js"
+      - "**/*.ts"
+      - "**/*.jsx"
+      - "**/*.tsx"
+    unsupported_languages: []
+    notes: >-
+      Contrast Security intentionally-vulnerable demo application. Scanned for
+      Java and JS/TS portions.
+
+  - name: doublestar
+    display_name: doublestar
+    url: https://github.com/bmatcuk/doublestar.git
+    checkout: null
+    supported_patterns: []
+    unsupported_languages:
+      - go
+    notes: >-
+      Go glob-matching library. Frame does NOT support Go, so this repo is
+      cloned and pinned for provenance but produces no Frame findings. All Go
+      files are reported as unsupported.
+
+  - name: benchmarkjava
+    display_name: OWASP BenchmarkJava
+    url: https://github.com/OWASP-Benchmark/BenchmarkJava.git
+    checkout: null
+    supported_patterns:
+      - "**/*.java"
+    unsupported_languages: []
+    notes: >-
+      Purpose-built OWASP Java benchmark (~2700 synthetic test cases). Large;
+      scans can take a while.
+
+  - name: juice-shop
+    display_name: OWASP Juice Shop
+    url: https://github.com/juice-shop/juice-shop.git
+    checkout: null
+    supported_patterns:
+      - "**/*.ts"
+      - "**/*.js"
+      - "**/*.tsx"
+      - "**/*.jsx"
+    unsupported_languages: []
+    notes: >-
+      OWASP Juice Shop (TypeScript/JavaScript, Node + Angular). Vendor/build
+      directories (node_modules, dist, frontend/dist) are excluded by the runner.
+
+  - name: webgoat
+    display_name: OWASP WebGoat
+    url: https://github.com/WebGoat/WebGoat.git
+    checkout: null
+    supported_patterns:
+      - "**/*.java"
+      - "**/*.js"
+      - "**/*.ts"
+    unsupported_languages: []
+    notes: >-
+      OWASP WebGoat deliberately-insecure Java teaching application (plus some
+      JS lesson assets).
+
+  - name: shopizer
+    display_name: Shopizer
+    url: https://github.com/shopizer-ecommerce/shopizer.git
+    checkout: null
+    supported_patterns:
+      - "**/*.java"
+      - "**/*.js"
+      - "**/*.ts"
+    unsupported_languages: []
+    notes: >-
+      Shopizer Java e-commerce platform. Large multi-module Maven project.
+
+  - name: xbow-validation-benchmarks
+    display_name: XBOW Validation Benchmarks
+    url: https://github.com/xbow-engineering/validation-benchmarks.git
+    checkout: null
+    supported_patterns:
+      - "**/*.py"
+      - "**/*.js"
+      - "**/*.ts"
+      - "**/*.jsx"
+      - "**/*.tsx"
+      - "**/*.java"
+      - "**/*.cs"
+    unsupported_languages:
+      - php
+    notes: >-
+      XBOW web-security validation benchmarks. A large fraction of the targets
+      are PHP, which Frame cannot analyze and which are reported as unsupported.
+      Only Python/JS/TS/Java/C# portions (where present) are scanned.

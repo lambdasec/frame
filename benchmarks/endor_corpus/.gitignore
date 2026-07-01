@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# Local run artifacts (repos are cloned into a workspace, results written per-run)
+workspace/
+results/
+*.sarif

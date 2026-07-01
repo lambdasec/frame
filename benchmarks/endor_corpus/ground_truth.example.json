@@ -1,0 +1,24 @@
+[
+  {
+    "_comment": "EXAMPLE ONLY. These entries are illustrative and FAKE. The runner NEVER uses this file as real data. Copy it to ground_truth.json and replace with manually-validated findings before using --ground-truth. See README.md 'How to add ground truth labels'.",
+    "repo": "benchmarkjava",
+    "commit": "0000000000000000000000000000000000000000",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/benchmark/testcode/BenchmarkTest00001.java",
+    "line": 123,
+    "description": "EXAMPLE (not real): SQL injection through unsanitized request parameter",
+    "source": "manual_validation",
+    "status": "true_positive"
+  },
+  {
+    "_comment": "EXAMPLE ONLY - FAKE illustrative entry, do not treat as real ground truth.",
+    "repo": "juice-shop",
+    "commit": "0000000000000000000000000000000000000000",
+    "cwe": "CWE-79",
+    "path": "routes/example.ts",
+    "line": 42,
+    "description": "EXAMPLE (not real): Reflected XSS via unencoded user input",
+    "source": "manual_validation",
+    "status": "true_positive"
+  }
+]

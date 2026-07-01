@@ -1,0 +1,11 @@
+{
+  "counts": {
+    "true_positive": 2,
+    "false_positive": 48,
+    "uncertain": 0,
+    "error": 0
+  },
+  "judged_precision": 0.04,
+  "judged_precision_note": "TP / (TP + FP) over findings the judge decided (uncertain/error excluded). This is model-adjudicated precision of the tool's findings, NOT recall or F1 -- the judge cannot find missed bugs.",
+  "total_cost_usd": 15.9838
+}
