@@ -46,7 +46,9 @@ class TriageConfig:
     api_key: str = ""               # bearer token (any string for most local servers)
     model: str = ""                 # served model name
     temperature: float = 0.0        # deterministic
-    max_tokens: int = 512
+    # Verdict JSON is ~40-80 tokens; 128 is ample and keeps prompt+generation
+    # under a 1k context window (so a larger model with a small window can be used).
+    max_tokens: int = 128
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around the finding
     max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
