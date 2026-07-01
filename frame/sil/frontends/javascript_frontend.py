@@ -524,6 +524,20 @@ class JavaScriptFrontend:
                 loc=proc.loc, var=PVar(nm), kind=TaintKind.USER_INPUT,
                 description="destructured Express request property (user input)"))
 
+        # Closure capture of REQUEST-DERIVED enclosing locals (precise, always on):
+        # e.g. `const id = req.body.id` in a handler, then a `.then(r => db.update(
+        # { _id: id }, ...))` callback whose only sink sits inside the callback.
+        # Unlike library mode this taints only request-derived captures, not all
+        # captured names, so it does not add the library-mode false positives.
+        if body_node is not None and not self.taint_function_params:
+            own = {str(param) for param, _ in proc.params}
+            captured = ((self._enclosing_request_derived_locals(node)
+                         & self._referenced_identifiers(body_node)) - own)
+            for nm in sorted(captured):
+                self._add_instr(TaintSource(
+                    loc=proc.loc, var=PVar(nm), kind=TaintKind.USER_INPUT,
+                    description="captured request-derived variable (closure)"))
+
         if body_node:
             if body_node.type == "statement_block":
                 self._translate_block(body_node)
@@ -1026,6 +1040,48 @@ class JavaScriptFrontend:
                             if nm is not None and nm.type == "identifier":
                                 names.add(self._get_text(nm))
                         stack.extend(c.children)
+            cur = cur.parent
+        return names
+
+    def _enclosing_request_derived_locals(self, node: TSNode) -> set:
+        """Enclosing-function locals whose initializer is request-derived.
+
+        A local is request-derived if its initializer references `req.`/`request.`,
+        a destructured request property bound in the same function, or another
+        request-derived local (small fixpoint). These stay tainted when captured
+        by a nested callback -- without tainting every captured name.
+        """
+        names: set = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                req_names = set(self._express_request_source_names(cur))
+                body = cur.child_by_field_name("body")
+                if body is not None:
+                    for _ in range(4):  # fixpoint for chained locals
+                        added = False
+                        stack = [body]
+                        while stack:
+                            c = stack.pop()
+                            if c.type == "variable_declarator":
+                                nm = c.child_by_field_name("name")
+                                init = c.child_by_field_name("value")
+                                if (nm is not None and nm.type == "identifier"
+                                        and init is not None):
+                                    name = self._get_text(nm)
+                                    if name not in req_names:
+                                        refs = self._referenced_identifiers(init)
+                                        chain = self._get_member_chain(init)
+                                        if ((chain and (chain.startswith("req.")
+                                                        or chain.startswith("request.")))
+                                                or (refs & req_names)
+                                                or ("req" in refs) or ("request" in refs)):
+                                            req_names.add(name)
+                                            added = True
+                            stack.extend(c.children)
+                        if not added:
+                            break
+                names |= req_names
             cur = cur.parent
         return names
 
