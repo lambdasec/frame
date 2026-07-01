@@ -817,5 +817,70 @@
     "judge_confidence": 0.97,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-1004",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/JWTVotesEndpoint.java",
+    "line": 126,
+    "description": "The Cookie objects for \"access_token\" (both here and at line 120-121 where the actual JWT is set) never call setHttpOnly(true) or setSecure(true), so the auth cookie is readable/modifiable via client-side JavaScript and sent over plaintext HTTP. Even though this specific branch clears the cookie with an empty value, it reflects the same unprotected cookie-construction pattern used to carry the actual JWT elsewhere in the same handler.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.75,
+    "tool": "frame",
+    "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-614",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/JWTVotesEndpoint.java",
+    "line": 126,
+    "description": "The cookie carrying the JWT access_token (and its cleared version on line 125-126) is constructed and added to the response without any setSecure(true) or setHttpOnly(true) call visible in the shown code, so the auth cookie is transmitted without the Secure flag and is vulnerable to disclosure over unencrypted channels.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.75,
+    "tool": "frame",
+    "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-1004",
+    "path": "src/main/java/org/owasp/webgoat/lessons/spoofcookie/SpoofCookieAssignment.java",
+    "line": 77,
+    "description": "The cookie created at line 74-76 sets Path and Secure but never calls setHttpOnly(true), so the session/auth cookie added via response.addCookie() at line 77 is exposed to client-side script access (missing HttpOnly), matching CWE-1004.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.8,
+    "tool": "frame",
+    "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-614",
+    "path": "src/main/java/org/owasp/webgoat/lessons/spoofcookie/SpoofCookieAssignment.java",
+    "line": 60,
+    "description": "This cookie is being cleared (empty value, maxAge=0) as part of a WebGoat lesson cleanup endpoint, not used to transmit session/sensitive data, so missing Secure/HttpOnly flags here have no real security impact; WebGoat is also an intentionally vulnerable training app where this endpoint's purpose is just to reset lesson state.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "false_positive",
+    "judge_confidence": 0.85,
+    "tool": "frame",
+    "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-1004",
+    "path": "src/main/java/org/owasp/webgoat/lessons/hijacksession/HijackSessionAssignment.java",
+    "line": 70,
+    "description": "The cookie sets Secure but never calls setHttpOnly(true), so it is readable via JavaScript/XSS; since this stores a session-hijack-relevant value, missing HttpOnly is a genuine instance of CWE-1004 regardless of WebGoat's intentionally-vulnerable teaching context.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.75,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]
