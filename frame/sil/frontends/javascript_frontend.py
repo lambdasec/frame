@@ -516,6 +516,14 @@ class JavaScriptFrontend:
                         loc=proc.loc, var=PVar(nm),
                         kind=TaintKind.USER_INPUT,
                         description="captured untrusted variable (closure)"))
+        # Express-style request destructuring is a taint source regardless of
+        # library mode: `({ body, params, query }: Request, res, next) => ...`.
+        # `params.file` is then user-controlled just like `req.params.file`.
+        for nm in self._express_request_source_names(node):
+            self._add_instr(TaintSource(
+                loc=proc.loc, var=PVar(nm), kind=TaintKind.USER_INPUT,
+                description="destructured Express request property (user input)"))
+
         if body_node:
             if body_node.type == "statement_block":
                 self._translate_block(body_node)
@@ -1031,6 +1039,61 @@ class JavaScriptFrontend:
                 refs.add(self._get_text(cur))
             stack.extend(cur.children)
         return refs
+
+    # Express Request properties that carry attacker-controlled data.
+    _REQUEST_PROPS = {"body", "params", "query", "cookies", "headers", "file",
+                      "files", "param", "session", "signedCookies"}
+
+    def _express_request_source_names(self, node: TSNode) -> set:
+        """Names bound by destructuring an Express Request handler parameter.
+
+        Recognizes handlers like ``({ body, params, query }: Request, res, next)``
+        -- returns the destructured request-property names so they can be marked
+        as taint sources. Only fires when the function looks like a request
+        handler (a `Request`-typed param, or a sibling `res`/`response`/`next`),
+        keeping it precise.
+        """
+        params_node = node.child_by_field_name("parameters")
+        if params_node is not None:
+            param_children = list(params_node.children)
+        else:
+            single = node.child_by_field_name("parameter")
+            param_children = [single] if single is not None else []
+
+        destructured: List[TSNode] = []
+        is_handler = False
+        for ch in param_children:
+            if ch.type == "identifier":
+                if self._get_text(ch) in ("res", "response", "next"):
+                    is_handler = True
+            elif ch.type in ("required_parameter", "optional_parameter"):
+                typ = ch.child_by_field_name("type")
+                if typ is not None and "Request" in self._get_text(typ):
+                    is_handler = True
+                pat = ch.child_by_field_name("pattern")
+                if pat is not None and pat.type == "object_pattern":
+                    destructured.append(pat)
+                elif pat is not None and pat.type == "identifier" and \
+                        self._get_text(pat) in ("res", "response", "next"):
+                    is_handler = True
+            elif ch.type == "object_pattern":
+                destructured.append(ch)
+
+        if not is_handler:
+            return set()
+        names: set = set()
+        for pat in destructured:
+            for c in pat.children:
+                nm = None
+                if c.type == "shorthand_property_identifier_pattern":
+                    nm = self._get_text(c)
+                elif c.type == "pair_pattern":
+                    v = c.child_by_field_name("value")
+                    if v is not None:
+                        nm = self._get_text(v)
+                if nm and nm in self._REQUEST_PROPS:
+                    names.add(nm)
+        return names
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
