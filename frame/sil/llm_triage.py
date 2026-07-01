@@ -49,6 +49,7 @@ class TriageConfig:
     max_tokens: int = 512
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around the finding
+    max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
     drop_threshold: float = 0.75    # drop only false-positives at/above this confidence
     enabled: bool = False
 
@@ -172,6 +173,13 @@ def triage_vulnerabilities(vulns: List[Any], source_code: str, language: str,
     for v in vulns:
         f = _finding_fields(v)
         snippet = _context_snippet(source_lines, f["line"], config.context_lines)
+        if len(snippet) > config.max_context_chars:
+            # Keep the finding line centered; drop outer context so the prompt
+            # always fits a small (2k) window even on minified/very-long lines.
+            half = config.max_context_chars // 2
+            mid = snippet.find(">>")
+            mid = mid if mid != -1 else len(snippet) // 2
+            snippet = snippet[max(0, mid - half): mid + half]
         key = _cache_key(filename, f, snippet)
         verdict = client.cache.get(key)
         if verdict is None:
