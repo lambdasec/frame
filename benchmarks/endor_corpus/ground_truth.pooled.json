@@ -596,6 +596,54 @@
   {
     "repo": "juice-shop",
     "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-943",
+    "path": "routes/trackOrder.ts",
+    "line": 18,
+    "description": "When reflectedXssChallenge is enabled, id is only truncated (not sanitized) via utils.trunc and then interpolated directly into a MongoDB $where JavaScript string, allowing NoSQL/JS injection; even in the default branch the regex-based sanitization is an ad-hoc denylist rather than a safe parameteri",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-94",
+    "path": "routes/userProfile.ts",
+    "line": 61,
+    "description": "The username field, which is user-controlled and stored/retrieved from the user object, is regex-matched and then substring-extracted content is passed directly to eval() with no sanitization, allowing arbitrary JavaScript code execution if an attacker sets their username to a crafted `#{...}` paylo",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-943",
+    "path": "routes/showProductReviews.ts",
+    "line": 36,
+    "description": "When the noSqlCommandChallenge flag is enabled, req.params.id is only truncated to 40 chars (not sanitized) and concatenated directly into a MongoDB $where clause, allowing NoSQL/JS injection; this is Juice Shop's intentionally vulnerable code path for that exact challenge, so the injection is genui",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
     "cwe": "CWE-89",
     "path": "data/static/codefixes/dbSchemaChallenge_3.ts",
     "line": 11,
@@ -776,36 +824,6 @@
   {
     "repo": "juice-shop",
     "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
-    "cwe": "CWE-943",
-    "path": "routes/showProductReviews.ts",
-    "line": 36,
-    "description": "User-controlled req.params.id is concatenated directly into a MongoDB $where clause, which evaluates arbitrary JavaScript server-side; when the noSqlCommandChallenge path is active the value is only truncated (not type-coerced), so injection payloads reach the query unsanitized \u2014 this is Juice Shop'",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "juice-shop",
-    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
-    "cwe": "CWE-943",
-    "path": "routes/trackOrder.ts",
-    "line": 18,
-    "description": "When the reflectedXssChallenge flag is enabled, `id` is only length-truncated (utils.trunc), not character-sanitized, and is interpolated directly into a `$where` JavaScript string executed by MongoDB, allowing NoSQL/JS injection via req.params.id; this is Juice Shop's intentional noSqlOrdersChallen",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "juice-shop",
-    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
     "cwe": "CWE-732",
     "path": "routes/updateUserProfile.ts",
     "line": 42,
@@ -825,21 +843,6 @@
     "path": "routes/userProfile.ts",
     "line": 61,
     "description": "username is user-controlled (set via registration/profile) and a substring of it is passed directly to eval() when a regex pattern matches, allowing arbitrary JavaScript execution from attacker-supplied data; this is OWASP Juice Shop's intentional SSTI/code-injection challenge.",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "juice-shop",
-    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
-    "cwe": "CWE-94",
-    "path": "routes/userProfile.ts",
-    "line": 61,
-    "description": "User-controlled username is substring-extracted and passed directly to eval() with no sanitization, only gated by a regex that fails open (falls through to eval whenever it matches), making it a genuine code injection sink reachable from untrusted profile input.",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [

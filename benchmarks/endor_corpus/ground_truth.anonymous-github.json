@@ -2429,5 +2429,18 @@
     "judge_confidence": 0.85,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-943",
+    "path": "src/server/routes/connection.ts",
+    "line": 220,
+    "description": "The query shape is hardcoded ({_id, \"apiTokens.tokenHash\"}) and not built from attacker-controlled keys; the value compared is hashToken(token), a hash of the token rather than the raw token, which normalizes it to a string and prevents NoSQL operator injection. There's no dynamic query construction from unsanitized user input here.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "false_positive",
+    "judge_confidence": 0.75,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]

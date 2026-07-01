@@ -2,7 +2,7 @@
   "by_repo": {
     "anonymous-github": {
       "confirmed_vulns": 8,
-      "frame:false_positive": 178,
+      "frame:false_positive": 179,
       "frame:error": 5,
       "frame:true_positive": 3,
       "frame:uncertain": 1,
@@ -18,8 +18,8 @@
     },
     "juice-shop": {
       "confirmed_vulns": 51,
-      "frame:false_positive": 51,
-      "frame:true_positive": 26,
+      "frame:false_positive": 56,
+      "frame:true_positive": 29,
       "semgrep:true_positive": 41,
       "semgrep:false_positive": 19
     },
@@ -62,10 +62,10 @@
     "CWE-732": 2,
     "CWE-502": 2,
     "CWE-319": 2,
+    "CWE-94": 1,
     "CWE-1104": 1,
     "CWE-522": 1,
     "CWE-95": 1,
-    "CWE-94": 1,
     "CWE-117": 1,
     "CWE-326": 1,
     "CWE-328": 1,
