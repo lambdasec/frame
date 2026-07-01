@@ -88,12 +88,23 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
         gt_by_repo[e["repo"]].append(
             (_rel(e.get("path"), e["repo"]), _norm_cwe(e.get("cwe")), int(e.get("line") or 0)))
 
-    # Semgrep reference (computed from judged verdicts / found_by -- Semgrep is
-    # not re-run). Recall vs the same pooled GT; precision from its adjudications.
+    # Semgrep reference (Semgrep is not re-run). Recall is matched the SAME
+    # file+CWE way as Frame -- against Semgrep's actual detections (all its judged
+    # findings, regardless of TP/FP verdict) -- so Semgrep is credited for
+    # anything it detected, and its recall is re-evaluated fairly as the GT grows
+    # with Frame-confirmed vulns. Precision is intrinsic (its own TP/(TP+FP)).
+    sem_file_cwe: Dict[str, set] = defaultdict(set)
+    for repo in REPOS:
+        sf = HERE / f"ground_truth.{repo}.semgrep.json"
+        if sf.exists():
+            for rr in json.loads(sf.read_text()):
+                if isinstance(rr, dict) and "_comment" not in rr:
+                    sem_file_cwe[repo].add((_rel(rr.get("path"), repo), _norm_cwe(rr.get("cwe"))))
     sem_recall_repo: Counter = Counter()
     for e in gt:
-        if "semgrep" in (e.get("found_by") or []):
-            sem_recall_repo[e["repo"]] += 1
+        repo = e["repo"]
+        if (_rel(e.get("path"), repo), _norm_cwe(e.get("cwe"))) in sem_file_cwe.get(repo, set()):
+            sem_recall_repo[repo] += 1
     sem_prec = Counter()
     for c in cache:
         if c.get("tool") == "semgrep":
