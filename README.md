@@ -24,8 +24,6 @@ Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: t
 | **Frame (full AI SAST)** | **0.67** | **0.51** | **0.58** |
 | Semgrep OSS | 0.52 | 0.40 | 0.45 |
 
-<sub>Frame's LLM layer finds ~65 real vulnerabilities that both a symbolic engine and Semgrep miss. The ground truth is enriched by that layer, so read the [caveats](benchmarks/endor_corpus/README.md).</sub>
-
 **OWASP Score** (True Positive Rate - False Positive Rate) on synthetic suites:
 
 | Benchmark | Frame | Semgrep | Difference |
