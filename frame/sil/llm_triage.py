@@ -71,6 +71,7 @@ class TriageConfig:
     # servers (incl. local MLX/optillm/vLLM/llama.cpp); "json_schema" enforces the
     # exact schema where supported; "off" falls back to prompt-only JSON.
     json_mode: str = "json_object"  # "json_object" | "json_schema" | "off"
+    cache_path: str = ""            # persist verdicts here (JSON); reused across runs
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around the finding
     max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
@@ -86,6 +87,7 @@ class TriageConfig:
             model=os.environ.get("FRAME_LLM_MODEL", ""),
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
+            cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
             context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
             # For a strict 1k window set this ~2000 (worst-case snippet ~500 tok);
             # 6000 (~1.5k tok) suits a 2k window.
@@ -118,8 +120,23 @@ class LLMTriageClient:
                  call_fn: Optional[Callable[[List[Dict[str, str]]], str]] = None):
         self.config = config
         self._call_fn = call_fn or self._http_call
+        # cache maps key -> {path, line, cwe, verdict}; persisted to cache_path.
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
+        if getattr(config, "cache_path", ""):
+            try:
+                with open(config.cache_path, encoding="utf-8") as fh:
+                    self.cache = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                self.cache = {}
+
+    def _save(self) -> None:
+        if getattr(self.config, "cache_path", ""):
+            try:
+                with open(self.config.cache_path, "w", encoding="utf-8") as fh:
+                    json.dump(self.cache, fh, indent=2)
+            except OSError:
+                pass
 
     def _response_format(self) -> Optional[Dict[str, Any]]:
         mode = getattr(self.config, "json_mode", "json_object")
@@ -226,10 +243,14 @@ def triage_vulnerabilities(vulns: List[Any], source_code: str, language: str,
             mid = mid if mid != -1 else len(snippet) // 2
             snippet = snippet[max(0, mid - half): mid + half]
         key = _cache_key(filename, f, snippet)
-        verdict = client.cache.get(key)
-        if verdict is None:
+        rec = client.cache.get(key)
+        if rec is None:
             verdict = client.triage(_build_prompt(f, snippet, language, filename))
-            client.cache[key] = verdict or {}
+            rec = {"path": filename, "line": f["line"], "cwe": f["cwe"],
+                   "verdict": verdict or {}}
+            client.cache[key] = rec
+            client._save()   # persist incrementally so a long run is never lost
+        verdict = rec.get("verdict") or None
         # Drop ONLY a confident false positive; keep on uncertainty or error.
         is_fp = verdict is not None and verdict.get("is_true_positive") is False
         conf = float(verdict.get("confidence", 0.0)) if verdict else 0.0
