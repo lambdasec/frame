@@ -85,6 +85,13 @@ def is_sink_grounded(cwe_id: Optional[str], line: Optional[int],
     return any(abs((line or 0) - sl) <= window and sk in kinds for sl, sk in sinks)
 
 
+def cross_file_grounded(cwe_id: Optional[str], explored_sink_kinds) -> bool:
+    """True if a sink of the CWE's kind exists in any file the agent explored --
+    grounds a cross-file finding whose sink lives in a different file."""
+    kinds = _CWE_SINK_KINDS.get(cwe_id)
+    return bool(kinds and (kinds & set(explored_sink_kinds)))
+
+
 def is_detection_candidate(source_code: str, has_symbolic_findings: bool) -> bool:
     """Only analyze security-relevant files (or ones the symbolic pass flagged)."""
     if has_symbolic_findings:
@@ -241,6 +248,8 @@ def detect_agentic(source_code: str, language: str, filename: str,
     if client is None:
         client = LLMTriageClient(config)
     repo_root = getattr(config, "repo_root", "")
+    explored: set = set()
+    client._explored = explored   # files the agent reads -> cross-file verification
     if not repo_root:
         return detect_in_file(source_code, language, filename, config, client)
     max_chars = getattr(config, "max_context_chars", 6000) * 4
@@ -268,6 +277,8 @@ def detect_agentic(source_code: str, language: str, filename: str,
                     a = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     a = {}
+                if fn.get("name") == "read_file" and a.get("path"):
+                    explored.add(str(a.get("path")))
                 res = _exec_tool(fn.get("name", ""), a, repo_root)
                 messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                                  "content": res[:8000]})

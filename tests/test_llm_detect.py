@@ -100,3 +100,10 @@ def test_numbered_truncates():
     big = "\n".join(f"line{i}" for i in range(1000))
     out = _numbered(big, 200)
     assert "truncated" in out and len(out) < 400
+
+
+def test_cross_file_grounded():
+    from frame.sil.llm_detect import cross_file_grounded
+    assert cross_file_grounded("CWE-78", {"shell", "html"}) is True   # cmd sink in explored file
+    assert cross_file_grounded("CWE-89", {"html"}) is False           # no sql sink explored
+    assert cross_file_grounded("CWE-209", {"sql"}) is False           # CWE with no sink model

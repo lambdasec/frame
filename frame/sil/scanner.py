@@ -23,6 +23,7 @@ from typing import List, Dict, Optional, Any
 from pathlib import Path
 from enum import Enum
 import json
+import os
 import time
 
 import re
@@ -721,23 +722,22 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] After confidence filter: {len(result.vulnerabilities)} vulnerabilities")
 
-            # Step 7 (optional): neuro-symbolic LLM triage. The symbolic engine has
-            # already produced the findings; the LLM only drops confident false
-            # positives (precision up, recall preserved -- see frame/sil/llm_triage.py).
-            if self.llm_triage:
-                result.vulnerabilities = self._apply_llm_triage(
-                    result.vulnerabilities, source_code, filename)
-                if self.verbose:
-                    print(f"[Scanner] After LLM triage: {len(result.vulnerabilities)} vulnerabilities")
-
-            # Step 8 (optional): LLM DETECTION -- adds findings the symbolic layer
-            # missed (recall). Runs after triage so its positive detections are not
-            # re-filtered. Labeled as a separate tier (source_var="llm_detect").
+            # Step 7 (optional): LLM DETECTION -- adds findings the symbolic layer
+            # missed (recall). Runs BEFORE triage so that, when both are enabled,
+            # triage also filters the (noisier) detection findings.
             if self.llm_detect:
                 result.vulnerabilities = self._apply_llm_detect(
                     result.vulnerabilities, source_code, filename, program)
                 if self.verbose:
                     print(f"[Scanner] After LLM detect: {len(result.vulnerabilities)} vulnerabilities")
+
+            # Step 8 (optional): neuro-symbolic LLM triage -- drops confident false
+            # positives from ALL findings (symbolic + detection), raising precision.
+            if self.llm_triage:
+                result.vulnerabilities = self._apply_llm_triage(
+                    result.vulnerabilities, source_code, filename)
+                if self.verbose:
+                    print(f"[Scanner] After LLM triage: {len(result.vulnerabilities)} vulnerabilities")
 
         except Exception as e:
             result.errors.append(f"Scan error: {str(e)}")
@@ -781,7 +781,8 @@ class FrameScanner:
         stay "llm_detect". Additive per (file, CWE). Fail-safe on any error."""
         try:
             from frame.sil.llm_detect import (detect_agentic, is_detection_candidate,
-                                              collect_sinks, is_sink_grounded)
+                                              collect_sinks, is_sink_grounded,
+                                              cross_file_grounded)
             from frame.sil.llm_triage import TriageConfig, LLMTriageClient
         except ImportError:
             return vulns
@@ -799,12 +800,31 @@ class FrameScanner:
         # (cross-file flows), else falls back to single-file detection.
         new = detect_agentic(source_code, self.language, filename, config, self._llm_client)
         sinks = collect_sinks(program) if program is not None else []
+        # Cross-file grounding (v2): collect sink kinds from the files the agent
+        # explored, so a finding whose sink lives in another file can be verified.
+        explored_kinds = set()
+        repo_root = getattr(config, "repo_root", "")
+        explored = getattr(self._llm_client, "_explored", None) or set()
+        if repo_root and explored:
+            root = os.path.realpath(repo_root)
+            for rel in explored:
+                try:
+                    fp = os.path.realpath(os.path.join(root, str(rel).lstrip("/")))
+                    if fp.startswith(root) and os.path.isfile(fp):
+                        prog2 = self.frontend.translate(
+                            open(fp, encoding="utf-8", errors="replace").read(), rel)
+                        explored_kinds |= {k for _, k in collect_sinks(prog2)}
+                except Exception:
+                    continue
         added = []
         for v in new:
             if v.cwe_id in existing_cwes:   # don't duplicate a proven finding
                 continue
-            if sinks and is_sink_grounded(v.cwe_id, v.line, sinks):
-                # Grounded in a real sink Frame recognizes -> higher-confidence tier.
+            grounded = (sinks and is_sink_grounded(v.cwe_id, v.line, sinks)) \
+                or cross_file_grounded(v.cwe_id, explored_kinds)
+            if grounded:
+                # Grounded in a real sink Frame recognizes (same file or a file the
+                # agent explored) -> higher-confidence tier.
                 v.source_var = "llm_verified"
                 v.confidence = max(v.confidence, 0.9)
                 v.description = v.description.replace(
