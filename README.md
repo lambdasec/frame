@@ -45,6 +45,9 @@ frame scan app.py
 # Scan a directory
 frame scan src/ --pattern "**/*.py"
 
+# AI-assisted scan: LLM detection + triage (needs an LLM endpoint, see below)
+frame scan src/ --ai
+
 # CI/CD integration (SARIF output)
 frame scan src/ --format sarif -o results.sarif --fail-on high
 ```
