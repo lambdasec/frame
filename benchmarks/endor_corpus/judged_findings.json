@@ -2258,6 +2258,18 @@
   {
     "repo": "anonymous-github",
     "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "tool": "frame",
+    "path": "src/server/routes/token-auth.ts",
+    "line": 9,
+    "cwe": "CWE-943",
+    "status": "false_positive",
+    "judge_confidence": 0.95,
+    "rule_id": "",
+    "source": "claude_code:claude-sonnet-5"
+  },
+  {
+    "repo": "anonymous-github",
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
     "tool": "semgrep",
     "path": "healthcheck.js",
     "line": 12,
@@ -5498,6 +5510,18 @@
   {
     "repo": "juice-shop",
     "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "tool": "frame",
+    "path": "routes/fileServer.ts",
+    "line": 33,
+    "cwe": "CWE-22",
+    "status": "true_positive",
+    "judge_confidence": 0.9,
+    "rule_id": "",
+    "source": "claude_code:claude-sonnet-5"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
     "tool": "semgrep",
     "path": "data/static/codefixes/dbSchemaChallenge_1.ts",
     "line": 5,
@@ -8000,6 +8024,18 @@
     "cwe": "CWE-259",
     "status": "false_positive",
     "judge_confidence": 0.75,
+    "rule_id": "",
+    "source": "claude_code:claude-sonnet-5"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "tool": "frame",
+    "path": "src/main/resources/webgoat/static/js/libs/text.js",
+    "line": 131,
+    "cwe": "CWE-78",
+    "status": "false_positive",
+    "judge_confidence": 0.98,
     "rule_id": "",
     "source": "claude_code:claude-sonnet-5"
   },

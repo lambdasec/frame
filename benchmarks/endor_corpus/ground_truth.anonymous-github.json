@@ -2442,5 +2442,18 @@
     "judge_confidence": 0.75,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-943",
+    "path": "src/server/routes/token-auth.ts",
+    "line": 9,
+    "description": "This function only computes a SHA-256 hash of a token string with no interaction with any query language, database, or data-query logic, so CWE-943 (injection in data query logic) does not apply \u2014 the finding is a mis-classification.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "false_positive",
+    "judge_confidence": 0.95,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]

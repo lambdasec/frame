@@ -1051,5 +1051,18 @@
     "judge_confidence": 0.75,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-78",
+    "path": "src/main/resources/webgoat/static/js/libs/text.js",
+    "line": 131,
+    "description": "This is a client-side regex match against a URL string to determine protocol/host/port for an XHR same-origin check; there is no process/shell invocation anywhere in this code, so CWE-78 (OS Command Injection) is a mis-classification.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "false_positive",
+    "judge_confidence": 0.98,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]

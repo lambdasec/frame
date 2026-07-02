@@ -1103,5 +1103,18 @@
     "judge_confidence": 0.9,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-22",
+    "path": "routes/fileServer.ts",
+    "line": 33,
+    "description": "The `file` parameter is only checked for an allowlisted extension (or an exact filename) and has null bytes stripped, but no path-traversal sanitization (e.g. stripping `../` or rejecting slashes/backslashes) is applied before `path.resolve('ftp/', file)`, allowing a payload like `../package.json\\x00.md` to escape the ftp directory and read arbitrary files \u2014 this is the classic poison-null-byte path traversal (this is Juice Shop's intentionally vulnerable fileServer route).",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.9,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]

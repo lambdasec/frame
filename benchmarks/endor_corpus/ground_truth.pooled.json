@@ -644,6 +644,21 @@
   {
     "repo": "juice-shop",
     "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-22",
+    "path": "routes/fileServer.ts",
+    "line": 33,
+    "description": "The `file` parameter is only checked for an allowlisted extension (or an exact filename) and has null bytes stripped, but no path-traversal sanitization (e.g. stripping `../` or rejecting slashes/backslashes) is applied before `path.resolve('ftp/', file)`, allowing a payload like `../package.json\\x0",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
     "cwe": "CWE-89",
     "path": "data/static/codefixes/dbSchemaChallenge_3.ts",
     "line": 11,

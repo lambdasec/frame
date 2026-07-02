@@ -2,7 +2,7 @@
   "by_repo": {
     "anonymous-github": {
       "confirmed_vulns": 8,
-      "frame:false_positive": 179,
+      "frame:false_positive": 180,
       "frame:error": 5,
       "frame:true_positive": 3,
       "frame:uncertain": 1,
@@ -17,9 +17,9 @@
       "semgrep:false_positive": 32
     },
     "juice-shop": {
-      "confirmed_vulns": 51,
+      "confirmed_vulns": 52,
       "frame:false_positive": 56,
-      "frame:true_positive": 29,
+      "frame:true_positive": 30,
       "semgrep:true_positive": 41,
       "semgrep:false_positive": 19
     },
@@ -33,7 +33,7 @@
     },
     "webgoat": {
       "confirmed_vulns": 52,
-      "frame:false_positive": 54,
+      "frame:false_positive": 55,
       "frame:error": 1,
       "frame:true_positive": 26,
       "semgrep:false_positive": 55,
@@ -44,7 +44,7 @@
   "by_cwe": {
     "CWE-89": 23,
     "CWE-943": 16,
-    "CWE-22": 11,
+    "CWE-22": 12,
     "CWE-489": 10,
     "CWE-352": 7,
     "CWE-79": 6,
@@ -73,7 +73,7 @@
     "CWE-918": 1
   },
   "totals": {
-    "confirmed_vulns": 127
+    "confirmed_vulns": 128
   },
   "note": "Model-adjudicated (Claude Sonnet 5), pooled union of Frame + Semgrep true positives. NOT a complete labeling: supports recall of known vulns, not absolute precision. Validate via BenchmarkJava agreement."
 }
