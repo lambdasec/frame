@@ -44,7 +44,12 @@ _CANDIDATE_RE = re.compile(
     r"getHeader|getCookies|res\.send|sendFile|sendRedirect|redirect|execute|"
     r"executeQuery|createStatement|prepareStatement|Runtime\.|ProcessBuilder|"
     r"readFile|writeFile|ObjectInputStream|Cipher|MessageDigest|eval\(|exec\(|"
-    r"\.query\(|\.find\(|\.findOne\(|new URL\(|fetch\(|axios|render|template)\b",
+    r"\.query\(|\.find\(|\.findOne\(|new URL\(|fetch\(|axios|render|template|"
+    # C# / ASP.NET: request binding, DB, process, file, view, redirect, deserialize
+    r"FromQuery|FromBody|FromRoute|FromForm|HttpContext|IActionResult|ActionResult|"
+    r"SqlCommand|ExecuteReader|ExecuteNonQuery|ExecuteScalar|DbCommand|"
+    r"Process\.Start|File\.Read|File\.Write|Html\.Raw|Response\.Redirect|"
+    r"Deserialize|HttpClient|WebClient|Request\.Query|Request\.Form)\b",
     re.I)
 
 

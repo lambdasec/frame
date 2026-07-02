@@ -49,10 +49,14 @@ repos:
       - "**/*.ts"
       - "**/*.jsx"
       - "**/*.tsx"
+      - "**/*.cs"
     unsupported_languages: []
     notes: >-
-      Contrast Security intentionally-vulnerable demo application. Scanned for
-      Java and JS/TS portions.
+      Contrast Security intentionally-vulnerable ASP.NET demo application. The
+      server-side app logic is C# (.cs) -- Frame parses it (frontend + specs) but
+      the symbolic C# taint specs surface nothing here, and Semgrep also produced
+      zero C# findings, so the LLM detection layer (language-agnostic) is the
+      realistic path to coverage. Java/JS/TS + C# are scanned.
 
   - name: doublestar
     display_name: doublestar
