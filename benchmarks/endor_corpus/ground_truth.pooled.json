@@ -1635,6 +1635,141 @@
   {
     "repo": "webgoat",
     "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-209",
+    "path": "src/main/java/org/owasp/webgoat/container/AjaxAuthenticationEntryPoint.java",
+    "line": 26,
+    "description": "authException.getMessage() is written directly into the HTTP error response without sanitization, so any detail contained in the authentication exception (e.g., specifics about why login failed) is exposed to the client. While Spring Security's built-in exception messages are often generic, this pat",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/container/users/UserService.java",
+    "line": 78,
+    "description": "The username is concatenated directly into a DDL SQL string executed via jdbcTemplate.execute() with no parameterization, quoting/escaping, or visible input validation, allowing SQL injection if a username contains malicious characters like embedded quotes or SQL statements.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/container/lessons/LessonConnectionInvocationHandler.java",
+    "line": 31,
+    "description": "The authenticated user's username is concatenated directly into a SQL string and executed via Statement.execute() without parameterization or escaping, so a username containing a double-quote or SQL metacharacters (allowed at registration) could break out of the SET SCHEMA statement and inject arbit",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/claimmisuse/JWTHeaderKIDEndpoint.java",
+    "line": 76,
+    "description": "The 'kid' JWT header value is attacker-controlled (JWT headers are not signed/protected data) and is concatenated directly into a SQL query string without parameterization, allowing SQL injection via a crafted kid value like ' OR '1'='1.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-209",
+    "path": "src/main/java/org/owasp/webgoat/lessons/securitymisconfiguration/VerboseErrorTask.java",
+    "line": 32,
+    "description": "The endpoint returns a hardcoded stack-trace-like string containing environment details, DB credentials, and an API token in plaintext to any caller of an unauthenticated GET endpoint, which is a textbook instance of verbose error/information exposure (CWE-209) regardless of it being a WebGoat train",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-200",
+    "path": "src/main/java/org/owasp/webgoat/lessons/securitymisconfiguration/VerboseErrorTask.java",
+    "line": 50,
+    "description": "fetchConfig gates sensitive debug/config data behind equality with a hardcoded LEAKED_TOKEN constant that is itself exposed via the sibling stack-trace endpoint, so any caller can retrieve internal debug/logging configuration by replaying that leaked value \u2014 a genuine information-exposure pattern, c",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/introduction/SqlInjectionLesson5.java",
+    "line": 65,
+    "description": "The `query` parameter comes directly from an unauthenticated POST endpoint and is passed unsanitized/unparameterized into Statement.executeQuery(), allowing arbitrary SQL injection; this is WebGoat's intentionally vulnerable lesson demonstrating exactly this flaw.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-22",
+    "path": "src/main/java/org/owasp/webgoat/lessons/pathtraversal/ProfileUploadRemoveUserInput.java",
+    "line": 41,
+    "description": "The handler passes the raw, attacker-controlled file.getOriginalFilename() directly into execute() with no sanitization or path validation, matching the classic path-traversal pattern (this class name explicitly signals it omits user-input filtering); if execute() uses this name to construct a files",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-22",
+    "path": "src/main/java/org/owasp/webgoat/lessons/pathtraversal/ProfileUploadBase.java",
+    "line": 51,
+    "description": "fullName is user-controlled and passed directly into new File(uploadDirectory, fullName) with no sanitization of path traversal sequences (e.g. '../') visible before use; only emptiness is checked. This matches WebGoat's intentionally vulnerable path-traversal lesson, where a crafted fullName like '",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
     "cwe": "CWE-352",
     "path": "src/main/java/org/owasp/webgoat/container/service/LabelDebugService.java",
     "line": 48,
