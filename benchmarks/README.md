@@ -14,6 +14,7 @@ Comprehensive benchmark infrastructure for evaluating Frame against industry-sta
   - [JavaScript (SecBench.js)](#javascript-secbenchjs-benchmark)
   - [C/C++ (NIST Juliet)](#cc-nist-juliet-benchmark)
   - [C# (IssueBlot.NET)](#c-issueblotnet-benchmark)
+- [Real-World Benchmark (Endor Labs Corpus)](#real-world-benchmark-endor-labs-corpus)
 - [Logic Solver Benchmarks](#logic-solver-benchmarks)
   - [Separation Logic (SL-COMP)](#separation-logic-sl-comp)
   - [String Theory (QF_S)](#string-theory-qf_s)
@@ -67,6 +68,22 @@ python -m benchmarks run --all
 | JavaScript | SecBench.js | 300 | 82.0% | 81.0% | **43.0%** | +33 pts |
 | C/C++ | NIST Juliet | 1,000 | 89.9% | 60.5% | **54.4%** | +69.3 pts |
 | C# | IssueBlot.NET | 171 | 84.7% | 80.3% | **80.3%** | +66.1 pts |
+
+<sub>Synthetic suites. Real-world numbers are below.</sub>
+
+### Real-World Benchmark (Endor Labs Corpus)
+
+5 production applications, Sonnet-5-judged pooled ground truth (193 vulns). Frame's
+full AI-SAST mode = sound symbolic core + **local-LLM detection + triage**:
+
+| Scanner | Recall | Precision |
+|---------|:------:|:---------:|
+| Frame — symbolic core only | 0.37 | 0.45 |
+| **Frame — full AI SAST** | **0.71** | **~0.5** |
+| Semgrep OSS (`p/default`) | 0.52 | 0.40 |
+| Endor AI SAST (*published, different GT*) | 0.435 | F1 0.465 |
+
+See [Real-World Benchmark (Endor Labs Corpus)](#real-world-benchmark-endor-labs-corpus) below and [`endor_corpus/`](endor_corpus/README.md) for the full scoreboard, LLM setup, and honest caveats.
 
 ### Logic Solver Benchmarks
 
@@ -298,6 +315,48 @@ python -m benchmarks run --division issueblot
 ```
 
 ---
+
+## Real-World Benchmark (Endor Labs Corpus)
+
+Synthetic suites (above) can overstate real-world quality — Endor Labs' central
+thesis. This benchmark scores Frame on the **5 real-world applications** in
+[Endor Labs' public AI-SAST corpus](https://www.endorlabs.com/learn/ai-sast-benchmark-2x-more-real-vulnerabilities)
+(`anonymous-github`, `demo-netflicks`, `juice-shop`, `webgoat`, `shopizer`).
+
+Real apps ship no labels, so ground truth is **pooled**: run Frame (symbolic **and**
+its LLM detection layer) **and** Semgrep OSS, adjudicate every finding with an LLM
+judge (Claude Sonnet 5), and keep the union of confirmed true positives — **193
+vulnerabilities**.
+
+| Scanner | Recall | Precision | Notes |
+|---------|:------:|:---------:|-------|
+| Frame — symbolic core only | 0.37 | 0.45 | sound taint + separation logic, no LLM |
+| **Frame — full AI SAST** (symbolic + LLM detect + triage) | **0.71** | **~0.46–0.51** | recommended real-world mode; runs on-device |
+| Semgrep OSS (`p/default`) | 0.52 | 0.40 | mature pattern scanner, no LLM layer |
+| Endor AI SAST (*published*) | 0.435¹ | F1 0.465¹ | **context only — different ground truth** |
+
+¹ Endor's numbers are on **their own** larger, many-tool + manually-reviewed ground
+truth — a different denominator. Quoted for context, **not** directly comparable.
+
+**What the LLM layer adds.** The symbolic core alone finds 0.37 recall; the
+local-LLM detection layer recovers **~65 real, Sonnet-confirmed vulnerabilities that
+both Frame's symbolic engine and Semgrep miss entirely** — across Java, JS/TS, and
+C# (including cross-file flows via agentic tool use, and 5 ASP.NET C# vulns in
+`demo-netflicks` where symbolic C# specs *and* Semgrep both scored zero). Triage
+then lifts detection precision **0.48 → 0.59** while keeping 90% of true positives.
+
+**Honest caveats.** The pooled ground truth is **enriched by Frame's own LLM
+detection** (~65 of 193 vulns) — a fair AI-SAST-vs-AI-SAST comparison would give
+Semgrep an LLM layer too, so the *magnitude* of Frame's recall lead is one-sided.
+Agentic detection is noisier than single-file; labels are model-adjudicated (~0.89
+agreement vs BenchmarkJava's real labels). Full detail, per-repo breakdown, LLM
+setup, and reproduction: [`endor_corpus/README.md`](endor_corpus/README.md).
+
+```bash
+# reproduce (needs an OpenAI-compatible endpoint for the LLM layer; see endor_corpus/README.md)
+python -m benchmarks.endor_corpus.measure_frame --workspace /tmp/endor-corpus \
+  --llm-detect --llm-triage
+```
 
 ## Logic Solver Benchmarks
 

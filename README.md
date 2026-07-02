@@ -1,10 +1,10 @@
 <p align="center">
   <img src="assets/logo.svg" alt="Frame" width="400">
   <p align="center">
-    <strong>Static Analysis for Memory Safety and Security</strong>
+    <strong>Neuro-Symbolic AI SAST — Separation Logic + Local LLM</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1520%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1592%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
@@ -12,7 +12,7 @@
 
 ---
 
-Frame is a static analysis tool powered by **separation logic** that finds security vulnerabilities and memory safety bugs with high precision. It supports **5 languages** and achieves **80%+ OWASP scores** - significantly outperforming tools like Semgrep and Bandit.
+Frame is a **neuro-symbolic AI SAST**: a sound static-analysis core — **taint analysis + separation-logic verification** (Z3) — paired with an **optional local-LLM layer** that detects vulnerabilities the symbolic engine misses and triages false positives. It supports **5 languages** and achieves **80%+ OWASP scores** (well ahead of Semgrep and Bandit). With its local-LLM layer enabled, Frame also finds real-world vulnerabilities that *both* a symbolic engine and a mature pattern scanner miss — **entirely on-device**, and every LLM finding is grounded and tiered, never blurred with the sound results.
 
 ## Highlights
 
@@ -148,6 +148,32 @@ Vulnerability Report
 - **Separation logic** formally verifies memory safety properties
 - **Z3 verification** eliminates false positives by proving vulnerability reachability
 
+## AI-Assisted Detection & Triage (optional, local)
+
+Frame's symbolic core is sound and precise, but structural analysis can't reach everything — context-dependent flows, unknown frameworks, business logic. Frame adds an **optional neuro-symbolic layer** driven by a local LLM:
+
+- **Detect** (recall) — find vulnerabilities the symbolic engine misses, with **agentic cross-file exploration**: the model calls `read_file`/`grep` tools over your repo to trace flows across files.
+- **Triage** (precision) — drop confident false positives from the findings.
+- **Verify** — each LLM finding is checked against Frame's *own* sink model; one grounded in a recognized sink (cross-file included) is promoted to a higher-confidence tier (`llm_verified`). Sound symbolic results and LLM results are never conflated.
+
+On the **[Endor Labs public AI-SAST corpus](benchmarks/endor_corpus/README.md)** (5 real-world apps, Sonnet-5-judged pooled ground truth), Frame's full AI-SAST mode reaches **0.71 recall at ~0.5 precision vs Semgrep's 0.52 / 0.40** — recovering **~65 real vulnerabilities** (Java, JS/TS, and C#) that both Frame's symbolic engine and Semgrep miss. (See the benchmark README for the full scoreboard and honest caveats — notably that the pooled ground truth is enriched by Frame's own LLM detection.)
+
+**Works with any OpenAI-compatible endpoint** — cloud or local. For a fully private, on-device setup on Apple Silicon we used an MLX server (**mlx-optiq**) with `mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit` (supports tool-calling + >16k context). Both layers are **OFF by default** — the sound symbolic core is the default.
+
+```bash
+export FRAME_LLM_BASE_URL=http://localhost:PORT/v1
+export FRAME_LLM_API_KEY=                                  # empty for local servers
+export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+export FRAME_LLM_REPO_ROOT=/path/to/repo                   # enables agentic cross-file tools
+```
+
+```python
+from frame.sil import FrameScanner
+# symbolic + LLM detection + triage (reads the FRAME_LLM_* env above)
+scanner = FrameScanner(language="java", llm_detect=True, llm_triage=True)
+result = scanner.scan_file("Controller.java")
+```
+
 ## CI/CD Integration
 
 ```yaml
@@ -218,6 +244,13 @@ Frame is validated against industry-standard benchmark suites:
 python -m benchmarks run --curated  # Run all benchmarks
 ```
 
+**Real-world evaluation.** Beyond synthetic suites, Frame is scored on the
+[**Endor Labs public AI-SAST corpus**](benchmarks/endor_corpus/README.md) — 5
+production applications, Sonnet-5-judged pooled ground truth. With its local-LLM
+layer, Frame reaches **0.71 recall / ~0.5 precision vs Semgrep's 0.52 / 0.40**,
+finding ~65 real vulnerabilities across Java, JS/TS, and C# that both a symbolic
+engine and Semgrep miss. (Read the benchmark README for the honest caveats.)
+
 See [benchmarks/README.md](benchmarks/README.md) for detailed results, methodology, and tool comparisons.
 
 ## Project Structure
@@ -228,9 +261,11 @@ frame/
   encoding/       # Z3 SMT encoding
   checking/       # Entailment checker
   sil/            # Security scanner
-    scanner.py    # Main interface
+    scanner.py    # Main interface (symbolic + optional LLM layers)
     frontends/    # Language parsers (Python, Java, JS, C, C#)
     analyzers/    # Taint & memory analysis
+    llm_detect.py # Optional LLM detection (recall) + agentic cross-file tools
+    llm_triage.py # Optional LLM triage (precision) + OpenAI-compatible client
   cli.py          # Command-line interface
 ```
 

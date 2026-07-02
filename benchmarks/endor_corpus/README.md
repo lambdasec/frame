@@ -29,21 +29,108 @@ real-world applications** in it, and deliberately excludes the other 3:
 So the benchmark proper is the **5 real-world apps**: `anonymous-github`,
 `demo-netflicks`, `juice-shop`, `webgoat`, `shopizer`.
 
+## Results: Frame (neuro-symbolic AI SAST) vs Semgrep
+
+Frame is no longer just a separation-logic solver — it pairs its **sound symbolic
+core** with an optional **local-LLM layer** for *detection* (recall) and *triage*
+(precision). All numbers are on the pooled ground truth (**193 judge-confirmed
+vulnerabilities** across the 5 real-world apps).
+
+| Scanner | Recall | Precision | Notes |
+| --- | --- | --- | --- |
+| Frame — symbolic core only | 0.37 | 0.45 | sound taint + separation logic, no LLM |
+| **Frame — full AI SAST** (symbolic + LLM detect + triage) | **0.71** | **~0.46–0.51** | recommended real-world mode; runs fully on-device |
+| Semgrep OSS (`p/default`) | 0.52 | 0.40 | mature pattern scanner, no LLM layer |
+| Endor AI SAST (*published*) | 0.435¹ | F1 0.465¹ | **context only — different ground truth** |
+
+¹ Endor's numbers are on **their own** much larger, many-tool + manually-reviewed
+ground truth — a different denominator. Quoted for context, **not** comparable to
+this harness. See [Endor published numbers](#endor-published-numbers-for-context-only).
+
+**What the LLM layer adds.** The symbolic core alone finds 0.37 recall. The
+local-LLM detection layer recovers **~65 real, Sonnet-confirmed vulnerabilities
+that both Frame's symbolic engine *and* Semgrep miss entirely** — including
+cross-file flows (via agentic tool use) and, on the C# ASP.NET app
+(`demo-netflicks`), 5 vulns where Frame's symbolic C# specs *and* Semgrep both
+scored zero. Triage then filters ~40% of the detection false positives (validated:
+detection precision **0.48 → 0.59**, keeping **90%** of the true positives).
+
+**Every LLM finding is tiered and grounded, never blurred with proven results.**
+Symbolic findings are "proven"; LLM findings carry a separate `llm_detect` /
+`llm_verified` tier — the latter meaning the claimed sink is confirmed in Frame's
+own sink model (cross-file included). Soundness and explainability survive.
+
+### Honest caveats (please read)
+
+- **Asymmetric ground truth.** The pooled GT is *enriched by Frame's own LLM
+  detection* — ~65 of its 193 vulns were surfaced by Frame's LLM layer, which
+  Semgrep (as shipped) has no mechanism to find. A fair *AI-SAST-vs-AI-SAST*
+  comparison would give Semgrep an LLM layer too. The vulns are real, but the
+  **magnitude** of Frame's recall lead is one-sided: Semgrep's recall is measured
+  against a denominator Frame helped grow.
+- **Agentic detection is noisier** than single-file (0.43–0.56 raw precision);
+  verification + triage recover it.
+- **Labels are model-adjudicated** (Claude Sonnet 5) — a lower bound, ~0.89
+  agreement vs BenchmarkJava's real labels, not exhaustive human ground truth.
+- **`demo-netflicks` was a weak data point for both tools** — its real vulns are
+  C#, which both scanners' traditional engines missed — until the LLM layer covered it.
+
+## Using the local-LLM layer
+
+Frame's detection/triage talk to any **OpenAI-compatible** `/v1/chat/completions`
+endpoint — cloud or local. For a fully **on-device, private** setup on Apple
+Silicon we used an MLX-based server (**mlx-optiq**), which supports OpenAI
+tool-calling and long (>16k) context — both required for agentic cross-file
+detection. The model **`mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`** worked well.
+
+```bash
+export FRAME_LLM_BASE_URL=http://localhost:PORT/v1
+export FRAME_LLM_API_KEY=                                   # empty for local servers
+export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+export FRAME_LLM_REPO_ROOT=/path/to/repo                    # enables agentic cross-file tools
+```
+
+Enable the layers on the scanner (both OFF by default — the sound symbolic core is
+the default):
+
+```python
+from frame.sil import FrameScanner
+sc = FrameScanner(language="java", llm_detect=True, llm_triage=True)
+res = sc.scan_file("Controller.java")
+```
+
+…or on this benchmark:
+
+```bash
+python -m benchmarks.endor_corpus.measure_frame \
+  --workspace /tmp/endor-corpus --llm-detect --llm-triage
+```
+
+| Env var | Meaning |
+| --- | --- |
+| `FRAME_LLM_BASE_URL` | OpenAI-compatible base, e.g. `http://localhost:PORT/v1` |
+| `FRAME_LLM_MODEL` | model id (we used `mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`) |
+| `FRAME_LLM_API_KEY` | API key; leave empty for local servers |
+| `FRAME_LLM_REPO_ROOT` | repo root → enables agentic `read_file`/`grep` cross-file detection |
+| `FRAME_LLM_MAX_TOOL_STEPS` | tool-call rounds before forcing a verdict (default 6) |
+| `FRAME_LLM_DROP_THRESHOLD` | triage confidence needed to drop a finding (default 0.75) |
+
 ## Ground truth (pooled, not complete)
 
 Real-world repos ship no vulnerability labels, so this benchmark builds a
-**pooled ground truth**: it runs Frame **and** Semgrep OSS, then adjudicates every
-finding with an LLM judge (Claude Sonnet 5, headless via `claude -p`), and keeps
-the union of judge-confirmed true positives —
-[`ground_truth.pooled.json`](ground_truth.pooled.json) (**106 confirmed
-vulnerabilities** across the 5 apps). See
+**pooled ground truth**: it runs Frame (symbolic **and** its LLM detection layer)
+**and** Semgrep OSS, then adjudicates every finding with an LLM judge (Claude
+Sonnet 5, headless via `claude -p`), and keeps the union of judge-confirmed true
+positives — [`ground_truth.pooled.json`](ground_truth.pooled.json) (**193 confirmed
+vulnerabilities** across the 5 apps; grown from an initial 106 as Frame's LLM
+detection surfaced vulns neither tool's traditional engine found). See
 [Pooled ground truth](#pooled-ground-truth-reusable).
 
 > ⚠️ **This is a lower bound, not complete ground truth.** It contains only vulns
-> that Frame *or* Semgrep found and the judge confirmed. Vulnerabilities **both
-> tools missed are absent**, so the true count is ≥ 106 (likely well above it —
-> only 4 of the 106 were found by *both* tools). A finding *absent* from the set is
-> therefore **not** necessarily a false positive. The labels are also
+> that Frame *or* Semgrep found and the judge confirmed. Vulnerabilities **all
+> engines missed are absent**, so the true count is ≥ 193 (the tools overlap on
+> very few — Frame's LLM layer and Semgrep are largely complementary). A finding
+> *absent* from the set is therefore **not** necessarily a false positive. The labels are also
 > **model-adjudicated**, not human-verified (validated at ~0.89 agreement against
 > BenchmarkJava's real labels). Endor closed this gap by pooling *many* tools plus
 > manual review; this harness uses two tools + an LLM judge.
