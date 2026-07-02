@@ -735,7 +735,7 @@ class FrameScanner:
             # re-filtered. Labeled as a separate tier (source_var="llm_detect").
             if self.llm_detect:
                 result.vulnerabilities = self._apply_llm_detect(
-                    result.vulnerabilities, source_code, filename)
+                    result.vulnerabilities, source_code, filename, program)
                 if self.verbose:
                     print(f"[Scanner] After LLM detect: {len(result.vulnerabilities)} vulnerabilities")
 
@@ -773,12 +773,15 @@ class FrameScanner:
             vulns, source_code, self.language, filename, config, self._llm_client)
         return kept
 
-    def _apply_llm_detect(self, vulns, source_code: str, filename: str):
+    def _apply_llm_detect(self, vulns, source_code: str, filename: str, program=None):
         """LLM detection pass: add findings the symbolic layer missed, on
-        security-relevant files. Additive per (file, CWE) so it doesn't duplicate
-        symbolic findings. Fail-safe: any error returns findings unchanged."""
+        security-relevant files. Each LLM finding is symbolically VERIFIED against
+        Frame's own sink model -- one grounded in a recognized dangerous sink is
+        promoted to a higher-confidence tier (source_var="llm_verified"); the rest
+        stay "llm_detect". Additive per (file, CWE). Fail-safe on any error."""
         try:
-            from frame.sil.llm_detect import detect_in_file, is_detection_candidate
+            from frame.sil.llm_detect import (detect_in_file, is_detection_candidate,
+                                              collect_sinks, is_sink_grounded)
             from frame.sil.llm_triage import TriageConfig, LLMTriageClient
         except ImportError:
             return vulns
@@ -793,9 +796,18 @@ class FrameScanner:
             self._llm_client = LLMTriageClient(config)
         existing_cwes = {v.cwe_id for v in vulns}
         new = detect_in_file(source_code, self.language, filename, config, self._llm_client)
-        # Additive only: keep LLM findings whose CWE the symbolic layer didn't
-        # already report in this file (avoid duplicating proven findings).
-        added = [v for v in new if v.cwe_id not in existing_cwes]
+        sinks = collect_sinks(program) if program is not None else []
+        added = []
+        for v in new:
+            if v.cwe_id in existing_cwes:   # don't duplicate a proven finding
+                continue
+            if sinks and is_sink_grounded(v.cwe_id, v.line, sinks):
+                # Grounded in a real sink Frame recognizes -> higher-confidence tier.
+                v.source_var = "llm_verified"
+                v.confidence = max(v.confidence, 0.9)
+                v.description = v.description.replace(
+                    "[LLM-detected]", "[LLM-detected, sink-verified]")
+            added.append(v)
         return list(vulns) + added
 
     def scan_file(self, filepath: str) -> ScanResult:

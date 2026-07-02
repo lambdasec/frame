@@ -46,6 +46,43 @@ _CANDIDATE_RE = re.compile(
     re.I)
 
 
+# Which symbolic sink kinds ground each CWE. If Frame's SIL has a sink of the
+# matching kind at the LLM's claimed line, the finding is grounded in a real
+# dangerous operation Frame recognizes (it just couldn't connect the flow).
+_CWE_SINK_KINDS = {
+    "CWE-89": {"sql", "orm"}, "CWE-943": {"nosql"}, "CWE-79": {"html", "xss"},
+    "CWE-78": {"shell", "command"}, "CWE-22": {"path", "filesystem"},
+    "CWE-73": {"path", "filesystem"}, "CWE-918": {"ssrf"},
+    "CWE-94": {"eval"}, "CWE-95": {"eval"}, "CWE-91": {"xml_injection"},
+    "CWE-502": {"deserialize", "deserialize_unsafe"}, "CWE-611": {"xml"},
+    "CWE-90": {"ldap"}, "CWE-643": {"xpath"}, "CWE-601": {"redirect"},
+    "CWE-113": {"header"}, "CWE-117": {"log"}, "CWE-1336": {"template"},
+}
+
+
+def collect_sinks(program) -> list:
+    """[(line, sink_kind_value)] for every TaintSink in a translated program."""
+    sinks = []
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for instr in getattr(node, "instrs", []):
+                if type(instr).__name__ == "TaintSink":
+                    loc = getattr(instr, "loc", None)
+                    kind = getattr(getattr(instr, "kind", None), "value", None)
+                    if loc is not None and kind is not None:
+                        sinks.append((loc.line, kind))
+    return sinks
+
+
+def is_sink_grounded(cwe_id: Optional[str], line: Optional[int],
+                     sinks: list, window: int = 3) -> bool:
+    """True if Frame's SIL has a matching-kind sink near the claimed line."""
+    kinds = _CWE_SINK_KINDS.get(cwe_id)
+    if not kinds:
+        return False
+    return any(abs((line or 0) - sl) <= window and sk in kinds for sl, sk in sinks)
+
+
 def is_detection_candidate(source_code: str, has_symbolic_findings: bool) -> bool:
     """Only analyze security-relevant files (or ones the symbolic pass flagged)."""
     if has_symbolic_findings:

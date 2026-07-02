@@ -55,6 +55,16 @@ def test_candidate_selection():
     assert is_detection_candidate("const total = a + b;", True) is True
 
 
+def test_sink_grounding():
+    from frame.sil.llm_detect import is_sink_grounded
+    sinks = [(5, "sql"), (20, "html")]
+    assert is_sink_grounded("CWE-89", 5, sinks) is True          # sql sink at line
+    assert is_sink_grounded("CWE-89", 6, sinks, window=3) is True  # within window
+    assert is_sink_grounded("CWE-89", 50, sinks) is False        # no sink near
+    assert is_sink_grounded("CWE-79", 5, sinks) is False         # wrong kind at line
+    assert is_sink_grounded("CWE-209", 5, sinks) is False        # CWE with no sink model
+
+
 def test_numbered_truncates():
     big = "\n".join(f"line{i}" for i in range(1000))
     out = _numbered(big, 200)
