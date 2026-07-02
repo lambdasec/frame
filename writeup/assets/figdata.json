@@ -1,0 +1,92 @@
+{
+  "scoreboard": {
+    "Frame (symbolic)": {
+      "recall": 0.37,
+      "precision": 0.45,
+      "f1": 0.41
+    },
+    "Frame (+detect)": {
+      "recall": 0.71,
+      "precision": 0.46,
+      "f1": 0.56
+    },
+    "Frame (+detect+triage)": {
+      "recall": 0.67,
+      "precision": 0.51,
+      "f1": 0.58
+    },
+    "Semgrep OSS": {
+      "recall": 0.52,
+      "precision": 0.4,
+      "f1": 0.45
+    },
+    "Endor (diff GT)": {
+      "recall": 0.44,
+      "precision": 0.5,
+      "f1": 0.47
+    }
+  },
+  "ablation": {
+    "labels": [
+      "symbolic",
+      "+detection",
+      "+detection\n+triage"
+    ],
+    "recall": [
+      0.37,
+      0.71,
+      0.67
+    ],
+    "precision": [
+      0.45,
+      0.46,
+      0.51
+    ],
+    "f1": [
+      0.41,
+      0.56,
+      0.58
+    ]
+  },
+  "triage_crosstab": {
+    "tp_kept": 27,
+    "tp_dropped": 3,
+    "fp_kept": 19,
+    "fp_dropped": 13,
+    "precision_before": 0.48,
+    "precision_after": 0.59
+  },
+  "verification": {
+    "verified_tp": 4,
+    "verified_fp": 0,
+    "unverified_tp": 5,
+    "unverified_fp": 4
+  },
+  "per_repo": {
+    "webgoat": {
+      "gt": 73,
+      "symbolic_tp": 28,
+      "llm_detect_tp": 23
+    },
+    "juice-shop": {
+      "gt": 72,
+      "symbolic_tp": 38,
+      "llm_detect_tp": 20
+    },
+    "shopizer": {
+      "gt": 29,
+      "symbolic_tp": 1,
+      "llm_detect_tp": 16
+    },
+    "anonymous-github": {
+      "gt": 12,
+      "symbolic_tp": 5,
+      "llm_detect_tp": 4
+    },
+    "demo-netflicks": {
+      "gt": 7,
+      "symbolic_tp": 0,
+      "llm_detect_tp": 5
+    }
+  }
+}

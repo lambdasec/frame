@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 590" font-family="DejaVu Sans, Segoe UI, sans-serif" font-size="13">
+  <defs>
+    <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#555"/>
+    </marker>
+    <marker id="arwd" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#888"/>
+    </marker>
+    <style>
+      .box{rx:8;ry:8;stroke-width:1.2;}
+      .t{text-anchor:middle;fill:#1a1a1a;}
+      .sub{text-anchor:middle;fill:#33475b;font-size:11px;}
+      .grey{fill:#eef0f2;stroke:#c2c8ce;}
+      .blue{fill:#dbe7f4;stroke:#2f6db3;}
+      .bluef{fill:#c7dbf0;stroke:#2f6db3;}
+      .green{fill:#dcece0;stroke:#5aa469;}
+      .greenf{fill:#cbe3d2;stroke:#5aa469;}
+      .amber{fill:#f6e6d2;stroke:#d98c3f;}
+      .dark{fill:#2f3a45;stroke:#2f3a45;}
+      .edge{stroke:#555;stroke-width:1.4;fill:none;}
+      .dash{stroke:#888;stroke-width:1.3;fill:none;stroke-dasharray:5 4;}
+      .lbl{fill:#666;font-size:10.5px;font-style:italic;}
+    </style>
+  </defs>
+
+  <!-- top pipeline -->
+  <rect class="box grey" x="350" y="16" width="200" height="36"/>
+  <text class="t" x="450" y="39">Source code</text>
+  <rect class="box grey" x="350" y="72" width="200" height="36"/>
+  <text class="t" x="450" y="95">Language frontend</text>
+  <rect class="box grey" x="350" y="128" width="200" height="36"/>
+  <text class="t" x="450" y="151">SIL (intermediate representation)</text>
+  <path class="edge" d="M450,52 L450,72" marker-end="url(#arw)"/>
+  <path class="edge" d="M450,108 L450,128" marker-end="url(#arw)"/>
+
+  <!-- branch from SIL -->
+  <path class="edge" d="M400,164 C300,190 250,190 210,206" marker-end="url(#arw)"/>
+  <path class="edge" d="M500,164 C640,190 690,190 710,206" marker-end="url(#arw)"/>
+
+  <!-- left: symbolic branch -->
+  <rect class="box blue" x="60" y="208" width="300" height="64"/>
+  <text class="t" x="210" y="234">Symbolic core  (sound)</text>
+  <text class="sub" x="210" y="255">taint analysis · separation logic · Z3</text>
+  <rect class="box bluef" x="120" y="322" width="180" height="40"/>
+  <text class="t" x="210" y="347">Proven findings</text>
+  <path class="edge" d="M210,272 L210,322" marker-end="url(#arw)"/>
+
+  <!-- right: LLM detection branch -->
+  <rect class="box green" x="540" y="208" width="320" height="64"/>
+  <text class="t" x="700" y="234">LLM detection</text>
+  <text class="sub" x="700" y="255">long-context + agentic (read_file / grep)</text>
+  <rect class="box greenf" x="565" y="322" width="270" height="54"/>
+  <text class="t" x="700" y="345">Symbolic verification</text>
+  <text class="sub" x="700" y="364">sink-grounding, cross-file</text>
+  <rect class="box green" x="565" y="426" width="270" height="40"/>
+  <text class="t" x="700" y="451">Tiered: llm_verified / llm_detect</text>
+  <path class="dash" d="M700,272 L700,322" marker-end="url(#arwd)"/>
+  <text class="lbl" x="712" y="300" text-anchor="start">LLM proposes,</text>
+  <text class="lbl" x="712" y="313" text-anchor="start">symbolic verifies</text>
+  <path class="edge" d="M700,376 L700,426" marker-end="url(#arw)"/>
+
+  <!-- merge into triage -->
+  <rect class="box amber" x="300" y="502" width="300" height="42"/>
+  <text class="t" x="450" y="528">LLM triage — drop confident false positives</text>
+  <path class="edge" d="M210,362 C210,470 300,470 340,502" marker-end="url(#arw)"/>
+  <path class="edge" d="M700,466 C700,486 560,486 540,502" marker-end="url(#arw)"/>
+
+  <!-- final -->
+  <rect class="box dark" x="330" y="560" width="240" height="30"/>
+  <text class="t" x="450" y="580" fill="#fff">Final report (proven + tiered)</text>
+  <path class="edge" d="M450,544 L450,560" marker-end="url(#arw)"/>
+
+  <!-- section labels -->
+  <text x="60" y="196" fill="#2f6db3" font-size="11px" font-weight="bold">SOUND SYMBOLIC LAYER (always on)</text>
+  <text x="540" y="196" fill="#5aa469" font-size="11px" font-weight="bold">OPTIONAL LLM LAYER (any OpenAI-compatible endpoint)</text>
+</svg>
