@@ -40,7 +40,7 @@ The headline is one table. Everything after it is how we got there and why the n
 
 **Precision: a finding that is real-looking but not real.** Frame's symbolic layer, run over a real application, flags a regular-expression denial-of-service pattern inside a bundled, minified JavaScript library it ships. The pattern is there, but the library code is not reachable from any request the application serves. Across the corpus, 264 of Frame's 371 symbolic false positives are exactly this class: `CWE-1333` (ReDoS) and `CWE-1321` (prototype pollution) matched inside vendored libraries. A tool that reports them is not wrong about the syntax; it is wrong about the context. Triage exists to remove them.
 
-**Recall: a vulnerability the symbolic engine cannot express.** Consider this handler from the C# application in the corpus (`DotNetFlicks.Controllers/MovieController.cs`):
+**Recall: a vulnerability the symbolic engine cannot express.** Consider this handler from the C# application in the corpus ([`DotNetFlicks.Web/Controllers/MovieController.cs`](https://github.com/Contrast-Security-OSS/demo-netflicks/blob/2c3dd095c3f9e18d44940678fe68e9ff60f7a740/DotNetFlicks.Web/Controllers/MovieController.cs#L82)):
 
 ```csharp
 /*Sprinkle on some CSRF
@@ -96,11 +96,11 @@ Detection uses structured JSON output and fails safe: any transport or parse err
 
 | Repository | Language(s) | Pooled vulns |
 |---|---|:---:|
-| webgoat | Java, JS/TS | 73 |
-| juice-shop | JS/TS | 72 |
-| shopizer | Java, JS/TS | 29 |
-| anonymous-github | JS/TS | 12 |
-| demo-netflicks | C#, JS | 7 |
+| [webgoat](https://github.com/WebGoat/WebGoat) | Java, JS/TS | 73 |
+| [juice-shop](https://github.com/juice-shop/juice-shop) | JS/TS | 72 |
+| [shopizer](https://github.com/shopizer-ecommerce/shopizer) | Java, JS/TS | 29 |
+| [anonymous-github](https://github.com/tdurieux/anonymous_github) | JS/TS | 12 |
+| [demo-netflicks](https://github.com/Contrast-Security-OSS/demo-netflicks) | C#, JS | 7 |
 | **Total** | | **193** |
 
 **Judge validation.** The judge is a stand-in for manual review, so we checked it against real labels. On a BenchmarkJava sample, where ground truth is known, the Sonnet 5 judge agreed with the official labels about 89% of the time. Labels carry a `claude_code:*` source so they stay distinct from any hand-validated set.
@@ -137,7 +137,7 @@ In total the LLM layer contributes 68 confirmed detections (about 65 net after d
 
 **7.1 Triage removes a context false positive.** The 264 vendored-library matches from Section 2 are the bulk of the symbolic layer's false positives. They are syntactically real regex or object-merge patterns sitting in code the application never reaches from a request. Triage, reading the surrounding context, rejects them. This is the mechanism behind the precision recovery in Figure 4.
 
-**7.2 Single-file detection recovers an interprocedural SQL injection.** From webgoat (`SqlInjectionLesson5.java`):
+**7.2 Single-file detection recovers an interprocedural SQL injection.** From webgoat ([`SqlInjectionLesson5.java`](https://github.com/WebGoat/WebGoat/blob/0fec33936a472330718f3e2eb000694f31633b4d/src/main/java/org/owasp/webgoat/lessons/sqlinjection/introduction/SqlInjectionLesson5.java#L55)):
 
 ```java
 public AttackResult completed(String query) {   // request-derived parameter
@@ -191,7 +191,7 @@ finding: CWE-89 at route.js:4  (tier: llm_detect)
 
 The source and the sink are in different files. The agent read the helper, confirmed the sink with a grep, and reported the flow, three model calls end to end. Neither single-file analysis nor a taint engine that does not cross this boundary would connect it.
 
-**7.4 C# coverage where both traditional engines report nothing.** demo-netflicks is an ASP.NET application whose logic is in C#. Frame's symbolic C# analysis parses all 115 files and reports zero vulnerabilities; Semgrep reports zero true positives (its only output on this repo is 32 false positives in vendored JavaScript). The LLM layer found five real vulnerabilities. One (`DotNetFlicks.Accessors/MovieAccessor.cs`):
+**7.4 C# coverage where both traditional engines report nothing.** demo-netflicks is an ASP.NET application whose logic is in C#. Frame's symbolic C# analysis parses all 115 files and reports zero vulnerabilities; Semgrep reports zero true positives (its only output on this repo is 32 false positives in vendored JavaScript). The LLM layer found five real vulnerabilities. One ([`DotNetFlicks.Accessors/Accessors/MovieAccessor.cs`](https://github.com/Contrast-Security-OSS/demo-netflicks/blob/2c3dd095c3f9e18d44940678fe68e9ff60f7a740/DotNetFlicks.Accessors/Accessors/MovieAccessor.cs#L56)):
 
 ```csharp
 _db.Database.ExecuteSqlRaw(
@@ -221,4 +221,4 @@ SMT-based separation logic reduces heap reasoning to first-order queries (the he
 
 Sound symbolic analysis and LLMs are complementary. Kept apart, each has a known failure mode: the symbolic engine misses what its models cannot express, and the LLM invents what it cannot prove. Frame puts them together with the symbolic engine in charge of the truth: it detects with the LLM, verifies with the symbolic sink model, tiers so nothing is confused with a proof, and triages away the noise. On real-world code the result is higher recall and higher precision than a mature pattern scanner, on a local model, with every finding either proven or clearly labeled. The honest asterisk is the asymmetric ground truth, and we would rather state it than hide it.
 
-Artifacts, the pooled ground truth, and the harness are in the [Frame repository](https://github.com/lambdasec/frame); the figures in this report regenerate from the committed data with `writeup/gen_figures.py`.
+Artifacts, the pooled ground truth, and the harness are in the [Frame repository](https://github.com/lambdasec/frame).

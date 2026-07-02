@@ -49,29 +49,32 @@ def fig_scoreboard():
     scanners = list(sb.keys())
     metrics = ["recall", "precision", "f1"]
     labels = ["Recall", "Precision", "F1"]
-    colors = [C_FRAME, C_FRAME2, C_FRAME3]
+    colors = [C_FRAME, C_LLM, C_ENDOR]   # distinct hues so the legend reads clearly
     x = range(len(scanners))
     w = 0.26
-    fig, ax = plt.subplots(figsize=(8.2, 4.2))
+    fig, ax = plt.subplots(figsize=(8.8, 4.8))
     for i, (m, lab, col) in enumerate(zip(metrics, labels, colors)):
         vals = [sb[s][m] for s in scanners]
         bars = ax.bar([xi + (i - 1) * w for xi in x], vals, w, label=lab, color=col,
                       edgecolor="white", linewidth=0.5)
         for b, v in zip(bars, vals):
             ax.text(b.get_x() + b.get_width() / 2, v + 0.008, f"{v:.2f}",
-                    ha="center", va="bottom", fontsize=7.5)
+                    ha="center", va="bottom", fontsize=8)
     # hatch the Endor group to flag "different ground truth"
     endor_idx = scanners.index("Endor (diff GT)")
     for i in range(3):
-        ax.patches[i * len(scanners) + endor_idx].set_hatch("///")
+        ax.patches[i * len(scanners) + endor_idx].set_hatch("////")
     ax.set_xticks(list(x))
     ax.set_xticklabels(scanners, fontsize=9)
-    ax.set_ylim(0, 0.85)
+    ax.set_ylim(0, 0.9)
     ax.set_ylabel("score")
-    ax.set_title("Endor Labs real-world corpus (193 pooled vulnerabilities)")
-    ax.legend(loc="upper right", frameon=False, ncol=3, fontsize=8.5)
-    ax.text(endor_idx, 0.02, "hatched:\ndifferent GT", ha="center", va="bottom",
-            fontsize=6.5, color="#555")
+    # legend above the plot so it never overlaps a bar
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=3,
+              frameon=False, fontsize=10)
+    ax.set_title("Endor Labs real-world corpus (193 pooled vulnerabilities)",
+                 pad=34, fontsize=11)
+    ax.text(0.5, -0.16, "Endor (hatched) is scored on a different ground truth and shown for context only.",
+            transform=ax.transAxes, ha="center", fontsize=8, color="#777")
     _save(fig, "fig2_scoreboard.png")
 
 
@@ -116,7 +119,9 @@ def fig_triage():
     for i, (k, d) in enumerate(zip(kept, dropped)):
         a2.text(i, k / 2, str(k), ha="center", va="center", color="white", fontsize=9)
         a2.text(i, k + d / 2, str(d), ha="center", va="center", color="white", fontsize=9)
-    a2.set_title("Triage keeps TPs, drops FPs")
+    a2.set_ylim(0, max(k + d for k, d in zip(kept, dropped)) + 10)  # headroom for legend
+    a2.set_ylabel("findings")
+    a2.set_title("Triage keeps TPs, drops FPs", pad=8)
     a2.legend(loc="upper right", frameon=False, fontsize=8.5)
     _save(fig, "fig4_triage.png")
 

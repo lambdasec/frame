@@ -1,76 +1,72 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 590" font-family="DejaVu Sans, Segoe UI, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 620" font-family="DejaVu Sans, Segoe UI, sans-serif" font-size="13">
   <defs>
-    <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#555"/>
-    </marker>
-    <marker id="arwd" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#888"/>
+    <marker id="arw" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7.5,3 L0,6 Z" fill="#555"/>
     </marker>
     <style>
-      .box{rx:8;ry:8;stroke-width:1.2;}
       .t{text-anchor:middle;fill:#1a1a1a;}
-      .sub{text-anchor:middle;fill:#33475b;font-size:11px;}
-      .grey{fill:#eef0f2;stroke:#c2c8ce;}
-      .blue{fill:#dbe7f4;stroke:#2f6db3;}
-      .bluef{fill:#c7dbf0;stroke:#2f6db3;}
-      .green{fill:#dcece0;stroke:#5aa469;}
-      .greenf{fill:#cbe3d2;stroke:#5aa469;}
-      .amber{fill:#f6e6d2;stroke:#d98c3f;}
+      .sub{text-anchor:middle;fill:#33475b;font-size:10.5px;}
+      .grey{fill:#eef0f2;stroke:#c2c8ce;stroke-width:1.2;}
+      .blue{fill:#dbe7f4;stroke:#2f6db3;stroke-width:1.3;}
+      .bluef{fill:#c7dbf0;stroke:#2f6db3;stroke-width:1.3;}
+      .green{fill:#dcece0;stroke:#5aa469;stroke-width:1.3;}
+      .greenf{fill:#cbe3d2;stroke:#5aa469;stroke-width:1.3;}
+      .amber{fill:#f6e6d2;stroke:#d98c3f;stroke-width:1.3;}
       .dark{fill:#2f3a45;stroke:#2f3a45;}
-      .edge{stroke:#555;stroke-width:1.4;fill:none;}
-      .dash{stroke:#888;stroke-width:1.3;fill:none;stroke-dasharray:5 4;}
-      .lbl{fill:#666;font-size:10.5px;font-style:italic;}
+      .edge{stroke:#555;stroke-width:1.5;fill:none;}
+      .lbl{fill:#666;font-size:10.5px;font-style:italic;text-anchor:middle;}
     </style>
   </defs>
 
-  <!-- top pipeline -->
-  <rect class="box grey" x="350" y="16" width="200" height="36"/>
-  <text class="t" x="450" y="39">Source code</text>
-  <rect class="box grey" x="350" y="72" width="200" height="36"/>
-  <text class="t" x="450" y="95">Language frontend</text>
-  <rect class="box grey" x="350" y="128" width="200" height="36"/>
-  <text class="t" x="450" y="151">SIL (intermediate representation)</text>
-  <path class="edge" d="M450,52 L450,72" marker-end="url(#arw)"/>
-  <path class="edge" d="M450,108 L450,128" marker-end="url(#arw)"/>
+  <!-- top pipeline (centered) -->
+  <rect class="grey" rx="7" x="390" y="20" width="180" height="36"/>
+  <text class="t" x="480" y="43">Source code</text>
+  <rect class="grey" rx="7" x="390" y="72" width="180" height="36"/>
+  <text class="t" x="480" y="95">Language frontend</text>
+  <rect class="grey" rx="7" x="390" y="124" width="180" height="36"/>
+  <text class="t" x="480" y="147">SIL</text>
+  <path class="edge" d="M480,56 L480,72" marker-end="url(#arw)"/>
+  <path class="edge" d="M480,108 L480,124" marker-end="url(#arw)"/>
 
-  <!-- branch from SIL -->
-  <path class="edge" d="M400,164 C300,190 250,190 210,206" marker-end="url(#arw)"/>
-  <path class="edge" d="M500,164 C640,190 690,190 710,206" marker-end="url(#arw)"/>
+  <!-- clean orthogonal branch from SIL to the two columns -->
+  <path class="edge" d="M480,160 L480,190"/>
+  <path class="edge" d="M480,190 L200,190 L200,216" marker-end="url(#arw)"/>
+  <path class="edge" d="M480,190 L780,190 L780,216" marker-end="url(#arw)"/>
 
-  <!-- left: symbolic branch -->
-  <rect class="box blue" x="60" y="208" width="300" height="64"/>
-  <text class="t" x="210" y="234">Symbolic core  (sound)</text>
-  <text class="sub" x="210" y="255">taint analysis · separation logic · Z3</text>
-  <rect class="box bluef" x="120" y="322" width="180" height="40"/>
-  <text class="t" x="210" y="347">Proven findings</text>
-  <path class="edge" d="M210,272 L210,322" marker-end="url(#arw)"/>
+  <!-- LEFT: symbolic layer -->
+  <text x="60" y="207" fill="#2f6db3" font-size="11px" font-weight="bold">SOUND SYMBOLIC LAYER (default)</text>
+  <rect class="blue" rx="8" x="60" y="216" width="280" height="60"/>
+  <text class="t" x="200" y="241">Symbolic core (sound)</text>
+  <text class="sub" x="200" y="261">taint · separation logic · Z3</text>
+  <path class="edge" d="M200,276 L200,322" marker-end="url(#arw)"/>
+  <rect class="bluef" rx="8" x="110" y="322" width="180" height="40"/>
+  <text class="t" x="200" y="347">Proven findings</text>
 
-  <!-- right: LLM detection branch -->
-  <rect class="box green" x="540" y="208" width="320" height="64"/>
-  <text class="t" x="700" y="234">LLM detection</text>
-  <text class="sub" x="700" y="255">long-context + agentic (read_file / grep)</text>
-  <rect class="box greenf" x="565" y="322" width="270" height="54"/>
-  <text class="t" x="700" y="345">Symbolic verification</text>
-  <text class="sub" x="700" y="364">sink-grounding, cross-file</text>
-  <rect class="box green" x="565" y="426" width="270" height="40"/>
-  <text class="t" x="700" y="451">Tiered: llm_verified / llm_detect</text>
-  <path class="dash" d="M700,272 L700,322" marker-end="url(#arwd)"/>
-  <text class="lbl" x="712" y="300" text-anchor="start">LLM proposes,</text>
-  <text class="lbl" x="712" y="313" text-anchor="start">symbolic verifies</text>
-  <path class="edge" d="M700,376 L700,426" marker-end="url(#arw)"/>
+  <!-- RIGHT: LLM layer -->
+  <text x="630" y="207" fill="#5aa469" font-size="11px" font-weight="bold">OPTIONAL LLM LAYER (any OpenAI endpoint)</text>
+  <rect class="green" rx="8" x="630" y="216" width="300" height="60"/>
+  <text class="t" x="780" y="241">LLM detection</text>
+  <text class="sub" x="780" y="261">long-context + agentic (read_file / grep)</text>
+  <path class="edge" d="M780,276 L780,320" marker-end="url(#arw)"/>
+  <rect class="greenf" rx="8" x="650" y="320" width="260" height="54"/>
+  <text class="t" x="780" y="343">Symbolic verification</text>
+  <text class="sub" x="780" y="362">sink-grounding, cross-file</text>
+  <path class="edge" d="M780,374 L780,418" marker-end="url(#arw)"/>
+  <rect class="green" rx="8" x="650" y="418" width="260" height="40"/>
+  <text class="t" x="780" y="443">Tiered: llm_verified / llm_detect</text>
 
-  <!-- merge into triage -->
-  <rect class="box amber" x="300" y="502" width="300" height="42"/>
-  <text class="t" x="450" y="528">LLM triage — drop confident false positives</text>
-  <path class="edge" d="M210,362 C210,470 300,470 340,502" marker-end="url(#arw)"/>
-  <path class="edge" d="M700,466 C700,486 560,486 540,502" marker-end="url(#arw)"/>
+  <!-- caption in the gap between columns -->
+  <text class="lbl" x="475" y="300">the LLM proposes,</text>
+  <text class="lbl" x="475" y="315">the symbolic engine verifies</text>
 
-  <!-- final -->
-  <rect class="box dark" x="330" y="560" width="240" height="30"/>
-  <text class="t" x="450" y="580" fill="#fff">Final report (proven + tiered)</text>
-  <path class="edge" d="M450,544 L450,560" marker-end="url(#arw)"/>
+  <!-- merge into triage (orthogonal, routed below the columns) -->
+  <rect class="amber" rx="8" x="350" y="500" width="260" height="44"/>
+  <text class="t" x="480" y="527">LLM triage: drop confident FPs</text>
+  <path class="edge" d="M200,362 L200,522 L350,522" marker-end="url(#arw)"/>
+  <path class="edge" d="M780,458 L780,522 L610,522" marker-end="url(#arw)"/>
 
-  <!-- section labels -->
-  <text x="60" y="196" fill="#2f6db3" font-size="11px" font-weight="bold">SOUND SYMBOLIC LAYER (always on)</text>
-  <text x="540" y="196" fill="#5aa469" font-size="11px" font-weight="bold">OPTIONAL LLM LAYER (any OpenAI-compatible endpoint)</text>
+  <!-- final report -->
+  <path class="edge" d="M480,544 L480,568" marker-end="url(#arw)"/>
+  <rect class="dark" rx="7" x="378" y="568" width="204" height="32"/>
+  <text class="t" x="480" y="589" fill="#fff">Final report (proven + tiered)</text>
 </svg>
