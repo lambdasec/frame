@@ -106,9 +106,14 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
         repo = e["repo"]
         if (_rel(e.get("path"), repo), _norm_cwe(e.get("cwe"))) in sem_file_cwe.get(repo, set()):
             sem_recall_repo[repo] += 1
+    # Precision on the SAME scope as Frame: exclude test/fixture files (Frame no
+    # longer scans them, so Semgrep's test-file findings must be dropped too for a
+    # fair comparison).
     sem_prec = Counter()
     for c in cache:
         if c.get("tool") == "semgrep":
+            if R.is_test_file(_rel(c.get("path"), c["repo"])):
+                continue
             if c.get("status") == "true_positive":
                 sem_prec["tp"] += 1
             elif c.get("status") == "false_positive":

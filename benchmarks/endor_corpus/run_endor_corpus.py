@@ -54,10 +54,29 @@ EXCLUDE_DIRS = {
 # source of false positives for pattern-based checks. Excluded from scanning.
 GENERATED_RE = re.compile(r"(\.min\.(js|css|mjs)|\.bundle\.js|-min\.js|\.map)$", re.I)
 
+# Test code and *fixed*-example fixtures are not production attack surface, so
+# "vulnerabilities" there (hardcoded creds in fixtures, weak crypto in test setup,
+# the corrected version of a challenge) are false positives -- every SAST tool
+# excludes them. NB: only the `_correct` fixtures are excluded, NOT the plain
+# vulnerable challenge snippets (e.g. juice-shop data/static/codefixes/*_1.ts),
+# which are real vulnerabilities in the ground truth.
+TEST_PATH_RE = re.compile(
+    r"(^|/)(test|tests|__tests__)/"
+    r"|/src/test/"
+    r"|(Test|Tests|IntegrationTest)\.java$"
+    r"|\.(test|spec)\.[jt]sx?$|\.unit\.test\.[jt]sx?$"
+    r"|_correct\.[jt]s$",
+    re.I)
+
 
 def is_generated(path: str) -> bool:
     """True for minified/bundled/generated assets (by filename)."""
     return bool(GENERATED_RE.search(str(path)))
+
+
+def is_test_file(rel_path: str) -> bool:
+    """True for test code / fixed-example fixtures (not production attack surface)."""
+    return bool(TEST_PATH_RE.search(str(rel_path).replace("\\", "/")))
 
 
 # --------------------------------------------------------------------------- #
@@ -154,9 +173,11 @@ def collect_files(repo_dir: Path) -> List[Path]:
     for root, dirs, filenames in os.walk(repo_dir):
         dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
         for fn in filenames:
-            if is_generated(fn):
+            p = Path(root) / fn
+            rel = p.relative_to(repo_dir).as_posix()
+            if is_generated(fn) or is_test_file(rel):
                 continue
-            files.append(Path(root) / fn)
+            files.append(p)
     return files
 
 
