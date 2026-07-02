@@ -147,8 +147,19 @@ class JavaFrontend:
     # Interprocedural taint (one-hop, intra-file)
     # =========================================================================
 
-    def _collect_calls(self, node: TSNode, calls: List[Tuple[str, List[Optional[str]]]]) -> None:
-        """Collect same-instance method calls: (callee_name, [arg identifiers|None])."""
+    def _identifiers_in(self, node: TSNode) -> set:
+        """All identifier names referenced in a subtree (bounded walk)."""
+        names: set = set()
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "identifier":
+                names.add(self._get_text(n))
+            stack.extend(n.children)
+        return names
+
+    def _collect_calls(self, node: TSNode, calls: List[Tuple[str, List[set]]]) -> None:
+        """Collect same-instance method calls: (callee_name, [set-of-ids per arg])."""
         if node.type == "method_invocation":
             obj = node.child_by_field_name("object")
             # Only same-instance helper calls (bare `foo(...)` or `this.foo(...)`)
@@ -157,14 +168,16 @@ class JavaFrontend:
                 name_node = node.child_by_field_name("name")
                 callee = self._get_text(name_node) if name_node else None
                 args_node = node.child_by_field_name("arguments")
-                argnames: List[Optional[str]] = []
+                arg_ids: List[set] = []
                 if args_node is not None:
                     for a in args_node.children:
                         if a.type in ("(", ")", ","):
                             continue
-                        argnames.append(self._get_text(a) if a.type == "identifier" else None)
+                        # Identifiers ANYWHERE in the arg (handles `a + "-" + b`),
+                        # so taint flows through concatenations/expressions.
+                        arg_ids.append(self._identifiers_in(a))
                 if callee:
-                    calls.append((callee, argnames))
+                    calls.append((callee, arg_ids))
         for ch in node.children:
             self._collect_calls(ch, calls)
 
@@ -221,12 +234,12 @@ class JavaFrontend:
             for info in methods.values():
                 tainted_names = {info["params"][i] for i in info["tainted"]
                                  if i < len(info["params"]) and info["params"][i]}
-                for callee, argnames in info["calls"]:
+                for callee, arg_ids in info["calls"]:
                     cinfo = methods.get(callee)
                     if cinfo is None:
                         continue
-                    for j, an in enumerate(argnames):
-                        if an and an in tainted_names and j < len(cinfo["params"]) \
+                    for j, ids in enumerate(arg_ids):
+                        if (ids & tainted_names) and j < len(cinfo["params"]) \
                                 and j not in cinfo["tainted"]:
                             cinfo["tainted"].add(j)
                             changed = True

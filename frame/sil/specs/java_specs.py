@@ -638,6 +638,15 @@ ACCESS_CONTROL_SPECS = {
     # decode itself. (As a bare sink with the unrecognized "auth" kind it was
     # defaulting to SQL_QUERY and producing bogus CWE-89 findings.)
     "JWT.decode": _propagator([0], "JWT.decode (propagates token taint)"),
+    # JWT claim accessors propagate the token's taint from the receiver, so a
+    # tainted token flows through decoded header/payload claims to downstream
+    # sinks -- e.g. a JKU/x5u URL claim reaching new URL(...) -> SSRF (CWE-918).
+    "getHeaderClaim": _propagator_from_receiver("JWT header claim (propagates taint)"),
+    "getClaim": _propagator_from_receiver("JWT claim (propagates taint)"),
+    "asString": _propagator_from_receiver("Claim.asString (propagates taint)"),
+    "asInt": _propagator_from_receiver("Claim.asInt (propagates taint)"),
+    "asLong": _propagator_from_receiver("Claim.asLong (propagates taint)"),
+    "asBoolean": _propagator_from_receiver("Claim.asBoolean (propagates taint)"),
     "JWTVerifier": _propagator([0], "JWT verifier"),
 
     # Session handling
