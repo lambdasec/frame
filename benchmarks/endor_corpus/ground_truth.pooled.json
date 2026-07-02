@@ -1558,14 +1558,29 @@
   {
     "repo": "webgoat",
     "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-352",
-    "path": "src/main/java/org/owasp/webgoat/container/service/LabelDebugService.java",
-    "line": 48,
-    "description": "setDebuggingStatus performs a state change (labelDebugger.setEnabled) but is mapped with @RequestMapping lacking a method restriction, so it is reachable via GET/HEAD without CSRF protection, matching the rule's exact concern.",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
+    "cwe": "CWE-259",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/JWTRefreshEndpoint.java",
+    "line": 45,
+    "description": "A password/secret value is hardcoded directly in source code as a public static final String, which is a textbook CWE-259 instance regardless of this being a WebGoat teaching lesson.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
     "status": "true_positive",
     "found_by": [
-      "semgrep"
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-259",
+    "path": "src/main/java/org/owasp/webgoat/lessons/challenges/challenge7/Assignment7.java",
+    "line": 36,
+    "description": "ADMIN_PASSWORD_LINK is a hardcoded secret/token value embedded directly in source code and used as part of an admin password-reset link, matching the CWE-259 hardcoded-credential pattern regardless of the surrounding lesson context.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
     ],
     "provenance": "claude_judge_pooled",
     "granularity": "line"
@@ -1576,7 +1591,39 @@
     "cwe": "CWE-330",
     "path": "src/main/java/org/owasp/webgoat/lessons/challenges/challenge1/ImageServlet.java",
     "line": 21,
-    "description": "A static PINCODE value intended to act as a secret/challenge token is generated with java.util.Random(), which is not cryptographically secure and is predictable/seedable, matching the weak-random CWE-330 pattern exactly as described by the rule.",
+    "description": "PINCODE is generated with java.util.Random, a non-cryptographic PRNG with a predictable seed/state, and is stored as a static final secret value used presumably for access/verification in this WebGoat challenge \u2014 this matches CWE-330 as the value can be predicted rather than relying on a CSPRNG like",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/introduction/SqlInjectionLesson5a.java",
+    "line": 52,
+    "description": "User-controlled input (account, operator, injection request params) is concatenated directly into a SQL string and executed via Statement.executeQuery with no sanitization or parameterization, a classic SQL injection sink; this is WebGoat's intentionally vulnerable lesson demonstrating exactly this ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-352",
+    "path": "src/main/java/org/owasp/webgoat/container/service/LabelDebugService.java",
+    "line": 48,
+    "description": "setDebuggingStatus performs a state change (labelDebugger.setEnabled) but is mapped with @RequestMapping lacking a method restriction, so it is reachable via GET/HEAD without CSRF protection, matching the rule's exact concern.",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [
@@ -1787,21 +1834,6 @@
     "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/advanced/SqlInjectionLesson6b.java",
     "line": 59,
     "description": "The code calls e.printStackTrace() in a catch-all Exception handler with a 'do nothing' comment, matching the rule's exact target pattern of leftover debug code; while the stack trace itself isn't returned to the client (only the password field is), printStackTrace is a genuine anti-pattern that can",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "webgoat",
-    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-89",
-    "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/introduction/SqlInjectionLesson5a.java",
-    "line": 52,
-    "description": "User-controlled parameters (account, operator, injection) are concatenated directly into a SQL string with no sanitization and executed via Statement.executeQuery, which is exactly the classic SQL injection pattern this WebGoat lesson is designed to teach.",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [

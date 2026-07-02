@@ -25,17 +25,17 @@
     },
     "shopizer": {
       "confirmed_vulns": 14,
-      "frame:false_positive": 22,
+      "frame:false_positive": 32,
       "frame:true_positive": 1,
       "frame:uncertain": 1,
       "semgrep:false_positive": 21,
       "semgrep:true_positive": 13
     },
     "webgoat": {
-      "confirmed_vulns": 50,
-      "frame:false_positive": 47,
+      "confirmed_vulns": 52,
+      "frame:false_positive": 54,
       "frame:error": 1,
-      "frame:true_positive": 22,
+      "frame:true_positive": 26,
       "semgrep:false_positive": 55,
       "semgrep:true_positive": 58,
       "semgrep:uncertain": 1
@@ -55,6 +55,7 @@
     "CWE-1321": 3,
     "CWE-798": 3,
     "CWE-327": 3,
+    "CWE-259": 3,
     "CWE-614": 3,
     "CWE-1333": 2,
     "CWE-863": 2,
@@ -69,11 +70,10 @@
     "CWE-117": 1,
     "CWE-326": 1,
     "CWE-328": 1,
-    "CWE-259": 1,
     "CWE-918": 1
   },
   "totals": {
-    "confirmed_vulns": 125
+    "confirmed_vulns": 127
   },
   "note": "Model-adjudicated (Claude Sonnet 5), pooled union of Frame + Semgrep true positives. NOT a complete labeling: supports recall of known vulns, not absolute precision. Validate via BenchmarkJava agreement."
 }

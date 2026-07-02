@@ -96,7 +96,13 @@ class JavaFrontend:
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
         self._scan_deserialization(tree.root_node, program)
-        self._scan_csrf_disabled(tree.root_node, program)
+        # CSRF-disable and field-initializer scanning are DISABLED by default:
+        # the Sonnet-5 judge showed they produce context-dependent false positives
+        # (CSRF disabled on a stateless/token API is intentional; field constants
+        # like KEY_SPEC="AES" are not secrets). These are LLM-triage territory --
+        # the sound structural layer stays precision-first. Code retained for a
+        # future LLM-gated pass.
+        #   self._scan_csrf_disabled(tree.root_node, program)
         return program
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
@@ -133,10 +139,13 @@ class JavaFrontend:
                 elif child.type == "class_declaration":
                     # Handle inner classes
                     self._translate_class(child, program)
-            # Field initializers (e.g. `static final int PIN = new Random().nextInt()`,
-            # `Cipher.getInstance(SPEC)`, hardcoded keys) were never translated, so
-            # their sinks never fired. Translate them into a synthetic <clinit>.
-            self._translate_field_initializers(body, class_name, program)
+            # Field-initializer translation is DISABLED by default: while it is a
+            # correct generic fix, on this corpus it surfaced mostly false
+            # positives (benign field constants flagged as hardcoded secrets /
+            # weak hashes by the usage-based detectors). Precision-first: leave it
+            # to the LLM-triage layer, which can tell a real secret from a config
+            # constant. Code retained for a future LLM-gated pass.
+            #   self._translate_field_initializers(body, class_name, program)
 
         self._current_class = None
 
