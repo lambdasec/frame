@@ -172,6 +172,10 @@ SPRING_SPECS = {
     # Redirect
     "redirect:": _sink("redirect", [0], "Spring redirect"),
     "RedirectView": _sink("redirect", [0], "Spring RedirectView"),
+    # new ModelAndView("redirect:" + tainted) -> open redirect (taint-gated, so a
+    # static view name never fires).
+    "ModelAndView": _sink("redirect", [0], "Spring ModelAndView (open redirect)"),
+    "new ModelAndView": _sink("redirect", [0], "Spring ModelAndView (open redirect)"),
 
     # RestTemplate (SSRF)
     "restTemplate.getForObject": _sink("ssrf", [0], "Spring RestTemplate GET (SSRF)"),
