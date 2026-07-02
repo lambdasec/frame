@@ -12,7 +12,7 @@
 
 ---
 
-Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint, so it can run fully on-device, and every LLM finding is grounded and tiered, never blurred with the sound results.
+Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results.
 
 ## Highlights
 
