@@ -35,7 +35,7 @@
       "confirmed_vulns": 50,
       "frame:false_positive": 47,
       "frame:error": 1,
-      "frame:true_positive": 20,
+      "frame:true_positive": 22,
       "semgrep:false_positive": 55,
       "semgrep:true_positive": 58,
       "semgrep:uncertain": 1

@@ -7730,6 +7730,30 @@
   {
     "repo": "webgoat",
     "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "tool": "frame",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/SerializationHelper.java",
+    "line": 22,
+    "cwe": "CWE-502",
+    "status": "true_positive",
+    "judge_confidence": 0.9,
+    "rule_id": "",
+    "source": "claude_code:claude-sonnet-5"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "tool": "frame",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/InsecureDeserializationTask.java",
+    "line": 43,
+    "cwe": "CWE-502",
+    "status": "true_positive",
+    "judge_confidence": 0.95,
+    "rule_id": "",
+    "source": "claude_code:claude-sonnet-5"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
     "tool": "semgrep",
     "path": ".mvn/wrapper/MavenWrapperDownloader.java",
     "line": 92,

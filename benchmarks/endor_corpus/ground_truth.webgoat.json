@@ -882,5 +882,31 @@
     "judge_confidence": 0.75,
     "tool": "frame",
     "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-502",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/SerializationHelper.java",
+    "line": 22,
+    "description": "fromString() calls ObjectInputStream.readObject() on attacker-controllable Base64 data with no type filtering or validation, which is classic unsafe Java deserialization (this is WebGoat's deserialization lesson, purpose-built to demonstrate this exact CWE-502 flaw).",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.9,
+    "tool": "frame",
+    "rule_id": ""
+  },
+  {
+    "repo": null,
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-502",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/InsecureDeserializationTask.java",
+    "line": 43,
+    "description": "User-supplied request parameter is base64-decoded and passed directly to ObjectInputStream.readObject() with no class allowlist or filtering, a textbook unsafe deserialization of untrusted input.",
+    "source": "claude_code:claude-sonnet-5",
+    "status": "true_positive",
+    "judge_confidence": 0.95,
+    "tool": "frame",
+    "rule_id": ""
   }
 ]

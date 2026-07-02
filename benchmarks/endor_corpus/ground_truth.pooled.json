@@ -1526,6 +1526,38 @@
   {
     "repo": "webgoat",
     "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-502",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/SerializationHelper.java",
+    "line": 22,
+    "description": "fromString() calls ObjectInputStream.readObject() on attacker-controllable Base64 data with no type filtering or validation, which is classic unsafe Java deserialization (this is WebGoat's deserialization lesson, purpose-built to demonstrate this exact CWE-502 flaw).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-502",
+    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/InsecureDeserializationTask.java",
+    "line": 42,
+    "description": "The code deserializes a Base64-decoded byte stream directly from the untrusted `token` request parameter via ObjectInputStream.readObject() with no HMAC/signature verification or allow-listing before deserialization, matching CWE-502; this is WebGoat's intentionally vulnerable lesson demonstrating e",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
     "cwe": "CWE-352",
     "path": "src/main/java/org/owasp/webgoat/container/service/LabelDebugService.java",
     "line": 48,
@@ -1560,36 +1592,6 @@
     "path": "src/main/java/org/owasp/webgoat/lessons/cryptography/EncodingAssignment.java",
     "line": 37,
     "description": "java.util.Random() is used to select an index into a secrets/password array whose value becomes the actual Basic Auth credential stored in the session, so a non-cryptographic PRNG is directly used to select an authentication secret, matching the rule's intent.",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "webgoat",
-    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-502",
-    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/InsecureDeserializationTask.java",
-    "line": 42,
-    "description": "The code deserializes a Base64-decoded byte stream directly from the untrusted `token` request parameter via ObjectInputStream.readObject() with no HMAC/signature verification or allow-listing before deserialization, matching CWE-502; this is WebGoat's intentionally vulnerable lesson demonstrating e",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "webgoat",
-    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-502",
-    "path": "src/main/java/org/owasp/webgoat/lessons/deserialization/SerializationHelper.java",
-    "line": 22,
-    "description": "fromString() deserializes an arbitrary Base64-decoded byte stream via ObjectInputStream.readObject() with no ObjectInputFilter, allow-list, or type check; if the string parameter originates from user input (as it does in this WebGoat deserialization lesson), this is a classic unauthenticated deseria",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [
