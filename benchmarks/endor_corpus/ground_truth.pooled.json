@@ -959,6 +959,247 @@
   {
     "repo": "shopizer",
     "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-22",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/configuration/DroolsBeanFactory.java",
+    "line": 105,
+    "description": "The excelFile parameter is passed unsanitized into ResourceFactory.newClassPathResource, allowing path traversal/arbitrary classpath resource loading if this method is reachable from user input (e.g. via a REST controller as in known SalesManager/Shopizer path-traversal reports); no validation or pa",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-94",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/configuration/DroolsBeanFactory.java",
+    "line": 83,
+    "description": "getKieSession(Resource dt) writes an externally-supplied Resource into a KieFileSystem and compiles+executes it as Drools rules, which can run arbitrary Java/MVEL code \u2014 a classic code-injection sink if dt originates from user-controlled data; the shown code doesn't confirm the caller's trust level,",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-89",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/repositories/user/UserRepositoryImpl.java",
+    "line": 46,
+    "description": "criteria.getCriteriaOrderByField() is concatenated directly into the HQL 'order by' clause without whitelisting or parameterization, and OrderCriteria objects like this are typically populated from user-supplied sort/filter parameters in admin list endpoints, allowing HQL injection via the order-by ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-89",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/repositories/merchant/MerchantRepositoryImpl.java",
+    "line": 53,
+    "description": "criteria.getCriteriaOrderByField() is concatenated directly into the HQL string for the ORDER BY clause with no whitelist validation or escaping, and unlike the code/name parameters it is never bound via setParameter \u2014 if this field originates from user-controllable request input (typical for mercha",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-611",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/modules/integration/shipping/impl/USPSShippingQuote.java",
+    "line": 474,
+    "description": "A plain `new Digester()` is used to parse the USPS API response body without disabling DTD processing or external entity resolution (no setFeature calls disabling external-general/parameter entities), and Apache Commons Digester's underlying SAX parser is XXE-vulnerable by default. Since the XML bei",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-176",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/modules/integration/shipping/impl/USPSShippingQuote.java",
+    "line": 430,
+    "description": "The code uses the deprecated single-argument URLEncoder.encode(String), which silently relies on the JVM's platform-default charset instead of an explicit encoding like UTF-8, matching the CWE-176 improper-encoding-handling pattern; this can produce inconsistent or corrupted encoding of the XML requ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-611",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/modules/integration/shipping/impl/UPSShippingQuote.java",
+    "line": 472,
+    "description": "digester.parse() parses XML data from an external UPS API response without any visible disabling of DOCTYPE/external-entity processing, and Apache Commons Digester (backed by SAX) is XXE-vulnerable by default unless explicitly hardened. No secure-parsing configuration (e.g., disallow-doctype-decl, e",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-328",
+    "path": "sm-core/src/main/java/com/salesmanager/core/business/modules/utils/EncryptionImpl.java",
+    "line": 13,
+    "description": "The IV for AES/CBC encryption is a hardcoded, static string constant, making ciphertext deterministic and vulnerable to pattern-analysis/known-plaintext style attacks; this is a classic hardcoded/predictable IV weakness (better classified as CWE-329) rather than the stated CWE-328, but it is a genui",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-113",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/utils/FilePathUtils.java",
+    "line": 207,
+    "description": "The X-Forwarded-Host request header is fully attacker-controlled and is assigned directly to the returned URI with no validation, encoding, or CRLF stripping; given the method's purpose (building a forwarded store URI, likely used in a redirect/Location or canonical header downstream), this is a cla",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-915",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/utils/ServiceRequestCriteriaBuilderUtils.java",
+    "line": 62,
+    "description": "The method takes a raw HTTP request parameter value and binds it directly into an arbitrary object field via Spring's forDirectFieldAccess PropertyAccessor, bypassing any setter validation/sanitization \u2014 the textbook pattern for CWE-915 mass assignment. Even though the property name (setterName) is ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-327",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/utils/TokenizeTool.java",
+    "line": 39,
+    "description": "This encrypts data using a statically-defined Cipher string with no IV/nonce parameter passed to init(), and in the known Shopizer codebase this CIPHER constant is \"AES/ECB/PKCS5Padding\" \u2014 ECB mode is a broken/risky cryptographic algorithm choice, consistent with CWE-327.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-22",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/controller/ImagesController.java",
+    "line": 90,
+    "description": "imageName and extension are concatenated directly into a filename passed to contentService.getContentFile with no visible sanitization or path traversal checks (e.g. rejecting '../'), and these values are typical Spring @PathVariable/@RequestParam inputs from the request URL, making traversal plausi",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-942",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/filter/CorsFilter.java",
+    "line": 40,
+    "description": "The filter reflects the untrusted Origin request header directly into Access-Control-Allow-Origin without any allow-list validation, meaning any origin is trusted; combined with the broad allowed headers/methods this is a classic overly permissive CORS misconfiguration (CWE-942), risky especially if",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-287",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/store/security/JWTTokenUtil.java",
+    "line": 150,
+    "description": "The method unconditionally returns true, bypassing both the password-reset-timing check and token-expiration check that are computed but discarded (with the real logic commented out below); this means any token, even one issued before a password reset or expired, will be considered refreshable, defe",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-942",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/store/security/AuthenticationTokenFilter.java",
+    "line": 59,
+    "description": "The filter reflects the untrusted Origin request header verbatim into Access-Control-Allow-Origin while also setting Access-Control-Allow-Credentials: true, allowing any origin to make authenticated cross-site requests and read responses \u2014 a textbook permissive CORS misconfiguration.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
+    "cwe": "CWE-209",
+    "path": "sm-shop/src/main/java/com/salesmanager/shop/store/api/v1/customer/AuthenticateCustomerApi.java",
+    "line": 243,
+    "description": "The catch-all handler returns e.getMessage() directly in the HTTP response body, exposing internal exception details (potentially including implementation specifics or stack info) to the client, which is a textbook CWE-209 information exposure through error messages.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "shopizer",
+    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
     "cwe": "CWE-489",
     "path": "sm-core/src/main/java/com/salesmanager/core/business/modules/integration/payment/impl/PayPalExpressCheckoutPayment.java",
     "line": 319,
@@ -1128,21 +1369,6 @@
     "path": "sm-shop/src/main/java/com/salesmanager/shop/utils/TokenizeTool.java",
     "line": 24,
     "description": "The code explicitly calls KeyGenerator.getInstance(\"DES\") to generate a symmetric key used elsewhere for encryption/decryption (note the CIPHER constant nearby), and DES's 56-bit effective key space is broken by brute force with modern hardware, making this a genuine weak-cryptography defect regardl",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "shopizer",
-    "commit": "6a4a0a65a3408ee8f62597b51d1b3aac24b77dee",
-    "cwe": "CWE-327",
-    "path": "sm-shop/src/main/java/com/salesmanager/shop/utils/TokenizeTool.java",
-    "line": 39,
-    "description": "The cipher is initialized with only a key and no IV (aes.init(Cipher.ENCRYPT_MODE, key)), consistent with ECB mode (Java's AES default when no mode is specified is ECB), and the code encrypts data reachable via tokenizeString for use elsewhere in the app.",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [
@@ -1712,6 +1938,21 @@
     "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
     "cwe": "CWE-200",
     "path": "src/main/java/org/owasp/webgoat/lessons/securitymisconfiguration/VerboseErrorTask.java",
+    "line": 32,
+    "description": "The endpoint is a publicly reachable @GetMapping that returns a hardcoded stack trace embedding real-looking sensitive configuration (DB_PASSWORD, SYSTEM_API_TOKEN) as plain text to any caller, which is a genuine CWE-200 information exposure regardless of it being demonstrative WebGoat lesson code.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-200",
+    "path": "src/main/java/org/owasp/webgoat/lessons/securitymisconfiguration/VerboseErrorTask.java",
     "line": 50,
     "description": "fetchConfig gates sensitive debug/config data behind equality with a hardcoded LEAKED_TOKEN constant that is itself exposed via the sibling stack-trace endpoint, so any caller can retrieve internal debug/logging configuration by replaying that leaked value \u2014 a genuine information-exposure pattern, c",
     "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
@@ -1763,6 +2004,203 @@
     "status": "true_positive",
     "found_by": [
       "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-79",
+    "path": "src/main/resources/webgoat/static/js/goatApp/view/LessonContentView.js",
+    "line": 173,
+    "description": "feedback (and output) is inserted via jQuery .html() without HTML-escaping after only stripping backslashes, and this data originates from server responses to lesson interactions in WebGoat, several of which echo attacker-controlled input \u2014 a classic DOM XSS sink.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-79",
+    "path": "src/main/resources/webgoat/static/js/goatApp/view/LessonContentView.js",
+    "line": 180,
+    "description": "`output` is passed through `removeSlashesFromJSON` and `polyglot.t()` (a translation lookup that falls back to returning the raw string) directly into jQuery `.html()`, a classic DOM XSS sink; if `output` includes any attacker-influenced content from a lesson response, it is rendered unsanitized as ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-798",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/JWTVotesEndpoint.java",
+    "line": 56,
+    "description": "A hardcoded secret (\"victory\", base64-encoded) is used as the JWT signing/verification key, a genuine hardcoded-credential weakness (this is WebGoat's intentionally vulnerable JWT lesson). Hardcoded key material used for JWT trust decisions is exploitable if an attacker can guess/derive it and forge",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-347",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/JWTRefreshEndpoint.java",
+    "line": 91,
+    "description": "The JWT is parsed with a fixed signing key via the legacy Jwts.parser().parse() call without restricting accepted algorithms, and the code explicitly branches on jwt.getHeader().get(\"alg\") == \"none\" as a recognized success path \u2014 meaning an attacker-supplied 'none'-algorithm token can bypass signatu",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-20",
+    "path": "src/main/java/org/owasp/webgoat/lessons/jwt/claimmisuse/JWTHeaderJKUEndpoint.java",
+    "line": 57,
+    "description": "The jku header is taken directly from the untrusted, unverified JWT (decoded before signature check) and used to build a URL for fetching the JWK used to verify that same token's signature, allowing an attacker to host their own JWKS and forge a validly-signed token (classic JWT jku header injection",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-306",
+    "path": "src/main/java/org/owasp/webgoat/lessons/challenges/challenge8/Assignment8.java",
+    "line": 54,
+    "description": "The endpoint only rejects GET requests and allows any other HTTP verb (POST, PUT, DELETE, etc.) to vote and receive the flag with no actual authentication/session check \u2014 a classic HTTP verb-based access control bypass, which this WebGoat lesson explicitly demonstrates.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-601",
+    "path": "src/main/java/org/owasp/webgoat/lessons/openredirect/OpenRedirectTask1.java",
+    "line": 45,
+    "description": "This WebGoat lesson only blocklists a fixed set of internal hostnames; any other host, including attacker-controlled external domains, is accepted and redirected to, making it a classic open redirect (the whole point of this intentionally vulnerable lesson).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-601",
+    "path": "src/main/java/org/owasp/webgoat/lessons/openredirect/OpenRedirectRealRedirect.java",
+    "line": 18,
+    "description": "The endpoint takes a raw user-supplied 'url' request parameter and passes it directly into ModelAndView's redirect: prefix with no validation, allowlisting, or sanitization, allowing arbitrary open redirects; the code comment even confirms this is intentional and unvalidated.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-346",
+    "path": "src/main/java/org/owasp/webgoat/lessons/csrf/CSRFGetFlag.java",
+    "line": 29,
+    "description": "This state-changing POST endpoint relies solely on inspecting the Referer/Host headers instead of validating an unpredictable CSRF token, and Referer can be omitted or spoofed by an attacker, so origin validation here is insufficient to prevent CSRF.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-89",
+    "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/advanced/SqlInjectionLesson6a.java",
+    "line": 54,
+    "description": "User-controlled accountName is concatenated directly into a SQL string with no parameterization; the only guard (unionQueryChecker) merely detects UNION via regex and does not prevent injection via quotes/OR-based payloads, so this is a genuine SQL injection sink.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-94",
+    "path": "src/main/java/org/owasp/webgoat/lessons/sqlinjection/mitigation/SqlInjectionLesson10b.java",
+    "line": 95,
+    "description": "User-controlled input `s` is embedded into Java source text and compiled/executed via JavaCompiler, which is textbook dynamic code injection if `s` originates from an untrusted HTTP request (as is typical in this WebGoat lesson's controller flow).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-74",
+    "path": "src/main/java/org/owasp/webgoat/lessons/passwordreset/ResetLinkAssignmentForgotPassword.java",
+    "line": 91,
+    "description": "The host parameter is embedded unsanitized into the password-reset email template via String.format and mailed to the user; this is WebGoat's password-reset-link-poisoning lesson where host originates from attacker-controllable request data (e.g. Host header), letting an attacker redirect the victim",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "webgoat",
+    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
+    "cwe": "CWE-22",
+    "path": "src/main/java/org/owasp/webgoat/lessons/pathtraversal/ProfileUploadRetrieval.java",
+    "line": 99,
+    "description": "The check on request.getQueryString() only blocks literal '..' and '/' in the raw query string, but request.getParameter(\"id\") returns the URL-decoded value; percent-encoded traversal sequences (e.g. %2e%2e%2f) bypass the raw-string filter and can still resolve outside catPicturesDirectory when conc",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame+semgrep)",
+    "status": "true_positive",
+    "found_by": [
+      "frame",
+      "semgrep"
     ],
     "provenance": "claude_judge_pooled",
     "granularity": "line"
@@ -1894,36 +2332,6 @@
     "path": "src/main/java/org/owasp/webgoat/lessons/jwt/claimmisuse/JWTHeaderJKUEndpoint.java",
     "line": 57,
     "description": "The `jku` value comes directly from an attacker-controlled, unverified JWT header (decoded before signature verification) and is passed straight into `new URL(...)` to fetch JWKs with no allowlist or validation, letting an attacker point the server at an arbitrary host \u2014 this is precisely the intent",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "webgoat",
-    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-601",
-    "path": "src/main/java/org/owasp/webgoat/lessons/openredirect/OpenRedirectRealRedirect.java",
-    "line": 18,
-    "description": "The endpoint takes a raw user-supplied 'url' request parameter and passes it directly into ModelAndView's redirect: prefix with no validation, allowlisting, or sanitization, allowing arbitrary open redirects; the code comment even confirms this is intentional and unvalidated.",
-    "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
-    "status": "true_positive",
-    "found_by": [
-      "semgrep"
-    ],
-    "provenance": "claude_judge_pooled",
-    "granularity": "line"
-  },
-  {
-    "repo": "webgoat",
-    "commit": "0fec33936a472330718f3e2eb000694f31633b4d",
-    "cwe": "CWE-22",
-    "path": "src/main/java/org/owasp/webgoat/lessons/pathtraversal/ProfileUploadRetrieval.java",
-    "line": 100,
-    "description": "The traversal guard only inspects the raw, still-URL-encoded query string for literal '..' or '/'; request.getParameter(\"id\") returns the decoded value, so an attacker can encode a payload (e.g. %2e%2e%2f) to bypass the check and still get a traversal-controlled path passed into new File(catPictures",
     "source": "claude_code_judge:claude-sonnet-5 (pooled semgrep)",
     "status": "true_positive",
     "found_by": [
