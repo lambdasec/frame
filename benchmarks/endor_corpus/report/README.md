@@ -7,7 +7,7 @@ Regenerate the charts from the committed ground truth + verdict caches:
 
 ```bash
 pip install matplotlib
-python writeup/gen_figures.py     # rewrites assets/fig2..fig6 .png
+python benchmarks/endor_corpus/report/gen_figures.py     # rewrites assets/fig2..fig6 .png
 ```
 
 `assets/figdata.json` holds the numbers the charts are built from;

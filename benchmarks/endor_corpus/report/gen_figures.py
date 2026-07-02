@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate the figures for the Frame AI-SAST report from assets/figdata.json.
 
-    python writeup/gen_figures.py
+    python benchmarks/endor_corpus/report/gen_figures.py
 
-Reads writeup/assets/figdata.json (produced from the committed ground truth +
-verdict caches) and writes PNGs into writeup/assets/. Deterministic; no network.
+Reads benchmarks/endor_corpus/report/assets/figdata.json (produced from the committed ground truth +
+verdict caches) and writes PNGs into benchmarks/endor_corpus/report/assets/. Deterministic; no network.
 """
 from __future__ import annotations
 
