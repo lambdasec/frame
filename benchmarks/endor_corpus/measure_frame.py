@@ -66,10 +66,11 @@ def _rel(path: str, repo: str) -> str:
 
 
 def scan_repo(repo: str, repo_dir: Path, patterns: List[str],
-              llm_triage: bool = False) -> List[Tuple[str, int, str]]:
+              llm_triage: bool = False, llm_detect: bool = False) -> List[Tuple[str, int, str]]:
     from frame.sil import FrameScanner
     exts = R.patterns_to_extensions(patterns)
-    sc = FrameScanner(language="python", verify=False, llm_triage=llm_triage)
+    sc = FrameScanner(language="python", verify=False,
+                      llm_triage=llm_triage, llm_detect=llm_detect)
     out = []
     for fp in R.collect_files(repo_dir):
         if fp.suffix.lower() not in exts:
@@ -85,7 +86,7 @@ def scan_repo(repo: str, repo_dir: Path, patterns: List[str],
 
 
 def measure(workspace: Path, gt_path: Path, cache_path: Path,
-            window: int = 5, llm_triage: bool = False) -> Dict[str, Any]:
+            window: int = 5, llm_triage: bool = False, llm_detect: bool = False) -> Dict[str, Any]:
     corpus = {c["name"]: c for c in yaml.safe_load(
         (HERE / "corpus.yaml").read_text())["repos"]}
     gt = json.loads(gt_path.read_text())
@@ -145,7 +146,7 @@ def measure(workspace: Path, gt_path: Path, cache_path: Path,
         if not rd.exists():
             per_repo[repo] = {"error": "not cloned"}
             continue
-        findings = scan_repo(repo, rd, corpus[repo]["supported_patterns"], llm_triage=llm_triage)
+        findings = scan_repo(repo, rd, corpus[repo]["supported_patterns"], llm_triage=llm_triage, llm_detect=llm_detect)
         findings_norm = [(rel, line, _norm_cwe(cwe)) for rel, line, cwe in findings]
 
         # recall: which GT entries does Frame hit? Match at FILE + CWE (not exact
@@ -209,9 +210,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="Enable the LLM triage pass (needs FRAME_LLM_BASE_URL + "
                         "FRAME_LLM_MODEL env, e.g. a local MLX/optillm endpoint). "
                         "Measures precision lift vs the pooled GT.")
+    p.add_argument("--llm-detect", action="store_true",
+                   help="Enable the LLM detection pass (adds findings the symbolic "
+                        "layer missed; needs the same endpoint env). Measures recall lift.")
     args = p.parse_args(argv)
 
-    r = measure(args.workspace, args.ground_truth, args.cache, llm_triage=args.llm_triage)
+    r = measure(args.workspace, args.ground_truth, args.cache,
+                llm_triage=args.llm_triage, llm_detect=args.llm_detect)
     rc, pc, sem = r["recall"], r["precision_cached"], r["semgrep"]
     frame_recall = f"{rc['matched']}/{rc['total_gt']} = {rc['value']}"
     frame_prec = f"{pc['tp']}TP/{pc['fp']}FP = {pc['value']}"

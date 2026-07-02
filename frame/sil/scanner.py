@@ -563,6 +563,7 @@ class FrameScanner:
         verbose: bool = False,
         library_mode: bool = False,
         llm_triage: bool = False,
+        llm_detect: bool = False,
         llm_config: Any = None
     ):
         """
@@ -581,8 +582,11 @@ class FrameScanner:
         self.verify = verify
         self.timeout = timeout
         self.verbose = verbose
-        # Optional neuro-symbolic LLM triage of findings (see frame/sil/llm_triage.py).
+        # Optional neuro-symbolic LLM layers (see frame/sil/llm_triage.py,
+        # llm_detect.py). Triage filters findings (precision); detect adds findings
+        # (recall). Both off by default -- the sound symbolic layer is the default.
         self.llm_triage = llm_triage
+        self.llm_detect = llm_detect
         self._llm_config = llm_config
         self._llm_client = None
         self.library_mode = library_mode
@@ -726,6 +730,15 @@ class FrameScanner:
                 if self.verbose:
                     print(f"[Scanner] After LLM triage: {len(result.vulnerabilities)} vulnerabilities")
 
+            # Step 8 (optional): LLM DETECTION -- adds findings the symbolic layer
+            # missed (recall). Runs after triage so its positive detections are not
+            # re-filtered. Labeled as a separate tier (source_var="llm_detect").
+            if self.llm_detect:
+                result.vulnerabilities = self._apply_llm_detect(
+                    result.vulnerabilities, source_code, filename)
+                if self.verbose:
+                    print(f"[Scanner] After LLM detect: {len(result.vulnerabilities)} vulnerabilities")
+
         except Exception as e:
             result.errors.append(f"Scan error: {str(e)}")
             if self.verbose:
@@ -759,6 +772,31 @@ class FrameScanner:
         kept, self._llm_client = triage_vulnerabilities(
             vulns, source_code, self.language, filename, config, self._llm_client)
         return kept
+
+    def _apply_llm_detect(self, vulns, source_code: str, filename: str):
+        """LLM detection pass: add findings the symbolic layer missed, on
+        security-relevant files. Additive per (file, CWE) so it doesn't duplicate
+        symbolic findings. Fail-safe: any error returns findings unchanged."""
+        try:
+            from frame.sil.llm_detect import detect_in_file, is_detection_candidate
+            from frame.sil.llm_triage import TriageConfig, LLMTriageClient
+        except ImportError:
+            return vulns
+        config = self._llm_config or TriageConfig.from_env()
+        if not getattr(config, "base_url", "") or not getattr(config, "model", ""):
+            if self.verbose:
+                print("[Scanner] LLM detect requested but no endpoint/model; skipping.")
+            return vulns
+        if not is_detection_candidate(source_code, bool(vulns)):
+            return vulns
+        if self._llm_client is None:
+            self._llm_client = LLMTriageClient(config)
+        existing_cwes = {v.cwe_id for v in vulns}
+        new = detect_in_file(source_code, self.language, filename, config, self._llm_client)
+        # Additive only: keep LLM findings whose CWE the symbolic layer didn't
+        # already report in this file (avoid duplicating proven findings).
+        added = [v for v in new if v.cwe_id not in existing_cwes]
+        return list(vulns) + added
 
     def scan_file(self, filepath: str) -> ScanResult:
         """
