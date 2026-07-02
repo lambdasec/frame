@@ -49,6 +49,66 @@
   {
     "repo": "anonymous-github",
     "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-79",
+    "path": "public/script/admin.js",
+    "line": 72,
+    "description": "Unlike the success handler (line 64) which escapes '<'/'>' before injecting into the popup document, the error handler at line 72 assigns unescaped JSON-stringified error data directly to innerHTML, allowing HTML/script injection if the error payload (e.g., server error message or reflected user inp",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "anonymous-github",
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-79",
+    "path": "public/script/admin.js",
+    "line": 595,
+    "description": "msg is built from err.data/String(err) and injected via innerHTML without the same `<`/`>` escaping applied on the success path (line 587), so any HTML-bearing content in the error response renders unescaped, enabling DOM XSS if the API's error data reflects attacker-influenced content.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "anonymous-github",
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-259",
+    "path": "src/config.ts",
+    "line": 62,
+    "description": "A hardcoded default database password literal is present directly in source config, which is a genuine CWE-259 instance regardless of whether it is later overridden by environment variables at runtime.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "anonymous-github",
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
+    "cwe": "CWE-209",
+    "path": "src/server/routes/pullRequest-public.ts",
+    "line": 51,
+    "description": "This is a public route (pullRequest-public.ts) that propagates pr.model.statusMessage directly into a thrown error, which is likely serialized back to unauthenticated clients; if statusMessage captures internal processing/build errors it could leak internal details, and there's no visible sanitizati",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "anonymous-github",
+    "commit": "e4e102eccd7de3a1fc6ccfb70fa03ef6c13e1ccf",
     "cwe": "CWE-73",
     "path": "scripts/dev-proxy.js",
     "line": 72,
@@ -648,6 +708,306 @@
     "path": "routes/fileServer.ts",
     "line": 33,
     "description": "The `file` parameter is only checked for an allowlisted extension (or an exact filename) and has null bytes stripped, but no path-traversal sanitization (e.g. stripping `../` or rejecting slashes/backslashes) is applied before `path.resolve('ftp/', file)`, allowing a payload like `../package.json\\x0",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-307",
+    "path": "server.ts",
+    "line": 346,
+    "description": "The rate limiter's keyGenerator trusts the client-supplied X-Forwarded-For header as the rate-limit key instead of relying solely on the validated req.ip, letting an attacker rotate that header per request to bypass rate limiting and brute-force the password reset endpoint.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-79",
+    "path": "frontend/src/app/track-result/track-result.component.ts",
+    "line": 48,
+    "description": "bypassSecurityTrustHtml explicitly disables Angular's built-in HTML sanitization for a string built via template literal from results.data[0].orderId, which originates from a backend response tied to attacker-influenced order data; if that field is ever attacker-controlled it renders as raw HTML/scr",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-601",
+    "path": "frontend/src/app/login/login.component.ts",
+    "line": 100,
+    "description": "The redirectUrl is taken directly from an untrusted query parameter and used later to redirect the user after login (this is the OWASP Juice Shop login flow), without validation against an allowlist of internal paths, allowing an attacker to craft a login link that redirects victims to an arbitrary ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-79",
+    "path": "frontend/src/app/welcome-banner/welcome-banner.component.ts",
+    "line": 39,
+    "description": "config.application.welcomeBanner.message is assigned directly to this.message from server-supplied application configuration; the hardcoded default value at line 28 contains raw HTML markup, strongly implying the component template renders `message` via [innerHTML] without sanitization, making it a ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-94",
+    "path": "data/static/codefixes/chatbotGreedyInjectionChallenge_1.ts",
+    "line": 65,
+    "description": "User/tool-controlled product id is concatenated unsanitized into a MongoDB `$where` clause, which is evaluated as JavaScript server-side, enabling NoSQL/code injection; this is the exact vulnerable pattern the 'chatbotGreedyInjectionChallenge' demo is built to illustrate. The `Number(Id)` (capital I",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-200",
+    "path": "data/static/codefixes/chatbotGreedyInjectionChallenge_3.ts",
+    "line": 24,
+    "description": "The system prompt embeds a 'CONFIDENTIAL - INTERNAL ONLY' business rule that the LLM is told never to proactively disclose, but since it lives in the model context it can be exfiltrated via prompt injection/jailbreak, exposing internal policy to end users \u2014 this is the intentional vulnerability in J",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-943",
+    "path": "data/static/codefixes/chatbotGreedyInjectionChallenge_3.ts",
+    "line": 66,
+    "description": "Line 66 builds a MongoDB $where clause via string concatenation, which executes arbitrary JavaScript server-side and is a textbook NoSQL injection sink \u2014 this exact pattern is CWE-943 regardless of framework. The apparent `Id`/`id` typo (undefined `Id` instead of the destructured `id`) looks like a ",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-284",
+    "path": "routes/payment.ts",
+    "line": 21,
+    "description": "The handler trusts req.body.UserId from the client to select which user's payment cards to return instead of deriving the user identity from the authenticated session, allowing any caller to enumerate other users' stored card records (masked, but still an IDOR/broken access control issue).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-521",
+    "path": "routes/changePassword.ts",
+    "line": 15,
+    "description": "The handler accepts a new password from query.new and only checks for non-empty and match with the repeat field (lines 19-25); there is no password strength/complexity validation before it is used to update the user's credentials, which is exactly the weak-password-requirements defect CWE-521 descri",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-79",
+    "path": "routes/saveLoginIp.ts",
+    "line": 23,
+    "description": "When the httpHeaderXssChallenge is enabled, the code skips security.sanitizeSecure() and stores the raw, attacker-controlled `true-client-ip` header directly to the user's lastLoginIp field; if this value is later rendered unescaped (e.g., in an admin view), it enables stored XSS, matching the known",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-284",
+    "path": "routes/basket.ts",
+    "line": 19,
+    "description": "The route fetches a basket by an attacker-controlled `id` param and returns its contents without any authorization check that the basket belongs to the requesting user; the `challengeUtils.solveIf` call merely detects exploitation of this flaw for a CTF challenge rather than preventing it, so any au",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-20",
+    "path": "routes/basketItems.ts",
+    "line": 92,
+    "description": "quantity is never validated to be a positive integer before this check; a negative quantity satisfies both the limitPerUser and stock comparisons, letting an attacker bypass per-user limits and stock checks and even manipulate basket totals (classic Juice Shop negative-quantity business-logic flaw).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-79",
+    "path": "routes/currentUser.ts",
+    "line": 58,
+    "description": "res.jsonp(response) reflects the user-controlled req.query.callback parameter as the JSONP function name without validation/sanitization, allowing injection of arbitrary script content into the response (classic JSONP callback XSS).",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-862",
+    "path": "routes/deluxe.ts",
+    "line": 43,
+    "description": "Payment validation only occurs when paymentMode is 'card' (and presumably 'wallet' earlier); any other paymentMode value skips validation entirely and reaches user.update granting deluxe role for free. This is confirmed by the challenge check on line 45 which explicitly detects paymentMode values ot",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-79",
+    "path": "routes/updateUserProfile.ts",
+    "line": 38,
+    "description": "req.body.username is persisted to the user record without any sanitization or encoding; this is the known OWASP Juice Shop stored-XSS sink where the unsanitized username is later rendered unescaped in the profile view, enabling stored XSS.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-284",
+    "path": "routes/memory.ts",
+    "line": 15,
+    "description": "UserId is taken directly from req.body without verifying it matches the authenticated user (e.g., req.user.id), allowing any authenticated user to create memory records attributed to an arbitrary other UserId \u2014 a broken access control / IDOR issue rather than deriving ownership from the session.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-94",
+    "path": "routes/showProductReviews.ts",
+    "line": 36,
+    "description": "req.params.id is concatenated unsanitized into a MongoDB $where clause, which is evaluated as JavaScript server-side; the code path only truncates length (utils.trunc) without escaping or validating content, allowing NoSQL/code injection via crafted id values.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-639",
+    "path": "routes/dataExport.ts",
+    "line": 26,
+    "description": "The user is authenticated and loggedInUser.data.id is available, but the MemoryModel query uses the attacker-controlled req.body.UserId instead of the authenticated user's id, letting any logged-in user retrieve another user's memories by supplying an arbitrary UserId.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-284",
+    "path": "routes/orderHistory.ts",
+    "line": 27,
+    "description": "allOrders() has no authentication/authorization check before returning all orders via ordersCollection.find(), unlike the adjacent handler which scopes results to the logged-in user's email \u2014 this exposes every user's order data to any caller who can reach the route.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "juice-shop",
+    "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "cwe": "CWE-94",
+    "path": "routes/recycles.ts",
+    "line": 14,
+    "description": "req.params.id is untrusted and JSON.parse'd directly into a Sequelize where clause, allowing an attacker to inject an object (e.g. Sequelize operators) instead of a scalar id, altering query semantics; CWE-94 is a mislabel but this is a genuine injection vulnerability reachable from user input.",
     "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
     "status": "true_positive",
     "found_by": [
