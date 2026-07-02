@@ -199,6 +199,11 @@ class JavaScriptFrontend:
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
+        # One-hop interprocedural taint: a request-derived value passed to a
+        # same-file function taints that function's parameter (e.g. a handler
+        # computes `file` from req and calls a helper verify(file) that sends it).
+        self._propagate_js_interprocedural(tree.root_node, program)
+
         # The whole-file ReDoS and prototype-pollution passes are structural
         # heuristics, not taint-gated. On vendored third-party libraries and
         # minified/generated bundles they produce almost only false positives
@@ -986,6 +991,103 @@ class JavaScriptFrontend:
         proc.exit_node = exit_node.id
         proc.connect(entry.id, exit_node.id)
         program.add_procedure(proc)
+
+    def _request_derived_names(self, func_node: TSNode) -> set:
+        """Names in a function that are request-derived: destructured request
+        properties plus locals initialized from a request source (small fixpoint).
+        These are the values whose interprocedural flow we track."""
+        names = set(self._express_request_source_names(func_node))
+        body = func_node.child_by_field_name("body")
+        if body is None:
+            return names
+        for _ in range(4):
+            added = False
+            stack = [body]
+            while stack:
+                c = stack.pop()
+                if c.type == "variable_declarator":
+                    nm = c.child_by_field_name("name")
+                    init = c.child_by_field_name("value")
+                    if (nm is not None and nm.type == "identifier" and init is not None):
+                        name = self._get_text(nm)
+                        if name not in names:
+                            chain = self._get_member_chain(init)
+                            refs = self._referenced_identifiers(init)
+                            if ((chain and (chain.startswith("req.") or chain.startswith("request.")))
+                                    or (refs & names)):
+                                names.add(name)
+                                added = True
+                stack.extend(c.children)
+            if not added:
+                break
+        return names
+
+    def _collect_js_calls(self, node: TSNode, calls: list) -> None:
+        """Collect bare-identifier calls: (callee_name, [ids-per-arg])."""
+        if node.type == "call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "identifier":
+                callee = self._get_text(fn)
+                args = node.child_by_field_name("arguments")
+                arg_ids = []
+                if args is not None:
+                    for a in args.children:
+                        if a.type in ("(", ")", ","):
+                            continue
+                        arg_ids.append(self._referenced_identifiers(a))
+                calls.append((callee, arg_ids))
+        for ch in node.children:
+            self._collect_js_calls(ch, calls)
+
+    def _propagate_js_interprocedural(self, root: TSNode, program: Program) -> None:
+        """Taint a same-file function's parameter when a caller passes it a
+        request-derived value (one hop). Mirrors the Java pass; recovers e.g.
+        `verify(file)` where a handler derived `file` from the request."""
+        procs_by_name: Dict[str, Any] = {}
+        for p in program.procedures.values():
+            procs_by_name.setdefault(p.name, p)
+            procs_by_name.setdefault(p.name.split(".")[-1], p)
+
+        func_nodes = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNC_LIKE:
+                func_nodes.append(n)
+            stack.extend(n.children)
+
+        to_taint: Dict[str, set] = {}
+        for fn in func_nodes:
+            derived = self._request_derived_names(fn)
+            if not derived:
+                continue
+            body = fn.child_by_field_name("body")
+            if body is None:
+                continue
+            calls: list = []
+            self._collect_js_calls(body, calls)
+            for callee, arg_ids in calls:
+                cproc = procs_by_name.get(callee)
+                if cproc is None:
+                    continue
+                for j, ids in enumerate(arg_ids):
+                    if (ids & derived) and j < len(cproc.params):
+                        to_taint.setdefault(cproc.name, set()).add(j)
+
+        for pname, idxs in to_taint.items():
+            proc = procs_by_name.get(pname)
+            if proc is None or proc.entry_node is None:
+                continue
+            entry = proc.nodes.get(proc.entry_node)
+            if entry is None:
+                continue
+            for j in sorted(idxs):
+                if j >= len(proc.params):
+                    continue
+                pv = proc.params[j][0]
+                entry.instrs.insert(0, TaintSource(
+                    loc=proc.loc, var=pv, kind=TaintKind.USER_INPUT,
+                    description="Interprocedural: request-derived argument from caller"))
 
     def _func_param_names(self, func_node: TSNode) -> set:
         """Identifier names of a function node's formal parameters."""
