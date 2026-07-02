@@ -133,8 +133,51 @@ class JavaFrontend:
                 elif child.type == "class_declaration":
                     # Handle inner classes
                     self._translate_class(child, program)
+            # Field initializers (e.g. `static final int PIN = new Random().nextInt()`,
+            # `Cipher.getInstance(SPEC)`, hardcoded keys) were never translated, so
+            # their sinks never fired. Translate them into a synthetic <clinit>.
+            self._translate_field_initializers(body, class_name, program)
 
         self._current_class = None
+
+    def _translate_field_initializers(self, body: TSNode, class_name: str,
+                                      program: Program) -> None:
+        """Translate class field initializers into a synthetic <clinit> procedure.
+
+        field_declaration nodes carry variable_declarator children just like a
+        local variable declaration, so we reuse _translate_local_var_declaration.
+        This lets the usage-based/taint sinks (insecure random, weak crypto,
+        hardcoded secret) fire on field initializers, and populates constant
+        tracking for later value resolution (e.g. a weak Cipher spec constant).
+        """
+        fields = [c for c in body.children if c.type == "field_declaration"]
+        has_init = any(
+            any(gc.type == "variable_declarator" and gc.child_by_field_name("value")
+                for gc in f.children)
+            for f in fields)
+        if not has_init:
+            return
+        proc = Procedure(name=f"{class_name}.<clinit>", params=[],
+                         ret_type=Typ.unknown_type(),
+                         loc=self._get_location(body), is_method=True)
+        proc.is_static = True
+        self._current_proc = proc
+        self._node_counter = 0
+        self._constant_values = {}
+        self._weak_algo_vars = set()
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        for f in fields:
+            self._translate_local_var_declaration(f)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc = None
+        program.add_procedure(proc)
 
     def _translate_interface(self, node: TSNode, program: Program) -> None:
         """Translate interface (skip method bodies as they're abstract)"""
