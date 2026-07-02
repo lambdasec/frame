@@ -101,6 +101,22 @@ def create_parser() -> argparse.ArgumentParser:
         default="high",
         help="Exit with error if vulnerabilities of this severity found (default: high)"
     )
+    scan_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Enable the AI layer (LLM detection + triage). Needs FRAME_LLM_BASE_URL "
+             "and FRAME_LLM_MODEL, e.g. a local mlx-optiq or any OpenAI-compatible endpoint"
+    )
+    scan_parser.add_argument(
+        "--llm-detect",
+        action="store_true",
+        help="Enable LLM detection only (adds findings the symbolic engine misses)"
+    )
+    scan_parser.add_argument(
+        "--llm-triage",
+        action="store_true",
+        help="Enable LLM triage only (drops confident false positives)"
+    )
 
     # === SOLVE command ===
     solve_parser = subparsers.add_parser(

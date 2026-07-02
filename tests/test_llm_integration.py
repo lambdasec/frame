@@ -102,3 +102,15 @@ def test_csharp_controller_is_a_candidate():
     assert is_detection_candidate(cs, False) is True
     # a plain C# DTO with no security-relevant surface is not a candidate
     assert is_detection_candidate("public class Movie { public string Title; }", False) is False
+
+
+def test_cli_ai_flags_parse():
+    """`frame scan --ai` (and the granular flags) parse and reach args."""
+    from frame.cli import create_parser
+    p = create_parser()
+    a = p.parse_args(["scan", "app.js", "--ai"])
+    assert a.ai is True and a.llm_detect is False and a.llm_triage is False
+    b = p.parse_args(["scan", "app.js", "--llm-detect", "--llm-triage"])
+    assert b.llm_detect is True and b.llm_triage is True and b.ai is False
+    c = p.parse_args(["scan", "app.js"])
+    assert c.ai is False and c.llm_detect is False and c.llm_triage is False

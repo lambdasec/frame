@@ -281,11 +281,15 @@ def cmd_scan(args) -> int:
 
     # Create scanner
     try:
+        # AI layer: --ai turns on both; --llm-detect / --llm-triage are granular.
+        ai = getattr(args, "ai", False)
         scanner = FrameScanner(
             language=args.language,
             verify=not args.no_verify,
             timeout=args.timeout,
-            verbose=args.verbose
+            verbose=args.verbose,
+            llm_detect=ai or getattr(args, "llm_detect", False),
+            llm_triage=ai or getattr(args, "llm_triage", False),
         )
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)

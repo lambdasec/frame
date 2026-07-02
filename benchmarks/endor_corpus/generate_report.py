@@ -31,9 +31,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+# matplotlib is optional: only report generation needs it. Guard the import so the
+# module (and anything that imports it, e.g. the test suite) loads without it.
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # noqa: E402
+except ImportError:  # pragma: no cover
+    matplotlib = None
+    plt = None
 
 from benchmarks.endor_corpus import summarize as S  # noqa: E402
 
@@ -429,14 +435,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args.output.mkdir(parents=True, exist_ok=True)
     figs: Dict[str, Optional[str]] = {}
-    if bj:
+    if plt is None:
+        print("[generate_report] matplotlib not installed; skipping charts "
+              "(text report only). Install with: pip install matplotlib", file=sys.stderr)
+        bj_charts = fc_charts = judged_charts = False
+    else:
+        bj_charts = fc_charts = judged_charts = True
+    if bj and bj_charts:
         figs["bj_overall"] = chart_bj_overall(bj, args.output)
         figs["bj_by_category"] = chart_bj_by_category(bj, args.output)
-    if fc:
+    if fc and fc_charts:
         figs["findings_totals"] = chart_findings_totals(fc, args.output)
         figs["overlap"] = chart_overlap(fc, args.output)
         figs["cwe_distribution"] = chart_cwe_distribution(fc, args.output)
-    if frame_j or semgrep_j:
+    if (frame_j or semgrep_j) and judged_charts:
         figs["judged_precision"] = chart_judged_precision(frame_j, semgrep_j, args.output)
 
     # judged precision table
