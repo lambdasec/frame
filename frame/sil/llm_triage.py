@@ -142,10 +142,12 @@ class LLMTriageClient:
         if rf is not None:
             body["response_format"] = rf   # structured output where supported
         payload = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.api_key}",
-        })
+        headers = {"Content-Type": "application/json"}
+        # Some local servers (e.g. OptiQ) reject *any* Authorization header; only
+        # send one when a key is actually configured. Set FRAME_LLM_API_KEY="" to omit.
+        if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        req = urllib.request.Request(url, data=payload, headers=headers)
         with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return body["choices"][0]["message"]["content"]
