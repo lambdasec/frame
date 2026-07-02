@@ -282,16 +282,3 @@ Semgrep miss. The benchmark README records how the ground truth was built and th
 honest caveats.
 
 See [benchmarks/README.md](benchmarks/README.md) for detailed results, methodology, and tool comparisons.
-
-## References
-
-- Reynolds & O'Hearn (2002). [Separation Logic: A Logic for Shared Mutable Data Structures](https://doi.org/10.1109/LICS.2002.1029817)
-- O'Hearn (2020). [Incorrectness Logic](https://doi.org/10.1145/3371078)
-
-**Related:** [Infer](https://fbinfer.com/), [Semgrep](https://semgrep.dev/), [CodeQL](https://codeql.github.com/)
-
----
-
-<p align="center">
-  <sub>Built with <a href="https://github.com/Z3Prover/z3">Z3</a> and <a href="https://tree-sitter.github.io/">tree-sitter</a></sub>
-</p>
