@@ -33,9 +33,25 @@ HERE = Path(__file__).resolve().parent
 REPOS = ["webgoat", "juice-shop", "shopizer", "anonymous-github", "demo-netflicks"]
 
 
+# Canonicalize closely-equivalent CWE families so a finding isn't counted as a
+# miss purely because two tools label the SAME vuln class differently (applied
+# symmetrically to Frame, Semgrep, and the ground truth). Kept conservative:
+# only well-established equivalences.
+_CWE_FAMILY = {
+    "CWE-73": "CWE-22",    # external control of file name/path ~ path traversal
+    "CWE-77": "CWE-78",    # command injection family
+    "CWE-80": "CWE-79",    # basic XSS ~ XSS
+    "CWE-259": "CWE-798",  # hardcoded password ~ hardcoded credentials
+    "CWE-326": "CWE-327",  # inadequate encryption strength ~ broken crypto
+}
+
+
 def _norm_cwe(c: Any) -> Optional[str]:
     n = OB.cwe_to_int(c)
-    return f"CWE-{n}" if n is not None else None
+    if n is None:
+        return None
+    cwe = f"CWE-{n}"
+    return _CWE_FAMILY.get(cwe, cwe)
 
 
 def _rel(path: str, repo: str) -> str:
