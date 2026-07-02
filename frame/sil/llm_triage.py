@@ -72,6 +72,8 @@ class TriageConfig:
     # exact schema where supported; "off" falls back to prompt-only JSON.
     json_mode: str = "json_object"  # "json_object" | "json_schema" | "off"
     cache_path: str = ""            # persist verdicts here (JSON); reused across runs
+    repo_root: str = ""             # repo root for agentic detection tools (read_file/grep)
+    max_tool_steps: int = 6         # tool-call rounds before forcing a verdict
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around the finding
     max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
@@ -88,6 +90,8 @@ class TriageConfig:
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
             cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
+            repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
+            max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "6")),
             context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
             # For a strict 1k window set this ~2000 (worst-case snippet ~500 tok);
             # 6000 (~1.5k tok) suits a 2k window.
@@ -168,6 +172,32 @@ class LLMTriageClient:
         with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return body["choices"][0]["message"]["content"]
+
+    def chat_raw(self, messages: List[Dict[str, Any]],
+                 tools: Optional[list] = None) -> Optional[Dict[str, Any]]:
+        """Return the full assistant message (content + any tool_calls), or None
+        on failure. Used by the agentic detection loop (tool-calling)."""
+        url = f"{self.config.base_url}/chat/completions"
+        body: Dict[str, Any] = {
+            "model": self.config.model, "messages": messages,
+            "temperature": self.config.temperature, "max_tokens": self.config.max_tokens,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        try:
+            self.stats["calls"] += 1
+            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                         headers=headers)
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                out = json.loads(resp.read().decode("utf-8"))
+            return out["choices"][0]["message"]
+        except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
+            self.stats["errors"] += 1
+            return None
 
     def triage(self, prompt_ctx: str) -> Optional[Dict[str, Any]]:
         """Return the parsed verdict dict, or None on any failure (fail-safe)."""

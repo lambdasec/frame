@@ -19,6 +19,8 @@ Gated behind FrameScanner(llm_detect=True) / `--llm-detect`.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -160,8 +162,10 @@ def detect_in_file(source_code: str, language: str, filename: str,
         ])
     except Exception:
         return []
-    obj = _extract_json_object(raw) or {}
-    findings = obj.get("findings") or []
+    return _findings_to_vulns((_extract_json_object(raw) or {}).get("findings") or [], filename)
+
+
+def _findings_to_vulns(findings: list, filename: str) -> List[Any]:
     out = []
     for f in findings:
         if not isinstance(f, dict):
@@ -170,3 +174,108 @@ def detect_in_file(source_code: str, language: str, filename: str,
         if v is not None and v.cwe_id:
             out.append(v)
     return out
+
+
+# ---- Agentic (tool-using) detection: cross-file exploration --------------------
+
+_TOOLS = [
+    {"type": "function", "function": {
+        "name": "read_file",
+        "description": "Read a source file in the repository by repo-relative path.",
+        "parameters": {"type": "object",
+                       "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "grep",
+        "description": "Regex-search the repository; returns up to 40 'path:line: text' matches.",
+        "parameters": {"type": "object",
+                       "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
+]
+
+_GREP_EXTS = (".java", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".py", ".cs", ".c", ".cpp", ".go")
+
+
+def _safe_path(repo_root: str, path: str) -> Optional[str]:
+    """Resolve a repo-relative path, refusing anything that escapes the repo."""
+    root = os.path.realpath(repo_root)
+    p = os.path.realpath(os.path.join(root, str(path).lstrip("/")))
+    return p if (p == root or p.startswith(root + os.sep)) else None
+
+
+def _exec_tool(name: str, args: Dict[str, Any], repo_root: str, max_chars: int = 8000) -> str:
+    try:
+        if name == "read_file":
+            p = _safe_path(repo_root, args.get("path", ""))
+            if not p or not os.path.isfile(p):
+                return "ERROR: file not found"
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                return fh.read()[:max_chars]
+        if name == "grep":
+            pat = re.compile(str(args.get("pattern", "")), re.I)
+            root = os.path.realpath(repo_root)
+            out: List[str] = []
+            for dp, _, fns in os.walk(root):
+                for fn in fns:
+                    if not fn.lower().endswith(_GREP_EXTS):
+                        continue
+                    fp = os.path.join(dp, fn)
+                    try:
+                        with open(fp, encoding="utf-8", errors="replace") as fh:
+                            for i, ln in enumerate(fh, 1):
+                                if pat.search(ln):
+                                    out.append(f"{os.path.relpath(fp, root)}:{i}: {ln.strip()[:160]}")
+                                    if len(out) >= 40:
+                                        return "\n".join(out)
+                    except OSError:
+                        continue
+            return "\n".join(out) or "no matches"
+    except (re.error, ValueError, OSError) as e:
+        return f"ERROR: {e}"
+    return "ERROR: unknown tool"
+
+
+def detect_agentic(source_code: str, language: str, filename: str,
+                   config: TriageConfig,
+                   client: Optional[LLMTriageClient] = None) -> List[Any]:
+    """Tool-using detection: the model may read_file/grep across the repo to trace
+    cross-file flows before reporting. Falls back to single-file if no repo_root."""
+    if client is None:
+        client = LLMTriageClient(config)
+    repo_root = getattr(config, "repo_root", "")
+    if not repo_root:
+        return detect_in_file(source_code, language, filename, config, client)
+    max_chars = getattr(config, "max_context_chars", 6000) * 4
+    system = DETECT_SYSTEM + (
+        " You MAY call read_file(path) and grep(pattern) to inspect related files "
+        "(helpers, callers, config, sources/sinks in other files) before deciding. "
+        "When finished, reply with ONLY the JSON object.")
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Language: {language}\nFile: {filename}\n\n"
+         f"Source (numbered lines):\n{_numbered(source_code, max_chars)}\n\n"
+         "Investigate (use tools if helpful for cross-file flows) and report real "
+         "vulnerabilities as the JSON object."}]
+    for _ in range(max(1, getattr(config, "max_tool_steps", 6))):
+        msg = client.chat_raw(messages, _TOOLS)
+        if msg is None:
+            return []
+        tcs = msg.get("tool_calls")
+        if tcs:
+            messages.append({"role": "assistant", "content": msg.get("content") or "",
+                             "tool_calls": tcs})
+            for tc in tcs:
+                fn = tc.get("function", {})
+                try:
+                    a = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    a = {}
+                res = _exec_tool(fn.get("name", ""), a, repo_root)
+                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                                 "content": res[:8000]})
+            continue
+        return _findings_to_vulns(
+            (_extract_json_object(msg.get("content") or "") or {}).get("findings") or [], filename)
+    # Step budget exhausted -> force a final verdict without tools.
+    messages.append({"role": "user", "content": "Report the findings now as the JSON object."})
+    msg = client.chat_raw(messages)
+    return _findings_to_vulns(
+        (_extract_json_object((msg or {}).get("content") or "") or {}).get("findings") or [], filename)

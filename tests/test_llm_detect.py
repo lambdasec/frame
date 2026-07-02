@@ -65,6 +65,37 @@ def test_sink_grounding():
     assert is_sink_grounded("CWE-209", 5, sinks) is False        # CWE with no sink model
 
 
+def test_agentic_tool_loop(tmp_path):
+    from frame.sil.llm_detect import detect_agentic
+    (tmp_path / "helper.js").write_text("const cp=require('child_process'); cp.exec(cmd)")
+    calls = {"n": 0}
+    def fake_chat(messages, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:                      # first: model calls a tool
+            return {"content": "", "tool_calls": [
+                {"id": "t1", "function": {"name": "read_file",
+                                          "arguments": '{"path": "helper.js"}'}}]}
+        return {"content": json.dumps({"findings": [                 # then: reports
+            {"cwe": "CWE-78", "line": 3, "type": "command_injection",
+             "reasoning": "cmd flows cross-file to cp.exec", "confidence": 0.9}]})}
+    cfg = TriageConfig(base_url="x", model="m", repo_root=str(tmp_path))
+    c = LLMTriageClient(cfg)
+    c.chat_raw = fake_chat
+    vs = detect_agentic("app.get('/x',(req,res)=>helper.run(req.query.cmd))",
+                        "javascript", "h.js", cfg, c)
+    assert calls["n"] == 2                        # one tool round, then answer
+    assert len(vs) == 1 and vs[0].cwe_id == "CWE-78"
+
+
+def test_exec_tool_and_path_safety(tmp_path):
+    from frame.sil.llm_detect import _exec_tool, _safe_path
+    (tmp_path / "a.js").write_text("secret-content")
+    assert _exec_tool("read_file", {"path": "a.js"}, str(tmp_path)) == "secret-content"
+    assert "ERROR" in _exec_tool("read_file", {"path": "../../etc/passwd"}, str(tmp_path))
+    assert _safe_path(str(tmp_path), "../escape") is None       # no repo escape
+    assert _safe_path(str(tmp_path), "a.js") is not None
+
+
 def test_numbered_truncates():
     big = "\n".join(f"line{i}" for i in range(1000))
     out = _numbered(big, 200)

@@ -780,7 +780,7 @@ class FrameScanner:
         promoted to a higher-confidence tier (source_var="llm_verified"); the rest
         stay "llm_detect". Additive per (file, CWE). Fail-safe on any error."""
         try:
-            from frame.sil.llm_detect import (detect_in_file, is_detection_candidate,
+            from frame.sil.llm_detect import (detect_agentic, is_detection_candidate,
                                               collect_sinks, is_sink_grounded)
             from frame.sil.llm_triage import TriageConfig, LLMTriageClient
         except ImportError:
@@ -795,7 +795,9 @@ class FrameScanner:
         if self._llm_client is None:
             self._llm_client = LLMTriageClient(config)
         existing_cwes = {v.cwe_id for v in vulns}
-        new = detect_in_file(source_code, self.language, filename, config, self._llm_client)
+        # detect_agentic uses read_file/grep tools when config.repo_root is set
+        # (cross-file flows), else falls back to single-file detection.
+        new = detect_agentic(source_code, self.language, filename, config, self._llm_client)
         sinks = collect_sinks(program) if program is not None else []
         added = []
         for v in new:
