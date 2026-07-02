@@ -86,6 +86,10 @@ class TriageConfig:
             model=os.environ.get("FRAME_LLM_MODEL", ""),
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
+            context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
+            # For a strict 1k window set this ~2000 (worst-case snippet ~500 tok);
+            # 6000 (~1.5k tok) suits a 2k window.
+            max_context_chars=int(os.environ.get("FRAME_LLM_MAX_CONTEXT_CHARS", "6000")),
             json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_object"),
             drop_threshold=float(os.environ.get("FRAME_LLM_DROP_THRESHOLD", "0.75")),
             timeout=int(os.environ.get("FRAME_LLM_TIMEOUT", "60")),
