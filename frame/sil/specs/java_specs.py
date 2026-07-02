@@ -144,6 +144,8 @@ SERVLET_SPECS = {
     # _scan_deserialization) at construction of an inherently-unsafe deserializer
     # (ObjectInputStream / XMLDecoder), which cannot safely handle untrusted data.
     "__unsafe_deserialize__": _sink("deserialize_unsafe", [], "Unsafe deserializer construction (CWE-502)"),
+    # Emitted by _scan_csrf_disabled at http.csrf().disable() in a Spring Security config.
+    "__csrf_disabled__": _sink("csrf_disabled", [], "CSRF protection disabled (CWE-352)"),
 }
 
 # =============================================================================

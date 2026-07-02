@@ -125,6 +125,7 @@ class SinkKind(Enum):
     # A08: Software/Data Integrity Failures
     DESERIALIZATION = "deserialize"  # Object deserialization (CWE-502)
     DESERIALIZE_UNSAFE = "deserialize_unsafe"  # Inherently-unsafe deserializer, usage-based (CWE-502)
+    CSRF_DISABLED = "csrf_disabled"  # CSRF protection disabled in security config (CWE-352)
 
     # A09: Logging & Alerting Failures
     LOG = "log"                 # Log injection (CWE-117)

@@ -96,6 +96,7 @@ class JavaFrontend:
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
         self._scan_deserialization(tree.root_node, program)
+        self._scan_csrf_disabled(tree.root_node, program)
         return program
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
@@ -379,6 +380,34 @@ class JavaFrontend:
             stack.extend(n.children)
         self._emit_findings_proc(program, "<unsafe-deserialize>",
                                  "__unsafe_deserialize__", hits)
+
+    def _scan_csrf_disabled(self, root: TSNode, program: Program) -> None:
+        """Flag CSRF protection disabled in a Spring Security config (CWE-352).
+
+        Detects `http.csrf().disable()` (the disable() is called on a csrf()
+        receiver) and the lambda/method-reference form `csrf(c -> c.disable())` /
+        `csrf(AbstractHttpConfigurer::disable)`. Disabling CSRF on a session/
+        cookie-authenticated app removes cross-site-request-forgery protection.
+        """
+        hits: List[Location] = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "method_invocation":
+                name_node = n.child_by_field_name("name")
+                mname = self._get_text(name_node) if name_node is not None else ""
+                if mname == "disable":
+                    obj = n.child_by_field_name("object")
+                    if obj is not None and obj.type == "method_invocation":
+                        onn = obj.child_by_field_name("name")
+                        if onn is not None and self._get_text(onn) == "csrf":
+                            hits.append(self._get_location(n))
+                elif mname == "csrf":
+                    args = n.child_by_field_name("arguments")
+                    if args is not None and "disable" in self._get_text(args):
+                        hits.append(self._get_location(n))
+            stack.extend(n.children)
+        self._emit_findings_proc(program, "<csrf-disabled>", "__csrf_disabled__", hits)
 
     def _emit_findings_proc(self, program: Program, name: str,
                             sink_name: str, hits: List[Location]) -> None:
