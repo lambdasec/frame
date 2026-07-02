@@ -283,22 +283,6 @@ honest caveats.
 
 See [benchmarks/README.md](benchmarks/README.md) for detailed results, methodology, and tool comparisons.
 
-## Project Structure
-
-```
-frame/
-  core/           # AST and parser
-  encoding/       # Z3 SMT encoding
-  checking/       # Entailment checker
-  sil/            # Security scanner
-    scanner.py    # Main interface (symbolic + optional LLM layers)
-    frontends/    # Language parsers (Python, Java, JS, C, C#)
-    analyzers/    # Taint & memory analysis
-    llm_detect.py # Optional LLM detection (recall) + agentic cross-file tools
-    llm_triage.py # Optional LLM triage (precision) + OpenAI-compatible client
-  cli.py          # Command-line interface
-```
-
 ## References
 
 - Reynolds & O'Hearn (2002). [Separation Logic: A Logic for Shared Mutable Data Structures](https://doi.org/10.1109/LICS.2002.1029817)
