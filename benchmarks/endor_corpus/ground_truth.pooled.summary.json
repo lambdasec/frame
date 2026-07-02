@@ -11,9 +11,10 @@
       "semgrep:true_positive": 20
     },
     "demo-netflicks": {
-      "confirmed_vulns": 2,
-      "frame:false_positive": 48,
-      "frame:true_positive": 2,
+      "confirmed_vulns": 7,
+      "frame:false_positive": 50,
+      "frame:true_positive": 7,
+      "frame:uncertain": 1,
       "semgrep:false_positive": 32
     },
     "juice-shop": {
@@ -43,12 +44,12 @@
     }
   },
   "by_cwe": {
-    "CWE-89": 30,
+    "CWE-89": 31,
+    "CWE-22": 17,
     "CWE-943": 17,
-    "CWE-22": 16,
     "CWE-79": 15,
     "CWE-489": 10,
-    "CWE-352": 7,
+    "CWE-352": 8,
     "CWE-94": 6,
     "CWE-73": 5,
     "CWE-330": 5,
@@ -60,6 +61,7 @@
     "CWE-798": 4,
     "CWE-548": 4,
     "CWE-1321": 3,
+    "CWE-611": 3,
     "CWE-200": 3,
     "CWE-327": 3,
     "CWE-614": 3,
@@ -67,11 +69,11 @@
     "CWE-863": 2,
     "CWE-20": 2,
     "CWE-732": 2,
-    "CWE-611": 2,
     "CWE-328": 2,
     "CWE-942": 2,
     "CWE-502": 2,
     "CWE-319": 2,
+    "CWE-78": 1,
     "CWE-307": 1,
     "CWE-521": 1,
     "CWE-862": 1,
@@ -92,7 +94,7 @@
     "CWE-918": 1
   },
   "totals": {
-    "confirmed_vulns": 188
+    "confirmed_vulns": 193
   },
   "note": "Model-adjudicated (Claude Sonnet 5), pooled union of Frame + Semgrep true positives. NOT a complete labeling: supports recall of known vulns, not absolute precision. Validate via BenchmarkJava agreement."
 }

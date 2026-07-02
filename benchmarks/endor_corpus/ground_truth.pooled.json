@@ -212,6 +212,81 @@
     "granularity": "line"
   },
   {
+    "repo": "demo-netflicks",
+    "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+    "cwe": "CWE-352",
+    "path": "DotNetFlicks.Web/Controllers/MovieController.cs",
+    "line": 90,
+    "description": "The POST Edit action performs a state-changing save (_movieManager.Save(vm)) but the [ValidateAntiForgeryToken] attribute is explicitly commented out (with a comment acknowledging it should be added), leaving the endpoint unprotected against CSRF.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "demo-netflicks",
+    "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+    "cwe": "CWE-611",
+    "path": "DotNetFlicks.Managers/Managers/PersonManager.cs",
+    "line": 80,
+    "description": "DtdProcessing is explicitly set to Parse and XmlResolver is set to a live XmlUrlResolver, enabling DTD/external entity resolution on attacker-controlled XML input passed into the reader, which is the canonical XXE misconfiguration (reinforced by the commented-out exploit payloads referencing local f",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "demo-netflicks",
+    "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+    "cwe": "CWE-78",
+    "path": "DotNetFlicks.Accessors/Identity/ApplicationSignInManager.cs",
+    "line": 46,
+    "description": "escapedArgs is interpolated unquoted into ProcessStartInfo.Arguments passed to certutil; even though UseShellExecute=false avoids shell metacharacter injection, an attacker-controlled value containing spaces/dashes can inject additional certutil flags (e.g. -urlcache) enabling command/argument injec",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "demo-netflicks",
+    "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+    "cwe": "CWE-22",
+    "path": "DotNetFlicks.Accessors/Identity/ApplicationSignInManager.cs",
+    "line": 34,
+    "description": "The `cmd` parameter is used directly (after only quote-escaping, not path-traversal sanitization) to build a file path passed to File.WriteAllText, allowing an attacker-controlled value like '../../etc/passwd' or similar to write files outside the intended directory.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
+    "repo": "demo-netflicks",
+    "commit": "2c3dd095c3f9e18d44940678fe68e9ff60f7a740",
+    "cwe": "CWE-89",
+    "path": "DotNetFlicks.Accessors/Accessors/MovieAccessor.cs",
+    "line": 56,
+    "description": "request.UserId and request.Search are concatenated directly into a raw SQL INSERT statement executed via ExecuteSqlRaw without parameterization, allowing SQL injection from user-controlled search/request input.",
+    "source": "claude_code_judge:claude-sonnet-5 (pooled frame)",
+    "status": "true_positive",
+    "found_by": [
+      "frame"
+    ],
+    "provenance": "claude_judge_pooled",
+    "granularity": "line"
+  },
+  {
     "repo": "juice-shop",
     "commit": "33518f5a0911e25d9df747b1e70fb7af279a755c",
     "cwe": "CWE-89",
