@@ -79,6 +79,35 @@ def is_test_file(rel_path: str) -> bool:
     return bool(TEST_PATH_RE.search(str(rel_path).replace("\\", "/")))
 
 
+# Third-party client-side libraries bundled into a repo are not the app's own
+# attack surface -- findings in them (a regex in three.js, a path op in ace.js)
+# belong to the library, not the app, and are noise. Detect by vendored directory,
+# known library filename, or a large single JS bundle.
+VENDOR_DIR_RE = re.compile(
+    r"(^|/)(vendor|vendored|third[_-]?party|external|bower_components|"
+    r"jspm_packages|node_modules)/", re.I)
+LIB_NAME_RE = re.compile(
+    r"(^|/)(jquery|bootstrap|angular|react|react-dom|vue|lodash|underscore|moment|"
+    r"d3|three|ace|popper|tinymce|ckeditor|codemirror|highlight(\.pack)?|prism|"
+    r"mathjax|backbone|ember|knockout|handlebars|chart|swagger[-.]?ui|pdf(\.worker)?|"
+    r"ext-[\w]+)[-.\w]*\.js$", re.I)
+_LARGE_JS_BYTES = 100 * 1024   # a >100 KB single JS file is a bundle, not app source
+
+
+def is_vendored(rel_path: str, full_path=None) -> bool:
+    """True for bundled third-party client-side libraries (not the app's own code)."""
+    p = "/" + str(rel_path).replace("\\", "/").lstrip("/")
+    if VENDOR_DIR_RE.search(p) or LIB_NAME_RE.search(p):
+        return True
+    if full_path is not None and p.lower().endswith((".js", ".jsx", ".mjs", ".cjs")):
+        try:
+            if os.path.getsize(full_path) > _LARGE_JS_BYTES:
+                return True
+        except OSError:
+            pass
+    return False
+
+
 # --------------------------------------------------------------------------- #
 # Small utilities
 # --------------------------------------------------------------------------- #
@@ -175,7 +204,7 @@ def collect_files(repo_dir: Path) -> List[Path]:
         for fn in filenames:
             p = Path(root) / fn
             rel = p.relative_to(repo_dir).as_posix()
-            if is_generated(fn) or is_test_file(rel):
+            if is_generated(fn) or is_test_file(rel) or is_vendored(rel, p):
                 continue
             files.append(p)
     return files

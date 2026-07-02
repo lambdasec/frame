@@ -632,7 +632,12 @@ COMMAND_INJECTION_SPECS = {
 ACCESS_CONTROL_SPECS = {
     # JWT handling
     "Jwts.parser": _sink("auth", [0], "JWT parser - verify signature (CWE-347)"),
-    "JWT.decode": _sink("auth", [0], "JWT decode (CWE-347)"),
+    # JWT.decode(token) merely parses the token (no signature check) -- it is not
+    # an injection sink. Treat it as a taint propagator so the token's taint flows
+    # to real downstream sinks (e.g. a JKU URL -> SSRF) without mislabeling the
+    # decode itself. (As a bare sink with the unrecognized "auth" kind it was
+    # defaulting to SQL_QUERY and producing bogus CWE-89 findings.)
+    "JWT.decode": _propagator([0], "JWT.decode (propagates token taint)"),
     "JWTVerifier": _propagator([0], "JWT verifier"),
 
     # Session handling
