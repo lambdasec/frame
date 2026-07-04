@@ -1,0 +1,1929 @@
+[
+  {
+    "instance_id": "pylons__waitress_575994cd42e83fd772a5f7ec98b2c56751bd3f65",
+    "cwe_ids": [
+      "CWE-444"
+    ],
+    "cve": "CVE-2019-16792",
+    "files": [
+      "parser.py"
+    ]
+  },
+  {
+    "instance_id": "jupyterhub__oauthenticator_a4aac191c16cf6281f3d346615aefa75702b02d7",
+    "cwe_ids": [
+      "CWE-863"
+    ],
+    "cve": "CVE-2020-26250",
+    "files": [
+      "bitbucket.py",
+      "cilogon.py",
+      "github.py",
+      "gitlab.py",
+      "google.py",
+      "oauth2.py"
+    ]
+  },
+  {
+    "instance_id": "urllib3__urllib3_8d65ea1ecf6e2cdc27d42124e587c1b83a3118b0",
+    "cwe_ids": [
+      "CWE-295"
+    ],
+    "cve": "CVE-2021-28363",
+    "files": [
+      "connection.py"
+    ]
+  },
+  {
+    "instance_id": "matrix-org__synapse_03318a766cac9f8b053db2214d9c332a977d226c",
+    "cwe_ids": [
+      "CWE-331",
+      "CWE-400"
+    ],
+    "cve": "CVE-2021-29471",
+    "files": [
+      "tls.py",
+      "push_rule_evaluator.py",
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "scrapy__scrapy_b01d69a1bf48060daec8f751368622352d8b85a6",
+    "cwe_ids": [
+      "CWE-522"
+    ],
+    "cve": "CVE-2021-41125",
+    "files": [
+      "httpauth.py"
+    ]
+  },
+  {
+    "instance_id": "lxml__lxml_12fa9669007180a7bb87d990c375cf91ca5b664a",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2021-43818",
+    "files": [
+      "clean.py"
+    ]
+  },
+  {
+    "instance_id": "lxml__lxml_f2330237440df7e8f39c3ad1b1aa8852be3b27c0",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2021-43818",
+    "files": [
+      "clean.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_b62c479ff6979563c7c23e7182942bc4f460a2c7",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2022-3371",
+    "files": [
+      "page_admin_users.py",
+      "page_pref_general.py",
+      "page_pref_tokens.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_7294bb7466532762c93d711211e5958940c1b428",
+    "cwe_ids": [
+      "CWE-1021"
+    ],
+    "cve": "CVE-2022-3167",
+    "files": [
+      "security.py"
+    ]
+  },
+  {
+    "instance_id": "sqlalchemy__mako_925760291d6efec64fda6e9dd1fd9cfbd5be068c",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2022-40023",
+    "files": [
+      "lexer.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_2ffc2af65c8f8113b06e0b89929c604bcdf844b9",
+    "cwe_ids": [
+      "CWE-521"
+    ],
+    "cve": "CVE-2022-3376",
+    "files": [
+      "page_pref_general.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_ff806ab173a504395fdfb3139eb0a29444ab4b91",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2023-28836",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_4f8289a81206f767df1900ac48f485d90fc87edb",
+    "cwe_ids": [
+      "CWE-787"
+    ],
+    "cve": "CVE-2023-31146",
+    "files": [
+      "core.py"
+    ]
+  },
+  {
+    "instance_id": "pallets__flask_afd63b16170b7c047f5758eb910c416511e9c965",
+    "cwe_ids": [
+      "CWE-539"
+    ],
+    "cve": "CVE-2023-30861",
+    "files": [
+      "sessions.py"
+    ]
+  },
+  {
+    "instance_id": "zopefoundation__zope_26a55dbc301db417f47cafda6fe0f983b5690088",
+    "cwe_ids": [
+      "CWE-79",
+      "CWE-80"
+    ],
+    "cve": "CVE-2023-42458",
+    "files": [
+      "Image.py"
+    ]
+  },
+  {
+    "instance_id": "plone__plone.namedfile_ff5269fb4c79f4eb91dd934561b8824a49a03b60",
+    "cwe_ids": [
+      "CWE-79",
+      "CWE-80"
+    ],
+    "cve": "CVE-2023-41048",
+    "files": [
+      "scaling.py"
+    ]
+  },
+  {
+    "instance_id": "rohe__pysaml2_6e09a25d9b4b7aa7a506853210a9a14100b8bc9b",
+    "cwe_ids": [
+      "CWE-611"
+    ],
+    "cve": "CVE-2016-10127",
+    "files": [
+      "__init__.py",
+      "pack.py",
+      "soap.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_0bd57a879a0d54920bb9038a732645fb917040e9",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2021-35042",
+    "files": [
+      "constants.py",
+      "query.py"
+    ]
+  },
+  {
+    "instance_id": "savon-noir__python-libnmap_c36fecde90017befeb4853396d0e2aac93c95b64",
+    "cwe_ids": [
+      "CWE-88"
+    ],
+    "cve": "CVE-2022-30284",
+    "files": [
+      "process.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_c4a19cf67d575c4886171b8efcbf4675d51f3929",
+    "cwe_ids": [
+      "CWE-284"
+    ],
+    "cve": "CVE-2022-4724",
+    "files": [
+      "__init__.py",
+      "_sshkey.py",
+      "_user.py"
+    ]
+  },
+  {
+    "instance_id": "borgbackup__borg_3eb070191da10c2d3f7bc6484cf3d51c3045f884",
+    "cwe_ids": [
+      "CWE-347"
+    ],
+    "cve": "CVE-2023-36811",
+    "files": [
+      "archive.py",
+      "key.py",
+      "msgpack.py",
+      "cache.py",
+      "parseformat.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_400c226953b4568f4361bc0a0c223511652c2b9d",
+    "cwe_ids": [
+      "CWE-23"
+    ],
+    "cve": "CVE-2024-0520",
+    "files": [
+      "http_dataset_source.py"
+    ]
+  },
+  {
+    "instance_id": "lektor__lektor_7393d87bd354e43120937789956175064e4610a0",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2024-28335",
+    "files": [
+      "editor.py",
+      "utils.py"
+    ]
+  },
+  {
+    "instance_id": "psf__requests_a58d7f2ffb4d00b46dca2d70a3932a0b37e22fac",
+    "cwe_ids": [
+      "CWE-670"
+    ],
+    "cve": "CVE-2024-35195",
+    "files": [
+      "adapters.py"
+    ]
+  },
+  {
+    "instance_id": "mkomitee__requests-kerberos_9c1e08cc17bb6950455a85d33d391ecd2bce6eb6",
+    "cwe_ids": [
+      "CWE-287"
+    ],
+    "cve": "CVE-2014-8650",
+    "files": [
+      "kerberos_.py"
+    ]
+  },
+  {
+    "instance_id": "jupyterhub__oauthenticator_5cd2d1816f90dc5c946e6e38fd2d0ba535624c5c",
+    "cwe_ids": [
+      "CWE-639"
+    ],
+    "cve": "CVE-2022-31027",
+    "files": [
+      "cilogon.py",
+      "oauth2.py"
+    ]
+  },
+  {
+    "instance_id": "dpgaspar__flask-appbuilder_6af28521589599b1dbafd6313256229ee9a4fa74",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2021-32805",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "nonebot__nonebot2_b65b3b438c95894654fd9081139989c757bdc6c1",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2024-21624",
+    "files": [
+      "template.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_150dd927c3297daccab507bc5a5f2c3a32f24d5f",
+    "cwe_ids": [
+      "CWE-78"
+    ],
+    "cve": "CVE-2022-41131",
+    "files": [
+      "hive.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_019a37ab98ff53f04fecfadf602b6cd5ac748f7f",
+    "cwe_ids": [
+      "CWE-252"
+    ],
+    "cve": "CVE-2023-37902",
+    "files": [
+      "functions.py"
+    ]
+  },
+  {
+    "instance_id": "gventuri__pandas-ai_3aac79be8fc1d18b53d66a566adddbbdd2b38ad5",
+    "cwe_ids": [
+      "CWE-94"
+    ],
+    "cve": "CVE-2023-39660",
+    "files": [
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_8f9a4d3a2bc42f14bb437defd30c7315adbff22c",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2015-5145",
+    "files": [
+      "validators.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_438a450714a3ca06285eeea34bdc6cf79d7f6cbc",
+    "cwe_ids": [
+      "CWE-29"
+    ],
+    "cve": "CVE-2024-3573",
+    "files": [
+      "environment_variables.py",
+      "handlers.py",
+      "uri.py"
+    ]
+  },
+  {
+    "instance_id": "jtesta__ssh-audit_8e972c5e94b460379fe0c7d20209c16df81538a5",
+    "cwe_ids": [
+      "CWE-354"
+    ],
+    "cve": "CVE-2023-48795",
+    "files": [
+      "ssh2_kexdb.py",
+      "ssh_audit.py"
+    ]
+  },
+  {
+    "instance_id": "tiangolo__fastapi_fa7e3c996edf2d5482fff8f9d890ac2390dede4d",
+    "cwe_ids": [
+      "CWE-352"
+    ],
+    "cve": "CVE-2021-32677",
+    "files": [
+      "routing.py"
+    ]
+  },
+  {
+    "instance_id": "plone__plone.namedfile_188f66a4577021cf8f2bf7c0f5150f9b9573f167",
+    "cwe_ids": [
+      "CWE-79",
+      "CWE-80"
+    ],
+    "cve": "CVE-2023-41048",
+    "files": [
+      "scaling.py"
+    ]
+  },
+  {
+    "instance_id": "gitpython-developers__gitpython_ca965ecc81853bca7675261729143f54e5bf4cdd",
+    "cwe_ids": [
+      "NVD-CWE-noinfo"
+    ],
+    "cve": "CVE-2023-40267",
+    "files": [
+      "base.py"
+    ]
+  },
+  {
+    "instance_id": "openstack__nova_8b289237ed6d53738c22878decf0c429301cf3d0",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2015-8749",
+    "files": [
+      "volume_utils.py",
+      "volumeops.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_d9dea5ce17f0c5859dc705bba8e6ef22e5659955",
+    "cwe_ids": [
+      "CWE-20"
+    ],
+    "cve": "CVE-2023-28710",
+    "files": [
+      "spark_jdbc.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_f18f48492dc69f392e45567580b6ddb0c070ea58",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2024-39863",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_2c73f8352635c0a433423a5b94740de1a118e508",
+    "cwe_ids": [
+      "CWE-697"
+    ],
+    "cve": "CVE-2022-24787",
+    "files": [
+      "core.py",
+      "expr.py",
+      "keccak256_helper.py"
+    ]
+  },
+  {
+    "instance_id": "plone__plone.rest_43b4a7e86206e237e1de5ca3817ed071575882f7",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2023-42457",
+    "files": [
+      "traverse.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_5be2b1ed55fd7259dfdf2c82e7701dba407b8b62",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2023-28836",
+    "files": [
+      "forms.py"
+    ]
+  },
+  {
+    "instance_id": "bottlepy__bottle_6d7e13da0f998820800ecb3fe9ccee4189aefb54",
+    "cwe_ids": [
+      "CWE-93"
+    ],
+    "cve": "CVE-2016-9964",
+    "files": [
+      "bottle.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_5fe901e5d86ed02dbbb63039a897582951266afd",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2022-21683",
+    "files": [
+      "edit.py"
+    ]
+  },
+  {
+    "instance_id": "flask-admin__flask-admin_8af10e0b022464fdcb2da3d0ea5bbd2f11c0acd1",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2018-16516",
+    "files": [
+      "helpers.py"
+    ]
+  },
+  {
+    "instance_id": "twisted__twisted_6c61fc4503ae39ab8ecee52d10f10ee2c371d7e2",
+    "cwe_ids": [
+      "CWE-74"
+    ],
+    "cve": "CVE-2019-12387",
+    "files": [
+      "_newclient.py",
+      "client.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_1da75dfcecd4d169e34809ade55748384e8af6c1",
+    "cwe_ids": [
+      "CWE-22",
+      "CWE-29"
+    ],
+    "cve": "CVE-2023-6831",
+    "files": [
+      "uri.py"
+    ]
+  },
+  {
+    "instance_id": "pylons__waitress_11d9e138125ad46e951027184b13242a3c1de017",
+    "cwe_ids": [
+      "CWE-444"
+    ],
+    "cve": "CVE-2019-16789",
+    "files": [
+      "parser.py",
+      "rfc7230.py",
+      "utilities.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_f8d51e21523238280ebcfdb378612afd7844eca8",
+    "cwe_ids": [
+      "CWE-29"
+    ],
+    "cve": "CVE-2024-3848",
+    "files": [
+      "handlers.py"
+    ]
+  },
+  {
+    "instance_id": "andialbrecht__sqlparse_b4a39d9850969b4e1d6940d32094ee0b42a2cf03",
+    "cwe_ids": [
+      "CWE-674"
+    ],
+    "cve": "CVE-2024-4340",
+    "files": [
+      "sql.py"
+    ]
+  },
+  {
+    "instance_id": "piccolo-orm__piccolo_82679eb8cd1449cf31d87c9914a072e70168b6eb",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2023-47128",
+    "files": [
+      "base.py",
+      "postgres.py",
+      "sqlite.py"
+    ]
+  },
+  {
+    "instance_id": "pallets__flask_70f906c51ce49c485f1d355703e9cc3386b1cc2b",
+    "cwe_ids": [
+      "CWE-539"
+    ],
+    "cve": "CVE-2023-30861",
+    "files": [
+      "sessions.py"
+    ]
+  },
+  {
+    "instance_id": "xi__django-mfa3_32f656e22df120b84bdf010e014bb19bd97971de",
+    "cwe_ids": [
+      "CWE-287"
+    ],
+    "cve": "CVE-2022-24857",
+    "files": [
+      "admin.py",
+      "apps.py"
+    ]
+  },
+  {
+    "instance_id": "plone__plone.namedfile_f0f911f2a72b2e5c923dc2ab9179319cc47788f9",
+    "cwe_ids": [
+      "CWE-79",
+      "CWE-80"
+    ],
+    "cve": "CVE-2023-41048",
+    "files": [
+      "scaling.py"
+    ]
+  },
+  {
+    "instance_id": "zopefoundation__zope_603b0a12881c90a072a7a65e32d47ed898ce37cb",
+    "cwe_ids": [
+      "CWE-79",
+      "CWE-80"
+    ],
+    "cve": "CVE-2023-42458",
+    "files": [
+      "Image.py"
+    ]
+  },
+  {
+    "instance_id": "pallets__jinja_0668239dc6b44ef38e7a6c9f91f312fd4ca581cb",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2024-34064",
+    "files": [
+      "filters.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_2406780831618405a13113377a784f3102465f40",
+    "cwe_ids": [
+      "CWE-524"
+    ],
+    "cve": "CVE-2022-3292",
+    "files": [
+      "dispatch.py",
+      "secure_headers.py"
+    ]
+  },
+  {
+    "instance_id": "urllib3__urllib3_a74c9cfbaed9f811e7563cfc3dce894928e0221a",
+    "cwe_ids": [
+      "CWE-400"
+    ],
+    "cve": "CVE-2020-7212",
+    "files": [
+      "url.py"
+    ]
+  },
+  {
+    "instance_id": "python-pillow__pillow_2444cddab2f83f28687c7c20871574acbb6dbcf3",
+    "cwe_ids": [
+      "CWE-400"
+    ],
+    "cve": "CVE-2022-45199",
+    "files": [
+      "TiffImagePlugin.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_667657c6fe2b336c90be37f37fb92f65df4feee3",
+    "cwe_ids": [
+      "CWE-130"
+    ],
+    "cve": "CVE-2022-3290",
+    "files": [
+      "page_admin.py",
+      "page_login.py",
+      "pref_general.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_422791ea45713aaaa865bdca74addb9fffd93a71",
+    "cwe_ids": [
+      "CWE-352"
+    ],
+    "cve": "CVE-2022-3232",
+    "files": [
+      "page_admin.py",
+      "page_delete.py",
+      "pref_general.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_3de1415ee77a9244eb04bdb695e249d3ec9ed868",
+    "cwe_ids": [
+      "CWE-190"
+    ],
+    "cve": "CVE-2023-32058",
+    "files": [
+      "stmt.py"
+    ]
+  },
+  {
+    "instance_id": "zopefoundation__products.genericsetup_700319512b3615b3871a1f24e096cf66dc488c57",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2021-21360",
+    "files": [
+      "context.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_6724eeb6210d5965937eaf9dae3e476eb30f8268",
+    "cwe_ids": [
+      "CWE-20"
+    ],
+    "cve": "CVE-2023-35797",
+    "files": [
+      "hive.py"
+    ]
+  },
+  {
+    "instance_id": "pallets__jinja_716795349a41d4983a9a4771f7d883c96ea17be7",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2024-22195",
+    "files": [
+      "filters.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_0bb7203b584e771b23536ba065a6efda457161bb",
+    "cwe_ids": [
+      "CWE-789"
+    ],
+    "cve": "CVE-2023-30837",
+    "files": [
+      "data_positions.py",
+      "subscriptable.py"
+    ]
+  },
+  {
+    "instance_id": "canonical__operator_fea6d2072435a62170d4c01272572f1a7e916e61",
+    "cwe_ids": [
+      "CWE-532"
+    ],
+    "cve": "CVE-2024-41129",
+    "files": [
+      "model.py"
+    ]
+  },
+  {
+    "instance_id": "streamlit__streamlit_80d9979d5f4a00217743d607078a1d867fad8acf",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2022-35918",
+    "files": [
+      "components.py"
+    ]
+  },
+  {
+    "instance_id": "dgilland__pydash_6ff0831ad285fff937cafd2a853f20cc9ae92021",
+    "cwe_ids": [
+      "CWE-94",
+      "CWE-77"
+    ],
+    "cve": "CVE-2023-26145",
+    "files": [
+      "helpers.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_32ebcbf2e1fe3e5ba79a6554a167efce81f7422d",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2024-42005",
+    "files": [
+      "query.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_626cca1b75b6c587afd4241a9692e8929b1921a5",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2022-3298",
+    "files": [
+      "pref_sshkeys.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_b5e3bb0a98268d18ceead36ab9b2b7eaacd659a8",
+    "cwe_ids": [
+      "CWE-326",
+      "CWE-770"
+    ],
+    "cve": "CVE-2022-3273",
+    "files": [
+      "__init__.py",
+      "page_admin_users.py",
+      "page_pref_general.py",
+      "login.py",
+      "_user.py"
+    ]
+  },
+  {
+    "instance_id": "jupyterhub__jupyter-server-proxy_fd31930bacd12188c448c886e0783529436b99eb",
+    "cwe_ids": [
+      "CWE-918"
+    ],
+    "cve": "CVE-2022-21697",
+    "files": [
+      "handlers.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_4e32546faf227a6497ce8b282fff7450cae6f665",
+    "cwe_ids": [
+      "CWE-312"
+    ],
+    "cve": "CVE-2020-17511",
+    "files": [
+      "cli.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_0268b855f9eab3377f2821164ef3e66037789e09",
+    "cwe_ids": [
+      "CWE-287"
+    ],
+    "cve": "CVE-2014-0482",
+    "files": [
+      "middleware.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_d9a41e7f24d08c024acc9a3094940199df94db34",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2020-15118",
+    "files": [
+      "forms.py"
+    ]
+  },
+  {
+    "instance_id": "labd__wagtail-2fa_ac23550d33b7436e90e3beea904647907eba5b74",
+    "cwe_ids": [
+      "CWE-863"
+    ],
+    "cve": "CVE-2020-5240",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "tensorflow__tensorflow_dbdd98c37bc25249e8f288bd30d01e118a7b4498",
+    "cwe_ids": [
+      "CWE-475"
+    ],
+    "cve": "CVE-2022-29207",
+    "files": [
+      "summary_ops_v2.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_0dc9c016fadb71a067e5a42be30164e3f96c0492",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2022-34265",
+    "files": [
+      "operations.py",
+      "datetime.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_b78ec09f4582e363f6f449df6f987127e126c311",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2022-3439",
+    "files": [
+      "api.py",
+      "form.py",
+      "page_admin_session.py",
+      "page_login.py",
+      "page_mfa.py",
+      "page_pref_general.py",
+      "page_pref_session.py",
+      "config.py",
+      "rdw_app.py",
+      "ratelimit.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_851f7a1b3aa2a36fd041e3d0ed38f9355a58c8ae",
+    "cwe_ids": [
+      "CWE-670"
+    ],
+    "cve": "CVE-2023-30629",
+    "files": [
+      "functions.py"
+    ]
+  },
+  {
+    "instance_id": "aio-libs__aiohttp_f016f0680e4ace6742b03a70cb0382ce86abe371",
+    "cwe_ids": [
+      "CWE-444"
+    ],
+    "cve": "CVE-2023-47641",
+    "files": [
+      "http_parser.py"
+    ]
+  },
+  {
+    "instance_id": "celery__celery_1f7ad7e6df1e02039b6ab9eec617d283598cad6b",
+    "cwe_ids": [
+      "CWE-77"
+    ],
+    "cve": "CVE-2021-23727",
+    "files": [
+      "base.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_2044dac5c6968441be6f534c4139bcf48c5c7e48",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2022-28346",
+    "files": [
+      "query.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_00b0fc50e1738c7174c495464a5ef069408a4402",
+    "cwe_ids": [
+      "CWE-89"
+    ],
+    "cve": "CVE-2022-28347",
+    "files": [
+      "features.py",
+      "operations.py",
+      "query.py"
+    ]
+  },
+  {
+    "instance_id": "home-assistant__core_dbfc5ea8f96bde6cd165892f5a6a6f9a65731c76",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2023-50715",
+    "files": [
+      "login_flow.py",
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_a2df08888c318713742c57f71465f32a1c27ed72",
+    "cwe_ids": [
+      "CWE-754"
+    ],
+    "cve": "CVE-2024-24567",
+    "files": [
+      "functions.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_07cefdee4a9d1fcd9a3a631cbd07c78defd1923b",
+    "cwe_ids": [
+      "CWE-208"
+    ],
+    "cve": "CVE-2024-39329",
+    "files": [
+      "hashers.py"
+    ]
+  },
+  {
+    "instance_id": "cobbler__cobbler_d8f60bbf14a838c8c8a1dba98086b223e35fe70a",
+    "cwe_ids": [
+      "CWE-863"
+    ],
+    "cve": "CVE-2021-40325",
+    "files": [
+      "api.py",
+      "remote.py",
+      "tftpgen.py",
+      "validate.py"
+    ]
+  },
+  {
+    "instance_id": "apache__superset_ccf73b2608f3f3d1f3d31b927e094fcf50b86a03",
+    "cwe_ids": [
+      "CWE-863"
+    ],
+    "cve": "CVE-2023-40610",
+    "files": [
+      "sql_parse.py"
+    ]
+  },
+  {
+    "instance_id": "dask__distributed_afce4be8e05fb180e50a9d9e38465f1a82295e1b",
+    "cwe_ids": [
+      "NVD-CWE-Other"
+    ],
+    "cve": "CVE-2021-42343",
+    "files": [
+      "local.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_048a9ebb6ea468426cb4e57c71572cbbd975517f",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2023-46695",
+    "files": [
+      "forms.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_1853724acaf17ed7414d54c7d2b5563a25025a71",
+    "cwe_ids": [
+      "CWE-276"
+    ],
+    "cve": "CVE-2020-24584",
+    "files": [
+      "filebased.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_1f2dd37f6fcefdd10ed44cb233b2e62b520afb38",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2020-13596",
+    "files": [
+      "widgets.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_ad0410ec4f458aa39803e5f6b9a3736527062dcd",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2023-36053",
+    "files": [
+      "validators.py",
+      "fields.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_d4dcd5b9dd9e462fec8220e33e3e6c822b7e88a6",
+    "cwe_ids": [
+      "NVD-CWE-Other"
+    ],
+    "cve": "CVE-2021-44420",
+    "files": [
+      "resolvers.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_233befc33bdc45d4838c773d5aed4408720504c5",
+    "cwe_ids": [
+      "CWE-521"
+    ],
+    "cve": "CVE-2022-3179",
+    "files": [
+      "page_admin.py",
+      "pref_general.py",
+      "config.py",
+      "store.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_f2a32f2a9f3fb8be1a9432ac3d81d3aacdb13095",
+    "cwe_ids": [
+      "CWE-306"
+    ],
+    "cve": "CVE-2022-3327",
+    "files": [
+      "config.py",
+      "rdw_app.py",
+      "auth_form.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_b9ab9ed77e1deda9697fe472fb1079fd428149ee",
+    "cwe_ids": [
+      "CWE-29"
+    ],
+    "cve": "CVE-2023-6975",
+    "files": [
+      "ftp_artifact_repo.py"
+    ]
+  },
+  {
+    "instance_id": "saltstack__salt_2f612bd81ddf80145a9984396a7fd789f4c8ffec",
+    "cwe_ids": [
+      "CWE-287"
+    ],
+    "cve": "CVE-2022-22935",
+    "files": [
+      "crypt.py"
+    ]
+  },
+  {
+    "instance_id": "tensorflow__tensorflow_afac8158d43691661ad083f6dd9e56f327c1dcb7",
+    "cwe_ids": [
+      "CWE-662",
+      "CWE-667"
+    ],
+    "cve": "CVE-2021-41213",
+    "files": [
+      "def_function.py",
+      "function.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_c5544d289233f501917e25970c03ed444abbd4f0",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2016-2512",
+    "files": [
+      "http.py"
+    ]
+  },
+  {
+    "instance_id": "ghantoos__lshell_e72dfcd1f258193f9aaea3591ecbdaed207661a0",
+    "cwe_ids": [
+      "CWE-150"
+    ],
+    "cve": "CVE-2016-6903",
+    "files": [
+      "sec.py"
+    ]
+  },
+  {
+    "instance_id": "identitypython__pysaml2_5e9d5acbcd8ae45c4e736ac521fd2df5b1c62e25",
+    "cwe_ids": [
+      "CWE-347"
+    ],
+    "cve": "CVE-2020-5390",
+    "files": [
+      "sigver.py"
+    ]
+  },
+  {
+    "instance_id": "jupyter__notebook_3cec4bbe21756de9f0c4bccf18cf61d840314d74",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2020-26215",
+    "files": [
+      "handlers.py"
+    ]
+  },
+  {
+    "instance_id": "identitypython__pysaml2_46578df0695269a16f1c94171f1429873f90ed99",
+    "cwe_ids": [
+      "CWE-347"
+    ],
+    "cve": "CVE-2021-21239",
+    "files": [
+      "sigver.py"
+    ]
+  },
+  {
+    "instance_id": "ansible__ansible_0cdc410dce6658e93c06fa27e0100ddbb11e7015",
+    "cwe_ids": [
+      "CWE-522"
+    ],
+    "cve": "CVE-2021-20228",
+    "files": [
+      "basic.py"
+    ]
+  },
+  {
+    "instance_id": "plone__products.isurlinportal_d4fd34990d18adf05a10dc5e2bb4b066798280ba",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2021-32806",
+    "files": [
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "vyperlang__vyper_049dbdc647b2ce838fae7c188e6bb09cf16e470b",
+    "cwe_ids": [
+      "CWE-190"
+    ],
+    "cve": "CVE-2022-24845",
+    "files": [
+      "core.py",
+      "external_call.py",
+      "external_function.py",
+      "ir_node.py",
+      "convert.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_5ac38b2a75becbab9f948bd5e37ecbcd9f0b362e",
+    "cwe_ids": [
+      "CWE-460"
+    ],
+    "cve": "CVE-2022-3301",
+    "files": [
+      "rdw_app.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_20fc0d304412cc569b21f31e52cb8b94094d6314",
+    "cwe_ids": [
+      "CWE-352"
+    ],
+    "cve": "CVE-2022-3267",
+    "files": [
+      "page_settings.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_18a5aabd48fa6d2d2771a25f95610c28a1a097ca",
+    "cwe_ids": [
+      "CWE-352"
+    ],
+    "cve": "CVE-2022-3233",
+    "files": [
+      "pref_notification.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_ac334dd27ceadac0661b1e2e059a8423433c3fee",
+    "cwe_ids": [
+      "CWE-311",
+      "CWE-614"
+    ],
+    "cve": "CVE-2022-3250",
+    "files": [
+      "secure_headers.py"
+    ]
+  },
+  {
+    "instance_id": "jupyter__jupyter_core_1118c8ce01800cb689d51f655f5ccef19516e283",
+    "cwe_ids": [
+      "CWE-427",
+      "CWE-250"
+    ],
+    "cve": "CVE-2022-39286",
+    "files": [
+      "application.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_4d464b467f14b8eb9103d7f5f0774e49995527c7",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2022-3438",
+    "files": [
+      "page_admin_users.py",
+      "page_pref_general.py",
+      "_user.py"
+    ]
+  },
+  {
+    "instance_id": "ikus060__rdiffweb_323383d1db656f1b1291be529947bd943a6b0e99",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2022-3389",
+    "files": [
+      "dispatch.py",
+      "rdw_app.py"
+    ]
+  },
+  {
+    "instance_id": "cyface__django-termsandconditions_03396a1c2e0af95e12a45c5faef7e47a4b513e1a",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2022-4589",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "python-mechanize__mechanize_dd05334448e9f39814bab044d2eaa5ef69b410d6",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2021-32837",
+    "files": [
+      "_urllib2_fork.py"
+    ]
+  },
+  {
+    "instance_id": "mozilla__bleach_1334134d34397966a7f7cfebd38639e9ba2c680e",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2021-23980",
+    "files": [
+      "html5lib_shim.py",
+      "sanitizer.py"
+    ]
+  },
+  {
+    "instance_id": "mozilla__bleach_d6018f2539d271963c3e7f54f36ef11900363c69",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2020-6817",
+    "files": [
+      "sanitizer.py"
+    ]
+  },
+  {
+    "instance_id": "ckan__ckan_4c22c135fa486afa13855d1cdb9765eaf418d2aa",
+    "cwe_ids": [
+      "CWE-330",
+      "CWE-344"
+    ],
+    "cve": "CVE-2023-22746",
+    "files": [
+      "create.py"
+    ]
+  },
+  {
+    "instance_id": "streamlit__streamlit_afcf880c60e5d7538936cc2d9721b9e1bc02b075",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2023-27494",
+    "files": [
+      "components.py",
+      "routes.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_8c660fb59239828583f17cdede3b64f208b8752c",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2023-23969",
+    "files": [
+      "trans_real.py"
+    ]
+  },
+  {
+    "instance_id": "canonical__cloud-init_a378b7e4f47375458651c0972e7cd813f6fe0a6b",
+    "cwe_ids": [
+      "CWE-532"
+    ],
+    "cve": "CVE-2023-1786",
+    "files": [
+      "DataSourceLXD.py",
+      "DataSourceVultr.py",
+      "__init__.py",
+      "stages.py"
+    ]
+  },
+  {
+    "instance_id": "psf__requests_74ea7cf7a6a27a4eeb2ae24e162bcc942a6706d5",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2023-32681",
+    "files": [
+      "sessions.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_fae77a525dd908c56d6204a4cef1c1c75b4e9857",
+    "cwe_ids": [
+      "CWE-29"
+    ],
+    "cve": "CVE-2023-2780",
+    "files": [
+      "environment_variables.py",
+      "handlers.py",
+      "uri.py"
+    ]
+  },
+  {
+    "instance_id": "planetlabs__planet-client-python_d71415a83119c5e89d7b80d5f940d162376ee3b7",
+    "cwe_ids": [
+      "CWE-732"
+    ],
+    "cve": "CVE-2023-32303",
+    "files": [
+      "auth.py"
+    ]
+  },
+  {
+    "instance_id": "zopefoundation__restrictedpython_c8eca66ae49081f0016d2e1f094c3d72095ef531",
+    "cwe_ids": [
+      "CWE-913"
+    ],
+    "cve": "CVE-2023-37271",
+    "files": [
+      "transformer.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_bc96aed6ac53f998b2f4c4bf97e2d4f5fe337e5b",
+    "cwe_ids": [
+      "CWE-532"
+    ],
+    "cve": "CVE-2023-45809",
+    "files": [
+      "user_bulk_action.py"
+    ]
+  },
+  {
+    "instance_id": "urllib3__urllib3_01220354d389cd05474713f8c982d05c9b17aafb",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2023-43804",
+    "files": [
+      "retry.py"
+    ]
+  },
+  {
+    "instance_id": "yt-dlp__yt-dlp_f04b5bedad7b281bee9814686bba1762bae092eb",
+    "cwe_ids": [
+      "CWE-444"
+    ],
+    "cve": "CVE-2023-46121",
+    "files": [
+      "cybrary.py",
+      "duboku.py",
+      "embedly.py",
+      "generic.py",
+      "slideslive.py",
+      "storyfire.py",
+      "vimeo.py",
+      "networking.py"
+    ]
+  },
+  {
+    "instance_id": "tryton__trytond_30e978593733385db3144f8c583eeb4679575cf0",
+    "cwe_ids": [
+      "CWE-269"
+    ],
+    "cve": "CVE-2017-0360",
+    "files": [
+      "misc.py"
+    ]
+  },
+  {
+    "instance_id": "openstack__aodh_149d3ad2193b4d17df801f82a0a6be62dba564db",
+    "cwe_ids": [
+      "CWE-306"
+    ],
+    "cve": "CVE-2017-12440",
+    "files": [
+      "alarms.py"
+    ]
+  },
+  {
+    "instance_id": "numpy__numpy_49bcb1aba1ca32a38696ce5239392529430b2cc4",
+    "cwe_ids": [
+      "CWE-835"
+    ],
+    "cve": "CVE-2017-12852",
+    "files": [
+      "arraypad.py"
+    ]
+  },
+  {
+    "instance_id": "aio-libs__aiohttp-session_1b356f01bbab57d041c9a75bacd72fbbf8524728",
+    "cwe_ids": [
+      "CWE-613"
+    ],
+    "cve": "CVE-2018-1000814",
+    "files": [
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "home-assistant__core_598f093bf0fecdefaa3d95d1ddae71317a05321e",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2018-21019",
+    "files": [
+      "api.py"
+    ]
+  },
+  {
+    "instance_id": "horazont__aioxmpp_29ff0838a40f58efe30a4bbcea95aa8dab7da475",
+    "cwe_ids": [
+      "NVD-CWE-noinfo"
+    ],
+    "cve": "CVE-2019-1000007",
+    "files": [
+      "model.py"
+    ]
+  },
+  {
+    "instance_id": "apragacz__django-rest-registration_26d094fab65ea8c2694fdfb6a3ab95a7808b62d5",
+    "cwe_ids": [
+      "CWE-347"
+    ],
+    "cve": "CVE-2019-13177",
+    "files": [
+      "verification.py"
+    ]
+  },
+  {
+    "instance_id": "jakubroztocil__httpie_df36d6255df5793129b02ac82f1010171bd8a0a8",
+    "cwe_ids": [
+      "CWE-601"
+    ],
+    "cve": "CVE-2019-10751",
+    "files": [
+      "downloads.py"
+    ]
+  },
+  {
+    "instance_id": "buildbot__buildbot_e781f110933e05ecdb30abc64327a2c7c9ff9c5a",
+    "cwe_ids": [
+      "CWE-93"
+    ],
+    "cve": "CVE-2019-7313",
+    "files": [
+      "resource.py"
+    ]
+  },
+  {
+    "instance_id": "ierror__django-js-reverse_78d6aff2276f2d341f643b095515f8aaba5e67c2",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2019-15486",
+    "files": [
+      "core.py"
+    ]
+  },
+  {
+    "instance_id": "openstack__neutron_8c213e45902e21d2fe00639ef7d92b35304bde82",
+    "cwe_ids": [
+      "CWE-755"
+    ],
+    "cve": "CVE-2019-9735",
+    "files": [
+      "iptables_firewall.py"
+    ]
+  },
+  {
+    "instance_id": "saltstack__salt_cce7abad9c22d9d50ccee2813acabff8deca35dd",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2020-11652",
+    "files": [
+      "localfs.py",
+      "verify.py",
+      "config.py",
+      "file_roots.py"
+    ]
+  },
+  {
+    "instance_id": "sybrenstuvel__python-rsa_3283b1284475cf6c79a7329aee8bd7443cc72672",
+    "cwe_ids": [
+      "CWE-327"
+    ],
+    "cve": "CVE-2020-13757",
+    "files": [
+      "pkcs1.py"
+    ]
+  },
+  {
+    "instance_id": "ceph__ceph_0443e40c11280ba3b7efcba61522afa70c4f8158",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2020-1699",
+    "files": [
+      "home.py"
+    ]
+  },
+  {
+    "instance_id": "mozilla__bleach_f77e0f6392177a06e46a49abd61a4d9f035e57fd",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2020-6802",
+    "files": [
+      "html5lib_shim.py"
+    ]
+  },
+  {
+    "instance_id": "mozilla__bleach_175f67740e7951e1d80cefb7831e6c3e4efeb986",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2020-6816",
+    "files": [
+      "html5lib_shim.py"
+    ]
+  },
+  {
+    "instance_id": "marshmallow-code__webargs_b9ee8b0aa668207a363d9fd21d967eeadb975c3e",
+    "cwe_ids": [
+      "CWE-352"
+    ],
+    "cve": "CVE-2020-7965",
+    "files": [
+      "bottleparser.py",
+      "webapp2parser.py"
+    ]
+  },
+  {
+    "instance_id": "ubernostrum__django-registration_2db0bb7ec35636ea46b07b146328b87b2cb13ca5",
+    "cwe_ids": [
+      "CWE-209"
+    ],
+    "cve": "CVE-2021-21416",
+    "files": [
+      "views.py",
+      "conf.py"
+    ]
+  },
+  {
+    "instance_id": "fredrik-johansson__mpmath_46d44c3c8f3244017fe1eb102d564eb4ab8ef750",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2021-29063",
+    "files": [
+      "ctx_mp.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_5c7a60977cba478f6a35390ba98cffc2bd41c8a4",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2021-29434",
+    "files": [
+      "contentstate.py"
+    ]
+  },
+  {
+    "instance_id": "sabnzbd__sabnzbd_3766ba54026eaa520dbee5b57a2f33d4954fb98b",
+    "cwe_ids": [
+      "CWE-23"
+    ],
+    "cve": "CVE-2021-29488",
+    "files": [
+      "filesystem.py",
+      "newsunpack.py"
+    ]
+  },
+  {
+    "instance_id": "jupyterhub__firstuseauthenticator_953418e2450dbc2d854e332350849533b0ebc7ba",
+    "cwe_ids": [
+      "CWE-284"
+    ],
+    "cve": "CVE-2021-41194",
+    "files": [
+      "firstuseauthenticator.py"
+    ]
+  },
+  {
+    "instance_id": "python-babel__babel_3a700b5b8b53606fd98ef8294a56f9510f7290f8",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2021-42771",
+    "files": [
+      "localedata.py"
+    ]
+  },
+  {
+    "instance_id": "paramiko__paramiko_4c491e299c9b800358b16fa4886d8d94f45abe2e",
+    "cwe_ids": [
+      "CWE-362"
+    ],
+    "cve": "CVE-2022-24302",
+    "files": [
+      "pkey.py"
+    ]
+  },
+  {
+    "instance_id": "jupyter-server__jupyter_server_3485007abbb459585357212dcaa20521989272e8",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2022-29241",
+    "files": [
+      "filemanager.py",
+      "handlers.py"
+    ]
+  },
+  {
+    "instance_id": "openstack__neutron_01fc2b9195f999df4d810df4ee63f77ecbc81f7e",
+    "cwe_ids": [
+      "CWE-400"
+    ],
+    "cve": "CVE-2022-3277",
+    "files": [
+      "securitygroups_db.py"
+    ]
+  },
+  {
+    "instance_id": "executablebooks__markdown-it-py_53ca3e9c2b9e9b295f6abf7f4ad2730a9b70f68c",
+    "cwe_ids": [
+      "CWE-173"
+    ],
+    "cve": "CVE-2023-26302",
+    "files": [
+      "parse.py"
+    ]
+  },
+  {
+    "instance_id": "encode__starlette_1797de464124b090f10cf570441e8292936d63e3",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2023-29159",
+    "files": [
+      "staticfiles.py"
+    ]
+  },
+  {
+    "instance_id": "gradio-app__gradio_37967617bd97615fb6f3b44e7750c0e0be58479a",
+    "cwe_ids": [
+      "CWE-20"
+    ],
+    "cve": "CVE-2023-34239",
+    "files": [
+      "blocks.py",
+      "routes.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_ac65b82eeeeaa670e09a83c7da65cbac7e89f8db",
+    "cwe_ids": [
+      "CWE-863"
+    ],
+    "cve": "CVE-2023-35908",
+    "files": [
+      "auth.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_454f2fb93437f98917283336201b4048293f7582",
+    "cwe_ids": [
+      "CWE-1333"
+    ],
+    "cve": "CVE-2023-36053",
+    "files": [
+      "validators.py",
+      "fields.py"
+    ]
+  },
+  {
+    "instance_id": "py-pdf__pypdf_c6c56f550bb384e05f0139c796ba1308837d6373",
+    "cwe_ids": [
+      "CWE-407"
+    ],
+    "cve": "CVE-2023-36810",
+    "files": [
+      "pdf.py"
+    ]
+  },
+  {
+    "instance_id": "home-assistant__home-assistant_dbfc5ea8f96bde6cd165892f5a6a6f9a65731c76",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2023-50715",
+    "files": [
+      "login_flow.py",
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "mlflow__mlflow_4bd7f27c810ba7487d53ed5ef1038fca0f8dc28c",
+    "cwe_ids": [
+      "CWE-29"
+    ],
+    "cve": "CVE-2023-6977",
+    "files": [
+      "uri.py"
+    ]
+  },
+  {
+    "instance_id": "psf__black_f00093672628d212b8965a8993cee8bedf5fe9b8",
+    "cwe_ids": [
+      "CWE-75",
+      "CWE-1333"
+    ],
+    "cve": "CVE-2024-21503",
+    "files": [
+      "strings.py"
+    ]
+  },
+  {
+    "instance_id": "latchset__jwcrypto_90477a3b6e73da69740e00b8161f53fea19b831f",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2024-28102",
+    "files": [
+      "jwe.py"
+    ]
+  },
+  {
+    "instance_id": "jupyterhub__oauthenticator_5246b09675501b09fb6ed64022099b7644812f60",
+    "cwe_ids": [
+      "CWE-285"
+    ],
+    "cve": "CVE-2024-29033",
+    "files": [
+      "google.py"
+    ]
+  },
+  {
+    "instance_id": "apache__airflow_89e7f3e7bdf2126bbbcd959dc10d65ef92773cca",
+    "cwe_ids": [
+      "CWE-281"
+    ],
+    "cve": "CVE-2024-28746",
+    "files": [
+      "base_auth_manager.py",
+      "fab.py",
+      "fab_auth_manager.py",
+      "security_manager.py"
+    ]
+  },
+  {
+    "instance_id": "wagtail__wagtail_284f75a6f91f7ab18cc304d7d34f33b559ae37b1",
+    "cwe_ids": [
+      "CWE-280"
+    ],
+    "cve": "CVE-2024-35228",
+    "files": [
+      "views.py"
+    ]
+  },
+  {
+    "instance_id": "langchain-ai__langchain_aad3d8bd47d7f5598156ff2bdcc8f736f24a7412",
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "cve": "CVE-2024-3571",
+    "files": [
+      "file_system.py"
+    ]
+  },
+  {
+    "instance_id": "langchain-ai__langchain_bf0b3cc0b5ade1fb95a5b1b6fa260e99064c2e22",
+    "cwe_ids": [
+      "CWE-918"
+    ],
+    "cve": "CVE-2024-0243",
+    "files": [
+      "html.py"
+    ]
+  },
+  {
+    "instance_id": "matthiask__html-sanitizer_48db42fc5143d0140c32d929c46b802f96913550",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2024-34078",
+    "files": [
+      "sanitizer.py"
+    ]
+  },
+  {
+    "instance_id": "openstack__oslo.utils_6e17ae1f7959c64dfd20a5f67edf422e702426aa",
+    "cwe_ids": [
+      "CWE-532",
+      "CWE-522"
+    ],
+    "cve": "CVE-2022-0718",
+    "files": [
+      "strutils.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_5f0829a27e85d89ad8c433f5c6a7a7d17c9e9292",
+    "cwe_ids": [
+      "CWE-704"
+    ],
+    "cve": "CVE-2014-0474",
+    "files": [
+      "__init__.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_601107524523bca02376a0ddc1a06c6fdb8f22f3",
+    "cwe_ids": [
+      "CWE-20"
+    ],
+    "cve": "CVE-2014-3730",
+    "files": [
+      "http.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_5447709a571cd5d95971f1d5d21d4a7edcf85bbd",
+    "cwe_ids": [
+      "CWE-400"
+    ],
+    "cve": "CVE-2015-2316",
+    "files": [
+      "html.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_2654e1b93923bac55f12b4e66c5e39b16695ace5",
+    "cwe_ids": [
+      "CWE-79"
+    ],
+    "cve": "CVE-2015-2241",
+    "files": [
+      "helpers.py"
+    ]
+  },
+  {
+    "instance_id": "django__django_1828f4341ec53a8684112d24031b767eba557663",
+    "cwe_ids": [
+      "CWE-770"
+    ],
+    "cve": "CVE-2015-5143",
+    "files": [
+      "cache.py",
+      "cached_db.py",
+      "db.py",
+      "file.py"
+    ]
+  },
+  {
+    "instance_id": "scrapy-plugins__scrapy-splash_2b253e57fe64ec575079c8cdc99fe2013502ea31",
+    "cwe_ids": [
+      "CWE-200"
+    ],
+    "cve": "CVE-2021-41124",
+    "files": [
+      "middleware.py"
+    ]
+  }
+]

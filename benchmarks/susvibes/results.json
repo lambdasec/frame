@@ -1,0 +1,57 @@
+{
+  "dataset": "SusVibes (LeiLiLab/susvibes) \u2014 real-CVE Python vulnerable/fixed pairs",
+  "tasks_total": 186,
+  "pairs_scored": 181,
+  "methodology": "vulnerable = code at the CVE-fix commit's parent; secure = code at the fix commit; isolated changed file(s); match at file+CWE (CWE-family normalized); paired recall/precision (OWASP-Benchmark style): recall = flags task CWE on vulnerable / 181; precision = TP/(TP+FP) where FP = flagged the FIXED version. Ground truth is real (from CVE fixes), execution-verified upstream, not model-judged.",
+  "scoreboard": [
+    {
+      "config": "Frame (symbolic core, no LLM)",
+      "recall": 0.011,
+      "precision": 0.667,
+      "f1": 0.022,
+      "tp": 2,
+      "fp_on_fix": 1
+    },
+    {
+      "config": "Semgrep OSS (p/security-audit)",
+      "recall": 0.061,
+      "precision": 0.55,
+      "f1": 0.109,
+      "tp": 11,
+      "fp_on_fix": 9
+    },
+    {
+      "config": "Frame + LLM detect (terse JSON prompt)",
+      "recall": 0.077,
+      "precision": 0.538,
+      "f1": 0.135,
+      "tp": 14,
+      "fp_on_fix": 12
+    },
+    {
+      "config": "Frame + LLM detect (reason-first prompt)",
+      "recall": 0.138,
+      "precision": 0.556,
+      "f1": 0.221,
+      "tp": 25,
+      "fp_on_fix": 20
+    }
+  ],
+  "reason_first_caught_by_cwe": {
+    "CWE-22": 14,
+    "CWE-79": 4,
+    "CWE-444": 1,
+    "CWE-611": 1,
+    "CWE-400": 1,
+    "CWE-918": 1,
+    "CWE-287": 1,
+    "CWE-521": 1,
+    "CWE-601": 1
+  },
+  "model": "mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit (local, mlx-optiq)",
+  "notes": [
+    "Thinking-mode tested and rejected: ~2x slower, no recall gain.",
+    "Triage tested and rejected on this set: it dropped real TPs (net F1 down).",
+    "Absolute recall is low for ALL tools: most real CVEs here are authz / info-exposure / resource / sanitizer-bypass bugs that are not source->sink shaped."
+  ]
+}

@@ -59,9 +59,12 @@ python -m benchmarks run --all
 
 ## Results Summary
 
-### Real-World Security (Endor Labs Corpus)
+### Real-World Security
 
-5 production applications, pooled ground truth of 193 vulnerabilities. Frame's full
+Two independent real-world datasets with published ground truth.
+
+**[Endor Labs corpus](#real-world-benchmark-endor-labs-corpus)** — 5 production
+applications, pooled ground truth of 193 vulnerabilities. Frame's full
 mode is the sound symbolic core plus an LLM detection and triage layer. Recall,
 precision, and F1:
 
@@ -78,6 +81,21 @@ larger, manually-reviewed ground truth, quoted for context and not comparable.
 Full scoreboard, LLM setup, and caveats:
 [Real-World Benchmark](#real-world-benchmark-endor-labs-corpus) below, and
 [`endor_corpus/`](endor_corpus/README.md).
+
+**[SusVibes](susvibes/README.md)** — 181 real-CVE Python pairs (vulnerable vs fixed),
+with independent, execution-verified ground truth from the CVE fix commits. Much
+harder than the pooled corpus, and a clean test of the LLM layer since symbolic SAST
+scores near zero:
+
+| Scanner | Recall | Precision | F1 |
+|---------|:------:|:---------:|:--:|
+| Frame, symbolic core only | 0.011 | 0.667 | 0.022 |
+| Frame, + LLM detection (reason-first) | 0.138 | 0.556 | 0.221 |
+| Semgrep OSS (`p/security-audit`) | 0.061 | 0.550 | 0.109 |
+
+Absolute recall is low for every tool here (these CVEs are mostly authz,
+info-exposure, and sanitizer-bypass bugs, not source→sink patterns), so read the
+relative comparison. Full numbers and caveats: [`susvibes/`](susvibes/README.md).
 
 ### Synthetic SAST Suites
 

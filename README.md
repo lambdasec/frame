@@ -16,13 +16,14 @@ Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: t
 
 ## Highlights
 
-**Real-world security** ([Endor Labs corpus](benchmarks/endor_corpus/README.md), 5 production apps, 193 pooled vulnerabilities):
+**Real-world security** — two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
 
-| Scanner | Recall | Precision | F1 |
-|---------|:------:|:---------:|:--:|
-| Frame (symbolic core) | 0.37 | 0.45 | 0.41 |
-| **Frame (full AI SAST)** | **0.67** | **0.51** | **0.58** |
-| Semgrep OSS | 0.52 | 0.40 | 0.45 |
+| Dataset | Vulns | Frame | Semgrep |
+|---------|:-----:|:-----:|:-------:|
+| [Endor Labs corpus](benchmarks/endor_corpus/README.md) — 5 production apps | 193 | **0.67 / 0.51** | 0.52 / 0.40 |
+| [SusVibes](benchmarks/susvibes/README.md) — real-CVE Python pairs | 181 | **0.14 / 0.56** | 0.06 / 0.55 |
+
+<sub>recall / precision. Frame leads Semgrep on both. SusVibes uses independent, execution-verified CVE ground truth and is hard for every tool (read the caveats); the Endor corpus uses a pooled, model-judged ground truth.</sub>
 
 **OWASP Score** (True Positive Rate - False Positive Rate) on synthetic suites:
 
