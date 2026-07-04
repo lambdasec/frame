@@ -78,6 +78,7 @@ class TriageConfig:
     context_lines: int = 12         # code lines of context around the finding
     max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
     drop_threshold: float = 0.75    # drop only false-positives at/above this confidence
+    detect_max_tokens: int = 1500   # detection: room for reason-first CoT before the JSON
     enabled: bool = False
 
     @classmethod
@@ -89,6 +90,7 @@ class TriageConfig:
             model=os.environ.get("FRAME_LLM_MODEL", ""),
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
+            detect_max_tokens=int(os.environ.get("FRAME_LLM_DETECT_MAX_TOKENS", "1500")),
             cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
             repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
             max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "6")),
@@ -124,6 +126,7 @@ class LLMTriageClient:
                  call_fn: Optional[Callable[[List[Dict[str, str]]], str]] = None):
         self.config = config
         self._call_fn = call_fn or self._http_call
+        self._custom_call_fn = call_fn   # set only in tests / SDK swaps
         # cache maps key -> {path, line, cwe, verdict}; persisted to cache_path.
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
@@ -151,15 +154,16 @@ class LLMTriageClient:
                 "name": "triage_verdict", "schema": VERDICT_SCHEMA, "strict": True}}
         return None
 
-    def _http_call(self, messages: List[Dict[str, str]]) -> str:
+    def _http_call(self, messages: List[Dict[str, str]],
+                   max_tokens: Optional[int] = None, force_json: bool = True) -> str:
         url = f"{self.config.base_url}/chat/completions"
         body: Dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
             "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": max_tokens or self.config.max_tokens,
         }
-        rf = self._response_format()
+        rf = self._response_format() if force_json else None
         if rf is not None:
             body["response_format"] = rf   # structured output where supported
         payload = json.dumps(body).encode("utf-8")
@@ -172,6 +176,16 @@ class LLMTriageClient:
         with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return body["choices"][0]["message"]["content"]
+
+    def detect_complete(self, messages: List[Dict[str, str]]) -> str:
+        """Detection call (reason-first): no forced JSON so the model can reason in
+        prose before emitting the findings object, with a larger token budget. Tests
+        and SDK swaps still intercept via the injected call_fn."""
+        self.stats["calls"] += 1
+        if self._custom_call_fn is not None:
+            return self._custom_call_fn(messages)
+        return self._http_call(messages, max_tokens=self.config.detect_max_tokens,
+                               force_json=False)
 
     def chat_raw(self, messages: List[Dict[str, Any]],
                  tools: Optional[list] = None) -> Optional[Dict[str, Any]]:

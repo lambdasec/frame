@@ -26,12 +26,18 @@ from typing import Any, Dict, List, Optional
 
 from frame.sil.llm_triage import LLMTriageClient, TriageConfig, _extract_json_object
 
+# Reason-first prompt: the model reasons in prose about the flow, THEN emits the
+# findings object. On real-CVE evaluation (SusVibes) this ~1.8x'd detection recall
+# over a terse "JSON only" prompt at equal precision, so it is the default. It
+# requires a free-text call (no forced json_object) and a larger token budget --
+# see LLMTriageClient.detect_complete / TriageConfig.detect_max_tokens.
 DETECT_SYSTEM = (
-    "You are a precise application-security scanner. Analyze the given source file "
-    "and report ONLY genuine, exploitable vulnerabilities -- an actual flow from "
-    "attacker-controlled input to a dangerous sink, or a clearly dangerous pattern. "
-    "Do NOT report style issues, defense-in-depth suggestions, or speculative items. "
-    "Respond with ONLY a JSON object: "
+    "You are a precise application-security auditor. Analyze the given source file for "
+    "REAL, exploitable vulnerabilities. First reason step by step about attacker-controlled "
+    "inputs and the dangerous operations they can reach: injection (SQL / command / code), "
+    "path traversal, SSRF, XSS, unsafe deserialization, open redirect, XXE, and broken "
+    "authentication or authorization. Ignore style issues, defense-in-depth suggestions, and "
+    "speculative items. THEN, after the reasoning, output ONLY a JSON object on its own line: "
     '{"findings": [{"reasoning": "<1 sentence>", "cwe": "CWE-89", "line": <int>, '
     '"type": "<short_snake_case>", "confidence": 0.0-1.0}]}. '
     "Use an empty findings array if there are no real vulnerabilities."
@@ -166,9 +172,9 @@ def detect_in_file(source_code: str, language: str, filename: str,
     max_chars = getattr(config, "max_context_chars", 6000) * 4  # detection uses more context
     prompt = (f"Language: {language}\nFile: {filename}\n\nSource (numbered lines):\n"
               f"{_numbered(source_code, max_chars)}\n\n"
-              "Report the real vulnerabilities as the specified JSON object.")
+              "Reason step by step, then report the real vulnerabilities as the JSON object.")
     try:
-        raw = client._call_fn([
+        raw = client.detect_complete([
             {"role": "system", "content": DETECT_SYSTEM},
             {"role": "user", "content": prompt},
         ])

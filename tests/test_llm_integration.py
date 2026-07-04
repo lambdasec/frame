@@ -26,11 +26,11 @@ def _stub_client(detect_findings, triage_is_tp=True, triage_conf=0.9):
     by the system prompt. detect -> a findings object; triage -> a verdict."""
     def call_fn(messages):
         system = messages[0]["content"] if messages else ""
-        if "application-security scanner" in system:          # DETECT_SYSTEM
+        if "application-security auditor" in system:          # DETECT_SYSTEM
             return json.dumps({"findings": detect_findings})
         return json.dumps({"is_true_positive": triage_is_tp,  # triage verdict
                            "confidence": triage_conf, "reasoning": "stub"})
-    assert "application-security scanner" in DETECT_SYSTEM     # guard the sentinel
+    assert "application-security auditor" in DETECT_SYSTEM     # guard the sentinel
     return LLMTriageClient(TriageConfig(base_url="x", model="m"), call_fn=call_fn)
 
 
