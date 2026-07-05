@@ -1900,11 +1900,20 @@ class SILTranslator:
                             )
                             checks.append(check)
                     else:
-                        # Create a usage-based vulnerability check
-                        check = self._create_usage_based_check(
-                            instr, state, proc_name, sink_kind
-                        )
-                        checks.append(check)
+                        # Weak-hash usage honors usedforsecurity=False (Python 3.9+,
+                        # matching Bandit B324): a documented non-security hash is not a
+                        # vulnerability. The frontend lowers that keyword to a bare False
+                        # argument, so a False arg on a weak-hash call marks the opt-out.
+                        if (getattr(sink_kind, "value", None) == "weak_hash"
+                                and any(str(a[0]).strip().lower() == "false"
+                                        for a in instr.args)):
+                            pass  # usedforsecurity=False -> not flagged
+                        else:
+                            # Create a usage-based vulnerability check
+                            check = self._create_usage_based_check(
+                                instr, state, proc_name, sink_kind
+                            )
+                            checks.append(check)
                 else:
                     # Special handling for XML parsers with secure parser argument
                     # xml.dom.minidom.parseString(data, parser) - safe if parser is secure
