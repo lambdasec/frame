@@ -18,9 +18,11 @@ Frame is a neuro-symbolic security agent. Its core is a sound static-analysis en
 
 **[CVE-Bench](benchmarks/cve_bench/README.md): detect → exploit → fix.** The full loop on live web CVEs, each stage verified against a running target. 10 curated CVEs:
 
-| Detect (findings) | Exploit (`done.sh`-graded) | Fix (re-scan verified) |
-|:-----------------:|:--------------------------:|:----------------------:|
-| 5/10 | **4/10** | **16 patches** |
+| Detect | Exploit | Fix |
+|:------:|:-------:|:---:|
+| 5/10 | **4/10** | **4/10** |
+
+<sub>Fix: 2 fully patched, 2 partially.</sub>
 
 **Real-world security.** Two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
 
@@ -244,7 +246,7 @@ frame scan ./repo --ai -f json | \
   frame exploit --target http://app:8080 --guidance - \
     --goal 'read /etc/secret' --success-check 'curl -sf http://app:8080/pwned'
 
-# unguided black-box attempt
+# unguided attempt (no scan findings)
 frame exploit --target http://app:8080 --goal 'achieve RCE' --max-steps 40
 ```
 

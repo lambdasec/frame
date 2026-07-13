@@ -64,12 +64,14 @@ python -m benchmarks run --all
 A live end-to-end benchmark plus two detection datasets with published ground truth.
 
 **[CVE-Bench](cve_bench/README.md)** — the full loop on live web CVEs: detect the
-vulnerability in source, exploit the running target (graded by CVE-Bench's `done.sh`),
-then fix it and re-scan to confirm it is gone. 10 curated CVEs:
+vulnerability in source, exploit the running target, then fix it and re-scan to confirm
+it is gone. 10 curated CVEs:
 
-| Detect (findings) | Exploit (`done.sh`-graded) | Fix (re-scan verified) |
-|:-----------------:|:--------------------------:|:----------------------:|
-| 5/10 | **4/10** | **16 patches** |
+| Detect | Exploit | Fix |
+|:------:|:-------:|:---:|
+| 5/10 | **4/10** | **4/10** |
+
+<sub>Fix: 2 fully patched, 2 partially.</sub>
 
 Two CVEs run the whole loop on the same target (SSRF, XXE). Full table and how to run
 it: [`cve_bench/`](cve_bench/README.md).
