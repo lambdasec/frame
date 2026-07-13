@@ -118,6 +118,50 @@ def create_parser() -> argparse.ArgumentParser:
         help="Enable LLM triage only (drops confident false positives)"
     )
 
+    # === EXPLOIT command ===
+    exploit_parser = subparsers.add_parser(
+        "exploit",
+        help="Drive an LLM agent to exploit a live target (authorized use only)",
+        description="Run the neuro-symbolic exploitation agent against a live, in-scope "
+                    "target. Optionally prime it with a Frame findings JSON (from "
+                    "`frame scan --ai -f json`) so it attacks the localized flaw."
+    )
+    exploit_parser.add_argument(
+        "--target", required=True,
+        help="Target under test, e.g. http://app:8080 (must be authorized/in-scope)"
+    )
+    exploit_parser.add_argument(
+        "--goal",
+        help="Objective / success condition in words (default: read a secret, run a "
+             "command, or modify server state)"
+    )
+    exploit_parser.add_argument(
+        "--guidance",
+        help="Frame findings JSON to prime the agent (file path, or '-' for stdin). "
+             "Pipe from `frame scan --ai -f json`."
+    )
+    exploit_parser.add_argument(
+        "--success-check",
+        help="Shell command re-run after each step; exit 0 means solved (success "
+             "oracle). Omit to let the agent self-terminate when it verifies success."
+    )
+    exploit_parser.add_argument(
+        "--max-steps", type=int, default=40,
+        help="Maximum agent steps (default: 40)"
+    )
+    exploit_parser.add_argument(
+        "--exec-timeout", type=int, default=120,
+        help="Per-command execution timeout in seconds (default: 120)"
+    )
+    exploit_parser.add_argument(
+        "--model",
+        help="Override FRAME_LLM_MODEL for this run"
+    )
+    exploit_parser.add_argument(
+        "--format", default="text", choices=["text", "json"],
+        help="Output format (default: text)"
+    )
+
     # === SOLVE command ===
     solve_parser = subparsers.add_parser(
         "solve",
@@ -252,6 +296,155 @@ def cmd_scan(args) -> int:
     # Delegate to the SIL scanner CLI
     from frame.sil.cli import cmd_scan as sil_scan
     return sil_scan(args)
+
+
+# ============================================================================
+# EXPLOIT Command
+# ============================================================================
+
+_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def _load_findings(raw: str) -> List[dict]:
+    """Flatten a `frame scan -f json` payload (single file, multi-file, or a bare
+    list) into a flat list of finding dicts."""
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        if "vulnerabilities" in data:
+            return data["vulnerabilities"] or []
+        if "files" in data:
+            out: List[dict] = []
+            for f in data["files"]:
+                out.extend(f.get("vulnerabilities", []) or [])
+            return out
+    return []
+
+
+def _top_finding(findings: List[dict]) -> Optional[dict]:
+    """Pick the finding most worth exploiting: highest severity, then confidence."""
+    if not findings:
+        return None
+
+    def _key(f: dict):
+        sev = _SEVERITY_RANK.get(str(f.get("severity", "")).lower(), 0)
+        try:
+            conf = float(f.get("confidence", 0) or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        return (sev, conf)
+
+    return max(findings, key=_key)
+
+
+def _finding_rank(f: dict):
+    sev = _SEVERITY_RANK.get(str(f.get("severity", "")).lower(), 0)
+    try:
+        conf = float(f.get("confidence", 0) or 0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return (sev, conf)
+
+
+def _select_findings(findings: List[dict], n: int = 6) -> List[dict]:
+    """Deduped top-N findings to pass as exploit leads.
+
+    The top-1 is frequently NOT the exploitable bug: findings bunch at the same
+    severity/confidence, so ranking barely discriminates and a deserialization
+    finding can outrank the actual path traversal. Passing several deduped leads
+    (one per distinct cwe+type+file) lets the agent attack the right surface.
+    """
+    ranked = sorted(findings, key=_finding_rank, reverse=True)
+    seen: set = set()
+    out: List[dict] = []
+    for f in ranked:
+        loc = str(f.get("location") or "").rsplit("/", 1)[-1]
+        key = (f.get("cwe_id") or f.get("cwe"), f.get("type"), loc)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+        if len(out) >= n:
+            break
+    return out
+
+
+def cmd_exploit(args) -> int:
+    """Execute exploit command - run the LLM exploitation agent against a target."""
+    import subprocess
+    from frame.sil.llm_client import LLMConfig
+    from frame.sil.llm_exploit import (
+        exploit_agentic, local_exec_tool, guidance_from_finding,
+    )
+
+    # LLM config from env (FRAME_LLM_*), with optional --model override.
+    config = LLMConfig.from_env()
+    if args.model:
+        config.model = args.model
+    if not config.base_url or not config.model:
+        print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
+              "endpoint) to use the exploit agent.", file=sys.stderr)
+        return 1
+    config.exploit_max_steps = args.max_steps
+
+    # Optional guidance: findings JSON (file or '-' stdin) -> top finding -> guidance.
+    guidance = None
+    if args.guidance:
+        try:
+            raw = sys.stdin.read() if args.guidance == "-" else Path(args.guidance).read_text()
+            findings = _load_findings(raw)
+        except Exception as e:
+            print(f"Error reading guidance findings: {e}", file=sys.stderr)
+            return 1
+        selected = _select_findings(findings)
+        if selected:
+            leads = [guidance_from_finding(f) for f in selected]
+            guidance = {
+                "leads": leads,
+                "provenance": "symbolic" if any(l.get("provenance") == "symbolic"
+                                                for l in leads) else "llm",
+            }
+        else:
+            print("Warning: guidance provided but no findings parsed; running unguided.",
+                  file=sys.stderr)
+
+    goal = args.goal or ("Compromise the target: read a protected secret, execute a "
+                         "command, or modify server state -- and prove it with observed "
+                         "output.")
+    task_prompt = f"Target: {args.target}\n\nObjective: {goal}"
+
+    # Success oracle: optional shell command, exit 0 == solved.
+    is_solved = None
+    if args.success_check:
+        def is_solved() -> bool:
+            try:
+                return subprocess.run(args.success_check, shell=True,
+                                      timeout=60).returncode == 0
+            except Exception:
+                return False
+
+    exec_tool = local_exec_tool(timeout=args.exec_timeout)
+    result = exploit_agentic(task_prompt, config, exec_tool=exec_tool,
+                             guidance=guidance, is_solved=is_solved,
+                             max_steps=args.max_steps)
+
+    out = {
+        "target": args.target,
+        "solved": result.solved,
+        "steps": result.steps,
+        "reason": result.reason,
+        "guided": guidance is not None,
+        "provenance": guidance.get("provenance") if guidance else None,
+    }
+    if args.format == "json":
+        print(json.dumps(out, indent=2))
+    else:
+        status = "✓ EXPLOITED" if result.solved else "✗ NOT EXPLOITED"
+        print(f"{status}  (steps={result.steps}, reason={result.reason}, "
+              f"guided={out['guided']}"
+              + (f", lead={out['provenance']}" if guidance else "") + ")")
+    return 0 if result.solved else 1
 
 
 # ============================================================================
@@ -811,6 +1004,7 @@ def main(argv: List[str] = None) -> int:
     # Dispatch to command handler
     commands = {
         "scan": cmd_scan,
+        "exploit": cmd_exploit,
         "solve": cmd_solve,
         "check": cmd_check,
         "parse": cmd_parse,
