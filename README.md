@@ -12,21 +12,17 @@
 
 ---
 
-Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further — driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding — and a remediation layer closes the loop, generating a fix and then re-scanning the patched code to *prove* the vulnerability is gone. Detect → exploit → fix → verify, end to end.
+Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further, driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding. A remediation layer then closes the loop: it generates a fix and re-scans the patched code to prove the vulnerability is gone. Detect, exploit, fix, verify, end to end.
 
 ## Highlights
 
-**End-to-end security agent** — beyond detection, Frame runs the full loop on **real, live CVEs** from [CVE-Bench](benchmarks/cve_bench/README.md): **detect → exploit → fix**, each stage independently verified.
+**[CVE-Bench](benchmarks/cve_bench/README.md): detect → exploit → fix.** The full loop on live web CVEs, each stage verified against a running target. 10 curated CVEs:
 
-| Stage | On 10 curated CVE-Bench CVEs |
-|-------|------------------------------|
-| **Detect** | finds the vulnerability in source — 5/10 with findings (35 total) |
-| **Exploit** | drives an LLM agent to compromise the live target — **4/10 solved, execution-verified** by the benchmark's own `done.sh` grader |
-| **Fix** | patches the vulnerability and **re-scans to prove it's gone — 16 fixes verified** |
+| Detect (findings) | Exploit (`done.sh`-graded) | Fix (re-scan verified) |
+|:-----------------:|:--------------------------:|:----------------------:|
+| 5/10 | **4/10** | **16 patches** |
 
-<sub>2 CVEs run the entire detect→exploit→fix→verify loop end-to-end (SSRF, XXE). Multi-model and on-device-capable; a capability demonstration on a curated source-localizable subset — see the [full writeup](benchmarks/cve_bench/README.md) for methodology and honest caveats.</sub>
-
-**Real-world security** — two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
+**Real-world security.** Two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
 
 | Dataset | Vulns | Frame | Semgrep |
 |---------|:-----:|:-----:|:-------:|
@@ -89,12 +85,13 @@ frame repl
 
 ## Commands
 
-Frame is one CLI covering the whole workflow — **detect → triage → exploit** — plus the separation-logic solver. Run `frame <command> --help` for all flags.
+Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus the separation-logic solver. Run `frame <command> --help` for all flags.
 
 | Command | What it does |
 |---------|--------------|
 | `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. |
-| `frame exploit --target <url>` | Drive an LLM agent to **exploit a live, authorized target**. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |
+| `frame exploit --target <url>` | Drive an LLM agent to exploit a live, authorized target. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |
+| `frame fix <path>` | Generate a fix for each scan finding, then re-scan the patched code to confirm the vulnerability is gone. `--guidance <findings.json\|->`, `--in-place` or `--diff`. |
 | `frame solve "<P> \|- <Q>"` | Check a single separation-logic entailment. |
 | `frame check <file>` | Batch-check entailments (one per line). |
 | `frame parse "<formula>"` | Parse and display a formula's AST. |
@@ -235,7 +232,7 @@ result = scanner.scan_file("Controller.java")
 
 > ⚠️ **Authorized use only.** `frame exploit` attacks a live target. Run it exclusively against systems you own or are explicitly permitted to test (a lab, a CTF, a consented engagement).
 
-Detection tells you a bug *might* be there; exploitation proves it. `frame exploit` closes that gap — it drives an LLM through a tool loop against a live target and stops only when success is **observably verified**, never on the model's unchecked say-so.
+Detection tells you a bug *might* be there; exploitation proves it. `frame exploit` closes that gap. It drives an LLM through a tool loop against a live target and stops only when success is observably verified, never on the model's unchecked say-so.
 
 - **Frame-guided.** Pipe a scan's findings in with `--guidance`. Frame's symbolic taint path hands the agent the exact endpoint, parameter, and sink, so it attacks the right surface instead of probing blind. The guidance header is honest about provenance: a symbolic finding is presented as a sound, verified-reachable lead; an LLM-detected finding as a heuristic lead to verify while exploiting.
 - **Verified success.** Pass `--success-check '<cmd>'` (exit 0 ⇒ solved) to use an external oracle, or let the agent self-terminate once it verifies a real state change (a returned secret, a written file, an executed command). Unverified "done" is treated as failure.

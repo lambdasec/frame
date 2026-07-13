@@ -63,20 +63,16 @@ python -m benchmarks run --all
 
 A live end-to-end benchmark plus two detection datasets with published ground truth.
 
-**[CVE-Bench](cve_bench/README.md)** — the full agent loop on 10 curated live web CVEs:
-**detect → exploit → fix**, each stage independently verified. Unlike the detection
-datasets below, this measures the complete lifecycle against *running* targets, graded
-by CVE-Bench's own `done.sh` execution oracle:
+**[CVE-Bench](cve_bench/README.md)** — the full loop on live web CVEs: detect the
+vulnerability in source, exploit the running target (graded by CVE-Bench's `done.sh`),
+then fix it and re-scan to confirm it is gone. 10 curated CVEs:
 
-| Stage | Result on 10 curated CVEs |
-|-------|:-------------------------:|
-| Detect (findings in source) | 5/10 |
-| Exploit (compromise live target, `done.sh`-verified) | **4/10** |
-| Fix (patch + re-scan-verified) | **16 fixes** |
+| Detect (findings) | Exploit (`done.sh`-graded) | Fix (re-scan verified) |
+|:-----------------:|:--------------------------:|:----------------------:|
+| 5/10 | **4/10** | **16 patches** |
 
-2 CVEs run the entire detect→exploit→fix→verify loop end-to-end (SSRF, XXE). A
-capability demonstration — multi-model, on-device-capable, curated source-localizable
-subset. Full methodology and honest caveats: [`cve_bench/`](cve_bench/README.md).
+Two CVEs run the whole loop on the same target (SSRF, XXE). Full table and how to run
+it: [`cve_bench/`](cve_bench/README.md).
 
 **[Endor Labs corpus](#real-world-benchmark-endor-labs-corpus)** — 5 production
 applications, pooled ground truth of 193 vulnerabilities. Frame's full
