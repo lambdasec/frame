@@ -4,7 +4,7 @@
     <strong>Neuro-Symbolic AI SAST: Separation Logic + LLMs</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1593%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1629%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
@@ -12,7 +12,7 @@
 
 ---
 
-Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results.
+Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further — driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding.
 
 ## Highlights
 
@@ -76,6 +76,27 @@ frame repl
 ```
 
 </details>
+
+## Commands
+
+Frame is one CLI covering the whole workflow — **detect → triage → exploit** — plus the separation-logic solver. Run `frame <command> --help` for all flags.
+
+| Command | What it does |
+|---------|--------------|
+| `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. |
+| `frame exploit --target <url>` | Drive an LLM agent to **exploit a live, authorized target**. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |
+| `frame solve "<P> \|- <Q>"` | Check a single separation-logic entailment. |
+| `frame check <file>` | Batch-check entailments (one per line). |
+| `frame parse "<formula>"` | Parse and display a formula's AST. |
+| `frame repl` | Interactive separation-logic REPL. |
+
+**The analysis stages compose over a shared findings JSON, so the shell is the pipeline:**
+
+```bash
+# scan (symbolic + LLM) produces findings; the exploit agent attacks the localized bug
+frame scan ./repo --ai -f json | \
+  frame exploit --target http://app:8080 --guidance - --goal 'read the admin secret'
+```
 
 ## Supported Languages
 
@@ -198,6 +219,26 @@ from frame.sil import FrameScanner
 # symbolic + LLM detection + triage (reads the FRAME_LLM_* env above)
 scanner = FrameScanner(language="java", llm_detect=True, llm_triage=True)
 result = scanner.scan_file("Controller.java")
+```
+
+## Exploitation (offensive, optional)
+
+> ⚠️ **Authorized use only.** `frame exploit` attacks a live target. Run it exclusively against systems you own or are explicitly permitted to test (a lab, a CTF, a consented engagement).
+
+Detection tells you a bug *might* be there; exploitation proves it. `frame exploit` closes that gap — it drives an LLM through a tool loop against a live target and stops only when success is **observably verified**, never on the model's unchecked say-so.
+
+- **Frame-guided.** Pipe a scan's findings in with `--guidance`. Frame's symbolic taint path hands the agent the exact endpoint, parameter, and sink, so it attacks the right surface instead of probing blind. The guidance header is honest about provenance: a symbolic finding is presented as a sound, verified-reachable lead; an LLM-detected finding as a heuristic lead to verify while exploiting.
+- **Verified success.** Pass `--success-check '<cmd>'` (exit 0 ⇒ solved) to use an external oracle, or let the agent self-terminate once it verifies a real state change (a returned secret, a written file, an executed command). Unverified "done" is treated as failure.
+- **Runs anywhere.** Commands execute from wherever you invoke `frame`, so point it at any reachable target; use any OpenAI-compatible model (an open, ungated model is the right base for offensive tasks).
+
+```bash
+# guided end-to-end: scan localizes the bug, the agent exploits it
+frame scan ./repo --ai -f json | \
+  frame exploit --target http://app:8080 --guidance - \
+    --goal 'read /etc/secret' --success-check 'curl -sf http://app:8080/pwned'
+
+# unguided black-box attempt
+frame exploit --target http://app:8080 --goal 'achieve RCE' --max-steps 40
 ```
 
 ## CI/CD Integration
