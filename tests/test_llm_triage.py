@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from frame.sil.llm_triage import (
     TriageConfig, LLMTriageClient, triage_vulnerabilities, _extract_json_object,
-    _context_snippet,
+    _context_snippet, _verdict_response_format, triage_agentic, _should_escalate,
 )
 
 
@@ -52,14 +52,29 @@ def test_low_confidence_false_positive_is_kept():
     assert len(kept) == 1
 
 
-def test_transport_error_keeps_finding():
+def test_transport_error_raises():
+    # User asked for LLM triage and the endpoint is unreachable -> flag it (raise),
+    # never silently proceed as if triage ran.
+    import pytest
+    from frame.sil.llm_client import LLMUnavailableError
     def boom(messages):
         raise OSError("endpoint down")
-    client = LLMTriageClient(TriageConfig(base_url="x", model="m"), call_fn=boom)
-    kept, c = triage_vulnerabilities([_vuln(5, "CWE-79")], SRC, "js", "a.js",
+    client = LLMTriageClient(TriageConfig(base_url="x", model="m", agent_retries=0),
+                             call_fn=boom)
+    with pytest.raises(LLMUnavailableError):
+        triage_vulnerabilities([_vuln(5, "CWE-79")], SRC, "js", "a.js",
+                               TriageConfig(agent_retries=0), client)
+
+
+def test_parse_blip_keeps_finding():
+    # A non-transport blip (model returns un-parseable content, no exception) is
+    # fail-safe: keep the finding (triage only ever drops confident false positives).
+    def junk(messages):
+        return "not json at all"
+    client = LLMTriageClient(TriageConfig(base_url="x", model="m"), call_fn=junk)
+    kept, _ = triage_vulnerabilities([_vuln(5, "CWE-79")], SRC, "js", "a.js",
                                      TriageConfig(), client)
-    assert len(kept) == 1          # fail-safe: never drop on error
-    assert c.stats["errors"] == 1
+    assert len(kept) == 1          # kept, not dropped
 
 
 def test_verdict_is_cached():
@@ -79,11 +94,12 @@ def test_no_endpoint_configured_is_disabled():
 
 
 def test_response_format_modes():
-    assert LLMTriageClient(TriageConfig(json_mode="json_object"))._response_format() \
-        == {"type": "json_object"}
-    schema = LLMTriageClient(TriageConfig(json_mode="json_schema"))._response_format()
+    # The triage verdict's structured-output spec now lives in the triage layer
+    # (the shared client is schema-agnostic).
+    assert _verdict_response_format("json_object") == {"type": "json_object"}
+    schema = _verdict_response_format("json_schema")
     assert schema["type"] == "json_schema" and schema["json_schema"]["strict"] is True
-    assert LLMTriageClient(TriageConfig(json_mode="off"))._response_format() is None
+    assert _verdict_response_format("off") is None
 
 
 def test_reasoning_first_order_still_parses():
@@ -101,3 +117,79 @@ def test_extract_json_and_context():
     assert _extract_json_object("no json here") is None
     snip = _context_snippet(SRC.splitlines(), 3, 1)
     assert ">> 3:" in snip and "2:" in snip
+
+
+def test_extract_json_reason_first_with_prose_braces():
+    # Reason-first output: prose with code-snippet braces BEFORE the JSON object.
+    # A greedy first{...}last{ would span the prose and fail to parse -> None,
+    # silently dropping every finding. The extractor must return the trailing
+    # findings object (the last balanced, parseable dict).
+    raw = ('Reasoning: path = base + {category}/{folder}, no sanitize.\n'
+           'A stray dict {"note": "x"} appears mid-reasoning.\n'
+           '{"findings": [{"cwe": "CWE-22", "line": 501, "type": "path_traversal"}]}')
+    o = _extract_json_object(raw)
+    assert o is not None and o["findings"][0]["cwe"] == "CWE-22"
+    assert o["findings"][0]["line"] == 501
+    # nested braces inside the target object are handled (balanced scan)
+    assert _extract_json_object('x {"a": {"b": 1}} y')["a"]["b"] == 1
+
+
+# ---- agentic triage (opt-in escalation) ----------------------------------------
+
+def test_should_escalate_band():
+    cfg = TriageConfig(drop_threshold=0.75)
+    assert _should_escalate(None, cfg) is True                  # unparseable -> investigate
+    assert _should_escalate({"confidence": 0.5}, cfg) is True   # ambiguous band
+    assert _should_escalate({"confidence": 0.9}, cfg) is False  # confident -> act as-is
+    assert _should_escalate({"confidence": 0.1}, cfg) is False  # clueless -> keep as-is
+
+
+def test_triage_agentic_investigates_then_verdicts(tmp_path):
+    (tmp_path / "helper.js").write_text("function sanitize(x){ return esc(x); }")
+    cfg = TriageConfig(base_url="x", model="m", repo_root=str(tmp_path))
+    c = LLMTriageClient(cfg)
+    seq = {"i": 0}
+    def chat(messages, tools=None):
+        seq["i"] += 1
+        if seq["i"] == 1:                          # first: investigate the repo
+            return {"content": "", "tool_calls": [{"id": "1", "function": {
+                "name": "grep", "arguments": '{"pattern": "sanitize"}'}}]}
+        return {"content": json.dumps({"reasoning": "sanitized in caller",       # then: verdict
+                "is_true_positive": False, "confidence": 0.9}), "tool_calls": []}
+    c.chat_raw = chat
+    v = triage_agentic("finding context", cfg, c)
+    assert seq["i"] == 2 and v["is_true_positive"] is False
+
+
+def test_triage_agentic_no_repo_falls_back_to_single_call():
+    c = _client(lambda _: {"is_true_positive": True, "confidence": 0.8, "reasoning": "x"})
+    v = triage_agentic("ctx", TriageConfig(base_url="x", model="m"), c)  # no repo_root
+    assert v["is_true_positive"] is True
+
+
+def test_escalation_is_opt_in_off_by_default(tmp_path):
+    (tmp_path / "a.js").write_text("x")
+    calls = {"chat_raw": 0}
+    c = _client(lambda _: {"is_true_positive": False, "confidence": 0.5, "reasoning": "maybe"})
+    orig = c.chat_raw
+    def counting(messages, tools=None):
+        calls["chat_raw"] += 1
+        return orig(messages, tools)
+    c.chat_raw = counting
+    cfg = TriageConfig(base_url="x", model="m", repo_root=str(tmp_path), drop_threshold=0.75)
+    # triage_agentic defaults False: uncertain FP@0.5 is kept, never escalates
+    kept, _ = triage_vulnerabilities([_vuln(5, "CWE-79")], SRC, "js", "a.js", cfg, c)
+    assert kept and calls["chat_raw"] == 0
+
+
+def test_escalation_when_enabled_upgrades_verdict(tmp_path):
+    (tmp_path / "a.js").write_text("x")
+    cfg = TriageConfig(base_url="x", model="m", repo_root=str(tmp_path),
+                       drop_threshold=0.75, triage_agentic=True)
+    c = _client(lambda _: {"is_true_positive": False, "confidence": 0.5, "reasoning": "uncertain"})
+    def chat(messages, tools=None):   # agentic path: investigate -> confident FP
+        return {"content": json.dumps({"is_true_positive": False, "confidence": 0.95,
+                "reasoning": "found sanitizer in caller"}), "tool_calls": []}
+    c.chat_raw = chat
+    kept, cc = triage_vulnerabilities([_vuln(5, "CWE-79")], SRC, "js", "a.js", cfg, c)
+    assert kept == [] and cc.stats["dropped"] == 1   # uncertain single call -> confident drop

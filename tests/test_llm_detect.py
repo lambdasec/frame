@@ -40,11 +40,16 @@ def test_finding_without_cwe_is_dropped():
     assert detect_in_file(SRC, "javascript", "x.js", TriageConfig(), c) == []
 
 
-def test_transport_error_yields_nothing():
+def test_transport_error_raises_not_empty():
+    # A transport failure must NOT masquerade as "no vulnerabilities": detection
+    # raises LLMUnavailableError so the caller knows the scan could not run.
+    import pytest
+    from frame.sil.llm_client import LLMUnavailableError
     def boom(messages):
         raise OSError("down")
-    c = LLMTriageClient(TriageConfig(base_url="x", model="m"), call_fn=boom)
-    assert detect_in_file(SRC, "javascript", "x.js", TriageConfig(), c) == []
+    c = LLMTriageClient(TriageConfig(base_url="x", model="m", agent_retries=0), call_fn=boom)
+    with pytest.raises(LLMUnavailableError):
+        detect_in_file(SRC, "javascript", "x.js", TriageConfig(agent_retries=0), c)
 
 
 def test_candidate_selection():

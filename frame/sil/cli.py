@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List
 
 from frame.sil.scanner import FrameScanner, ScanResult, Severity
+from frame.sil.llm_client import LLMUnavailableError
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -296,14 +297,19 @@ def cmd_scan(args) -> int:
         print("Install tree-sitter: pip install tree-sitter tree-sitter-python", file=sys.stderr)
         return 1
 
-    # Perform scan
+    # Perform scan. An unreachable LLM endpoint (with --ai) surfaces as a hard
+    # error, never a misleading "no vulnerabilities found".
     results = []
-
-    if target.is_file():
-        result = scanner.scan_file(str(target))
-        results.append(result)
-    else:
-        results = scanner.scan_directory(str(target), args.pattern)
+    try:
+        if target.is_file():
+            result = scanner.scan_file(str(target))
+            results.append(result)
+        else:
+            results = scanner.scan_directory(str(target), args.pattern)
+    except LLMUnavailableError as e:
+        print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
+              file=sys.stderr)
+        return 2
 
     if not results:
         print("No files found to scan.", file=sys.stderr)

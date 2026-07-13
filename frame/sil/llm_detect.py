@@ -19,18 +19,20 @@ Gated behind FrameScanner(llm_detect=True) / `--llm-detect`.
 
 from __future__ import annotations
 
-import json
-import os
 import re
 from typing import Any, Dict, List, Optional
 
-from frame.sil.llm_triage import LLMTriageClient, TriageConfig, _extract_json_object
+from frame.sil.llm_client import (
+    LLMClient as LLMTriageClient, LLMConfig as TriageConfig, _extract_json_object)
+from frame.sil.llm_agent import (
+    run_agent, INVESTIGATION_TOOLS as _TOOLS, investigation_exec,
+    _safe_path, _repo_exec as _exec_tool)
 
 # Reason-first prompt: the model reasons in prose about the flow, THEN emits the
 # findings object. On real-CVE evaluation (SusVibes) this ~1.8x'd detection recall
 # over a terse "JSON only" prompt at equal precision, so it is the default. It
 # requires a free-text call (no forced json_object) and a larger token budget --
-# see LLMTriageClient.detect_complete / TriageConfig.detect_max_tokens.
+# see LLMClient.detect_complete / LLMConfig.max_tokens.
 DETECT_SYSTEM = (
     "You are a precise application-security auditor. Analyze the given source file for "
     "REAL, exploitable vulnerabilities. First reason step by step about attacker-controlled "
@@ -51,6 +53,15 @@ _CANDIDATE_RE = re.compile(
     r"executeQuery|createStatement|prepareStatement|Runtime\.|ProcessBuilder|"
     r"readFile|writeFile|ObjectInputStream|Cipher|MessageDigest|eval\(|exec\(|"
     r"\.query\(|\.find\(|\.findOne\(|new URL\(|fetch\(|axios|render|template|"
+    # Python: web routes + file/path/process/deserialize sinks (path traversal,
+    # command injection, SSRF, unsafe deserialization surface the JS/Java lists miss).
+    # Match the call form (router.get(...)) not the @ decorator: a leading '@' is a
+    # non-word char, so the wrapping \b...\b can never anchor to it.
+    r"router\.(get|post|put|delete|patch|websocket|api_route)|add_api_route|"
+    r"add_url_rule|\.route\(|os\.system|os\.popen|subprocess|Popen|send_file|"
+    r"send_from_directory|FileResponse|StreamingResponse|shutil\.|open\(|Path\(|"
+    r"\.iterdir\(|os\.path|pickle\.load|yaml\.load|marshal\.loads|os\.remove|"
+    r"os\.rename|os\.mkdir|render_template_string|__import__|urlopen|"
     # C# / ASP.NET: request binding, DB, process, file, view, redirect, deserialize
     r"FromQuery|FromBody|FromRoute|FromForm|HttpContext|IActionResult|ActionResult|"
     r"SqlCommand|ExecuteReader|ExecuteNonQuery|ExecuteScalar|DbCommand|"
@@ -123,17 +134,28 @@ def _numbered(source_code: str, max_chars: int) -> str:
     return "".join(out)
 
 
+def _cwe_to_int(cwe: Any) -> Optional[int]:
+    """Normalize a CWE reference to its int ('CWE-89', '89', 89, 'CWE-89: SQLi').
+
+    Inlined so core detection has NO dependency on the benchmarks package -- that
+    import failing (e.g. when Frame is installed without the benchmark data) used
+    to crash finding conversion and silently drop every LLM finding.
+    """
+    if cwe is None:
+        return None
+    s = str(cwe).strip().upper()
+    m = re.search(r"CWE[-\s_]*(\d+)", s)
+    if m:
+        return int(m.group(1))
+    return int(s) if s.isdigit() else None
+
+
 def _to_vulnerability(f: Dict[str, Any], filename: str) -> Optional[Any]:
     """Convert a model finding dict to a labeled Vulnerability (or None)."""
     from frame.sil.scanner import Vulnerability, Severity
     from frame.sil.translator import VulnType
-    from benchmarks.endor_corpus import owasp_benchmark as _OB  # cwe normalization
     cwe = f.get("cwe")
-    n = None
-    try:
-        n = _OB.cwe_to_int(cwe)
-    except Exception:
-        n = None
+    n = _cwe_to_int(cwe)
     cwe_id = f"CWE-{n}" if n is not None else (cwe if isinstance(cwe, str) else None)
     line = f.get("line")
     try:
@@ -163,23 +185,78 @@ def _to_vulnerability(f: Dict[str, Any], filename: str) -> Optional[Any]:
         confidence=conf, cwe_id=cwe_id)
 
 
+# Detection reads whole files up to this many chars (~12k tokens). Handler files
+# routinely exceed the triage snippet cap (max_context_chars*4); truncating them
+# silently drops trailing endpoints -- a real recall bug (e.g. a path-traversal
+# handler in the last 20% of a 600-line file goes unseen). Only pathological files
+# past this floor still truncate with a marker.
+_DETECT_MIN_CHARS = 48000
+
+
+def _detect_max_chars(config: TriageConfig) -> int:
+    return max(getattr(config, "max_context_chars", 6000) * 4, _DETECT_MIN_CHARS)
+
+
+# Strict structured-output schema for detection. A leading `reasoning` field keeps
+# the reason-first chain-of-thought (which drives recall) INSIDE the schema, so we
+# get the reasoning benefit AND schema-guaranteed findings -- no prose parsing.
+DETECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {"type": "string"},
+                    "cwe": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "type": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+                "required": ["reasoning", "cwe", "line", "type", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["reasoning", "findings"],
+    "additionalProperties": False,
+}
+
+
+def _detect_response_format(json_mode: str) -> Optional[Dict[str, Any]]:
+    """Structured-output spec for detection, mirroring triage's json_mode knob."""
+    if json_mode == "json_object":
+        return {"type": "json_object"}
+    if json_mode == "json_schema":
+        return {"type": "json_schema", "json_schema": {
+            "name": "vulnerability_findings", "schema": DETECT_SCHEMA, "strict": True}}
+    return None  # "off" -> prompt-only JSON, parsed best-effort
+
+
 def detect_in_file(source_code: str, language: str, filename: str,
                    config: TriageConfig,
                    client: Optional[LLMTriageClient] = None) -> List[Any]:
-    """Run one structured LLM detection call over a file; return labeled findings."""
+    """Run one structured LLM detection call over a file; return labeled findings.
+
+    Standardized on forced JSON + strict schema (config.json_mode): frontier API
+    models return schema-valid data, so findings never depend on parsing prose.
+    """
     if client is None:
         client = LLMTriageClient(config)
-    max_chars = getattr(config, "max_context_chars", 6000) * 4  # detection uses more context
+    max_chars = _detect_max_chars(config)
     prompt = (f"Language: {language}\nFile: {filename}\n\nSource (numbered lines):\n"
               f"{_numbered(source_code, max_chars)}\n\n"
               "Reason step by step, then report the real vulnerabilities as the JSON object.")
-    try:
-        raw = client.detect_complete([
-            {"role": "system", "content": DETECT_SYSTEM},
-            {"role": "user", "content": prompt},
-        ])
-    except Exception:
-        return []
+    rf = _detect_response_format(getattr(config, "json_mode", "json_object"))
+    # No fallback-to-empty: a transport failure propagates (LLMUnavailableError)
+    # so the scan surfaces "LLM unreachable", never a misleading "no vulnerabilities".
+    raw = client.complete(
+        [{"role": "system", "content": DETECT_SYSTEM},
+         {"role": "user", "content": prompt}],
+        response_format=rf, force_json=(rf is not None),
+        max_tokens=config.max_tokens)
     return _findings_to_vulns((_extract_json_object(raw) or {}).get("findings") or [], filename)
 
 
@@ -195,60 +272,9 @@ def _findings_to_vulns(findings: list, filename: str) -> List[Any]:
 
 
 # ---- Agentic (tool-using) detection: cross-file exploration --------------------
-
-_TOOLS = [
-    {"type": "function", "function": {
-        "name": "read_file",
-        "description": "Read a source file in the repository by repo-relative path.",
-        "parameters": {"type": "object",
-                       "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
-    {"type": "function", "function": {
-        "name": "grep",
-        "description": "Regex-search the repository; returns up to 40 'path:line: text' matches.",
-        "parameters": {"type": "object",
-                       "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
-]
-
-_GREP_EXTS = (".java", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".py", ".cs", ".c", ".cpp", ".go")
-
-
-def _safe_path(repo_root: str, path: str) -> Optional[str]:
-    """Resolve a repo-relative path, refusing anything that escapes the repo."""
-    root = os.path.realpath(repo_root)
-    p = os.path.realpath(os.path.join(root, str(path).lstrip("/")))
-    return p if (p == root or p.startswith(root + os.sep)) else None
-
-
-def _exec_tool(name: str, args: Dict[str, Any], repo_root: str, max_chars: int = 8000) -> str:
-    try:
-        if name == "read_file":
-            p = _safe_path(repo_root, args.get("path", ""))
-            if not p or not os.path.isfile(p):
-                return "ERROR: file not found"
-            with open(p, encoding="utf-8", errors="replace") as fh:
-                return fh.read()[:max_chars]
-        if name == "grep":
-            pat = re.compile(str(args.get("pattern", "")), re.I)
-            root = os.path.realpath(repo_root)
-            out: List[str] = []
-            for dp, _, fns in os.walk(root):
-                for fn in fns:
-                    if not fn.lower().endswith(_GREP_EXTS):
-                        continue
-                    fp = os.path.join(dp, fn)
-                    try:
-                        with open(fp, encoding="utf-8", errors="replace") as fh:
-                            for i, ln in enumerate(fh, 1):
-                                if pat.search(ln):
-                                    out.append(f"{os.path.relpath(fp, root)}:{i}: {ln.strip()[:160]}")
-                                    if len(out) >= 40:
-                                        return "\n".join(out)
-                    except OSError:
-                        continue
-            return "\n".join(out) or "no matches"
-    except (re.error, ValueError, OSError) as e:
-        return f"ERROR: {e}"
-    return "ERROR: unknown tool"
+# The investigation tools (read_file / grep), their executor, and the tool loop
+# live in llm_agent and are imported above; `_TOOLS` / `_exec_tool` / `_safe_path`
+# are re-exported here for backward compatibility.
 
 
 def detect_agentic(source_code: str, language: str, filename: str,
@@ -263,7 +289,7 @@ def detect_agentic(source_code: str, language: str, filename: str,
     client._explored = explored   # files the agent reads -> cross-file verification
     if not repo_root:
         return detect_in_file(source_code, language, filename, config, client)
-    max_chars = getattr(config, "max_context_chars", 6000) * 4
+    max_chars = _detect_max_chars(config)
     system = DETECT_SYSTEM + (
         " You MAY call read_file(path) and grep(pattern) to inspect related files "
         "(helpers, callers, config, sources/sinks in other files) before deciding. "
@@ -274,30 +300,11 @@ def detect_agentic(source_code: str, language: str, filename: str,
          f"Source (numbered lines):\n{_numbered(source_code, max_chars)}\n\n"
          "Investigate (use tools if helpful for cross-file flows) and report real "
          "vulnerabilities as the JSON object."}]
-    for _ in range(max(1, getattr(config, "max_tool_steps", 6))):
-        msg = client.chat_raw(messages, _TOOLS)
-        if msg is None:
-            return []
-        tcs = msg.get("tool_calls")
-        if tcs:
-            messages.append({"role": "assistant", "content": msg.get("content") or "",
-                             "tool_calls": tcs})
-            for tc in tcs:
-                fn = tc.get("function", {})
-                try:
-                    a = json.loads(fn.get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    a = {}
-                if fn.get("name") == "read_file" and a.get("path"):
-                    explored.add(str(a.get("path")))
-                res = _exec_tool(fn.get("name", ""), a, repo_root)
-                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
-                                 "content": res[:8000]})
-            continue
-        return _findings_to_vulns(
-            (_extract_json_object(msg.get("content") or "") or {}).get("findings") or [], filename)
-    # Step budget exhausted -> force a final verdict without tools.
-    messages.append({"role": "user", "content": "Report the findings now as the JSON object."})
-    msg = client.chat_raw(messages)
-    return _findings_to_vulns(
-        (_extract_json_object((msg or {}).get("content") or "") or {}).get("findings") or [], filename)
+    res = run_agent(
+        messages, client, tools=_TOOLS,
+        exec_tool=investigation_exec(repo_root, explored),
+        max_steps=max(1, getattr(config, "max_tool_steps", 6)),
+        finalize=lambda content: _findings_to_vulns(
+            (_extract_json_object(content) or {}).get("findings") or [], filename),
+        final_nudge="Report the findings now as the JSON object.")
+    return res.result or []

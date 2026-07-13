@@ -1,4 +1,4 @@
-"""Optional LLM triage pass for Frame findings (neuro-symbolic).
+"""Optional LLM triage pass for Frame findings (neuro-symbolic precision layer).
 
 Frame's symbolic/separation-logic engine produces the findings; this pass asks an
 LLM to adjudicate each one *in context* and drops the ones it is confident are
@@ -14,21 +14,32 @@ false positives. The design keeps Frame sound and precise:
   * Verdicts are cached by (file, line, cwe, code-hash) so repeated scans are cheap
     and stable.
 
-Transport is any OpenAI-compatible /chat/completions endpoint -- a local model
-served via MLX / optillm / vLLM / Ollama, or a hosted API -- so proprietary code
-can be triaged fully on-device. Configure via env or a TriageConfig.
+Transport is the shared `LLMClient` (frame.sil.llm_client) -- any OpenAI-compatible
+/chat/completions endpoint (local MLX/OptiQ/vLLM/Ollama or a hosted API), so
+proprietary code can be triaged fully on-device.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import re
-import urllib.error
-import urllib.request
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+_log = logging.getLogger("frame.llm")
+
+from frame.sil.llm_client import (
+    LLMClient, LLMConfig, LLMUnavailableError, _extract_json_object)
+from frame.sil.llm_agent import run_agent, INVESTIGATION_TOOLS, investigation_exec
+
+# Backward-compatible aliases: the shared transport used to live in this module.
+# Callers (scanner, detect/exploit layers, benchmarks, tests) still import these
+# names from here; they now resolve to the neutral transport in llm_client.
+TriageConfig = LLMConfig
+LLMTriageClient = LLMClient
+
+__all__ = ["TriageConfig", "LLMTriageClient", "LLMConfig", "LLMClient",
+           "_extract_json_object", "triage_vulnerabilities", "triage_agentic",
+           "SYSTEM_PROMPT", "VERDICT_SCHEMA"]
 
 SYSTEM_PROMPT = (
     "You are a precise application-security reviewer adjudicating static-analysis "
@@ -40,9 +51,8 @@ SYSTEM_PROMPT = (
     '{"reasoning": "<1-2 sentences>", "is_true_positive": true|false, "confidence": 0.0-1.0}.'
 )
 
-# JSON schema for servers that support strict structured output (OpenAI
-# json_schema / many local servers). Reasoning is first so the model reasons
-# before committing to a verdict, within a bounded structured response.
+# JSON schema for servers that support strict structured output. Reasoning is first
+# so the model reasons before committing to a verdict, within a bounded response.
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -55,176 +65,89 @@ VERDICT_SCHEMA = {
 }
 
 
-@dataclass
-class TriageConfig:
-    base_url: str = ""              # OpenAI-compatible base, e.g. http://localhost:8080/v1
-    api_key: str = ""               # bearer token (any string for most local servers)
-    model: str = ""                 # served model name
-    temperature: float = 0.0        # deterministic
-    # With structured output the verdict is a short JSON object (reasoning +
-    # boolean + number). 256 leaves room for a 1-2 sentence reasoning field while
-    # keeping prompt+generation (~490 + 256) under a 1k window -- so a larger
-    # model with a small context can be used. Raise it (and the window) only for
-    # longer free-form reasoning.
-    max_tokens: int = 256
-    # Structured output. "json_object" is widely supported by OpenAI-compatible
-    # servers (incl. local MLX/optillm/vLLM/llama.cpp); "json_schema" enforces the
-    # exact schema where supported; "off" falls back to prompt-only JSON.
-    json_mode: str = "json_object"  # "json_object" | "json_schema" | "off"
-    cache_path: str = ""            # persist verdicts here (JSON); reused across runs
-    repo_root: str = ""             # repo root for agentic detection tools (read_file/grep)
-    max_tool_steps: int = 6         # tool-call rounds before forcing a verdict
-    timeout: int = 60               # seconds per call
-    context_lines: int = 12         # code lines of context around the finding
-    max_context_chars: int = 6000   # hard cap on code snippet (~1.5k tok) -> safe for a 2k window
-    drop_threshold: float = 0.75    # drop only false-positives at/above this confidence
-    detect_max_tokens: int = 1500   # detection: room for reason-first CoT before the JSON
-    enabled: bool = False
-
-    @classmethod
-    def from_env(cls) -> "TriageConfig":
-        base = os.environ.get("FRAME_LLM_BASE_URL", "").rstrip("/")
-        return cls(
-            base_url=base,
-            api_key=os.environ.get("FRAME_LLM_API_KEY", "sk-local"),
-            model=os.environ.get("FRAME_LLM_MODEL", ""),
-            temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
-            max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "256")),
-            detect_max_tokens=int(os.environ.get("FRAME_LLM_DETECT_MAX_TOKENS", "1500")),
-            cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
-            repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
-            max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "6")),
-            context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
-            # For a strict 1k window set this ~2000 (worst-case snippet ~500 tok);
-            # 6000 (~1.5k tok) suits a 2k window.
-            max_context_chars=int(os.environ.get("FRAME_LLM_MAX_CONTEXT_CHARS", "6000")),
-            json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_object"),
-            drop_threshold=float(os.environ.get("FRAME_LLM_DROP_THRESHOLD", "0.75")),
-            timeout=int(os.environ.get("FRAME_LLM_TIMEOUT", "60")),
-            enabled=bool(base and os.environ.get("FRAME_LLM_MODEL")),
-        )
+# Agentic triage: the same verdict, but the model may investigate the repo first.
+# The evidence-based-drop clause is the safeguard against dropping true positives:
+# a finding is only ruled a false positive if the model *finds* the mitigating control.
+TRIAGE_AGENTIC_SYSTEM = (
+    SYSTEM_PROMPT + " You MAY call read_file(path) and grep(pattern) to investigate "
+    "whether attacker-controlled input actually REACHES this sink without a sanitizer "
+    "or authorization guard: inspect the caller(s), the route/auth, and any validation "
+    "elsewhere in the repo. Only conclude false-positive if you FIND the specific "
+    "mitigating control; if you cannot find one, keep the finding. When finished, reply "
+    "with ONLY the JSON verdict object."
+)
 
 
-def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
-    """Best-effort extraction of the first JSON object from model output."""
-    if not text:
-        return None
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
+def _verdict_response_format(json_mode: str) -> Optional[Dict[str, Any]]:
+    """Structured-output spec for the triage verdict, per the config's json_mode."""
+    if json_mode == "json_object":
+        return {"type": "json_object"}
+    if json_mode == "json_schema":
+        return {"type": "json_schema", "json_schema": {
+            "name": "triage_verdict", "schema": VERDICT_SCHEMA, "strict": True}}
+    return None  # "off" -> prompt-only JSON, no response_format
+
+
+def _triage_one(client: LLMClient, config: LLMConfig,
+                prompt_ctx: str) -> Optional[Dict[str, Any]]:
+    """One verdict for one finding. Returns the parsed dict, or None on any failure
+    (fail-safe -- the caller then keeps the finding)."""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt_ctx},
+    ]
+    rf = _verdict_response_format(getattr(config, "json_mode", "json_object"))
     try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
+        raw = client.complete(messages, response_format=rf, force_json=(rf is not None))
+    except LLMUnavailableError:
+        # The user asked for LLM triage and the endpoint is unreachable -> flag it,
+        # never silently proceed as if triage ran.
+        raise
+    except Exception as exc:  # noqa: BLE001 -- a non-transport (parse/logic) blip is
+        # fail-safe: keep the finding (triage only drops confident FPs, never hides a
+        # vuln). Logged so a skipped verdict is visible, not silent.
+        _log.warning("triage verdict errored (%s) -- keeping finding as-is", exc)
         return None
+    verdict = _extract_json_object(raw)
+    if verdict is None:
+        _log.warning("triage verdict unparseable from model response -- keeping finding")
+    return verdict
 
 
-class LLMTriageClient:
-    """Calls an OpenAI-compatible chat endpoint. `call_fn` overrides the HTTP
-    transport (used in tests and to swap in a local SDK)."""
+def triage_agentic(prompt_ctx: str, config: LLMConfig,
+                   client: Optional[LLMClient] = None) -> Optional[Dict[str, Any]]:
+    """Investigate a finding across the repo before deciding (the escalated path).
+    The model may read_file/grep to check reachability and sanitization, then returns
+    the verdict. Falls back to a single call when no repo_root is configured."""
+    if client is None:
+        client = LLMClient(config)
+    repo_root = getattr(config, "repo_root", "")
+    if not repo_root:
+        return _triage_one(client, config, prompt_ctx)
+    messages = [
+        {"role": "system", "content": TRIAGE_AGENTIC_SYSTEM},
+        {"role": "user", "content": prompt_ctx},
+    ]
+    res = run_agent(
+        messages, client, tools=INVESTIGATION_TOOLS,
+        exec_tool=investigation_exec(repo_root),
+        max_steps=max(1, getattr(config, "max_tool_steps", 6)),
+        finalize=lambda content: _extract_json_object(content),
+        final_nudge="Give your final verdict now as the JSON object.")
+    return res.result
 
-    def __init__(self, config: TriageConfig,
-                 call_fn: Optional[Callable[[List[Dict[str, str]]], str]] = None):
-        self.config = config
-        self._call_fn = call_fn or self._http_call
-        self._custom_call_fn = call_fn   # set only in tests / SDK swaps
-        # cache maps key -> {path, line, cwe, verdict}; persisted to cache_path.
-        self.cache: Dict[str, Dict[str, Any]] = {}
-        self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
-        if getattr(config, "cache_path", ""):
-            try:
-                with open(config.cache_path, encoding="utf-8") as fh:
-                    self.cache = json.load(fh)
-            except (OSError, json.JSONDecodeError):
-                self.cache = {}
 
-    def _save(self) -> None:
-        if getattr(self.config, "cache_path", ""):
-            try:
-                with open(self.config.cache_path, "w", encoding="utf-8") as fh:
-                    json.dump(self.cache, fh, indent=2)
-            except OSError:
-                pass
-
-    def _response_format(self) -> Optional[Dict[str, Any]]:
-        mode = getattr(self.config, "json_mode", "json_object")
-        if mode == "json_object":
-            return {"type": "json_object"}
-        if mode == "json_schema":
-            return {"type": "json_schema", "json_schema": {
-                "name": "triage_verdict", "schema": VERDICT_SCHEMA, "strict": True}}
-        return None
-
-    def _http_call(self, messages: List[Dict[str, str]],
-                   max_tokens: Optional[int] = None, force_json: bool = True) -> str:
-        url = f"{self.config.base_url}/chat/completions"
-        body: Dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": max_tokens or self.config.max_tokens,
-        }
-        rf = self._response_format() if force_json else None
-        if rf is not None:
-            body["response_format"] = rf   # structured output where supported
-        payload = json.dumps(body).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        # Some local servers (e.g. OptiQ) reject *any* Authorization header; only
-        # send one when a key is actually configured. Set FRAME_LLM_API_KEY="" to omit.
-        if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        return body["choices"][0]["message"]["content"]
-
-    def detect_complete(self, messages: List[Dict[str, str]]) -> str:
-        """Detection call (reason-first): no forced JSON so the model can reason in
-        prose before emitting the findings object, with a larger token budget. Tests
-        and SDK swaps still intercept via the injected call_fn."""
-        self.stats["calls"] += 1
-        if self._custom_call_fn is not None:
-            return self._custom_call_fn(messages)
-        return self._http_call(messages, max_tokens=self.config.detect_max_tokens,
-                               force_json=False)
-
-    def chat_raw(self, messages: List[Dict[str, Any]],
-                 tools: Optional[list] = None) -> Optional[Dict[str, Any]]:
-        """Return the full assistant message (content + any tool_calls), or None
-        on failure. Used by the agentic detection loop (tool-calling)."""
-        url = f"{self.config.base_url}/chat/completions"
-        body: Dict[str, Any] = {
-            "model": self.config.model, "messages": messages,
-            "temperature": self.config.temperature, "max_tokens": self.config.max_tokens,
-        }
-        if tools:
-            body["tools"] = tools
-            body["tool_choice"] = "auto"
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        try:
-            self.stats["calls"] += 1
-            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
-                                         headers=headers)
-            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                out = json.loads(resp.read().decode("utf-8"))
-            return out["choices"][0]["message"]
-        except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
-            self.stats["errors"] += 1
-            return None
-
-    def triage(self, prompt_ctx: str) -> Optional[Dict[str, Any]]:
-        """Return the parsed verdict dict, or None on any failure (fail-safe)."""
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt_ctx},
-        ]
-        try:
-            self.stats["calls"] += 1
-            return _extract_json_object(self._call_fn(messages))
-        except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
-            self.stats["errors"] += 1
-            return None
+def _should_escalate(verdict: Optional[Dict[str, Any]], config: LLMConfig) -> bool:
+    """Escalate to agentic investigation only when a single call is *uncertain* --
+    an unparseable verdict, or a confidence in the ambiguous band below the drop
+    threshold (but not so low the model is clueless). Bounds the extra cost."""
+    if verdict is None:
+        return True
+    try:
+        conf = float(verdict.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        return True
+    return 0.35 <= conf < getattr(config, "drop_threshold", 0.75)
 
 
 def _finding_fields(v: Any) -> Dict[str, Any]:
@@ -265,13 +188,13 @@ def _cache_key(filename: str, f: Dict[str, Any], snippet: str) -> str:
 
 
 def triage_vulnerabilities(vulns: List[Any], source_code: str, language: str,
-                           filename: str, config: TriageConfig,
-                           client: Optional[LLMTriageClient] = None
-                           ) -> Tuple[List[Any], LLMTriageClient]:
+                           filename: str, config: LLMConfig,
+                           client: Optional[LLMClient] = None
+                           ) -> Tuple[List[Any], LLMClient]:
     """Filter `vulns` by LLM adjudication. Drops only confident false positives;
     keeps everything else (including on any error). Returns (kept, client)."""
     if client is None:
-        client = LLMTriageClient(config)
+        client = LLMClient(config)
     if not vulns:
         return vulns, client
     source_lines = source_code.splitlines()
@@ -280,8 +203,8 @@ def triage_vulnerabilities(vulns: List[Any], source_code: str, language: str,
         f = _finding_fields(v)
         snippet = _context_snippet(source_lines, f["line"], config.context_lines)
         if len(snippet) > config.max_context_chars:
-            # Keep the finding line centered; drop outer context so the prompt
-            # always fits a small (2k) window even on minified/very-long lines.
+            # Keep the finding line centered; drop outer context so the prompt always
+            # fits a small window even on minified/very-long lines.
             half = config.max_context_chars // 2
             mid = snippet.find(">>")
             mid = mid if mid != -1 else len(snippet) // 2
@@ -289,7 +212,16 @@ def triage_vulnerabilities(vulns: List[Any], source_code: str, language: str,
         key = _cache_key(filename, f, snippet)
         rec = client.cache.get(key)
         if rec is None:
-            verdict = client.triage(_build_prompt(f, snippet, language, filename))
+            prompt = _build_prompt(f, snippet, language, filename)
+            verdict = _triage_one(client, config, prompt)
+            # Opt-in: escalate an uncertain single-call verdict to an investigation
+            # loop that checks reachability/sanitization across the repo.
+            if (getattr(config, "triage_agentic", False)
+                    and getattr(config, "repo_root", "")
+                    and _should_escalate(verdict, config)):
+                investigated = triage_agentic(prompt, config, client)
+                if investigated is not None:
+                    verdict = investigated
             rec = {"path": filename, "line": f["line"], "cwe": f["cwe"],
                    "verdict": verdict or {}}
             client.cache[key] = rec

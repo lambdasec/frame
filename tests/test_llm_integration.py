@@ -114,3 +114,33 @@ def test_cli_ai_flags_parse():
     assert b.llm_detect is True and b.llm_triage is True and b.ai is False
     c = p.parse_args(["scan", "app.js"])
     assert c.ai is False and c.llm_detect is False and c.llm_triage is False
+
+
+# ---- Any-language coverage: LLM-detect-only for languages without a frontend ----
+
+def test_unsupported_language_without_ai_is_graceful():
+    """A language with no symbolic frontend must not crash; it points to --ai."""
+    from frame.sil import FrameScanner
+    sc = FrameScanner(language="php", verify=False)
+    res = sc.scan("<?php echo $_GET['x']; ?>", "a.php")
+    assert res.vulnerabilities == [] and any("--ai" in e for e in res.errors)
+
+
+def test_unsupported_language_with_ai_runs_llm_detect():
+    """Under --ai, LLM-detect runs on ANY language; findings are LLM-tier (not symbolic)."""
+    from frame.sil import FrameScanner
+    cfg = TriageConfig(base_url="x", model="m")
+    def call_fn(messages):
+        return json.dumps({"findings": [{"cwe": "CWE-89", "line": 1, "type": "sql_injection",
+                                         "reasoning": "user input in query", "confidence": 0.8}]})
+    sc = FrameScanner(language="php", verify=False, llm_detect=True, llm_config=cfg)
+    sc._llm_client = LLMTriageClient(cfg, call_fn=call_fn)
+    res = sc.scan("<?php $id=$_GET['id']; mysqli_query($c, \"SELECT * FROM u WHERE id=$id\"); ?>", "a.php")
+    hits = [v for v in res.vulnerabilities if v.cwe_id == "CWE-89"]
+    assert hits and hits[0].source_var == "llm_detect"   # LLM-tier, never "proven"
+
+
+def test_rust_has_no_frontend_but_constructs():
+    from frame.sil import FrameScanner
+    assert FrameScanner(language="rust", verify=False).frontend is None
+    assert FrameScanner(language="python", verify=False).frontend is not None

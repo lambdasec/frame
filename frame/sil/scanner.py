@@ -26,6 +26,8 @@ import json
 import os
 import time
 
+from frame.sil.llm_client import LLMUnavailableError
+
 import re
 from typing import Tuple
 
@@ -629,7 +631,10 @@ class FrameScanner:
             from frame.sil.frontends.csharp_frontend import CSharpFrontend
             return CSharpFrontend()
         else:
-            raise ValueError(f"Unsupported language: {language}")
+            # No symbolic frontend for this language. Return None rather than raise:
+            # under --ai the scan still runs the language-agnostic LLM-detect layer
+            # (LLM-tier findings only -- no sound symbolic analysis for this language).
+            return None
 
     def scan(self, source_code: str, filename: str = "<unknown>") -> ScanResult:
         """
@@ -652,9 +657,22 @@ class FrameScanner:
         result = ScanResult(filename=filename)
         result.lines_scanned = source_code.count('\n') + 1
 
-        # Check if frontend is available
+        # No symbolic frontend for this language: fall back to LLM-detect-only so
+        # `frame scan --ai` works on ANY language (PHP, Rust, Go, ...). The findings
+        # are LLM-tier only (source_var="llm_detect") -- there is no sound symbolic
+        # analysis for a language without a frontend, and the tiering makes that
+        # explicit. Without --ai there is nothing sound to do, so we say so.
         if self.frontend is None:
-            result.errors.append(f"Language '{self.language}' frontend not yet implemented")
+            if self.llm_detect:
+                result.vulnerabilities = self._apply_llm_detect(
+                    [], source_code, filename, program=None)
+                if self.llm_triage:
+                    result.vulnerabilities = self._apply_llm_triage(
+                        result.vulnerabilities, source_code, filename)
+            else:
+                result.errors.append(
+                    f"Language '{self.language}' has no symbolic frontend; "
+                    f"re-run with --ai for LLM-based detection.")
             result.scan_time_ms = (time.time() - start_time) * 1000
             return result
 
@@ -739,6 +757,10 @@ class FrameScanner:
                 if self.verbose:
                     print(f"[Scanner] After LLM triage: {len(result.vulnerabilities)} vulnerabilities")
 
+        except LLMUnavailableError:
+            # Never mask an unreachable LLM as a clean scan -- propagate so the
+            # caller reports "LLM unavailable", not "no vulnerabilities found".
+            raise
         except Exception as e:
             result.errors.append(f"Scan error: {str(e)}")
             if self.verbose:
@@ -791,7 +813,11 @@ class FrameScanner:
             if self.verbose:
                 print("[Scanner] LLM detect requested but no endpoint/model; skipping.")
             return vulns
-        if not is_detection_candidate(source_code, bool(vulns)):
+        # Supported languages gate on the candidate heuristic (avoid calling the
+        # model on every file). For an unsupported language (LLM-only mode) the user
+        # explicitly opted in with --ai, so detection always runs -- the heuristic's
+        # patterns are tuned for the symbolic languages and would miss PHP/Ruby/etc.
+        if self.frontend is not None and not is_detection_candidate(source_code, bool(vulns)):
             return vulns
         if self._llm_client is None:
             self._llm_client = LLMTriageClient(config)
@@ -805,7 +831,10 @@ class FrameScanner:
         explored_kinds = set()
         repo_root = getattr(config, "repo_root", "")
         explored = getattr(self._llm_client, "_explored", None) or set()
-        if repo_root and explored:
+        # Grounding needs a symbolic frontend to translate explored files; in
+        # LLM-only mode (unsupported language) there is none, so findings stay
+        # LLM-tier (correct -- no symbolic verification is available).
+        if repo_root and explored and self.frontend is not None:
             root = os.path.realpath(repo_root)
             for rel in explored:
                 try:
