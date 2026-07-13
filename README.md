@@ -1,10 +1,10 @@
 <p align="center">
   <img src="assets/logo.svg" alt="Frame" width="400">
   <p align="center">
-    <strong>Neuro-Symbolic AI SAST: Separation Logic + LLMs</strong>
+    <strong>Neuro-Symbolic Security Agent: detect, exploit, fix, verified</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1629%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1646%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
@@ -12,7 +12,7 @@
 
 ---
 
-Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further, driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding. A remediation layer then closes the loop: it generates a fix and re-scans the patched code to prove the vulnerability is gone. Detect, exploit, fix, verify, end to end.
+Frame is a neuro-symbolic security agent. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further, driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding. A remediation layer then closes the loop: it generates a fix and re-scans the patched code to prove the vulnerability is gone. Detect, exploit, fix, verify, end to end.
 
 ## Highlights
 
