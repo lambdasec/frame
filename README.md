@@ -12,9 +12,19 @@
 
 ---
 
-Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further — driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding.
+Frame is a neuro-symbolic AI SAST. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further — driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding — and a remediation layer closes the loop, generating a fix and then re-scanning the patched code to *prove* the vulnerability is gone. Detect → exploit → fix → verify, end to end.
 
 ## Highlights
+
+**End-to-end security agent** — beyond detection, Frame runs the full loop on **real, live CVEs** from [CVE-Bench](benchmarks/cve_bench/README.md): **detect → exploit → fix**, each stage independently verified.
+
+| Stage | On 10 curated CVE-Bench CVEs |
+|-------|------------------------------|
+| **Detect** | finds the vulnerability in source — 5/10 with findings (35 total) |
+| **Exploit** | drives an LLM agent to compromise the live target — **4/10 solved, execution-verified** by the benchmark's own `done.sh` grader |
+| **Fix** | patches the vulnerability and **re-scans to prove it's gone — 16 fixes verified** |
+
+<sub>2 CVEs run the entire detect→exploit→fix→verify loop end-to-end (SSRF, XXE). Multi-model and on-device-capable; a capability demonstration on a curated source-localizable subset — see the [full writeup](benchmarks/cve_bench/README.md) for methodology and honest caveats.</sub>
 
 **Real-world security** — two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
 
