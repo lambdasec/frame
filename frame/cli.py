@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 import json
 import time
@@ -117,6 +118,10 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable LLM triage only (drops confident false positives)"
     )
+    scan_parser.add_argument(
+        "--model",
+        help="Override FRAME_LLM_MODEL for this scan (same as setting the env var)"
+    )
 
     # === EXPLOIT command ===
     exploit_parser = subparsers.add_parser(
@@ -158,6 +163,47 @@ def create_parser() -> argparse.ArgumentParser:
         help="Override FRAME_LLM_MODEL for this run"
     )
     exploit_parser.add_argument(
+        "--format", default="text", choices=["text", "json"],
+        help="Output format (default: text)"
+    )
+    exploit_parser.add_argument(
+        "--trace-out",
+        help="Write the full agent trace (system prompt, guidance, every tool call "
+             "and result) as JSON to this file -- useful for comparing model behavior."
+    )
+
+    # === FIX command ===
+    fix_parser = subparsers.add_parser(
+        "fix",
+        help="Generate (and verify) security fixes for scan findings",
+        description="Remediate vulnerabilities found by `frame scan`. Generates a "
+                    "minimal patch per finding, then VERIFIES it by re-scanning the "
+                    "patched code -- Frame confirms the vulnerability is gone."
+    )
+    fix_parser.add_argument(
+        "source", help="Source file or directory the findings refer to"
+    )
+    fix_parser.add_argument(
+        "--guidance", required=True,
+        help="Frame findings JSON to fix (file path, or '-' for stdin). Pipe from "
+             "`frame scan --ai -f json`."
+    )
+    fix_parser.add_argument(
+        "--in-place", action="store_true",
+        help="Write the patches to the files (default: print a unified diff instead)"
+    )
+    fix_parser.add_argument(
+        "--diff", action="store_true",
+        help="Print a unified diff of the patches (the default when --in-place is off)"
+    )
+    fix_parser.add_argument(
+        "--no-verify", action="store_true",
+        help="Skip re-scanning the patched code to confirm the fix (verify is on by default)"
+    )
+    fix_parser.add_argument(
+        "--model", help="Override FRAME_LLM_MODEL for this run"
+    )
+    fix_parser.add_argument(
         "--format", default="text", choices=["text", "json"],
         help="Output format (default: text)"
     )
@@ -291,8 +337,16 @@ def create_parser() -> argparse.ArgumentParser:
 # SCAN Command
 # ============================================================================
 
+def _apply_model_override(args) -> None:
+    """`--model` is sugar for FRAME_LLM_MODEL: setting it here means every layer
+    (scan/detect/triage/exploit) reading the env picks it up. Flag beats env."""
+    if getattr(args, "model", None):
+        os.environ["FRAME_LLM_MODEL"] = args.model
+
+
 def cmd_scan(args) -> int:
     """Execute scan command"""
+    _apply_model_override(args)
     # Delegate to the SIL scanner CLI
     from frame.sil.cli import cmd_scan as sil_scan
     return sil_scan(args)
@@ -378,10 +432,10 @@ def cmd_exploit(args) -> int:
         exploit_agentic, local_exec_tool, guidance_from_finding,
     )
 
-    # LLM config from env (FRAME_LLM_*), with optional --model override.
+    # LLM config from env (FRAME_LLM_*). --model overrides FRAME_LLM_MODEL, the
+    # same single knob every layer reads (flag beats env, uniformly).
+    _apply_model_override(args)
     config = LLMConfig.from_env()
-    if args.model:
-        config.model = args.model
     if not config.base_url or not config.model:
         print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
               "endpoint) to use the exploit agent.", file=sys.stderr)
@@ -437,6 +491,14 @@ def cmd_exploit(args) -> int:
         "guided": guidance is not None,
         "provenance": guidance.get("provenance") if guidance else None,
     }
+    if getattr(args, "trace_out", None):
+        try:
+            with open(args.trace_out, "w") as fh:
+                json.dump({"model": config.model, "summary": out,
+                           "transcript": result.transcript}, fh, indent=2, default=str)
+        except Exception as e:
+            print(f"Warning: could not write trace to {args.trace_out}: {e}",
+                  file=sys.stderr)
     if args.format == "json":
         print(json.dumps(out, indent=2))
     else:
@@ -445,6 +507,112 @@ def cmd_exploit(args) -> int:
               f"guided={out['guided']}"
               + (f", lead={out['provenance']}" if guidance else "") + ")")
     return 0 if result.solved else 1
+
+
+# ============================================================================
+# FIX Command
+# ============================================================================
+
+_LANG_BY_EXT = {".py": "python", ".js": "javascript", ".jsx": "javascript",
+                ".ts": "typescript", ".tsx": "typescript", ".java": "java",
+                ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".cs": "csharp",
+                ".php": "php", ".rb": "ruby", ".go": "go"}
+
+
+def _lang_for(path: str) -> str:
+    return _LANG_BY_EXT.get(os.path.splitext(path)[1].lower(), "python")
+
+
+def _resolve_finding_file(loc: Optional[str], source: str) -> Optional[str]:
+    """Locate a finding's file relative to the user-supplied source path."""
+    if loc and os.path.isfile(loc):
+        return loc
+    if os.path.isfile(source):
+        return source
+    if loc and os.path.isdir(source):
+        cand = os.path.join(source, os.path.basename(loc))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def cmd_fix(args) -> int:
+    """Execute fix command - generate and verify security patches for findings."""
+    from collections import OrderedDict
+    from frame.sil.llm_client import LLMConfig
+    from frame.sil.llm_fix import generate_fix, apply_fix, make_diff, verify_fix, FixResult
+
+    _apply_model_override(args)
+    config = LLMConfig.from_env()
+    if not config.base_url or not config.model:
+        print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
+              "endpoint) to use fix.", file=sys.stderr)
+        return 1
+    try:
+        raw = sys.stdin.read() if args.guidance == "-" else Path(args.guidance).read_text()
+        findings = _load_findings(raw)
+    except Exception as e:
+        print(f"Error reading findings: {e}", file=sys.stderr)
+        return 1
+    if not findings:
+        print("No findings to fix.", file=sys.stderr)
+        return 1
+
+    by_file: "OrderedDict[str, list]" = OrderedDict()
+    for f in findings:
+        fp = _resolve_finding_file(f.get("location"), args.source)
+        if fp is not None:
+            by_file.setdefault(fp, []).append(f)
+    if not by_file:
+        print("Could not locate any finding's file under the given source path.",
+              file=sys.stderr)
+        return 1
+
+    results: List[FixResult] = []
+    for fp, flist in by_file.items():
+        try:
+            original = Path(fp).read_text()
+        except Exception as e:
+            print(f"Warning: cannot read {fp}: {e}", file=sys.stderr)
+            continue
+        patched = original
+        lang = _lang_for(fp)
+        for f in flist:
+            patch = generate_fix(f, patched, config)
+            new, applied = apply_fix(patched, patch)
+            verified = None
+            if applied:
+                patched = new
+                if not args.no_verify:
+                    verified = verify_fix(patched, lang, os.path.basename(fp), f, config)
+            results.append(FixResult(
+                file=fp, cwe=str(f.get("cwe_id") or f.get("cwe") or ""),
+                line=f.get("line") or 0, applied=applied, verified=verified,
+                rationale=(patch or {}).get("rationale", ""),
+                original=(patch or {}).get("original", ""),
+                replacement=(patch or {}).get("replacement", "")))
+        if patched != original:
+            if args.in_place:
+                Path(fp).write_text(patched)
+            elif args.format != "json":
+                print(make_diff(fp, original, patched))
+
+    applied_n = sum(1 for r in results if r.applied)
+    verified_n = sum(1 for r in results if r.verified is True)
+    if args.format == "json":
+        print(json.dumps([{"file": r.file, "cwe": r.cwe, "line": r.line,
+                           "applied": r.applied, "verified": r.verified,
+                           "rationale": r.rationale} for r in results], indent=2))
+    else:
+        for r in results:
+            v = ("verified✓" if r.verified is True else
+                 "STILL DETECTED" if r.verified is False else "verify-skipped")
+            print(f"  {r.cwe} {os.path.basename(r.file)}:{r.line} -> "
+                  + (f"patched ({v})" if r.applied else "could not apply"))
+        mode = "written in place" if args.in_place else "shown as diff"
+        print(f"\n{applied_n}/{len(results)} findings patched ({mode}); "
+              f"{verified_n} verified fixed by re-scan.")
+    return 0 if applied_n > 0 else 1
 
 
 # ============================================================================
@@ -1005,6 +1173,7 @@ def main(argv: List[str] = None) -> int:
     commands = {
         "scan": cmd_scan,
         "exploit": cmd_exploit,
+        "fix": cmd_fix,
         "solve": cmd_solve,
         "check": cmd_check,
         "parse": cmd_parse,
