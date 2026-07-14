@@ -293,7 +293,10 @@ def detect_agentic(source_code: str, language: str, filename: str,
     system = DETECT_SYSTEM + (
         " You MAY call read_file(path) and grep(pattern) to inspect related files "
         "(helpers, callers, config, sources/sinks in other files) before deciding. "
-        "When finished, reply with ONLY the JSON object.")
+        "Work systematically: enumerate the request handlers/endpoints and, for each "
+        "attacker-controlled input, trace whether it can reach a dangerous sink "
+        "(injection, path traversal, SSRF, unsafe deserialization, broken authz), "
+        "following the flow across files. When finished, reply with ONLY the JSON object.")
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Language: {language}\nFile: {filename}\n\n"
@@ -303,8 +306,9 @@ def detect_agentic(source_code: str, language: str, filename: str,
     res = run_agent(
         messages, client, tools=_TOOLS,
         exec_tool=investigation_exec(repo_root, explored),
-        max_steps=max(1, getattr(config, "max_tool_steps", 6)),
+        max_steps=max(1, getattr(config, "max_tool_steps", 30)),
         finalize=lambda content: _findings_to_vulns(
             (_extract_json_object(content) or {}).get("findings") or [], filename),
-        final_nudge="Report the findings now as the JSON object.")
+        final_nudge="Report the findings now as the JSON object.",
+        compact_at_chars=getattr(config, "agent_context_budget_chars", 80000))
     return res.result or []

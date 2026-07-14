@@ -540,7 +540,7 @@ def cmd_fix(args) -> int:
     """Execute fix command - generate and verify security patches for findings."""
     from collections import OrderedDict
     from frame.sil.llm_client import LLMConfig
-    from frame.sil.llm_fix import generate_fix, apply_fix, make_diff, verify_fix, FixResult
+    from frame.sil.llm_fix import generate_fix, apply_fix, make_diff, verify_fixes, FixResult
 
     _apply_model_override(args)
     config = LLMConfig.from_env()
@@ -577,20 +577,28 @@ def cmd_fix(args) -> int:
             continue
         patched = original
         lang = _lang_for(fp)
+        file_results: List[FixResult] = []
         for f in flist:
             patch = generate_fix(f, patched, config)
             new, applied = apply_fix(patched, patch)
-            verified = None
             if applied:
                 patched = new
-                if not args.no_verify:
-                    verified = verify_fix(patched, lang, os.path.basename(fp), f, config)
-            results.append(FixResult(
+            file_results.append(FixResult(
                 file=fp, cwe=str(f.get("cwe_id") or f.get("cwe") or ""),
-                line=f.get("line") or 0, applied=applied, verified=verified,
+                line=f.get("line") or 0, applied=applied, verified=None,
                 rationale=(patch or {}).get("rationale", ""),
                 original=(patch or {}).get("original", ""),
                 replacement=(patch or {}).get("replacement", "")))
+        # One re-scan verifies every applied finding for this file (not one per finding
+        # -- per-finding re-scanning timed out on a file with 13 findings).
+        if not args.no_verify and patched != original:
+            applied_findings = [flist[i] for i, r in enumerate(file_results) if r.applied]
+            verdicts = iter(verify_fixes(patched, lang, os.path.basename(fp),
+                                         applied_findings, config))
+            for r in file_results:
+                if r.applied:
+                    r.verified = next(verdicts, None)
+        results.extend(file_results)
         if patched != original:
             if args.in_place:
                 Path(fp).write_text(patched)

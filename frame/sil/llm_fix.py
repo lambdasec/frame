@@ -119,15 +119,32 @@ def make_diff(filename: str, before: str, after: str) -> str:
         fromfile=f"a/{filename}", tofile=f"b/{filename}"))
 
 
+def verify_fixes(patched_source: str, language: str, filename: str,
+                 findings: List[Dict[str, Any]], config: LLMConfig,
+                 client: Optional[LLMClient] = None) -> List[Optional[bool]]:
+    """Verify all of a file's findings with a SINGLE re-scan: the caller applies every
+    patch first, then this detects once and checks which CWEs remain. Returns a list
+    aligned to `findings` -- True = the finding's CWE is gone, False = it still detects,
+    None = the re-scan could not run. Empty `findings` returns [] without scanning.
+
+    Batching matters: per-finding re-scanning is O(findings) detection passes, which
+    timed out on a file with 13 findings; this is one pass regardless of count.
+    """
+    if not findings:
+        return []
+    try:
+        vulns = detect_in_file(patched_source, language, filename, config, client)
+    except Exception:
+        return [None] * len(findings)
+    present = {str(getattr(v, "cwe_id", "") or "").upper() for v in vulns}
+    return [str(f.get("cwe_id") or f.get("cwe") or "").upper() not in present
+            for f in findings]
+
+
 def verify_fix(patched_source: str, language: str, filename: str,
                finding: Dict[str, Any], config: LLMConfig,
                client: Optional[LLMClient] = None) -> Optional[bool]:
     """Re-run detection on the patched code; True if the finding's CWE is gone,
-    False if it still detects, None if verification itself could not run."""
-    cwe = str(finding.get("cwe_id") or finding.get("cwe") or "").upper()
-    try:
-        vulns = detect_in_file(patched_source, language, filename, config, client)
-    except Exception:
-        return None
-    still = any(str(getattr(v, "cwe_id", "") or "").upper() == cwe for v in vulns)
-    return not still
+    False if it still detects, None if verification itself could not run.
+    (Single-finding convenience over `verify_fixes`.)"""
+    return verify_fixes(patched_source, language, filename, [finding], config, client)[0]

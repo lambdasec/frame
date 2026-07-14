@@ -4,7 +4,7 @@
     <strong>Neuro-Symbolic Security Agent: detect, exploit, fix, verified</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1646%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1655%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>

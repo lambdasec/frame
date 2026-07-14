@@ -131,9 +131,10 @@ def triage_agentic(prompt_ctx: str, config: LLMConfig,
     res = run_agent(
         messages, client, tools=INVESTIGATION_TOOLS,
         exec_tool=investigation_exec(repo_root),
-        max_steps=max(1, getattr(config, "max_tool_steps", 6)),
+        max_steps=max(1, getattr(config, "max_tool_steps", 30)),
         finalize=lambda content: _extract_json_object(content),
-        final_nudge="Give your final verdict now as the JSON object.")
+        final_nudge="Give your final verdict now as the JSON object.",
+        compact_at_chars=getattr(config, "agent_context_budget_chars", 80000))
     return res.result
 
 

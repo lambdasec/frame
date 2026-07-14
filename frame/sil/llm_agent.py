@@ -106,6 +106,61 @@ def investigation_exec(repo_root: str,
     return _exec
 
 
+# ---- Context compaction (keeps long sessions inside the window) ----------------
+
+_PROGRESS_MARKER = "[PROGRESS NOTES]"
+
+_COMPACT_SYSTEM = (
+    "You are compacting an agent's working transcript so it fits the context window. "
+    "Summarize everything below into a dense progress log the agent can act on: what "
+    "it has tried, the key results and observations, hypotheses confirmed or ruled "
+    "out (dead-ends and WHY they died), the current state, and the most promising "
+    "open leads. Be concrete -- name endpoints, parameters, payloads, and error "
+    "signatures. Output only the summary.")
+
+
+def _context_chars(messages: List[Dict[str, Any]]) -> int:
+    return sum(len(str(m.get("content") or "")) for m in messages)
+
+
+def _compact_messages(messages: List[Dict[str, Any]], client,
+                      keep_recent: int = 6) -> List[Dict[str, Any]]:
+    """Replace the middle of a long transcript with a single PROGRESS-NOTES summary,
+    preserving the system prompt (messages[0]) and the last `keep_recent` turns.
+
+    Mirrors Mythos's durable ledger + dead-end cache. The summary is produced by
+    `client.complete`; if that fails or is empty the transcript is returned unchanged
+    (skip this round rather than drop context). Any leading orphaned tool result in
+    the kept tail (its assistant turn was compacted away) is dropped so the message
+    sequence stays valid for the API.
+    """
+    if len(messages) <= keep_recent + 1:
+        return messages
+    head = messages[0]
+    middle = messages[1:len(messages) - keep_recent]
+    tail = messages[len(messages) - keep_recent:]
+    lines: List[str] = []
+    for m in middle:
+        content = str(m.get("content") or "")
+        for tc in (m.get("tool_calls") or []):
+            fn = tc.get("function", {}) or {}
+            content += f" [call {fn.get('name', '')} {fn.get('arguments', '') or ''}]"
+        lines.append(f"{m.get('role', '?')}: {content.strip()}")
+    try:
+        summary = client.complete(
+            [{"role": "system", "content": _COMPACT_SYSTEM},
+             {"role": "user", "content": "\n".join(lines)}],
+            max_tokens=getattr(getattr(client, "config", None), "max_tokens", 4096))
+    except Exception:
+        return messages
+    if not summary:
+        return messages
+    while tail and tail[0].get("role") == "tool":   # drop orphaned tool result
+        tail = tail[1:]
+    notes = {"role": "user", "content": f"{_PROGRESS_MARKER}\n{summary}"}
+    return [head, notes] + tail
+
+
 # ---- The loop ------------------------------------------------------------------
 
 def run_agent(messages: List[Dict[str, Any]], client, *,
@@ -115,12 +170,16 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
               check_done: Optional[Callable[[], Any]] = None,
               max_tool_output: int = 8000,
               stall_nudge: str = DEFAULT_STALL,
-              final_nudge: str = DEFAULT_FINAL) -> AgentResult:
+              final_nudge: str = DEFAULT_FINAL,
+              compact_at_chars: Optional[int] = None,
+              keep_recent: int = 6) -> AgentResult:
     """Drive `client` through a tool loop over `messages`.
 
     Exactly one of `finalize` (self-terminating: parse the model's no-tool-call
     output) or `check_done` (oracle-terminating: external success check, non-None
-    to stop) should be supplied. Returns an AgentResult.
+    to stop) should be supplied. When `compact_at_chars` is set, the transcript is
+    summarized down once it exceeds that many characters, so long runs stay inside
+    the context window. Returns an AgentResult.
     """
     step = 0
     for step in range(1, max_steps + 1):
@@ -129,6 +188,9 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             r = check_done()
             if r is not None:
                 return AgentResult(r, True, step - 1, messages)
+
+        if compact_at_chars and _context_chars(messages) > compact_at_chars:
+            messages = _compact_messages(messages, client, keep_recent)
 
         msg = client.chat_raw(messages, tools)
         if msg is None:

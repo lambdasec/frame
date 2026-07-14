@@ -51,6 +51,11 @@ class LLMConfig:
     # verdict: a reasoning model spends output tokens thinking *before* it emits a
     # tool call, so a small budget truncates it mid-thought and no tool call appears.
     agent_max_tokens: int = 16000
+    # When the running transcript (sum of message content) exceeds this, run_agent
+    # compacts older turns into a PROGRESS-NOTES summary and keeps only recent turns.
+    # This is what makes long, persistent probing sessions feasible without blowing
+    # the context window -- raise it for models with larger contexts.
+    agent_context_budget_chars: int = 80000
     # Retries for the agentic transport on transient network errors (flaky links).
     agent_retries: int = 2
     # Structured output. "json_object" is widely supported (incl. local
@@ -59,12 +64,12 @@ class LLMConfig:
     json_mode: str = "json_schema"  # "json_schema" (strict) | "json_object" | "off"
     cache_path: str = ""            # persist verdicts here (JSON); reused across runs
     repo_root: str = ""             # repo root for agentic tools (read_file/grep)
-    max_tool_steps: int = 6         # tool-call rounds before forcing a verdict (detect/triage)
+    max_tool_steps: int = 30        # investigation rounds for agentic detect/triage (room to enumerate handlers/sinks across files)
     timeout: int = 60               # seconds per call
     context_lines: int = 12         # code lines of context around a finding
     max_context_chars: int = 6000   # hard cap on a code snippet (~1.5k tok)
     drop_threshold: float = 0.75    # triage drops only false-positives at/above this confidence
-    exploit_max_steps: int = 40     # exploitation: tool-loop turns against a live target
+    exploit_max_steps: int = 250    # exploitation: tool-loop turns against a live target (compaction keeps long runs in-context)
     triage_agentic: bool = False    # triage: escalate uncertain verdicts to an investigation loop
     enabled: bool = False
 
@@ -78,12 +83,13 @@ class LLMConfig:
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "4096")),
             agent_max_tokens=int(os.environ.get("FRAME_LLM_AGENT_MAX_TOKENS", "16000")),
+            agent_context_budget_chars=int(os.environ.get("FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS", "80000")),
             agent_retries=int(os.environ.get("FRAME_LLM_AGENT_RETRIES", "2")),
-            exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "40")),
+            exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "250")),
             triage_agentic=os.environ.get("FRAME_LLM_TRIAGE_AGENTIC", "").lower() in ("1", "true", "yes"),
             cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
             repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
-            max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "6")),
+            max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "30")),
             context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
             max_context_chars=int(os.environ.get("FRAME_LLM_MAX_CONTEXT_CHARS", "6000")),
             json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_schema"),

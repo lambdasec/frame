@@ -81,7 +81,9 @@ def _stub_fix(monkeypatch, *, verified=True):
     monkeypatch.setattr(fixmod, "generate_fix", lambda f, s, c, client=None: {
         "original": "q='SELECT '+x", "replacement": "q=safe('SELECT ?', x)",
         "rationale": "parameterized"})
-    monkeypatch.setattr(fixmod, "verify_fix", lambda *a, **k: verified)
+    # cmd_fix batches verification: one verify_fixes(...) per file for all its findings.
+    monkeypatch.setattr(fixmod, "verify_fixes",
+                        lambda ps, lang, fn, findings, c, client=None: [verified] * len(findings))
 
 
 def test_cmd_fix_diff_mode_does_not_write(monkeypatch, tmp_path, capsys):
