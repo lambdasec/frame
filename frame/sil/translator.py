@@ -182,6 +182,7 @@ class VulnType(Enum):
             SinkKind.REDIRECT: cls.OPEN_REDIRECT,
             SinkKind.SSRF: cls.SSRF,
             SinkKind.AUTHZ_CHECK: cls.AUTHORIZATION_BYPASS,
+            SinkKind.RESOURCE_SELECT: cls.IDOR,
             SinkKind.CORS: cls.CORS_MISCONFIGURATION,
             # A02: Security Misconfiguration
             SinkKind.HEADER: cls.HEADER_INJECTION,
@@ -1214,6 +1215,14 @@ class SILTranslator:
             # Keep XSS only if it's at a real XSS sink, not just return
             checks = [c for c in checks if c.vuln_type != VulnType.XSS or c.sink_type != SinkKind.HTML_OUTPUT.value]
 
+        # Post-hoc ownership discharge: drop IDOR checks whose fetched object is
+        # later validated against the authenticated principal (a dominating
+        # `obj.field != current_user...` guard). This is the separation-logic
+        # ownership invariant proved after the selection rather than by scoping
+        # the query -- control-flow-sensitive, so it runs once the whole
+        # procedure's instructions are available.
+        checks = self._filter_post_hoc_ownership_checks(proc, checks)
+
         return checks
 
     def _init_state_for_procedure(self, proc: Procedure) -> SymbolicState:
@@ -1796,6 +1805,11 @@ class SILTranslator:
             if spec.is_taint_source() and instr.ret:
                 ret_var = str(instr.ret[0])
                 source_kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+                # The Authorization/Cookie header is an authentication credential, not a
+                # free object-selector: tag PRINCIPAL (arg-sensitive), so values derived
+                # from it -- even through a custom validator -- are the caller's own identity.
+                if source_kind == TaintKind.USER_INPUT and self._is_auth_credential_access(func_name, instr):
+                    source_kind = TaintKind.PRINCIPAL
                 state.add_taint(ret_var, TaintInfo(
                     source_kind=source_kind,
                     source_var=ret_var,
@@ -2007,8 +2021,31 @@ class SILTranslator:
 
                                 for arg_var in arg_vars:
                                     if state.is_tainted(arg_var):
+                                        # IDOR requires an ATTACKER-CONTROLLED object selector.
+                                        # Only a USER_INPUT-kind value (a path/query/body
+                                        # parameter) selects a cross-user object. A selector that
+                                        # is the caller's OWN authenticated identity (PRINCIPAL --
+                                        # credential / session / JWT, propagated even through a
+                                        # custom validator) is self-scoped; a value read from the
+                                        # database (DATABASE) or the environment is not directly
+                                        # attacker-supplied. Sound: the attacker can only present
+                                        # their own credential and cannot pick another user's row
+                                        # unless a request parameter names it.
+                                        if spec.is_sink == 'resource_select':
+                                            _ti = state.get_taint_info(arg_var)
+                                            if _ti is None or _ti.source_kind != TaintKind.USER_INPUT:
+                                                continue
                                         if not state.is_sanitized_for(arg_var, spec.is_sink):
                                             if not state.is_asserted_safe_for(arg_var, spec.is_sink):
+                                                # IDOR ownership binding: a resource-selection query
+                                                # scoped by the authenticated principal (e.g.
+                                                # filter_by(user_id=current_user.id, id=x)) selects the
+                                                # caller's OWN resource -- not an object-level authz flaw.
+                                                # Custom/indirect auth and post-hoc ownership checks are
+                                                # left to the LLM layer.
+                                                if spec.is_sink == 'resource_select' and \
+                                                        self._resource_select_principal_scoped(instr):
+                                                    continue
                                                 # Skip xpath sinks for vars with inline .replace() sanitization
                                                 if spec.is_sink == 'xpath' and arg_var in inline_sanitized_vars:
                                                     continue
@@ -2787,6 +2824,16 @@ class SILTranslator:
                     continue
 
             if state.is_tainted(var):
+                # IDOR requires an ATTACKER-CONTROLLED object selector: only a
+                # USER_INPUT-kind value (path/query/body parameter) names a
+                # cross-user object. A selector that is the caller's own
+                # identity (PRINCIPAL) is self-scoped; a value read from the
+                # database (DATABASE) or environment is not directly attacker-
+                # supplied. Other sink kinds keep firing on any taint.
+                if instr.kind.value == 'resource_select':
+                    _ti = state.get_taint_info(var)
+                    if _ti is None or _ti.source_kind != TaintKind.USER_INPUT:
+                        continue
                 if not state.is_sanitized_for(var, instr.kind.value):
                     if not state.is_asserted_safe_for(var, instr.kind.value):
                         check = self._create_taint_check(
@@ -2885,6 +2932,118 @@ class SILTranslator:
     # =========================================================================
     # Vulnerability Check Creation
     # =========================================================================
+
+    # Authenticated-principal identifiers (an ownership binding when they scope a
+    # resource-selection query). A catalog of framework principals, like the
+    # source/sink name catalogs -- not a source-text pattern rule.
+    _PRINCIPAL_TOKENS = ("current_user", "get_jwt_identity", "current_identity",
+                         "g.user", "request.user")
+
+    _AUTH_HEADER_NAMES = ("authorization", "cookie", "x-api-key", "x-auth-token",
+                          "x-access-token", "x-session-token")
+
+    def _is_auth_credential_access(self, func_name, instr) -> bool:
+        """True if a call reads an HTTP authentication credential header
+        (Authorization / Cookie / API-key). The attacker can only present their own
+        credential, so this value and anything derived from it is the authenticated
+        principal -- tainted PRINCIPAL, not USER_INPUT."""
+        try:
+            fn = str(func_name or "")
+            if "headers.get" not in fn and "headers.__getitem__" not in fn:
+                return False
+            for a in (getattr(instr, "args", None) or []):
+                exp = a[0] if isinstance(a, tuple) else a
+                s = str(exp).strip().strip("'\"").lower()
+                if s in self._AUTH_HEADER_NAMES:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _filter_post_hoc_ownership_checks(self, proc, checks):
+        """Drop IDOR checks whose fetched object is validated by a post-hoc
+        ownership guard: a conditional that compares the fetched object's field
+        against the authenticated principal (e.g.
+        `if txn.sender_id != current_user.id and txn.receiver_id != current_user.id: abort(403)`).
+
+        The selection query itself is attacker-parameterized, but the caller's
+        access is authorized by the subsequent ownership proof, so it is not an
+        object-level authorization flaw. Scoped per procedure; only fires when an
+        explicit principal-vs-object comparison names the fetched object.
+        """
+        idor_checks = [c for c in checks if c.vuln_type == VulnType.IDOR]
+        if not idor_checks:
+            return checks
+        import re
+
+        def _principal_base(tok):
+            return tok.split(".", 1)[0]
+
+        principal_bases = {_principal_base(t) for t in self._PRINCIPAL_TOKENS}
+
+        # 1. Object bases compared against a principal inside a branch condition.
+        guarded_objects = set()
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if isinstance(instr, Prune):
+                    cond = str(instr.condition)
+                    if not any(tok in cond for tok in self._PRINCIPAL_TOKENS):
+                        continue
+                    for base in re.findall(r'([A-Za-z_]\w*)\.\w+', cond):
+                        if base not in principal_bases:
+                            guarded_objects.add(base)
+        if not guarded_objects:
+            return checks
+
+        # 2. Alias map: a call result temp assigned to a named variable.
+        alias = {}
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if isinstance(instr, Assign):
+                    try:
+                        rhs = list(instr.exp.free_vars())
+                    except Exception:
+                        rhs = []
+                    if len(rhs) == 1:
+                        alias[rhs[0]] = str(instr.id)
+
+        # 3. Resource-select calls whose result object is guarded -> protected selectors.
+        protected = set()
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call) or not instr.ret:
+                    continue
+                spec = self.program.get_spec(instr.get_full_name())
+                if not (spec and spec.is_taint_sink() and spec.is_sink == 'resource_select'):
+                    continue
+                obj = str(instr.ret[0])
+                if obj not in guarded_objects and alias.get(obj) not in guarded_objects:
+                    continue
+                for aidx in (spec.sink_args or []):
+                    if aidx < len(instr.args):
+                        for v in self._get_exp_vars(instr.args[aidx][0]):
+                            protected.add(v)
+        if not protected:
+            return checks
+
+        return [c for c in checks
+                if not (c.vuln_type == VulnType.IDOR and c.source_var in protected)]
+
+    def _resource_select_principal_scoped(self, instr) -> bool:
+        """True if a resource-selection call is scoped by the authenticated principal
+        (e.g. filter_by(user_id=current_user.id, id=x)) -- the query selects the
+        caller's own resource, so it is not an object-level authorization flaw.
+        Inspects the call's receiver + argument expressions in the IR."""
+        try:
+            parts = []
+            if getattr(instr, "receiver", None) is not None:
+                parts.append(str(instr.receiver))
+            for a in (getattr(instr, "args", None) or []):
+                parts.append(str(a[0] if isinstance(a, tuple) else a))
+            blob = " ".join(parts)
+            return any(tok in blob for tok in self._PRINCIPAL_TOKENS)
+        except Exception:
+            return False
 
     def _create_taint_check(
         self,

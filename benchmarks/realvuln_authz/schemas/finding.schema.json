@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RealVuln authz finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repository", "endpoint", "method_or_operation", "handler", "file",
+    "start_line", "end_line", "cwe", "object_identifier",
+    "authenticated_principal", "resource_operation", "missing_or_bypassed_check",
+    "attack_scenario", "confidence"
+  ],
+  "properties": {
+    "repository": {"type": "string"},
+    "endpoint": {"type": "string"},
+    "method_or_operation": {"type": "string"},
+    "handler": {"type": "string"},
+    "file": {"type": "string"},
+    "start_line": {"type": "integer"},
+    "end_line": {"type": "integer"},
+    "cwe": {"type": "string"},
+    "object_identifier": {"type": "string"},
+    "authenticated_principal": {"type": "string"},
+    "resource_operation": {"type": "string"},
+    "missing_or_bypassed_check": {"type": "string"},
+    "attack_scenario": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "provenance": {
+      "type": "string",
+      "enum": ["symbolic", "llm_detected", "llm_verified"],
+      "description": "Frame provenance tier; absent for the glm52_repo_agent system."
+    }
+  }
+}

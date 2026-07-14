@@ -11,6 +11,7 @@ for parsing. It handles:
 - Class methods
 """
 
+import re
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -262,17 +263,16 @@ class PythonFrontend:
             is_method=is_method,
         )
 
-        # Check for static method decorator
-        if is_method:
-            parent = node.parent
-            if parent and parent.type == "decorated_definition":
-                for child in parent.children:
-                    if child.type == "decorator":
-                        decorator_text = self._get_text(child)
-                        if "@staticmethod" in decorator_text:
-                            proc.is_static = True
-                        if "@classmethod" in decorator_text:
-                            proc.is_static = True
+        # Inspect decorators (both methods and module-level route handlers).
+        decorator_texts: List[str] = []
+        parent = node.parent
+        if parent and parent.type == "decorated_definition":
+            for child in parent.children:
+                if child.type == "decorator":
+                    decorator_texts.append(self._get_text(child))
+        for dtext in decorator_texts:
+            if "@staticmethod" in dtext or "@classmethod" in dtext:
+                proc.is_static = True
 
         self._current_proc = proc
         self._node_counter = 0
@@ -283,8 +283,39 @@ class PythonFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
-        # Translate body (pass program for nested functions)
+        # Web-handler parameters are attacker-controlled. A function is a request
+        # handler if it has a route decorator, is a GraphQL resolver/mutation, or
+        # reads the framework request object -- covering Flask decorators,
+        # connexion/OpenAPI operationId handlers (no decorator), and GraphQL. Its
+        # route/query parameters are then USER_INPUT sources, so the sound taint
+        # engine detects IDOR (attacker id reaches a resource-selection sink).
+        # Structural handler identification feeds the IR; the taint engine makes the
+        # detection decision -- this is not a pattern rule.
         body_node = node.child_by_field_name("body")
+        body_text = self._get_text(body_node) if body_node else ""
+        route_params = self._route_path_param_names(decorator_texts)
+        decs = " ".join(decorator_texts)
+        is_handler = (
+            bool(route_params)
+            or any(t in decs for t in (".route(", ".get(", ".post(", ".put(", ".delete(", ".patch("))
+            or func_name.startswith("resolve_") or func_name == "mutate"
+            or "request." in body_text
+        )
+        source_params = set(route_params)
+        if is_handler:
+            source_params.update(
+                p[0].name for p in params
+                if p[0].name not in ("self", "cls", "info", "root", "parent"))
+        if source_params:
+            param_names = {p[0].name for p in params}
+            loc = self._get_location(node)
+            for pname in source_params:
+                if pname in param_names:
+                    self._add_instr(TaintSource(
+                        loc=loc, var=PVar(pname), kind=TaintKind.USER_INPUT,
+                        description="web handler parameter (attacker-controlled)"))
+
+        # Translate body (pass program for nested functions)
         if body_node:
             self._translate_block(body_node, program=program)
 
@@ -299,6 +330,98 @@ class PythonFrontend:
 
         self._current_proc = None
         return proc
+
+    @staticmethod
+    def _route_path_param_names(decorator_texts: List[str]) -> List[str]:
+        """Path-parameter names declared in a web route decorator, e.g.
+        @app.route('/users/<id>'), @bp.get('/users/<int:id>'), FastAPI '/users/{id}'.
+
+        This parses the route STRING to build the IR (marking attacker-controlled
+        inputs); it is frontend parsing, not a security detection rule -- the taint
+        engine decides whether a flow is a vulnerability.
+        """
+        names: List[str] = []
+        for d in decorator_texts:
+            if not any(tok in d for tok in (".route(", ".get(", ".post(",
+                                            ".put(", ".delete(", ".patch(")):
+                continue
+            m = re.search(r"['\"]([^'\"]+)['\"]", d)   # the route path literal
+            if not m:
+                continue
+            for pm in re.finditer(r"<(?:[a-zA-Z_]\w*:)?([a-zA-Z_]\w*)>|\{([a-zA-Z_]\w*)\}", m.group(1)):
+                names.append(pm.group(1) or pm.group(2))
+        return names
+
+    # Header names that carry a caller's own credential rather than a
+    # free-form request value. A read of one of these is PRINCIPAL-typed.
+    _AUTH_HEADER_NAMES = (
+        "authorization", "cookie", "x-api-key", "api-key", "apikey",
+        "x-auth-token", "x-access-token", "x-authentication-token",
+        "proxy-authorization", "authentication",
+    )
+
+    @classmethod
+    def _is_auth_credential_source(cls, func_name: str, arg_texts: List[str]) -> bool:
+        """True when a generic header read targets a credential header.
+
+        e.g. request.headers.get('Authorization'), headers['Cookie'].
+        The func_name must be a header access and one argument must name a
+        known credential header. Non-credential header reads (e.g.
+        headers.get('X-Forwarded-For')) stay USER_INPUT.
+        """
+        fn = (func_name or "").lower()
+        if "header" not in fn:
+            return False
+        for a in arg_texts:
+            if a is None:
+                continue
+            val = a.strip().strip("'\"").lower()
+            if val in cls._AUTH_HEADER_NAMES:
+                return True
+        return False
+
+    def _translate_subscript_source_assignment(
+        self, target: str, subscript_node: TSNode, loc: Location
+    ) -> Optional[List[Instr]]:
+        """Lower `target = base[key]` to a `base.__getitem__(key)` call when
+        `base.__getitem__` is a known source spec (request.args/json/form/...).
+
+        Returns the instruction list, or None if base is not a recognized
+        source (caller then falls back to generic ExpIndex handling).
+        """
+        base = subscript_node.child_by_field_name("value")
+        key = subscript_node.child_by_field_name("subscript")
+        if base is None or key is None:
+            return None
+        base_text = self._get_text(base)
+        func_name = f"{base_text}.__getitem__"
+        spec = self.specs.get(func_name)
+        if not (spec and spec.is_taint_source()):
+            return None
+
+        key_exp = self._translate_expression(key)
+        ret_id = self._new_ident(target)
+        instrs: List[Instr] = [
+            Call(
+                loc=loc,
+                ret=(ret_id, Typ.unknown_type()),
+                func=ExpConst.string(func_name),
+                args=[(key_exp, Typ.unknown_type())],
+            ),
+            Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)),
+        ]
+        kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+        if kind == TaintKind.USER_INPUT and self._is_auth_credential_source(
+            func_name, [self._get_text(key)]
+        ):
+            kind = TaintKind.PRINCIPAL
+        instrs.append(TaintSource(
+            loc=loc,
+            var=PVar(target),
+            kind=kind,
+            description=spec.description,
+        ))
+        return instrs
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
@@ -455,6 +578,21 @@ class PythonFrontend:
                 id=PVar(target_name),
                 exp=exp
             ))
+
+        elif right.type == "subscript":
+            # x = request.args["id"] / request.json["id"] / headers["Authorization"]
+            # A subscript on a known request-data source is lowered to a
+            # `.__getitem__` call so the source spec (and its credential-
+            # provenance refinement) applies -- otherwise subscript reads of
+            # attacker input are silently untainted (recall gap).
+            instrs = self._translate_subscript_source_assignment(target_name, right, loc)
+            if instrs is not None:
+                self._add_instrs(instrs)
+            else:
+                nested_call_instrs = self._extract_all_calls_from_node(right, loc)
+                self._add_instrs(nested_call_instrs)
+                exp = self._translate_expression(right)
+                self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp))
 
         elif right.type == "formatted_string" or right.type == "f_string":
             # x = f"..."
@@ -622,6 +760,16 @@ class PythonFrontend:
         spec = self.specs.get(func_name)
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+            # Credential-provenance refinement: a generic header read is
+            # USER_INPUT, but reading a *credential* header (Authorization,
+            # Cookie, X-Api-Key, ...) yields a PRINCIPAL — a value the caller
+            # can only present for their own identity, so a selector derived
+            # from it is self-scoped and cannot be an IDOR. This is arg-
+            # sensitive, so it must be decided here where the args are visible.
+            if kind == TaintKind.USER_INPUT and self._is_auth_credential_source(
+                func_name, [self._get_text(a) for a in args]
+            ):
+                kind = TaintKind.PRINCIPAL
             instrs.append(TaintSource(
                 loc=loc,
                 var=PVar(target),
@@ -868,6 +1016,13 @@ class PythonFrontend:
         # Save current node
         before_node = self._current_node
 
+        # A call in the condition (e.g. `if Paste.query.filter_by(id=id).delete():`)
+        # still executes -- emit its Call instructions so sinks reached only from a
+        # branch test are analyzed, not silently dropped.
+        if before_node is not None and condition is not None:
+            for c in self._extract_all_calls_from_node(condition, loc):
+                before_node.add_instr(c)
+
         # Create nodes for branches
         true_node = proc.new_node(NodeKind.NORMAL)
         proc.add_node(true_node)
@@ -935,6 +1090,12 @@ class PythonFrontend:
         condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
+
+        # Emit Call instructions for any calls in the loop condition so their
+        # sinks are analyzed (see _translate_if).
+        if before_node is not None and condition is not None:
+            for c in self._extract_all_calls_from_node(condition, loc):
+                before_node.add_instr(c)
 
         true_node = proc.new_node(NodeKind.NORMAL)
         proc.add_node(true_node)

@@ -50,8 +50,10 @@ FLASK_SPECS = {
     "request.form.__getitem__": _source("user", "Flask form data"),
     "request.json": _source("user", "Flask JSON body"),
     "request.json.get": _source("user", "Flask JSON field"),
+    "request.json.__getitem__": _source("user", "Flask JSON field"),
     "request.data": _source("user", "Flask raw request data"),
     "request.values.get": _source("user", "Flask combined args/form"),
+    "request.values.__getitem__": _source("user", "Flask combined args/form"),
     "request.cookies.get": _source("user", "Flask cookie"),
     "request.headers.get": _source("user", "Flask request header"),
     "request.headers.getlist": _source("user", "Flask request header list"),
@@ -955,6 +957,39 @@ SSRF_ENHANCED_SPECS = {
 }
 
 # =============================================================================
+# Object-level authorization (IDOR / BOLA) -- resource-selection sinks (CWE-639)
+# =============================================================================
+# An attacker-controlled object identifier reaching one of these SELECT-by-id
+# operations is an IDOR candidate (source->sink reachability). Keys are ORM-
+# receiver-qualified (get_spec suffix-matches "X.query.get" -> "query.get" before
+# bare "get"), so ordinary dict.get / request.args.get are NOT matched.
+# Authenticated-principal sources: values derived from the caller's authentication
+# credential are the caller's OWN identity (an attacker can only present their own
+# credential). Tainted PRINCIPAL rather than USER_INPUT, so a resource selected by
+# one is self-scoped (not IDOR). The kind propagates through custom validators, so
+# token_validator(request.headers['Authorization'])['sub'] stays PRINCIPAL without
+# the analyzer knowing what token_validator does. (Authorization/Cookie header
+# access is tagged PRINCIPAL arg-sensitively in the translator.)
+PRINCIPAL_SPECS: Dict[str, ProcSpec] = {
+    "get_jwt_identity": _source("principal", "JWT authenticated subject"),
+    "session.get": _source("principal", "Flask server-side session identity"),
+    "session.__getitem__": _source("principal", "Flask server-side session identity"),
+    "request.authorization": _source("principal", "parsed HTTP auth credential"),
+    "request.cookies.get": _source("principal", "session cookie (authenticated)"),
+    "request.cookies.__getitem__": _source("principal", "session cookie (authenticated)"),
+}
+
+IDOR_SPECS: Dict[str, ProcSpec] = {
+    "query.get": _sink("resource_select", [0], "SQLAlchemy select by primary key (IDOR)"),
+    "query.get_or_404": _sink("resource_select", [0], "Flask-SQLAlchemy get_or_404 (IDOR)"),
+    "get_or_404": _sink("resource_select", [0], "Flask-SQLAlchemy get_or_404 (IDOR)"),
+    "query.filter_by": _sink("resource_select", [0], "SQLAlchemy filter_by selection (IDOR)"),
+    "query.filter": _sink("resource_select", [0], "SQLAlchemy filter selection (IDOR)"),
+    "objects.get": _sink("resource_select", [0], "Django ORM select by field (IDOR)"),
+    "objects.filter": _sink("resource_select", [0], "Django ORM filter selection (IDOR)"),
+}
+
+# =============================================================================
 # Combined Specifications
 # =============================================================================
 
@@ -962,6 +997,8 @@ PYTHON_SPECS: Dict[str, ProcSpec] = {}
 PYTHON_SPECS.update(FLASK_SPECS)
 PYTHON_SPECS.update(DJANGO_SPECS)
 PYTHON_SPECS.update(SQLALCHEMY_SPECS)
+PYTHON_SPECS.update(PRINCIPAL_SPECS)
+PYTHON_SPECS.update(IDOR_SPECS)
 PYTHON_SPECS.update(SUBPROCESS_SPECS)
 PYTHON_SPECS.update(FILESYSTEM_SPECS)
 PYTHON_SPECS.update(EVAL_SPECS)

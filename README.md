@@ -24,6 +24,14 @@ Frame is a neuro-symbolic security agent. Its core is a sound static-analysis en
 
 <sub>Fix: 2 fully patched, 2 partially.</sub>
 
+**[RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md): broken authorization on real apps.** An independent study on 4 pinned public Python apps (VAmPI, DVBLab, Vulpy, DVGA), using Frame's sound separation-logic core (ownership tracking, credential provenance) plus its LLM layer — no pattern rules. 8 real IDOR/BOLA bugs + 2 authorization-safe controls:
+
+| Detected | Precision | Safe controls |
+|:--------:|:---------:|:-------------:|
+| **6/8** | 100% | 2/2 |
+
+<sub>Recall 0.75 at zero false positives; majority vote over 3 runs.</sub>
+
 **Real-world security.** Two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
 
 | Dataset | Vulns | Frame | Semgrep |

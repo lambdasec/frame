@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RealVuln authz single run record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "system", "repository", "frame_commit", "realvuln_commit", "application_commit",
+    "model", "temperature", "max_tokens", "tool_step_limit",
+    "prompt_sha256", "start_time", "end_time", "wall_clock_seconds",
+    "model_calls", "input_tokens", "output_tokens",
+    "transport_errors", "raw_findings", "normalized_findings"
+  ],
+  "properties": {
+    "system": {"type": "string", "enum": ["glm52_repo_agent", "frame_authz_symbolic", "frame_glm52_authz"]},
+    "repository": {"type": "string"},
+    "run_index": {"type": "integer"},
+    "frame_commit": {"type": "string"},
+    "realvuln_commit": {"type": "string"},
+    "application_commit": {"type": "string"},
+    "model": {"type": ["string", "null"]},
+    "endpoint_base_url": {"type": ["string", "null"], "description": "secrets removed"},
+    "temperature": {"type": ["number", "null"]},
+    "max_tokens": {"type": ["integer", "null"]},
+    "tool_step_limit": {"type": ["integer", "null"]},
+    "prompt_sha256": {"type": ["string", "object", "null"]},
+    "start_time": {"type": "string"},
+    "end_time": {"type": "string"},
+    "wall_clock_seconds": {"type": "number"},
+    "model_calls": {"type": "integer"},
+    "input_tokens": {"type": "integer"},
+    "output_tokens": {"type": "integer"},
+    "provider_cost_usd": {"type": ["number", "null"]},
+    "transport_errors": {"type": "array", "items": {"type": "string"}},
+    "raw_findings": {"type": "array"},
+    "normalized_findings": {"type": "array"},
+    "endpoint_dossiers": {"type": "array", "description": "present for Frame systems"}
+  }
+}

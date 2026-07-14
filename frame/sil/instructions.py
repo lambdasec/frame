@@ -55,6 +55,12 @@ class TaintKind(Enum):
     DATABASE = "database"       # Database query results
     COMMAND_OUTPUT = "command"  # Command execution output
     DESERIALIZED = "deserialize"  # Deserialized data
+    # The authenticated caller's own identity: derived from an authentication
+    # credential (Authorization header, session, cookie, JWT). Distinct from
+    # USER_INPUT object-selectors because an attacker can only present their OWN
+    # credential -- so a resource selected by a PRINCIPAL-derived value is self-
+    # scoped, not a cross-user (IDOR) access. Propagates through custom validators.
+    PRINCIPAL = "principal"
 
     def __str__(self) -> str:
         return self.value
@@ -96,6 +102,7 @@ class SinkKind(Enum):
     REDIRECT = "redirect"       # URL redirect (CWE-601)
     SSRF = "ssrf"               # Server-side request forgery (CWE-918)
     AUTHZ_CHECK = "authz"       # Authorization bypass (CWE-863)
+    RESOURCE_SELECT = "resource_select"  # Object-level resource selection by id -- IDOR/BOLA (CWE-639)
     CORS = "cors"               # CORS misconfiguration (CWE-942)
 
     # A02: Security Misconfiguration

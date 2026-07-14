@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Frame endpoint dossier",
+  "description": "Structured deterministic-analysis context for one route/resolver/mutation, produced by the symbolic authorization analyzer and adjudicated by the LLM.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "endpoint_id", "framework", "method_or_operation", "route_or_field",
+    "handler", "file", "start_line", "end_line",
+    "authentication_guards", "principal_sources", "attacker_controlled_identifiers",
+    "resource_accesses", "authorization_predicates", "sensitive_reads",
+    "state_changes", "control_flow_evidence", "cross_file_trace", "candidate_reason"
+  ],
+  "properties": {
+    "endpoint_id": {"type": "string", "description": "stable generated identifier"},
+    "framework": {"type": "string", "enum": ["flask", "django", "fastapi", "graphql", "flask_graphql"]},
+    "method_or_operation": {"type": "string"},
+    "route_or_field": {"type": "string"},
+    "handler": {"type": "string"},
+    "file": {"type": "string"},
+    "start_line": {"type": "integer"},
+    "end_line": {"type": "integer"},
+    "authentication_guards": {"type": "array", "items": {"type": "string"}},
+    "principal_sources": {"type": "array", "items": {"type": "string"}},
+    "attacker_controlled_identifiers": {"type": "array", "items": {"type": "string"}},
+    "resource_accesses": {"type": "array", "items": {"type": "string"}},
+    "authorization_predicates": {"type": "array", "items": {"type": "string"}},
+    "sensitive_reads": {"type": "array", "items": {"type": "string"}},
+    "state_changes": {"type": "array", "items": {"type": "string"}},
+    "control_flow_evidence": {"type": "array", "items": {"type": "string"}},
+    "cross_file_trace": {"type": "array", "items": {"type": "string"}},
+    "candidate_reason": {"type": "string"},
+    "is_candidate": {"type": "boolean", "description": "true if this endpoint became an authorization candidate"},
+    "suppressed_by": {"type": "string", "description": "the ownership/authz control that suppressed the candidate, if any"}
+  }
+}

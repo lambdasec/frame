@@ -1009,6 +1009,14 @@ class FrameScanner:
         if not vulns:
             return vulns
 
+        # IDOR/authz findings are PER-ENDPOINT: every route/handler is a distinct
+        # finding, so they must not be collapsed by the windowed / one-per-file
+        # dedup below (which exists to squash repeated taint-flow reports of the
+        # same bug). Pull them out, dedup them per (procedure, selector), re-attach.
+        from frame.sil.translator import VulnType as _VT
+        idor_vulns = [v for v in vulns if v.type == _VT.IDOR]
+        vulns = [v for v in vulns if v.type != _VT.IDOR]
+
         # Severity order for comparison
         severity_order = {
             Severity.CRITICAL: 5,
@@ -1142,6 +1150,16 @@ class FrameScanner:
                 deduplicated.append(best)
                 added_file_cwes.add(file_cwe_key)
 
+        # Re-attach IDOR findings, deduped per endpoint+selector (one per distinct
+        # procedure + attacker-controlled selector), not per file.
+        idor_seen = {}
+        for v in idor_vulns:
+            key = (v.location, v.procedure, v.source_var, v.cwe_id)
+            existing = idor_seen.get(key)
+            if existing is None or is_better(v, existing):
+                idor_seen[key] = v
+        deduplicated.extend(idor_seen.values())
+
         return deduplicated
 
     def _filter_by_confidence(self, vulns: List[Vulnerability], source_code: str) -> List[Vulnerability]:
@@ -1217,6 +1235,7 @@ class FrameScanner:
             VulnType.CSRF,
             VulnType.TRUST_BOUNDARY,
             VulnType.SENSITIVE_DATA_EXPOSURE,
+            VulnType.IDOR,
         }
 
         if check.vuln_type in taint_based_vulns:
@@ -1328,66 +1347,6 @@ class FrameScanner:
                             cwe_id=cwe,
                         ))
         return vulns
-
-    def _check_csharp_sanitizers(self, source_code: str, line_num: int, vuln_type: VulnType, cwe_id: str, current_line: str) -> bool:
-        """
-        Check if C# sanitizers are present that would neutralize the vulnerability.
-
-        Uses context analysis to detect:
-        1. Integer validation (Int32.TryParse) before SQL concatenation
-        2. InnerText assignment for XML (auto-escapes)
-        3. XmlDocument in .NET 4.5.2+ without DTD processing
-
-        Returns True if sanitizer is detected (vulnerability should be skipped).
-        """
-        lines = source_code.split('\n')
-
-        # Get function context (50 lines before current line)
-        start_line = max(0, line_num - 50)
-        context_lines = lines[start_line:line_num]
-        context = '\n'.join(context_lines)
-
-        # SQL Injection sanitizers
-        if vuln_type == VulnType.SQL_INJECTION or cwe_id == 'CWE-89':
-            # Check for Int32.TryParse / int.TryParse pattern
-            # This validates input as integer, making SQL injection impossible
-            if re.search(r'Int32\.TryParse|int\.TryParse|Int64\.TryParse|long\.TryParse', context):
-                # Check if the current line uses .ToString() on what looks like an integer
-                if re.search(r'\+\s*\w+\.ToString\s*\(\s*\)', current_line):
-                    return True  # Integer concatenation after validation is safe
-                # Also check for direct integer variable concatenation
-                # Pattern: + id, or + id) where id was validated
-                if re.search(r'\+\s*\w+\s*[,\)]', current_line):
-                    # Check if this looks like an integer variable (not a string)
-                    var_match = re.search(r'\+\s*(\w+)', current_line)
-                    if var_match:
-                        var_name = var_match.group(1)
-                        # Check if this variable was validated with TryParse
-                        if re.search(rf'TryParse\s*\([^,]+,\s*out\s+{var_name}\s*\)', context):
-                            return True
-
-            # Check for parameterized query patterns nearby
-            if re.search(r'Parameters\.Add|AddWithValue|SqlParameter', context):
-                return True
-
-        # XXE / XML Injection sanitizers
-        if vuln_type == VulnType.XXE or cwe_id in ('CWE-611', 'CWE-91'):
-            # Get full function context (lines after current line too)
-            end_line = min(len(lines), line_num + 30)
-            full_context = '\n'.join(lines[start_line:end_line])
-
-            # InnerText assignment auto-escapes XML special characters
-            # This is safe because InnerText encodes special chars like < > &
-            # Check if InnerText is used for user input anywhere in the function
-            if re.search(r'\.InnerText\s*=', full_context):
-                # Check if user input goes to InnerText (not InnerXml which is unsafe)
-                if not re.search(r'\.InnerXml\s*=', full_context):
-                    return True
-            # Note: We do NOT automatically assume XmlDocument is safe in .NET 4.5.2+
-            # because the benchmark tests for legacy vulnerability patterns.
-            # Only InnerText assignment is a definitive sanitizer.
-
-        return False
 
     def _analyze_memory_safety(self, source_code: str, filename: str) -> List[Vulnerability]:
         """

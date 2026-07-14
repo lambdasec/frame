@@ -1,0 +1,188 @@
+# RealVuln Authorization / IDOR-BOLA study — FROZEN benchmark manifest.
+#
+# Version 1.0.0. Once committed, treat this file as frozen: do not add, remove, or
+# edit cases without bumping `version` and documenting the reason (see README).
+#
+# This is an INDEPENDENT public study of the general task class described in a
+# commercial Semgrep research post (deterministic analysis narrows context, an LLM
+# reasons about authorization). It is NOT a reproduction of Semgrep's benchmark and
+# its scores are NOT comparable to Semgrep's published numbers. All applications,
+# commits, labels, and prompts here are public and pinned for reproducibility.
+
+benchmark: realvuln_authz
+version: "1.0.0"
+
+# The RealVuln benchmark repository the labels are derived from, pinned.
+realvuln_benchmark:
+  repository: kolega-ai/Real-Vuln-Benchmark
+  commit: 1aba1e9e42a88672189c2d113e1894f12067c158
+  note: >
+    Only the human-authored Python applications below are used. RealVuln's
+    LLM-generated seeded applications are deliberately excluded from this study.
+
+# Curated core suite: 8 vulnerable authorization cases + 2 explicit safe controls,
+# across 4 human-authored public Python apps and 3 application styles
+# (Flask REST APIs, Flask app routes, GraphQL resolvers/mutations).
+repositories:
+
+  # --------------------------------------------------------------------------
+  - slug: realvuln-vampi
+    upstream_repository: erev0s/VAmPI
+    commit: 1713b54b601ad29582581eeda4b31fceb1319874
+    framework: flask
+    role: development_smoke_test          # may be used while implementing analysis
+    cases:
+      - id: vampi-002
+        expected: vulnerable
+        class: idor
+        operation: password_update
+        file: api_views/users.py
+        start_line: 187
+        end_line: 190
+        function: update_password
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          The authenticated caller can select another username through the URL and
+          change that user's password because the target is chosen from the path
+          parameter instead of the authenticated JWT subject.
+
+      - id: vampi-003
+        expected: vulnerable
+        class: bola
+        operation: object_read
+        file: api_views/books.py
+        start_line: 51
+        end_line: 51
+        function: get_by_title
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          A book is selected only by attacker-controlled title without restricting
+          the query to the authenticated owner, exposing another user's secret content.
+
+      - id: vampi-fp-003
+        expected: safe
+        class: ownership_check_present
+        operation: object_read
+        file: api_views/books.py
+        start_line: 62
+        end_line: 63
+        function: get_by_title
+        acceptable_cwes: [CWE-639, CWE-862]
+        description: >
+          The safe branch resolves the authenticated user and restricts the book query
+          by both authenticated user and book title.
+
+  # --------------------------------------------------------------------------
+  - slug: realvuln-dvblab
+    upstream_repository: mamgad/DVBLab
+    commit: 25bdef1e32055bfb6366856acc5db829e61e3647
+    framework: flask
+    role: held_out_evaluation
+    cases:
+      - id: dvblab-010
+        expected: vulnerable
+        class: idor
+        operation: password_update
+        file: backend/routes/auth_routes.py
+        start_line: 137
+        end_line: 149
+        function: update_password
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          An authenticated user supplies an arbitrary user_id in the request body.
+          The endpoint changes that user's password without proving that the target
+          is the authenticated principal.
+
+      - id: dvblab-011
+        expected: vulnerable
+        class: idor
+        operation: object_list_read
+        file: backend/routes/transaction_routes.py
+        start_line: 47
+        end_line: 50
+        function: get_transactions
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          The request may override current_user.id with an attacker-controlled
+          user_id query parameter and retrieve another user's transaction history.
+
+      - id: dvblab-fp-002
+        expected: safe
+        class: ownership_check_present
+        operation: object_read
+        file: backend/routes/transaction_routes.py
+        start_line: 64
+        end_line: 84
+        function: get_transaction
+        acceptable_cwes: [CWE-639, CWE-862]
+        description: >
+          Although the transaction ID is attacker controlled, the handler verifies
+          that the authenticated user is either the sender or receiver and returns
+          HTTP 403 otherwise.
+
+  # --------------------------------------------------------------------------
+  - slug: realvuln-vulpy
+    upstream_repository: fportantier/vulpy
+    commit: 5249cc8b05a1c37f6b2f757b1cf16a509c327122
+    framework: flask
+    role: held_out_evaluation
+    cases:
+      - id: vulpy-030
+        expected: vulnerable
+        class: idor
+        operation: object_list_read
+        file: bad/mod_api.py
+        start_line: 47
+        end_line: 51
+        function: do_post_list
+        acceptable_cwes: [CWE-639, CWE-284, CWE-862]
+        description: >
+          GET /api/post/<username> returns any named user's posts without
+          authentication or an ownership policy.
+
+      - id: vulpy-037
+        expected: vulnerable
+        class: principal_overwrite
+        operation: create_as_another_user
+        file: bad/mod_api.py
+        start_line: 54
+        end_line: 70
+        function: do_post_create
+        acceptable_cwes: [CWE-639, CWE-915, CWE-284, CWE-306, CWE-863]
+        description: >
+          The handler initially derives username from the authenticated API key but
+          subsequently applies attacker JSON through data.update(), allowing the
+          authenticated identity to be overwritten before creating the post.
+
+  # --------------------------------------------------------------------------
+  - slug: realvuln-damn-vulnerable-graphql-application
+    upstream_repository: dolevf/Damn-Vulnerable-GraphQL-Application
+    commit: a961308c02d1fb462b192681c336b0739e432da7
+    framework: flask_graphql
+    role: held_out_evaluation
+    cases:
+      - id: dvga-013
+        expected: vulnerable
+        class: idor
+        operation: object_update
+        file: core/views.py
+        start_line: 140
+        end_line: 148
+        function: EditPaste.mutate
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          The GraphQL EditPaste mutation accepts an arbitrary paste ID and modifies
+          the matching object without checking ownership or authorization.
+
+      - id: dvga-014
+        expected: vulnerable
+        class: idor
+        operation: object_delete
+        file: core/views.py
+        start_line: 164
+        end_line: 169
+        function: DeletePaste.mutate
+        acceptable_cwes: [CWE-639, CWE-284, CWE-285, CWE-862]
+        description: >
+          The GraphQL DeletePaste mutation accepts an arbitrary paste ID and deletes
+          the matching object without checking ownership or authorization.

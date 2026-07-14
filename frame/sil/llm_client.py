@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -65,7 +66,12 @@ class LLMConfig:
     cache_path: str = ""            # persist verdicts here (JSON); reused across runs
     repo_root: str = ""             # repo root for agentic tools (read_file/grep)
     max_tool_steps: int = 30        # investigation rounds for agentic detect/triage (room to enumerate handlers/sinks across files)
-    timeout: int = 60               # seconds per call
+    timeout: int = 60               # socket timeout: max gap between bytes / connect
+    # Hard wall-clock deadline for a single HTTP call. urllib's `timeout` only bounds
+    # per-socket-operation gaps, so a reasoning model that trickles bytes can block
+    # far past it; this watchdog force-closes the socket at the deadline. 0 -> derive
+    # a generous default from `timeout` (see effective_total_timeout).
+    total_timeout: int = 0
     context_lines: int = 12         # code lines of context around a finding
     max_context_chars: int = 6000   # hard cap on a code snippet (~1.5k tok)
     drop_threshold: float = 0.75    # triage drops only false-positives at/above this confidence
@@ -95,6 +101,7 @@ class LLMConfig:
             json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_schema"),
             drop_threshold=float(os.environ.get("FRAME_LLM_DROP_THRESHOLD", "0.75")),
             timeout=int(os.environ.get("FRAME_LLM_TIMEOUT", "60")),
+            total_timeout=int(os.environ.get("FRAME_LLM_TOTAL_TIMEOUT", "0")),
             enabled=bool(base and os.environ.get("FRAME_LLM_MODEL")),
         )
 
@@ -185,6 +192,54 @@ class LLMClient:
                 raise
         raise last_err if last_err is not None else RuntimeError("no response_format attempt ran")
 
+    def _effective_total_timeout(self) -> float:
+        """Wall-clock deadline for one HTTP call. Defaults generously off the socket
+        timeout so a legitimately slow reasoning generation still completes, while a
+        genuinely hung connection is bounded."""
+        tt = getattr(self.config, "total_timeout", 0) or 0
+        if tt > 0:
+            return float(tt)
+        return float(max(self.config.timeout * 6, 600))
+
+    def _urlopen_read(self, req: "urllib.request.Request") -> bytes:
+        """urlopen + read with a hard wall-clock deadline enforced by the CALLER.
+
+        The request runs in a daemon worker; the caller waits at most `deadline`
+        seconds. urllib's own `timeout` only bounds per-operation gaps (connect,
+        byte-to-byte), so a response that trickles bytes -- or a server that blocks
+        inside urlopen before replying -- can otherwise hang far past it. When the
+        deadline hits we close the socket (if we hold it, to unblock a stuck read)
+        and raise, so the caller proceeds even if the abandoned worker lingers until
+        its socket timeout.
+        """
+        deadline = self._effective_total_timeout()
+        box: Dict[str, Any] = {}
+        done = threading.Event()
+
+        def _worker():
+            try:
+                resp = urllib.request.urlopen(req, timeout=self.config.timeout)
+                box["resp"] = resp
+                box["raw"] = resp.read()
+            except Exception as exc:      # surfaced to the caller below
+                box["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=_worker, daemon=True).start()
+        if not done.wait(deadline):
+            r = box.get("resp")
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+            raise TimeoutError(
+                f"LLM request exceeded {deadline:.0f}s wall-clock deadline")
+        if "error" in box:
+            raise box["error"]
+        return box["raw"]
+
     def _post_chat(self, messages: List[Dict[str, str]], max_tokens: Optional[int],
                    response_format: Optional[Dict[str, Any]]) -> str:
         url = f"{self.config.base_url}/chat/completions"
@@ -203,8 +258,7 @@ class LLMClient:
         if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         req = urllib.request.Request(url, data=payload, headers=headers)
-        with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = json.loads(self._urlopen_read(req).decode("utf-8"))
         return data["choices"][0]["message"]["content"]
 
     def complete(self, messages: List[Dict[str, str]], *,
@@ -273,8 +327,7 @@ class LLMClient:
             try:
                 self.stats["calls"] += 1
                 req = urllib.request.Request(url, data=data, headers=headers)
-                with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                    out = json.loads(resp.read().decode("utf-8"))
+                out = json.loads(self._urlopen_read(req).decode("utf-8"))
                 return out["choices"][0]["message"]
             except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
                 self.stats["errors"] += 1
