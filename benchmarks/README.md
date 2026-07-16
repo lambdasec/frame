@@ -61,9 +61,10 @@ python -m benchmarks run --all
 
 ### Real-World Security
 
-A live end-to-end benchmark plus two detection datasets with published ground truth.
+Five independent benchmarks with published ground truth: a live end-to-end loop, an
+AI-SAST vendor comparison, an authorization study, and two detection datasets.
 
-**[CVE-Bench](cve_bench/README.md)** — the full loop on live web CVEs: detect the
+**[CVE-Bench](cve_bench/README.md)**: the full loop on live web CVEs: detect the
 vulnerability in source, exploit the running target, then fix it and re-scan to confirm
 it is gone. 10 curated CVEs:
 
@@ -76,7 +77,7 @@ it is gone. 10 curated CVEs:
 Two CVEs run the whole loop on the same target (SSRF, XXE). Full table and how to run
 it: [`cve_bench/`](cve_bench/README.md).
 
-**[Endor Labs corpus](#real-world-benchmark-endor-labs-corpus)** — 5 production
+**[Endor Labs corpus](#real-world-benchmark-endor-labs-corpus)**: 5 production
 applications, pooled ground truth of 193 vulnerabilities. Frame's full
 mode is the sound symbolic core plus an LLM detection and triage layer. Recall,
 precision, and F1:
@@ -95,7 +96,7 @@ Full scoreboard, LLM setup, and caveats:
 [Real-World Benchmark](#real-world-benchmark-endor-labs-corpus) below, and
 [`endor_corpus/`](endor_corpus/README.md).
 
-**[SusVibes](susvibes/README.md)** — 181 real-CVE Python pairs (vulnerable vs fixed),
+**[SusVibes](susvibes/README.md)**: 181 real-CVE Python pairs (vulnerable vs fixed),
 with independent, execution-verified ground truth from the CVE fix commits. Much
 harder than the pooled corpus, and a clean test of the LLM layer since symbolic SAST
 scores near zero:
@@ -109,6 +110,27 @@ scores near zero:
 Absolute recall is low for every tool here (these CVEs are mostly authz,
 info-exposure, and sanitizer-bypass bugs, not source→sink patterns), so read the
 relative comparison. Full numbers and caveats: [`susvibes/`](susvibes/README.md).
+
+**[XBOW / ZeroPath](xbow_zeropath/REPORT.md)**: Frame vs a commercial AI-SAST vendor
+(ZeroPath) and open-source scanners (Semgrep, Snyk, Bearer) on 39 real web-vuln apps,
+using ZeroPath's public benchmark and their own GPT-4o judge, so the numbers are
+apples-to-apples. Detection rate (vulnerable app) and false-positive rate (patched
+twin). The full 39-benchmark run is in progress; a 5-class pilot has Frame tying
+ZeroPath at 4/5 detection and 2/5 false positives, ahead of Semgrep (3/5), Snyk (2/5),
+and Bearer (1/5). Full report: [`xbow_zeropath/`](xbow_zeropath/REPORT.md).
+
+**[RealVuln IDOR/BOLA](realvuln_authz/REPORT.md)**: broken-authorization detection on
+4 pinned public Python apps (VAmPI, DVBLab, Vulpy, DVGA), 8 IDOR/BOLA bugs plus 2
+authorization-safe controls. Sound separation-logic ownership tracking and credential
+provenance, plus the LLM layer:
+
+| System | Detected | Precision | Safe controls |
+|--------|:--------:|:---------:|:-------------:|
+| Frame, symbolic core | 5/8 | 1.00 | 2/2 |
+| Frame, + LLM (GLM-5.2) | 6/8 | 1.00 | 2/2 |
+
+Recall 0.75 at zero false positives, majority vote over 3 runs. Full study:
+[`realvuln_authz/`](realvuln_authz/REPORT.md).
 
 ### Synthetic SAST Suites
 

@@ -18,7 +18,7 @@ INTRO = """\
 A commercial Semgrep study reported that combining deterministic program analysis
 with LLM reasoning improved repository-scale detection of IDOR vulnerabilities. The
 applications and complete evaluator used in that study were not publicly released.
-We therefore conduct an independent experiment on a frozen public subset of RealVuln,
+We run an independent experiment on a frozen public subset of RealVuln,
 using human-authored Python applications with public file-, line- and CWE-level
 ground truth. This study evaluates whether Frame's open neuro-symbolic architecture
 can perform the same general class of authorization analysis. It is **not** a
@@ -27,9 +27,9 @@ Semgrep's published results.
 
 **Systems evaluated** (both are direct `frame` invocations):
 
-- `frame_authz_symbolic` — `frame scan`: sound taint-based IDOR candidates
+- `frame_authz_symbolic` (`frame scan`): sound taint-based IDOR candidates
   (attacker-controlled path/query/body identifier reaches a resource-selection sink).
-- `frame_glm52_authz` — `frame scan --ai`: the same symbolic candidates, with GLM-5.2
+- `frame_glm52_authz` (`frame scan --ai`): the same symbolic candidates, with GLM-5.2
   adjudicating ownership/authorization (the semantic judgment the taint engine cannot
   soundly make).
 """
@@ -40,7 +40,7 @@ LIMITATIONS = """\
 - Semgrep's original application set is private; this is **not** a head-to-head vendor comparison.
 - RealVuln applications are intentionally vulnerable training applications.
 - The core suite has only **8 positive cases** and 2 safe controls; no strong statistical claims.
-- The ground truth is public and therefore not a permanently blind test.
+- The ground truth is public, so it is not a permanently blind test.
 - VAmPI was used as a development smoke test; DVBLab / Vulpy / DVGA were held out for this cycle.
 - All applications are Python; several cases are deliberately obvious.
 - Authorization CWEs overlap (CWE-639 / 862 / 863 / 284 / 285); matching accepts a CWE family per case.

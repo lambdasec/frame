@@ -12,9 +12,9 @@
 
 ---
 
-Frame is a **neuro-symbolic security agent**. A sound static-analysis core (taint analysis plus separation-logic verification with Z3) is fused with an LLM layer in one loop: the model proposes, the sound core disposes.
+Frame is a neuro-symbolic security agent. A sound static-analysis core (taint analysis plus separation-logic verification with Z3) is fused with an LLM layer in one loop: the model proposes, the sound core disposes.
 
-It runs the whole loop end to end: **detect** vulnerabilities across 5 languages, **exploit** them with a working proof-of-concept against a live target, **fix** the code, and **verify** the bug is gone. Symbolic findings are proven, not guessed; LLM findings are tiered separately so the two are never confused. On independent real-world benchmarks Frame is competitive with commercial AI-SAST vendors, and it scores 80%+ on the synthetic OWASP suites. The LLM layer runs on any OpenAI-compatible endpoint, on-device if you want.
+It runs the whole loop end to end. Detect vulnerabilities across 5 languages. Exploit them with a working proof-of-concept against a live target. Fix the code, then re-scan to confirm the bug is gone. Symbolic findings are proven, not guessed; LLM findings are tiered separately so the two are never confused. On independent real-world benchmarks Frame is competitive with commercial AI-SAST vendors, and it scores 80%+ on the synthetic OWASP suites. The LLM layer runs on any OpenAI-compatible endpoint, on-device if you want.
 
 ## Highlights
 
@@ -28,7 +28,7 @@ It runs the whole loop end to end: **detect** vulnerabilities across 5 languages
 | [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization, 4 real apps | **6/8** detected, precision **1.00** | 0 false positives on safe controls |
 | [SusVibes](benchmarks/susvibes/README.md) | 181 real-CVE Python pairs | recall **0.14**, precision **0.56** | Semgrep recall 0.06, precision 0.55 |
 
-<sub>Each cell names its own metric. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's report for methodology and caveats.</sub>
+<sub>Each cell names its own metric. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's report for methods and caveats.</sub>
 
 **OWASP score, synthetic suites** (True Positive Rate minus False Positive Rate):
 
@@ -40,7 +40,7 @@ It runs the whole loop end to end: **detect** vulnerabilities across 5 languages
 | **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
 | **C#** (IssueBlot.NET) | 80.3% | 14.2% | +66.1 pts |
 
-<sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methodology and results.</sub>
+<sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methods and results.</sub>
 
 ## Installation
 
@@ -96,7 +96,7 @@ Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus
 | `frame parse "<formula>"` | Parse and display a formula's AST. |
 | `frame repl` | Interactive separation-logic REPL. |
 
-**The analysis stages compose over a shared findings JSON, so the shell is the pipeline:**
+The analysis stages compose over a shared findings JSON, so the shell is the pipeline:
 
 ```bash
 # scan (symbolic + LLM) produces findings; the exploit agent attacks the localized bug
@@ -106,7 +106,7 @@ frame scan ./repo --ai -f json | \
 
 ## Supported Languages
 
-The **symbolic engine** has sound frontends for five languages:
+The symbolic engine has sound frontends for five languages:
 
 | Language | Frameworks & Libraries |
 |----------|----------------------|
@@ -116,7 +116,7 @@ The **symbolic engine** has sound frontends for five languages:
 | **C/C++** | POSIX, Windows API, memory operations |
 | **C#** | ASP.NET, Entity Framework, ADO.NET |
 
-The **LLM layer** (`--ai`) runs on any language, including ones with no symbolic frontend (PHP, Ruby, Go, and more). Those findings stay in the LLM tier, never mixed with the sound symbolic results.
+The LLM layer (`--ai`) runs on any language, including ones with no symbolic frontend (PHP, Ruby, Go, and more). Those findings stay in the LLM tier, never mixed with the sound symbolic results.
 
 ## What Frame Detects
 
@@ -174,7 +174,7 @@ Frame recognizes 80+ vulnerability classes across the families below. The symbol
 
 ## How It Works
 
-Frame runs one investigation at rising commitment (**detect → triage → exploit → fix**), with a sound symbolic core grounding every stage so the LLM can't hallucinate:
+Frame runs one investigation at rising commitment (detect, triage, exploit, fix), with a sound symbolic core grounding every stage so the LLM can't hallucinate:
 
 ```
  source code
@@ -313,30 +313,13 @@ frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"  # List transitivity
 
 ## Benchmarks
 
-Frame is validated against industry-standard benchmark suites:
-
-| Benchmark | Domain | Tests | Precision | Recall |
-|-----------|--------|-------|-----------|--------|
-| OWASP Python | Web Security | 500 | 95.3% | 83.5% |
-| OWASP Java | Web Security | 500 | 97.2% | 84.8% |
-| SecBench.js | Node.js Security | 300 | 82.0% | 81.0% |
-| NIST Juliet | C/C++ Memory | 1,000 | 89.9% | 60.5% |
-| IssueBlot.NET | C# Security | 171 | 84.7% | 80.3% |
-| SL-COMP | Separation Logic | 692 | 79.9% | n/a¹ |
-| SMT-LIB QF_S | String Theory | 3,300 | 99.3% | n/a¹ |
+The headline numbers are in [Highlights](#highlights). Frame is also validated on
+logic-solver suites (SL-COMP separation logic 79.9%, SMT-LIB QF_S string theory
+99.3%) that back the solver above.
 
 ```bash
-python -m benchmarks run --curated  # Run all benchmarks
+python -m benchmarks run --curated   # run the full suite
 ```
 
-<sub>¹ SL-COMP and QF_S are logic-solver suites: the percentage is solver accuracy, and recall does not apply.</sub>
-
-Beyond the synthetic suites, Frame is scored on the
-[Endor Labs public AI-SAST corpus](benchmarks/endor_corpus/README.md): 5
-production applications. With the LLM layer, Frame reaches 0.67 recall at 0.51
-precision, against Semgrep's 0.52 and 0.40. It finds around 65 real
-vulnerabilities across Java, JS/TS, and C# that both a symbolic engine and
-Semgrep miss. The benchmark README records how the ground truth was built and the
-honest caveats.
-
-See [benchmarks/README.md](benchmarks/README.md) for detailed results, methodology, and tool comparisons.
+See [benchmarks/README.md](benchmarks/README.md) for every division (security and
+logic-solver), the real-world corpora, per-tool comparisons, methods, and caveats.
