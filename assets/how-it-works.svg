@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 480" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <!-- source code -->
+  <rect x="290" y="8" width="120" height="30" rx="15" fill="#475569"/>
+  <text x="350" y="28" text-anchor="middle" font-size="13" fill="#ffffff">source code</text>
+
+  <!-- connectors -->
+  <g stroke="#94a3b8" fill="#94a3b8">
+    <line x1="350" y1="40" x2="350" y2="55" stroke-width="2"/>
+    <path d="M344,54 L356,54 L350,61 Z"/>
+    <line x1="350" y1="160" x2="350" y2="173" stroke-width="2"/>
+    <path d="M344,172 L356,172 L350,179 Z"/>
+    <line x1="350" y1="258" x2="350" y2="271" stroke-width="2"/>
+    <path d="M344,270 L356,270 L350,277 Z"/>
+    <line x1="350" y1="376" x2="350" y2="389" stroke-width="2"/>
+    <path d="M344,388 L356,388 L350,395 Z"/>
+  </g>
+
+  <!-- DETECT -->
+  <rect x="70" y="62" width="560" height="96" rx="12" fill="#2563eb"/>
+  <text x="94" y="94" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">DETECT</text>
+  <text x="94" y="118" font-size="12.5" fill="#eaf0ff">Sound core: taint + separation logic, Z3-verified, zero false positives.</text>
+  <text x="94" y="138" font-size="12.5" fill="#eaf0ff">An LLM layer adds recall. Findings are tiered: proven / llm.</text>
+
+  <!-- TRIAGE -->
+  <rect x="70" y="180" width="560" height="76" rx="12" fill="#7c3aed"/>
+  <text x="94" y="210" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">TRIAGE</text>
+  <text x="94" y="232" font-size="12.5" fill="#f1eaff">The LLM drops confident false positives,</text>
+  <text x="94" y="250" font-size="12.5" fill="#f1eaff">grounded to Frame's own sink model.</text>
+
+  <!-- EXPLOIT -->
+  <rect x="70" y="278" width="560" height="96" rx="12" fill="#e11d48"/>
+  <text x="94" y="310" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">EXPLOIT</text>
+  <text x="94" y="334" font-size="12.5" fill="#ffe9ee">An LLM agent drives a working proof-of-concept against a live target,</text>
+  <text x="94" y="354" font-size="12.5" fill="#ffe9ee">stopping only when success is observably verified.</text>
+
+  <!-- FIX -->
+  <rect x="70" y="396" width="560" height="76" rx="12" fill="#16a34a"/>
+  <text x="94" y="426" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">FIX</text>
+  <text x="94" y="448" font-size="12.5" fill="#e7fbef">Generate a patch, re-scan the patched code,</text>
+  <text x="94" y="466" font-size="12.5" fill="#e7fbef">and prove the vulnerability is gone.</text>
+</svg>

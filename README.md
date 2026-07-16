@@ -178,23 +178,9 @@ Frame recognizes 80+ vulnerability classes across the families below. The symbol
 
 Frame runs one investigation at rising commitment (detect, triage, exploit, fix), with a sound symbolic core grounding every stage so the LLM can't hallucinate:
 
-```
- source code
-     |
-     v
-  DETECT   sound core (taint + separation logic, Z3-verified, zero-FP)
-           + LLM layer for recall  ->  findings, tiered: proven / llm
-     |
-     v
-  TRIAGE   LLM drops confident false positives, grounded to Frame's sink model
-     |
-     v
-  EXPLOIT  LLM agent drives a working PoC against a live target,
-           stopping only when success is observably verified
-     |
-     v
-  FIX      generate a patch, re-scan the patched code, prove the bug is gone
-```
+<p align="center">
+  <img src="assets/how-it-works.svg" alt="Frame pipeline: source code flows through DETECT, TRIAGE, EXPLOIT, and FIX" width="620">
+</p>
 
 - **Detect:** the sound core proves reachable bugs with zero false positives; the LLM layer adds recall, tracing flows across files. Symbolic and LLM findings are never conflated.
 - **Triage:** the LLM drops confident false positives, keeping a finding unless it *finds* the mitigating control.
