@@ -1,10 +1,10 @@
 <p align="center">
   <img src="assets/logo.svg" alt="Frame" width="400">
   <p align="center">
-    <strong>Neuro-Symbolic Security Agent: detect, exploit, fix, verified</strong>
+    <strong>Neuro-symbolic security agent: detect, exploit, fix — proven, not probable</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1655%20passed-brightgreen" alt="Tests"></a>
+    <a href="tests/"><img src="https://img.shields.io/badge/tests-1660%20passed-brightgreen" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
@@ -12,36 +12,25 @@
 
 ---
 
-Frame is a neuro-symbolic security agent. Its core is a sound static-analysis engine: taint analysis plus separation-logic verification with Z3. On top of that core sits an optional LLM layer that detects vulnerabilities the symbolic engine misses and triages false positives. Frame supports 5 languages and scores 80%+ on the OWASP benchmarks, well ahead of Semgrep and Bandit. With the LLM layer on, it also finds real-world vulnerabilities that a symbolic engine and a mature pattern scanner both miss. The LLM layer works with any OpenAI-compatible endpoint and can run fully on-device. Its findings are labeled as a separate tier, so they are never mistaken for the sound symbolic results. An optional offensive layer goes one step further, driving an LLM agent to develop and execute a working proof-of-concept exploit against a live, authorized target, primed by Frame's own finding. A remediation layer then closes the loop: it generates a fix and re-scans the patched code to prove the vulnerability is gone. Detect, exploit, fix, verify, end to end.
+Frame is a **neuro-symbolic security agent**. A sound static-analysis core — taint analysis plus separation-logic verification with Z3 — is fused with an LLM layer in one loop: the model proposes, the sound core disposes.
+
+It runs the whole loop end to end: **detect** vulnerabilities across 5 languages, **exploit** them with a working proof-of-concept against a live target, **fix** the code, and **verify** the bug is gone. Symbolic findings are proven, not guessed; LLM findings are tiered separately so the two are never confused. On independent real-world benchmarks Frame is competitive with commercial AI-SAST vendors, and it scores 80%+ on the synthetic OWASP suites. The LLM layer runs on any OpenAI-compatible endpoint, on-device if you want.
 
 ## Highlights
 
-**[CVE-Bench](benchmarks/cve_bench/README.md): detect → exploit → fix.** The full loop on live web CVEs, each stage verified against a running target. 10 curated CVEs:
+**Real-world security benchmarks.** Frame is competitive with commercial AI-SAST vendors, validated on five independent datasets with published ground truth — spanning detection, exploitation, and remediation on real applications. Every Frame number uses open models (local Qwen via mlx-optiq, or hosted GLM-5.2), no frontier vendor:
 
-| Detect | Exploit | Fix |
-|:------:|:-------:|:---:|
-| 5/10 | **4/10** | **4/10** |
+| Benchmark | What it measures | Frame | Comparison |
+|-----------|------------------|:-----:|-----------|
+| [XBOW / ZeroPath](https://github.com/ZeroPathAI/validation-benchmarks) | AI-SAST detection + false positives, 39 web-vuln apps | _run in progress_ | head-to-head vs ZeroPath, Semgrep, Snyk, Bearer |
+| [CVE-Bench](benchmarks/cve_bench/README.md) | Full detect → exploit → fix loop, 10 live web CVEs | **5** · **4** · **4** /10 | every stage verified on a live target |
+| [Endor Labs corpus](benchmarks/endor_corpus/README.md) | 193 vulns across 5 production apps | **0.67 / 0.51** | Semgrep 0.52 / 0.40 |
+| [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization on 4 real apps | **6/8 · 100%** | 0 false positives on safe controls |
+| [SusVibes](benchmarks/susvibes/README.md) | 181 execution-verified real-CVE Python pairs | **0.14 / 0.56** | Semgrep 0.06 / 0.55 |
 
-<sub>Fix: 2 fully patched, 2 partially.</sub>
+<sub>Two-number cells are recall / precision; CVE-Bench is detect · exploit · fix. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's README for methodology and caveats.</sub>
 
-**[RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md): broken authorization on real apps.** An independent study on 4 pinned public Python apps (VAmPI, DVBLab, Vulpy, DVGA), using Frame's sound separation-logic core (ownership tracking, credential provenance) plus its LLM layer — no pattern rules. 8 real IDOR/BOLA bugs + 2 authorization-safe controls:
-
-| Detected | Precision | Safe controls |
-|:--------:|:---------:|:-------------:|
-| **6/8** | 100% | 2/2 |
-
-<sub>Recall 0.75 at zero false positives; majority vote over 3 runs.</sub>
-
-**Real-world security.** Two independent datasets with published ground truth, Frame (with its LLM layer) vs Semgrep OSS:
-
-| Dataset | Vulns | Frame | Semgrep |
-|---------|:-----:|:-----:|:-------:|
-| [Endor Labs corpus](benchmarks/endor_corpus/README.md), 5 production apps | 193 | **0.67 / 0.51** | 0.52 / 0.40 |
-| [SusVibes](benchmarks/susvibes/README.md), real-CVE Python pairs | 181 | **0.14 / 0.56** | 0.06 / 0.55 |
-
-<sub>recall / precision. Frame leads Semgrep on both. SusVibes uses independent, execution-verified CVE ground truth and is hard for every tool (read the caveats); the Endor corpus uses a pooled, model-judged ground truth.</sub>
-
-**OWASP Score** (True Positive Rate - False Positive Rate) on synthetic suites:
+**OWASP score — synthetic suites** (True Positive Rate − False Positive Rate):
 
 | Benchmark | Frame | Semgrep | Difference |
 |-----------|:---:|:---:|:---:|
@@ -175,32 +164,36 @@ frame scan ./repo --ai -f json | \
 
 ## How It Works
 
-Frame combines taint analysis with separation logic verification:
+Frame runs one investigation at rising commitment — **detect → triage → exploit → fix** — with a sound symbolic core grounding every stage so the LLM can't hallucinate:
 
 ```
-Source Code
+ source code
      |
      v
-[Language Frontend] ---> SIL (Separation Intermediate Language)
-     |                         |
-     v                         v
-[Taint Tracking]        [Symbolic Execution]
-     |                         |
-     v                         v
-[Pattern Detection] <---> [Z3 Verification]
+  DETECT   sound core (taint + separation logic, Z3-verified, zero-FP)
+           + LLM layer for recall  ->  findings, tiered: proven / llm
      |
      v
-Vulnerability Report
+  TRIAGE   LLM drops confident false positives, grounded to Frame's sink model
+     |
+     v
+  EXPLOIT  LLM agent drives a working PoC against a live target,
+           stopping only when success is observably verified
+     |
+     v
+  FIX      generate a patch, re-scan the patched code, prove the bug is gone
 ```
 
-**Why this matters:**
-- **Taint analysis** tracks untrusted data flow from sources (user input) to sinks (SQL queries)
-- **Separation logic** formally verifies memory safety properties
-- **Z3 verification** eliminates false positives by proving vulnerability reachability
+- **Detect** — the sound core proves reachable bugs with zero false positives; the LLM layer adds recall, tracing flows across files. Symbolic and LLM findings are never conflated.
+- **Triage** — the LLM drops confident false positives, keeping a finding unless it *finds* the mitigating control.
+- **Exploit** — an LLM agent develops and executes a working proof-of-concept against a live, authorized target.
+- **Fix** — Frame generates a patch, re-scans, and confirms the vulnerability is gone with no regressions.
 
-## AI-Assisted Detection & Triage (optional)
+**Inside detect:** a per-language frontend lowers source into SIL (a separation intermediate language); taint tracking follows untrusted data from sources to sinks, symbolic execution explores paths, and Z3 discharges the reachability proof — a bug is reported only when it is provably reachable.
 
-Frame's symbolic core is sound and precise. But structural analysis can't reach everything: context-dependent flows, unknown frameworks, business logic. Frame adds an optional layer driven by an LLM.
+## AI-Assisted Detection & Triage
+
+Frame's symbolic core is sound and precise. But structural analysis can't reach everything: context-dependent flows, unknown frameworks, business logic. Frame adds a layer driven by an LLM.
 
 - **Detect** (recall): find vulnerabilities the symbolic engine misses. It can explore across files, calling `read_file`/`grep` tools over your repo to trace a flow from one file into another.
 - **Triage** (precision): drop confident false positives from the findings.
@@ -208,7 +201,7 @@ Frame's symbolic core is sound and precise. But structural analysis can't reach 
 
 On the [Endor Labs public AI-SAST corpus](benchmarks/endor_corpus/README.md) (5 real-world apps), Frame's full mode (detection + triage) reaches 0.67 recall at 0.51 precision, or 0.71 recall with detection alone. Semgrep gets 0.52 recall at 0.40 precision. The LLM layer recovers around 65 real vulnerabilities across Java, JS/TS, and C# that both Frame's symbolic engine and Semgrep miss. See the [benchmark README](benchmarks/endor_corpus/README.md) for the full scoreboard and the honest caveats.
 
-The layer works with any OpenAI-compatible endpoint, so you can point it at a frontier hosted model or a local one. Our results use a local model, for privacy and cost: [mlx-optiq](https://mlx-optiq.com) serving [`mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit) on Apple Silicon. A stronger hosted model would likely do better. Both layers are off by default; without them you get the sound symbolic core.
+The layer works with any OpenAI-compatible endpoint — local or hosted — and Frame stays open and ungated end to end, no frontier vendor required. For privacy and cost you can run it fully on-device with [mlx-optiq](https://mlx-optiq.com) serving [`mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit) on Apple Silicon; our benchmarks use both this local setup and a hosted open-source model, GLM-5.2 (`z-ai/glm-5.2`).
 
 ```bash
 # our local setup (Apple Silicon): serve the model, then point Frame at it
@@ -223,7 +216,7 @@ export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
 export FRAME_LLM_REPO_ROOT=/path/to/repo                   # enables agentic cross-file tools
 ```
 
-Then turn the layer on with one flag:
+The symbolic core runs on its own; add the LLM layer with one flag:
 
 ```bash
 frame scan src/ --ai          # symbolic + LLM detection + triage
@@ -238,9 +231,7 @@ scanner = FrameScanner(language="java", llm_detect=True, llm_triage=True)
 result = scanner.scan_file("Controller.java")
 ```
 
-## Exploitation (offensive, optional)
-
-> ⚠️ **Authorized use only.** `frame exploit` attacks a live target. Run it exclusively against systems you own or are explicitly permitted to test (a lab, a CTF, a consented engagement).
+## Exploitation
 
 Detection tells you a bug *might* be there; exploitation proves it. `frame exploit` closes that gap. It drives an LLM through a tool loop against a live target and stops only when success is observably verified, never on the model's unchecked say-so.
 

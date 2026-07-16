@@ -46,8 +46,9 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-l", "--language",
         default="python",
-        choices=["python"],  # Add more as implemented
-        help="Source language (default: python)"
+        help="Source language (default: python). Symbolic frontends: python, "
+             "javascript, typescript, java, c, cpp, csharp. Any other language "
+             "(e.g. php, ruby, go) runs LLM-detect only under --ai."
     )
     scan_parser.add_argument(
         "-p", "--pattern",
@@ -91,6 +92,22 @@ def create_parser() -> argparse.ArgumentParser:
         choices=["critical", "high", "medium", "low", "any", "none"],
         default="high",
         help="Exit with error if vulnerabilities of this severity found (default: high)"
+    )
+    scan_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Enable the LLM layer (detection + triage). Needs an LLM endpoint "
+             "configured via FRAME_LLM_* env vars."
+    )
+    scan_parser.add_argument(
+        "--llm-detect",
+        action="store_true",
+        help="Enable LLM detection only (find vulnerabilities the symbolic engine misses)."
+    )
+    scan_parser.add_argument(
+        "--llm-triage",
+        action="store_true",
+        help="Enable LLM triage only (filter false positives from symbolic findings)."
     )
 
     return parser

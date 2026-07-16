@@ -327,6 +327,7 @@ class ScanResult:
                         "artifactLocation": {"uri": self.filename},
                         "region": {
                             "startLine": vuln.line,
+                            "endLine": getattr(vuln, "end_line", None) or vuln.line,
                             "startColumn": vuln.column,
                         }
                     }
