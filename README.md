@@ -70,14 +70,16 @@ frame scan src/ --format sarif -o results.sarif --fail-on high
 <summary><strong>More examples</strong></summary>
 
 ```bash
-# Check separation logic entailment
-frame solve "x |-> 5 * y |-> 3 |- x |-> 5"
+# Exploit a finding against a live, authorized target (primed by a scan)
+frame exploit --target http://localhost:8080 --guidance findings.json
 
-# Batch check formulas
-frame check formulas.txt
+# Generate a fix, then re-scan to confirm the vulnerability is gone
+frame fix app.py --guidance findings.json --diff
 
-# Interactive mode
-frame repl
+# Separation-logic solver
+frame solve "x |-> 5 * y |-> 3 |- x |-> 5"   # check an entailment
+frame check formulas.txt                       # batch-check a file
+frame repl                                      # interactive REPL
 ```
 
 </details>
@@ -305,7 +307,7 @@ Frame includes a separation logic solver for verifying heap properties:
 | `P -* Q` | Magic wand |
 | `P \|- Q` | P entails Q |
 
-**Built-in predicates:** `ls(x,y)` (list segment), `list(x)`, `tree(x)`, `dll(x,p,y,n)`
+**Built-in predicates:** `ls(x,y)`, `list(x)`, `tree(x)`, `dll(x,p,y,n)`
 
 ```bash
 frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"  # List transitivity

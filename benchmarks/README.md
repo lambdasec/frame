@@ -8,7 +8,9 @@ Comprehensive benchmark infrastructure for evaluating Frame against industry-sta
 
 - [Quick Start](#quick-start)
 - [Results Summary](#results-summary)
-- [Real-World Benchmark (Endor Labs Corpus)](#real-world-benchmark-endor-labs-corpus)
+  - [Real-World Security](#real-world-security): CVE-Bench, XBOW/ZeroPath, Endor, RealVuln, SusVibes
+  - [Synthetic SAST Suites](#synthetic-sast-suites)
+- [Endor Labs Corpus (deep dive)](#real-world-benchmark-endor-labs-corpus)
 - [SAST Security Benchmarks](#sast-security-benchmarks)
   - [Python (OWASP)](#python-owasp-benchmark)
   - [Java (OWASP)](#java-owasp-benchmark)
