@@ -1,41 +1,87 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 480" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-  <!-- source code -->
-  <rect x="290" y="8" width="120" height="30" rx="15" fill="#475569"/>
-  <text x="350" y="28" text-anchor="middle" font-size="13" fill="#ffffff">source code</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 560" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e1319"/>
+      <stop offset="1" stop-color="#0a0d12"/>
+    </linearGradient>
+  </defs>
 
-  <!-- connectors -->
-  <g stroke="#94a3b8" fill="#94a3b8">
-    <line x1="350" y1="40" x2="350" y2="55" stroke-width="2"/>
-    <path d="M344,54 L356,54 L350,61 Z"/>
-    <line x1="350" y1="160" x2="350" y2="173" stroke-width="2"/>
-    <path d="M344,172 L356,172 L350,179 Z"/>
-    <line x1="350" y1="258" x2="350" y2="271" stroke-width="2"/>
-    <path d="M344,270 L356,270 L350,277 Z"/>
-    <line x1="350" y1="376" x2="350" y2="389" stroke-width="2"/>
-    <path d="M344,388 L356,388 L350,395 Z"/>
+  <rect x="0.75" y="0.75" width="858.5" height="558.5" rx="20" fill="url(#bg)" stroke="#22272e" stroke-width="1.5"/>
+
+  <!-- header -->
+  <text x="430" y="48" text-anchor="middle" font-size="11" letter-spacing="3.5" font-weight="600" fill="#5a636e">HOW FRAME WORKS</text>
+  <text x="430" y="80" text-anchor="middle" font-size="19" font-weight="600" fill="#e6edf3">The model proposes. The sound core disposes.</text>
+  <line x1="150" y1="102" x2="710" y2="102" stroke="#20262d" stroke-width="1"/>
+
+  <!-- rail labels -->
+  <text x="150" y="128" text-anchor="middle" font-size="11" letter-spacing="2" font-weight="700" fill="#2dd4bf">SOUND CORE</text>
+  <text x="150" y="144" text-anchor="middle" font-size="9.5" fill="#3f9d92">separation logic + Z3</text>
+  <text x="710" y="128" text-anchor="middle" font-size="11" letter-spacing="2" font-weight="700" fill="#8b949e">LLM LAYER</text>
+  <text x="710" y="144" text-anchor="middle" font-size="9.5" fill="#6a7681">proposes, recall</text>
+
+  <!-- left rail: sound core (solid teal) grounds every stage -->
+  <line x1="150" y1="170" x2="150" y2="490" stroke="#2dd4bf" stroke-width="6" opacity="0.10"/>
+  <line x1="150" y1="170" x2="150" y2="490" stroke="#2dd4bf" stroke-width="2"/>
+  <g stroke="#2dd4bf">
+    <line x1="150" y1="196" x2="196" y2="196" stroke-width="1.5" opacity="0.65"/>
+    <line x1="150" y1="286" x2="196" y2="286" stroke-width="1.5" opacity="0.65"/>
+    <line x1="150" y1="376" x2="196" y2="376" stroke-width="1.5" opacity="0.65"/>
+    <line x1="150" y1="466" x2="196" y2="466" stroke-width="1.5" opacity="0.65"/>
+  </g>
+  <g fill="#2dd4bf">
+    <circle cx="150" cy="196" r="4"/><circle cx="150" cy="286" r="4"/>
+    <circle cx="150" cy="376" r="4"/><circle cx="150" cy="466" r="4"/>
   </g>
 
+  <!-- right rail: LLM layer (dashed, neutral) feeds every stage -->
+  <line x1="710" y1="170" x2="710" y2="490" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="2 5" opacity="0.8"/>
+  <g stroke="#8b949e" stroke-dasharray="2 4" opacity="0.55">
+    <line x1="664" y1="196" x2="710" y2="196" stroke-width="1.5"/>
+    <line x1="664" y1="286" x2="710" y2="286" stroke-width="1.5"/>
+    <line x1="664" y1="376" x2="710" y2="376" stroke-width="1.5"/>
+    <line x1="664" y1="466" x2="710" y2="466" stroke-width="1.5"/>
+  </g>
+  <g fill="none" stroke="#8b949e" opacity="0.7">
+    <circle cx="710" cy="196" r="3"/><circle cx="710" cy="286" r="3"/>
+    <circle cx="710" cy="376" r="3"/><circle cx="710" cy="466" r="3"/>
+  </g>
+
+  <!-- stage cards -->
   <!-- DETECT -->
-  <rect x="70" y="62" width="560" height="96" rx="12" fill="#2563eb"/>
-  <text x="94" y="94" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">DETECT</text>
-  <text x="94" y="118" font-size="12.5" fill="#eaf0ff">Sound core: taint + separation logic, Z3-verified, zero false positives.</text>
-  <text x="94" y="138" font-size="12.5" fill="#eaf0ff">An LLM layer adds recall. Findings are tiered: proven / llm.</text>
+  <rect x="196" y="162" width="468" height="68" rx="11" fill="#161b22" stroke="#2a313a"/>
+  <rect x="196" y="174" width="3.5" height="44" rx="1.75" fill="#2dd4bf"/>
+  <text x="224" y="192" font-size="15" font-weight="700" letter-spacing="2" fill="#e6edf3">DETECT</text>
+  <text x="640" y="191" text-anchor="end" font-size="10.5" fill="#768390">symbolic + LLM</text>
+  <text x="224" y="214" font-size="12" fill="#8b949e">Prove reachable bugs. Zero false positives.</text>
 
   <!-- TRIAGE -->
-  <rect x="70" y="180" width="560" height="76" rx="12" fill="#7c3aed"/>
-  <text x="94" y="210" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">TRIAGE</text>
-  <text x="94" y="232" font-size="12.5" fill="#f1eaff">The LLM drops confident false positives,</text>
-  <text x="94" y="250" font-size="12.5" fill="#f1eaff">grounded to Frame's own sink model.</text>
+  <rect x="196" y="252" width="468" height="68" rx="11" fill="#161b22" stroke="#2a313a"/>
+  <rect x="196" y="264" width="3.5" height="44" rx="1.75" fill="#2dd4bf"/>
+  <text x="224" y="282" font-size="15" font-weight="700" letter-spacing="2" fill="#e6edf3">TRIAGE</text>
+  <text x="640" y="281" text-anchor="end" font-size="10.5" fill="#768390">LLM</text>
+  <text x="224" y="304" font-size="12" fill="#8b949e">Drop false positives against the sink model.</text>
 
   <!-- EXPLOIT -->
-  <rect x="70" y="278" width="560" height="96" rx="12" fill="#e11d48"/>
-  <text x="94" y="310" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">EXPLOIT</text>
-  <text x="94" y="334" font-size="12.5" fill="#ffe9ee">An LLM agent drives a working proof-of-concept against a live target,</text>
-  <text x="94" y="354" font-size="12.5" fill="#ffe9ee">stopping only when success is observably verified.</text>
+  <rect x="196" y="342" width="468" height="68" rx="11" fill="#161b22" stroke="#2a313a"/>
+  <rect x="196" y="354" width="3.5" height="44" rx="1.75" fill="#2dd4bf"/>
+  <text x="224" y="372" font-size="15" font-weight="700" letter-spacing="2" fill="#e6edf3">EXPLOIT</text>
+  <text x="640" y="371" text-anchor="end" font-size="10.5" fill="#768390">LLM agent</text>
+  <text x="224" y="394" font-size="12" fill="#8b949e">Prove it with a working PoC on a live target.</text>
 
   <!-- FIX -->
-  <rect x="70" y="396" width="560" height="76" rx="12" fill="#16a34a"/>
-  <text x="94" y="426" font-size="15" font-weight="700" letter-spacing="2" fill="#ffffff">FIX</text>
-  <text x="94" y="448" font-size="12.5" fill="#e7fbef">Generate a patch, re-scan the patched code,</text>
-  <text x="94" y="466" font-size="12.5" fill="#e7fbef">and prove the vulnerability is gone.</text>
+  <rect x="196" y="432" width="468" height="68" rx="11" fill="#161b22" stroke="#2a313a"/>
+  <rect x="196" y="444" width="3.5" height="44" rx="1.75" fill="#2dd4bf"/>
+  <text x="224" y="462" font-size="15" font-weight="700" letter-spacing="2" fill="#e6edf3">FIX</text>
+  <text x="640" y="461" text-anchor="end" font-size="10.5" fill="#768390">patch + verify</text>
+  <text x="224" y="484" font-size="12" fill="#8b949e">Patch, re-scan, and prove the bug is gone.</text>
+
+  <!-- flow chevrons between stages -->
+  <g stroke="#3a424c" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M422,238 L430,245 L438,238"/>
+    <path d="M422,328 L430,335 L438,328"/>
+    <path d="M422,418 L430,425 L438,418"/>
+  </g>
+
+  <!-- footer -->
+  <text x="430" y="532" text-anchor="middle" font-size="11" fill="#5a636e">Run as one loop to convergence: fix re-scans until the vulnerability is gone.</text>
 </svg>
