@@ -21,14 +21,14 @@ It runs the whole loop end to end: **detect** vulnerabilities across 5 languages
 **Real-world security benchmarks.** Frame is competitive with commercial AI-SAST vendors, validated on five independent datasets with published ground truth, spanning detection, exploitation, and remediation on real applications. Every Frame number uses open models (local Qwen via mlx-optiq, or hosted GLM-5.2):
 
 | Benchmark | What it measures | Frame | Comparison |
-|-----------|------------------|:-----:|-----------|
-| [XBOW / ZeroPath](https://github.com/ZeroPathAI/validation-benchmarks) | AI-SAST detection + false positives, 39 web-vuln apps | _run in progress_ | head-to-head vs ZeroPath, Semgrep, Snyk, Bearer |
-| [CVE-Bench](benchmarks/cve_bench/README.md) | Full detect → exploit → fix loop, 10 live web CVEs | **5** · **4** · **4** /10 | every stage verified on a live target |
-| [Endor Labs corpus](benchmarks/endor_corpus/README.md) | 193 vulns across 5 production apps | **0.67 / 0.51** | Semgrep 0.52 / 0.40 |
-| [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization on 4 real apps | **6/8 · 100%** | 0 false positives on safe controls |
-| [SusVibes](benchmarks/susvibes/README.md) | 181 execution-verified real-CVE Python pairs | **0.14 / 0.56** | Semgrep 0.06 / 0.55 |
+|-----------|------------------|------|-----------|
+| [XBOW / ZeroPath](benchmarks/xbow_zeropath/REPORT.md) | AI-SAST on 39 web-vuln apps | _run in progress_ | vs ZeroPath, Semgrep, Snyk, Bearer |
+| [CVE-Bench](benchmarks/cve_bench/README.md) | Full loop, 10 live web CVEs | detect **5/10**, exploit **4/10**, fix **4/10** | each stage verified on a live target |
+| [Endor Labs corpus](benchmarks/endor_corpus/README.md) | 193 vulns, 5 production apps | recall **0.67**, precision **0.51** | Semgrep recall 0.52, precision 0.40 |
+| [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization, 4 real apps | **6/8** detected, precision **1.00** | 0 false positives on safe controls |
+| [SusVibes](benchmarks/susvibes/README.md) | 181 real-CVE Python pairs | recall **0.14**, precision **0.56** | Semgrep recall 0.06, precision 0.55 |
 
-<sub>Two-number cells are recall / precision; CVE-Bench is detect · exploit · fix. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's README for methodology and caveats.</sub>
+<sub>Each cell names its own metric. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's report for methodology and caveats.</sub>
 
 **OWASP score, synthetic suites** (True Positive Rate minus False Positive Rate):
 
