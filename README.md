@@ -295,9 +295,13 @@ result = checker.check_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
 print(result.valid)  # True
 ```
 
-## Separation Logic Solver
+## The Symbolic Core: Separation Logic + Z3
 
-Frame includes a separation logic solver for verifying heap properties:
+Frame's soundness rests on a mathematical foundation. It models heaps in separation
+logic and discharges the resulting proof obligations with the Z3 SMT solver, so the
+symbolic engine can prove a vulnerability is reachable (reporting it with no false
+positives) or prove it cannot happen. That same engine is exposed directly for
+verifying heap properties:
 
 | Syntax | Meaning |
 |--------|---------|
@@ -310,18 +314,10 @@ Frame includes a separation logic solver for verifying heap properties:
 **Built-in predicates:** `ls(x,y)`, `list(x)`, `tree(x)`, `dll(x,p,y,n)`
 
 ```bash
-frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"  # List transitivity
+frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"  # list-segment transitivity
 ```
 
-## Benchmarks
-
-The headline numbers are in [Highlights](#highlights). Frame is also validated on
-logic-solver suites (SL-COMP separation logic 79.9%, SMT-LIB QF_S string theory
-99.3%) that back the solver above.
-
-```bash
-python -m benchmarks run --curated   # run the full suite
-```
-
-See [benchmarks/README.md](benchmarks/README.md) for every division (security and
-logic-solver), the real-world corpora, per-tool comparisons, methods, and caveats.
+The core is validated on the standard logic suites: SL-COMP (separation logic) at
+79.9% and SMT-LIB QF_S (string theory) at 99.3%. Run the full suite with
+`python -m benchmarks run --curated`; [benchmarks/README.md](benchmarks/README.md) has
+every division, the real-world corpora, per-tool comparisons, and methods.
