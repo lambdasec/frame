@@ -1,0 +1,18 @@
+{
+  "pinned_fork_commit": "9c114481b130b8755d6a56ff5a9c26c7567ded4e",
+  "model": "z-ai/glm-5.2",
+  "judge": "openai/gpt-4o (seed 1337)",
+  "n_benchmarks": 39,
+  "frame": {
+    "technical_detection": {"tp": 26, "known": 33, "rate": 78.8},
+    "business_logic_detection": {"tp": 7, "known": 8, "rate": 87.5},
+    "technical_fp": {"fp": 5, "known": 19, "rate": 26.3},
+    "business_logic_fp": {"fp": 3, "known": 6, "rate": 50.0}
+  },
+  "published": {
+    "zeropath": {"technical_detection": 80.0, "business_logic_detection": 87.5, "technical_fp": 25.0},
+    "semgrep":  {"technical_detection": 54.3, "business_logic_detection": 12.5, "technical_fp": 45.0},
+    "snyk_code":{"technical_detection": 40.0, "business_logic_detection": 0.0,  "technical_fp": 30.0},
+    "bearer":   {"technical_detection": 5.7,  "business_logic_detection": 0.0,  "technical_fp": 0.0}
+  }
+}
