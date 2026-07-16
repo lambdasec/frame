@@ -264,6 +264,11 @@ class VulnerabilityCheck:
     # Data flow path (list of variables/expressions)
     data_flow_path: List[str] = field(default_factory=list)
 
+    # Per-edge branch conditions assumed on the path to this sink (pure formulas).
+    # If their conjunction is unsatisfiable the sink is on an infeasible path and
+    # the check is dropped. Populated after the fact (never prunes execution).
+    path_condition: List[Formula] = field(default_factory=list)
+
     def __str__(self) -> str:
         return f"VulnerabilityCheck({self.vuln_type.value} at {self.location})"
 
@@ -347,6 +352,12 @@ class SymbolicState:
     # allocation_state: "allocated", "freed", or "unknown"
     object_members: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
+    # Per-edge branch conditions (pure formulas) assumed on the path to here.
+    # Recorded as data only -- never used to prune execution -- and checked for
+    # satisfiability when a finding is created, so an infeasible path is dropped
+    # without disturbing the state-merge fixpoint.
+    feasibility_constraints: List[Formula] = field(default_factory=list)
+
     def copy(self) -> 'SymbolicState':
         """Create a deep copy for branching"""
         return SymbolicState(
@@ -367,6 +378,7 @@ class SymbolicState:
             validated_for_eval=set(self.validated_for_eval),
             dict_elements={k: dict(v) for k, v in self.dict_elements.items()},
             object_members={k: dict(v) for k, v in self.object_members.items()},
+            feasibility_constraints=list(self.feasibility_constraints),
         )
 
     def set_constant(self, var: str, value: any) -> None:
@@ -1191,22 +1203,69 @@ class SILTranslator:
 
             # Execute instructions in node
             current_state = state.copy()
+            returned = False
             for instr in node.instrs:
                 node_checks, current_state = self._execute_instr(
                     instr, current_state, proc.name
                 )
+                # Record the path's feasibility constraints on each new finding, so
+                # a finding on a provably-infeasible path can be dropped later. This
+                # is post-hoc bookkeeping; it never prunes execution.
+                if node_checks and current_state.feasibility_constraints:
+                    for chk in node_checks:
+                        if not chk.path_condition:
+                            chk.path_condition = list(current_state.feasibility_constraints)
                 checks.extend(node_checks)
+                # A branch guard only constrains the value the variable held at the
+                # branch. Once the variable is reassigned, that guard no longer
+                # bounds the live value, so drop it -- otherwise a guard on an old
+                # version conjoins with a guard on the new version and looks
+                # contradictory when it is not (e.g. `if not p: p = ""` then
+                # `if p:`). Keeps the SAT check sound across reassignment.
+                if current_state.feasibility_constraints:
+                    written = instr.get_written_vars()
+                    if written:
+                        current_state.feasibility_constraints = [
+                            g for g in current_state.feasibility_constraints
+                            if not (g.free_vars() & written)
+                        ]
+                # A return terminates the path. The frontend still links a successor
+                # after it; stopping here removes spurious merges that would otherwise
+                # drop the path conditions, so early-return guards are respected.
+                if isinstance(instr, Return):
+                    returned = True
+                    break
+
+            if returned:
+                continue
 
             # Add successors to worklist, respecting skip indices from constant folding
             skip_indices = getattr(current_state, '_skip_successor_indices', set())
             succ_list = list(node.succs)
+            # A clean 2-way branch guards successor 0 with the condition (true) and
+            # successor 1 with its negation (false). Record these per edge so the
+            # path to any downstream sink carries its exact branch assumptions.
+            edge_exp = self._branch_edge_formula(node)
             for idx, succ_id in enumerate(succ_list):
-                if idx not in skip_indices:
-                    # Create a clean copy without the skip markers
-                    succ_state = current_state.copy()
-                    if hasattr(succ_state, '_skip_successor_indices'):
-                        del succ_state._skip_successor_indices
-                    worklist.append((succ_id, succ_state))
+                if idx in skip_indices:
+                    continue
+                # Create a clean copy without the skip markers
+                succ_state = current_state.copy()
+                if hasattr(succ_state, '_skip_successor_indices'):
+                    del succ_state._skip_successor_indices
+                if edge_exp is not None and idx in (0, 1):
+                    guard = self._feasibility_guard(edge_exp, assume_true=(idx == 0))
+                    # Only record guards that mention a program variable. A
+                    # constant guard (e.g. a `True` placeholder the frontend emits
+                    # for a loop/structural edge) carries no path information, and
+                    # its negation would be a spurious contradiction. Genuine
+                    # constant-driven dead edges are already pruned by constant
+                    # folding during execution.
+                    if guard is not None and guard.free_vars():
+                        succ_state.feasibility_constraints = (
+                            succ_state.feasibility_constraints + [guard]
+                        )
+                worklist.append((succ_id, succ_state))
 
         # Post-process: If we found non-XSS vulnerabilities, remove XSS-on-return checks
         # to avoid duplicate reporting (e.g., SQLi test shouldn't also report XSS)
@@ -1222,6 +1281,11 @@ class SILTranslator:
         # the query -- control-flow-sensitive, so it runs once the whole
         # procedure's instructions are available.
         checks = self._filter_post_hoc_ownership_checks(proc, checks)
+
+        # Drop findings whose path is provably infeasible (dead code guarded by
+        # contradictory or early-return branches). Post-hoc and satisfiability-based,
+        # so it never disturbs execution or drops a feasible finding.
+        checks = self._filter_infeasible_checks(checks)
 
         return checks
 
@@ -2596,6 +2660,69 @@ class SILTranslator:
 
         return checks, state
 
+    def _feasibility_guard(self, exp, assume_true):
+        """Sound pure formula for assuming `exp` is truthy (assume_true) or falsy on
+        an edge. A bare-variable truthiness test has no sound boolean encoding in the
+        separation-logic checker (a lone Var is spatial, so Not(Var) is spuriously
+        unsatisfiable); model it explicitly as (in)equality against a falsy sentinel
+        so both polarities are individually satisfiable and contradict only when the
+        same variable is assumed both ways. Comparisons and boolean combinators use
+        the normal encoding. Returns None if no usable guard can be formed."""
+        if isinstance(exp, ExpUnOp) and exp.op == "!":
+            return self._feasibility_guard(exp.operand, not assume_true)
+        f = self._exp_to_formula(exp)
+        if isinstance(f, Var):
+            return Neq(f, Const(0)) if assume_true else Eq(f, Const(0))
+        return f if assume_true else Not(f)
+
+    def _branch_edge_formula(self, node):
+        """The branch condition of a clean 2-way branch (two prunes of the same
+        condition, one true and one false, with two successors). Successor 0 assumes
+        it true; successor 1 assumes it false. Returns the condition Exp, else None."""
+        prunes = [i for i in node.instrs if isinstance(i, Prune)]
+        if len(prunes) != 2 or len(node.succs) < 2:
+            return None
+        p_true = next((p for p in prunes if p.is_true_branch), None)
+        p_false = next((p for p in prunes if not p.is_true_branch), None)
+        if p_true is None or p_false is None:
+            return None
+        if str(p_true.condition) != str(p_false.condition):
+            return None
+        return p_true.condition
+
+    def _feasibility_sat(self, formula) -> bool:
+        """Is the pure path-condition formula satisfiable? Uses Frame's Z3 checker.
+        Defaults to True (keep the finding) on any error, so a finding is never
+        dropped unless its path is provably unsatisfiable."""
+        checker = getattr(self, "_feas_checker", None)
+        if checker is None:
+            try:
+                from frame.checking.checker import EntailmentChecker
+                checker = EntailmentChecker()
+            except Exception:
+                checker = False   # unavailable: never drop
+            self._feas_checker = checker
+        if not checker:
+            return True
+        try:
+            return bool(checker.is_satisfiable(formula))
+        except Exception:
+            return True
+
+    def _filter_infeasible_checks(self, checks):
+        """Drop findings whose accumulated branch conditions are unsatisfiable: the
+        sink sits on a path that cannot execute. Sound -- a finding is dropped only
+        when its path condition is provably UNSAT, so feasible findings are kept."""
+        out = []
+        for c in checks:
+            pc = getattr(c, "path_condition", None)
+            if pc:
+                conj = pc[0] if len(pc) == 1 else self._build_conjunction(list(pc))
+                if not self._feasibility_sat(conj):
+                    continue
+            out.append(c)
+        return out
+
     def _exec_prune(self, instr: Prune, state: SymbolicState) -> Optional[SymbolicState]:
         """
         Execute prune (conditional).
@@ -3629,6 +3756,9 @@ class SILTranslator:
 
         # Path constraints: drop (would need disjunction)
         merged.path_constraints = []
+        # Conditions from two joined paths cannot both be assumed; drop them at a
+        # merge (conservative: fewer feasibility drops, never a wrong one).
+        merged.feasibility_constraints = []
 
         # Constants: intersection (only keep if same value in both states)
         for var in set(s1.constants.keys()) & set(s2.constants.keys()):
