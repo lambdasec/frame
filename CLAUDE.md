@@ -14,7 +14,7 @@ Frame is a separation logic entailment checker that uses Z3 SMT solver to verify
 
 ### Testing
 ```bash
-# Run all tests (553 tests: 532 pytest + 21 legacy suites)
+# Run all tests
 python -m pytest tests/
 
 # Run with verbose output

@@ -4,7 +4,7 @@
     <strong>Sound static analysis and LLM reasoning, in one security agent</strong>
   </p>
   <p align="center">
-    <a href="tests/"><img src="https://img.shields.io/badge/tests-1660%20passed-brightgreen" alt="Tests"></a>
+    <a href="https://github.com/lambdasec/frame/actions/workflows/tests.yml"><img src="https://github.com/lambdasec/frame/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
     <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
