@@ -35,6 +35,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.python_specs import PYTHON_SPECS
 
 
@@ -98,7 +99,7 @@ class PythonFrontend:
         tree = self.parser.parse(self._source_bytes)
 
         # Create program with library specs
-        program = Program(library_specs=self.specs.copy())
+        program = Program(library_specs=self.specs.copy(), language="python")
         program.source_files.append(filename)
 
         # Walk top-level definitions
@@ -465,23 +466,39 @@ class PythonFrontend:
 
         return params
 
+    def _translate_nested_function(self, node: TSNode, program: Program) -> None:
+        """Translate a function defined inside another function's body.
+
+        `_translate_function` retargets the builder at the new procedure and does
+        not put it back, so without this the enclosing function's remaining
+        statements land in the nested procedure's CFG: the outer body is lost and
+        the inner one gains code it never contained.
+        """
+        saved_proc = self._current_proc
+        saved_node = self._current_node
+        saved_counter = self._node_counter
+        try:
+            proc = self._translate_function(node)
+            if proc:
+                program.add_procedure(proc)
+        finally:
+            self._current_proc = saved_proc
+            self._current_node = saved_node
+            self._node_counter = saved_counter
+
     def _translate_block(self, node: TSNode, program: Program = None) -> None:
         """Translate a block of statements"""
         for child in node.children:
             # Handle nested function definitions
             if child.type == "function_definition":
                 if program:
-                    proc = self._translate_function(child)
-                    if proc:
-                        program.add_procedure(proc)
+                    self._translate_nested_function(child, program)
             elif child.type == "decorated_definition":
                 # Handle decorated nested functions
                 if program:
                     for c in child.children:
                         if c.type == "function_definition":
-                            proc = self._translate_function(c)
-                            if proc:
-                                program.add_procedure(proc)
+                            self._translate_nested_function(c, program)
                             break
             else:
                 self._translate_statement(child)
@@ -1154,6 +1171,12 @@ class PythonFrontend:
         loop_head = proc.new_node(NodeKind.LOOP_HEAD)
         proc.add_node(loop_head)
 
+        # `break` has no SIL representation, so record here, the only place the
+        # loop's parse tree is still available, whether any statement in the body
+        # can transfer control out of the loop. The translator pairs this with the
+        # loop condition to decide whether the loop can terminate at all.
+        loop_head.loop_body_can_exit = body_can_exit_loop(node.child_by_field_name("body"))
+
         # Loop body
         body_node = proc.new_node(NodeKind.NORMAL)
         proc.add_node(body_node)
@@ -1249,6 +1272,11 @@ class PythonFrontend:
 
     def _translate_try(self, node: TSNode) -> None:
         """Translate try/except/finally"""
+        # The handler's control flow is not modelled below, so record that this
+        # procedure's CFG understates how control can leave it.
+        if self._current_proc:
+            self._current_proc.has_exception_handler = True
+
         # Simplified: just translate the body
         body = node.child_by_field_name("body")
         if body:

@@ -22,20 +22,20 @@ from frame.core.ast import (
     Formula, Emp, PointsTo, SepConj, And, Or, Not, Eq, Neq,
     Var, Const, Taint, Sanitized, Source, Sink,
     NullDeref, UseAfterFree, BufferOverflow, Exists,
-    PredicateCall, Lt, Le, Gt, Ge
+    PredicateCall, Lt, Le, Gt, Ge, True_
 )
 
 from .types import (
     Ident, PVar, Location, Typ, TypeKind,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary
 )
 from .instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign,
     TaintSource, TaintSink, Sanitize, AssertSafe, Return,
     TaintKind, SinkKind, resolve_sink_kind
 )
-from .procedure import Procedure, Node, Program, ProcSpec
+from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 
 
 # =============================================================================
@@ -156,6 +156,13 @@ class VulnType(Enum):
     UNTRUSTED_SEARCH_PATH = "untrusted_path"    # CWE-426/427
     DATA_SENTINEL = "data_sentinel"             # CWE-464
 
+    # Resource exhaustion (the CWE-400 cluster). Frame reports the specific
+    # child weakness, never the CWE-400 parent: `cwe_taxonomy.is_a` already makes
+    # each of these satisfy a query for CWE-400.
+    UNBOUNDED_ALLOCATION = "unbounded_allocation"    # CWE-770
+    UNCONTROLLED_RECURSION = "uncontrolled_recursion"  # CWE-674
+    INFINITE_LOOP = "infinite_loop"                  # CWE-835
+
     # Generic taint flow
     TAINT_FLOW = "taint_flow"
 
@@ -199,6 +206,8 @@ class VulnType(Enum):
             SinkKind.INSECURE_AUTH: cls.INSUFFICIENT_CREDENTIAL_PROTECTION,
             SinkKind.INSECURE_TEMP_FILE: cls.INSECURE_TEMP_FILE,
             SinkKind.PROTOTYPE_POLLUTION: cls.PROTOTYPE_POLLUTION,
+            # Resource exhaustion
+            SinkKind.ALLOC_SIZE: cls.UNBOUNDED_ALLOCATION,
             # A07: Authentication Failures
             SinkKind.CREDENTIAL: cls.BROKEN_AUTHENTICATION,
             SinkKind.SESSION: cls.SESSION_FIXATION,
@@ -1287,6 +1296,12 @@ class SILTranslator:
         # so it never disturbs execution or drops a feasible finding.
         checks = self._filter_infeasible_checks(checks)
 
+        # Non-termination is a property of the finished CFG, not of any path the
+        # worklist walked, so these run last and are exempt from the taint-flow
+        # post-processing above.
+        checks.extend(self._nonterminating_loop_checks(proc))
+        checks.extend(self._uncontrolled_recursion_checks(proc))
+
         return checks
 
     def _init_state_for_procedure(self, proc: Procedure) -> SymbolicState:
@@ -2117,6 +2132,14 @@ class SILTranslator:
                                                 if arg_var in inline_sanitized_for:
                                                     if spec.is_sink in inline_sanitized_for[arg_var]:
                                                         continue
+                                                # CWE-770 is about an allocation size that is
+                                                # UNBOUNDED. A branch condition on the path that
+                                                # constrains the size discharges that, so only a
+                                                # size reaching the allocator with no check at
+                                                # all is reported.
+                                                if spec.is_sink == 'alloc_size' and \
+                                                        self._alloc_size_is_bounded(arg_var, state):
+                                                    continue
                                                 check = self._create_taint_check(
                                                     instr, state, proc_name,
                                                     arg_var, sink_kind
@@ -2961,6 +2984,12 @@ class SILTranslator:
                     _ti = state.get_taint_info(var)
                     if _ti is None or _ti.source_kind != TaintKind.USER_INPUT:
                         continue
+                # CWE-770 is about an allocation size that is UNBOUNDED. A branch
+                # condition on the path that constrains the size discharges that,
+                # so only a size reaching the allocator unchecked is reported.
+                if instr.kind == SinkKind.ALLOC_SIZE and \
+                        self._alloc_size_is_bounded(var, state):
+                    continue
                 if not state.is_sanitized_for(var, instr.kind.value):
                     if not state.is_asserted_safe_for(var, instr.kind.value):
                         check = self._create_taint_check(
@@ -3229,6 +3258,319 @@ class SILTranslator:
         if isinstance(arg_exp, ExpConst) and isinstance(arg_exp.value, str):
             return bool(self._UNBOUNDED_SCANF.search(arg_exp.value))
         return False
+
+    def _alloc_size_is_bounded(self, var: str, state: SymbolicState) -> bool:
+        """Is the allocation size `var` constrained on the path to the allocator?
+
+        Any branch condition mentioning the variable counts: a comparison against
+        a limit, a range test, a membership check. Frame does not try to decide
+        whether a particular guard is a SUFFICIENT bound, only whether the value
+        was checked at all. Whether `n < 10_000_000` is small enough is a policy
+        question, and answering it here would turn every deliberate limit into a
+        finding.
+
+        A guard is dropped from `feasibility_constraints` as soon as the variable
+        it mentions is reassigned, so a stale check on an older value cannot
+        silence a genuinely unchecked one.
+        """
+        if state.get_constant(var) is not None:
+            return True
+        for guard in state.feasibility_constraints:
+            if var in guard.free_vars():
+                return True
+        return False
+
+    # =========================================================================
+    # Structural non-termination detectors (CWE-835 / CWE-674)
+    #
+    # These are properties of the finished CFG rather than of a taint flow, so
+    # they run once per procedure instead of during symbolic execution. Both are
+    # deliberately narrow: they fire only when non-termination follows from the
+    # graph itself, never from a guess about what a condition might evaluate to.
+    # =========================================================================
+
+    # Operators that evaluate only some of their operands: short-circuit
+    # connectives and the ternary, which reaches the IR as an ExpBinOp carrying a
+    # "?:" marker. A call underneath one of these runs conditionally even though
+    # the frontend hoists it into the enclosing block as a plain Call.
+    _CONDITIONAL_OPS = frozenset({"&&", "||", "and", "or", "?:", "??"})
+
+    def _is_always_true_condition(self, exp) -> bool:
+        """Is `exp` a literal that is truthy in every execution?
+
+        Only literals qualify. `while (x)` is never always-true here even if x
+        happens to be constant on some path: that would be a claim about values,
+        and this detector only makes claims about syntax.
+        """
+        if not isinstance(exp, ExpConst):
+            return False
+        value = exp.value
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        return False
+
+    def _nonterminating_loop_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-835: a loop whose exit is unreachable by construction.
+
+        Two obligations, both discharged structurally:
+
+        * the loop condition is a literal that is always truthy, so the exit
+          prune (which assumes the condition false) can never be taken, and
+        * the frontend proved the body holds no break / return / throw / goto /
+          yield, so no statement inside can leave the loop either.
+
+        `for` heads are lowered with a constant-true placeholder condition and
+        never carry `loop_body_can_exit`, so iteration over a collection is not a
+        candidate. Neither is `while cond:` for any non-literal cond, however
+        obviously it may loop forever: proving that needs value reasoning, and
+        guessing there is exactly how this class of detector produces noise.
+        """
+        checks: List[VulnerabilityCheck] = []
+
+        for node in proc.nodes.values():
+            if node.kind != NodeKind.LOOP_HEAD:
+                continue
+            # None means "not analysed" (every non-while head); True means the
+            # body has a way out. Only an explicit False licenses a finding.
+            if node.loop_body_can_exit is not False:
+                continue
+
+            prunes = [i for i in node.instrs if isinstance(i, Prune)]
+            if not prunes:
+                continue
+            if not all(self._is_always_true_condition(p.condition) for p in prunes):
+                continue
+
+            checks.append(VulnerabilityCheck(
+                formula=True_(),
+                vuln_type=VulnType.INFINITE_LOOP,
+                location=prunes[0].loc,
+                description="Loop condition is always true and the body contains no "
+                            "break, return or throw: the loop cannot terminate",
+                sink_type="infinite_loop",
+                procedure_name=proc.name,
+            ))
+
+        return checks
+
+    def _iter_instr_exps(self, instr: Instr):
+        """Every top-level expression carried by an instruction.
+
+        Reads the dataclass fields rather than enumerating instruction types, so
+        a new instruction kind is covered without touching this.
+        """
+        for value in vars(instr).values():
+            if isinstance(value, Exp):
+                yield value
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    if isinstance(item, Exp):
+                        yield item
+                    elif isinstance(item, tuple):
+                        for sub in item:
+                            if isinstance(sub, Exp):
+                                yield sub
+
+    def _exp_calls_name(self, exp: Exp, name: str) -> bool:
+        """Does `exp` contain a call to `name` anywhere in its subtree?"""
+        stack = [exp]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, ExpCall):
+                callee = cur.func
+                if isinstance(callee, ExpConst) and isinstance(callee.value, str):
+                    if self._strip_self_receiver(callee.value) == name:
+                        return True
+                elif isinstance(callee, ExpVar) and str(callee.var) == name:
+                    return True
+            for child in (getattr(cur, "__dict__", {}) or {}).values():
+                if isinstance(child, Exp):
+                    stack.append(child)
+                elif isinstance(child, (list, tuple)):
+                    stack.extend(c for c in child if isinstance(c, Exp))
+        return False
+
+    def _strip_self_receiver(self, name: str) -> str:
+        """Drop a leading `self.` / `this.` receiver from a call name."""
+        for prefix in ("self.", "this."):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+        return name
+
+    def _is_direct_self_call(self, instr: Instr, proc: Procedure) -> bool:
+        """Is `instr` a call from `proc` to `proc` itself?
+
+        Matching is strict on purpose. `self.conn.close()` inside `close()` shares
+        the simple name but calls another object, so only the procedure's own
+        receiver (`self.` / `this.`) counts.
+
+        Inside a METHOD, an unqualified call to the method's own name means
+        different things per language. Java and C# resolve it through the
+        implicit receiver, so it is recursion. Python and JavaScript require an
+        explicit receiver for a method call, so there it names an unrelated free
+        function, which is exactly how a delegating wrapper is written
+        (`def find_frame(self, ...): return find_frame(self, ...)`). Both idioms
+        are common, so this branches on the program's language rather than
+        guessing. A plain function, whose procedure name IS the simple name,
+        recurses unqualified in every language.
+        """
+        if not isinstance(instr, Call):
+            return False
+
+        simple_name = proc.name.rsplit(".", 1)[-1]
+        called = instr.get_func_name()
+        if instr.receiver is not None:
+            called = f"{instr.receiver}.{called}"
+
+        stripped = self._strip_self_receiver(called)
+        if stripped != called:
+            return stripped == simple_name
+        if called != simple_name:
+            return False
+        if proc.name == simple_name:
+            return True
+        language = getattr(self.program, "language", "") or ""
+        return language in self._IMPLICIT_RECEIVER_LANGUAGES
+
+    # Languages where an unqualified call inside a method resolves against the
+    # implicit receiver before any free function of the same name.
+    _IMPLICIT_RECEIVER_LANGUAGES = frozenset({"java", "csharp"})
+
+    def _recursion_is_expression_guarded(self, proc: Procedure, simple_name: str) -> bool:
+        """Does a self-call sit inside a ternary or a short-circuit operand?
+
+        The frontends hoist a nested call out of the expression containing it, so
+        `return f(x) if p else x` and `return p or f(x)` both leave a Call that
+        looks unconditional in the block while the recursion actually happens on
+        one branch only. Those forms carry their own base case, so any procedure
+        that has one is left alone entirely.
+        """
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                for exp in self._iter_instr_exps(instr):
+                    stack = [exp]
+                    while stack:
+                        cur = stack.pop()
+                        if self._is_conditional_exp(cur) and self._exp_calls_name(cur, simple_name):
+                            return True
+                        for child in (getattr(cur, "__dict__", {}) or {}).values():
+                            if isinstance(child, Exp):
+                                stack.append(child)
+                            elif isinstance(child, (list, tuple)):
+                                stack.extend(c for c in child if isinstance(c, Exp))
+        return False
+
+    def _is_conditional_exp(self, exp) -> bool:
+        """Does `exp` evaluate only some of its operands?
+
+        True for a ternary and for the short-circuit connectives. The operator
+        marker is looked for in every field of the node rather than in `op`
+        alone, because a ternary reaches the IR as an ExpBinOp whose fields the
+        frontends do not fill in a uniform order.
+        """
+        if isinstance(exp, ExpTernary):
+            return True
+        if not isinstance(exp, ExpBinOp):
+            return False
+        for field_value in (exp.op, exp.left, exp.right):
+            marker = None
+            if isinstance(field_value, str):
+                marker = field_value
+            elif isinstance(field_value, ExpConst) and isinstance(field_value.value, str):
+                marker = field_value.value
+            if marker is not None and marker in self._CONDITIONAL_OPS:
+                return True
+        return False
+
+    def _call_is_unavoidable(self, proc: Procedure, call_node_id: int, call_index: int) -> bool:
+        """Does every execution of `proc` reach the self-call?
+
+        Computed by deleting the call's block from the CFG and asking whether the
+        entry can still reach a way out: a block with no successors, or one that
+        returns. If it can, that path is a reachable base case. If it cannot, the
+        recursive call happens on every run and the recursion is unbounded.
+        """
+        node = proc.nodes.get(call_node_id)
+        if node is None:
+            return False
+
+        # A return earlier in the same block leaves before recursing.
+        for earlier in node.instrs[:call_index]:
+            if isinstance(earlier, Return):
+                return False
+
+        reachable: Set[int] = set()
+        stack = [proc.entry_node]
+        while stack:
+            nid = stack.pop()
+            if nid in reachable or nid == call_node_id or nid not in proc.nodes:
+                continue
+            reachable.add(nid)
+            stack.extend(proc.nodes[nid].succs)
+
+        for nid in reachable:
+            other = proc.nodes[nid]
+            if not other.succs:
+                return False
+            if any(isinstance(i, Return) for i in other.instrs):
+                return False
+        return True
+
+    def _uncontrolled_recursion_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-674: a procedure whose recursive call has no reachable base case.
+
+        Reported only when the self-call is unavoidable: no path from the entry
+        reaches a return or a CFG exit without going through it. A guarded
+        recursion (`if n <= 1: return 1`) leaves such a path and is not reported,
+        and neither is recursion whose base case lives in a ternary or a
+        short-circuit operand, which the CFG cannot represent.
+
+        Nothing here claims the recursion is bounded when we stay silent. Proving
+        that an argument decreases is a termination proof Frame does not attempt,
+        so this detector answers the much narrower question of whether a base case
+        exists at all.
+        """
+        checks: List[VulnerabilityCheck] = []
+
+        # The whole argument rests on "no path leaves without recursing", which a
+        # CFG missing its exception edges cannot support: `try: return f(n-1)
+        # except: return 0` has its base case in a handler the frontends inline
+        # without edges, and would otherwise look unconditional.
+        if proc.has_exception_handler:
+            return checks
+
+        simple_name = proc.name.rsplit(".", 1)[-1]
+
+        self_calls = [
+            (node.id, idx, instr)
+            for node in proc.nodes.values()
+            for idx, instr in enumerate(node.instrs)
+            if self._is_direct_self_call(instr, proc)
+        ]
+        if not self_calls:
+            return checks
+
+        if self._recursion_is_expression_guarded(proc, simple_name):
+            return checks
+
+        for node_id, idx, instr in self_calls:
+            if not self._call_is_unavoidable(proc, node_id, idx):
+                continue
+            checks.append(VulnerabilityCheck(
+                formula=True_(),
+                vuln_type=VulnType.UNCONTROLLED_RECURSION,
+                location=instr.loc,
+                description=f"'{simple_name}' calls itself on every path: no base case "
+                            f"is reachable, so the recursion cannot terminate",
+                sink_type="uncontrolled_recursion",
+                procedure_name=proc.name,
+            ))
+            # One finding per procedure: further self-calls are the same bug.
+            break
+
+        return checks
 
     def _create_usage_based_check(
         self,

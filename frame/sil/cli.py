@@ -109,6 +109,13 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable LLM triage only (filter false positives from symbolic findings)."
     )
+    scan_parser.add_argument(
+        "--repo-scale",
+        action="store_true",
+        help="Analyze the whole repository in one LLM session instead of one per "
+             "file. Far faster and cheaper on real projects, and lets the model "
+             "follow flows across files. Requires --ai or --llm-detect."
+    )
 
     return parser
 
@@ -308,6 +315,7 @@ def cmd_scan(args) -> int:
             verbose=args.verbose,
             llm_detect=ai or getattr(args, "llm_detect", False),
             llm_triage=ai or getattr(args, "llm_triage", False),
+            llm_repo_scale=getattr(args, "repo_scale", False),
         )
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)

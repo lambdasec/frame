@@ -595,5 +595,23 @@ JAVASCRIPT_SPECS.update(SSRF_ENHANCED_SPECS)
 JAVASCRIPT_SPECS.update(PROTOTYPE_POLLUTION_SPECS)
 JAVASCRIPT_SPECS.update(REDOS_SPECS)
 
+
+# =============================================================================
+# Allocation sizes (CWE-770)
+# =============================================================================
+# Only APIs whose flagged argument is unambiguously a byte COUNT. `Array(n)` and
+# `String.repeat(n)` are left out: the first also builds a one-element array from
+# a non-number, and the second's bare method name would match any `.repeat()`.
+# `crypto.randomBytes` is left out too: a ProcSpec carries one role, and its
+# existing role as a secure-random sanitizer is the more valuable one.
+
+ALLOCATION_SIZE_SPECS = {
+    "Buffer.alloc": _sink("alloc_size", [0], "Buffer.alloc(size)"),
+    "Buffer.allocUnsafe": _sink("alloc_size", [0], "Buffer.allocUnsafe(size)"),
+    "Buffer.allocUnsafeSlow": _sink("alloc_size", [0], "Buffer.allocUnsafeSlow(size)"),
+}
+
+JAVASCRIPT_SPECS.update(ALLOCATION_SIZE_SPECS)
+
 # Alias for TypeScript (same specs)
 TYPESCRIPT_SPECS = JAVASCRIPT_SPECS

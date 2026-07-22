@@ -312,3 +312,163 @@ def detect_agentic(source_code: str, language: str, filename: str,
         final_nudge="Report the findings now as the JSON object.",
         compact_at_chars=getattr(config, "agent_context_budget_chars", 80000))
     return res.result or []
+
+
+# ---- Repository-scale detection ------------------------------------------------
+# Per-file agentic detection opens one model session per candidate file, which does
+# not scale to real projects: a 500-file repository means 500 sessions, each paying
+# to rediscover the same context. Repository-scale detection instead runs ONE
+# session over the whole tree and lets the model navigate with grep/read_file, the
+# way a human reviewer works. Findings therefore have to name their own file, which
+# per-file detection never needed, hence the extended schema below.
+
+DETECT_REPO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {"type": "string"},
+                    "file": {"type": "string"},
+                    "cwe": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "type": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+                "required": ["reasoning", "file", "cwe", "line", "type", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["reasoning", "findings"],
+    "additionalProperties": False,
+}
+
+DETECT_REPO_SYSTEM = (
+    "You are a precise application-security auditor reviewing an entire code "
+    "repository. Find REAL, exploitable vulnerabilities: injection (SQL / command / "
+    "code), path traversal, SSRF, XSS, unsafe deserialization, open redirect, XXE, "
+    "and broken authentication or authorization. Ignore style issues, "
+    "defense-in-depth suggestions, and speculative items.\n\n"
+    "Use read_file(path) and grep(pattern) to navigate. Work systematically: locate "
+    "the entry points (request handlers, routes, CLI commands, message consumers), "
+    "then for each attacker-controlled input trace whether it reaches a dangerous "
+    "sink, following the flow across files. Confirm by reading the code; do not "
+    "guess from file names.\n\n"
+    "When finished, reply with ONLY a JSON object: {\"reasoning\": str, \"findings\": "
+    "[{\"reasoning\": str, \"file\": str, \"cwe\": str, \"line\": int, \"type\": str, "
+    "\"confidence\": float}]}. `file` must be a repository-relative path you actually "
+    "read. Report an empty findings list if the code is clean; a wrong finding is "
+    "worse than no finding."
+)
+
+
+def _repo_inventory(repo_root: str, language: str, limit: int = 400) -> str:
+    """A bounded listing of the repository's source files, as a starting map.
+
+    The agent could discover this itself, but spending tool calls to re-list a tree
+    we can hand over for free wastes its step budget on navigation instead of
+    analysis.
+    """
+    import os
+    exts = _LANGUAGE_EXTENSIONS.get((language or "").lower())
+    skip_dirs = {".git", "node_modules", "vendor", "dist", "build", "target",
+                 "__pycache__", ".venv", "venv", "site-packages", ".tox"}
+    found: List[str] = []
+    root = os.path.realpath(repo_root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+        for name in filenames:
+            if exts and not name.lower().endswith(exts):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), root)
+            found.append(rel)
+            if len(found) >= limit:
+                found.append(f"... (listing truncated at {limit} files)")
+                return "\n".join(found)
+    return "\n".join(sorted(found))
+
+
+_LANGUAGE_EXTENSIONS = {
+    "python": (".py",),
+    "javascript": (".js", ".jsx", ".mjs", ".cjs"),
+    "typescript": (".ts", ".tsx"),
+    "java": (".java",),
+    "c": (".c", ".h"),
+    "cpp": (".cpp", ".cc", ".cxx", ".hpp", ".h"),
+    "csharp": (".cs",),
+    "go": (".go",),
+    "rust": (".rs",),
+    "php": (".php",),
+    "ruby": (".rb",),
+}
+
+
+def _repo_findings_to_vulns(findings: list, repo_root: str) -> List[Any]:
+    """Convert repo-scale findings, each of which names its own file.
+
+    A path outside the repository is dropped rather than clamped: it means the model
+    named something it did not read, and a finding we cannot locate is not reportable.
+    """
+    import os
+    out = []
+    root = os.path.realpath(repo_root)
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        rel = str(f.get("file") or "").strip()
+        if not rel:
+            continue
+        abs_path = os.path.realpath(os.path.join(root, rel))
+        if abs_path != root and not abs_path.startswith(root + os.sep):
+            continue
+        if not os.path.isfile(abs_path):
+            continue
+        v = _to_vulnerability(f, abs_path)
+        if v is not None and v.cwe_id:
+            out.append(v)
+    return out
+
+
+def detect_repo(repo_root: str, language: str, config: TriageConfig,
+                client: Optional[LLMTriageClient] = None,
+                max_steps: Optional[int] = None) -> List[Any]:
+    """Detect vulnerabilities across a whole repository in a single agentic session.
+
+    Returns the findings, each already resolved to an absolute path inside
+    `repo_root`. Returns an empty list when `repo_root` is not a usable directory,
+    so callers can treat this as best-effort.
+    """
+    import os
+    if not repo_root or not os.path.isdir(repo_root):
+        return []
+    if client is None:
+        client = LLMTriageClient(config)
+    explored: set = set()
+    client._explored = explored
+    root = os.path.realpath(repo_root)
+    inventory = _repo_inventory(root, language)
+    if not inventory.strip():
+        return []
+    steps = max_steps if max_steps is not None else max(
+        1, getattr(config, "max_tool_steps", 30))
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": DETECT_REPO_SYSTEM},
+        {"role": "user", "content": (
+            f"Language: {language}\nRepository root: {root}\n\n"
+            f"Source files:\n{inventory}\n\n"
+            "Investigate the repository with the tools and report real "
+            "vulnerabilities as the JSON object.")},
+    ]
+    res = run_agent(
+        messages, client, tools=_TOOLS,
+        exec_tool=investigation_exec(root, explored),
+        max_steps=steps,
+        finalize=lambda content: _repo_findings_to_vulns(
+            (_extract_json_object(content) or {}).get("findings") or [], root),
+        final_nudge="Report the findings now as the JSON object.",
+        compact_at_chars=getattr(config, "agent_context_budget_chars", 80000))
+    return res.result or []

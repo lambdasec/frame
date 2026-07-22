@@ -179,6 +179,13 @@ class Node:
     kind: NodeKind = NodeKind.NORMAL
     label: Optional[str] = None  # Optional label for debugging
 
+    # LOOP_HEAD nodes only: does the loop body contain a statement that can
+    # transfer control out of the loop (break / return / throw / goto / yield)?
+    # `break` has no SIL instruction, so the CFG alone cannot answer this; the
+    # frontend records it from the parse tree. None means "not analysed", which
+    # is what every other node carries, so a consumer must treat None as unknown.
+    loop_body_can_exit: Optional[bool] = None
+
     def __str__(self) -> str:
         lines = [f"Node {self.id} ({self.kind.name}):"]
         for instr in self.instrs:
@@ -258,6 +265,12 @@ class Procedure:
     class_name: Optional[str] = None  # Class name if method
     is_static: bool = False           # Is this a static method?
     is_constructor: bool = False      # Is this a constructor?
+
+    # Does the body contain a try/catch? The frontends translate handler bodies
+    # inline instead of giving them their own edges, so for a procedure with one
+    # the CFG understates the ways control can leave. Any analysis that concludes
+    # something from the ABSENCE of an exit path must abstain when this is set.
+    has_exception_handler: bool = False
 
     # Internal state for building CFG
     _next_node_id: int = field(default=0, repr=False)
@@ -379,6 +392,13 @@ class Program:
 
     # Source file information
     source_files: List[str] = field(default_factory=list)
+
+    # Source language, set by the frontend. Needed where two languages give the
+    # same SIL shape different meanings: an unqualified call to the enclosing
+    # method's own name is recursion in Java and C#, which resolve it through the
+    # implicit receiver, but names an unrelated free function in Python and
+    # JavaScript, which require `self.` / `this.` for a method call.
+    language: str = ""
 
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]

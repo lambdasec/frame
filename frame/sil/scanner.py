@@ -366,6 +366,42 @@ class ScanResult:
         return mapping.get(severity, "warning")
 
 
+# A source line this long does not occur in code people write and review; it is
+# the signature of a bundler, a minifier, or a code generator. Overridable for
+# codebases with unusual formatting.
+GENERATED_LINE_THRESHOLD = int(
+    os.environ.get("FRAME_GENERATED_LINE_THRESHOLD", "2000"))
+
+
+def is_generated_source(source_code: str,
+                        threshold: int = None) -> bool:
+    """Does this look like minified or generated output rather than source?
+
+    Judged on line geometry alone, never on the filename: a `.min.js` suffix is a
+    convention, not a guarantee, and plenty of generated files do not carry one.
+    A file qualifies when any single line exceeds `threshold` characters, which
+    is the reliable signature of bundled or minified output.
+
+    Conservative by construction: ordinary source, including long string literals
+    and wide tables, stays well under the threshold, so real code is never
+    skipped. Empty input is not generated.
+    """
+    if not source_code:
+        return False
+    limit = GENERATED_LINE_THRESHOLD if threshold is None else threshold
+    if limit <= 0:
+        return False
+    longest = 0
+    for line in source_code.splitlines():
+        if len(line) > longest:
+            longest = len(line)
+            if longest > limit:
+                return True
+    # A single unterminated line (no newlines at all) is the classic minified
+    # bundle shape; splitlines already covers it, but guard the no-newline case.
+    return len(source_code) > limit and "\n" not in source_code
+
+
 class FrameScanner:
     """
     Main vulnerability scanner.
@@ -462,6 +498,13 @@ class FrameScanner:
         VulnType.TYPE_CONFUSION: Severity.HIGH,
         VulnType.ASSERTION_FAILURE: Severity.MEDIUM,
 
+        # Resource exhaustion (CWE-400 cluster). Availability impact only, and a
+        # non-terminating procedure is a self-inflicted hang rather than an
+        # attacker-steered one, so these sit below the injection classes.
+        VulnType.UNBOUNDED_ALLOCATION: Severity.MEDIUM,
+        VulnType.UNCONTROLLED_RECURSION: Severity.MEDIUM,
+        VulnType.INFINITE_LOOP: Severity.MEDIUM,
+
         # Generic
         VulnType.TAINT_FLOW: Severity.MEDIUM,
     }
@@ -557,6 +600,12 @@ class FrameScanner:
         VulnType.DIVIDE_BY_ZERO: "CWE-369",
         VulnType.TYPE_CONFUSION: "CWE-843",
         VulnType.ASSERTION_FAILURE: "CWE-617",
+
+        # Resource exhaustion. Always the specific child weakness: a query for
+        # the CWE-400 parent is satisfied through `cwe_taxonomy.is_a`.
+        VulnType.UNBOUNDED_ALLOCATION: "CWE-770",
+        VulnType.UNCONTROLLED_RECURSION: "CWE-674",
+        VulnType.INFINITE_LOOP: "CWE-835",
     }
 
     def __init__(
@@ -568,7 +617,8 @@ class FrameScanner:
         library_mode: bool = False,
         llm_triage: bool = False,
         llm_detect: bool = False,
-        llm_config: Any = None
+        llm_config: Any = None,
+        llm_repo_scale: bool = False
     ):
         """
         Initialize the scanner.
@@ -591,6 +641,10 @@ class FrameScanner:
         # (recall). Both off by default -- the sound symbolic layer is the default.
         self.llm_triage = llm_triage
         self.llm_detect = llm_detect
+        # Repository-scale detection: one LLM session for the whole tree
+        # instead of one per file. Opt-in, so per-file behaviour (and every
+        # benchmark number measured against it) is unchanged by default.
+        self.llm_repo_scale = llm_repo_scale
         self._llm_config = llm_config
         self._llm_client = None
         self.library_mode = library_mode
@@ -904,6 +958,18 @@ class FrameScanner:
 
         # Use utf-8-sig to automatically strip BOM (common in C# files)
         source_code = path.read_text(encoding='utf-8-sig')
+
+        # Minified and generated artifacts are not source: they are build output,
+        # they are never the file a security advisory points at, and analysing them
+        # costs enormous time for no signal (a single 277KB line of bundled JS can
+        # burn minutes of CPU). Detect them structurally, by line geometry, rather
+        # than by filename, so the check does not depend on naming conventions.
+        if is_generated_source(source_code):
+            result = ScanResult(filename=str(path))
+            result.warnings.append(
+                "Skipped: file looks generated or minified (extremely long lines)")
+            return result
+
         return self.scan(source_code, str(path))
 
     def scan_directory(self, dirpath: str, pattern: str = "**/*.py") -> List[ScanResult]:
@@ -920,12 +986,94 @@ class FrameScanner:
         results = []
         dir_path = Path(dirpath)
 
-        for filepath in dir_path.glob(pattern):
-            if filepath.is_file():
-                result = self.scan_file(str(filepath))
-                results.append(result)
+        # The agentic detector can trace flows across files with its read_file and
+        # grep tools, but only when it has a repo root; without one it silently
+        # degrades to single-file analysis and cross-file flows are lost. A
+        # directory scan knows the root, so supply it.
+        self._default_repo_root(dir_path)
+
+        # Repository-scale mode runs the LLM layer ONCE over the whole tree rather
+        # than once per file. Per-file costs a session for every candidate, which is
+        # unusable on real projects: the model re-derives the same context each time
+        # and the wall clock scales with file count. The symbolic pass is unaffected
+        # and still runs per file, so only the LLM tier changes.
+        repo_scale = self.llm_repo_scale and self.llm_detect
+        per_file_detect = self.llm_detect
+        if repo_scale:
+            self.llm_detect = False          # suppress the per-file LLM pass
+
+        try:
+            for filepath in dir_path.glob(pattern):
+                if filepath.is_file():
+                    result = self.scan_file(str(filepath))
+                    results.append(result)
+        finally:
+            self.llm_detect = per_file_detect
+
+        if repo_scale:
+            results = self._apply_repo_scale_detect(dir_path, results)
 
         return results
+
+    def _apply_repo_scale_detect(self, dir_path: Path,
+                                 results: List[ScanResult]) -> List[ScanResult]:
+        """Run one repository-wide LLM detection pass and merge its findings.
+
+        Findings are attached to the ScanResult for the file they name, creating one
+        if the file was not otherwise scanned (the model may legitimately flag a file
+        the glob did not match). Fail-safe: any error leaves the symbolic results
+        untouched, because a broken LLM tier must never discard proven findings.
+        """
+        try:
+            from frame.sil.llm_detect import detect_repo
+            from frame.sil.llm_triage import TriageConfig
+        except ImportError:
+            return results
+        try:
+            config = self._llm_config or TriageConfig.from_env()
+            if not getattr(config, "base_url", "") or not getattr(config, "model", ""):
+                if self.verbose:
+                    print("[Scanner] repo-scale detect requested but no endpoint/model.")
+                return results
+            root = str(dir_path.resolve())
+            found = detect_repo(root, self.language, config, self._llm_client)
+        except Exception as e:
+            if self.verbose:
+                print(f"[Scanner] repo-scale detect failed: {e}")
+            return results
+
+        by_file = {r.filename: r for r in results}
+        for vuln in found or []:
+            target = getattr(vuln, "location", "") or ""
+            result = by_file.get(target)
+            if result is None:
+                result = ScanResult(filename=target)
+                by_file[target] = result
+                results.append(result)
+            # Additive per (file, CWE): never displace a symbolic finding.
+            if not any(v.cwe_id == vuln.cwe_id for v in result.vulnerabilities):
+                result.vulnerabilities.append(vuln)
+        return results
+
+    def _default_repo_root(self, dir_path: Path) -> None:
+        """Point the LLM layer's investigation tools at the directory being scanned.
+
+        Only fills in a root that is not already configured, so an explicit
+        FRAME_LLM_REPO_ROOT still wins. No-op when the LLM layer is off.
+        """
+        if not (self.llm_detect or self.llm_triage):
+            return
+        try:
+            from frame.sil.llm_triage import TriageConfig
+        except ImportError:
+            return
+        try:
+            if self._llm_config is None:
+                self._llm_config = TriageConfig.from_env()
+            if not getattr(self._llm_config, "repo_root", ""):
+                self._llm_config.repo_root = str(dir_path.resolve())
+        except Exception:
+            pass   # never let this break a scan
 
     def _process_check(self, check: VulnerabilityCheck) -> Optional[Vulnerability]:
         """

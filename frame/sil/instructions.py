@@ -105,6 +105,9 @@ class SinkKind(Enum):
     RESOURCE_SELECT = "resource_select"  # Object-level resource selection by id -- IDOR/BOLA (CWE-639)
     CORS = "cors"               # CORS misconfiguration (CWE-942)
 
+    # Resource exhaustion
+    ALLOC_SIZE = "alloc_size"   # Size/count argument of an allocation (CWE-770)
+
     # A02: Security Misconfiguration
     HEADER = "header"           # HTTP header injection (CWE-113)
     SECRET_EXPOSURE = "secret"  # Secret/credential exposure (CWE-200)

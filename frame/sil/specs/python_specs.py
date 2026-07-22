@@ -1092,6 +1092,33 @@ OWASP_HELPERS_SPECS = {
 PYTHON_SPECS.update(OWASP_HELPERS_SPECS)
 
 
+# =============================================================================
+# Allocation sizes (CWE-770)
+# =============================================================================
+# Only APIs whose flagged argument is unambiguously a COUNT are listed. Python's
+# `bytes`/`bytearray` are deliberately absent: they take either a length or the
+# data itself, and without types `bytearray(user_string)` is indistinguishable
+# from `bytearray(user_length)`, so specifying them would report ordinary string
+# conversion as unbounded allocation. `os.urandom` and `secrets.token_*` are
+# absent for a different reason: a ProcSpec carries one role, and their existing
+# role as secure-random sanitizers is the more valuable one.
+
+ALLOCATION_SIZE_SPECS = {
+    "mmap.mmap": _sink("alloc_size", [1], "mmap.mmap(fileno, length) maps length bytes"),
+    # numpy, under both the canonical name and the conventional `np` alias
+    "numpy.zeros": _sink("alloc_size", [0], "numpy.zeros(shape)"),
+    "numpy.ones": _sink("alloc_size", [0], "numpy.ones(shape)"),
+    "numpy.empty": _sink("alloc_size", [0], "numpy.empty(shape)"),
+    "numpy.full": _sink("alloc_size", [0], "numpy.full(shape, value)"),
+    "np.zeros": _sink("alloc_size", [0], "numpy.zeros(shape)"),
+    "np.ones": _sink("alloc_size", [0], "numpy.ones(shape)"),
+    "np.empty": _sink("alloc_size", [0], "numpy.empty(shape)"),
+    "np.full": _sink("alloc_size", [0], "numpy.full(shape, value)"),
+}
+
+PYTHON_SPECS.update(ALLOCATION_SIZE_SPECS)
+
+
 def get_python_specs() -> Dict[str, ProcSpec]:
     """Get all Python library specifications"""
     return PYTHON_SPECS.copy()

@@ -890,3 +890,21 @@ JAVA_SPECS.update(SENSITIVE_DATA_SPECS)
 JAVA_SPECS.update(HEADER_SPECS)
 JAVA_SPECS.update(SSRF_ENHANCED_SPECS)
 JAVA_SPECS.update(REDOS_SPECS)
+
+
+# =============================================================================
+# Allocation sizes (CWE-770)
+# =============================================================================
+# `new byte[n]` is the commonest Java form but reaches the IR as an assignment
+# expression rather than a call, so it is out of reach of a spec. What is
+# reachable are the factory methods whose sole argument is a capacity.
+
+ALLOCATION_SIZE_SPECS = {
+    "ByteBuffer.allocate": _sink("alloc_size", [0], "ByteBuffer.allocate(capacity)"),
+    "ByteBuffer.allocateDirect": _sink("alloc_size", [0], "ByteBuffer.allocateDirect(capacity)"),
+    "CharBuffer.allocate": _sink("alloc_size", [0], "CharBuffer.allocate(capacity)"),
+    "IntBuffer.allocate": _sink("alloc_size", [0], "IntBuffer.allocate(capacity)"),
+    "LongBuffer.allocate": _sink("alloc_size", [0], "LongBuffer.allocate(capacity)"),
+}
+
+JAVA_SPECS.update(ALLOCATION_SIZE_SPECS)

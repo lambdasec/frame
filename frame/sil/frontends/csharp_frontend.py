@@ -35,6 +35,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
 
 
@@ -115,7 +116,7 @@ class CSharpFrontend:
         self._ident_counter = 0
 
         tree = self.parser.parse(self._source_bytes)
-        program = Program(library_specs=self.specs.copy())
+        program = Program(library_specs=self.specs.copy(), language="csharp")
         program.source_files.append(filename)
 
         self._translate_compilation_unit(tree.root_node, program)
@@ -965,6 +966,12 @@ class CSharpFrontend:
         loop_head = proc.new_node(NodeKind.LOOP_HEAD)
         proc.add_node(loop_head)
 
+        # `break` has no SIL representation, so record here, the only place the
+        # loop's parse tree is still available, whether any statement in the body
+        # can transfer control out of the loop. The translator pairs this with the
+        # loop condition to decide whether the loop can terminate at all.
+        loop_head.loop_body_can_exit = body_can_exit_loop(node.child_by_field_name("body"))
+
         body_node = proc.new_node(NodeKind.NORMAL)
         proc.add_node(body_node)
 
@@ -1143,6 +1150,11 @@ class CSharpFrontend:
 
     def _translate_try(self, node: TSNode) -> None:
         """Translate try/catch/finally"""
+        # The handler's control flow is not modelled below, so record that this
+        # procedure's CFG understates how control can leave it.
+        if self._current_proc:
+            self._current_proc.has_exception_handler = True
+
         body = node.child_by_field_name("body")
         if body:
             self._translate_block(body)
