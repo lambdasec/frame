@@ -512,34 +512,14 @@ class PathSensitiveAnalyzer:
         if var_name in self.current_state.pointers:
             ptr_info = self.current_state.pointers[var_name]
 
-            # Check for double-free using SL
+            # CWE-415 (double free) and CWE-590 (free of non-heap memory) are now
+            # raised structurally in the translator over the SIL/CFG; the emission
+            # that used to live here is retired to avoid duplicate reporting. The
+            # freed-state transition is still maintained below so any remaining
+            # consumers of the path state stay consistent.
             if ptr_info.state == HeapState.FREED:
-                sl_formula = f"emp |- {var_name} |-> _"
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id="CWE-415",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Double free: '{var_name}' already freed at line {ptr_info.free_loc.line if ptr_info.free_loc else '?'}",
-                    alloc_loc=ptr_info.alloc_loc,
-                    free_loc=ptr_info.free_loc,
-                    confidence=0.95,
-                    sl_check=sl_formula
-                ))
                 return
-
-            # Check for free of stack memory
             if ptr_info.source == AllocSource.STACK:
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id="CWE-590",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Free of stack memory: '{var_name}' is stack-allocated",
-                    alloc_loc=ptr_info.alloc_loc,
-                    confidence=0.95,
-                    sl_check=f"{var_name} |-> (stack) |- {var_name} |-> (heap)"
-                ))
                 return
 
             # Valid free - update state
@@ -578,37 +558,13 @@ class PathSensitiveAnalyzer:
 
         ptr_info = self.current_state.pointers[var_name]
 
-        # Check for NULL dereference
+        # CWE-476 (null dereference) and CWE-416 (use after free) are now raised
+        # structurally in the translator over the SIL/CFG; the emission that used
+        # to live here is retired to avoid duplicate reporting.
         if ptr_info.state == HeapState.NULL:
-            # Verify with SL: emp |- var |-> _ should FAIL
-            sl_formula = f"emp |- {var_name} |-> _"
-
-            self._add_vuln(MemoryVuln(
-                vuln_type=VulnType.NULL_DEREFERENCE,
-                cwe_id="CWE-476",
-                location=loc,
-                var_name=var_name,
-                description=f"NULL pointer {context}: '{var_name}' is NULL",
-                confidence=0.95,
-                sl_check=sl_formula
-            ))
             return
-
-        # Check for use-after-free
         if ptr_info.state == HeapState.FREED:
-            sl_formula = f"emp |- {var_name} |-> _"
-
-            self._add_vuln(MemoryVuln(
-                vuln_type=VulnType.USE_AFTER_FREE,
-                cwe_id="CWE-416",
-                location=loc,
-                var_name=var_name,
-                description=f"Use after free: '{var_name}' freed at line {ptr_info.free_loc.line if ptr_info.free_loc else '?'}",
-                alloc_loc=ptr_info.alloc_loc,
-                free_loc=ptr_info.free_loc,
-                confidence=0.95,
-                sl_check=sl_formula
-            ))
+            return
 
     def _check_dereference_expr(self, node: Any, loc: Location):
         """Check pointer dereference expression."""

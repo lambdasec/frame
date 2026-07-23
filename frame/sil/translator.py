@@ -28,7 +28,7 @@ from frame.core.ast import (
 from .types import (
     Ident, PVar, Location, Typ, TypeKind,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary, ExpCast
 )
 from .instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign,
@@ -339,6 +339,20 @@ class SymbolicState:
     # Freed pointers
     freed: Set[str] = field(default_factory=set)
 
+    # Pointers that are DEFINITELY null on this path (var -> the location where
+    # it became null). Populated only for a null literal assignment (`p = NULL`
+    # / `p = 0`); an allocator result is deliberately NOT tracked here, because a
+    # malloc-then-deref is the common correct idiom and firing on it would be
+    # indistinguishable from correct code. A deref of a var still in this set is
+    # a provable CWE-476.
+    null_ptrs: Dict[str, object] = field(default_factory=dict)
+
+    # Origin of a pointer's storage: "heap" (malloc/new), "stack" (a fixed local
+    # array or the address of a local). Used to decide CWE-590: freeing a var
+    # whose origin is "stack" frees memory that was never on the heap. A var with
+    # no entry has an unknown origin and is left alone (precision over recall).
+    heap_origin: Dict[str, str] = field(default_factory=dict)
+
     # Path constraints (pure formulas)
     path_constraints: List[Formula] = field(default_factory=list)
 
@@ -393,6 +407,8 @@ class SymbolicState:
             ) for k, v in self.tainted.items()},
             sanitized={k: list(v) for k, v in self.sanitized.items()},
             freed=set(self.freed),
+            null_ptrs=dict(self.null_ptrs),
+            heap_origin=dict(self.heap_origin),
             path_constraints=list(self.path_constraints),
             asserted_safe={k: list(v) for k, v in self.asserted_safe.items()},
             list_elements={k: list(v) for k, v in self.list_elements.items()},
@@ -791,6 +807,18 @@ class SILTranslator:
         # Track tainted class members across methods (for format string, etc.)
         # Maps: class_name -> {member_name -> taint_source_kind}
         self._class_member_taints: Dict[str, Dict[str, str]] = {}
+        # The procedure currently being executed (gives detectors access to its
+        # fixed-array declarations for heap-origin reasoning).
+        self._cur_proc: Optional[Procedure] = None
+
+    @property
+    def _is_c_lang(self) -> bool:
+        """The heap-lifecycle deref detectors (CWE-476/416/590) reason about
+        C-style raw pointers and only run for C/C++. Other frontends have no
+        `free`/`malloc` and no pointer dereference, so gating here keeps their
+        results untouched."""
+        return (getattr(self.program, "language", "") or "").lower() in (
+            "c", "cpp", "c++", "cxx")
 
     def _proc_always_returns_constant(self, proc_name: str) -> bool:
         """
@@ -1190,6 +1218,7 @@ class SILTranslator:
         and generating checks at sinks.
         """
         checks = []
+        self._cur_proc = proc
 
         # Initialize state with parameters potentially tainted
         initial_state = self._init_state_for_procedure(proc)
@@ -1259,6 +1288,14 @@ class SILTranslator:
                 if isinstance(instr, Return):
                     returned = True
                     break
+                # A call to a function that never returns (exit, abort, ...) ends
+                # the path exactly like a return: nothing after it on this branch
+                # executes. Modelling it is what makes an `if(p==NULL){exit(1);}`
+                # guard clear p's null-ness downstream (the null branch is dead),
+                # so a later dereference is not misreported as CWE-476.
+                if self._is_noreturn_call(instr):
+                    returned = True
+                    break
 
             if returned:
                 continue
@@ -1289,6 +1326,17 @@ class SILTranslator:
                         succ_state.feasibility_constraints = (
                             succ_state.feasibility_constraints + [guard]
                         )
+                    # Null-narrowing: an edge that establishes `p != NULL` (the
+                    # false side of `if(p==NULL)`, the true side of `if(p)`, etc.)
+                    # clears p's null flag on that path, so a deref reached only
+                    # after the pointer was proved non-null is not reported.
+                    for v in self._edge_nonnull_vars(edge_exp, assume_true=(idx == 0)):
+                        succ_state.null_ptrs.pop(v, None)
+                    # Null-confirming: the mirror edge (`if(p==NULL)` true side,
+                    # `if(!p)` true side) proves p IS null on this path, so a
+                    # dereference of p downstream is the classic CWE-476.
+                    for v in self._edge_null_vars(edge_exp, assume_true=(idx == 0)):
+                        succ_state.null_ptrs[v] = edge_exp
                 worklist.append((succ_id, succ_state))
 
         # Post-process: If we found non-XSS vulnerabilities, remove XSS-on-return checks
@@ -1378,6 +1426,15 @@ class SILTranslator:
         """
         checks = []
 
+        # Heap-lifecycle deref checks (CWE-416 use-after-free, CWE-476 null
+        # dereference) run over EVERY instruction before it executes, because a
+        # dereference is not always a Load/Store: `int x = *p` is an Assign whose
+        # value expression derefs p, and `f(*p)` derefs p inside a call argument.
+        # Reading the state as it stands before the instruction reflects the
+        # frees and null assignments that preceded this point. Kept in a separate
+        # list because several dispatch arms below rebind `checks` wholesale.
+        lifecycle_checks = self._lifecycle_deref_checks(instr, state, proc_name)
+
         if isinstance(instr, Assign):
             assign_checks, state = self._exec_assign(instr, state, proc_name)
             checks.extend(assign_checks)
@@ -1415,7 +1472,7 @@ class SILTranslator:
         elif isinstance(instr, Return):
             checks, state = self._exec_return(instr, state, proc_name)
 
-        return checks, state
+        return lifecycle_checks + checks, state
 
     # =========================================================================
     # Instruction Execution
@@ -1434,6 +1491,12 @@ class SILTranslator:
 
         # Store symbolic value
         state.heap[target] = str(instr.exp)
+
+        # Track pointer nullness and storage origin across the assignment. Any
+        # reassignment first clears the target's prior lifecycle facts, then the
+        # right-hand side re-establishes them (null literal, address-of a local,
+        # or propagation from another pointer variable).
+        self._track_assign_lifecycle(instr, target, state)
 
         # Track constant values for constant folding
         exp_str = str(instr.exp).strip()
@@ -1807,15 +1870,9 @@ class SILTranslator:
         target = str(instr.id)
         addr = self._exp_to_str(instr.exp)
 
-        # Check for null dereference
-        check = self._check_null_deref(instr, state, proc_name, addr)
-        if check:
-            checks.append(check)
-
-        # Check for use-after-free
-        if state.is_freed(addr):
-            check = self._create_uaf_check(instr, state, proc_name, addr)
-            checks.append(check)
+        # Use-after-free / null-dereference for this load are raised centrally in
+        # `_lifecycle_deref_checks`, which extracts the base pointer from `addr`
+        # (a Load through `p + i` derefs `p`, not the literal string "p + i").
 
         # Load value and propagate taint
         if addr in state.heap:
@@ -1841,15 +1898,9 @@ class SILTranslator:
         addr = self._exp_to_str(instr.addr)
         value = self._exp_to_str(instr.value)
 
-        # Check for null dereference
-        check = self._check_null_deref(instr, state, proc_name, addr)
-        if check:
-            checks.append(check)
-
-        # Check for use-after-free
-        if state.is_freed(addr):
-            check = self._create_uaf_check(instr, state, proc_name, addr)
-            checks.append(check)
+        # Use-after-free / null-dereference for this store are raised centrally
+        # in `_lifecycle_deref_checks` (see `_exec_load`); a store through
+        # `p + i` derefs the base pointer `p`.
 
         # Update heap
         state.heap[addr] = value
@@ -2593,13 +2644,28 @@ class SILTranslator:
             if spec.is_allocator() and instr.ret:
                 ret_var = str(instr.ret[0])
                 state.mark_allocated(ret_var)
+                # The result lives on the heap, so freeing it later is legitimate.
+                # It is deliberately not recorded as null: a malloc-then-deref is
+                # the ordinary correct idiom and must not read as a null deref.
+                state.heap_origin[ret_var] = "heap"
+                state.null_ptrs.pop(ret_var, None)
                 if self.verbose:
                     print(f"[Translator] Allocation: {ret_var} = {func_name}()")
 
             # Handle memory deallocation (free, delete, etc.)
             if spec.is_deallocator() and len(instr.args) > 0:
                 arg_exp, _ = instr.args[0]
-                freed_var = self._exp_to_str(arg_exp)
+                freed_var = self._sole_var(arg_exp) or self._exp_to_str(arg_exp)
+
+                # Check for free of non-heap memory (CWE-590): the pointer's
+                # storage came from a stack array or the address of a local, so
+                # it was never on the heap and must not be handed to free/delete.
+                if self._is_c_lang and self._is_nonheap_origin(freed_var, state):
+                    check = self._create_invalid_free_check(
+                        instr, state, proc_name, freed_var)
+                    checks.append(check)
+                    if self.verbose:
+                        print(f"[Translator] FREE-NON-HEAP detected: {func_name}({freed_var})")
 
                 # Check for double-free: freeing already freed memory
                 if state.is_freed(freed_var):
@@ -4020,6 +4086,280 @@ class SILTranslator:
             procedure_name=proc_name,
         )
 
+    def _create_invalid_free_check(
+        self,
+        instr: Instr,
+        state: SymbolicState,
+        proc_name: str,
+        addr: str
+    ) -> VulnerabilityCheck:
+        """Create free-of-non-heap-memory check (CWE-590)."""
+        from frame.core.ast import True_
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.INVALID_FREE,
+            location=instr.loc,
+            description=f"Free of non-heap memory: '{addr}' is stack storage, "
+                        f"not a heap allocation",
+            tainted_var=addr,
+            procedure_name=proc_name,
+        )
+
+    def _create_null_deref_check(
+        self,
+        instr: Instr,
+        state: SymbolicState,
+        proc_name: str,
+        addr: str
+    ) -> VulnerabilityCheck:
+        """Create null-pointer-dereference check (CWE-476)."""
+        from frame.core.ast import True_
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.NULL_DEREFERENCE,
+            location=instr.loc,
+            description=f"Null-pointer dereference of '{addr}', which is NULL on "
+                        f"this path",
+            tainted_var=addr,
+            procedure_name=proc_name,
+        )
+
+    # =========================================================================
+    # Heap-lifecycle helpers (CWE-416 / CWE-476 / CWE-590)
+    # =========================================================================
+
+    def _sole_var(self, exp: Exp) -> Optional[str]:
+        """The single variable an expression names, seeing through casts. Returns
+        None for anything that is not a bare (possibly cast) variable."""
+        if isinstance(exp, ExpCast):
+            return self._sole_var(exp.exp)
+        if isinstance(exp, ExpVar):
+            return str(exp.var)
+        return None
+
+    def _is_null_literal(self, exp: Exp) -> bool:
+        """Is the expression a NULL / 0 pointer literal (through any cast)?"""
+        if isinstance(exp, ExpCast):
+            return self._is_null_literal(exp.exp)
+        if isinstance(exp, ExpConst):
+            if exp.value is None:
+                return True
+            return isinstance(exp.value, int) and not isinstance(exp.value, bool) \
+                and exp.value == 0
+        return False
+
+    def _is_nonheap_origin(self, var: str, state: SymbolicState) -> bool:
+        """Is `var`'s storage provably NOT on the heap (a stack array, or the
+        address of a local)? Unknown origins return False -- only a definite
+        stack origin makes freeing it a CWE-590."""
+        if state.heap_origin.get(var) == "stack":
+            return True
+        fixed_arrays = getattr(self._cur_proc, "fixed_array_bounds", {}) or {}
+        return var in fixed_arrays
+
+    def _track_assign_lifecycle(self, instr: Assign, target: str,
+                                state: SymbolicState) -> None:
+        """Update null-ness and storage origin across `target = exp`.
+
+        A reassignment first drops the target's prior lifecycle facts (its old
+        value is gone), then the right-hand side re-establishes them: a null
+        literal makes it null, the address of a local makes it stack storage, and
+        a bare variable propagates the source's facts (this is what carries a
+        lowered `p = malloc(...)`, which the frontend splits into a temp call and
+        `p = $tmp`, onto `p`)."""
+        if not self._is_c_lang:
+            return
+        exp = instr.exp
+        fixed_arrays = getattr(self._cur_proc, "fixed_array_bounds", {}) or {}
+
+        state.null_ptrs.pop(target, None)
+        state.heap_origin.pop(target, None)
+        state.freed.discard(target)
+
+        if target in fixed_arrays:
+            # A fixed local array is stack storage no matter what placeholder
+            # value the frontend binds at its declaration.
+            state.heap_origin[target] = "stack"
+            return
+        if isinstance(exp, ExpUnOp) and exp.op == "&":
+            state.heap_origin[target] = "stack"
+            return
+        if self._is_null_literal(exp):
+            # An explicit `p = NULL` on its own does not fire CWE-476: the value
+            # is almost always overwritten on the live path before any use (the
+            # ubiquitous `T *p; p = NULL; if(cond) p = real; use(p)` idiom), and
+            # firing on the initializer alone produces false positives on correct
+            # code. Null-ness that actually reaches a dereference is established by
+            # a branch that CONFIRMS `p == NULL` (see `_edge_null_vars`), which is
+            # the genuine "dereference after null check" shape of this weakness.
+            return
+        src = self._sole_var(exp)
+        if src is not None:
+            if src in state.null_ptrs:
+                state.null_ptrs[target] = state.null_ptrs[src]
+            if src in state.heap_origin:
+                state.heap_origin[target] = state.heap_origin[src]
+            if src in state.freed:
+                state.freed.add(target)
+
+    def _edge_nonnull_vars(self, edge_exp: Exp, assume_true: bool) -> Set[str]:
+        """Variables a branch edge proves are NOT null.
+
+        `edge_exp` is the branch condition; `assume_true` says which side of the
+        branch this edge takes. `if(p==NULL)` proves p non-null on its false
+        side; `if(p!=NULL)` and `if(p)` prove it on their true side; `if(!p)`
+        proves it on its false side."""
+        if edge_exp is None:
+            return set()
+        # `!e` flips the side.
+        if isinstance(edge_exp, ExpUnOp) and edge_exp.op == "!":
+            return self._edge_nonnull_vars(edge_exp.operand, not assume_true)
+        if isinstance(edge_exp, ExpBinOp) and edge_exp.op in ("==", "!="):
+            for a, b in ((edge_exp.left, edge_exp.right),
+                         (edge_exp.right, edge_exp.left)):
+                if self._is_null_literal(b):
+                    var = self._sole_var(a)
+                    if var is not None:
+                        # p == NULL proves non-null on the FALSE side; p != NULL
+                        # on the TRUE side.
+                        proves = (edge_exp.op == "!=") == assume_true
+                        return {var} if proves else set()
+            return set()
+        # A bare pointer used as a truthiness test: `if(p)` proves non-null on
+        # its true side.
+        var = self._sole_var(edge_exp)
+        if var is not None and assume_true:
+            return {var}
+        return set()
+
+    # Standard C/C++ library functions that never return to the caller. A call
+    # to one ends the current path, so nothing after it on that branch runs.
+    _NORETURN_FUNCS = frozenset({
+        "exit", "_exit", "_Exit", "quick_exit", "abort", "_abort",
+        "longjmp", "siglongjmp", "__assert_fail", "err", "errx",
+    })
+
+    def _is_noreturn_call(self, instr: Instr) -> bool:
+        """Is `instr` a call to a function that never returns (exit/abort/...)?"""
+        if not isinstance(instr, Call):
+            return False
+        name = instr.get_func_name() if hasattr(instr, "get_func_name") else None
+        if name is None:
+            func = getattr(instr, "func", None)
+            if isinstance(func, ExpConst) and isinstance(func.value, str):
+                name = func.value
+        if not name:
+            return False
+        return self._strip_self_receiver(name) in self._NORETURN_FUNCS
+
+    def _edge_null_vars(self, edge_exp: Exp, assume_true: bool) -> Set[str]:
+        """Variables a branch edge proves ARE null. `if(p==NULL)` proves it on
+        its true side, `if(p!=NULL)` on its false side, `if(!p)` on its true
+        side, `if(p)` on its false side. This is the mirror of
+        `_edge_nonnull_vars`."""
+        if edge_exp is None:
+            return set()
+        if isinstance(edge_exp, ExpUnOp) and edge_exp.op == "!":
+            return self._edge_null_vars(edge_exp.operand, not assume_true)
+        if isinstance(edge_exp, ExpBinOp) and edge_exp.op in ("==", "!="):
+            for a, b in ((edge_exp.left, edge_exp.right),
+                         (edge_exp.right, edge_exp.left)):
+                if self._is_null_literal(b):
+                    var = self._sole_var(a)
+                    if var is not None:
+                        proves = (edge_exp.op == "==") == assume_true
+                        return {var} if proves else set()
+            return set()
+        var = self._sole_var(edge_exp)
+        if var is not None and not assume_true:
+            return {var}
+        return set()
+
+    def _deref_base(self, exp: Exp) -> Optional[str]:
+        """The base pointer variable a dereference address reads through.
+
+        `*(p + i)`, `p[i]`, `*p`, `(T*)p`, and `p->f` all dereference `p`, so the
+        base is `p` in every case. Address-of (`&x`) is not a dereference and has
+        no base."""
+        if isinstance(exp, ExpVar):
+            return str(exp.var)
+        if isinstance(exp, ExpCast):
+            return self._deref_base(exp.exp)
+        if isinstance(exp, ExpUnOp):
+            if exp.op == "&":
+                return None
+            return self._deref_base(exp.operand)
+        if isinstance(exp, ExpBinOp):
+            return self._deref_base(exp.left) or self._deref_base(exp.right)
+        if isinstance(exp, ExpIndex):
+            return self._deref_base(exp.base)
+        if isinstance(exp, ExpFieldAccess):
+            return self._deref_base(exp.base)
+        return None
+
+    def _walk_exp(self, exp: Exp):
+        """Yield `exp` and every sub-expression, depth first."""
+        if not isinstance(exp, Exp):
+            return
+        yield exp
+        for child in vars(exp).values():
+            if isinstance(child, Exp):
+                yield from self._walk_exp(child)
+            elif isinstance(child, (list, tuple)):
+                for item in child:
+                    if isinstance(item, Exp):
+                        yield from self._walk_exp(item)
+                    elif isinstance(item, tuple):
+                        for sub in item:
+                            if isinstance(sub, Exp):
+                                yield from self._walk_exp(sub)
+
+    def _iter_deref_bases(self, instr: Instr) -> Dict[str, object]:
+        """Base pointer variables dereferenced by this instruction, mapped to the
+        instruction location. Covers Store/Load addresses plus `*p`, `p[i]`, and
+        `p->f` appearing anywhere in the instruction's expressions (a call
+        argument, an assignment value, a return expression)."""
+        bases: Dict[str, object] = {}
+
+        def add(e):
+            b = self._deref_base(e)
+            if b:
+                bases.setdefault(b, instr.loc)
+
+        if isinstance(instr, Store):
+            add(instr.addr)
+        if isinstance(instr, Load):
+            add(instr.exp)
+        for exp in self._iter_instr_exps(instr):
+            for sub in self._walk_exp(exp):
+                if isinstance(sub, ExpUnOp) and sub.op == "*":
+                    add(sub.operand)
+                elif isinstance(sub, ExpIndex):
+                    add(sub.base)
+                elif isinstance(sub, ExpFieldAccess) and sub.is_arrow:
+                    add(sub.base)
+        return bases
+
+    def _lifecycle_deref_checks(
+        self,
+        instr: Instr,
+        state: SymbolicState,
+        proc_name: str
+    ) -> List[VulnerabilityCheck]:
+        """CWE-416 (use of a freed pointer) and CWE-476 (dereference of a pointer
+        that is NULL on this path), raised for every dereference the instruction
+        performs. C/C++ only: other frontends have no free and no raw deref."""
+        checks: List[VulnerabilityCheck] = []
+        if not self._is_c_lang:
+            return checks
+        for base in self._iter_deref_bases(instr):
+            if base in state.freed:
+                checks.append(self._create_uaf_check(instr, state, proc_name, base))
+            elif base in state.null_ptrs:
+                checks.append(
+                    self._create_null_deref_check(instr, state, proc_name, base))
+        return checks
+
     # =========================================================================
     # Helpers
     # =========================================================================
@@ -4390,6 +4730,19 @@ class SILTranslator:
 
         # Freed: union (freed in either path)
         merged.freed = s1.freed | s2.freed
+
+        # Null pointers: intersection. A var is DEFINITELY null after the join
+        # only if it was null on both incoming paths; if either path gave it a
+        # real value the join is not a provable null, so we must not fire.
+        for v in set(s1.null_ptrs) & set(s2.null_ptrs):
+            merged.null_ptrs[v] = s1.null_ptrs[v]
+
+        # Heap origin: keep only origins the two paths agree on. A var reaching a
+        # free with different origins on different paths has no single provable
+        # origin, so CWE-590 stays silent (precision over recall).
+        for v in set(s1.heap_origin) & set(s2.heap_origin):
+            if s1.heap_origin[v] == s2.heap_origin[v]:
+                merged.heap_origin[v] = s1.heap_origin[v]
 
         # Asserted safe: intersection
         for var in set(s1.asserted_safe.keys()) & set(s2.asserted_safe.keys()):

@@ -1,21 +1,41 @@
-"""
-Test cases for improved CWE-476 NULL Pointer Dereference detection.
+"""CWE-476 NULL pointer dereference: the structural, precision-first contract.
 
-Tests the enhanced detection in interprocedural_analyzer.py:
-1. No false positives on type declarations
-2. Detection of pointers from NULL-returnable functions
-3. Proper NULL check scope tracking
+CWE-476 detection moved off the line-regex that used to live in
+`interprocedural_analyzer.py` and onto the separation-logic translator, which
+reasons over the SIL/CFG. The regex fired on every dereference of an
+unchecked allocation, which is the ordinary correct C idiom, so it produced
+false positives on correct code (a `malloc; use; free` sequence looks identical
+at the dereference to a `malloc; use` one). The structural detector instead
+fires only where the pointer is PROVABLY null on the path: a branch that
+confirms `p == NULL` guarding the dereference, the classic "dereference after
+null check" shape of this weakness.
+
+The obligations these tests pin down, precision weighted heaviest:
+
+* an unchecked allocation that is dereferenced is NOT reported (it is the
+  common correct idiom, and flagging it would flag correct code),
+* a dereference guarded by a null check (`if(p)`, `if(p != NULL)`) is NOT
+  reported,
+* a pointer proved null by the guard it sits under and then dereferenced IS
+  reported,
+* a type declaration is never mistaken for a dereference.
 """
 
 import pytest
 from frame.sil.analyzers.interprocedural_analyzer import analyze_interprocedural
+from frame.sil.scanner import scan_code
+
+
+def _cwe476(code, language="c"):
+    result = scan_code(code, language=language, filename="t.c")
+    return [v for v in result.vulnerabilities if v.cwe_id == "CWE-476"]
 
 
 class TestCWE476TypeDeclarations:
-    """Test that type declarations don't trigger false positives."""
+    """A pointer type declaration is not a dereference."""
 
     def test_no_fp_basic_type_declaration(self):
-        """int *ptr should not trigger CWE-476."""
+        """`int *ptr` must not read as a dereference of ptr."""
         code = '''
 void foo() {
     int *ptr;
@@ -25,13 +45,10 @@ void foo() {
     }
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should not report the declaration as a dereference
-        assert all("type declaration" not in v.description.lower() for v in cwe476_vulns)
+        assert _cwe476(code) == []
 
     def test_no_fp_struct_type_declaration(self):
-        """struct Node *ptr should not trigger CWE-476."""
+        """`struct Node *ptr` under a null check is clean."""
         code = '''
 struct Node {
     int data;
@@ -45,14 +62,10 @@ void foo() {
     }
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Type declarations should not be flagged
-        for v in cwe476_vulns:
-            assert "struct Node" not in v.description
+        assert _cwe476(code) == []
 
     def test_no_fp_typedef_declaration(self):
-        """TypeName *ptr should not trigger CWE-476."""
+        """A typedef pointer declaration under a null check is clean."""
         code = '''
 typedef struct { int x; } Point;
 void foo() {
@@ -62,61 +75,54 @@ void foo() {
     }
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should not have false positives on typedef declarations
-        assert len(cwe476_vulns) == 0
+        assert _cwe476(code) == []
 
 
-class TestCWE476NullReturnableFunctions:
-    """Test detection of pointers from functions that can return NULL."""
+class TestCWE476PrecisionOnUncheckedUse:
+    """Dereferencing an unchecked allocation is the common correct idiom and is
+    deliberately NOT reported: it cannot be told apart from correct code (a
+    `malloc; use; free` sequence dereferences identically), so firing on it would
+    fire on correct programs. Recall is traded for precision here on purpose."""
 
-    def test_fopen_null_dereference(self):
-        """fopen can return NULL, so using result without check is CWE-476."""
+    def test_malloc_no_check_is_not_flagged(self):
+        """`malloc` then use without a null check: no CWE-476 (would flag
+        correct code, which dereferences a fresh allocation the same way)."""
         code = '''
-void process_file() {
-    FILE *fp = fopen("test.txt", "r");
-    fread(buffer, 1, 100, fp);
+void f() {
+    int *data = malloc(sizeof(int) * 100);
+    data[0] = 42;
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should detect potential NULL dereference of fp
-        assert any(v.var_name == "fp" for v in cwe476_vulns)
+        assert _cwe476(code) == []
 
-    def test_strstr_null_dereference(self):
-        """strstr can return NULL if substring not found."""
+    def test_arrow_dereference_no_check_is_not_flagged(self):
+        """An arrow dereference of an unchecked allocation is not reported."""
         code = '''
-void find_and_modify(char *haystack, char *needle) {
+struct Node { int value; };
+void f() {
+    struct Node *node = malloc(sizeof(struct Node));
+    node->value = 10;
+}
+'''
+        assert _cwe476(code) == []
+
+    def test_nullable_return_deref_is_not_flagged(self):
+        """A dereference of a NULL-returnable call result (strstr) without a
+        check is not reported: same precision trade as an unchecked malloc."""
+        code = '''
+void f(char *haystack, char *needle) {
     char *result = strstr(haystack, needle);
     *result = 'X';
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should detect potential NULL dereference
-        assert any(v.var_name == "result" for v in cwe476_vulns)
-
-    def test_getenv_null_dereference(self):
-        """getenv can return NULL if env var not set."""
-        code = '''
-void check_env() {
-    char *home = getenv("HOME");
-    printf("Home: %s\n", home);
-    int len = strlen(home);
-}
-'''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should detect potential NULL dereference of home
-        assert any(v.var_name == "home" for v in cwe476_vulns)
+        assert _cwe476(code) == []
 
 
 class TestCWE476NullCheckScope:
-    """Test that NULL checks properly suppress detection."""
+    """A dereference guarded by a null check is clean."""
 
     def test_null_check_suppresses_detection(self):
-        """if (ptr != NULL) should suppress detection inside block."""
+        """`if (ptr != NULL)` protects the dereferences inside it."""
         code = '''
 void safe_use() {
     char *ptr = malloc(100);
@@ -126,13 +132,10 @@ void safe_use() {
     }
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # NULL-checked variable should not be flagged
-        assert len(cwe476_vulns) == 0
+        assert _cwe476(code) == []
 
     def test_truthiness_check_suppresses(self):
-        """if (ptr) should also suppress detection."""
+        """`if (ptr)` protects the dereference inside it."""
         code = '''
 void safe_use() {
     char *ptr = malloc(100);
@@ -141,58 +144,48 @@ void safe_use() {
     }
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Truthiness check should also suppress
-        assert len(cwe476_vulns) == 0
+        assert _cwe476(code) == []
 
-    def test_null_check_in_condition(self):
-        """ptr != NULL in complex condition should suppress."""
+    def test_early_return_guard_suppresses(self):
+        """`if(!p) return;` proves p non-null afterwards, so the later
+        dereference is clean."""
         code = '''
 void safe_use() {
     char *ptr = malloc(100);
-    if (ptr != NULL && strlen(ptr) > 0) {
-        *ptr = 'a';
-    }
+    if (!ptr) return;
+    *ptr = 'a';
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Condition includes NULL check, should suppress
-        assert len(cwe476_vulns) == 0
+        assert _cwe476(code) == []
 
 
 class TestCWE476TruePositives:
-    """Test that true vulnerabilities are detected."""
+    """A pointer proved null on the path and then dereferenced is CWE-476."""
 
-    def test_malloc_no_check(self):
-        """malloc result used without NULL check is vulnerable."""
+    def test_deref_confirmed_null(self):
+        """Dereference inside `if(p == NULL)` -- the pointer is provably null on
+        exactly the path that dereferences it."""
         code = '''
-void vulnerable() {
+void f() {
+    int *p = 0;
+    if (p == NULL) {
+        int x = *p;
+    }
+}
+'''
+        assert len(_cwe476(code)) > 0
+
+    def test_regex_layer_no_longer_emits_cwe476(self):
+        """The retired line-regex in interprocedural_analyzer no longer emits any
+        CWE-476; the structural translator owns this weakness now."""
+        code = '''
+void f() {
     int *data = malloc(sizeof(int) * 100);
     data[0] = 42;
 }
 '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should detect NULL dereference
-        assert len(cwe476_vulns) > 0
-        assert any(v.var_name == "data" for v in cwe476_vulns)
-
-    def test_arrow_dereference_no_check(self):
-        """Arrow operator on unchecked pointer is vulnerable."""
-        code = '''
-struct Node { int value; };
-void vulnerable() {
-    struct Node *node = malloc(sizeof(struct Node));
-    node->value = 10;
-}
-'''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe476_vulns = [v for v in vulns if v.cwe_id == "CWE-476"]
-        # Should detect arrow dereference without NULL check
-        assert len(cwe476_vulns) > 0
-        assert any(v.var_name == "node" for v in cwe476_vulns)
+        vulns = analyze_interprocedural(code, "t.c")
+        assert [v for v in vulns if v.cwe_id == "CWE-476"] == []
 
 
 if __name__ == "__main__":

@@ -368,36 +368,16 @@ class SLMemoryAnalyzer:
         if var_name in self.heap:
             region = self.heap[var_name]
 
-            # Check for CWE-590: Freeing stack-allocated memory
+            # CWE-590 (free of non-heap memory) and CWE-415 (double free) are now
+            # raised structurally in the translator over the SIL/CFG; the emission
+            # that used to live here is retired to avoid duplicate reporting. The
+            # freed-state transition is still maintained so the rest of this pass
+            # stays consistent.
             if region.alloc_kind == AllocKind.STACK:
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,  # Use DOUBLE_FREE as closest type
-                    cwe_id="CWE-590",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Free of non-heap memory: '{var_name}' is stack-allocated at line {region.alloc_loc.line if region.alloc_loc else '?'}",
-                    alloc_loc=region.alloc_loc,
-                    confidence=0.95,
-                ))
-                if self.verbose:
-                    print(f"[SL] FREE NON-HEAP: {var_name} at line {loc.line}")
                 return  # Don't update state for invalid free
 
-            # Check for double-free using separation logic reasoning
-            # If ptr is already freed, heap doesn't entail ptr |-> _
             if region.state == HeapState.FREED:
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id="CWE-415",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Double free: '{var_name}' already freed at line {region.free_loc.line if region.free_loc else '?'}. Heap ⊬ {var_name} |-> _",
-                    alloc_loc=region.alloc_loc,
-                    free_loc=region.free_loc,
-                    confidence=0.95,
-                ))
-                if self.verbose:
-                    print(f"[SL] DOUBLE FREE: {var_name} at line {loc.line}")
+                pass
             else:
                 # Valid free - update heap state
                 # In SL: remove ptr |-> val from heap formula
@@ -450,20 +430,9 @@ class SLMemoryAnalyzer:
                         if f'if ({var_name})' in line or f'if({var_name})' in line:
                             continue
 
-                        # Use-after-free detected!
-                        # In SL terms: heap ⊬ ptr |-> _ (ptr is not valid)
-                        self._add_vuln(MemoryVuln(
-                            vuln_type=VulnType.USE_AFTER_FREE,
-                            cwe_id="CWE-416",
-                            location=loc,
-                            var_name=var_name,
-                            description=f"Use after free: '{var_name}' freed at line {region.free_loc.line if region.free_loc else '?'}. Heap ⊬ {var_name} |-> _",
-                            alloc_loc=region.alloc_loc,
-                            free_loc=region.free_loc,
-                            confidence=0.90,
-                        ))
-                        if self.verbose:
-                            print(f"[SL] UAF: {var_name} at line {loc.line} (freed at {region.free_loc.line if region.free_loc else '?'})")
+                        # CWE-416 (use after free) is now raised structurally in
+                        # the translator over the SIL/CFG; the emission that used
+                        # to live here is retired to avoid duplicate reporting.
                         break
 
     def _check_assignment(self, line: str, loc: Location):

@@ -2203,208 +2203,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                             confidence=0.75,
                         ))
 
-        # =====================================================================
-        # CWE-476: NULL Pointer Dereference (Enhanced Detection)
-        # =====================================================================
-
-        # Track brace depth for scope-sensitive NULL check tracking
-        open_braces = stripped.count('{')
-        close_braces = stripped.count('}')
-        current_brace_depth += open_braces - close_braces
-
-        # Check if we're exiting a NULL check block
-        if in_null_check_block and current_brace_depth < null_check_block_depth:
-            in_null_check_block = False
-            null_check_scope_vars.clear()
-
-        # Track assignments from NULL-returnable functions
-        for func_name in NULL_RETURNABLE_FUNCS:
-            nullable_match = re.search(rf'(\w+)\s*=\s*(?:\([^)]*\)\s*)?{func_name}\s*\(', stripped)
-            if nullable_match:
-                var = nullable_match.group(1)
-                nullable_vars[var] = line_num
-                allocated_vars[var] = line_num  # Also track as allocated
-
-        alloc_match = re.search(r'(\w+)\s*=\s*(?:malloc|calloc|realloc)\s*\(', stripped)
-        if alloc_match:
-            allocated_vars[alloc_match.group(1)] = line_num
-
-        # Track explicit NULL checks: if (ptr != NULL), if (ptr == NULL), if (ptr), if (!ptr)
-        null_check_match = re.search(r'if\s*\(\s*(\w+)\s*(?:[!=]=\s*(?:NULL|nullptr|0)\s*)?\)', stripped)
-        if null_check_match:
-            var = null_check_match.group(1)
-            null_checked_vars.add(var)
-            # If this is "if (ptr != NULL)" followed by {, vars inside are protected
-            if re.search(rf'if\s*\(\s*{var}\s*(?:!=\s*(?:NULL|nullptr|0))?\s*\)\s*\{{', stripped):
-                null_check_scope_vars.add(var)
-                in_null_check_block = True
-                null_check_block_depth = current_brace_depth
-
-        # Also track NULL checks in conditions: ptr != NULL && ...
-        null_cond_match = re.search(r'(\w+)\s*[!=]=\s*(?:NULL|nullptr|0)', stripped)
-        if null_cond_match:
-            null_checked_vars.add(null_cond_match.group(1))
-
-        # Track negated NULL checks: if (!ptr)
-        negated_check = re.search(r'if\s*\(\s*!\s*(\w+)\s*\)', stripped)
-        if negated_check:
-            null_checked_vars.add(negated_check.group(1))
-
-        # Track early exit guards: if (ptr == NULL) { exit(-1); } or { return; } etc.
-        # After such a guard, ptr is proven non-NULL for the rest of the function
-        early_exit_guard = re.search(r'if\s*\(\s*(\w+)\s*==\s*(?:NULL|nullptr|0)\s*\)\s*\{?\s*(?:exit|return|abort|_exit|longjmp|goto|throw)\b', stripped)
-        if early_exit_guard:
-            var = early_exit_guard.group(1)
-            null_checked_vars.add(var)
-            # This is a permanent guard - don't scope it
-            null_check_scope_vars.add(var)
-
-        # Helper function to check if a dereference is actually a type declaration
-        def is_type_declaration(var_name: str, line: str) -> bool:
-            """Check if *var is a type declaration, not a dereference."""
-            type_patterns = [
-                # Basic types with modifiers
-                rf'(?:const\s+|volatile\s+|static\s+|extern\s+)*(?:unsigned\s+|signed\s+)?(?:char|short|int|long|float|double|void)\s+\*+\s*{var_name}\b',
-                # Struct/union/enum types
-                rf'(?:struct|union|enum)\s+\w+\s+\*+\s*{var_name}\b',
-                # Typedef names (capitalized or ending with _t)
-                rf'\b[A-Z]\w*\s+\*+\s*{var_name}\b',
-                rf'\b\w+_t\s+\*+\s*{var_name}\b',
-                # Function return type in declaration
-                rf'^\s*\w+\s+\*+\s*{var_name}\s*\(',
-                # Cast expression: (type *)var or (type*)var
-                rf'\(\s*\w+\s*\*+\s*\)\s*{var_name}',
-                # Pointer-to-pointer declarations
-                rf'\w+\s+\*+\s*\*+\s*{var_name}\b',
-                # Parameter declarations: func(int *var)
-                rf'\(\s*(?:\w+\s+)*\w+\s+\*+\s*{var_name}\s*[,)]',
-            ]
-            for pattern in type_patterns:
-                if re.search(pattern, line):
-                    return True
-            return False
-
-        # Helper function to check if var is protected by NULL check
-        def is_null_protected(var_name: str) -> bool:
-            """Check if variable is protected by a NULL check."""
-            if var_name in null_checked_vars:
-                return True
-            if in_null_check_block and var_name in null_check_scope_vars:
-                return True
-            return False
-
-        # Detect pointer dereferences: *ptr, ptr->field, ptr[index]
-        # Pattern 1: Direct dereference *ptr (but not type declarations)
-        deref_match = re.search(r'(?<![a-zA-Z_\d])\*\s*(\w+)', stripped)
-        if deref_match:
-            var = deref_match.group(1)
-            # Skip type declarations and casts
-            if not is_type_declaration(var, stripped):
-                # Check if this is a nullable var that hasn't been NULL-checked
-                if var in nullable_vars and not is_null_protected(var):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.NULL_DEREFERENCE,
-                        cwe_id="CWE-476",
-                        location=loc,
-                        var_name=var,
-                        description=f"Dereference of '{var}' without NULL check (may be NULL from function return)",
-                        confidence=0.8,
-                    ))
-                # Only check C-style allocations (malloc/calloc/realloc) which can return NULL
-                # C++ new throws std::bad_alloc instead of returning NULL
-                elif var in c_style_allocs and not is_null_protected(var):
-                    if line_num - c_style_allocs[var] <= 10:
-                        vulns.append(MemoryVuln(
-                            vuln_type=VulnType.NULL_DEREFERENCE,
-                            cwe_id="CWE-476",
-                            location=loc,
-                            var_name=var,
-                            description=f"Dereference of '{var}' without NULL check after allocation",
-                            confidence=0.7,
-                        ))
-
-        # Pattern 2: Arrow dereference ptr->field
-        arrow_match = re.search(r'(\w+)\s*->', stripped)
-        if arrow_match:
-            var = arrow_match.group(1)
-            # Skip if this is 'this->' in C++
-            if var != 'this':
-                if var in nullable_vars and not is_null_protected(var):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.NULL_DEREFERENCE,
-                        cwe_id="CWE-476",
-                        location=loc,
-                        var_name=var,
-                        description=f"Arrow dereference of '{var}' without NULL check (may be NULL from function return)",
-                        confidence=0.8,
-                    ))
-                # Only check C-style allocations which can return NULL
-                elif var in c_style_allocs and not is_null_protected(var):
-                    if line_num - c_style_allocs[var] <= 10:
-                        vulns.append(MemoryVuln(
-                            vuln_type=VulnType.NULL_DEREFERENCE,
-                            cwe_id="CWE-476",
-                            location=loc,
-                            var_name=var,
-                            description=f"Arrow dereference of '{var}' without NULL check after allocation",
-                            confidence=0.7,
-                        ))
-
-        # Pattern 3: Array subscript on pointer ptr[index]
-        subscript_match = re.search(r'(\w+)\s*\[[^\]]+\]', stripped)
-        if subscript_match:
-            var = subscript_match.group(1)
-            # Exclude common non-pointer array names
-            if var not in {'argv', 'envp', 'args', 'i', 'j', 'k', 'n', 'len', 'size', 'count', 'index'}:
-                if var in nullable_vars and not is_null_protected(var):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.NULL_DEREFERENCE,
-                        cwe_id="CWE-476",
-                        location=loc,
-                        var_name=var,
-                        description=f"Array access on '{var}' without NULL check (may be NULL from function return)",
-                        confidence=0.75,
-                    ))
-
-        # Pattern 4: Passing nullable pointer to functions that will dereference it
-        # Functions like fread, fwrite, fgets, strlen, strcpy expect non-NULL pointers
-        dereferencing_funcs = [
-            # File I/O functions
-            'fread', 'fwrite', 'fgets', 'fputs', 'fprintf', 'fscanf',
-            'fgetc', 'fputc', 'fseek', 'ftell', 'rewind', 'fflush',
-            'feof', 'ferror', 'clearerr', 'fileno',
-            # String functions
-            'strlen', 'strcpy', 'strncpy', 'strcat', 'strncat', 'strcmp', 'strncmp',
-            'strchr', 'strrchr', 'strstr', 'strtok', 'strtol', 'strtod',
-            # Memory functions
-            'memcpy', 'memmove', 'memset', 'memcmp', 'memchr',
-            # Printing functions
-            'printf', 'sprintf', 'snprintf', 'puts', 'fputs',
-            # Other common functions
-            'free', 'realloc',
-        ]
-        for func in dereferencing_funcs:
-            # Look for function call with nullable var as argument
-            func_call_pattern = rf'\b{func}\s*\([^)]*\b(\w+)\b'
-            func_match = re.search(func_call_pattern, stripped)
-            if func_match:
-                # Get all argument variables in the function call
-                args_match = re.search(rf'\b{func}\s*\(([^)]*)\)', stripped)
-                if args_match:
-                    args_str = args_match.group(1)
-                    # Extract all variable names from arguments
-                    arg_vars = re.findall(r'\b([a-zA-Z_]\w*)\b', args_str)
-                    for arg_var in arg_vars:
-                        if arg_var in nullable_vars and not is_null_protected(arg_var):
-                            vulns.append(MemoryVuln(
-                                vuln_type=VulnType.NULL_DEREFERENCE,
-                                cwe_id="CWE-476",
-                                location=loc,
-                                var_name=arg_var,
-                                description=f"Passing potentially NULL pointer '{arg_var}' to {func}() which dereferences it",
-                                confidence=0.75,
-                            ))
-                            break  # Only report once per function call
+        # CWE-476 (NULL pointer dereference) is now detected structurally over the
+        # SIL/CFG in the translator (provable-null: an explicit NULL/0 assignment
+        # or a branch that confirms == NULL, dereferenced before any reassignment
+        # or non-null narrowing). The line-regex that used to live here fired on
+        # every unchecked-malloc dereference, which is the ordinary correct C
+        # idiom, so it produced false positives on correct code and is retired.
 
         # =====================================================================
         # CWE-190: Integer Overflow - Arithmetic on unchecked values
@@ -3258,29 +3062,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         free_match = re.search(r'\b(?:free|delete(?:\s*\[\])?)\s*\(?\s*(\w+)', stripped)
         if free_match:
             var = free_match.group(1)
-            # Semantic check: has this variable been freed before without reassignment?
-            if var in freed_vars:
-                # FP reduction: Check if variable was reassigned between frees
-                prev_free_line = freed_vars[var]
-                was_reassigned = False
-                for check_idx in range(prev_free_line, line_num - 1):
-                    if check_idx < len(lines):
-                        check_line = lines[check_idx]
-                        # Check for assignment: var = something
-                        if re.search(rf'\b{re.escape(var)}\s*=\s*[^=]', check_line):
-                            was_reassigned = True
-                            break
-                if not was_reassigned:
-                    # Double free - this variable was already freed and not reassigned
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.DOUBLE_FREE,
-                        cwe_id="CWE-415",
-                        location=loc,
-                        var_name=var,
-                        description=f"Double free - '{var}' freed again after line {freed_vars[var]}",
-                        confidence=0.9,
-                    ))
-            # Track this free
+            # CWE-415 (double free) is now raised structurally in the translator,
+            # which tracks the freed set over the CFG rather than scanning source
+            # lines. Only the free-tracking that the CWE-762 mismatch check below
+            # needs is kept here.
             freed_vars[var] = line_num
 
             # =====================================================================
@@ -3317,50 +3102,11 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                         confidence=0.95,
                     ))
 
-        # =====================================================================
-        # CWE-416: Use After Free
-        # =====================================================================
-        # Check if any freed variable is being used (dereferenced, passed to function, etc.)
-        for var, free_line in list(freed_vars.items()):
-            if line_num > free_line:
-                # Check for dereference of freed variable
-                if re.search(rf'\*\s*{var}\b', stripped) or \
-                   re.search(rf'{var}\s*\[', stripped) or \
-                   re.search(rf'{var}\s*->', stripped):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.USE_AFTER_FREE,
-                        cwe_id="CWE-416",
-                        location=loc,
-                        var_name=var,
-                        description=f"Use after free - '{var}' used after being freed at line {free_line}",
-                        confidence=0.85,
-                    ))
-                # Check for passing freed variable to function (but not free/delete)
-                if re.search(rf'\w+\s*\(\s*{var}\s*[,)]', stripped) and \
-                   not re.search(rf'\b(?:free|delete)\s*\(?\s*{var}', stripped):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.USE_AFTER_FREE,
-                        cwe_id="CWE-416",
-                        location=loc,
-                        var_name=var,
-                        description=f"Use after free - '{var}' passed to function after being freed",
-                        confidence=0.8,
-                    ))
-
-        # =====================================================================
-        # CWE-590: Free of Memory Not on Heap
-        # =====================================================================
-        if free_match:
-            var = free_match.group(1)
-            if var in stack_allocated_vars:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INVALID_FREE,
-                    cwe_id="CWE-590",
-                    location=loc,
-                    var_name=var,
-                    description=f"Free of stack memory - '{var}' was allocated with alloca at line {stack_allocated_vars[var]}",
-                    confidence=0.95,
-                ))
+        # CWE-416 (use after free) and CWE-590 (free of non-heap memory) are now
+        # raised structurally in the translator: CWE-416 from the freed set at
+        # every dereference over the CFG, CWE-590 from the freed pointer's tracked
+        # storage origin. The single-function line-regex that used to live here is
+        # retired in favour of that CFG-level reasoning.
 
         # =====================================================================
         # CWE-562: Return of Stack Variable Address
@@ -3607,36 +3353,11 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 confidence=0.85,
             ))
 
-        # =====================================================================
-        # CWE-476: NULL Pointer Dereference (enhanced)
-        # =====================================================================
-        # Semantic check: dereference of NULL-assigned variable without reassignment
-        for var, null_line in null_assigned_vars.items():
-            if line_num > null_line:
-                # Semantic check: was variable checked for NULL or reassigned?
-                if var not in null_checked_vars:
-                    # FP reduction: Check if variable was reassigned between null assign and here
-                    was_reassigned = False
-                    for check_line in lines[null_line:line_num-1]:
-                        # Check for assignment: var = something_not_null
-                        if re.search(rf'\b{re.escape(var)}\s*=\s*[^=;]+[^=;]', check_line):
-                            # But not var = NULL or var = 0
-                            if not re.search(rf'{re.escape(var)}\s*=\s*(?:NULL|nullptr|0)\s*;', check_line):
-                                was_reassigned = True
-                                break
-                    if was_reassigned:
-                        continue
-                    if re.search(rf'\*\s*{var}\b', stripped) or \
-                       re.search(rf'{var}\s*\[', stripped) or \
-                       re.search(rf'{var}\s*->', stripped):
-                        vulns.append(MemoryVuln(
-                            vuln_type=VulnType.NULL_DEREFERENCE,
-                            cwe_id="CWE-476",
-                            location=loc,
-                            var_name=var,
-                            description=f"NULL pointer dereference - '{var}' set to NULL at line {null_line} and dereferenced without check",
-                            confidence=0.85,
-                        ))
+        # CWE-476 (dereference of a NULL-assigned variable) is handled structurally
+        # in the translator; the line-regex that used to live here is retired. It
+        # also missed the classic case it was meant for -- a deref inside an
+        # `if (p == NULL)` block -- because it treated any `== NULL` test as a
+        # protecting check, so removing it loses no real detection.
 
         # =====================================================================
         # CWE-401: Memory Leak tracking - Semantic analysis

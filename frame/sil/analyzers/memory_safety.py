@@ -230,20 +230,11 @@ class MemorySafetyAnalyzer:
         if var_name in self.memory_regions:
             region = self.memory_regions[var_name]
 
-            # Double-free: heap ⊬ ptr |-> _ (already freed)
+            # CWE-415 (double free) is now raised structurally in the translator
+            # over the SIL/CFG; the emission that used to live here is retired to
+            # avoid duplicate reporting. The freed-state transition is kept.
             if region.state == MemoryState.FREED:
-                self._add_vuln(MemoryVulnerability(
-                    vuln_type=VulnType.DOUBLE_FREE,
-                    cwe_id="CWE-415",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Double free: '{var_name}' already freed at line {region.free_location.line if region.free_location else '?'}",
-                    alloc_location=region.alloc_location,
-                    free_location=region.free_location,
-                    confidence=0.95,
-                ))
-                if self.verbose:
-                    print(f"[SL] DOUBLE FREE: heap ⊬ {var_name} |-> _ at line {loc.line}")
+                pass
             else:
                 # Valid free - update state to FREED (remove from heap formula)
                 region.state = MemoryState.FREED
@@ -277,18 +268,9 @@ class MemorySafetyAnalyzer:
                         if f'delete {var_name}' in line or f'delete[] {var_name}' in line:
                             continue
 
-                        self._add_vuln(MemoryVulnerability(
-                            vuln_type=VulnType.USE_AFTER_FREE,
-                            cwe_id="CWE-416",
-                            location=loc,
-                            var_name=var_name,
-                            description=f"Use after free: '{var_name}' freed at line {region.free_location.line if region.free_location else '?'}",
-                            alloc_location=region.alloc_location,
-                            free_location=region.free_location,
-                            confidence=0.90,
-                        ))
-                        if self.verbose:
-                            print(f"[SL] USE AFTER FREE: heap ⊬ {var_name} |-> _ at line {loc.line}")
+                        # CWE-416 (use after free) is now raised structurally in
+                        # the translator over the SIL/CFG; the emission that used
+                        # to live here is retired to avoid duplicate reporting.
                         break
 
     def _check_null_assignment(self, line: str, loc: Location):
