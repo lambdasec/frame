@@ -2159,29 +2159,15 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     ))
                     break  # Only report once per line
 
-        # =====================================================================
-        # CWE-252: Unchecked Return Value
-        # =====================================================================
-        # Functions whose return value indicates success/failure that should be checked.
-        # We look for standalone function calls (not assigned to a variable).
-
-        security_critical_funcs = [
-            'setuid', 'seteuid', 'setreuid', 'setresuid',
-            'setgid', 'setegid', 'setregid', 'setresgid',
-            'chroot', 'chdir', 'fchdir',
-            'setrlimit', 'initgroups', 'setgroups',
-        ]
-        for func in security_critical_funcs:
-            # Match standalone calls like: setuid(0); but NOT x = setuid(0);
-            if re.search(rf'^\s*{func}\s*\([^)]*\)\s*;', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.UNCHECKED_RETURN,
-                    cwe_id="CWE-252",
-                    location=loc,
-                    var_name=func,
-                    description=f"Unchecked return value of security-critical function: {func}()",
-                    confidence=0.85,
-                ))
+        # CWE-252 (unchecked privilege-drop result) is intentionally NOT matched
+        # here. A line regex over `stripped` cannot see the canonical idiom
+        # `setuid(getuid())` (the inner parenthesis ends the match early), and it
+        # fires on every ordinary `unlink()`/`close()` in a cleanup path. The
+        # sound detector lives in translator._unchecked_return_checks: it fires on
+        # a Call with no destination whose spec sets `return_must_be_checked`,
+        # which the spec tables restrict to the privilege-management family. That
+        # reasons over the IR, so the call nesting and the formatting cannot
+        # defeat it and ordinary POSIX calls are never flagged.
 
         # =====================================================================
         # CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition
@@ -3880,37 +3866,14 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 if verbose:
                     print(f"[CWE-457] VULN: {description}")
 
-        # =====================================================================
-        # CWE-252/253: Unchecked Return Value
-        # =====================================================================
-        # Pattern 1: Function call without capturing return value
-        # Security-critical functions that should have their return checked
-        security_return_funcs = [
-            'malloc', 'calloc', 'realloc', 'strdup', 'strndup',
-            'fopen', 'fdopen', 'freopen', 'popen', 'tmpfile',
-            'socket', 'accept', 'bind', 'connect', 'listen',
-            'open', 'creat', 'read', 'write', 'close',
-            'pthread_create', 'pthread_mutex_lock', 'pthread_mutex_unlock',
-            'fork', 'execve', 'execl', 'execlp', 'execle', 'execv', 'execvp',
-            'setuid', 'setgid', 'seteuid', 'setegid', 'setreuid', 'setregid',
-            'chown', 'chmod', 'chdir', 'chroot', 'mkdir', 'rmdir', 'unlink',
-            'CreateFile', 'CreateFileA', 'CreateFileW',
-            'OpenProcess', 'OpenThread', 'VirtualAlloc', 'VirtualProtect',
-            'RegOpenKey', 'RegOpenKeyEx', 'RegCreateKey', 'RegCreateKeyEx',
-            'CryptAcquireContext', 'CryptGenRandom',
-        ]
-        for func in security_return_funcs:
-            # Pattern: func(args); on its own line (return value discarded)
-            unchecked_pattern = rf'^\s*{func}\s*\([^)]*\)\s*;'
-            if re.match(unchecked_pattern, stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.UNCHECKED_RETURN,
-                    cwe_id="CWE-252",
-                    location=loc,
-                    var_name=func,
-                    description=f"Unchecked return value - {func}() return not checked",
-                    confidence=0.8,
-                ))
+        # CWE-252 is intentionally NOT matched by a line regex over a broad
+        # function list. `malloc`, `read`, `close`, `unlink`, `mkdir` and the
+        # rest fail routinely and their result is ignored in correct code all the
+        # time, so a rule that fires on a bare call is a false-positive machine
+        # rather than a detector. The sound rule is
+        # translator._unchecked_return_checks, which fires only on the
+        # privilege-management family (via the `return_must_be_checked` spec) and
+        # only when the IR shows the result has no destination at all.
 
         # =====================================================================
         # CWE-256: Plaintext Storage of Password

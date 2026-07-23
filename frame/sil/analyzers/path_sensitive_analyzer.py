@@ -222,9 +222,6 @@ class PathSensitiveAnalyzer:
             # Check for memory leaks at function exit
             self._check_memory_leaks(filename, body)
 
-            # Check for unchecked return values
-            self._check_unchecked_returns(filename, body)
-
     def _get_function_name(self, func_node: Any) -> str:
         """Extract function name."""
         declarator = self._find_child(func_node, 'function_declarator')
@@ -887,23 +884,12 @@ class PathSensitiveAnalyzer:
                     sl_check=f"{var} |-> _ at function_exit"
                 ))
 
-    def _check_unchecked_returns(self, filename: str, body: Any):
-        """
-        CWE-252/253: Unchecked Return Value - Check if return values from critical functions are checked.
-        """
-        for var, ptr_info in self.current_state.pointers.items():
-            if ptr_info.is_return_value and not ptr_info.return_checked:
-                loc = ptr_info.alloc_loc or Location(filename, 0, 0)
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.UNCHECKED_RETURN,
-                    cwe_id="CWE-252",
-                    location=loc,
-                    var_name=var,
-                    description=f"Unchecked return value: '{var}' not checked for error",
-                    alloc_loc=loc,
-                    confidence=0.75,
-                    sl_check=f"{var} = func() without NULL check"
-                ))
+    # CWE-252 is handled structurally in translator._unchecked_return_checks,
+    # which fires on a privilege-management Call whose result has no destination
+    # in the IR. The path-sensitive analyzer no longer carries a separate
+    # unchecked-return stub: the field it keyed on (`is_return_value`) was never
+    # set, so it emitted nothing, and a source-shaped reimplementation would only
+    # reintroduce the false positives the structural rule exists to avoid.
 
     def _check_buffer_access(self, array_name: str, index_node: Any,
                              source: str, loc: Location):

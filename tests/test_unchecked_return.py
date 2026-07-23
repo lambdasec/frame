@@ -34,26 +34,20 @@ a CWE-252 finding answer a query for it, so emitting both would count one
 weakness twice. This is the same argument that keeps CWE-400 from being its own
 detector alongside CWE-770.
 
-One caveat about what these tests measure. A SEPARATE, older CWE-252 reporter
-lives in `analyzers/interprocedural_analyzer.py` and matches a regular expression
-against each source line, over a much longer function list that includes
-`unlink`, `close`, `mkdir`, `read` and `malloc`. It reports discarded results
-from all of them, which is the false-positive behavior this detector is built to
-avoid. It is left untouched here, so the negative cases below assert that the
-STRUCTURAL rule stays silent, identified by the procedure the finding is
-attributed to: findings from the regex reporter carry the synthetic procedure
-name `<interprocedural-analysis>`, findings from this one carry the real
-procedure. `test_the_older_regex_reporter_still_fires_on_ignorable_functions`
-records the overlap explicitly rather than leaving it to be discovered.
+There used to be a SEPARATE, older CWE-252 reporter in
+`analyzers/interprocedural_analyzer.py` that matched a regular expression against
+each source line, over a much longer function list that included `unlink`,
+`close`, `mkdir`, `read` and `malloc`. It reported discarded results from all of
+them, which is exactly the false-positive behavior this detector is built to
+avoid: an ignored `unlink()` in a cleanup path is correct code, not a weakness.
+That regex reporter has been retired. CWE-252 is now emitted by the structural
+rule alone, so `test_ordinary_posix_calls_are_no_longer_reported` and
+`test_cleanup_unlink_is_not_reported` pin that the false positives are gone.
 """
 
 from frame.sil import FrameScanner
 
 from frame.sil.cwe_taxonomy import is_a
-
-# Findings from the older regex-based CWE-252 reporter are attributed to this
-# synthetic procedure rather than to the procedure that contains the call.
-_REGEX_REPORTER = "<interprocedural-analysis>"
 
 
 def _cwes(src, language="c", filename="t.c"):
@@ -69,12 +63,8 @@ def _lines(src, cwe, language="c", filename="t.c"):
 
 
 def _structural_252_lines(src, language="c", filename="t.c"):
-    """Lines where the STRUCTURAL CWE-252 rule fires, excluding the regex one."""
-    result = FrameScanner(language=language, verify=False).scan(src, filename)
-    return [
-        v.line for v in result.vulnerabilities
-        if v.cwe_id == "CWE-252" and v.procedure != _REGEX_REPORTER
-    ]
+    """Lines where the (now sole, structural) CWE-252 rule fires."""
+    return _lines(src, "CWE-252", language, filename)
 
 
 # =============================================================================
@@ -216,11 +206,11 @@ def test_discarded_printf_result_is_not_reported():
     assert "CWE-252" not in _cwes(src)
 
 
-def test_discarded_results_of_ordinary_posix_calls_are_not_reported():
+def test_ordinary_posix_calls_are_no_longer_reported():
     # unlink, close, mkdir and fclose all fail routinely, and ignoring them in
     # a cleanup path is normal correct code rather than a weakness. None of them
-    # carries `return_must_be_checked`, so the structural rule says nothing.
-    # (The older regex reporter does report these; see the module docstring.)
+    # carries `return_must_be_checked`, so no CWE-252 is reported for any of them
+    # now that the line-regex reporter that used to flag them has been retired.
     src = (
         "void cleanup(int fd) {\n"
         "  unlink(\"/tmp/x\");\n"
@@ -228,22 +218,19 @@ def test_discarded_results_of_ordinary_posix_calls_are_not_reported():
         "  mkdir(\"/tmp/y\", 0755);\n"
         "}\n"
     )
-    assert _structural_252_lines(src) == []
+    assert _lines(src, "CWE-252") == []
 
 
-def test_the_older_regex_reporter_still_fires_on_ignorable_functions():
-    # Not an endorsement: a record of behavior this change deliberately did not
-    # touch. `unlink()` in a cleanup path is correct code, and the line-matching
-    # reporter calls it CWE-252 anyway. The structural rule above is the reason
-    # that list is not simply extended, and closing the gap means retiring the
-    # regex reporter, which is a separate change with its own regression risk.
+def test_cleanup_unlink_is_not_reported():
+    # The exact case the retired regex reporter used to flag. `unlink()` in a
+    # cleanup path is correct code; with only the structural rule left, no
+    # CWE-252 is emitted at all. This is the false positive the retirement fixed.
     src = (
         "void cleanup(void) {\n"
         "  unlink(\"/tmp/x\");\n"
         "}\n"
     )
-    assert _lines(src, "CWE-252") == [2]
-    assert _structural_252_lines(src) == []
+    assert _lines(src, "CWE-252") == []
 
 
 def test_discarded_memcpy_result_is_not_reported():
