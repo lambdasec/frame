@@ -505,6 +505,24 @@ class FrameScanner:
         VulnType.UNCONTROLLED_RECURSION: Severity.MEDIUM,
         VulnType.INFINITE_LOOP: Severity.MEDIUM,
 
+        # Directional memory safety. A write past the end corrupts adjacent
+        # memory and is the usual route to code execution, so it keeps the
+        # CRITICAL rating CWE-120 carries; an over-read discloses memory
+        # without altering it.
+        VulnType.OOB_WRITE: Severity.CRITICAL,
+        VulnType.OOB_READ: Severity.HIGH,
+
+        # A stack allocation too large to fit crashes the process: availability
+        # only, like the rest of the CWE-400 family.
+        VulnType.EXCESSIVE_ALLOCATION: Severity.MEDIUM,
+
+        # A world-writable resource lets any local user alter it.
+        VulnType.INCORRECT_PERMISSIONS: Severity.HIGH,
+
+        # A dropped privilege-drop result leaves the process running with
+        # privileges it believes it no longer has.
+        VulnType.UNCHECKED_RETURN: Severity.HIGH,
+
         # Generic
         VulnType.TAINT_FLOW: Severity.MEDIUM,
     }
@@ -606,6 +624,23 @@ class FrameScanner:
         VulnType.UNBOUNDED_ALLOCATION: "CWE-770",
         VulnType.UNCONTROLLED_RECURSION: "CWE-674",
         VulnType.INFINITE_LOOP: "CWE-835",
+
+        # Directional memory safety. CWE-120 remains the answer wherever the
+        # direction is not established; these are used only where the IR settles
+        # it, and both are children of CWE-119 so either still answers a query
+        # for the broader class.
+        VulnType.OOB_WRITE: "CWE-787",
+        VulnType.OOB_READ: "CWE-125",
+
+        # Excessive constant allocation, the sibling of CWE-770.
+        VulnType.EXCESSIVE_ALLOCATION: "CWE-789",
+
+        # Permission assignment, and the dropped privilege-drop result. Frame
+        # reports the specific CWE-252; a query for its CWE-754 parent is
+        # answered through `cwe_taxonomy.is_a`, so CWE-754 is not a detector of
+        # its own any more than CWE-400 is.
+        VulnType.INCORRECT_PERMISSIONS: "CWE-732",
+        VulnType.UNCHECKED_RETURN: "CWE-252",
     }
 
     def __init__(

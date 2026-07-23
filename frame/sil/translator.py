@@ -163,6 +163,21 @@ class VulnType(Enum):
     UNCONTROLLED_RECURSION = "uncontrolled_recursion"  # CWE-674
     INFINITE_LOOP = "infinite_loop"                  # CWE-835
 
+    # Memory safety, reported by direction. CWE-120 stays the answer whenever a
+    # buffer is overrun but the direction is not established; these two are used
+    # only where the IR settles it, a Store being a write and a read position a
+    # read.
+    OOB_WRITE = "oob_write"                          # CWE-787
+    OOB_READ = "oob_read"                            # CWE-125
+
+    # Excessive constant allocation, the sibling of UNBOUNDED_ALLOCATION: there
+    # the size is attacker-controlled, here it is written into the program.
+    EXCESSIVE_ALLOCATION = "excessive_allocation"    # CWE-789
+
+    # Permission assignment. CWE-754 is not a type of its own: CWE-252 is its
+    # MITRE child, so `cwe_taxonomy.is_a` already answers a CWE-754 query.
+    INCORRECT_PERMISSIONS = "incorrect_permissions"  # CWE-732
+
     # Generic taint flow
     TAINT_FLOW = "taint_flow"
 
@@ -1301,6 +1316,15 @@ class SILTranslator:
         # post-processing above.
         checks.extend(self._nonterminating_loop_checks(proc))
         checks.extend(self._uncontrolled_recursion_checks(proc))
+
+        # Likewise structural: each of these is settled by the finished IR (a
+        # constant index against a declared bound, a call result with no
+        # destination, a literal size, a literal mode) rather than by any path
+        # the worklist walked.
+        checks.extend(self._out_of_bounds_checks(proc))
+        checks.extend(self._unchecked_return_checks(proc))
+        checks.extend(self._excessive_allocation_checks(proc))
+        checks.extend(self._incorrect_permission_checks(proc))
 
         return checks
 
@@ -3569,6 +3593,299 @@ class SILTranslator:
             ))
             # One finding per procedure: further self-calls are the same bug.
             break
+
+        return checks
+
+    # =========================================================================
+    # Structural memory-safety and API-contract detectors
+    #
+    # CWE-787 / CWE-125 / CWE-789 / CWE-732. Like the non-termination pair
+    # above, these read the finished CFG rather than a taint flow, and each one
+    # fires only where the IR settles the question outright: a constant index
+    # against a constant declared bound, a return value with no destination, a
+    # literal size, a literal mode. Nothing here guesses at a value.
+    # =========================================================================
+
+    def _procedure_constant_ints(self, proc: Procedure) -> Dict[str, int]:
+        """Locals bound to one integer literal for the whole procedure.
+
+        `int i = 10; buf[i] = 0;` is the same weakness as `buf[10] = 0` and
+        should read the same way. Only a name assigned exactly once, and only
+        to an integer literal, is included: with two assignments the value at a
+        use depends on the path, and deciding that is value reasoning this
+        detector deliberately does not do.
+        """
+        counts: Dict[str, int] = {}
+        values: Dict[str, int] = {}
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                for name in instr.get_written_vars():
+                    counts[name] = counts.get(name, 0) + 1
+                if isinstance(instr, Assign):
+                    name = self._get_var_name(instr.id)
+                    if isinstance(instr.exp, ExpConst) and isinstance(instr.exp.value, int) \
+                            and not isinstance(instr.exp.value, bool):
+                        values[name] = instr.exp.value
+
+        return {name: value for name, value in values.items() if counts.get(name) == 1}
+
+    def _constant_index_value(self, exp, constants: Dict[str, int]) -> Optional[int]:
+        """The integer this index expression must hold, or None if unknown."""
+        if isinstance(exp, ExpConst) and isinstance(exp.value, int) and not isinstance(exp.value, bool):
+            return exp.value
+        if isinstance(exp, ExpVar):
+            return constants.get(str(exp.var))
+        return None
+
+    def _out_of_bounds_access(self, base, index, proc: Procedure,
+                              constants: Dict[str, int]) -> Optional[Tuple[str, int, int]]:
+        """Is `base[index]` provably outside `base`'s declared extent?
+
+        Returns (name, index, bound) when both the index and the bound are
+        known constants and the index falls outside `0 .. bound - 1`. Anything
+        unknown, either side, yields None: an index whose value the IR does not
+        pin down is not evidence of anything.
+        """
+        if not isinstance(base, ExpVar):
+            return None
+        name = str(base.var)
+        bound = proc.fixed_array_bounds.get(name)
+        # -1 marks a name declared twice with disagreeing bounds.
+        if bound is None or bound < 0:
+            return None
+
+        value = self._constant_index_value(index, constants)
+        if value is None or 0 <= value < bound:
+            return None
+        return name, value, bound
+
+    def _iter_read_index_exps(self, exp):
+        """Every `base[index]` appearing anywhere inside a read expression."""
+        stack = [exp]
+        while stack:
+            cur = stack.pop()
+            if cur is None:
+                continue
+            if isinstance(cur, ExpIndex):
+                yield cur
+            for child in (getattr(cur, "__dict__", {}) or {}).values():
+                if isinstance(child, Exp):
+                    stack.append(child)
+                elif isinstance(child, (list, tuple)):
+                    stack.extend(c for c in child if isinstance(c, Exp))
+
+    def _out_of_bounds_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-787 and CWE-125: an access provably past a fixed-size local array.
+
+        The direction comes from the instruction, not from a name or a comment.
+        A subscripted assignment target reaches the IR as a `Store` whose address
+        is `base + index`, so that is a write; a subscript anywhere a value is
+        READ reaches it as an `ExpIndex`, so that is a read. Frame reports the
+        specific CWE precisely because the IR distinguishes them, and leaves the
+        generic CWE-120 to the paths where it does not.
+
+        Both the bound and the index must be constants. That is narrow on
+        purpose: an index the IR cannot pin down might be in range on every
+        execution, and reporting it would mean asserting something about values
+        this detector has no basis for.
+        """
+        checks: List[VulnerabilityCheck] = []
+        if not proc.fixed_array_bounds:
+            return checks
+
+        constants = self._procedure_constant_ints(proc)
+
+        def record(kind: VulnType, name: str, value: int, bound: int, loc, verb: str) -> None:
+            checks.append(VulnerabilityCheck(
+                formula=True_(),
+                vuln_type=kind,
+                location=loc or Location.unknown(),
+                description=f"{verb} '{name}[{value}]' is outside the declared extent of "
+                            f"'{name}', which holds {bound} element(s)",
+                sink_type=kind.value,
+                procedure_name=proc.name,
+            ))
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if isinstance(instr, Store):
+                    addr = instr.addr
+                    # `arr[i] = v` is lowered to a store through `arr + i`.
+                    if isinstance(addr, ExpBinOp) and addr.op == "+":
+                        found = self._out_of_bounds_access(addr.left, addr.right, proc, constants)
+                        if found:
+                            record(VulnType.OOB_WRITE, *found, instr.loc, "Write to")
+                            continue
+                    if isinstance(addr, ExpIndex):
+                        found = self._out_of_bounds_access(addr.base, addr.index, proc, constants)
+                        if found:
+                            record(VulnType.OOB_WRITE, *found, instr.loc, "Write to")
+                            continue
+
+                # Every other position a subscript can appear in is a read,
+                # including the value half of a store.
+                for exp in self._iter_instr_exps(instr):
+                    if isinstance(instr, Store) and exp is instr.addr:
+                        continue
+                    for sub in self._iter_read_index_exps(exp):
+                        found = self._out_of_bounds_access(sub.base, sub.index, proc, constants)
+                        if found:
+                            record(VulnType.OOB_READ, *found, instr.loc, "Read of")
+
+        return checks
+
+    def _unchecked_return_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-252: the result of a call that can only fail silently is dropped.
+
+        Two conditions, both structural:
+
+        * the callee's spec sets `return_must_be_checked`, which the per-language
+          spec tables set only for the privilege-management family, where a
+          silent failure leaves the process holding privileges it believes it
+          gave up, and
+        * the call has NO destination at all. `Call.ret` is None exactly when the
+          source wrote the call as a bare statement, so the value is discarded
+          before anything could test it.
+
+        Requiring the absence of a destination, rather than trying to decide
+        whether an assigned result is later tested, is what keeps this quiet.
+        `if (setuid(u) != 0)` never becomes a Call instruction in the first place
+        (it is inlined into the branch condition), and `int r = setuid(u);`
+        carries a destination, so neither is a candidate. That gives up the case
+        where a result is stored and then genuinely never read, which is a real
+        bug Frame will miss. Missing it costs a finding; guessing at it costs
+        the detector its credibility.
+        """
+        checks: List[VulnerabilityCheck] = []
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call) or instr.ret is not None:
+                    continue
+                spec = self.program.get_spec(instr.get_full_name())
+                if spec is None or not spec.return_must_be_checked:
+                    continue
+                name = instr.get_func_name()
+                checks.append(VulnerabilityCheck(
+                    formula=True_(),
+                    vuln_type=VulnType.UNCHECKED_RETURN,
+                    location=instr.loc or Location.unknown(),
+                    description=f"Return value of '{name}' is discarded: if the call fails "
+                                f"the process keeps the privileges it appears to drop",
+                    sink_type="unchecked_return",
+                    procedure_name=proc.name,
+                ))
+
+        return checks
+
+    # The smallest default thread stack among mainstream platforms (1 MiB on
+    # Windows). A stack allocation of at least this much cannot be satisfied on
+    # a fresh thread there, so it is a hard platform fact rather than a judgment
+    # about whether some size is "too big".
+    _STACK_ALLOCATION_LIMIT = 1024 * 1024
+
+    def _excessive_allocation_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-789: a constant stack allocation too large to fit on a stack.
+
+        The sibling of CWE-770, and the distinction is where the size comes
+        from: CWE-770 is an attacker-controlled size that nothing bounds, this
+        is a size written into the program that is excessive on its face.
+
+        Restricted to the STACK on purpose. Whether a large heap allocation is
+        excessive is a policy question with no answer Frame can defend: a 512 MB
+        buffer pool is deliberate in one program and a bug in another. The stack
+        has a fixed platform limit instead, so the comparison is against a real
+        constraint and needs no judgment call.
+        """
+        checks: List[VulnerabilityCheck] = []
+        constants = self._procedure_constant_ints(proc)
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call):
+                    continue
+                spec = self.program.get_spec(instr.get_full_name())
+                if spec is None or spec.stack_allocation_size_arg is None:
+                    continue
+                index = spec.stack_allocation_size_arg
+                if index >= len(instr.args):
+                    continue
+
+                size = self._constant_index_value(instr.args[index][0], constants)
+                if size is None or size < self._STACK_ALLOCATION_LIMIT:
+                    continue
+
+                checks.append(VulnerabilityCheck(
+                    formula=True_(),
+                    vuln_type=VulnType.EXCESSIVE_ALLOCATION,
+                    location=instr.loc or Location.unknown(),
+                    description=f"'{instr.get_func_name()}' allocates {size} bytes on the "
+                                f"stack, at or above the {self._STACK_ALLOCATION_LIMIT}-byte "
+                                f"stack a thread is given by default",
+                    sink_type="excessive_allocation",
+                    procedure_name=proc.name,
+                ))
+
+        return checks
+
+    # The POSIX world-write bit, S_IWOTH.
+    _WORLD_WRITE_BIT = 0o002
+
+    def _incorrect_permission_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-732: a resource created or set world-writable by a literal mode.
+
+        The mode argument is identified by the per-language spec tables, never
+        by the shape of the number, and only an integer LITERAL (or a local
+        bound once to one) is examined. A mode assembled from `S_IRUSR | ...`
+        constants reaches the IR as an expression whose value Frame does not
+        know, and it is left alone.
+
+        `umask` inverts: its argument names the bits to CLEAR, so world-write is
+        permitted exactly when the world-write bit is ABSENT from the mask. That
+        is why the umask case is a spec flag rather than a second copy of this
+        rule with the comparison flipped by hand.
+        """
+        checks: List[VulnerabilityCheck] = []
+        constants = self._procedure_constant_ints(proc)
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call):
+                    continue
+                spec = self.program.get_spec(instr.get_full_name())
+                if spec is None or spec.permission_mode_arg is None:
+                    continue
+                index = spec.permission_mode_arg
+                # `open(path, flags)` has no mode at all: the mode is variadic.
+                if index >= len(instr.args):
+                    continue
+
+                mode = self._constant_index_value(instr.args[index][0], constants)
+                if mode is None or mode < 0:
+                    continue
+
+                world_writable = (mode & self._WORLD_WRITE_BIT) == 0 \
+                    if spec.permission_is_umask else (mode & self._WORLD_WRITE_BIT) != 0
+                if not world_writable:
+                    continue
+
+                name = instr.get_func_name()
+                if spec.permission_is_umask:
+                    detail = (f"'{name}({oct(mode)})' does not mask off the world-write bit, "
+                              f"so files this process creates are writable by any user")
+                else:
+                    detail = (f"'{name}' is given mode {oct(mode)}, which grants write "
+                              f"permission to any user on the system")
+
+                checks.append(VulnerabilityCheck(
+                    formula=True_(),
+                    vuln_type=VulnType.INCORRECT_PERMISSIONS,
+                    location=instr.loc or Location.unknown(),
+                    description=detail,
+                    sink_type="incorrect_permissions",
+                    procedure_name=proc.name,
+                ))
 
         return checks
 

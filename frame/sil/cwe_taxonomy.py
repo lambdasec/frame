@@ -66,6 +66,7 @@ CHILD_OF: Dict[str, Tuple[str, ...]] = {
     "CWE-664": (),                      # pillar: Improper Control of a Resource
     "CWE-400": ("CWE-664",),
     "CWE-770": ("CWE-400",),
+    "CWE-789": ("CWE-770",),
     "CWE-1333": ("CWE-400",),
     "CWE-404": ("CWE-664",),
     "CWE-772": ("CWE-404",),
@@ -100,6 +101,7 @@ CHILD_OF: Dict[str, Tuple[str, ...]] = {
     "CWE-918": ("CWE-610",),
     "CWE-601": ("CWE-610",),
     "CWE-377": ("CWE-668",),
+    "CWE-732": ("CWE-668",),
     "CWE-200": ("CWE-664",),
     "CWE-209": ("CWE-200",),
     "CWE-532": ("CWE-200",),
@@ -140,6 +142,7 @@ CHILD_OF: Dict[str, Tuple[str, ...]] = {
     "CWE-617": ("CWE-703",),
     "CWE-703": (),                      # pillar: Improper Check of Exceptional Conditions
     "CWE-754": ("CWE-703",),
+    "CWE-252": ("CWE-754",),
     "CWE-676": ("CWE-710",),
     "CWE-16": (),
     "CWE-840": (),

@@ -99,6 +99,34 @@ class ProcSpec:
     may_return_null: bool = False
 
     # =========================================================================
+    # Structural weakness specifications
+    #
+    # These describe a property of the API itself rather than of a taint flow,
+    # so the detectors that consult them are structural (they read the finished
+    # CFG) instead of running during symbolic execution.
+    # =========================================================================
+
+    # Is discarding this function's return value a defect? (CWE-252)
+    # Set only for APIs where the return is the ONLY failure signal and a
+    # silent failure is a security event, for example the privilege-dropping
+    # family. Most functions have a legitimately ignorable return, so the
+    # default of False is the right one for nearly everything.
+    return_must_be_checked: bool = False
+
+    # Index of a POSIX permission-mode argument, if any (CWE-732).
+    permission_mode_arg: Optional[int] = None
+
+    # Does `permission_mode_arg` name a umask rather than a mode? A umask
+    # CLEARS the bits it names, so the world-writable test inverts for it.
+    permission_is_umask: bool = False
+
+    # Index of a size argument allocated on the CALL STACK, if any (CWE-789).
+    # Distinct from a heap allocation: the stack has a hard, small platform
+    # limit, so an excessive constant here is provably unsatisfiable rather
+    # than merely large.
+    stack_allocation_size_arg: Optional[int] = None
+
+    # =========================================================================
     # Additional metadata
     # =========================================================================
 
@@ -271,6 +299,13 @@ class Procedure:
     # the CFG understates the ways control can leave. Any analysis that concludes
     # something from the ABSENCE of an exit path must abstain when this is set.
     has_exception_handler: bool = False
+
+    # Locals declared as a fixed-size array, mapped to their element count, for
+    # example `char buf[10]` -> {"buf": 10}. The IR lowers such a declaration to
+    # `buf = null` and keeps no type, so the bound is a syntactic fact only the
+    # frontend can see, in the same way `loop_body_can_exit` is. A name declared
+    # more than once with different bounds is omitted rather than guessed at.
+    fixed_array_bounds: Dict[str, int] = field(default_factory=dict)
 
     # Internal state for building CFG
     _next_node_id: int = field(default=0, repr=False)

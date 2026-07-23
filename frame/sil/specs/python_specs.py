@@ -1119,6 +1119,36 @@ ALLOCATION_SIZE_SPECS = {
 PYTHON_SPECS.update(ALLOCATION_SIZE_SPECS)
 
 
+# =============================================================================
+# Permission modes (CWE-732)
+# =============================================================================
+# The index of a POSIX mode argument. Merged into whatever spec each name
+# already carries (os.chmod is a path sink and stays one) rather than replacing
+# it, because a ProcSpec holds a single taint role.
+
+_PERMISSION_MODE_ARGS = {
+    "os.chmod": 1,
+    "os.fchmod": 1,
+    "os.lchmod": 1,
+    "os.mkdir": 1,
+    "os.makedirs": 1,
+    "os.mkfifo": 1,
+    "os.mknod": 1,
+    "os.open": 2,
+}
+
+for _name, _arg in _PERMISSION_MODE_ARGS.items():
+    _spec = PYTHON_SPECS.get(_name)
+    if _spec is None:
+        _spec = ProcSpec()
+        PYTHON_SPECS[_name] = _spec
+    _spec.permission_mode_arg = _arg
+
+_umask_spec = PYTHON_SPECS.setdefault("os.umask", ProcSpec())
+_umask_spec.permission_mode_arg = 0
+_umask_spec.permission_is_umask = True
+
+
 def get_python_specs() -> Dict[str, ProcSpec]:
     """Get all Python library specifications"""
     return PYTHON_SPECS.copy()

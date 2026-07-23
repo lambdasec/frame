@@ -727,3 +727,74 @@ CPP_SPECS: Dict[str, ProcSpec] = {}
 CPP_SPECS.update(C_SPECS)
 CPP_SPECS.update(CPP_STREAM_SPECS)
 CPP_SPECS.update(CPP_STRING_SPECS)
+
+
+# =============================================================================
+# Structural weakness facts (CWE-252, CWE-732, CWE-789)
+# =============================================================================
+# These describe the API itself rather than a taint flow, so they are merged
+# into whatever spec each name already carries instead of replacing it. A
+# ProcSpec holds one taint role, and the roles above (chmod as a path sink,
+# setuid as a privilege sink) are worth keeping.
+
+def _merge_spec_fields(specs: Dict[str, ProcSpec], name: str, **fields) -> None:
+    """Add structural fields to `name`'s spec, creating it if it has none."""
+    spec = specs.get(name)
+    if spec is None:
+        spec = ProcSpec()
+        specs[name] = spec
+    for key, value in fields.items():
+        setattr(spec, key, value)
+
+
+# CWE-252: functions whose return value is the ONLY failure signal and whose
+# silent failure is a security event. This list is deliberately confined to
+# privilege management. `unlink`, `mkdir`, `close` and friends fail routinely
+# and are ignored on purpose in correct code all the time; listing them would
+# make the detector fire on ordinary programs. When setuid() fails and the
+# result is dropped, the process keeps the privileges it believed it shed, so
+# there is no reading under which discarding it is intended.
+_RETURN_MUST_BE_CHECKED = (
+    "setuid", "setgid", "seteuid", "setegid",
+    "setreuid", "setregid", "setresuid", "setresgid",
+    "setfsuid", "setfsgid",
+    "setgroups", "initgroups",
+    "chroot",
+)
+
+# CWE-732: the index of a POSIX mode argument. `open`/`openat` carry a mode
+# only in their variadic form, so the detector checks the argument is present.
+_PERMISSION_MODE_ARGS = {
+    "chmod": 1,
+    "fchmod": 1,
+    "fchmodat": 2,
+    "mkdir": 1,
+    "mkdirat": 2,
+    "mkfifo": 1,
+    "mkfifoat": 2,
+    "mknod": 2,
+    "creat": 1,
+    "open": 2,
+    "openat": 3,
+    "shmget": 2,
+    "semget": 2,
+    "msgget": 1,
+}
+
+# CWE-789: allocation on the call stack, whose limit is a platform constant
+# rather than a policy choice.
+_STACK_ALLOCATION_SIZE_ARGS = {
+    "alloca": 0,
+    "_alloca": 0,
+    "_malloca": 0,
+    "__builtin_alloca": 0,
+}
+
+for _specs in (C_SPECS, CPP_SPECS):
+    for _name in _RETURN_MUST_BE_CHECKED:
+        _merge_spec_fields(_specs, _name, return_must_be_checked=True)
+    for _name, _arg in _PERMISSION_MODE_ARGS.items():
+        _merge_spec_fields(_specs, _name, permission_mode_arg=_arg)
+    _merge_spec_fields(_specs, "umask", permission_mode_arg=0, permission_is_umask=True)
+    for _name, _arg in _STACK_ALLOCATION_SIZE_ARGS.items():
+        _merge_spec_fields(_specs, _name, stack_allocation_size_arg=_arg)

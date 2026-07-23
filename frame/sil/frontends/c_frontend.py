@@ -45,6 +45,39 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.c_specs import C_SPECS, CPP_SPECS
 
 
+def parse_c_integer(text: str) -> Optional[int]:
+    """Value of a C integer literal, or None if it is not one.
+
+    Python's `int(text, 0)` is close but not C: it rejects the leading-zero
+    octal form, so `0777` raised and silently became 0. Permission modes are
+    written exactly that way, so a mode of 0777 reached the IR looking like the
+    most restrictive mode possible. Integer suffixes (`10UL`, `0x1FULL`) are
+    likewise not Python syntax and are stripped here.
+    """
+    if not text:
+        return None
+    body = text.strip().replace("'", "")  # C++14 digit separators
+    while body and body[-1] in "uUlLzZ":
+        body = body[:-1]
+    if not body:
+        return None
+
+    negative = body.startswith("-")
+    if negative:
+        body = body[1:]
+
+    try:
+        if body[:2].lower() in ("0x", "0b", "0o"):
+            value = int(body, 0)
+        elif len(body) > 1 and body[0] == "0":
+            value = int(body, 8)          # C octal: 0777
+        else:
+            value = int(body, 10)
+    except ValueError:
+        return None
+    return -value if negative else value
+
+
 class CFrontend:
     """
     Translates C source code to Frame SIL.
@@ -339,13 +372,66 @@ class CFrontend:
         """Translate variable declaration"""
         for child in node.children:
             if child.type == "init_declarator":
+                self._record_fixed_array_bound(child.child_by_field_name("declarator"))
                 self._translate_init_declarator(child)
             elif child.type in ("identifier", "pointer_declarator", "array_declarator"):
                 # Declaration without initialization
+                self._record_fixed_array_bound(child)
                 var_name = self._extract_identifier(child)
                 if var_name:
                     loc = self._get_location(child)
                     self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+
+    def _subscript_index(self, node: TSNode) -> Optional[TSNode]:
+        """The index node of a `subscript_expression`, across both grammars.
+
+        tree-sitter-c exposes it as an `index` field. tree-sitter-cpp wraps it
+        in a `subscript_argument_list` instead, and reading the missing field
+        there returned None, so a subscripted assignment in C++ produced no
+        instruction at all and was invisible to every analysis downstream.
+        """
+        index = node.child_by_field_name("index")
+        if index is not None:
+            return index
+
+        for child in node.children:
+            if child.type == "subscript_argument_list":
+                inner = [c for c in child.children if c.type not in ("[", "]", ",")]
+                # Only a single-dimension subscript has an unambiguous index.
+                return inner[0] if len(inner) == 1 else None
+        return None
+
+    def _record_fixed_array_bound(self, declarator: Optional[TSNode]) -> None:
+        """Note `char buf[10]` as a bound of 10 on the current procedure.
+
+        The IR lowers such a declaration to `buf = null` and keeps no type, so
+        the element count survives nowhere else. Only a declarator whose size is
+        an integer LITERAL is recorded: `char buf[N]` for a macro or a const is
+        a real bound too, but resolving it means reasoning about values, and a
+        wrong bound here would manufacture an out-of-bounds finding.
+
+        A name declared twice in one procedure (an inner scope shadowing an
+        outer one) is dropped entirely unless both declarations agree, because
+        the IR has no scopes and cannot say which one an index refers to.
+        """
+        if declarator is None or declarator.type != "array_declarator" or self._current_proc is None:
+            return
+
+        name = self._extract_identifier(declarator)
+        size_node = declarator.child_by_field_name("size")
+        if not name or size_node is None or size_node.type != "number_literal":
+            return
+
+        bound = parse_c_integer(self._get_text(size_node))
+        if bound is None or bound <= 0:
+            return
+
+        bounds = self._current_proc.fixed_array_bounds
+        if name in bounds and bounds[name] != bound:
+            # Conflicting declarations of one name: refuse to pick.
+            bounds[name] = -1
+        elif bounds.get(name) != -1:
+            bounds[name] = bound
 
     def _translate_init_declarator(self, node: TSNode) -> None:
         """Translate init_declarator (var = value)"""
@@ -400,7 +486,7 @@ class CFrontend:
         elif left.type == "subscript_expression":
             # arr[i] = value
             arr = left.child_by_field_name("argument")
-            idx = left.child_by_field_name("index")
+            idx = self._subscript_index(left)
             if arr and idx:
                 arr_exp = self._translate_expression(arr)
                 idx_exp = self._translate_expression(idx)
@@ -730,8 +816,8 @@ class CFrontend:
             try:
                 if "." in text:
                     return ExpConst.integer(int(float(text)))
-                else:
-                    return ExpConst.integer(int(text, 0))
+                parsed = parse_c_integer(text)
+                return ExpConst.integer(parsed if parsed is not None else 0)
             except ValueError:
                 return ExpConst.integer(0)
 
@@ -785,7 +871,9 @@ class CFrontend:
 
         elif node.type == "subscript_expression":
             arr = node.child_by_field_name("argument")
-            idx = node.child_by_field_name("index")
+            idx = self._subscript_index(node)
+            if arr is None or idx is None:
+                return ExpConst.null()
             return ExpIndex(self._translate_expression(arr), self._translate_expression(idx))
 
         elif node.type == "field_expression":

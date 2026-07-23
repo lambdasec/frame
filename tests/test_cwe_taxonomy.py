@@ -151,3 +151,62 @@ def test_parents_accessor():
     assert parents("CWE-89") == ("CWE-943",)
     assert parents("CWE-707") == ()
     assert parents("CWE-99999") == ()
+
+
+# --- the Tier 1 additions ----------------------------------------------------
+
+def test_directional_memory_safety_sits_under_the_generic_class():
+    # CWE-787 and CWE-125 are the directional siblings of CWE-120. All three are
+    # children of CWE-119, so an advisory citing the broad memory-corruption
+    # class matches whichever one Frame was able to prove.
+    assert is_a("CWE-787", "CWE-119")
+    assert is_a("CWE-125", "CWE-119")
+    assert is_a("CWE-120", "CWE-119")
+    assert is_a("CWE-787", "CWE-118")
+    assert is_a("CWE-125", "CWE-664")
+
+
+def test_a_write_is_not_a_read():
+    # Siblings, not ancestors of one another. Reporting the direction is only
+    # worth doing if the two do not collapse into each other on query.
+    assert not is_a("CWE-787", "CWE-125")
+    assert not is_a("CWE-125", "CWE-787")
+    assert not is_a("CWE-787", "CWE-120")
+    assert not is_a("CWE-120", "CWE-787")
+
+
+def test_excessive_allocation_sits_under_the_resource_classes():
+    # CWE-789 (excessive constant size) and CWE-770 (unbounded tainted size) are
+    # not siblings: 789 is 770's child, so a CWE-770 query catches both.
+    assert is_a("CWE-789", "CWE-770")
+    assert is_a("CWE-789", "CWE-400")
+    assert is_a("CWE-789", "CWE-664")
+    assert not is_a("CWE-770", "CWE-789")
+
+
+def test_unchecked_return_sits_under_improper_check():
+    # CWE-754 is the MITRE parent of CWE-252, which is why Frame emits only the
+    # specific child: a CWE-754 query is answered through the hierarchy.
+    assert is_a("CWE-252", "CWE-754")
+    assert is_a("CWE-252", "CWE-703")
+    assert not is_a("CWE-754", "CWE-252")
+
+    # It is not an availability weakness, whatever the surface similarity.
+    assert not is_a("CWE-252", "CWE-400")
+
+
+def test_permission_assignment_sits_under_resource_exposure():
+    assert is_a("CWE-732", "CWE-668")
+    assert is_a("CWE-732", "CWE-664")
+
+    # A world-writable file is not an access-control-check weakness: CWE-732
+    # lives under resource exposure, not under CWE-284.
+    assert not is_a("CWE-732", "CWE-284")
+
+
+def test_new_cwes_are_all_reachable_from_a_pillar():
+    # Every CWE Frame emits should terminate at a CWE-1000 pillar rather than
+    # dangling, otherwise a broad policy query silently misses it.
+    pillars = {"CWE-664", "CWE-691", "CWE-693", "CWE-703", "CWE-707", "CWE-710", "CWE-682"}
+    for cwe in ("CWE-787", "CWE-125", "CWE-789", "CWE-252", "CWE-732"):
+        assert ancestors(cwe) & pillars, f"{cwe} does not reach a pillar"
