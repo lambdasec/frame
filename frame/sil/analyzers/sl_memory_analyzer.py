@@ -593,33 +593,14 @@ class SLMemoryAnalyzer:
         return None
 
     def _check_memory_leaks(self, loc: Location):
+        """CWE-401 (memory leak) is now raised structurally in the translator via
+        ownership/escape analysis over the CFG. This analyzer flagged any
+        heap-allocated region still VALID at function exit, with no escape
+        analysis, so it false-positived on every ownership-transfer idiom
+        (return, out-parameter, hand-off to a callee). It is retired here as a
+        no-op.
         """
-        Check for memory leaks at function exit (CWE-401).
-
-        In separation logic terms:
-        - At function exit, heap should be emp (all allocated regions freed)
-        - If heap contains ptr |-> val where ptr was heap-allocated, it's a leak
-
-        We only report leaks for HEAP allocations (not stack/alloca).
-        """
-        for var_name, region in self.heap.items():
-            # Only check heap allocations (not stack)
-            if region.alloc_kind != AllocKind.HEAP:
-                continue
-
-            # If the region is still VALID (not freed), it's a memory leak
-            if region.state == HeapState.VALID:
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.MEMORY_LEAK,
-                    cwe_id="CWE-401",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Memory leak: '{var_name}' allocated at line {region.alloc_loc.line if region.alloc_loc else '?'} is never freed. Heap ⊨ {var_name} |-> _ at function exit",
-                    alloc_loc=region.alloc_loc,
-                    confidence=0.85,
-                ))
-                if self.verbose:
-                    print(f"[SL] MEMORY LEAK: {var_name} at function exit (line {loc.line})")
+        return
 
 
 def analyze_with_separation_logic(source: str, filename: str = "<unknown>",

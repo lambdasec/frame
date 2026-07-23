@@ -364,23 +364,95 @@ class CFrontend:
                 self._translate_assignment(child)
             elif child.type == "update_expression":
                 self._translate_update(child)
+            elif child.type == "delete_expression":
+                self._translate_delete(child)
             elif child.type != ";":
                 # Other expression - translate for side effects
                 exp = self._translate_expression(child)
+
+    def _translate_delete(self, node: TSNode) -> None:
+        """Translate a C++ `delete p` / `delete[] p` into a deallocator call.
+
+        The operand's base pointer is the argument, and the routine name is the
+        exact operator (`delete` vs `delete[]`) so the translator can both track
+        the release for use-after-free and check it against the allocator that
+        produced the pointer (a `delete[]` on a `new` object is CWE-762). Without
+        this the frontend dropped `delete` entirely and every C++ deallocation was
+        invisible to the heap-lifecycle analysis.
+        """
+        loc = self._get_location(node)
+        is_array = any(c.type == "[" for c in node.children)
+        # The operand is the last expression child (the pointer being deleted).
+        operand = None
+        for child in node.children:
+            if child.type not in ("delete", "[", "]"):
+                operand = child
+        if operand is None:
+            return
+        arg_exp = self._translate_expression(operand)
+        routine = "delete[]" if is_array else "delete"
+        self._add_instr(Call(
+            loc=loc,
+            ret=None,
+            func=ExpConst.string(routine),
+            args=[(arg_exp, Typ.unknown_type())],
+        ))
+
+    def _record_local(self, name: Optional[str]) -> None:
+        """Note `name` as a local variable declared in the current procedure.
+
+        The IR keeps no type for most locals, but the mere fact that a name is a
+        declared local (rather than a global or a struct field) is what lets the
+        return-of-stack-address check tell `return &x` for a local `x` apart from
+        `return &g` for a global, so the name alone is recorded.
+        """
+        if name and self._current_proc is not None:
+            self._current_proc.locals.setdefault(name, Typ.unknown_type())
 
     def _translate_declaration(self, node: TSNode) -> None:
         """Translate variable declaration"""
         for child in node.children:
             if child.type == "init_declarator":
-                self._record_fixed_array_bound(child.child_by_field_name("declarator"))
+                decl = child.child_by_field_name("declarator")
+                self._record_fixed_array_bound(decl)
+                self._record_array_from_string_init(decl, child.child_by_field_name("value"))
+                self._record_local(self._extract_identifier(decl))
                 self._translate_init_declarator(child)
             elif child.type in ("identifier", "pointer_declarator", "array_declarator"):
                 # Declaration without initialization
                 self._record_fixed_array_bound(child)
                 var_name = self._extract_identifier(child)
+                self._record_local(var_name)
                 if var_name:
                     loc = self._get_location(child)
                     self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+
+    def _record_array_from_string_init(self, declarator: Optional[TSNode],
+                                       value: Optional[TSNode]) -> None:
+        """A `char s[] = "..."` array has no written size but a size the
+        initializer fixes: the literal's length plus the NUL terminator. Recording
+        that bound lets the same stack-origin reasoning that covers `char s[N]`
+        also cover the inferred form, so returning such an array is caught as a
+        return of a stack address (CWE-562) and freeing it as a non-heap free.
+        """
+        if (declarator is None or declarator.type != "array_declarator"
+                or self._current_proc is None or value is None):
+            return
+        if declarator.child_by_field_name("size") is not None:
+            return  # an explicit size is already handled by _record_fixed_array_bound
+        if value.type != "string_literal":
+            return
+        name = self._extract_identifier(declarator)
+        if not name:
+            return
+        text = self._get_text(value)
+        inner = text[1:-1] if len(text) >= 2 else text
+        bound = len(inner) + 1
+        bounds = self._current_proc.fixed_array_bounds
+        if name in bounds and bounds[name] != bound:
+            bounds[name] = -1
+        elif bounds.get(name) != -1:
+            bounds[name] = bound
 
     def _subscript_index(self, node: TSNode) -> Optional[TSNode]:
         """The index node of a `subscript_expression`, across both grammars.
@@ -885,6 +957,14 @@ class CFrontend:
             func_name = self._get_call_name(node)
             args = [self._translate_expression(a) for a in self._get_call_args(node)]
             return ExpCall(ExpConst.string(func_name), args)
+
+        elif node.type == "new_expression":
+            # `new T` / `new T[n]` -> a call to the allocator operator, so the
+            # allocation flows through the same allocator spec as malloc. The
+            # array form (a `new_declarator` child, the `[n]`) is a distinct
+            # allocator whose only correct release is `delete[]`.
+            is_array = any(c.type == "new_declarator" for c in node.children)
+            return ExpCall(ExpConst.string("new[]" if is_array else "new"), [])
 
         elif node.type == "parenthesized_expression":
             for child in node.children:

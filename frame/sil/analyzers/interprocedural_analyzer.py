@@ -3064,43 +3064,14 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             var = free_match.group(1)
             # CWE-415 (double free) is now raised structurally in the translator,
             # which tracks the freed set over the CFG rather than scanning source
-            # lines. Only the free-tracking that the CWE-762 mismatch check below
-            # needs is kept here.
+            # lines. The free-tracking is kept for the other line-based checks.
             freed_vars[var] = line_num
 
-            # =====================================================================
-            # CWE-762: Mismatched Memory Management Routines
-            # =====================================================================
-            # Check if deallocation method matches allocation method
-            if var in alloc_types:
-                alloc_type, alloc_line = alloc_types[var]
-                # Strip comments to avoid false positives (e.g., "delete arr; // use delete[]")
-                code_part = re.sub(r'//.*$', '', stripped)  # Remove C++ line comments
-                code_part = re.sub(r'/\*.*?\*/', '', code_part)  # Remove C block comments
-                is_delete_array = re.search(r'\bdelete\s*\[\s*\]', code_part) is not None
-                is_delete = re.search(r'\bdelete\b', code_part) is not None and not is_delete_array
-                is_free = re.search(r'\bfree\s*\(', code_part) is not None
-
-                mismatch = None
-                if alloc_type == 'NEW_ARRAY' and is_delete:
-                    mismatch = "new[] with delete (should use delete[])"
-                elif alloc_type == 'NEW' and is_delete_array:
-                    mismatch = "new with delete[] (should use delete)"
-                elif alloc_type == 'MALLOC' and (is_delete or is_delete_array):
-                    mismatch = "malloc/calloc/realloc with delete (should use free)"
-                elif alloc_type in ('NEW', 'NEW_ARRAY') and is_free:
-                    mismatch = f"{'new[]' if alloc_type == 'NEW_ARRAY' else 'new'} with free (should use {'delete[]' if alloc_type == 'NEW_ARRAY' else 'delete'})"
-
-                if mismatch:
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.DOUBLE_FREE,  # Memory management issue
-                        cwe_id="CWE-762",
-                        location=loc,
-                        var_name=var,
-                        description=f"Mismatched memory management - {mismatch} (allocated at line {alloc_line})",
-                        alloc_location=Location(filename, alloc_line, 0),
-                        confidence=0.95,
-                    ))
+            # CWE-762 (mismatched memory routine) is now raised structurally in
+            # the translator: the allocator KIND (malloc-family / new / new[]) is
+            # tracked per pointer through the CFG and checked against the shape of
+            # the deallocator (free / delete / delete[]). The single-line regex
+            # that used to live here is retired in favour of that reasoning.
 
         # CWE-416 (use after free) and CWE-590 (free of non-heap memory) are now
         # raised structurally in the translator: CWE-416 from the freed set at
@@ -3108,26 +3079,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # storage origin. The single-function line-regex that used to live here is
         # retired in favour of that CFG-level reasoning.
 
-        # =====================================================================
-        # CWE-562: Return of Stack Variable Address
-        # =====================================================================
-        # Detects returning address of local stack-allocated arrays/variables.
-        # Pattern: return localVar; where localVar is a local array
-
-        return_match = re.search(r'\breturn\s+(\w+)\s*;', stripped)
-        if return_match:
-            returned_var = return_match.group(1)
-            # Check if this variable is a local array (declared in this function)
-            if returned_var in local_arrays:
-                decl_line = local_arrays[returned_var]
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.USE_AFTER_FREE,  # Using dangling pointer
-                    cwe_id="CWE-562",
-                    location=loc,
-                    var_name=returned_var,
-                    description=f"Return of stack variable address - '{returned_var}' is a local array declared at line {decl_line}",
-                    confidence=0.95,
-                ))
+        # CWE-562 (return of stack variable address) is now raised structurally in
+        # the translator: it inspects the Return's value in the IR for the address
+        # of a declared local or a pointer whose storage origin is the stack. The
+        # single-line regex that used to live here is retired.
 
         # =====================================================================
         # CWE-404: Improper Resource Shutdown
@@ -3359,43 +3314,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # `if (p == NULL)` block -- because it treated any `== NULL` test as a
         # protecting check, so removing it loses no real detection.
 
-        # =====================================================================
-        # CWE-401: Memory Leak tracking - Semantic analysis
-        # =====================================================================
-        # Check for return statements where allocated memory might not be freed
-        if re.search(r'\breturn\b', stripped) and allocated_vars:
-            for var, alloc_line in allocated_vars.items():
-                if var not in freed_vars:
-                    # Semantic check: Is the variable being returned (ownership transferred)?
-                    if re.search(rf'\breturn\s+{re.escape(var)}\b', stripped):
-                        continue
-                    # Semantic check: Was variable assigned to output param, member, or global?
-                    was_transferred = False
-                    for check_line in lines[max(0, alloc_line):line_num]:
-                        # Output param assignment: *out_param = var
-                        if re.search(rf'\*\w+\s*=\s*{re.escape(var)}\b', check_line):
-                            was_transferred = True
-                            break
-                        # Structure member assignment: obj->member = var
-                        if re.search(rf'\w+->\w+\s*=\s*{re.escape(var)}\b', check_line):
-                            was_transferred = True
-                            break
-                        # Global assignment: g_ptr = var
-                        if re.search(rf'g_\w+\s*=\s*{re.escape(var)}\b', check_line):
-                            was_transferred = True
-                            break
-                    if was_transferred:
-                        continue
-                    # Semantic check: Only flag if allocation was recent (within same block)
-                    if line_num - alloc_line < 50:
-                        vulns.append(MemoryVuln(
-                            vuln_type=VulnType.MEMORY_LEAK,
-                            cwe_id="CWE-401",
-                            location=Location(filename, alloc_line, 0),
-                            var_name=var,
-                            description=f"Potential memory leak - '{var}' allocated but may not be freed before return",
-                            confidence=0.5,
-                        ))
+        # CWE-401 (memory leak) is now raised structurally in the translator via
+        # ownership/escape analysis over the CFG: a heap allocation whose owning
+        # pointer goes out of scope on a path where ownership was neither released
+        # nor transferred/escaped. The line-based heuristic that used to live here
+        # (which false-positived on ownership-transfer code and used a 50-line
+        # proximity window) is retired in favour of that reasoning.
 
         # =====================================================================
         # CWE-457: Use of Uninitialized Variable - Semantic tracking

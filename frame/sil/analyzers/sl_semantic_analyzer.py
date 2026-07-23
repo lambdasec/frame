@@ -1246,23 +1246,13 @@ class SLSemanticAnalyzer:
         return False
 
     def _check_memory_leaks(self, loc: Location):
+        """CWE-401 (memory leak) is now raised structurally in the translator via
+        ownership/escape analysis over the CFG. This check flagged any
+        heap-allocated region still ALLOCATED at function exit with no escape
+        analysis, so it false-positived on ownership-transfer idioms (return,
+        out-parameter, hand-off to a callee). It is retired here as a no-op.
         """
-        Check for memory leaks at function exit (CWE-401).
-
-        In SL: at function exit, heap should be emp for local allocations
-        If heap contains var |-> _ for heap-allocated var, it's a leak.
-        """
-        for var_name, region in self.heap.items():
-            if region.alloc_kind == AllocKind.HEAP and region.state == HeapState.ALLOCATED:
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.MEMORY_LEAK,
-                    cwe_id="CWE-401",
-                    location=loc,
-                    var_name=var_name,
-                    description=f"Memory leak: '{var_name}' allocated at line {region.alloc_loc.line if region.alloc_loc else '?'} not freed. SL: heap ⊨ {var_name} |-> _ at exit",
-                    alloc_loc=region.alloc_loc,
-                    confidence=0.80
-                ))
+        return
 
 
     def _check_subscript_in_statement(self, node: Any, source: str, filename: str, loc: Location):

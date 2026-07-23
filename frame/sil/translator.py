@@ -130,6 +130,8 @@ class VulnType(Enum):
     BUFFER_UNDERFLOW = "buffer_underflow"       # CWE-124/127 (underread/underwrite)
     DOUBLE_FREE = "double_free"                 # CWE-415
     MEMORY_LEAK = "memory_leak"                 # CWE-401
+    MISMATCHED_FREE = "mismatched_free"         # CWE-762 (deallocator does not match allocator)
+    RETURN_STACK_ADDRESS = "return_stack_address"  # CWE-562 (return of a local's address)
     INVALID_FREE = "invalid_free"               # CWE-590 (free of non-heap memory)
     RESOURCE_LEAK = "resource_leak"             # CWE-404 (improper resource shutdown)
     FORMAT_STRING = "format_string"             # CWE-134
@@ -353,6 +355,23 @@ class SymbolicState:
     # no entry has an unknown origin and is left alone (precision over recall).
     heap_origin: Dict[str, str] = field(default_factory=dict)
 
+    # The allocator FAMILY a heap pointer came from: "c_heap" (malloc/calloc/...),
+    # "new" (scalar `new`), or "new_array" (`new[]`). This is the origin refined
+    # to a kind, used only for CWE-762: the one correct release for each family
+    # is fixed (free / delete / delete[]), so a deallocator of the wrong shape on
+    # a pointer whose kind is known is a provable mismatch. Unknown-kind pointers
+    # are left alone.
+    alloc_kind: Dict[str, str] = field(default_factory=dict)
+
+    # Ownership of live heap allocations, for CWE-401. Maps a pointer variable to
+    # the identity of the allocation it currently owns (id() of the allocating
+    # instruction). An allocation is LIVE exactly while some variable maps to it;
+    # it LEAKS when its last owner is overwritten (reassignment) or the function
+    # exits still owning it, and is safe once freed, returned, or passed out
+    # (escape), which drop every owner. Merged by intersection, so an allocation
+    # counts as owned at a join only when it was owned on both incoming paths.
+    owned_allocs: Dict[str, object] = field(default_factory=dict)
+
     # Path constraints (pure formulas)
     path_constraints: List[Formula] = field(default_factory=list)
 
@@ -409,6 +428,8 @@ class SymbolicState:
             freed=set(self.freed),
             null_ptrs=dict(self.null_ptrs),
             heap_origin=dict(self.heap_origin),
+            alloc_kind=dict(self.alloc_kind),
+            owned_allocs=dict(self.owned_allocs),
             path_constraints=list(self.path_constraints),
             asserted_safe={k: list(v) for k, v in self.asserted_safe.items()},
             list_elements={k: list(v) for k, v in self.list_elements.items()},
@@ -810,6 +831,10 @@ class SILTranslator:
         # The procedure currently being executed (gives detectors access to its
         # fixed-array declarations for heap-origin reasoning).
         self._cur_proc: Optional[Procedure] = None
+        # CWE-401 leak bookkeeping: allocation identity -> its source location, so
+        # a leak reported when an allocation is lost or outlives its scope points
+        # at the allocation site rather than the point of loss.
+        self._leak_sites: Dict[object, Location] = {}
 
     @property
     def _is_c_lang(self) -> bool:
@@ -1307,9 +1332,11 @@ class SILTranslator:
             # successor 1 with its negation (false). Record these per edge so the
             # path to any downstream sink carries its exact branch assumptions.
             edge_exp = self._branch_edge_formula(node)
+            added_succ = False
             for idx, succ_id in enumerate(succ_list):
                 if idx in skip_indices:
                     continue
+                added_succ = True
                 # Create a clean copy without the skip markers
                 succ_state = current_state.copy()
                 if hasattr(succ_state, '_skip_successor_indices'):
@@ -1338,6 +1365,14 @@ class SILTranslator:
                     for v in self._edge_null_vars(edge_exp, assume_true=(idx == 0)):
                         succ_state.null_ptrs[v] = edge_exp
                 worklist.append((succ_id, succ_state))
+
+            # A path that ends here without returning (falls off the end of a
+            # void function) drops any allocation it still owns: the owning
+            # pointer goes out of scope unreleased, a CWE-401 leak. Runs on the
+            # merged state at this node, so an allocation freed on some other
+            # incoming path is already gone. C/C++ only.
+            if self._is_c_lang and not added_succ:
+                checks.extend(self._finalize_leaks(current_state, proc.name))
 
         # Post-process: If we found non-XSS vulnerabilities, remove XSS-on-return checks
         # to avoid duplicate reporting (e.g., SQLi test shouldn't also report XSS)
@@ -1497,6 +1532,12 @@ class SILTranslator:
         # right-hand side re-establishes them (null literal, address-of a local,
         # or propagation from another pointer variable).
         self._track_assign_lifecycle(instr, target, state)
+
+        # Thread heap OWNERSHIP across the assignment (CWE-401): a fresh
+        # allocation landing in `target`, a move/alias of an owned pointer, or the
+        # loss of the allocation `target` used to hold. Runs after the lifecycle
+        # update so it sees the cleared facts. C/C++ only (gated inside).
+        checks.extend(self._track_ownership_assign(instr, target, state, proc_name))
 
         # Track constant values for constant folding
         exp_str = str(instr.exp).strip()
@@ -1904,6 +1945,12 @@ class SILTranslator:
 
         # Update heap
         state.heap[addr] = value
+
+        # A pointer stored through a dereference (`*out = p`, a field, a global)
+        # escapes this function's ownership: the caller can reach it, so it is
+        # not a leak. C/C++ only.
+        if self._is_c_lang:
+            self._escape_vars(state, self._escaping_expr_vars(instr.value))
 
         # Propagate taint
         value_vars = self._get_exp_vars(instr.value)
@@ -2639,6 +2686,14 @@ class SILTranslator:
         # Memory Safety: Track allocations and deallocations
         # =================================================================
 
+        # A pointer handed to any callee that is not itself releasing it escapes
+        # this function's ownership (the callee may take ownership or store it),
+        # so it will not be reported as a leak. The deallocator's own argument is
+        # released below, after its allocator kind is read for the CWE-762
+        # mismatch check. C/C++ only.
+        if self._is_c_lang and not (spec and spec.is_deallocator()):
+            self._escape_vars(state, self._escaping_arg_vars(instr))
+
         if spec:
             # Handle memory allocation (malloc, new, etc.)
             if spec.is_allocator() and instr.ret:
@@ -2649,6 +2704,16 @@ class SILTranslator:
                 # the ordinary correct idiom and must not read as a null deref.
                 state.heap_origin[ret_var] = "heap"
                 state.null_ptrs.pop(ret_var, None)
+                if self._is_c_lang:
+                    # Record the allocator KIND (for CWE-762) and take ownership of
+                    # the fresh allocation (for CWE-401).
+                    kind = self._alloc_kind_of_call(func_name)
+                    if kind is not None:
+                        state.alloc_kind[ret_var] = kind
+                    alloc_id = id(instr)
+                    self._leak_sites.setdefault(alloc_id, instr.loc)
+                    checks.extend(
+                        self._reassign_owner(state, ret_var, alloc_id, proc_name))
                 if self.verbose:
                     print(f"[Translator] Allocation: {ret_var} = {func_name}()")
 
@@ -2667,12 +2732,33 @@ class SILTranslator:
                     if self.verbose:
                         print(f"[Translator] FREE-NON-HEAP detected: {func_name}({freed_var})")
 
+                # Check for mismatched memory routine (CWE-762): the deallocator's
+                # shape must match the allocator that produced the pointer. Only
+                # fires when the pointer's allocator kind is known and the routine
+                # is a recognised deallocator whose expected partner differs.
+                if self._is_c_lang:
+                    kind = state.alloc_kind.get(freed_var)
+                    routine = self._free_routine_of_call(func_name)
+                    if kind is not None and routine is not None \
+                            and self._EXPECTED_FREE[kind] != routine:
+                        checks.append(self._create_mismatched_free_check(
+                            instr, state, proc_name, freed_var, kind, routine))
+                        if self.verbose:
+                            print(f"[Translator] MISMATCHED-FREE: {routine}({freed_var}) "
+                                  f"but allocated with {kind}")
+
                 # Check for double-free: freeing already freed memory
                 if state.is_freed(freed_var):
                     check = self._create_double_free_check(instr, state, proc_name, freed_var)
                     checks.append(check)
                     if self.verbose:
                         print(f"[Translator] DOUBLE-FREE detected: {func_name}({freed_var})")
+
+                # Releasing the allocation discharges ownership (no leak). C/C++.
+                if self._is_c_lang:
+                    aid = state.owned_allocs.get(freed_var)
+                    if aid is not None:
+                        self._release_alloc(state, aid)
 
                 # Mark as freed for use-after-free detection
                 state.mark_freed(freed_var)
@@ -3171,9 +3257,22 @@ class SILTranslator:
         mislabeled as XSS). Real reflected XSS is caught at explicit output sinks
         (response.getWriter().print/write, render_template, res.send, etc.).
         """
-        # Intentionally emits no checks -- see docstring. Real XSS is detected at
-        # explicit HTML output sinks, not at return statements.
-        return [], state
+        # Intentionally emits no XSS checks -- see docstring. Real XSS is detected
+        # at explicit HTML output sinks, not at return statements.
+        checks: List[VulnerabilityCheck] = []
+        if self._is_c_lang:
+            # CWE-562: returning the address of a local hands back a dangling
+            # pointer. Checked before the escape below so the returned pointer's
+            # stack origin is still visible.
+            if instr.value is not None and self._returns_stack_address(instr.value, state):
+                checks.append(self._create_return_stack_check(instr, state, proc_name))
+            # A returned pointer transfers ownership to the caller, so it does not
+            # leak.
+            if instr.value is not None:
+                self._escape_vars(state, self._escaping_expr_vars(instr.value))
+            # This return ends the path; any allocation still owned here leaks.
+            checks.extend(self._finalize_leaks(state, proc_name))
+        return checks, state
 
     # =========================================================================
     # Vulnerability Check Creation
@@ -4361,6 +4460,268 @@ class SILTranslator:
         return checks
 
     # =========================================================================
+    # Ownership and lifetime (CWE-401 leak, CWE-762 mismatch, CWE-562 stack addr)
+    #
+    # These reason over the same separation-logic heap facts Phase 1 threads
+    # through the CFG. A heap allocation is an owned resource; the frame/ownership
+    # question is whether that ownership is discharged (freed), transferred
+    # (returned, stored out, passed on), or dropped on the floor (a leak). All
+    # C/C++ only, and conservative: when ownership cannot be shown to be dropped,
+    # nothing is reported.
+    # =========================================================================
+
+    # Allocator families and the one deallocator that correctly releases each.
+    _C_HEAP_ALLOCATORS = frozenset({
+        "malloc", "calloc", "realloc", "reallocarray", "strdup", "strndup",
+        "aligned_alloc", "memalign", "posix_memalign", "valloc", "pvalloc",
+    })
+    _EXPECTED_FREE = {"c_heap": "free", "new": "delete", "new_array": "delete[]"}
+    _ALLOC_KIND_LABEL = {"c_heap": "malloc/calloc/realloc", "new": "new",
+                         "new_array": "new[]"}
+
+    def _cast_strip(self, exp: Exp) -> Exp:
+        """See through cast expressions to the value underneath."""
+        while isinstance(exp, ExpCast):
+            exp = exp.exp
+        return exp
+
+    def _alloc_kind_of_call(self, func_name) -> Optional[str]:
+        """The allocator family a call name names, or None if it is not a heap
+        allocator whose kind constrains how it must be released."""
+        name = self._strip_self_receiver(str(func_name or ""))
+        if name in ("new", "operator new"):
+            return "new"
+        if name in ("new[]", "operator new[]"):
+            return "new_array"
+        if name in self._C_HEAP_ALLOCATORS:
+            return "c_heap"
+        return None
+
+    def _free_routine_of_call(self, func_name) -> Optional[str]:
+        """The canonical deallocator routine a call name is, or None."""
+        name = self._strip_self_receiver(str(func_name or ""))
+        if name in ("free", "cfree"):
+            return "free"
+        if name in ("delete", "operator delete"):
+            return "delete"
+        if name in ("delete[]", "operator delete[]"):
+            return "delete[]"
+        return None
+
+    def _alloc_expr_kind(self, exp: Exp) -> Optional[str]:
+        """If `exp` (through casts) is an allocator call or a `new` expression,
+        its allocator family, else None. This is what catches an allocation the
+        frontend leaves embedded in an assignment -- `(T*)malloc(n)` and `new T`
+        -- rather than as a standalone Call instruction."""
+        exp = self._cast_strip(exp)
+        if isinstance(exp, ExpCall):
+            callee = exp.func
+            if isinstance(callee, ExpConst):
+                name = callee.value
+            elif isinstance(callee, ExpVar):
+                name = str(callee.var)
+            else:
+                name = str(callee)
+            return self._alloc_kind_of_call(name)
+        return None
+
+    def _is_temp_name(self, name) -> bool:
+        """A frontend-introduced single-use temporary (`$p`, `$p_1`)."""
+        return isinstance(name, str) and name.startswith("$")
+
+    def _is_declared_local(self, name) -> bool:
+        """Is `name` declared local to the current procedure (a declared local or
+        a parameter)? The address of one of these is a stack address."""
+        proc = self._cur_proc
+        if proc is None:
+            return False
+        if name in (proc.locals or {}):
+            return True
+        try:
+            return name in set(proc.param_names())
+        except Exception:
+            return False
+
+    def _is_local_owner(self, name) -> bool:
+        """May `name` own an allocation without that ownership being visible to
+        the caller? Declared locals, parameters, and temps qualify; a struct
+        field, a subscript, or a global does not (assigning through one hands the
+        allocation to something that outlives the function)."""
+        return self._is_temp_name(name) or self._is_declared_local(name)
+
+    def _escaping_expr_vars(self, exp: Exp) -> Set[str]:
+        """The pointer variable an expression hands off wholesale, if any. A bare
+        variable `p` (through casts) or its address `&p` passes the pointer
+        itself; `p[i]`, `*p`, `p->f` pass a value read THROUGH p and do not."""
+        inner = self._cast_strip(exp)
+        v = self._sole_var(inner)
+        if v is not None:
+            return {v}
+        if isinstance(inner, ExpUnOp) and inner.op == "&":
+            b = self._sole_var(self._cast_strip(inner.operand))
+            if b is not None:
+                return {b}
+        return set()
+
+    def _escaping_arg_vars(self, instr: Instr) -> Set[str]:
+        """Pointer variables an instruction hands to a callee wholesale."""
+        result: Set[str] = set()
+        for arg in (getattr(instr, "args", None) or []):
+            exp = arg[0] if isinstance(arg, tuple) else arg
+            result |= self._escaping_expr_vars(exp)
+        return result
+
+    def _leak_check(self, alloc_id, proc_name: str) -> VulnerabilityCheck:
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.MEMORY_LEAK,
+            location=self._leak_sites.get(alloc_id),
+            description="Memory leak: a heap allocation is never released, "
+                        "returned, or otherwise handed off before its owning "
+                        "pointer goes out of scope",
+            procedure_name=proc_name,
+        )
+
+    def _release_alloc(self, state: SymbolicState, alloc_id) -> None:
+        """Drop every owner of `alloc_id`: it was freed or escaped and can no
+        longer leak."""
+        for v in [v for v, a in state.owned_allocs.items() if a == alloc_id]:
+            state.owned_allocs.pop(v, None)
+            state.alloc_kind.pop(v, None)
+
+    def _escape_vars(self, state: SymbolicState, names) -> None:
+        """Mark allocations owned by any of `names` as escaped (safe from leak
+        reporting), releasing every alias that shares them."""
+        for name in names:
+            aid = state.owned_allocs.get(name)
+            if aid is not None:
+                self._release_alloc(state, aid)
+
+    def _reassign_owner(self, state: SymbolicState, var: str, new_id,
+                        proc_name: str) -> List[VulnerabilityCheck]:
+        """Rebind `var` to own `new_id` (or nothing, if None). If this drops the
+        last owner of an allocation `var` currently holds, that allocation is
+        lost -- the reassignment leak (`p = malloc(); p = malloc();` loses the
+        first)."""
+        checks: List[VulnerabilityCheck] = []
+        old = state.owned_allocs.get(var)
+        if old is not None and old != new_id:
+            others = any(v != var and a == old for v, a in state.owned_allocs.items())
+            if not others:
+                checks.append(self._leak_check(old, proc_name))
+        if new_id is None:
+            state.owned_allocs.pop(var, None)
+            state.alloc_kind.pop(var, None)
+        else:
+            state.owned_allocs[var] = new_id
+        return checks
+
+    def _track_ownership_assign(self, instr: Assign, target: str,
+                                state: SymbolicState,
+                                proc_name: str) -> List[VulnerabilityCheck]:
+        """Thread heap ownership across `target = exp` for CWE-401 (C/C++ only)."""
+        if not self._is_c_lang:
+            return []
+        exp = instr.exp
+        kind = self._alloc_expr_kind(exp)
+        if kind is not None:
+            # An allocator that CONSUMES a pointer argument (`realloc(p, n)`)
+            # releases it, and any pointer handed to the allocator call escapes
+            # regardless, so the allocation those arguments held is not leaked
+            # when `target` is rebound below.
+            call = self._cast_strip(exp)
+            if isinstance(call, ExpCall):
+                consumed: Set[str] = set()
+                for a in call.args:
+                    consumed |= self._escaping_expr_vars(a)
+                self._escape_vars(state, consumed)
+            # A fresh allocation lands in `target` (cast malloc, or `new`).
+            alloc_id = id(instr)
+            self._leak_sites.setdefault(alloc_id, instr.loc)
+            checks = self._reassign_owner(state, target, alloc_id, proc_name)
+            state.alloc_kind[target] = kind
+            state.heap_origin[target] = "heap"
+            return checks
+        src = self._sole_var(self._cast_strip(exp))
+        if src is not None and src in state.owned_allocs:
+            if not self._is_local_owner(target):
+                # `target` is caller-visible (a field, a global): the allocation
+                # escapes rather than staying under this function's control.
+                self._escape_vars(state, [src])
+                return self._reassign_owner(state, target, None, proc_name)
+            aid = state.owned_allocs[src]
+            checks = self._reassign_owner(state, target, aid, proc_name)
+            if src in state.alloc_kind:
+                state.alloc_kind[target] = state.alloc_kind[src]
+            if self._is_temp_name(src):
+                # A single-use temp MOVES its allocation onto `target`; a named
+                # variable SHARES it, so both stay owners and freeing either
+                # releases the allocation.
+                state.owned_allocs.pop(src, None)
+                state.alloc_kind.pop(src, None)
+            return checks
+        # `target` receives something that is not an owned pointer: it loses any
+        # allocation it was holding.
+        return self._reassign_owner(state, target, None, proc_name)
+
+    def _finalize_leaks(self, state: SymbolicState,
+                        proc_name: str) -> List[VulnerabilityCheck]:
+        """Every allocation still owned as a path ends leaks: its owning pointer
+        goes out of scope without the allocation having been freed or handed
+        off. A provably-null owner is skipped (an allocation that failed and was
+        bailed on has nothing to leak)."""
+        checks: List[VulnerabilityCheck] = []
+        seen = set()
+        for var, aid in list(state.owned_allocs.items()):
+            if aid in seen or var in state.null_ptrs:
+                continue
+            seen.add(aid)
+            checks.append(self._leak_check(aid, proc_name))
+        state.owned_allocs.clear()
+        state.alloc_kind.clear()
+        return checks
+
+    def _returns_stack_address(self, val: Exp, state: SymbolicState) -> bool:
+        """Does a return value hand back the address of a local? Either `&x` for a
+        declared local `x` (or `&x[i]`, `&s.f` on one), or a pointer variable
+        whose tracked storage origin is the stack -- a fixed local array that
+        decayed, or a pointer earlier set to the address of a local."""
+        inner = self._cast_strip(val)
+        if isinstance(inner, ExpUnOp) and inner.op == "&":
+            base = self._sole_var(self._cast_strip(inner.operand))
+            if base is None:
+                base = self._deref_base(inner.operand)
+            return base is not None and self._is_declared_local(base)
+        v = self._sole_var(inner)
+        return v is not None and state.heap_origin.get(v) == "stack"
+
+    def _create_mismatched_free_check(self, instr: Instr, state: SymbolicState,
+                                      proc_name: str, var: str, kind: str,
+                                      routine: str) -> VulnerabilityCheck:
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.MISMATCHED_FREE,
+            location=instr.loc,
+            description=f"Mismatched memory routine: '{var}' was allocated with "
+                        f"{self._ALLOC_KIND_LABEL[kind]} but released with "
+                        f"{routine} (expected {self._EXPECTED_FREE[kind]})",
+            tainted_var=var,
+            procedure_name=proc_name,
+        )
+
+    def _create_return_stack_check(self, instr: Instr, state: SymbolicState,
+                                   proc_name: str) -> VulnerabilityCheck:
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.RETURN_STACK_ADDRESS,
+            location=instr.loc,
+            description="Return of stack address: the returned value is the "
+                        "address of a local, which dangles once the function "
+                        "returns",
+            procedure_name=proc_name,
+        )
+
+    # =========================================================================
     # Helpers
     # =========================================================================
 
@@ -4744,6 +5105,19 @@ class SILTranslator:
             if s1.heap_origin[v] == s2.heap_origin[v]:
                 merged.heap_origin[v] = s1.heap_origin[v]
 
+        # Allocator kind: keep only where the two paths agree, mirroring origin.
+        for v in set(s1.alloc_kind) & set(s2.alloc_kind):
+            if s1.alloc_kind[v] == s2.alloc_kind[v]:
+                merged.alloc_kind[v] = s1.alloc_kind[v]
+
+        # Owned allocations: intersection. An allocation is owned after the join
+        # only if the SAME variable owned the SAME allocation on both paths; if a
+        # path freed/reassigned it, or a path never had it, it is not provably
+        # leaked at exit, so it is dropped (precision over recall).
+        for v in set(s1.owned_allocs) & set(s2.owned_allocs):
+            if s1.owned_allocs[v] == s2.owned_allocs[v]:
+                merged.owned_allocs[v] = s1.owned_allocs[v]
+
         # Asserted safe: intersection
         for var in set(s1.asserted_safe.keys()) & set(s2.asserted_safe.keys()):
             merged.asserted_safe[var] = list(
@@ -4819,5 +5193,10 @@ class SILTranslator:
             return False
         # Check if freed sets are equal
         if s1.freed != s2.freed:
+            return False
+        # Ownership of live allocations must also converge: a change here means a
+        # leak may now be reachable that was not before. Allocation identity is a
+        # stable per-site token, so this cannot oscillate.
+        if s1.owned_allocs != s2.owned_allocs:
             return False
         return True

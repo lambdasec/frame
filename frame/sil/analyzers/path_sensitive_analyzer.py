@@ -803,42 +803,14 @@ class PathSensitiveAnalyzer:
         return None
 
     def _check_memory_leaks(self, filename: str, body: Any):
+        """CWE-401 (memory leak) is now raised structurally in the translator via
+        ownership/escape analysis over the CFG (a heap allocation whose owning
+        pointer leaves scope with ownership neither released nor transferred). The
+        source-text heuristic that used to live here -- which decided ownership
+        transfer by grepping the function body for `return var` or `f(... var ...)`
+        -- is retired, so this is now a no-op.
         """
-        CWE-401: Memory Leak - Check for heap allocations without frees at function exit.
-
-        Uses separation logic: valid heap formula at exit implies potential leak.
-        """
-        body_text = body.text.decode('utf8') if body.text else ''
-
-        for var, ptr_info in self.current_state.pointers.items():
-            if (ptr_info.state == HeapState.VALID and
-                ptr_info.source == AllocSource.HEAP and
-                ptr_info.alloc_loc):
-
-                # Check if variable might be returned or stored
-                if f'return {var}' in body_text or f'return({var})' in body_text:
-                    continue
-
-                # Check if variable is passed to another function (might be freed there)
-                # Look for patterns like: func(var), func(data), Sink(var), etc.
-                import re
-                func_call_pattern = rf'\b\w+\s*\([^)]*\b{re.escape(var)}\b[^)]*\)'
-                if re.search(func_call_pattern, body_text):
-                    # Variable is passed to another function - don't flag as leak
-                    # It could be freed or stored in that function
-                    continue
-
-                loc = ptr_info.alloc_loc
-                self._add_vuln(MemoryVuln(
-                    vuln_type=VulnType.MEMORY_LEAK,
-                    cwe_id="CWE-401",
-                    location=loc,
-                    var_name=var,
-                    description=f"Memory leak: '{var}' allocated at line {loc.line} not freed before function exit. SL: {var} |-> _ * ... at exit",
-                    alloc_loc=loc,
-                    confidence=0.8,
-                    sl_check=f"{var} |-> _ at function_exit"
-                ))
+        return
 
     # CWE-252 is handled structurally in translator._unchecked_return_checks,
     # which fires on a privilege-management Call whose result has no destination
