@@ -425,7 +425,8 @@ class CFrontend:
                 self._record_local(var_name)
                 if var_name:
                     loc = self._get_location(child)
-                    self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+                    self._add_instr(Assign(loc=loc, id=PVar(var_name),
+                                           exp=ExpConst.null(), is_uninit_decl=True))
 
     def _record_array_from_string_init(self, declarator: Optional[TSNode],
                                        value: Optional[TSNode]) -> None:
@@ -527,7 +528,8 @@ class CFrontend:
                 exp = self._translate_expression(value)
                 self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
         else:
-            self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+            self._add_instr(Assign(loc=loc, id=PVar(var_name),
+                                   exp=ExpConst.null(), is_uninit_decl=True))
 
     def _translate_assignment(self, node: TSNode) -> None:
         """Translate assignment expression"""
@@ -713,7 +715,16 @@ class CFrontend:
         alternative = node.child_by_field_name("alternative")
         if alternative:
             self._current_node = false_node
-            self._translate_statement(alternative)
+            # tree-sitter wraps the else body in an `else_clause` node, which
+            # `_translate_statement` does not recognise; descending into it is what
+            # keeps the else branch in the CFG at all (otherwise the whole branch,
+            # and any definition it makes, is silently dropped).
+            if alternative.type == "else_clause":
+                for child in alternative.children:
+                    if child.type != "else":
+                        self._translate_statement(child)
+            else:
+                self._translate_statement(alternative)
             if self._current_node:
                 proc.connect(self._current_node.id, join_node.id)
         else:
@@ -780,6 +791,12 @@ class CFrontend:
         if init:
             if init.type == "declaration":
                 self._translate_declaration(init)
+            elif init.type == "assignment_expression":
+                # A bare `for(i = 0; ...)` initializer is an assignment expression,
+                # not a statement, so `_translate_statement` would silently drop it
+                # (leaving the loop variable with no definition); lower it directly,
+                # the same way the update clause is handled below.
+                self._translate_assignment(init)
             else:
                 self._translate_statement(init)
 

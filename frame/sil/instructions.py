@@ -399,6 +399,12 @@ class Assign(Instr):
     id: Union[Ident, PVar]  # Destination
     exp: Exp                # Source expression
 
+    # True only for a bare declaration with no initializer (`int x;`), which the
+    # frontend lowers to `x = null` exactly like `int *p = NULL;`. The two are
+    # otherwise indistinguishable in the IR, so this flag is the only structural
+    # signal that the target has no reaching definition yet (drives CWE-457).
+    is_uninit_decl: bool = False
+
     def __str__(self) -> str:
         return f"{self.id} = {self.exp}"
 

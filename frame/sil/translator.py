@@ -22,7 +22,7 @@ from frame.core.ast import (
     Formula, Emp, PointsTo, SepConj, And, Or, Not, Eq, Neq,
     Var, Const, Taint, Sanitized, Source, Sink,
     NullDeref, UseAfterFree, BufferOverflow, Exists,
-    PredicateCall, Lt, Le, Gt, Ge, True_
+    PredicateCall, Lt, Le, Gt, Ge, True_, ArithExpr, Expr
 )
 
 from .types import (
@@ -372,6 +372,16 @@ class SymbolicState:
     # counts as owned at a join only when it was owned on both incoming paths.
     owned_allocs: Dict[str, object] = field(default_factory=dict)
 
+    # Declared locals that have NO reaching definition on this path, for CWE-457.
+    # A local enters the set at its bare declaration (`int x;`, lowered to
+    # `x = null` and flagged `is_uninit_decl`) and leaves it the moment the path
+    # gives it a real value (any non-declaration write) or its address is taken /
+    # it is passed to a function (a possible out-parameter). A value-read of a var
+    # still in the set is a use of an uninitialized variable. Merged by UNION,
+    # which is the intersection of the dual "initialized" sets: a var initialized
+    # on only one incoming branch is still uninitialized at the join.
+    uninitialized: Set[str] = field(default_factory=set)
+
     # Path constraints (pure formulas)
     path_constraints: List[Formula] = field(default_factory=list)
 
@@ -430,6 +440,7 @@ class SymbolicState:
             heap_origin=dict(self.heap_origin),
             alloc_kind=dict(self.alloc_kind),
             owned_allocs=dict(self.owned_allocs),
+            uninitialized=set(self.uninitialized),
             path_constraints=list(self.path_constraints),
             asserted_safe={k: list(v) for k, v in self.asserted_safe.items()},
             list_elements={k: list(v) for k, v in self.list_elements.items()},
@@ -1470,6 +1481,13 @@ class SILTranslator:
         # list because several dispatch arms below rebind `checks` wholesale.
         lifecycle_checks = self._lifecycle_deref_checks(instr, state, proc_name)
 
+        # Numeric/value defects (CWE-457 use of an uninitialized variable, CWE-369
+        # divide by zero) also read the pre-instruction state, and the uninit pass
+        # additionally UPDATES the reaching-definition facts for this instruction.
+        # Both run before the dispatch, which only mutates the state in place.
+        numeric_checks = self._uninit_checks(instr, state, proc_name)
+        numeric_checks += self._divzero_checks(instr, state, proc_name)
+
         if isinstance(instr, Assign):
             assign_checks, state = self._exec_assign(instr, state, proc_name)
             checks.extend(assign_checks)
@@ -1507,7 +1525,7 @@ class SILTranslator:
         elif isinstance(instr, Return):
             checks, state = self._exec_return(instr, state, proc_name)
 
-        return lifecycle_checks + checks, state
+        return lifecycle_checks + numeric_checks + checks, state
 
     # =========================================================================
     # Instruction Execution
@@ -4460,6 +4478,286 @@ class SILTranslator:
         return checks
 
     # =========================================================================
+    # Numeric / value defects (CWE-457 uninitialized read, CWE-369 divide by zero)
+    #
+    # Both reason over the same per-path dataflow the rest of the translator
+    # threads: CWE-457 over a reaching-definition set (which locals still have no
+    # value on this path), CWE-369 over the accumulated path condition fed to
+    # Frame's Z3 satisfiability check. C/C++ only; precision is the priority, so
+    # each declines to fire wherever the defect cannot be proven.
+    # =========================================================================
+
+    def _uninit_aggregate_locals(self) -> Set[str]:
+        """Locals that are arrays or aggregates, which the scalar reaching-def
+        model does not track: a fixed-size array, or any local ever used as the
+        base of a field access (`s.f`). Their storage is addressable and reading
+        the name yields an address, not an uninitialized scalar, so tracking them
+        would only manufacture false positives. Computed once per procedure."""
+        proc = self._cur_proc
+        if proc is None:
+            return set()
+        cached = getattr(proc, "_uninit_aggregates", None)
+        if cached is not None:
+            return cached
+        agg: Set[str] = set(proc.fixed_array_bounds or {})
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                for exp in self._iter_instr_exps(instr):
+                    for sub in self._walk_exp(exp):
+                        if isinstance(sub, ExpFieldAccess):
+                            v = self._sole_var(self._cast_strip(sub.base))
+                            if v is not None:
+                                agg.add(v)
+        proc._uninit_aggregates = agg
+        return agg
+
+    def _uninit_trackable(self, name: str) -> bool:
+        """Should the reaching-definition analysis track `name`? Only a scalar or
+        pointer declared local qualifies; arrays and aggregates are excluded."""
+        return bool(name) and name not in self._uninit_aggregate_locals()
+
+    def _collect_value_reads(self, exp: Exp, out: Set[str]) -> None:
+        """Variables whose SCALAR VALUE `exp` reads. Address-of (`&x`), the base of
+        a field access (`s.f`) and the base of an index (`a[i]`) are not value
+        reads: the first takes an address, the other two use the base as storage.
+        A dereference (`*p`), a cast, and every arithmetic/logical operand ARE
+        value reads of what they contain."""
+        if isinstance(exp, ExpVar):
+            out.add(str(exp.var))
+        elif isinstance(exp, ExpConst):
+            return
+        elif isinstance(exp, ExpCast):
+            self._collect_value_reads(exp.exp, out)
+        elif isinstance(exp, ExpUnOp):
+            if exp.op == "&":
+                return
+            self._collect_value_reads(exp.operand, out)
+        elif isinstance(exp, ExpBinOp):
+            self._collect_value_reads(exp.left, out)
+            self._collect_value_reads(exp.right, out)
+        elif isinstance(exp, ExpIndex):
+            # The base is storage, not a scalar value; the index is a value read.
+            self._collect_value_reads(exp.index, out)
+        elif isinstance(exp, ExpFieldAccess):
+            return
+        elif isinstance(exp, ExpTernary):
+            self._collect_value_reads(exp.condition, out)
+            self._collect_value_reads(exp.true_exp, out)
+            self._collect_value_reads(exp.false_exp, out)
+        elif isinstance(exp, ExpStringConcat):
+            for part in exp.parts:
+                self._collect_value_reads(part, out)
+        elif isinstance(exp, ExpCall):
+            for arg in exp.args:
+                if self._is_addressable_arg(arg):
+                    continue
+                self._collect_value_reads(arg, out)
+
+    def _is_addressable_arg(self, arg: Exp) -> bool:
+        """Is a call argument a bare variable `x` or its address `&x` (through
+        casts)? Passing one hands the callee a location it may write, so it is
+        treated as a possible initialization rather than a value read. A compound
+        argument (`x + 1`, `f(x)`) cannot be an out-parameter and IS a value
+        read."""
+        inner = self._cast_strip(arg)
+        if isinstance(inner, ExpVar):
+            return True
+        if isinstance(inner, ExpUnOp) and inner.op == "&":
+            return True
+        return False
+
+    def _uninit_value_reads(self, instr: Instr) -> Set[str]:
+        """The scalar-value reads an instruction performs, for CWE-457. A write
+        target is not a read; a bare-variable or `&var` call argument is treated
+        as a possible out-parameter initialization, not a read."""
+        reads: Set[str] = set()
+        exps: List[Exp] = []
+        if isinstance(instr, Assign):
+            exps.append(instr.exp)
+        elif isinstance(instr, Store):
+            exps.append(instr.value)
+        elif isinstance(instr, Load):
+            exps.append(instr.exp)
+        elif isinstance(instr, Return):
+            if instr.value is not None:
+                exps.append(instr.value)
+        elif isinstance(instr, Prune):
+            exps.append(instr.condition)
+        elif isinstance(instr, TaintSink):
+            exps.append(instr.exp)
+        elif isinstance(instr, Call):
+            for arg, _ in instr.args:
+                if self._is_addressable_arg(arg):
+                    continue
+                exps.append(arg)
+            if instr.receiver is not None:
+                exps.append(instr.receiver)
+        for e in exps:
+            self._collect_value_reads(e, reads)
+        return reads
+
+    def _addr_taken_vars(self, instr: Instr) -> Set[str]:
+        """Every local whose address is taken anywhere in the instruction (`&x`).
+        Taking a local's address hands out a location that may be written, so it
+        counts as a possible initialization of that local."""
+        taken: Set[str] = set()
+        for exp in self._iter_instr_exps(instr):
+            for sub in self._walk_exp(exp):
+                if isinstance(sub, ExpUnOp) and sub.op == "&":
+                    v = self._sole_var(self._cast_strip(sub.operand))
+                    if v is not None:
+                        taken.add(v)
+        return taken
+
+    def _uninit_inits(self, instr: Instr) -> Set[str]:
+        """Locals this instruction gives a value to, so they leave the
+        uninitialized set: a normal (non-declaration) assignment target, a load
+        or call result, and any local whose address is taken or that is passed as
+        a bare argument to a call (a possible out-parameter)."""
+        inits: Set[str] = set(self._addr_taken_vars(instr))
+        if isinstance(instr, Assign) and not getattr(instr, "is_uninit_decl", False):
+            inits.add(self._get_var_name(instr.id))
+        elif isinstance(instr, Load):
+            inits.add(str(instr.id))
+        elif isinstance(instr, Alloc):
+            inits.add(str(instr.id))
+        elif isinstance(instr, Call):
+            if instr.ret:
+                inits.add(str(instr.ret[0]))
+            for arg, _ in instr.args:
+                if self._is_addressable_arg(arg):
+                    inits.add(self._sole_var(self._cast_strip(arg)))
+        inits.discard(None)
+        return inits
+
+    def _uninit_checks(self, instr: Instr, state: SymbolicState,
+                       proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-457: a value-read of a declared local with no reaching definition on
+        this path. Also UPDATES the reaching-definition set for this instruction:
+        a bare declaration marks its target uninitialized; any real write, an
+        address-of, or a bare/`&` call argument marks the target initialized. The
+        read check runs against the pre-instruction state, before the update, so a
+        read on the right of its own reinitialization is still caught."""
+        checks: List[VulnerabilityCheck] = []
+        if not self._is_c_lang:
+            return checks
+
+        if state.uninitialized:
+            for v in self._uninit_value_reads(instr):
+                if v in state.uninitialized:
+                    checks.append(
+                        self._create_uninit_check(instr, state, proc_name, v))
+
+        if isinstance(instr, Assign) and getattr(instr, "is_uninit_decl", False):
+            target = self._get_var_name(instr.id)
+            if self._uninit_trackable(target):
+                state.uninitialized.add(target)
+        else:
+            for v in self._uninit_inits(instr):
+                state.uninitialized.discard(v)
+        return checks
+
+    def _create_uninit_check(self, instr: Instr, state: SymbolicState,
+                             proc_name: str, var: str) -> VulnerabilityCheck:
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.UNINITIALIZED_VAR,
+            location=instr.loc,
+            description=f"Use of uninitialized variable '{var}': it is read on a "
+                        f"path where it has no reaching definition",
+            tainted_var=var,
+            procedure_name=proc_name,
+        )
+
+    def _exp_to_arith(self, exp: Exp, state: SymbolicState) -> Optional[Expr]:
+        """A SIL expression as a Frame arithmetic term, with known integer
+        constants substituted in. Returns None for anything not purely integer
+        arithmetic (a string, a call, a field/index), which keeps the divide check
+        from reasoning about values it cannot model."""
+        exp = self._cast_strip(exp)
+        if isinstance(exp, ExpConst):
+            if isinstance(exp.value, bool):
+                return None
+            if isinstance(exp.value, int):
+                return Const(exp.value)
+            return None
+        if isinstance(exp, ExpVar):
+            name = str(exp.var)
+            cv = state.constants.get(name)
+            if isinstance(cv, int) and not isinstance(cv, bool):
+                return Const(cv)
+            return Var(name)
+        if isinstance(exp, ExpBinOp):
+            op_map = {"+": "+", "-": "-", "*": "*", "/": "div", "%": "mod"}
+            mapped = op_map.get(exp.op)
+            if mapped is None:
+                return None
+            left = self._exp_to_arith(exp.left, state)
+            right = self._exp_to_arith(exp.right, state)
+            if left is None or right is None:
+                return None
+            return ArithExpr(mapped, left, right)
+        if isinstance(exp, ExpUnOp) and exp.op == "-":
+            inner = self._exp_to_arith(exp.operand, state)
+            return None if inner is None else ArithExpr("-", Const(0), inner)
+        return None
+
+    def _divisor_provably_zero(self, divisor: Exp, state: SymbolicState) -> bool:
+        """Is the divisor forced to zero on this path? True only when
+        `divisor != 0` is UNSATISFIABLE (a literal 0, a variable the path pins to
+        0, or an expression like `x - x`), conjoined with the path condition. An
+        unconstrained divisor keeps `divisor != 0` satisfiable and is never
+        flagged, so an ordinary `a / b` cannot fire. The path condition alone is
+        checked feasible first, so an UNSAT there is not misattributed to the
+        divisor. `_feasibility_sat` is conservative (True on any error), so a
+        divisor is called zero only on a genuine, provable UNSAT."""
+        term = self._exp_to_arith(divisor, state)
+        if term is None:
+            return False
+        nonzero = Neq(term, Const(0))
+        constraints = list(state.feasibility_constraints)
+        if constraints:
+            cond = self._build_conjunction(constraints)
+            if not self._feasibility_sat(cond):
+                return False
+            return not self._feasibility_sat(And(cond, nonzero))
+        return not self._feasibility_sat(nonzero)
+
+    def _divzero_checks(self, instr: Instr, state: SymbolicState,
+                        proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-369: a division or modulo whose divisor is provably zero on this
+        path. One finding per divisor location. C/C++ only."""
+        checks: List[VulnerabilityCheck] = []
+        if not self._is_c_lang:
+            return checks
+        seen = set()
+        for exp in self._iter_instr_exps(instr):
+            for sub in self._walk_exp(exp):
+                if not (isinstance(sub, ExpBinOp) and sub.op in ("/", "%")):
+                    continue
+                key = str(sub)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if self._divisor_provably_zero(sub.right, state):
+                    checks.append(
+                        self._create_divzero_check(instr, state, proc_name, sub))
+        return checks
+
+    def _create_divzero_check(self, instr: Instr, state: SymbolicState,
+                              proc_name: str, div: ExpBinOp) -> VulnerabilityCheck:
+        op = "modulo" if div.op == "%" else "division"
+        return VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.DIVIDE_BY_ZERO,
+            location=instr.loc,
+            description=f"Divide by zero: the {op} '{div}' has a divisor that is "
+                        f"provably zero on this path",
+            tainted_var=str(div.right),
+            procedure_name=proc_name,
+        )
+
+    # =========================================================================
     # Ownership and lifetime (CWE-401 leak, CWE-762 mismatch, CWE-562 stack addr)
     #
     # These reason over the same separation-logic heap facts Phase 1 threads
@@ -5118,6 +5416,11 @@ class SILTranslator:
             if s1.owned_allocs[v] == s2.owned_allocs[v]:
                 merged.owned_allocs[v] = s1.owned_allocs[v]
 
+        # Uninitialized locals: UNION (a var that lacked a reaching definition on
+        # EITHER incoming path is still uninitialized at the join). This is the
+        # intersection of the dual initialized sets. CWE-457.
+        merged.uninitialized = s1.uninitialized | s2.uninitialized
+
         # Asserted safe: intersection
         for var in set(s1.asserted_safe.keys()) & set(s2.asserted_safe.keys()):
             merged.asserted_safe[var] = list(
@@ -5198,5 +5501,12 @@ class SILTranslator:
         # leak may now be reachable that was not before. Allocation identity is a
         # stable per-site token, so this cannot oscillate.
         if s1.owned_allocs != s2.owned_allocs:
+            return False
+        # Uninitialized-variable facts must also converge: a var that becomes
+        # may-be-uninitialized at a join (union) can make a downstream read a new
+        # CWE-457, so a change here has to reopen the node. The set is drawn from
+        # the finite pool of declared locals and grows monotonically at joins, so
+        # this cannot oscillate.
+        if s1.uninitialized != s2.uninitialized:
             return False
         return True

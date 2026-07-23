@@ -1114,8 +1114,18 @@ def analyze_interprocedural(source: str, filename: str = "<unknown>",
     # Phase 4: Fallback pattern detection for CWEs that SL analyzer may miss
     # Include CWE-122/126 as SL analyzer may not catch simple regex patterns
     for vuln in _detect_semantic_cwes(source, filename, verbose):
-        # Skip only CWEs that are reliably handled by SL (UAF, double-free, etc.)
-        if vuln.cwe_id not in ('CWE-415', 'CWE-416', 'CWE-590', 'CWE-401'):
+        # Skip CWEs now handled structurally over the SIL IR, not by these text
+        # patterns: the heap lifecycle (UAF, double-free, non-heap free, leak) and,
+        # as of Phase 3, the numeric/value defects. CWE-457 (use of an
+        # uninitialized variable) is raised by the translator's reaching-definition
+        # dataflow and CWE-369 (divide by zero) by its Z3 provably-zero check, so
+        # the brittle name/taint heuristics here must not also emit them (they
+        # would fire on ordinary `100 / data`, a false positive the structural
+        # rule deliberately avoids). The `_detect_semantic_cwes` function itself is
+        # retained for the CWEs still sourced here (integer overflow, buffers,
+        # crypto, ...).
+        if vuln.cwe_id not in ('CWE-415', 'CWE-416', 'CWE-590', 'CWE-401',
+                               'CWE-457', 'CWE-369'):
             add_unique_vuln(vuln)
 
     return vulns
