@@ -84,6 +84,15 @@ CHILD_OF: Dict[str, Tuple[str, ...]] = {
     "CWE-120": ("CWE-119",),
     "CWE-125": ("CWE-119",),
     "CWE-787": ("CWE-119",),
+    # Location-of-access refinements (CWE-1000 ChildOf edges): access after the
+    # end and access before the start of a buffer, both under CWE-119.
+    "CWE-788": ("CWE-119",),
+    "CWE-786": ("CWE-119",),
+    # Heap overflow is an out-of-bounds write past the end of the buffer.
+    "CWE-122": ("CWE-787", "CWE-788"),
+    # Buffer underwrite / under-read: an out-of-bounds access before the start.
+    "CWE-124": ("CWE-787", "CWE-786"),
+    "CWE-127": ("CWE-125", "CWE-786"),
     "CWE-672": ("CWE-664",),
     "CWE-416": ("CWE-672",),
     "CWE-415": ("CWE-672",),

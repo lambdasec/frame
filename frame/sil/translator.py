@@ -172,6 +172,13 @@ class VulnType(Enum):
     OOB_WRITE = "oob_write"                          # CWE-787
     OOB_READ = "oob_read"                            # CWE-125
 
+    # Directional memory safety, the below-the-start pair of OOB_WRITE/OOB_READ.
+    # Used only where the IR settles that the access is provably before element
+    # zero (a negative index), so the specific under-* weakness is reported rather
+    # than the generic over-the-top 787/125.
+    OOB_UNDERWRITE = "oob_underwrite"                # CWE-124 (buffer underwrite)
+    OOB_UNDERREAD = "oob_underread"                  # CWE-127 (buffer under-read)
+
     # Excessive constant allocation, the sibling of UNBOUNDED_ALLOCATION: there
     # the size is attacker-controlled, here it is written into the program.
     EXCESSIVE_ALLOCATION = "excessive_allocation"    # CWE-789
@@ -1416,6 +1423,7 @@ class SILTranslator:
         # destination, a literal size, a literal mode) rather than by any path
         # the worklist walked.
         checks.extend(self._out_of_bounds_checks(proc))
+        checks.extend(self._loop_bound_checks(proc))
         checks.extend(self._unchecked_return_checks(proc))
         checks.extend(self._excessive_allocation_checks(proc))
         checks.extend(self._incorrect_permission_checks(proc))
@@ -1487,6 +1495,10 @@ class SILTranslator:
         # Both run before the dispatch, which only mutates the state in place.
         numeric_checks = self._uninit_checks(instr, state, proc_name)
         numeric_checks += self._divzero_checks(instr, state, proc_name)
+        # A tainted array index with no path guard below the array bound is the
+        # classic out-of-bounds write/read. Reads the pre-instruction taint and
+        # path condition, like the divide check above.
+        numeric_checks += self._tainted_index_checks(instr, state, proc_name)
 
         if isinstance(instr, Assign):
             assign_checks, state = self._exec_assign(instr, state, proc_name)
@@ -2018,6 +2030,19 @@ class SILTranslator:
         # Get specification for this function
         spec = self.program.get_spec(func_name)
 
+        # C/C++: a taint-source call nested inside an argument -- the `getenv(...)`
+        # in `atoi(getenv("X"))` -- never reaches the IR as its own instruction, so
+        # its taint would be lost at the point the enclosing call consumes it. If
+        # any argument expression contains a call to a known taint source, the
+        # value this call returns is derived from attacker input, so its result is
+        # tainted. Gated to C/C++ so no other frontend's taint flow shifts.
+        if self._is_c_lang and instr.ret and self._arg_has_source_call(instr):
+            ret_var = str(instr.ret[0])
+            state.add_taint(ret_var, TaintInfo(
+                source_kind=TaintKind.USER_INPUT,
+                source_var=ret_var,
+                source_location=instr.loc,
+            ))
 
         if spec:
             # Handle taint source
@@ -3879,13 +3904,22 @@ class SILTranslator:
 
         constants = self._procedure_constant_ints(proc)
 
-        def record(kind: VulnType, name: str, value: int, bound: int, loc, verb: str) -> None:
+        def record(is_write: bool, name: str, value: int, bound: int, loc, verb: str) -> None:
+            # Below element zero is a write/read BEFORE the start of the buffer
+            # (CWE-124 / CWE-127); at or past the top is the over-the-end pair
+            # (CWE-787 / CWE-125). The IR pins the index, so the direction is exact.
+            if value < 0:
+                kind = VulnType.OOB_UNDERWRITE if is_write else VulnType.OOB_UNDERREAD
+                where = f"before the start of '{name}'"
+            else:
+                kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
+                where = f"outside the declared extent of '{name}', which holds " \
+                        f"{bound} element(s)"
             checks.append(VulnerabilityCheck(
                 formula=True_(),
                 vuln_type=kind,
                 location=loc or Location.unknown(),
-                description=f"{verb} '{name}[{value}]' is outside the declared extent of "
-                            f"'{name}', which holds {bound} element(s)",
+                description=f"{verb} '{name}[{value}]' is {where}",
                 sink_type=kind.value,
                 procedure_name=proc.name,
             ))
@@ -3898,12 +3932,12 @@ class SILTranslator:
                     if isinstance(addr, ExpBinOp) and addr.op == "+":
                         found = self._out_of_bounds_access(addr.left, addr.right, proc, constants)
                         if found:
-                            record(VulnType.OOB_WRITE, *found, instr.loc, "Write to")
+                            record(True, *found, instr.loc, "Write to")
                             continue
                     if isinstance(addr, ExpIndex):
                         found = self._out_of_bounds_access(addr.base, addr.index, proc, constants)
                         if found:
-                            record(VulnType.OOB_WRITE, *found, instr.loc, "Write to")
+                            record(True, *found, instr.loc, "Write to")
                             continue
 
                 # Every other position a subscript can appear in is a read,
@@ -3914,7 +3948,7 @@ class SILTranslator:
                     for sub in self._iter_read_index_exps(exp):
                         found = self._out_of_bounds_access(sub.base, sub.index, proc, constants)
                         if found:
-                            record(VulnType.OOB_READ, *found, instr.loc, "Read of")
+                            record(False, *found, instr.loc, "Read of")
 
         return checks
 
@@ -4756,6 +4790,296 @@ class SILTranslator:
             tainted_var=str(div.right),
             procedure_name=proc_name,
         )
+
+    # =========================================================================
+    # Variable and tainted buffer bounds (CWE-787 / CWE-125 / CWE-124 / CWE-127).
+    #
+    # Tier 1 (`_out_of_bounds_checks`) settles the case where BOTH the array bound
+    # and the index are compile-time constants. These two detectors extend that to
+    # the two remaining SOUND, high-value cases, and nothing else:
+    #
+    #  * a loop counter whose guard permits the index to reach or pass the array
+    #    bound (`_loop_bound_checks`, structural over the finished CFG), and
+    #  * an attacker-controlled index with no path guard bounding it below the
+    #    array size (`_tainted_index_checks`, per-path over the symbolic state).
+    #
+    # Both read the extent from `fixed_array_bounds`, which is an ELEMENT count and
+    # therefore a correct bound for an array of any element type. The direction --
+    # over the top (787/125) versus before the start (124/127) -- and the write /
+    # read distinction come from the IR, exactly as in Tier 1. Where the index
+    # range cannot be resolved and the index is not tainted, neither fires.
+    # =========================================================================
+
+    def _arg_has_source_call(self, instr: Call) -> bool:
+        """Does any argument of this call contain a nested call to a taint source?
+
+        `atoi(getenv("X"))` lowers to a single `atoi` Call whose argument is an
+        `ExpCall` to `getenv`; the inner source never executes on its own, so its
+        taint has to be recovered from the argument expression here.
+        """
+        for arg_exp, _ in instr.args:
+            for sub in self._walk_exp(arg_exp):
+                if isinstance(sub, ExpCall):
+                    callee = sub.func
+                    name = None
+                    if isinstance(callee, ExpConst) and isinstance(callee.value, str):
+                        name = callee.value
+                    elif isinstance(callee, ExpVar):
+                        name = str(callee.var)
+                    if name:
+                        spec = self.program.get_spec(name)
+                        if spec is not None and spec.is_taint_source():
+                            return True
+        return False
+
+    def _subscript_accesses(self, instr: Instr):
+        """Every `base[index]` this instruction performs, as (base, index, is_write).
+
+        A subscripted assignment target reaches the IR as a `Store` through
+        `base + index` (or an `ExpIndex` address), so that is a write; a subscript
+        anywhere a value is read is an `ExpIndex`, so that is a read. The value
+        half of a store is a read even though it sits inside a `Store`.
+        """
+        if isinstance(instr, Store):
+            addr = instr.addr
+            if isinstance(addr, ExpBinOp) and addr.op == "+":
+                yield addr.left, addr.right, True
+            elif isinstance(addr, ExpIndex):
+                yield addr.base, addr.index, True
+
+        for exp in self._iter_instr_exps(instr):
+            if isinstance(instr, Store) and exp is instr.addr:
+                continue
+            for sub in self._walk_exp(exp):
+                if isinstance(sub, ExpIndex):
+                    yield sub.base, sub.index, False
+
+    def _stack_array_bound(self, base: Exp, proc: Procedure) -> Optional[int]:
+        """The declared element count of the fixed local array `base` names, or
+        None when `base` is not such an array (or its bound is ambiguous)."""
+        base = self._cast_strip(base)
+        if not isinstance(base, ExpVar):
+            return None
+        bound = (proc.fixed_array_bounds or {}).get(str(base.var))
+        # -1 marks a name declared twice with disagreeing bounds.
+        if bound is None or bound < 0:
+            return None
+        return bound
+
+    def _index_is_tainted(self, index: Exp, state: SymbolicState) -> bool:
+        """Is any variable in this index expression tainted on the path?"""
+        for var in self._get_exp_vars(index):
+            if state.is_tainted(var):
+                return True
+        return False
+
+    def _tainted_index_checks(self, instr: Instr, state: SymbolicState,
+                              proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-787 / CWE-125: an attacker-controlled index into a fixed array with
+        no path guard bounding it below the array size. C/C++ only.
+
+        The trigger is TAINT: an ordinary opaque parameter index is never flagged,
+        because it is not attacker-controlled as far as the analysis can see. The
+        rule fires only when the path does NOT force the index below the bound,
+        i.e. `path-condition AND index >= bound` is SATISFIABLE. A guard `if(i<B)`
+        makes that unsatisfiable, and a mask `i % B` keeps the index in range, so
+        both are silent. When the index cannot be modelled as an integer term it
+        is left alone.
+        """
+        checks: List[VulnerabilityCheck] = []
+        if not self._is_c_lang:
+            return checks
+        proc = self._cur_proc
+        if proc is None or not proc.fixed_array_bounds:
+            return checks
+
+        seen = set()
+        for base, index, is_write in self._subscript_accesses(instr):
+            bound = self._stack_array_bound(base, proc)
+            if bound is None:
+                continue
+            if not self._index_is_tainted(index, state):
+                continue
+            term = self._exp_to_arith(index, state)
+            if term is None:
+                continue
+            key = (str(base), str(index), is_write)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            over = Ge(term, Const(bound))
+            constraints = list(state.feasibility_constraints)
+            if constraints:
+                pc = self._build_conjunction(constraints)
+                # An infeasible path proves nothing; a feasible one that still
+                # permits index >= bound has no upper guard on the index.
+                if not self._feasibility_sat(pc):
+                    continue
+                permits_over = self._feasibility_sat(And(pc, over))
+            else:
+                permits_over = self._feasibility_sat(over)
+            if not permits_over:
+                continue
+
+            kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
+            verb = "Write to" if is_write else "Read of"
+            base_name = str(self._cast_strip(base).var) if isinstance(
+                self._cast_strip(base), ExpVar) else str(base)
+            checks.append(VulnerabilityCheck(
+                formula=True_(),
+                vuln_type=kind,
+                location=instr.loc,
+                description=f"{verb} '{base_name}[{index}]' uses an attacker-controlled "
+                            f"index with no guard bounding it below {bound}, the extent "
+                            f"of '{base_name}'",
+                tainted_var=str(index),
+                procedure_name=proc_name,
+            ))
+        return checks
+
+    def _loop_guard_upper(self, cond: Exp) -> Optional[Tuple[str, int]]:
+        """Read a loop-entry guard `i < K` / `i <= K` (either operand order) as
+        the induction variable name and the largest value it can take INSIDE the
+        body. `i < K` gives K-1; `i <= K` gives K. Anything else yields None."""
+        if not isinstance(cond, ExpBinOp):
+            return None
+        left = self._cast_strip(cond.left)
+        right = self._cast_strip(cond.right)
+
+        def as_var(e):
+            return str(e.var) if isinstance(e, ExpVar) else None
+
+        def as_int(e):
+            return e.value if isinstance(e, ExpConst) and isinstance(e.value, int) \
+                and not isinstance(e.value, bool) else None
+
+        # i < K  /  i <= K
+        var, k = as_var(left), as_int(right)
+        if var is not None and k is not None:
+            if cond.op == "<":
+                return var, k - 1
+            if cond.op == "<=":
+                return var, k
+            return None
+        # K > i  /  K >= i  (mirror image)
+        k, var = as_int(left), as_var(right)
+        if var is not None and k is not None:
+            if cond.op == ">":
+                return var, k - 1
+            if cond.op == ">=":
+                return var, k
+        return None
+
+    def _unit_increment_var(self, proc: Procedure, head_id: int) -> Set[str]:
+        """Variables incremented by exactly one on a back edge to `head_id`.
+
+        A loop counter is exactly a variable the body advances by `+1` before
+        control returns to the loop head. Restricting to a unit step is what makes
+        `i <= K` sound as `i reaches K`: with step one the counter takes every
+        integer in its range, so the boundary value genuinely occurs.
+        """
+        result: Set[str] = set()
+        for node in proc.nodes.values():
+            if head_id not in node.succs:
+                continue
+            for ins in node.instrs:
+                if not isinstance(ins, Assign):
+                    continue
+                target = self._get_var_name(ins.id)
+                exp = self._cast_strip(ins.exp)
+                if not (isinstance(exp, ExpBinOp) and exp.op == "+"):
+                    continue
+                a, b = self._cast_strip(exp.left), self._cast_strip(exp.right)
+                one_plus_var = (isinstance(a, ExpVar) and str(a.var) == target
+                                and isinstance(b, ExpConst) and b.value == 1)
+                var_plus_one = (isinstance(b, ExpVar) and str(b.var) == target
+                                and isinstance(a, ExpConst) and a.value == 1)
+                if one_plus_var or var_plus_one:
+                    result.add(target)
+        return result
+
+    def _constant_inits(self, proc: Procedure) -> Dict[str, Set[int]]:
+        """Every integer literal a variable is ever directly assigned, per name.
+
+        Used only to establish that a loop counter STARTS at a known non-negative
+        value, so the loop is entered and counts upward from within range.
+        """
+        inits: Dict[str, Set[int]] = {}
+        for node in proc.nodes.values():
+            for ins in node.instrs:
+                if isinstance(ins, Assign):
+                    exp = self._cast_strip(ins.exp)
+                    if isinstance(exp, ExpConst) and isinstance(exp.value, int) \
+                            and not isinstance(exp.value, bool):
+                        inits.setdefault(self._get_var_name(ins.id), set()).add(exp.value)
+        return inits
+
+    def _loop_bound_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """CWE-787 / CWE-125: a fixed-array access inside a counting loop whose
+        guard lets the counter reach or pass the array bound. C/C++ only.
+
+        Structural over the finished CFG. For each loop head with an entry guard
+        `i < K` / `i <= K`, the counter's largest in-body value is K-1 / K. When
+        `i` is a unit-step counter that starts at a known value in `0 .. bound`,
+        the body accesses `arr[i]`, and that largest value is >= the array's
+        element count, the access overruns the array on the final iteration. The
+        classic `for(i=0;i<B;i++)` has largest value B-1 < B and never fires; the
+        off-by-one `i<=B` reaches B and does.
+        """
+        checks: List[VulnerabilityCheck] = []
+        if not self._is_c_lang or not proc.fixed_array_bounds:
+            return checks
+
+        inits = self._constant_inits(proc)
+
+        for head_id, head in proc.nodes.items():
+            if head.kind != NodeKind.LOOP_HEAD:
+                continue
+            enter = next((i for i in head.instrs
+                          if isinstance(i, Prune) and i.is_true_branch), None)
+            if enter is None:
+                continue
+            guard = self._loop_guard_upper(enter.condition)
+            if guard is None:
+                continue
+            counter, i_max = guard
+
+            if counter not in self._unit_increment_var(proc, head_id):
+                continue
+            # The counter must start at a known value within the array's index
+            # space, so the loop is entered and sweeps upward from inside it. An
+            # unknown or negative start is not evidence of an overrun.
+            starts = inits.get(counter)
+            if not starts or any(s < 0 for s in starts):
+                continue
+            start = min(starts)
+
+            for node in proc.nodes.values():
+                for ins in node.instrs:
+                    for base, index, is_write in self._subscript_accesses(ins):
+                        idx = self._cast_strip(index)
+                        if not (isinstance(idx, ExpVar) and str(idx.var) == counter):
+                            continue
+                        bound = self._stack_array_bound(base, proc)
+                        if bound is None or start > i_max:
+                            continue
+                        if i_max < bound:
+                            continue  # every in-body index is in range
+                        kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
+                        verb = "Write to" if is_write else "Read of"
+                        base_name = str(self._cast_strip(base).var)
+                        checks.append(VulnerabilityCheck(
+                            formula=True_(),
+                            vuln_type=kind,
+                            location=ins.loc,
+                            description=f"{verb} '{base_name}[{counter}]' in a loop whose "
+                                        f"guard lets '{counter}' reach {i_max}, at or past "
+                                        f"{bound}, the extent of '{base_name}'",
+                            tainted_var=counter,
+                            procedure_name=proc.name,
+                        ))
+        return checks
 
     # =========================================================================
     # Ownership and lifetime (CWE-401 leak, CWE-762 mismatch, CWE-562 stack addr)

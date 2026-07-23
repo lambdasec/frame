@@ -73,13 +73,18 @@ def test_index_equal_to_the_bound_is_reported():
 
 
 def test_negative_index_is_reported():
+    # A constant index BELOW element zero is an access before the start of the
+    # buffer, so the specific under-the-start weakness (CWE-124, a write) is
+    # reported rather than the over-the-top CWE-787. The IR pins the index, so
+    # the direction is exact.
     src = (
         "void f(void) {\n"
         "  char buf[10];\n"
         "  buf[-1] = 'a';\n"
         "}\n"
     )
-    assert _lines(src, "CWE-787") == [3]
+    assert _lines(src, "CWE-124") == [3]
+    assert "CWE-787" not in _cwes(src)
 
 
 def test_index_held_by_a_single_assignment_constant_is_reported():

@@ -515,6 +515,10 @@ class FrameScanner:
         VulnType.OOB_WRITE: Severity.CRITICAL,
         VulnType.OOB_READ: Severity.HIGH,
 
+        # The under-* pair mirror the over-the-top write/read severities.
+        VulnType.OOB_UNDERWRITE: Severity.CRITICAL,
+        VulnType.OOB_UNDERREAD: Severity.HIGH,
+
         # A stack allocation too large to fit crashes the process: availability
         # only, like the rest of the CWE-400 family.
         VulnType.EXCESSIVE_ALLOCATION: Severity.MEDIUM,
@@ -637,6 +641,12 @@ class FrameScanner:
         # for the broader class.
         VulnType.OOB_WRITE: "CWE-787",
         VulnType.OOB_READ: "CWE-125",
+
+        # Directional memory safety, the below-the-start siblings. Each is a child
+        # of the same CWE-119 family through `cwe_taxonomy.is_a`, so a query for
+        # the broader class still resolves.
+        VulnType.OOB_UNDERWRITE: "CWE-124",
+        VulnType.OOB_UNDERREAD: "CWE-127",
 
         # Excessive constant allocation, the sibling of CWE-770.
         VulnType.EXCESSIVE_ALLOCATION: "CWE-789",

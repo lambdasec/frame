@@ -1692,19 +1692,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     ))
 
         # =====================================================================
-        # CWE-124: Buffer Underwrite - negative array index and pointer arithmetic
+        # CWE-124: Buffer Underwrite - pointer arithmetic before the buffer start.
         # =====================================================================
-        neg_index_match = re.search(r'(\w+)\s*\[\s*-\s*(\d+)\s*\]\s*=', stripped)
-        if neg_index_match:
-            var_name = neg_index_match.group(1)
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-124",
-                location=loc,
-                var_name=var_name,
-                description=f"Buffer underwrite - negative array index on '{var_name}'",
-                confidence=0.95,
-            ))
+        # (A negative CONSTANT array index `buf[-N] = ...` is now covered soundly
+        #  by the constant-index arm of the structural buffer-bounds detector,
+        #  which reports CWE-124 over the SIL. The pointer-arithmetic forms below,
+        #  which the structural detector does not model, are kept.)
 
         ptr_minus_match = re.search(r'\*\s*\(\s*(\w+)\s*-\s*(\d+)\s*\)\s*=', stripped)
         if ptr_minus_match:
@@ -2862,21 +2855,11 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     confidence=0.75,
                 ))
 
-        # Pattern: buf[index] where index is not validated (>= size) - read operation
-        array_read_match = re.search(r'=\s*(\w+)\s*\[\s*(\w+)\s*\]', stripped)
-        if array_read_match:
-            buf_var = array_read_match.group(1)
-            index_var = array_read_match.group(2)
-            # Check if it's an unchecked tainted index
-            if index_var in tainted_vars and index_var not in bounds_checked_vars:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-126",
-                    location=loc,
-                    var_name=buf_var,
-                    description=f"Buffer over-read - array read with unchecked index '{index_var}'",
-                    confidence=0.75,
-                ))
+        # (A tainted variable-index array read `= buf[index]` is now covered
+        #  soundly by the structural buffer-bounds detector in the translator,
+        #  which reports CWE-125 over the SIL rather than matching source text.
+        #  The regex form is removed so the two do not report different CWEs for
+        #  the same access.)
 
         # Pattern: read beyond array with constant large index
         large_index_read = re.search(r'=\s*\w+\s*\[\s*(\d+)\s*\]', stripped)
@@ -2967,19 +2950,10 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 confidence=0.85,
             ))
 
-        # Pattern: buf[negative_index] - reading with negative array index
-        neg_array_read_match = re.search(r'=\s*(\w+)\s*\[\s*-\s*(\d+)\s*\]', stripped)
-        if neg_array_read_match:
-            buf_var = neg_array_read_match.group(1)
-            offset = neg_array_read_match.group(2)
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id="CWE-127",
-                location=loc,
-                var_name=buf_var,
-                description=f"Buffer under-read - negative array index -{offset}",
-                confidence=0.9,
-            ))
+        # (A negative CONSTANT array index in a read `= buf[-N]` is now covered
+        #  soundly by the constant-index arm of the structural buffer-bounds
+        #  detector, which reports CWE-127 over the SIL. The pointer-arithmetic
+        #  under-read forms above, which it does not model, are kept.)
 
         # memmove to data - could overflow if data is small
         if re.search(r'\bmemmove\s*\(\s*data\s*,\s*\w+\s*,\s*\d+', stripped):

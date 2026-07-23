@@ -69,14 +69,23 @@ class TestCWE127BufferUnderread:
     """Tests for CWE-127: Buffer Under-read detection."""
 
     def test_negative_array_index_read(self):
-        """Detect read with negative array index."""
+        """Detect read with a negative index into a fixed array.
+
+        This case moved from the interprocedural regex to the structural
+        buffer-bounds detector, which reads the negative constant index and the
+        array's declared extent from the SIL and reports CWE-127 (access before
+        the start of the buffer). It is verified here through the scanner, where
+        that detector runs.
+        """
+        from frame.sil import FrameScanner
         source = '''
 void vuln() {
     char buf[10];
     char c = buf[-1];
 }
 '''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
+        result = FrameScanner(language="c", verify=False).scan(source, "test.c")
+        cwe_127 = [v for v in result.vulnerabilities if v.cwe_id == "CWE-127"]
         assert len(cwe_127) > 0, "Should detect CWE-127 for negative array index"
 
     def test_ptr_minus_constant(self):
