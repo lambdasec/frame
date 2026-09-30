@@ -22,7 +22,7 @@ from frame.core.ast import (
     Formula, Emp, PointsTo, SepConj, And, Or, Not, Eq, Neq,
     Var, Const, Taint, Sanitized, Source, Sink,
     NullDeref, UseAfterFree, BufferOverflow, Exists,
-    PredicateCall, Lt, Le, Gt, Ge, True_, ArithExpr, Expr
+    PredicateCall, Lt, Le, Gt, Ge, True_, False_, ArithExpr, Expr
 )
 
 from .types import (
@@ -2908,10 +2908,27 @@ class SILTranslator:
         separation-logic checker (a lone Var is spatial, so Not(Var) is spuriously
         unsatisfiable); model it explicitly as (in)equality against a falsy sentinel
         so both polarities are individually satisfiable and contradict only when the
-        same variable is assumed both ways. Comparisons and boolean combinators use
-        the normal encoding. Returns None if no usable guard can be formed."""
+        same variable is assumed both ways. `!`, `&&` and `||` push the polarity
+        down to their operands; comparisons use the normal encoding. Returns None
+        if no usable guard can be formed."""
         if isinstance(exp, ExpUnOp) and exp.op == "!":
             return self._feasibility_guard(exp.operand, not assume_true)
+        # Push the polarity down through `&&` / `||` (De Morgan) so every leaf,
+        # including a bare call-result inside a combinator, gets the sentinel
+        # encoding. Otherwise e.g. the false edge of `!ok(s) || bad(s)` becomes
+        # `Not(Or(Not(Var), Var))`, which is spuriously UNSAT and silently drops
+        # the findings on the continuation of an early-exit guard.
+        if isinstance(exp, ExpBinOp) and exp.op in ("&&", "||"):
+            left = self._feasibility_guard(exp.left, assume_true)
+            right = self._feasibility_guard(exp.right, assume_true)
+            if left is None or right is None:
+                return None
+            return And(left, right) if (exp.op == "&&") == assume_true else Or(left, right)
+        # A constant leaf is encoded by its truthiness: the checker reads any
+        # Const as true, so `Not(Const(0))` would make the false edge of
+        # `a || 0` spuriously UNSAT.
+        if isinstance(exp, ExpConst):
+            return True_() if bool(exp.value) == assume_true else False_()
         f = self._exp_to_formula(exp)
         if isinstance(f, Var):
             return Neq(f, Const(0)) if assume_true else Eq(f, Const(0))
