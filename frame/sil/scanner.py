@@ -28,7 +28,9 @@ import time
 
 from frame.sil.llm_client import LLMUnavailableError
 
+import math
 import re
+from collections import Counter
 from typing import Tuple
 
 from frame.sil.procedure import Program
@@ -1497,6 +1499,152 @@ class FrameScanner:
         'xxx', 'xxxx', 'todo', 'none', 'null', 'example', 'test', 'placeholder',
     }
 
+    # Value-shape gate for the name-based rules (Rule A). The target name only
+    # says the variable is *about* a credential; constants such as
+    # `SSH_AUTH_PRIVATE_KEY = "ssh-privatekey"` (a secret's field name),
+    # `SA_PRIVATE_KEY_NAME = "sa.key"` (a filename) or
+    # `EC_PRIVATE_KEY_BLOCK_TYPE = "EC PRIVATE KEY"` (a PEM label) hold no
+    # secret. A literal is suppressed only when, in order:
+    #   1. it is NOT key material and carries no known credential prefix
+    #      (veto: such values are always reported);
+    #   2. it has a strict non-secret shape: PEM block-type label, bare PEM
+    #      armor line, key/cert filename, filesystem path, or placeholder; or
+    #   3. it is identifier-shaped (lowercase words joined by - _ . or
+    #      UPPER_SNAKE) AND tied to the target name: the name carries a
+    #      descriptor token (`..._ENV`, `...Name`, `...Field`, `...Path`, ...),
+    #      or every value token echoes a name token / a concatenation of
+    #      adjacent name tokens / a structural word (id, name, field, ...).
+    #      A Kubernetes qualified key (`<dns-subdomain>/<name>`, e.g.
+    #      "csi.storage.k8s.io/node-expand-secret-name") is judged by its
+    #      name part under the same tie-to-name test; or
+    #   4. it exactly matches a standard HTTP auth header / scheme name
+    #      ("Authorization", "X-Api-Key", "Bearer", ...; case-insensitive,
+    #      exact match only) and the target is not password-named -- "cookie"
+    #      or "basic" is a plausible weak password.
+    # Everything else is reported as before -- human passwords are low
+    # entropy by nature ("hunter2pass", "super-secret-key"), so the gate never
+    # requires positive evidence of a secret.
+    # Literal values arrive with escapes unprocessed (a "\n" in source is the
+    # two characters backslash + n), so newline matching accepts both forms.
+    _PEM_WITH_BODY = re.compile(
+        r'-----BEGIN [A-Z0-9 ]+-----(?:(?!-----END).){0,512}?[A-Za-z0-9+/]{16,}', re.DOTALL)
+    _KNOWN_CREDENTIAL = re.compile(
+        r'\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[0-9A-Z]{16}\b'   # AWS access key id
+        r'|\bgh[pousr]_[A-Za-z0-9]{36,}'                                 # GitHub token
+        r'|\bgithub_pat_[A-Za-z0-9_]{22,}'                               # GitHub fine-grained PAT
+        r'|\bglpat-[A-Za-z0-9_-]{20,}'                                   # GitLab PAT
+        r'|\bxox[baprs]-[A-Za-z0-9-]{10,}'                               # Slack token
+        r'|\bAIza[0-9A-Za-z_-]{35}'                                      # Google API key
+        r'|\b[sr]k_(?:live|test)_[0-9A-Za-z]{16,}'                       # Stripe secret key
+        r'|\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}'  # JWT
+    )
+    # Credential prefixes at any length: a value carrying one is never
+    # suppressed, even when too short to be a full-format token.
+    _CREDENTIAL_PREFIX = re.compile(
+        r'\b(?:[srp]k_(?:live|test)_|gh[pousr]_|github_pat_|glpat-|xox[baprs]-|SG\.)'
+        r'|\b(?:AKIA|ASIA|AIza|eyJ)')
+    _HEX_BLOB = re.compile(r'[0-9a-f]{32,}|[0-9A-F]{32,}')
+    _TOKEN_CHARS = re.compile(r'[A-Za-z0-9+/=_\-.~]+')
+    _STRICT_NONSECRET_SHAPES = [
+        # PEM block type label ("EC PRIVATE KEY", "CERTIFICATE REQUEST").
+        re.compile(r'(?:[A-Z][A-Z0-9]* )+(?:KEY|CERTIFICATE|REQUEST|CRL|PARAMETERS|PKCS7|CMS|SIGNATURE)'),
+        # PEM armor line with no body ("-----BEGIN RSA PRIVATE KEY-----").
+        re.compile(r'-----(?:BEGIN|END) [A-Z0-9 ]+-----(?:\s|\\[nr])*'),
+        # Key / certificate filename ("sa.key", "tls.crt").
+        re.compile(r'(?i)[\w.-]+\.(?:key|pem|crt|cer|csr|der|p8|p12|pfx|jks|keystore|pub|'
+                   r'kdbx|asc|gpg)'),
+        # Filesystem path ("/etc/kubernetes/pki/sa.key", "./certs", "~/.ssh/id_rsa").
+        re.compile(r'(?:~|\.{1,2})?/[\w.\-/]*'),
+        # Placeholders ("<your-secret-key>", "********", "xxxx", "$SECRET",
+        # "${SECRET}", "$(cat key)").
+        re.compile(r'<[^<>]+>|\*+|(?i:x+)|\$[A-Z_][A-Z0-9_]*|\$\{[^}]*\}|\$\(.*\)'),
+    ]
+    # Identifier-shaped value: lowercase words joined by - _ . , or UPPER_SNAKE.
+    _IDENTIFIER_VALUE = re.compile(r'[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+')
+    # Target-name tokens saying the constant describes/locates a secret.
+    # `action` / `permission` name an authorization object ("ABAC action
+    # export-certificate-private-key") but only as the LEADING name token,
+    # exact and singular (Go `ActionX` / `PermissionX`); elsewhere they say
+    # where a credential is used (GITHUB_ACTIONS_TOKEN, DEPLOY_ACTION_TOKEN).
+    # `annotation` is the sibling of `label`.
+    # Deliberately NOT descriptors: role (DB_ROLE_PASSWORD), event
+    # (WEBHOOK_EVENT_SECRET), metric (METRICS_AUTH_TOKEN) -- each commonly
+    # names a real credential; scope/route values are not identifier-shaped
+    # or are already paths; kind is too generic.
+    _NAME_DESCRIPTORS = frozenset({
+        'env', 'var', 'name', 'field', 'header', 'label', 'type', 'file', 'path',
+        'dir', 'prefix', 'suffix', 'param', 'attr', 'column', 'prop',
+        'annotation'})
+    _LEADING_DESCRIPTORS = frozenset({'action', 'permission'})
+    # Kubernetes qualified key: DNS subdomain (2+ lowercase labels) + '/' +
+    # name, e.g. "csi.storage.k8s.io/node-expand-secret-name".
+    _QUALIFIED_KEY = re.compile(
+        r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)+/(?P<name>[^/]+)')
+    # Standard HTTP auth header / auth-scheme names (lowercased; exact match).
+    _HTTP_AUTH_NAMES = frozenset({
+        'authorization', 'proxy-authorization', 'www-authenticate', 'proxy-authenticate',
+        'cookie', 'set-cookie', 'x-api-key', 'x-auth-token', 'x-access-token',
+        'x-csrf-token', 'x-xsrf-token', 'bearer', 'basic'})
+    _PASSWORD_WORDS = frozenset({'pass', 'password', 'passwd', 'pwd'})
+    # Structural words allowed in a value that otherwise echoes the name.
+    _STRUCTURAL_WORDS = frozenset({'id', 'name', 'field', 'ref', 'data'})
+
+    @staticmethod
+    def _name_tokens(target: str) -> List[str]:
+        """Split an identifier on camelCase and separators, lowercased:
+        'SSHAuthPrivateKey' -> ['ssh', 'auth', 'private', 'key']."""
+        t = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', target)
+        t = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', t)
+        return [x for x in re.split(r'[^A-Za-z0-9]+', t.lower()) if x]
+
+    @staticmethod
+    def _shannon_entropy(value: str) -> float:
+        n = len(value)
+        return -sum(c / n * math.log2(c / n) for c in Counter(value).values())
+
+    @classmethod
+    def _is_key_material(cls, value: str) -> bool:
+        """Unambiguous secret: a PEM block with a base64 body, a known
+        credential format, or a high-entropy token (16+ non-whitespace token
+        chars; 32+ hex, or upper + lower + digit with Shannon entropy >= 3.5
+        bits/char)."""
+        if cls._PEM_WITH_BODY.search(value) or cls._KNOWN_CREDENTIAL.search(value):
+            return True
+        if len(value) < 16 or not cls._TOKEN_CHARS.fullmatch(value):
+            return False
+        if cls._HEX_BLOB.fullmatch(value):
+            return True
+        classes = (any(c.islower() for c in value) + any(c.isupper() for c in value)
+                   + any(c.isdigit() for c in value))
+        return classes == 3 and cls._shannon_entropy(value) >= 3.5
+
+    @classmethod
+    def _is_nonsecret_value(cls, target: str, value: str) -> bool:
+        """True when the literal bound to credential-named `target` names,
+        labels or locates a secret rather than being one (see the rule
+        comment above). Key material and credential prefixes always veto."""
+        if cls._is_key_material(value) or cls._CREDENTIAL_PREFIX.search(value):
+            return False
+        v = value.strip()
+        if any(p.fullmatch(v) for p in cls._STRICT_NONSECRET_SHAPES):
+            return True
+        name = cls._name_tokens(target)
+        if v.lower() in cls._HTTP_AUTH_NAMES:
+            return not any(tok in cls._PASSWORD_WORDS for tok in name)
+        qualified = cls._QUALIFIED_KEY.fullmatch(v)
+        if qualified:
+            v = qualified.group('name')
+        if not cls._IDENTIFIER_VALUE.fullmatch(v):
+            return False
+        if name and name[0] in cls._LEADING_DESCRIPTORS:
+            return True
+        if any(tok.rstrip('s') in cls._NAME_DESCRIPTORS for tok in name):
+            return True
+        grams = {''.join(name[i:j]) for i in range(len(name)) for j in range(i + 1, len(name) + 1)}
+        vals = [x for x in re.split(r'[-_.]', v.lower()) if x]
+        return (any(x in grams for x in vals)
+                and all(x in grams or x in cls._STRUCTURAL_WORDS for x in vals))
+
     def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
         """Tier-2 structural scan over the SIL for hardcoded secrets (CWE-798/
         259/321): a credential-named assignment target bound to a literal string.
@@ -1522,11 +1670,13 @@ class FrameScanner:
                         continue
 
                     cwe = label = None
-                    # Rule A: credential-named target bound to a literal.
-                    for pattern, c, lbl in self._SECRET_NAME_RULES:
-                        if pattern.search(target):
-                            cwe, label = c, lbl
-                            break
+                    # Rule A: credential-named target bound to a literal whose
+                    # value is not merely a name/label/filename for a secret.
+                    if not self._is_nonsecret_value(target, value):
+                        for pattern, c, lbl in self._SECRET_NAME_RULES:
+                            if pattern.search(target):
+                                cwe, label = c, lbl
+                                break
                     # Rule B: value embeds a credential (e.g. connection string
                     # "...;Password=secret;..."), regardless of the target name.
                     if cwe is None and self._CONNSTR_SECRET.search(value):
