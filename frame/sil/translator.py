@@ -33,7 +33,7 @@ from .types import (
 from .instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign,
     TaintSource, TaintSink, Sanitize, AssertSafe, Return,
-    TaintKind, SinkKind, resolve_sink_kind
+    TaintKind, SinkKind, resolve_sink_kind, _SINK_KIND_ALIASES
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 
@@ -2017,6 +2017,70 @@ class SILTranslator:
 
         return checks, state
 
+    def _call_taint_inputs(self, instr: Call, spec, func_name: str) -> List[str]:
+        """The variables whose taint reaches a call's result, by the same rules
+        _exec_call propagates with: a sanitizer's first argument, a propagator's
+        taint_propagates arguments and receiver, or -- for a callee with no spec
+        -- every argument and the receiver."""
+        args = [self._get_exp_vars(a) for a, _ in instr.args]
+        recv = func_name.rsplit('.', 1)[0] if '.' in func_name else None
+        if spec is None:
+            if self._proc_always_returns_constant(func_name):
+                return []
+            out = [v for vs in args for v in vs]
+            return out + [recv] if recv else out
+        out: List[str] = []
+        if spec.is_taint_sanitizer() and args:
+            out += args[0]
+        if spec.propagates_taint():
+            for i in spec.taint_propagates:
+                if i < len(args):
+                    out += args[i]
+            if recv and (spec.taint_from_receiver or '.' in func_name):
+                out.append(recv)
+        return out
+
+    def _call_input_sanitization(self, instr: Call, spec, func_name: str,
+                                 state: SymbolicState) -> List[set]:
+        """Sanitized kinds of each TAINTED input of the call, snapshotted before
+        the call executes. Empty when the call has no result or no tainted input."""
+        if not instr.ret:
+            return []
+        return [set(state.sanitized.get(v, []))
+                for v in self._call_taint_inputs(instr, spec, func_name)
+                if state.is_tainted(v)]
+
+    def _settle_call_sanitization(self, instr: Call, spec, state: SymbolicState,
+                                  input_kinds: List[set]) -> None:
+        """A call result is sanitized for a kind only if EVERY tainted input
+        reaching it was, plus the callee's own sanitizer kinds.
+
+        propagate_taint unions the sanitized kinds of each input into the
+        result, so one sanitized argument -- os.path.basename(p) beside a raw q
+        in os.path.join -- would launder the raw ones. The result replaces the
+        target's value, so its kinds are recomputed rather than accumulated.
+        Kinds are compared through the sink-kind alias map (e.g. 'xxe' ~ 'xml'),
+        so inputs sanitized under different names for the same sink still agree.
+        """
+        ret_var = str(instr.ret[0])
+        if not input_kinds or not state.is_tainted(ret_var):
+            return
+        if spec is not None and spec.is_taint_source():
+            return  # a fresh source value; its sanitization is not derived from inputs
+
+        def canon(kinds):
+            return {_SINK_KIND_ALIASES.get(k, k) for k in kinds}
+
+        canon_inputs = [canon(k) for k in input_kinds]
+        kinds = {k for k in set().union(*input_kinds)
+                 if all(_SINK_KIND_ALIASES.get(k, k) in c for c in canon_inputs)}
+        if spec is not None:
+            kinds |= set(spec.is_sanitizer or [])
+        if kinds:
+            state.sanitized[ret_var] = sorted(kinds)
+        else:
+            state.sanitized.pop(ret_var, None)
+
     def _exec_call(
         self,
         instr: Call,
@@ -2029,6 +2093,11 @@ class SILTranslator:
 
         # Get specification for this function
         spec = self.program.get_spec(func_name)
+
+        # Sanitization of the tainted inputs as they stand BEFORE this call runs
+        # (the result may overwrite one of them, e.g. q = join(q, basename(p))).
+        pre_call_input_kinds = self._call_input_sanitization(
+            instr, spec, func_name, state)
 
         # C/C++: a taint-source call nested inside an argument -- the `getenv(...)`
         # in `atoi(getenv("X"))` -- never reaches the IR as its own instruction, so
@@ -2439,6 +2508,10 @@ class SILTranslator:
                         receiver_var = parts[0]
                         if state.is_tainted(receiver_var):
                             state.propagate_taint(receiver_var, ret_var)
+
+        if instr.ret:
+            self._settle_call_sanitization(
+                instr, spec, state, pre_call_input_kinds)
 
         # Track secure XML parsers
         # xml.sax.make_parser() creates a parser with secure defaults (XXE disabled)
