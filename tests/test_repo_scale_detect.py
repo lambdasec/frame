@@ -270,3 +270,31 @@ def test_repo_scale_attaches_finding_to_named_file(tmp_path, monkeypatch):
                       llm_repo_scale=True)
     results = sc.scan_directory(str(tmp_path), "**/*.py")
     assert any(v.cwe_id == "CWE-78" for r in results for v in r.vulnerabilities)
+
+
+def test_repo_scale_finding_under_excluded_dir_is_dropped(tmp_path, monkeypatch):
+    # The agent's read_file/grep tools are not limited to the glob's matches (that
+    # is exactly why a legitimately-flagged file the glob missed still gets a new
+    # ScanResult -- see test_repo_scale_attaches_finding_to_named_file above). If
+    # the model wanders into a `.claude/worktrees/...` copy and reports a finding
+    # there, merging it back in would reintroduce the same duplication the default
+    # directory excludes on `scan_directory` exist to prevent.
+    from frame.sil import FrameScanner
+    from frame.sil.llm_detect import _repo_findings_to_vulns
+    monkeypatch.setenv("FRAME_LLM_BASE_URL", "http://x/v1")
+    monkeypatch.setenv("FRAME_LLM_MODEL", "m")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    worktree = tmp_path / ".claude" / "worktrees" / "some-branch"
+    worktree.mkdir(parents=True)
+    (worktree / "a.py").write_text("import os\nos.system(x)\n")
+    vulns = _repo_findings_to_vulns([{
+        "file": ".claude/worktrees/some-branch/a.py", "cwe": "CWE-78", "line": 2,
+        "type": "cmdi", "confidence": 0.9, "reasoning": "r"}], str(tmp_path))
+    assert vulns, "the finding must actually resolve to a real file to be a fair test"
+    monkeypatch.setattr("frame.sil.llm_detect.detect_repo",
+                        lambda *a, **k: vulns)
+    sc = FrameScanner(language="python", verify=False, llm_detect=True,
+                      llm_repo_scale=True)
+    results = sc.scan_directory(str(tmp_path), "**/*.py")
+    assert not any(v.cwe_id == "CWE-78" for r in results for v in r.vulnerabilities)
+    assert not any(str(worktree) in r.filename for r in results)

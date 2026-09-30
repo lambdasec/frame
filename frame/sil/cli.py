@@ -56,6 +56,16 @@ def create_parser() -> argparse.ArgumentParser:
         help="Glob pattern for directory scan (default: **/*.py)"
     )
     scan_parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Directory scans skip agent/tool state and dependency "
+             "directories by default (.git, .claude/worktrees, "
+             ".cursor/worktrees, .worktrees, .idea, .vscode, node_modules, "
+             ".venv, venv [only if it looks like a virtualenv], .tox, "
+             "__pycache__, .mypy_cache, .pytest_cache). Pass this to scan "
+             "them too."
+    )
+    scan_parser.add_argument(
         "-f", "--format",
         default="text",
         choices=["text", "json", "sarif"],
@@ -330,7 +340,9 @@ def cmd_scan(args) -> int:
             result = scanner.scan_file(str(target))
             results.append(result)
         else:
-            results = scanner.scan_directory(str(target), args.pattern)
+            exclude_dirs = [] if getattr(args, "no_default_excludes", False) else None
+            results = scanner.scan_directory(str(target), args.pattern,
+                                              exclude_dirs=exclude_dirs)
     except LLMUnavailableError as e:
         print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
               file=sys.stderr)

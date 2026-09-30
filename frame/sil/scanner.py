@@ -19,7 +19,7 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import FrozenSet, Iterable, List, Dict, Optional, Any, Union
 from pathlib import Path
 from enum import Enum
 import json
@@ -402,6 +402,69 @@ def is_generated_source(source_code: str,
     # A single unterminated line (no newlines at all) is the classic minified
     # bundle shape; splitlines already covers it, but guard the no-newline case.
     return len(source_code) > limit and "\n" not in source_code
+
+
+# Directory names (or component sequences) skipped by default during a
+# directory scan, for every language -- the exclusion happens on the file
+# walk, before any frontend sees a path. An entry is either a single
+# component (matches that name anywhere) or a tuple of components that must
+# appear consecutively (see `FrameScanner._is_excluded_dir_member`). None of
+# these hold project source in the common case:
+#   - .git                          VCS internals.
+#   - (".claude", "worktrees"),
+#     (".cursor", "worktrees")      Agent worktree copies specifically, not
+#                                   the tool's whole state directory:
+#                                   `.claude/worktrees/<branch>/` holds a full
+#                                   copy of the repository that a Claude Code
+#                                   agent works in, and scanning it multiplies
+#                                   every finding once per worktree. A bare
+#                                   `.claude` exclusion would also hide
+#                                   `.claude/hooks/*.py` and skill scripts,
+#                                   which are real, user-authored project
+#                                   code a security scanner should see -- so
+#                                   only the `worktrees` subdirectory is
+#                                   excluded, not the whole tool state dir.
+#   - .worktrees                    Same shape (a tool's own worktree
+#                                   copies), for tools that keep it at the
+#                                   repo root instead of nested under their
+#                                   own state directory.
+#   - .idea, .vscode                IDE project configuration, not source.
+#   - node_modules                  Vendored JS dependencies -- someone
+#                                   else's code.
+#   - .venv, .tox                   Python virtualenvs. These can contain
+#                                   thousands of third-party `.py` files,
+#                                   which is exactly the "full copy that
+#                                   isn't project source" problem.
+#   - venv                          Same shape, but the bare name collides
+#                                   with CPython's stdlib `venv` package and
+#                                   is a plausible real source directory
+#                                   name, so it is excluded conditionally:
+#                                   only when the directory actually
+#                                   contains `pyvenv.cfg`, the marker every
+#                                   `venv`/`virtualenv`-created environment
+#                                   carries (see `_is_excluded_dir_member`).
+#   - __pycache__                   Python bytecode cache.
+#   - .mypy_cache, .pytest_cache    Tool caches, not source.
+#
+# Matching is on path components relative to the scan root (see
+# `scan_directory`), so a scan root that itself sits inside one of these
+# directories still scans normally -- only descendants named like this are
+# skipped.
+DEFAULT_EXCLUDED_SCAN_DIRS: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset({
+    ".git",
+    (".claude", "worktrees"),
+    (".cursor", "worktrees"),
+    ".worktrees",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".tox",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+})
 
 
 class FrameScanner:
@@ -1025,19 +1088,86 @@ class FrameScanner:
 
         return self.scan(source_code, str(path))
 
-    def scan_directory(self, dirpath: str, pattern: str = "**/*.py") -> List[ScanResult]:
+    @staticmethod
+    def _is_excluded_dir_member(
+            filepath: Path, root: Path,
+            excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]]) -> bool:
+        """Does `filepath` sit under one of `excluded_dirs`, relative to `root`?
+
+        Only directory components between `root` and the file are checked --
+        never the filename itself, and never anything above `root` -- so a
+        scan root that itself happens to be named (or nested in) an excluded
+        directory still has its own files scanned normally.
+
+        An entry in `excluded_dirs` is either a plain string, matched against
+        any single directory component, or a tuple of components that must
+        appear consecutively (e.g. `(".claude", "worktrees")` matches
+        `.claude/worktrees/...` but not a bare `.claude/hooks/...`).
+
+        The single name `"venv"` is a special case: it collides with
+        CPython's own `venv` stdlib package and is a plausible real source
+        directory name, so it only counts as a virtualenv -- and is only
+        excluded -- when it actually contains `pyvenv.cfg`, the marker every
+        `venv`/`virtualenv`-created environment carries. `.venv` has no such
+        ambiguity and is excluded unconditionally.
+        """
+        if not excluded_dirs:
+            return False
+        try:
+            rel_parts = filepath.relative_to(root).parts
+        except ValueError:
+            # Not actually under `root` (e.g. a differently-resolved symlink) --
+            # conservative default is to scan it, never to inspect components
+            # above `root` that this guarantee was never meant to cover.
+            return False
+        dir_parts = rel_parts[:-1]  # drop the filename: only dirs can match
+        if not dir_parts:
+            return False
+
+        single = {e for e in excluded_dirs if isinstance(e, str)}
+        multi = [e for e in excluded_dirs if isinstance(e, tuple) and e]
+
+        for i, part in enumerate(dir_parts):
+            if part not in single:
+                continue
+            if part == "venv":
+                venv_dir = root.joinpath(*dir_parts[:i + 1])
+                if not (venv_dir / "pyvenv.cfg").is_file():
+                    continue
+            return True
+
+        for seq in multi:
+            n = len(seq)
+            for i in range(len(dir_parts) - n + 1):
+                if tuple(dir_parts[i:i + n]) == seq:
+                    return True
+        return False
+
+    def scan_directory(self, dirpath: str, pattern: str = "**/*.py",
+                        exclude_dirs: Optional[Iterable[Union[str, Tuple[str, ...]]]] = None
+                        ) -> List[ScanResult]:
         """
         Scan all matching files in a directory.
 
         Args:
             dirpath: Directory path
             pattern: Glob pattern for files
+            exclude_dirs: Directory names (or component-sequence tuples) to
+                skip anywhere under `dirpath` (matched against path
+                components relative to `dirpath`, so a scan root that itself
+                sits inside such a directory is not affected). Defaults to
+                `DEFAULT_EXCLUDED_SCAN_DIRS` -- VCS/IDE/dependency/build
+                state such as `.git` and `.claude/worktrees` that is not
+                project source in the common case. Pass `[]` to disable
+                filtering.
 
         Returns:
             List of ScanResult for each file
         """
         results = []
         dir_path = Path(dirpath)
+        excluded_dirs = (DEFAULT_EXCLUDED_SCAN_DIRS if exclude_dirs is None
+                          else frozenset(exclude_dirs))
 
         # The agentic detector can trace flows across files with its read_file and
         # grep tools, but only when it has a repo root; without one it silently
@@ -1057,25 +1187,34 @@ class FrameScanner:
 
         try:
             for filepath in dir_path.glob(pattern):
-                if filepath.is_file():
-                    result = self.scan_file(str(filepath))
-                    results.append(result)
+                if not filepath.is_file():
+                    continue
+                if self._is_excluded_dir_member(filepath, dir_path, excluded_dirs):
+                    continue
+                result = self.scan_file(str(filepath))
+                results.append(result)
         finally:
             self.llm_detect = per_file_detect
 
         if repo_scale:
-            results = self._apply_repo_scale_detect(dir_path, results)
+            results = self._apply_repo_scale_detect(dir_path, results, excluded_dirs)
 
         return results
 
     def _apply_repo_scale_detect(self, dir_path: Path,
-                                 results: List[ScanResult]) -> List[ScanResult]:
+                                 results: List[ScanResult],
+                                 excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset()
+                                 ) -> List[ScanResult]:
         """Run one repository-wide LLM detection pass and merge its findings.
 
         Findings are attached to the ScanResult for the file they name, creating one
         if the file was not otherwise scanned (the model may legitimately flag a file
-        the glob did not match). Fail-safe: any error leaves the symbolic results
-        untouched, because a broken LLM tier must never discard proven findings.
+        the glob did not match). That legitimate case is exactly how an excluded
+        directory could sneak back in: the agent's own read_file/grep tools are not
+        limited to the glob's matches, so a newly-created result is still checked
+        against `excluded_dirs` before being kept. Fail-safe: any error leaves the
+        symbolic results untouched, because a broken LLM tier must never discard
+        proven findings.
         """
         try:
             from frame.sil.llm_detect import detect_repo
@@ -1088,8 +1227,8 @@ class FrameScanner:
                 if self.verbose:
                     print("[Scanner] repo-scale detect requested but no endpoint/model.")
                 return results
-            root = str(dir_path.resolve())
-            found = detect_repo(root, self.language, config, self._llm_client)
+            resolved_root = dir_path.resolve()
+            found = detect_repo(str(resolved_root), self.language, config, self._llm_client)
         except Exception as e:
             if self.verbose:
                 print(f"[Scanner] repo-scale detect failed: {e}")
@@ -1098,8 +1237,15 @@ class FrameScanner:
         by_file = {r.filename: r for r in results}
         for vuln in found or []:
             target = getattr(vuln, "location", "") or ""
+            if not target:
+                continue
             result = by_file.get(target)
             if result is None:
+                if self._is_excluded_dir_member(Path(target), resolved_root, excluded_dirs):
+                    if self.verbose:
+                        print(f"[Scanner] repo-scale finding dropped, "
+                              f"path is under an excluded directory: {target}")
+                    continue
                 result = ScanResult(filename=target)
                 by_file[target] = result
                 results.append(result)

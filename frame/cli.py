@@ -65,6 +65,16 @@ def create_parser() -> argparse.ArgumentParser:
         help="Glob pattern for directory scan (default: **/*.py)"
     )
     scan_parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Directory scans skip agent/tool state and dependency "
+             "directories by default (.git, .claude/worktrees, "
+             ".cursor/worktrees, .worktrees, .idea, .vscode, node_modules, "
+             ".venv, venv [only if it looks like a virtualenv], .tox, "
+             "__pycache__, .mypy_cache, .pytest_cache). Pass this to scan "
+             "them too."
+    )
+    scan_parser.add_argument(
         "-f", "--format",
         default="text",
         choices=["text", "json", "sarif"],
