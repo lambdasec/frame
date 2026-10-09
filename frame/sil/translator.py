@@ -142,6 +142,7 @@ class VulnType(Enum):
     DIVIDE_BY_ZERO = "divide_by_zero"           # CWE-369
     TYPE_CONFUSION = "type_confusion"           # CWE-843
     ASSERTION_FAILURE = "assertion_failure"     # CWE-617
+    PRIVILEGE_MANAGEMENT = "privilege_management"  # CWE-269
     SIGN_EXTENSION = "sign_extension"           # CWE-194
     UNICODE_HANDLING = "unicode_handling"       # CWE-176
     CONFIG_INJECTION = "config_injection"       # CWE-15
@@ -260,6 +261,12 @@ class VulnType(Enum):
             SinkKind.NULL_DEREF: cls.NULL_DEREFERENCE,
             SinkKind.DIVIDE_BY_ZERO: cls.DIVIDE_BY_ZERO,
         }
+        mapping.update({
+            SinkKind.ASSERTION: cls.ASSERTION_FAILURE,
+            SinkKind.RACE: cls.RACE_CONDITION,
+            SinkKind.SENSITIVE_EXPOSURE: cls.SENSITIVE_DATA_EXPOSURE,
+            SinkKind.PRIVILEGE: cls.PRIVILEGE_MANAGEMENT,
+        })
         return mapping.get(sink_kind, cls.TAINT_FLOW)
 
 
@@ -1354,11 +1361,7 @@ class SILTranslator:
             for idx, succ_id in enumerate(succ_list):
                 if idx in skip_indices:
                     continue
-                added_succ = True
-                # Create a clean copy without the skip markers
-                succ_state = current_state.copy()
-                if hasattr(succ_state, '_skip_successor_indices'):
-                    del succ_state._skip_successor_indices
+                guard = None
                 if edge_exp is not None and idx in (0, 1):
                     guard = self._feasibility_guard(edge_exp, assume_true=(idx == 0))
                     # Only record guards that mention a program variable. A
@@ -1367,10 +1370,27 @@ class SILTranslator:
                     # its negation would be a spurious contradiction. Genuine
                     # constant-driven dead edges are already pruned by constant
                     # folding during execution.
-                    if guard is not None and guard.free_vars():
-                        succ_state.feasibility_constraints = (
-                            succ_state.feasibility_constraints + [guard]
-                        )
+                    if guard is not None and not guard.free_vars():
+                        guard = None
+                    # An edge the solver proves this path cannot take is not
+                    # followed. Otherwise a provably dead path can be the FIRST to
+                    # reach a join; the feasible path that arrives later with the
+                    # same taint is then never analysed, and the finding it would
+                    # have produced survives only if a later join happens to forget
+                    # the contradiction. `_feasibility_sat` answers True when
+                    # undecided, so only a proven contradiction prunes.
+                    if guard is not None and not self._edge_feasible(
+                            current_state.feasibility_constraints, guard):
+                        continue
+                added_succ = True
+                # Create a clean copy without the skip markers
+                succ_state = current_state.copy()
+                if hasattr(succ_state, '_skip_successor_indices'):
+                    del succ_state._skip_successor_indices
+                if guard is not None:
+                    succ_state.feasibility_constraints = (
+                        succ_state.feasibility_constraints + [guard]
+                    )
                 worklist.append((succ_id, succ_state))
 
             # A path that ends here without returning (falls off the end of a
@@ -4657,6 +4677,38 @@ class SILTranslator:
             return True
         return self._is_declared_local(name)
 
+    def _edge_feasible(self, pc: List[Formula], guard: Formula) -> bool:
+        """Can a path whose condition is `pc` take an edge guarded by `guard`?
+        Only the facts connected to the guard's variables can contradict it, so
+        just those are sent to the solver (the rest of `pc` is satisfiable by
+        construction: an unsatisfiable condition is never propagated)."""
+        facts = self._connected_facts(guard.free_vars(), pc)
+        if not facts:
+            return True
+        key = (tuple(str(g) for g in facts), str(guard))
+        cache = self.__dict__.setdefault("_edge_query_cache", {})
+        if key not in cache:
+            cache[key] = self._feasibility_sat(self._build_conjunction(facts + [guard]))
+        return cache[key]
+
+    @staticmethod
+    def _connected_facts(names: Set[str], pc: List[Formula]) -> List[Formula]:
+        """The facts reachable from `names` through shared variables, in order."""
+        want = set(names)
+        chosen: Set[int] = set()
+        changed = True
+        while changed:
+            changed = False
+            for i, fact in enumerate(pc):
+                if i in chosen:
+                    continue
+                fv = fact.free_vars()
+                if fv & want:
+                    chosen.add(i)
+                    want |= fv
+                    changed = True
+        return [pc[i] for i in sorted(chosen)]
+
     @staticmethod
     def _relevant_facts(var: str, pc: List[Formula]) -> List[Formula]:
         """The facts connected to `var` through shared variables (its cone of
@@ -6461,14 +6513,13 @@ class SILTranslator:
 
         # Path constraints: drop (would need disjunction)
         merged.path_constraints = []
-        # Conditions from two joined paths cannot both be assumed. For C/C++ keep
-        # what the join knows -- the shared facts plus the DISJUNCTION of the rest
+        # Conditions from two joined paths cannot both be assumed. Keep what the
+        # join knows -- the shared facts plus the DISJUNCTION of the rest
         # (pc1 | pc2) -- so the solver still sees, e.g., that p is null exactly on
-        # the path where n == 0. Other languages keep the old drop-everything join.
-        merged.feasibility_constraints = (
-            self._join_path_conditions(s1.feasibility_constraints,
-                                       s2.feasibility_constraints)
-            if self._is_c_lang else [])
+        # the path where n == 0, or that a guard taken before an if/else still
+        # holds after it. This is never stronger than either incoming condition.
+        merged.feasibility_constraints = self._join_path_conditions(
+            s1.feasibility_constraints, s2.feasibility_constraints)
 
         # Constants: intersection (only keep if same value in both states)
         for var in set(s1.constants.keys()) & set(s2.constants.keys()):

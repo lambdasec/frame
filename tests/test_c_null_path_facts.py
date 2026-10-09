@@ -219,12 +219,12 @@ def test_verifier_drops_a_null_finding_its_facts_contradict():
 
 # ---- scope: other languages keep the old join ---------------------------------------
 
-def test_join_is_only_disjunctive_for_c():
+def test_join_is_disjunctive_for_every_language():
     from frame.sil.procedure import Program
     from frame.sil.translator import SymbolicState
-    a, b = SymbolicState(), SymbolicState()
-    a.feasibility_constraints = [Eq(Var("x"), Const(1))]
-    b.feasibility_constraints = [Eq(Var("x"), Const(2))]
-    assert SILTranslator(Program(language="python"))._merge_states(a, b).feasibility_constraints == []
-    merged = SILTranslator(Program(language="c"))._merge_states(a, b).feasibility_constraints
-    assert len(merged) == 1 and isinstance(merged[0], Or)
+    for lang in ("c", "cpp", "python", "java", "javascript", "csharp"):
+        a, b = SymbolicState(), SymbolicState()
+        a.feasibility_constraints = [Eq(Var("x"), Const(1))]
+        b.feasibility_constraints = [Eq(Var("x"), Const(2))]
+        merged = SILTranslator(Program(language=lang))._merge_states(a, b).feasibility_constraints
+        assert len(merged) == 1 and isinstance(merged[0], Or), lang

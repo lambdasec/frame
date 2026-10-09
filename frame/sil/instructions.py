@@ -158,6 +158,10 @@ class SinkKind(Enum):
     DIVIDE_BY_ZERO = "divide_by_zero"  # Division by zero (CWE-369)
     DANGEROUS_FUNCTION = "dangerous_function"  # Inherently unsafe API (CWE-676)
     PROTOTYPE_POLLUTION = "prototype_pollution"  # JS prototype pollution (CWE-1321)
+    ASSERTION = "assertion"     # Reachable assertion on attacker data (CWE-617)
+    RACE = "race"               # Time-of-check/time-of-use file race (CWE-367)
+    SENSITIVE_EXPOSURE = "sensitive_exposure"  # Sensitive data exposed (CWE-200)
+    PRIVILEGE = "privilege"     # Privilege management on attacker data (CWE-269)
 
     def __str__(self) -> str:
         return self.value
@@ -179,6 +183,9 @@ _SINK_KIND_ALIASES = {
     "path": "filesystem",
     "shell_command": "shell",
     "html_output": "html",
+    "redos": "regex",
+    "buffer": "buffer_overflow",
+    "network": "sensitive_exposure",   # data sent out over a socket (CWE-200)
 }
 
 

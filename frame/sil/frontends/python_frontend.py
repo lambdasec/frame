@@ -32,7 +32,7 @@ from frame.sil.types import (
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
     TaintSource, TaintSink, Sanitize,
-    TaintKind, SinkKind, PruneKind
+    TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
@@ -796,7 +796,7 @@ class PythonFrontend:
 
         # Check if this is a sink (unusual but possible)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args_exp):
                     instrs.append(TaintSink(
@@ -882,7 +882,7 @@ class PythonFrontend:
         # Check if this is a sink
         spec = self.specs.get(func_name)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])

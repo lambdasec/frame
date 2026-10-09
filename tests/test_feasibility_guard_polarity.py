@@ -63,11 +63,25 @@ def test_contradiction_through_a_combinator_is_still_pruned():
     assert _sqli_lines(_contradictory_src()) == []
 
 
-def test_contradiction_fixture_is_pruned_by_the_feasibility_filter(monkeypatch):
-    # Non-vacuity: the finding exists and only the infeasible-path filter drops it.
+def test_contradiction_fixture_is_pruned_by_the_solver(monkeypatch):
+    # Non-vacuity: with both solver uses disabled -- pruning infeasible edges in
+    # the walk and the post-hoc infeasible-path filter -- the finding exists, so
+    # it is the solver's contradiction, and nothing else, that removes it.
     monkeypatch.setattr(SILTranslator, "_filter_infeasible_checks",
                         lambda self, checks: checks)
+    monkeypatch.setattr(SILTranslator, "_edge_feasible", lambda self, pc, guard: True)
     assert _sqli_lines(_contradictory_src()) == [8]
+
+
+def test_contradiction_is_pruned_by_either_solver_use_alone(monkeypatch):
+    # Edge pruning alone (filter disabled) removes the infeasible path ...
+    with monkeypatch.context() as m:
+        m.setattr(SILTranslator, "_filter_infeasible_checks", lambda self, checks: checks)
+        assert _sqli_lines(_contradictory_src()) == []
+    # ... and so does the filter alone (pruning disabled).
+    with monkeypatch.context() as m:
+        m.setattr(SILTranslator, "_edge_feasible", lambda self, pc, guard: True)
+        assert _sqli_lines(_contradictory_src()) == []
 
 
 def test_constant_leaf_in_disjunctive_guard_keeps_the_continuation_feasible():

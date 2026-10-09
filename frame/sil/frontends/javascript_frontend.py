@@ -39,7 +39,7 @@ from frame.sil.types import (
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
     TaintSource, TaintSink, Sanitize,
-    TaintKind, SinkKind, PruneKind
+    TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
@@ -112,11 +112,8 @@ def _get_sink_kind(spec_type: str) -> SinkKind:
     """Convert spec sink type string to SinkKind enum"""
     if spec_type in SINK_TYPE_MAP:
         return SINK_TYPE_MAP[spec_type]
-    # Try direct conversion
-    try:
-        return SinkKind(spec_type)
-    except ValueError:
-        return SinkKind.SQL_QUERY  # Default fallback
+    # Shared resolver (aliases, then SinkKind values).
+    return resolve_sink_kind(spec_type)
 
 
 class JavaScriptFrontend:

@@ -567,6 +567,7 @@ class FrameScanner:
         VulnType.DIVIDE_BY_ZERO: Severity.MEDIUM,
         VulnType.TYPE_CONFUSION: Severity.HIGH,
         VulnType.ASSERTION_FAILURE: Severity.MEDIUM,
+        VulnType.PRIVILEGE_MANAGEMENT: Severity.HIGH,
 
         # Resource exhaustion (CWE-400 cluster). Availability impact only, and a
         # non-terminating procedure is a self-inflicted hang rather than an
@@ -695,6 +696,7 @@ class FrameScanner:
         VulnType.DIVIDE_BY_ZERO: "CWE-369",
         VulnType.TYPE_CONFUSION: "CWE-843",
         VulnType.ASSERTION_FAILURE: "CWE-617",
+        VulnType.PRIVILEGE_MANAGEMENT: "CWE-269",
 
         # Resource exhaustion. Always the specific child weakness: a query for
         # the CWE-400 parent is satisfied through `cwe_taxonomy.is_a`.

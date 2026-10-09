@@ -40,7 +40,7 @@ from frame.sil.types import (
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
     TaintSource, TaintSink, Sanitize,
-    TaintKind, SinkKind, PruneKind
+    TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
@@ -865,7 +865,7 @@ class JavaFrontend:
                 if algo_instr:
                     instrs.append(algo_instr)
             else:
-                kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+                kind = resolve_sink_kind(spec.is_sink)
                 for arg_idx in spec.sink_args:
                     if arg_idx < len(args):
                         arg_exp = self._translate_expression(args[arg_idx])
@@ -993,7 +993,7 @@ class JavaFrontend:
         # Check specs for constructor sink (e.g., FileOutputStream, File)
         spec = self._lookup_spec(constructor_name)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -1021,7 +1021,7 @@ class JavaFrontend:
         # Use flexible spec lookup
         spec = self._lookup_spec(method_name)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
