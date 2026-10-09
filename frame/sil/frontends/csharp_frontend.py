@@ -34,6 +34,7 @@ from frame.sil.instructions import (
     TaintSource, TaintSink, Sanitize,
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
+from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
@@ -198,8 +199,55 @@ class CSharpFrontend:
                         if proc:
                             proc.class_name = full_class_name
                             program.add_procedure(proc)
+            self._translate_literal_fields(body, full_class_name, program)
 
         self._current_class = old_class
+
+    _STRING_LITERAL_TYPES = frozenset({
+        "string_literal", "verbatim_string_literal", "raw_string_literal"})
+
+    def _literal_of(self, node: TSNode) -> Optional[TSNode]:
+        """The string-literal initializer under a declarator/property, if any
+        (directly, or wrapped in an ``equals_value_clause`` by older grammars)."""
+        for c in node.children:
+            if c.type in self._STRING_LITERAL_TYPES:
+                return c
+            if c.type == "equals_value_clause":
+                for cc in c.children:
+                    if cc.type in self._STRING_LITERAL_TYPES:
+                        return cc
+        return None
+
+    def _translate_literal_fields(self, body: TSNode, class_name: str,
+                                  program: Program) -> None:
+        """Lower string-literal field and property initializers (``string
+        password = "..."``) so hardcoded credentials declared outside a method
+        body reach the literal scanner. Adds no sources or sinks."""
+        assigns = []
+
+        def add(name_node, lit):
+            if name_node is not None and lit is not None:
+                assigns.append(Assign(loc=self._get_location(name_node),
+                                      id=PVar(self._get_text(name_node)),
+                                      exp=self._translate_expression(lit)))
+
+        for member in body.children:
+            if member.type == "field_declaration":
+                for vd in member.children:
+                    if vd.type != "variable_declaration":
+                        continue
+                    for decl in vd.children:
+                        if decl.type == "variable_declarator":
+                            name = decl.child_by_field_name("name") or next(
+                                (c for c in decl.children if c.type == "identifier"), None)
+                            add(name, self._literal_of(decl))
+            elif member.type == "property_declaration":
+                name = member.child_by_field_name("name")
+                add(name, self._literal_of(member))
+        proc = literal_init_procedure(f"{class_name}..cctor",
+                                      self._get_location(body), assigns)
+        if proc is not None:
+            program.add_procedure(proc)
 
     def _translate_method(self, node: TSNode) -> Optional[Procedure]:
         """Translate method definition"""

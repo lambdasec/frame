@@ -1043,6 +1043,14 @@ class InterproceduralAnalyzer:
                                 print(f"[IPA] Call to {func_name} frees arg {arg_name}")
 
 
+def _bounded_product(line: str, var: str, product_fits) -> bool:
+    """Is every `var * C` / `C * var` on `line` provably in int range, given the
+    literal upper bound recorded for `var`?"""
+    consts = [int(c) for c in re.findall(rf'\b{re.escape(var)}\s*\*\s*(\d+)\b', line)]
+    consts += [int(c) for c in re.findall(rf'\b(\d+)\s*\*\s*{re.escape(var)}\b', line)]
+    return bool(consts) and all(product_fits(var, c) for c in consts)
+
+
 def analyze_interprocedural(source: str, filename: str = "<unknown>",
                             verbose: bool = False) -> List[MemoryVuln]:
     """
@@ -1196,6 +1204,13 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     # Track bounds checking for integer overflow detection
     bounds_checked_vars: Set[str] = set()  # vars with upper/lower bounds checks
     overflow_guarded_vars: Set[str] = set()  # vars checked for overflow potential
+    # Smallest literal upper bound seen for a variable (`d < 1000` -> 999). A
+    # product `d * C` cannot overflow a 32-bit int while bound * C fits in one.
+    upper_bounds: Dict[str, int] = {}
+
+    def product_fits(var: str, const: int) -> bool:
+        bound = upper_bounds.get(var)
+        return bound is not None and abs(bound) * abs(const) <= 2**31 - 1
 
     # Track zero-checked variables for divide-by-zero detection (CWE-369)
     zero_checked_vars: Set[str] = set()  # vars checked for != 0, > 0, or similar
@@ -1232,6 +1247,14 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     # First pass: identify bounds checks and guards
     for line_num, line in enumerate(lines, 1):
         stripped = line.strip()
+
+        # Literal upper bounds: `x < K`, `x <= K`, `K > x`, `K >= x`.
+        for m in re.finditer(r'\b([A-Za-z_]\w*)\s*(<=?)\s*(\d+)\b(?!\s*[*+/])', stripped):
+            k = int(m.group(3)) - (1 if m.group(2) == '<' else 0)
+            upper_bounds[m.group(1)] = min(k, upper_bounds.get(m.group(1), k))
+        for m in re.finditer(r'\b(\d+)\s*(>=?)\s*([A-Za-z_]\w*)\b', stripped):
+            k = int(m.group(1)) - (1 if m.group(2) == '>' else 0)
+            upper_bounds[m.group(3)] = min(k, upper_bounds.get(m.group(3), k))
 
         # Detect overflow guards: if (data > INT_MAX/2), if (data < sqrt(INT_MAX)), etc.
         if re.search(r'\bdata\s*[><]=?\s*(?:INT_MAX|LONG_MAX|LLONG_MAX|sqrt|SHRT_MAX)', stripped):
@@ -2229,7 +2252,8 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     confidence=0.85,
                 ))
             # Detect: result = data * 2 or data * constant (multiplication)
-            elif re.search(r'\bdata\s*\*\s*\d+', stripped) or re.search(r'\d+\s*\*\s*data\b', stripped):
+            elif (re.search(r'\bdata\s*\*\s*\d+', stripped) or re.search(r'\d+\s*\*\s*data\b', stripped)) \
+                    and not _bounded_product(stripped, 'data', product_fits):
                 vulns.append(MemoryVuln(
                     vuln_type=VulnType.INTEGER_OVERFLOW,
                     cwe_id="CWE-190",
@@ -2258,8 +2282,8 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             # Skip if this is sizeof or if there's a proper check
             if const >= 2 and 'sizeof' not in stripped:
                 # Skip if var is already guarded by an overflow check earlier in the code
-                if var in overflow_guarded_vars:
-                    pass  # Already guarded
+                if var in overflow_guarded_vars or product_fits(var, const):
+                    pass  # Already guarded (flag or literal bound keeps var * const in range)
                 # Check if there's no overflow guard on this line or recent lines
                 elif not re.search(rf'\b{var}\s*[<>]=?\s*\w*MAX', stripped):
                     # Check if this is an arithmetic assignment (result = var * 2)

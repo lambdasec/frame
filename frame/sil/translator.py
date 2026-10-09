@@ -1499,6 +1499,9 @@ class SILTranslator:
         # classic out-of-bounds write/read. Reads the pre-instruction taint and
         # path condition, like the divide check above.
         numeric_checks += self._tainted_index_checks(instr, state, proc_name)
+        # A copy/fill of a compile-time-constant size into a buffer whose capacity
+        # is also a compile-time constant: provably out of bounds, taint-free.
+        numeric_checks += self._constant_copy_overflow_checks(instr, proc_name)
 
         if isinstance(instr, Assign):
             assign_checks, state = self._exec_assign(instr, state, proc_name)
@@ -1756,11 +1759,14 @@ class SILTranslator:
                         state.set_constant(target, string_val[lit_index])
                         return checks, state
 
-        # Propagate taint from any tainted source
-        for src_var in source_vars:
-            if state.is_tainted(src_var):
-                state.propagate_taint(src_var, target)
-                break  # Only need one taint source
+        # Propagate taint from any tainted source. The pointer a size-only
+        # allocator (malloc/calloc/alloca) returns is fresh memory, not data derived
+        # from its size argument, so it does not inherit that argument's taint.
+        if not self._is_size_only_alloc(instr.exp):
+            for src_var in source_vars:
+                if state.is_tainted(src_var):
+                    state.propagate_taint(src_var, target)
+                    break  # Only need one taint source
 
         # Also propagate sanitization even if source isn't tainted
         # This handles cases like: bar = sanitize(param)
@@ -1872,7 +1878,11 @@ class SILTranslator:
                     'ssrf': SinkKind.SSRF,
                     'log': SinkKind.LOG,
                 }
-                sink_enum = sink_kind_map.get(sink_kind, SinkKind.EVAL)
+                # A kind this table does not list but SinkKind knows (integer_overflow,
+                # buffer_overflow, memory, ...) must keep its own identity; only a
+                # genuinely unknown kind falls back to EVAL.
+                sink_enum = sink_kind_map.get(sink_kind) or resolve_sink_kind(
+                    sink_kind, default=SinkKind.EVAL)
                 check = self._create_taint_check(
                     instr, state, proc_name,
                     tainted_var, sink_enum
@@ -2112,6 +2122,24 @@ class SILTranslator:
                 source_var=ret_var,
                 source_location=instr.loc,
             ))
+
+        # C/C++ input functions fill a buffer / out-parameter with attacker data
+        # (fgets(buf,...), scanf("%d",&n), read(fd,buf,...)); taint the variable
+        # each named argument designates (`buf` or `&n`, through casts).
+        if spec and spec.taint_out_args and self._is_c_lang:
+            for idx in spec.taint_out_args:
+                if idx >= len(instr.args):
+                    continue
+                inner = self._cast_strip(instr.args[idx][0])
+                if isinstance(inner, ExpUnOp) and inner.op == "&":
+                    inner = self._cast_strip(inner.operand)
+                out_var = self._sole_var(inner)
+                if out_var is not None:
+                    state.add_taint(out_var, TaintInfo(
+                        source_kind=TaintKind.USER_INPUT,
+                        source_var=out_var,
+                        source_location=instr.loc,
+                    ))
 
         if spec:
             # Handle taint source
@@ -2818,9 +2846,12 @@ class SILTranslator:
                 # The result lives on the heap, so freeing it later is legitimate.
                 # It is deliberately not recorded as null: a malloc-then-deref is
                 # the ordinary correct idiom and must not read as a null deref.
-                state.heap_origin[ret_var] = "heap"
+                # alloca() is the exception: its result is stack storage, freed
+                # automatically, so it is never leaked and must not be free()d.
+                stack_alloc = spec.stack_allocation_size_arg is not None
+                state.heap_origin[ret_var] = "stack" if stack_alloc else "heap"
                 state.null_ptrs.pop(ret_var, None)
-                if self._is_c_lang:
+                if self._is_c_lang and not stack_alloc:
                     # Record the allocator KIND (for CWE-762) and take ownership of
                     # the fresh allocation (for CWE-401).
                     kind = self._alloc_kind_of_call(func_name)
@@ -4398,6 +4429,21 @@ class SILTranslator:
         fixed_arrays = getattr(self._cur_proc, "fixed_array_bounds", {}) or {}
         return var in fixed_arrays
 
+    def _proc_address_taken(self) -> Set[str]:
+        """Locals of the current procedure whose address is taken anywhere (`&x`):
+        any callee or pointer write may then change them. Computed once."""
+        proc = self._cur_proc
+        if proc is None:
+            return set()
+        cached = getattr(proc, "_address_taken_cache", None)
+        if cached is None:
+            cached = set()
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    cached |= self._addr_taken_vars(instr)
+            proc._address_taken_cache = cached
+        return cached
+
     def _track_assign_lifecycle(self, instr: Assign, target: str,
                                 state: SymbolicState) -> None:
         """Update null-ness and storage origin across `target = exp`.
@@ -4426,13 +4472,20 @@ class SILTranslator:
             state.heap_origin[target] = "stack"
             return
         if self._is_null_literal(exp):
-            # An explicit `p = NULL` on its own does not fire CWE-476: the value
-            # is almost always overwritten on the live path before any use (the
-            # ubiquitous `T *p; p = NULL; if(cond) p = real; use(p)` idiom), and
-            # firing on the initializer alone produces false positives on correct
-            # code. Null-ness that actually reaches a dereference is established by
-            # a branch that CONFIRMS `p == NULL` (see `_edge_null_vars`), which is
-            # the genuine "dereference after null check" shape of this weakness.
+            # `p = NULL` makes p null on this path only when nothing but this
+            # procedure's own straight-line code can change it: p must be a true
+            # local (a global or static can be reset by any callee) and its
+            # address must never be taken (`init(&p)` may assign it). Joins merge
+            # null-ness by INTERSECTION and any reassignment drops it above, so
+            # the ubiquitous `T *p = NULL; if(cond) p = real; use(p)` idiom stays
+            # clean: p is null on only one incoming path at the join. What this
+            # leaves is the genuine bug -- a local that is NULL on every path to a
+            # dereference. Null-ness is also established by a branch that confirms
+            # `p == NULL` (see `_edge_null_vars`).
+            if (target in (getattr(self._cur_proc, "locals", None) or {})
+                    and target not in self._proc_address_taken()
+                    and target not in (getattr(self._cur_proc, "expr_assigned", None) or ())):
+                state.null_ptrs[target] = exp
             return
         src = self._sole_var(exp)
         if src is not None:
@@ -4478,6 +4531,7 @@ class SILTranslator:
     _NORETURN_FUNCS = frozenset({
         "exit", "_exit", "_Exit", "quick_exit", "abort", "_abort",
         "longjmp", "siglongjmp", "__assert_fail", "err", "errx",
+        "__frame_goto__",   # the C frontend's lowering of `goto`
     })
 
     def _is_noreturn_call(self, instr: Instr) -> bool:
@@ -4581,6 +4635,11 @@ class SILTranslator:
                     add(sub.base)
         return bases
 
+    def _cur_proc_unreliable(self) -> bool:
+        """Did the current C/C++ function parse with errors? Its CFG may then be
+        missing statements, so path-dataflow defect checks stay silent on it."""
+        return bool(getattr(self._cur_proc, "has_parse_errors", False))
+
     def _lifecycle_deref_checks(
         self,
         instr: Instr,
@@ -4591,7 +4650,7 @@ class SILTranslator:
         that is NULL on this path), raised for every dereference the instruction
         performs. C/C++ only: other frontends have no free and no raw deref."""
         checks: List[VulnerabilityCheck] = []
-        if not self._is_c_lang:
+        if not self._is_c_lang or self._cur_proc_unreliable():
             return checks
         for base in self._iter_deref_bases(instr):
             if base in state.freed:
@@ -4623,7 +4682,7 @@ class SILTranslator:
         cached = getattr(proc, "_uninit_aggregates", None)
         if cached is not None:
             return cached
-        agg: Set[str] = set(proc.fixed_array_bounds or {})
+        agg: Set[str] = set(proc.fixed_array_bounds or {}) | set(proc.array_locals or ())
         for node in proc.nodes.values():
             for instr in node.instrs:
                 for exp in self._iter_instr_exps(instr):
@@ -4638,6 +4697,9 @@ class SILTranslator:
     def _uninit_trackable(self, name: str) -> bool:
         """Should the reaching-definition analysis track `name`? Only a scalar or
         pointer declared local qualifies; arrays and aggregates are excluded."""
+        proc = self._cur_proc
+        if proc is not None and name in (proc.expr_assigned or ()):
+            return False
         return bool(name) and name not in self._uninit_aggregate_locals()
 
     def _collect_value_reads(self, exp: Exp, out: Set[str]) -> None:
@@ -4673,9 +4735,38 @@ class SILTranslator:
                 self._collect_value_reads(part, out)
         elif isinstance(exp, ExpCall):
             for arg in exp.args:
-                if self._is_addressable_arg(arg):
+                if self._arg_may_define(arg, exp.func):
                     continue
                 self._collect_value_reads(arg, out)
+
+    # C macros/functions that take a bare aggregate (va_list, jmp_buf) and
+    # initialise it: the one place a plain C argument is an out-parameter.
+    _C_BARE_OUT_PARAM_CALLS = frozenset({
+        "va_start", "va_end", "va_copy", "va_arg",
+        "setjmp", "_setjmp", "sigsetjmp", "longjmp", "siglongjmp"})
+
+    def _arg_may_define(self, arg: Exp, func: Optional[Exp] = None) -> bool:
+        """May passing `arg` initialise the variable it names?
+
+        `&x` always may (the callee gets a location). A bare `x` may only in C++,
+        where it can bind to a reference out-parameter; in C arguments are passed
+        by value, so a bare scalar argument is a READ of x -- the exact shape of
+        Juliet's CWE-457 (`int data; printIntLine(data);`). The few C macros that
+        take a bare aggregate are exempt."""
+        inner = self._cast_strip(arg)
+        if isinstance(inner, ExpUnOp) and inner.op == "&":
+            return True
+        if not isinstance(inner, ExpVar):
+            return False
+        lang = (getattr(self.program, "language", "") or "").lower()
+        if lang != "c":
+            return True
+        name = ""
+        if isinstance(func, ExpConst):
+            name = str(func.value)
+        elif func is not None:
+            name = str(func)
+        return name.strip('"') in self._C_BARE_OUT_PARAM_CALLS
 
     def _is_addressable_arg(self, arg: Exp) -> bool:
         """Is a call argument a bare variable `x` or its address `&x` (through
@@ -4711,7 +4802,7 @@ class SILTranslator:
             exps.append(instr.exp)
         elif isinstance(instr, Call):
             for arg, _ in instr.args:
-                if self._is_addressable_arg(arg):
+                if self._arg_may_define(arg, instr.func):
                     continue
                 exps.append(arg)
             if instr.receiver is not None:
@@ -4749,7 +4840,7 @@ class SILTranslator:
             if instr.ret:
                 inits.add(str(instr.ret[0]))
             for arg, _ in instr.args:
-                if self._is_addressable_arg(arg):
+                if self._arg_may_define(arg, instr.func):
                     inits.add(self._sole_var(self._cast_strip(arg)))
         inits.discard(None)
         return inits
@@ -4766,7 +4857,7 @@ class SILTranslator:
         if not self._is_c_lang:
             return checks
 
-        if state.uninitialized:
+        if state.uninitialized and not self._cur_proc_unreliable():
             for v in self._uninit_value_reads(instr):
                 if v in state.uninitialized:
                     checks.append(
@@ -4977,7 +5068,7 @@ class SILTranslator:
         is left alone.
         """
         checks: List[VulnerabilityCheck] = []
-        if not self._is_c_lang:
+        if not self._is_c_lang or self._cur_proc_unreliable():
             return checks
         proc = self._cur_proc
         if proc is None or not proc.fixed_array_bounds:
@@ -5027,6 +5118,150 @@ class SILTranslator:
                 procedure_name=proc_name,
             ))
         return checks
+
+    # name -> (index of the destination buffer, index of the byte-count argument
+    # or None). The byte count is either an explicit argument or, for the string
+    # copies, the length of a literal source argument (see the checker below).
+    _BOUNDED_WRITES = {
+        "memcpy": (0, 2), "memmove": (0, 2), "memset": (0, 2),
+        "strncpy": (0, 2), "snprintf": (0, 1), "fgets": (0, 1),
+        "read": (1, 2), "recv": (1, 2),
+    }
+    _LITERAL_COPIES = {"strcpy": 1, "strcat": 1, "sprintf": 1}
+
+    def _const_int(self, exp: Exp) -> Optional[int]:
+        """Integer value of a compile-time constant expression (literals joined
+        by + - * and casts), else None. Names and sizeof are NOT resolved."""
+        exp = self._cast_strip(exp)
+        if isinstance(exp, ExpConst):
+            v = exp.value
+            return v if isinstance(v, int) and not isinstance(v, bool) else None
+        if isinstance(exp, ExpBinOp) and exp.op in ("+", "-", "*"):
+            a, b = self._const_int(exp.left), self._const_int(exp.right)
+            if a is None or b is None:
+                return None
+            return a + b if exp.op == "+" else a - b if exp.op == "-" else a * b
+        return None
+
+    def _single_def(self, var: str) -> Optional[Exp]:
+        """The one expression `var` is ever assigned in this procedure (its
+        declaration placeholder excluded), or None if it has none or several."""
+        proc = self._cur_proc
+        if proc is None:
+            return None
+        cache = getattr(proc, "_single_def_cache", None)
+        if cache is None:
+            defs: Dict[str, List[Exp]] = {}
+            call_rets: Dict[str, Instr] = {}
+            for node in proc.nodes.values():
+                for ins in node.instrs:
+                    if isinstance(ins, Assign) and not getattr(ins, "is_uninit_decl", False):
+                        defs.setdefault(self._get_var_name(ins.id), []).append(ins.exp)
+                    elif isinstance(ins, Call) and ins.ret:
+                        call_rets[str(ins.ret[0])] = ins
+            cache = proc._single_def_cache = {}
+            for name, exps in defs.items():
+                if len(exps) != 1:
+                    continue
+                e = self._cast_strip(exps[0])
+                # `p = malloc(K)` lowered as a temp call plus `p = $tmp`.
+                if isinstance(e, ExpVar) and str(e.var) in call_rets:
+                    c = call_rets[str(e.var)]
+                    cache[name] = ExpCall(c.func, [a for a, _ in c.args])
+                else:
+                    cache[name] = e
+        return cache.get(var)
+
+    def _buffer_capacity(self, dest: Exp) -> Optional[int]:
+        """Byte capacity of the buffer `dest` names, when it is certain: a fixed
+        character array local, or a pointer whose single definition is such an
+        array or a constant-size malloc/calloc/alloca. Anything else is None."""
+        proc = self._cur_proc
+        base = self._cast_strip(dest)
+        if proc is None or not isinstance(base, ExpVar):
+            return None
+        name = str(base.var)
+        if name in proc.char_array_locals:
+            return self._stack_array_bound(base, proc)
+        seen = set()
+        while name not in seen:
+            seen.add(name)
+            d = self._single_def(name)
+            if d is None:
+                return None
+            if isinstance(d, ExpVar):
+                src = str(d.var)
+                if src in proc.char_array_locals:
+                    return self._stack_array_bound(ExpVar(PVar(src)), proc)
+                name = src
+                continue
+            if isinstance(d, ExpCall) and isinstance(d.func, ExpConst) \
+                    and str(d.func.value) in ("malloc", "alloca") and len(d.args) == 1:
+                return self._const_int(d.args[0])
+            return None
+        return None
+
+    @staticmethod
+    def _literal_len(value: object) -> Optional[int]:
+        """Bytes a C string literal occupies including its NUL, escapes folded."""
+        if not isinstance(value, str):
+            return None
+        text = value
+        if "\\" in text:
+            text = re.sub(r"\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)", "?", text)
+        return len(text) + 1
+
+    def _constant_copy_overflow_checks(self, instr: Instr,
+                                       proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-120/121/122: a copy or fill whose size is a compile-time constant
+        bigger than the destination's compile-time-constant capacity.
+
+        Fully static, no taint or path reasoning: the destination is a local
+        character array or a pointer provably aliasing one (or a constant-size
+        malloc), and the size is either an explicit constant argument or the
+        length of a string-literal source. Only certain facts are used, so an
+        unknown size, an unresolved macro, or a pointer with several possible
+        definitions is never flagged. C/C++ only."""
+        if not self._is_c_lang or not isinstance(instr, Call):
+            return []
+        func = instr.func
+        fname = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"')
+        args = [a for a, _ in instr.args]
+        need = None
+        what = ""
+        if fname in self._BOUNDED_WRITES:
+            dest_i, n_i = self._BOUNDED_WRITES[fname]
+            if dest_i >= len(args) or n_i >= len(args):
+                return []
+            need = self._const_int(args[n_i])
+            dest = args[dest_i]
+            what = f"{fname}() of {need} bytes"
+        elif fname in self._LITERAL_COPIES and len(args) > self._LITERAL_COPIES[fname]:
+            src = self._cast_strip(args[self._LITERAL_COPIES[fname]])
+            if not (isinstance(src, ExpConst) and isinstance(src.value, str)):
+                return []
+            if fname == "sprintf" and "%" in src.value:
+                return []   # formatted output length is not a constant
+            need = self._literal_len(src.value)
+            dest = args[0]
+            what = f"{fname}() of a {need}-byte string (with NUL)"
+        else:
+            return []
+        if need is None or need <= 0:
+            return []
+        cap = self._buffer_capacity(dest)
+        if cap is None or need <= cap:
+            return []
+        dest_name = self._exp_to_str(self._cast_strip(dest))
+        return [VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.BUFFER_OVERFLOW,
+            location=instr.loc,
+            description=f"Buffer overflow: {what} into '{dest_name}', which holds "
+                        f"only {cap} bytes",
+            tainted_var=dest_name,
+            procedure_name=proc_name,
+        )]
 
     def _loop_guard_upper(self, cond: Exp) -> Optional[Tuple[str, int]]:
         """Read a loop-entry guard `i < K` / `i <= K` (either operand order) as
@@ -5275,11 +5510,50 @@ class SILTranslator:
                 return {b}
         return set()
 
+    # libc functions that read or write THROUGH a pointer argument but never
+    # retain it (no stored copy, no ownership transfer). Passing an owned pointer
+    # to one of these is a use, not an escape, so the allocation can still leak.
+    # Deliberately excludes anything that may keep the pointer: strtok, setbuf,
+    # setvbuf, realloc, atexit, signal, pthread_*, bsearch/qsort callbacks.
+    _NON_RETAINING_CALLS = frozenset({
+        "strcpy", "strncpy", "strcat", "strncat", "strlen", "strnlen", "strcmp",
+        "strncmp", "strcasecmp", "strncasecmp", "strchr", "strrchr", "strstr",
+        "strspn", "strcspn", "strpbrk", "strcoll",
+        "memcpy", "memmove", "memset", "memcmp", "memchr", "bcopy", "bzero",
+        "printf", "fprintf", "sprintf", "snprintf", "vprintf", "vfprintf",
+        "vsprintf", "vsnprintf", "puts", "fputs", "putchar", "fputc",
+        "scanf", "fscanf", "sscanf", "fgets", "gets", "fread", "fwrite",
+        "read", "write", "send", "recv",
+        "atoi", "atol", "atoll", "atof", "strtol", "strtoul", "strtoll",
+        "strtoull", "strtod",
+        "toupper", "tolower", "isalpha", "isdigit", "isspace",
+        "wcscpy", "wcsncpy", "wcscat", "wcslen", "wcscmp", "wmemcpy", "wmemset",
+    })
+
+    def _is_size_only_alloc(self, exp: Exp) -> bool:
+        """Is `exp` (through casts) a call to malloc/calloc/alloca? Their result is
+        new memory; the arguments only say how much."""
+        inner = self._cast_strip(exp)
+        if not (isinstance(inner, ExpCall) and isinstance(inner.func, ExpConst)):
+            return False
+        return str(inner.func.value).strip('"') in ("malloc", "calloc", "alloca") \
+            and self._is_c_lang
+
     def _escaping_arg_vars(self, instr: Instr) -> Set[str]:
-        """Pointer variables an instruction hands to a callee wholesale."""
+        """Pointer variables an instruction hands to a callee wholesale.
+
+        For a known non-retaining libc callee only the `&p` form counts: a bare
+        `p` is merely read or written through, while `&p` could be stored."""
         result: Set[str] = set()
+        func = getattr(instr, "func", None)
+        fname = (str(func.value) if isinstance(func, ExpConst) else str(func or "")).strip('"')
+        non_retaining = fname in self._NON_RETAINING_CALLS
         for arg in (getattr(instr, "args", None) or []):
             exp = arg[0] if isinstance(arg, tuple) else arg
+            if non_retaining:
+                inner = self._cast_strip(exp)
+                if not (isinstance(inner, ExpUnOp) and inner.op == "&"):
+                    continue
             result |= self._escaping_expr_vars(exp)
         return result
 

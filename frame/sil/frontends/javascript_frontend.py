@@ -41,6 +41,7 @@ from frame.sil.instructions import (
     TaintSource, TaintSink, Sanitize,
     TaintKind, SinkKind, PruneKind
 )
+from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
@@ -102,7 +103,7 @@ SINK_TYPE_MAP = {
     "ssl": SinkKind.WEAK_CRYPTO,
     "exception": SinkKind.ERROR_DISCLOSURE,
     "info_disclosure": SinkKind.DEBUG_INFO,
-    "prototype_pollution": SinkKind.EVAL,  # Closest match
+    "prototype_pollution": SinkKind.PROTOTYPE_POLLUTION,
     "redos": SinkKind.REGEX,
 }
 
@@ -193,6 +194,10 @@ class JavaScriptFrontend:
         # Parse source code
         tree = self.parser.parse(self._source_bytes)
 
+        # File-level prototype-pollution guard signal (see _scan_proto_pollution);
+        # needed up front so call-style sinks like merge(a, b) honour it too.
+        self._proto_guarded = bool(self._PROTO_GUARD_RE.search(source_code))
+
         # Create program with library specs
         program = Program(library_specs=self.specs.copy(), language=self.language)
         program.source_files.append(filename)
@@ -270,6 +275,90 @@ class JavaScriptFrontend:
         for child in root.children:
             self._translate_top_level(child, program, seen_ids)
         self._collect_nested_functions(root, program, seen_ids)
+        self._translate_module_scope(root, program)
+        self._translate_literal_properties(root, program)
+
+    # Top-level node types that are already procedures (or carry no behaviour).
+    _MODULE_SCOPE_SKIP = frozenset({
+        "function_declaration", "generator_function_declaration",
+        "class_declaration", "import_statement", "comment", "empty_statement",
+        "hash_bang_line", "interface_declaration", "type_alias_declaration",
+        "enum_declaration", "ambient_declaration", "module", "internal_module",
+    })
+
+    def _translate_literal_properties(self, root: TSNode, program: Program) -> None:
+        """Lower string-literal object properties and class fields
+        (``{ password: "..." }``, ``class A { apiKey = "..." }``) so hardcoded
+        credentials in config objects reach the literal scanner. Adds no
+        sources or sinks, so taint results are unaffected."""
+        assigns = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "pair":
+                key, value = n.child_by_field_name("key"), n.child_by_field_name("value")
+            elif n.type == "field_definition":
+                key, value = n.child_by_field_name("property"), n.child_by_field_name("value")
+            else:
+                continue
+            if key is None or value is None or value.type != "string":
+                continue
+            if key.type not in ("property_identifier", "string", "private_property_identifier"):
+                continue
+            name = self._get_text(key).strip("'\"`")
+            if name:
+                assigns.append(Assign(loc=self._get_location(n), id=PVar(name),
+                                      exp=self._translate_expression(value)))
+        proc = literal_init_procedure("<literal-properties>",
+                                      self._get_location(root), assigns)
+        if proc is not None:
+            program.add_procedure(proc)
+
+    def _translate_module_scope(self, root: TSNode, program: Program) -> None:
+        """Analyze module-level statements as a synthetic ``<module>`` procedure.
+
+        Declarations and calls at file scope never ran through the analysis, so
+        a script doing ``execSync('git ' + process.argv[2])`` at top level, or a
+        credential literal bound to a top-level ``const``, was invisible. Function
+        and class declarations are skipped (they are already their own
+        procedures); function expressions nested in statements are translated
+        separately by ``_collect_nested_functions``.
+        """
+        stmts = []
+        for child in root.children:
+            if child.type == "export_statement":
+                # `export const x = ...` -> the declaration; `export default expr`
+                # / `export { a }` carry no module-scope statement worth lowering.
+                decl = child.child_by_field_name("declaration")
+                if decl is not None and decl.type not in self._MODULE_SCOPE_SKIP:
+                    stmts.append(decl)
+            elif child.type not in self._MODULE_SCOPE_SKIP:
+                stmts.append(child)
+        if not stmts:
+            return
+
+        proc = Procedure(
+            name="<module>",
+            params=[],
+            ret_type=Typ.unknown_type(),
+            loc=self._get_location(root),
+        )
+        self._current_proc = proc
+        self._node_counter = 0
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        for stmt in stmts:
+            self._translate_statement(stmt)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc = None
+        program.add_procedure(proc)
 
     def _collect_nested_functions(self, node: TSNode, program: Program,
                                   seen_ids: set) -> None:
@@ -893,11 +982,21 @@ class JavaScriptFrontend:
             # pollution flows through a loop/path/param key that could be
             # "__proto__"; attacker-controlled member keys are still caught by the
             # taint-based sinks.
+            path_keys = self._enclosing_path_key_vars(n)
             key_like = (
                 key_txt in loop_vars
                 or key_txt in params
-                or key_txt in self._enclosing_path_key_vars(n)
+                or key_txt in path_keys
             )
+            # `o[keys[i]]` / `o[keys[keys.length - 1]]` where `keys` came from
+            # path.split('.'): the classic nested-setter shape (lodash.set, dset).
+            # Only an array derived from a split/shift/pop counts; indexing by an
+            # arbitrary member/subscript stays benign map-building (see above).
+            if not key_like and index.type == "subscript_expression":
+                base = index.child_by_field_name("object")
+                if base is not None and base.type == "identifier" \
+                        and self._get_text(base) in path_keys:
+                    key_like = True
             if not key_like:
                 continue
 
@@ -1447,9 +1546,20 @@ class JavaScriptFrontend:
 
         for key in candidates:
             spec = self.specs.get(key)
-            if spec and spec.is_taint_sink():
+            if (spec and spec.is_taint_sink()
+                    and spec.is_sink not in self._CALL_ONLY_SINK_KINDS):
                 return spec
         return None
+
+    def _guarded_proto_sink(self, spec) -> bool:
+        """A prototype-pollution call sink in a file that already checks keys
+        against __proto__/constructor/prototype is treated as guarded."""
+        return spec.is_sink == "prototype_pollution" and getattr(self, "_proto_guarded", False)
+
+    # Sinks whose vulnerability is *calling* a function (`md5(x)`,
+    # `Math.random()`); assigning to a property that merely shares the name
+    # (`exports.md5 = md5`) is not a call and must not match.
+    _CALL_ONLY_SINK_KINDS = frozenset({"weak_hash", "weak_crypto", "insecure_random"})
 
     def _translate_call_assignment(
         self,
@@ -1495,7 +1605,7 @@ class JavaScriptFrontend:
             ))
 
         # Check if this is a sink
-        if spec and spec.is_taint_sink():
+        if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec):
             kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
@@ -1565,7 +1675,7 @@ class JavaScriptFrontend:
                 if spec:
                     break
 
-        if spec and spec.is_taint_sink():
+        if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec):
             kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
@@ -2068,11 +2178,20 @@ class JavaScriptFrontend:
                     return self._translate_expression(child)
 
         elif node.type == "array":
+            # Aggregate every element so taint in any position survives, e.g.
+            # spawn('sh', ['-c', req.query.cmd]) -- not just the first element.
             elements = []
             for child in node.children:
-                if child.type not in ("[", "]", ","):
+                if child.type in ("[", "]", ",", "comment"):
+                    continue
+                if child.type == "spread_element":
+                    elements.extend(self._translate_expression(c)
+                                    for c in child.children if c.type != "...")
+                else:
                     elements.append(self._translate_expression(child))
-            return elements[0] if elements else ExpConst.null()
+            if not elements:
+                return ExpConst.null()
+            return ExpStringConcat(elements) if len(elements) > 1 else elements[0]
 
         elif node.type == "object":
             # Aggregate the property values so taint flows through an object,

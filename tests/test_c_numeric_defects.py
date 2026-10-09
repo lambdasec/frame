@@ -96,11 +96,28 @@ def test_scanf_into_address_then_read_is_not_reported():
     assert "CWE-457" not in _cwes(src)
 
 
-def test_bare_variable_passed_to_function_then_read_is_not_reported():
-    # A bare-variable argument may be a C++ reference out-parameter, so passing it
-    # is treated as a possible initialization rather than a use.
-    src = "void g(int); int f(){int x; g(x); return x;}"
+def test_bare_variable_passed_to_function_in_cpp_is_not_reported():
+    # In C++ a bare-variable argument may bind to a reference out-parameter, so
+    # passing it is treated as a possible initialization rather than a use.
+    src = "void g(int&); int f(){int x; g(x); return x;}"
+    assert "CWE-457" not in _cwes(src, language="cpp")
+
+
+def test_bare_scalar_passed_by_value_in_c_is_a_read():
+    # C passes arguments by value: handing an uninitialized scalar to a function
+    # reads it (Juliet CWE-457: `int data; printIntLine(data);`).
+    assert "CWE-457" in _cwes("void g(int); void f(){int x; g(x);}")
+    assert "CWE-457" in _cwes('#include <stdio.h>\nvoid f(){int x; printf("%d", x);}')
+
+
+def test_c_out_param_macros_taking_a_bare_aggregate_are_exempt():
+    src = "#include <stdarg.h>\nint f(const char*fmt,...){va_list ap; va_start(ap, fmt); va_end(ap); return 0;}"
     assert "CWE-457" not in _cwes(src)
+
+
+def test_defined_before_bare_argument_in_c_is_clean():
+    assert "CWE-457" not in _cwes("void g(int); void f(){int x=1; g(x);}")
+    assert "CWE-457" not in _cwes("void g(int); void f(int c){int x; if(c) x=1; else x=2; g(x);}")
 
 
 def test_struct_field_written_then_field_read_is_not_reported():

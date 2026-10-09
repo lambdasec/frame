@@ -308,6 +308,16 @@ class SLSemanticAnalyzer:
                 is_null_check = True
                 if self.verbose:
                     print(f"[SL] Found NULL check: if ({null_check_var} == NULL)")
+            else:
+                # Equivalent null-check spellings: `if (!ptr)` and `if (NULL == ptr)`.
+                neg_match = (re.match(r'^\s*\(\s*!\s*(\w+)\s*\)\s*$', cond_text)
+                             or re.match(r'^\s*\(\s*(?:NULL|nullptr|0)\s*==\s*(\w+)\s*\)\s*$',
+                                         cond_text))
+                if neg_match and neg_match.group(1) not in ('true', 'false', 'TRUE', 'FALSE'):
+                    null_check_var = neg_match.group(1)
+                    is_null_check = True
+                    if self.verbose:
+                        print(f"[SL] Found NULL check: if (!{null_check_var})")
 
             # Check for patterns like (ptr != NULL) or (ptr != nullptr) or (ptr != 0)
             # In this case, ptr is non-NULL in the then branch
@@ -344,7 +354,10 @@ class SLSemanticAnalyzer:
         for child in node.children:
             if child.type in ('parenthesized_expression', 'condition_clause'):
                 saw_condition = True
-            elif saw_condition and child.type in ('compound_statement', 'expression_statement'):
+            elif saw_condition and child.type in ('compound_statement', 'expression_statement',
+                                                  'return_statement', 'goto_statement',
+                                                  'break_statement', 'continue_statement'):
+                # A bare `if (!p) return;` has the jump statement itself as its body.
                 branches.append(('then', child))
                 break
 

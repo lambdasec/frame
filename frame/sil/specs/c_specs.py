@@ -623,10 +623,12 @@ MEMORY_SAFETY_SPECS = {
     ),
 
     # Allocation operations - mark as allocators AND sinks for tracking
+    # The size argument is the sink: attacker-controlled size is an integer
+    # overflow / excessive allocation (CWE-190/680), not a generic "memory" flow.
     "malloc": ProcSpec(
         allocates=True,
         may_return_null=True,
-        is_sink="memory",
+        is_sink="integer_overflow",
         sink_args=[0],
         description="malloc (dynamic allocation, may return NULL)"
     ),
@@ -790,6 +792,14 @@ _STACK_ALLOCATION_SIZE_ARGS = {
     "__builtin_alloca": 0,
 }
 
+# Input functions that deliver data into an argument rather than (only) the return
+# value. Positions are 0-based; scanf-family out-parameters follow the format.
+_TAINT_OUT_ARGS = {
+    "fgets": [0], "gets": [0], "getline": [0], "getdelim": [0],
+    "fread": [0], "read": [1], "pread": [1], "recv": [1], "recvfrom": [1],
+    "scanf": [1, 2, 3, 4, 5], "fscanf": [2, 3, 4, 5, 6],
+}
+
 for _specs in (C_SPECS, CPP_SPECS):
     for _name in _RETURN_MUST_BE_CHECKED:
         _merge_spec_fields(_specs, _name, return_must_be_checked=True)
@@ -798,3 +808,5 @@ for _specs in (C_SPECS, CPP_SPECS):
     _merge_spec_fields(_specs, "umask", permission_mode_arg=0, permission_is_umask=True)
     for _name, _arg in _STACK_ALLOCATION_SIZE_ARGS.items():
         _merge_spec_fields(_specs, _name, stack_allocation_size_arg=_arg)
+    for _name, _args in _TAINT_OUT_ARGS.items():
+        _merge_spec_fields(_specs, _name, taint_out_args=list(_args))

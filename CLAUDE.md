@@ -100,6 +100,12 @@ frame/sil/
 - **Two argparse parsers exist**: `frame/cli.py` (the `frame` entrypoint) and `frame/sil/cli.py` (`python -m frame.sil.cli`). `cmd_scan` lives in `sil/cli.py`, but any new `scan` flag must be added to BOTH parsers (tests/test_cli_frame_entrypoint_excludes.py exists because this bit us).
 - Suppression/config precedence: CLI flags > config file > built-in defaults. `--min-severity` and `--fail-on` default to `None` in argparse so the config file can supply them; resolve in `cmd_scan`.
 - Suppressed findings are kept on `ScanResult.suppressed` (reported as `summary.suppressed`), never silently dropped. Repo-scale LLM findings are merged after per-file suppression and are not currently subject to inline markers.
+- **Frontend conventions that bit us** (each was a silent recall or precision bug):
+  - Code that is not inside a function must still be lowered. JS module scope becomes a synthetic `<module>` procedure; string-literal class fields / object properties become `<clinit>` / `<literal-properties>` procedures (`frontends/_literal_fields.py`). These carry only `Assign`s of literals, so they add no taint sources or sinks.
+  - Spec sink-kind strings must go through `instructions.resolve_sink_kind` (aliases such as `path` -> `filesystem`). A hand-rolled `if kind in SinkKind else SQL_QUERY` fallback silently reports path traversal as SQL injection (still true in the Java and Python frontends).
+  - `ProcSpec.is_source` taints only the call's *return value*. C input functions that fill a buffer or out-parameter (`fgets`, `scanf`, `read`, `recv`) use `taint_out_args` (set in `c_specs.py`).
+  - C vs C++ matter: `Program.language` is `"c"` or `"cpp"`. A bare variable argument can only be an out-parameter in C++ (reference binding); in C it is a by-value read (see `_arg_may_define`).
+  - C analyzers are a mix of structural passes (translator, SIL-based) and older line-based regexes (`interprocedural_analyzer.py`). Test C snippets one statement per line; a one-line function defeats the line-based ones and hides real behaviour.
 - Adding sources/sinks: edit the `*_specs.py` for the language. Duplicate dict keys there silently override each other (ruff F601 now catches this).
 
 ## Architecture (solver)
@@ -275,6 +281,7 @@ Default timeout is 5000ms. Increase for complex benchmarks or decrease for faste
 - `test_edge_cases.py`: Corner cases and error handling
 - `test_parser_regressions.py`: Parser bug regressions
 - `test_suppressions_config.py`: inline suppressions and `.frame.toml` config
+- `test_js_recall.py`, `test_c_recall.py`: recall regressions from probing real-world patterns, each positive paired with the nearest correct idiom as a negative
 - `test_cwe*.py`, `test_c_*.py`, `test_sil_scanner.py`: scanner detection tests
 - `test_slcomp_*.py`: SL-COMP regression tests (need no download)
 

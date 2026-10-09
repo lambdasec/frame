@@ -12,6 +12,7 @@ for parsing. It handles:
 - Preprocessor directives (limited)
 """
 
+import re
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -38,7 +39,7 @@ from frame.sil.types import (
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
     TaintSource, TaintSink, Sanitize,
-    TaintKind, SinkKind, PruneKind
+    TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
@@ -198,6 +199,8 @@ class CFrontend:
             is_method=False,
         )
 
+        proc.has_parse_errors = bool(node.has_error)
+
         self._current_proc = proc
         self._node_counter = 0
 
@@ -352,7 +355,12 @@ class CFrontend:
         elif node.type == "continue_statement":
             pass  # Skip continue for now
         elif node.type == "goto_statement":
-            pass  # Skip goto for now
+            # A goto leaves the straight-line path. The jump target is not
+            # modelled, so end the path here the way a call that never returns
+            # does; otherwise `if (!p) goto error;` falls through with p still
+            # null and the code after it is analysed as if the guard did nothing.
+            self._add_instr(Call(loc=self._get_location(node), ret=None,
+                                 func=ExpConst.string("__frame_goto__"), args=[]))
 
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
@@ -454,6 +462,7 @@ class CFrontend:
             bounds[name] = -1
         elif bounds.get(name) != -1:
             bounds[name] = bound
+            self._note_char_array(declarator, name)
 
     def _subscript_index(self, node: TSNode) -> Optional[TSNode]:
         """The index node of a `subscript_expression`, across both grammars.
@@ -474,6 +483,27 @@ class CFrontend:
                 return inner[0] if len(inner) == 1 else None
         return None
 
+    _CHAR_TYPE_RE = re.compile(
+        r"^(?:const\s+|volatile\s+|static\s+|register\s+)*"
+        r"(?:(?:unsigned|signed)\s+)?(?:char|int8_t|uint8_t)$")
+
+    def _note_char_array(self, declarator: TSNode, name: str) -> None:
+        """Record `name` as a one-byte-element array when its declared type is a
+        plain character type, so its element count is a byte capacity."""
+        node = declarator.parent
+        while node is not None and node.type not in ("declaration", "field_declaration"):
+            node = node.parent
+        if node is None:
+            return
+        type_node = node.child_by_field_name("type")
+        if type_node is None:
+            return
+        # Qualifiers such as `const`/`static` are siblings of the type node.
+        prefix = " ".join(self._get_text(c) for c in node.children
+                          if c.type in ("type_qualifier", "storage_class_specifier"))
+        if self._CHAR_TYPE_RE.match(f"{prefix} {self._get_text(type_node)}".strip()):
+            self._current_proc.char_array_locals.add(name)
+
     def _record_fixed_array_bound(self, declarator: Optional[TSNode]) -> None:
         """Note `char buf[10]` as a bound of 10 on the current procedure.
 
@@ -491,6 +521,8 @@ class CFrontend:
             return
 
         name = self._extract_identifier(declarator)
+        if name:
+            self._current_proc.array_locals.add(name)
         size_node = declarator.child_by_field_name("size")
         if not name or size_node is None or size_node.type != "number_literal":
             return
@@ -505,6 +537,7 @@ class CFrontend:
             bounds[name] = -1
         elif bounds.get(name) != -1:
             bounds[name] = bound
+            self._note_char_array(declarator, name)
 
     def _translate_init_declarator(self, node: TSNode) -> None:
         """Translate init_declarator (var = value)"""
@@ -578,7 +611,20 @@ class CFrontend:
                 val_exp = self._translate_expression(right)
                 # Model as assignment to synthetic variable
                 target = f"{self._get_text(obj)}_{field_name}"
+                if self._is_arrow_access(left):
+                    # `p->f = v` stores THROUGH p. The synthetic assignment below
+                    # hides that, so expose the dereference of p as a marker read
+                    # (a dummy temp bound to `p->f`) for the null/freed-pointer
+                    # checks. The marker adds no taint and no value flow.
+                    self._add_instr(Assign(
+                        loc=loc, id=PVar(f"$deref_{target}"),
+                        exp=ExpFieldAccess(obj_exp, field_name, True)))
                 self._add_instr(Assign(loc=loc, id=PVar(target), exp=val_exp))
+
+    @staticmethod
+    def _is_arrow_access(field_node: TSNode) -> bool:
+        """Is this field_expression `ptr->field` (vs `struct.field`)?"""
+        return any(c.type == "->" for c in field_node.children)
 
     def _translate_call_assignment(
         self,
@@ -611,7 +657,7 @@ class CFrontend:
             instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=spec.description))
 
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -638,7 +684,7 @@ class CFrontend:
 
         spec = self.specs.get(func_name)
         if spec and spec.is_taint_sink():
-            kind = SinkKind(spec.is_sink) if spec.is_sink in [s.value for s in SinkKind] else SinkKind.SQL_QUERY
+            kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
@@ -968,7 +1014,9 @@ class CFrontend:
         elif node.type == "field_expression":
             obj = node.child_by_field_name("argument")
             field = node.child_by_field_name("field")
-            return ExpFieldAccess(self._translate_expression(obj), self._get_text(field) if field else "")
+            return ExpFieldAccess(self._translate_expression(obj),
+                                  self._get_text(field) if field else "",
+                                  self._is_arrow_access(node))
 
         elif node.type == "call_expression":
             func_name = self._get_call_name(node)
@@ -1000,6 +1048,11 @@ class CFrontend:
             return ExpConst.integer(0)  # Placeholder
 
         elif node.type == "assignment_expression":
+            # An assignment nested in an expression (`while ((p = next()))`) writes
+            # its target, but only the value is lowered; note the write.
+            left = node.child_by_field_name("left")
+            if left is not None and left.type == "identifier" and self._current_proc is not None:
+                self._current_proc.expr_assigned.add(self._get_text(left))
             right = node.child_by_field_name("right")
             return self._translate_expression(right)
 
@@ -1109,6 +1162,14 @@ class CppFrontend(CFrontend):
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._current_namespace: Optional[str] = None
+
+    def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
+        """Translate C++ source; label the program "cpp" (CFrontend says "c") so
+        language-sensitive analyses can tell C's by-value arguments from C++
+        references."""
+        program = super().translate(source_code, filename)
+        program.language = "cpp"
+        return program
 
     def _translate_translation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C++ translation unit"""

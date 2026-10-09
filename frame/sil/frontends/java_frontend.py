@@ -42,6 +42,7 @@ from frame.sil.instructions import (
     TaintSource, TaintSink, Sanitize,
     TaintKind, SinkKind, PruneKind
 )
+from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
 # ProcSpec is used for type hints in _lookup_spec
@@ -150,6 +151,8 @@ class JavaFrontend:
             # triage, which tells a real secret from a benign config constant).
             if _aggressive_detectors():
                 self._translate_field_initializers(body, class_name, program)
+            else:
+                self._translate_literal_fields(body, class_name, program)
 
         self._current_class = None
 
@@ -191,6 +194,30 @@ class JavaFrontend:
             proc.connect(self._current_node.id, exit_node.id)
         self._current_proc = None
         program.add_procedure(proc)
+
+    def _translate_literal_fields(self, body: TSNode, class_name: str,
+                                  program: Program) -> None:
+        """Lower plain string-literal field initializers (``String password =
+        "..."``) so hardcoded credentials in fields are visible to the literal
+        scanner. Narrower than ``_translate_field_initializers`` (no sinks)."""
+        assigns = []
+        for field_node in body.children:
+            if field_node.type != "field_declaration":
+                continue
+            for decl in field_node.children:
+                if decl.type != "variable_declarator":
+                    continue
+                name = decl.child_by_field_name("name")
+                value = decl.child_by_field_name("value")
+                if name is None or value is None or value.type != "string_literal":
+                    continue
+                assigns.append(Assign(loc=self._get_location(decl),
+                                      id=PVar(self._get_text(name)),
+                                      exp=self._translate_expression(value)))
+        proc = literal_init_procedure(f"{class_name}.<clinit>",
+                                      self._get_location(body), assigns)
+        if proc is not None:
+            program.add_procedure(proc)
 
     def _translate_interface(self, node: TSNode, program: Program) -> None:
         """Translate interface (skip method bodies as they're abstract)"""

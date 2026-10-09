@@ -126,6 +126,13 @@ class ProcSpec:
     # than merely large.
     stack_allocation_size_arg: Optional[int] = None
 
+    # Argument positions whose POINTEE the call fills with externally supplied
+    # data (C input functions): the buffer of fgets/read/recv, the out-parameters
+    # of scanf. `is_source` taints only the return value, but these functions are
+    # normally called for their effect with the result ignored, so without this
+    # the attacker data they deliver never becomes tainted.
+    taint_out_args: List[int] = field(default_factory=list)
+
     # =========================================================================
     # Additional metadata
     # =========================================================================
@@ -306,6 +313,29 @@ class Procedure:
     # frontend can see, in the same way `loop_body_can_exit` is. A name declared
     # more than once with different bounds is omitted rather than guessed at.
     fixed_array_bounds: Dict[str, int] = field(default_factory=dict)
+
+    # Locals in `fixed_array_bounds` whose element type is a one-byte character
+    # type (`char`, `unsigned char`, `signed char`, `uint8_t`, ...), so the
+    # element count is also the capacity in bytes. Absent for every other
+    # element type: byte-level copy checks only reason about these.
+    char_array_locals: Set[str] = field(default_factory=set)
+
+    # Every local declared with array syntax, whatever its size expression
+    # (`char b[64]`, `char b[SOME_MACRO]`, `int m[N][M]`). `fixed_array_bounds`
+    # only holds literal sizes, but a macro-sized array is still an array: its
+    # name denotes storage, never an uninitialized scalar.
+    array_locals: Set[str] = field(default_factory=set)
+
+    # The function's source did not parse cleanly (typically unexpanded statement
+    # macros such as `Py_BEGIN_ALLOW_THREADS` with no semicolon). tree-sitter
+    # error-recovers, so the CFG can drop whole statements and loops; dataflow
+    # facts derived from it (null-ness, definedness, freed state) are unreliable.
+    has_parse_errors: bool = False
+
+    # Locals assigned somewhere the IR does not lower to an assignment, such as
+    # inside a condition (`while ((p = next()))`). Their value changes in ways the
+    # path analyses cannot see, so null-ness and definedness are not tracked.
+    expr_assigned: Set[str] = field(default_factory=set)
 
     # Internal state for building CFG
     _next_node_id: int = field(default=0, repr=False)
