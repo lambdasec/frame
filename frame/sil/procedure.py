@@ -332,11 +332,6 @@ class Procedure:
     # facts derived from it (null-ness, definedness, freed state) are unreliable.
     has_parse_errors: bool = False
 
-    # Locals assigned somewhere the IR does not lower to an assignment, such as
-    # inside a condition (`while ((p = next()))`). Their value changes in ways the
-    # path analyses cannot see, so null-ness and definedness are not tracked.
-    expr_assigned: Set[str] = field(default_factory=set)
-
     # Internal state for building CFG
     _next_node_id: int = field(default=0, repr=False)
 
@@ -464,6 +459,11 @@ class Program:
     # implicit receiver, but names an unrelated free function in Python and
     # JavaScript, which require `self.` / `this.` for a method call.
     language: str = ""
+
+    # C/C++: names of function-like macros defined in the translation unit. A
+    # call to one may write its bare-variable arguments (see the translator's
+    # `_arg_may_define`).
+    function_macros: Set[str] = field(default_factory=set)
 
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]

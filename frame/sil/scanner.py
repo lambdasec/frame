@@ -1601,13 +1601,13 @@ class FrameScanner:
             VulnType.SSRF,
             VulnType.LDAP_INJECTION,
             VulnType.XPATH_INJECTION,
-            VulnType.CRYPTO_WEAK_HASH,
-            VulnType.CRYPTO_WEAK_CIPHER,
-            VulnType.CRYPTO_WEAK_RANDOM,
+            VulnType.WEAK_HASH,
+            VulnType.WEAK_CRYPTOGRAPHY,
+            VulnType.INSECURE_RANDOM,
             VulnType.INSECURE_COOKIE,
             VulnType.INSECURE_COOKIE_HTTPONLY,
             VulnType.CSRF,
-            VulnType.TRUST_BOUNDARY,
+            VulnType.TRUST_BOUNDARY_VIOLATION,
             VulnType.SENSITIVE_DATA_EXPOSURE,
             VulnType.IDOR,
         }
@@ -1625,10 +1625,14 @@ class FrameScanner:
 
         # Memory safety bugs: use full incorrectness logic
         if check.vuln_type == VulnType.NULL_DEREFERENCE:
-            return self.checker.check_bug_reachability(
-                check.formula,
-                check.formula
-            )
+            # Incorrectness logic: is `pc * null_deref(p)` satisfiable? The path
+            # condition the translator proved p nil under is the precondition; a
+            # SAT answer comes with a concrete witness, UNSAT drops the finding.
+            from frame.core.ast import And as _And, True_ as _True
+            pre = _True()
+            for fact in (check.path_condition or []):
+                pre = fact if isinstance(pre, _True) else _And(pre, fact)
+            return self.checker.check_null_dereference(pre, check.tainted_var)
         elif check.vuln_type == VulnType.USE_AFTER_FREE:
             return self.checker.check_bug_reachability(
                 check.formula,

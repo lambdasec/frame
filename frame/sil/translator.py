@@ -348,14 +348,6 @@ class SymbolicState:
     # Freed pointers
     freed: Set[str] = field(default_factory=set)
 
-    # Pointers that are DEFINITELY null on this path (var -> the location where
-    # it became null). Populated only for a null literal assignment (`p = NULL`
-    # / `p = 0`); an allocator result is deliberately NOT tracked here, because a
-    # malloc-then-deref is the common correct idiom and firing on it would be
-    # indistinguishable from correct code. A deref of a var still in this set is
-    # a provable CWE-476.
-    null_ptrs: Dict[str, object] = field(default_factory=dict)
-
     # Origin of a pointer's storage: "heap" (malloc/new), "stack" (a fixed local
     # array or the address of a local). Used to decide CWE-590: freeing a var
     # whose origin is "stack" frees memory that was never on the heap. A var with
@@ -443,7 +435,6 @@ class SymbolicState:
             ) for k, v in self.tainted.items()},
             sanitized={k: list(v) for k, v in self.sanitized.items()},
             freed=set(self.freed),
-            null_ptrs=dict(self.null_ptrs),
             heap_origin=dict(self.heap_origin),
             alloc_kind=dict(self.alloc_kind),
             owned_allocs=dict(self.owned_allocs),
@@ -860,7 +851,8 @@ class SILTranslator:
         C-style raw pointers and only run for C/C++. Other frontends have no
         `free`/`malloc` and no pointer dereference, so gating here keeps their
         results untouched."""
-        return (getattr(self.program, "language", "") or "").lower() in (
+        program = getattr(self, "program", None)
+        return (getattr(program, "language", "") or "").lower() in (
             "c", "cpp", "c++", "cxx")
 
     def _proc_always_returns_constant(self, proc_name: str) -> bool:
@@ -1262,6 +1254,8 @@ class SILTranslator:
         """
         checks = []
         self._cur_proc = proc
+        self._null_candidates = []
+        self._uninit_candidates = []
 
         # Initialize state with parameters potentially tainted
         initial_state = self._init_state_for_procedure(proc)
@@ -1300,7 +1294,8 @@ class SILTranslator:
             # Execute instructions in node
             current_state = state.copy()
             returned = False
-            for instr in node.instrs:
+            for instr_idx, instr in enumerate(node.instrs):
+                self._cur_pos = (node_id, instr_idx)
                 node_checks, current_state = self._execute_instr(
                     instr, current_state, proc.name
                 )
@@ -1318,7 +1313,12 @@ class SILTranslator:
                 # version conjoins with a guard on the new version and looks
                 # contradictory when it is not (e.g. `if not p: p = ""` then
                 # `if p:`). Keeps the SAT check sound across reassignment.
-                if current_state.feasibility_constraints:
+                if self._is_c_lang:
+                    # C/C++: maintain the path facts (drop, havoc, and record the
+                    # assignment as `x == rhs`) -- see _advance_path_facts.
+                    current_state.feasibility_constraints = self._advance_path_facts(
+                        current_state.feasibility_constraints, instr)
+                elif current_state.feasibility_constraints:
                     written = instr.get_written_vars()
                     if written:
                         current_state.feasibility_constraints = [
@@ -1371,17 +1371,6 @@ class SILTranslator:
                         succ_state.feasibility_constraints = (
                             succ_state.feasibility_constraints + [guard]
                         )
-                    # Null-narrowing: an edge that establishes `p != NULL` (the
-                    # false side of `if(p==NULL)`, the true side of `if(p)`, etc.)
-                    # clears p's null flag on that path, so a deref reached only
-                    # after the pointer was proved non-null is not reported.
-                    for v in self._edge_nonnull_vars(edge_exp, assume_true=(idx == 0)):
-                        succ_state.null_ptrs.pop(v, None)
-                    # Null-confirming: the mirror edge (`if(p==NULL)` true side,
-                    # `if(!p)` true side) proves p IS null on this path, so a
-                    # dereference of p downstream is the classic CWE-476.
-                    for v in self._edge_null_vars(edge_exp, assume_true=(idx == 0)):
-                        succ_state.null_ptrs[v] = edge_exp
                 worklist.append((succ_id, succ_state))
 
             # A path that ends here without returning (falls off the end of a
@@ -1391,6 +1380,13 @@ class SILTranslator:
             # incoming path is already gone. C/C++ only.
             if self._is_c_lang and not added_succ:
                 checks.extend(self._finalize_leaks(current_state, proc.name))
+
+        # CWE-476 is decided only now, against the fixpoint of the path facts
+        # (_path_fact_fixpoint): the walk above does not re-analyse a node when
+        # only its path condition changes, so a verdict taken during the walk
+        # could rest on one branch's facts alone.
+        if self._null_candidates or self._uninit_candidates:
+            checks.extend(self._confirm_path_candidates(proc))
 
         # Post-process: If we found non-XSS vulnerabilities, remove XSS-on-return checks
         # to avoid duplicate reporting (e.g., SQLi test shouldn't also report XSS)
@@ -2844,13 +2840,10 @@ class SILTranslator:
                 ret_var = str(instr.ret[0])
                 state.mark_allocated(ret_var)
                 # The result lives on the heap, so freeing it later is legitimate.
-                # It is deliberately not recorded as null: a malloc-then-deref is
-                # the ordinary correct idiom and must not read as a null deref.
                 # alloca() is the exception: its result is stack storage, freed
                 # automatically, so it is never leaked and must not be free()d.
                 stack_alloc = spec.stack_allocation_size_arg is not None
                 state.heap_origin[ret_var] = "stack" if stack_alloc else "heap"
-                state.null_ptrs.pop(ret_var, None)
                 if self._is_c_lang and not stack_alloc:
                     # Record the allocator KIND (for CWE-762) and take ownership of
                     # the fresh allocation (for CWE-401).
@@ -3034,7 +3027,7 @@ class SILTranslator:
         if isinstance(exp, ExpConst):
             return True_() if bool(exp.value) == assume_true else False_()
         f = self._exp_to_formula(exp)
-        if isinstance(f, Var):
+        if isinstance(f, (Var, ArithExpr)):
             return Neq(f, Const(0)) if assume_true else Eq(f, Const(0))
         return f if assume_true else Not(f)
 
@@ -4385,9 +4378,8 @@ class SILTranslator:
         addr: str
     ) -> VulnerabilityCheck:
         """Create null-pointer-dereference check (CWE-476)."""
-        from frame.core.ast import True_
         return VulnerabilityCheck(
-            formula=True_(),
+            formula=NullDeref(Var(addr)),
             vuln_type=VulnType.NULL_DEREFERENCE,
             location=instr.loc,
             description=f"Null-pointer dereference of '{addr}', which is NULL on "
@@ -4429,6 +4421,395 @@ class SILTranslator:
         fixed_arrays = getattr(self._cur_proc, "fixed_array_bounds", {}) or {}
         return var in fixed_arrays
 
+    # =========================================================================
+    # Path facts (C/C++)
+    #
+    # The path condition is a list of pure formulas over program variables that
+    # Frame's separation-logic checker decides with Z3. Branch edges add the
+    # guard (`_feasibility_guard`); an assignment adds `x == rhs`; a write, a call
+    # or a store through a pointer removes every fact it may invalidate. At a
+    # join the two incoming conditions are combined as `common & (rest1 | rest2)`.
+    # Null-ness is nothing more than the fact `p == nil`, so a CWE-476 is the
+    # entailment `pc |- p == nil` -- the same UNSAT query the divide-by-zero
+    # check asks about its divisor -- and the finding carries `null_deref(p)` for
+    # the incorrectness checker to discharge into a concrete witness.
+    # =========================================================================
+
+    # A disjunction at a join is dropped (keeping only the shared facts) once it
+    # grows past this many atoms, bounding solver cost on long branch chains.
+    _MAX_JOIN_ATOMS = 48
+
+    def _fact_term(self, exp: Exp) -> Optional[Expr]:
+        """`exp` as a pure term the solver can reason about: integer and null
+        literals, variables, and + - * over them. Anything else is None. Unlike
+        `_exp_to_arith` this never substitutes tracked constants, so the result
+        depends on the expression alone and can be replayed from any state."""
+        exp = self._cast_strip(exp)
+        if isinstance(exp, ExpConst):
+            if exp.value is None:
+                return Const(None)
+            if isinstance(exp.value, int) and not isinstance(exp.value, bool):
+                return Const(exp.value)
+            return None
+        if isinstance(exp, ExpVar):
+            return Var(self._get_var_name(exp.var))
+        if isinstance(exp, ExpBinOp) and exp.op in ("+", "-", "*"):
+            left, right = self._fact_term(exp.left), self._fact_term(exp.right)
+            if left is None or right is None:
+                return None
+            return ArithExpr(exp.op, left, right)
+        if isinstance(exp, ExpUnOp) and exp.op == "-":
+            inner = self._fact_term(exp.operand)
+            return None if inner is None else ArithExpr("-", Const(0), inner)
+        return None
+
+    def _assignment_fact(self, instr: Instr) -> Optional[Formula]:
+        """`x == rhs` for an assignment the solver can model, else None. A bare
+        declaration is not an assignment, an array name denotes storage (never
+        a value), and `x = x + 1` has no equational reading without SSA."""
+        if not isinstance(instr, Assign) or getattr(instr, "is_uninit_decl", False):
+            return None
+        target = self._get_var_name(instr.id)
+        proc = self._cur_proc
+        if proc is not None and (target in (proc.fixed_array_bounds or {})
+                                 or target in (proc.array_locals or ())):
+            return None
+        term = self._fact_term(instr.exp)
+        if term is None or target in term.free_vars():
+            return None
+        return Eq(Var(target), term)
+
+    def _havoc_vars(self, instr: Instr, pc: List[Formula]) -> Set[str]:
+        """Variables an instruction may change without naming them. A store
+        through a pointer may write any local whose address was taken; a call may
+        additionally write any non-local (a global, a field) mentioned by a fact.
+        Their facts no longer describe the live values."""
+        has_call = isinstance(instr, Call) or any(
+            isinstance(sub, ExpCall)
+            for e in self._iter_instr_exps(instr) for sub in self._walk_exp(e))
+        if not has_call and not isinstance(instr, Store):
+            return set()
+        out = set(self._proc_address_taken())
+        if has_call:
+            proc = self._cur_proc
+            params = {str(p) for p, _ in (proc.params if proc is not None else [])}
+            for fact in pc:
+                for v in fact.free_vars():
+                    if v.endswith(self._UNINIT_GHOST):
+                        continue   # definedness is not memory a callee can reach
+                    if not (self._is_temp_name(v) or v in params
+                            or self._is_declared_local(v)):
+                        out.add(v)
+        return out
+
+    def _advance_path_facts(self, pc: List[Formula], instr: Instr,
+                            ghosts: bool = False) -> List[Formula]:
+        """The path condition after `instr`: drop the facts on anything it writes
+        or may write, then record the assignment it performs. With `ghosts`, also
+        track each declared-without-initializer local's definedness as the fact
+        `x#uninit == 1` / `== 0`. A pure function of its arguments, so it can be
+        replayed from a merged state."""
+        drop = set(instr.get_written_vars()) | self._havoc_vars(instr, pc)
+        if drop and pc:
+            pc = self._forget(pc, drop)
+        fact = self._assignment_fact(instr)
+        if fact is not None:
+            pc = list(pc) + [fact]
+        if ghosts:
+            pc = self._advance_definedness(pc, instr)
+        return pc
+
+    # Suffix of the ghost variable that records "this local has no value yet".
+    _UNINIT_GHOST = "#uninit"
+
+    def _uninit_decl_vars(self) -> Set[str]:
+        """Locals of the current procedure declared without an initializer that
+        the CWE-457 analysis tracks. Computed once per procedure."""
+        proc = self._cur_proc
+        if proc is None:
+            return set()
+        cached = getattr(proc, "_uninit_decl_cache", None)
+        if cached is None:
+            cached = set()
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    if isinstance(instr, Assign) and getattr(instr, "is_uninit_decl", False):
+                        name = self._get_var_name(instr.id)
+                        if self._uninit_trackable(name):
+                            cached.add(name)
+            proc._uninit_decl_cache = cached
+        return cached
+
+    def _advance_definedness(self, pc: List[Formula], instr: Instr) -> List[Formula]:
+        """Ghost facts for CWE-457: a bare declaration sets `x#uninit == 1`, and
+        anything `_uninit_inits` counts as giving x a value sets it to 0."""
+        tracked = self._uninit_decl_vars()
+        if not tracked:
+            return pc
+        if isinstance(instr, Assign) and getattr(instr, "is_uninit_decl", False):
+            changed = {self._get_var_name(instr.id)} & tracked
+            value = 1
+        else:
+            changed = self._uninit_inits(instr) & tracked
+            value = 0
+        for v in changed:
+            ghost = v + self._UNINIT_GHOST
+            pc = self._forget(pc, {ghost}) + [Eq(Var(ghost), Const(value))]
+        return pc
+
+    def _forget(self, pc: List[Formula], names: Set[str]) -> List[Formula]:
+        """The facts with every atom about `names` forgotten: each such atom is
+        replaced by `true` where it occurs positively and `false` under a
+        negation, which only ever WEAKENS a fact (an over-approximation of
+        `exists names. fact`). Dropping a whole fact instead would also throw away
+        everything a disjunction says about unrelated variables -- e.g. that
+        `rport` is defined exactly on the branch where `raddr` is set."""
+        out: List[Formula] = []
+        for fact in pc:
+            if not (fact.free_vars() & names):
+                out.append(fact)
+                continue
+            weaker = self._forget_atoms(fact, names, positive=True)
+            if not isinstance(weaker, True_):
+                out.append(weaker)
+        return out
+
+    @classmethod
+    def _forget_atoms(cls, f: Formula, names: Set[str], positive: bool) -> Formula:
+        if not (f.free_vars() & names):
+            return f
+        if isinstance(f, And):
+            a = cls._forget_atoms(f.left, names, positive)
+            b = cls._forget_atoms(f.right, names, positive)
+            if isinstance(a, False_) or isinstance(b, False_):
+                return False_()
+            if isinstance(a, True_):
+                return b
+            if isinstance(b, True_):
+                return a
+            return And(a, b)
+        if isinstance(f, Or):
+            a = cls._forget_atoms(f.left, names, positive)
+            b = cls._forget_atoms(f.right, names, positive)
+            if isinstance(a, True_) or isinstance(b, True_):
+                return True_()
+            if isinstance(a, False_):
+                return b
+            if isinstance(b, False_):
+                return a
+            return Or(a, b)
+        if isinstance(f, Not):
+            inner = cls._forget_atoms(f.formula, names, not positive)
+            if isinstance(inner, True_):
+                return False_()
+            if isinstance(inner, False_):
+                return True_()
+            return Not(inner)
+        # An atom about a forgotten name: no longer known either way.
+        return True_() if positive else False_()
+
+    @classmethod
+    def _formula_atoms(cls, f) -> int:
+        if isinstance(f, (And, Or)):
+            return cls._formula_atoms(f.left) + cls._formula_atoms(f.right)
+        if isinstance(f, Not):
+            return cls._formula_atoms(f.formula)
+        return 1
+
+    def _join_path_conditions(self, pc1: List[Formula],
+                              pc2: List[Formula]) -> List[Formula]:
+        """pc1 | pc2 as a fact list: the facts both share, plus one disjunction of
+        what is left on each side. If either side has nothing beyond the shared
+        facts the disjunction is just those facts. Over-long disjunctions are
+        dropped, which only ever weakens the condition (never unsound)."""
+        k1 = {str(g) for g in pc1}
+        k2 = {str(g) for g in pc2}
+        common = [g for g in pc1 if str(g) in k2]
+        rest1 = [g for g in pc1 if str(g) not in k2]
+        rest2 = [g for g in pc2 if str(g) not in k1]
+        if not rest1 or not rest2:
+            return common
+        disj = Or(self._build_conjunction(rest1), self._build_conjunction(rest2))
+        if self._formula_atoms(disj) > self._MAX_JOIN_ATOMS:
+            # Widen before giving up: first forget the atoms about memory and
+            # call results (fields, globals, `f(x) == 0`), which the next call
+            # invalidates anyway, keeping what the branches say about locals.
+            # Only if that is still too large keep just the shared facts.
+            volatile = {v for g in rest1 + rest2 for v in g.free_vars()
+                        if not self._is_stable_name(v)}
+            rest1 = self._forget(rest1, volatile)
+            rest2 = self._forget(rest2, volatile)
+            if not rest1 or not rest2:
+                return common
+            disj = Or(self._build_conjunction(rest1), self._build_conjunction(rest2))
+            if self._formula_atoms(disj) > self._MAX_JOIN_ATOMS:
+                return common
+        return common + [disj]
+
+    def _is_stable_name(self, name: str) -> bool:
+        """A name whose value only this procedure's own writes change: a local,
+        a parameter, a temporary, or a definedness ghost. Everything else in a
+        fact (a field, a global, the text of a call) is memory a call may reach."""
+        if name.endswith(self._UNINIT_GHOST) or self._is_temp_name(name):
+            return True
+        proc = self._cur_proc
+        if proc is not None and name in {str(p) for p, _ in proc.params}:
+            return True
+        return self._is_declared_local(name)
+
+    @staticmethod
+    def _relevant_facts(var: str, pc: List[Formula]) -> List[Formula]:
+        """The facts connected to `var` through shared variables (its cone of
+        influence), in path order. Facts on unrelated variables cannot change
+        whether the path forces `var`'s value, so they are left out of the query."""
+        want = {var}
+        chosen: Set[int] = set()
+        changed = True
+        while changed:
+            changed = False
+            for i, fact in enumerate(pc):
+                if i in chosen:
+                    continue
+                fv = fact.free_vars()
+                if fv & want:
+                    chosen.add(i)
+                    want |= fv
+                    changed = True
+        return [pc[i] for i in sorted(chosen)]
+
+    def _provably_null(self, var: str, pc: List[Formula]) -> bool:
+        """Does the path condition force `var` to nil? True only when the facts
+        about `var` are satisfiable and `var != nil` is UNSATISFIABLE with them.
+        The solver is asked through `_feasibility_sat`, which answers True on any
+        error or timeout, so an undecided query never yields a finding."""
+        if not pc:
+            return False
+        facts = self._relevant_facts(var, pc)
+        if not facts:
+            return False
+        key = (var, tuple(str(g) for g in facts))
+        cache = self.__dict__.setdefault("_null_query_cache", {})
+        if key not in cache:
+            cond = self._build_conjunction(facts)
+            cache[key] = (self._feasibility_sat(cond)
+                          and not self._feasibility_sat(
+                              And(cond, Neq(Var(var), Const(None)))))
+        return cache[key]
+
+    def _path_fact_fixpoint(self, proc: Procedure) -> Dict[int, List[Formula]]:
+        """The path condition holding on entry to every node, as a dataflow
+        fixpoint over the CFG. Transfer: `_advance_path_facts` per instruction (a
+        return or a call that never returns ends the path). Edges: the branch
+        guard from `_feasibility_guard`. Join: `_join_path_conditions`. A join
+        only ever weakens a node's condition and over-long disjunctions collapse
+        to the shared facts, so the iteration terminates; it is also capped."""
+        entry: Dict[int, List[Formula]] = {proc.entry_node: []}
+        joined_arrivals: Dict[int, Set[Tuple[str, ...]]] = {}
+        work = [proc.entry_node]
+        budget = 50 * max(len(proc.nodes), 1)
+        while work and budget > 0:
+            budget -= 1
+            node_id = work.pop(0)
+            node = proc.nodes.get(node_id)
+            if node is None:
+                continue
+            pc = entry[node_id]
+            ended = False
+            for instr in node.instrs:
+                pc = self._advance_path_facts(pc, instr, ghosts=True)
+                if isinstance(instr, Return) or self._is_noreturn_call(instr):
+                    ended = True
+                    break
+            if ended:
+                continue
+            edge_exp = self._branch_edge_formula(node)
+            for idx, succ in enumerate(node.succs):
+                arrival = pc
+                if edge_exp is not None and idx in (0, 1):
+                    guard = self._feasibility_guard(edge_exp, assume_true=(idx == 0))
+                    if isinstance(guard, False_):
+                        continue   # a constant-false edge (`while (1)` exit) never runs
+                    if guard is not None and guard.free_vars():
+                        arrival = pc + [guard]
+                key = tuple(str(g) for g in arrival)
+                seen = joined_arrivals.setdefault(succ, set())
+                if key in seen:
+                    continue
+                seen.add(key)
+                if succ not in entry:
+                    entry[succ] = arrival
+                    work.append(succ)
+                    continue
+                merged = self._join_path_conditions(entry[succ], arrival)
+                if [str(g) for g in merged] != [str(g) for g in entry[succ]]:
+                    entry[succ] = merged
+                    work.append(succ)
+        return entry
+
+    def _confirm_path_candidates(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """Decide this procedure's CWE-476 and CWE-457 candidates against the
+        path-fact fixpoint. The facts at each site are replayed from its node's
+        entry condition, then:
+
+        * CWE-476 needs the pointer to be provably nil (`pc |- p == nil`);
+        * CWE-457 needs SOME feasible path on which the variable is still
+          uninitialized (`pc & x#uninit == 1` satisfiable).
+
+        Each finding records the facts it rests on."""
+        out: List[VulnerabilityCheck] = []
+        entry = self._path_fact_fixpoint(proc)
+
+        def facts_at(pos):
+            node_id, idx = pos
+            node = proc.nodes.get(node_id)
+            if node is None or node_id not in entry:
+                return None
+            pc = list(entry[node_id])
+            for prev in node.instrs[:idx]:
+                pc = self._advance_path_facts(pc, prev, ghosts=True)
+            return pc
+
+        seen = set()
+        for pos, instr, base, proc_name in self._null_candidates:
+            if pos is None or ("null", pos, base) in seen:
+                continue
+            seen.add(("null", pos, base))
+            pc = facts_at(pos)
+            if pc is None or not self._provably_null(base, pc):
+                continue
+            check = self._create_null_deref_check(instr, None, proc_name, base)
+            check.path_condition = self._relevant_facts(base, pc)
+            out.append(check)
+
+        for pos, instr, var, proc_name in self._uninit_candidates:
+            if pos is None or ("uninit", pos, var) in seen:
+                continue
+            seen.add(("uninit", pos, var))
+            pc = facts_at(pos)
+            if pc is None or not self._maybe_uninitialized(var, pc):
+                continue
+            check = self._create_uninit_check(instr, None, proc_name, var)
+            check.path_condition = [g for g in pc
+                                    if not any(v.endswith(self._UNINIT_GHOST)
+                                               for v in g.free_vars())]
+            out.append(check)
+
+        self._null_candidates = []
+        self._uninit_candidates = []
+        return out
+
+    def _maybe_uninitialized(self, var: str, pc: List[Formula]) -> bool:
+        """Is there a feasible path here on which `var` has no value yet? The
+        whole path condition must be satisfiable together with `var#uninit == 1`.
+        `_feasibility_sat` answers True when undecided, which keeps the finding,
+        matching the reaching-definition analysis this refines."""
+        ghost = Eq(Var(var + self._UNINIT_GHOST), Const(1))
+        key = (var, tuple(str(g) for g in pc))
+        cache = self.__dict__.setdefault("_uninit_query_cache", {})
+        if key not in cache:
+            cache[key] = self._feasibility_sat(self._build_conjunction(list(pc) + [ghost]))
+        return cache[key]
+
     def _proc_address_taken(self) -> Set[str]:
         """Locals of the current procedure whose address is taken anywhere (`&x`):
         any callee or pointer write may then change them. Computed once."""
@@ -4459,7 +4840,6 @@ class SILTranslator:
         exp = instr.exp
         fixed_arrays = getattr(self._cur_proc, "fixed_array_bounds", {}) or {}
 
-        state.null_ptrs.pop(target, None)
         state.heap_origin.pop(target, None)
         state.freed.discard(target)
 
@@ -4472,59 +4852,15 @@ class SILTranslator:
             state.heap_origin[target] = "stack"
             return
         if self._is_null_literal(exp):
-            # `p = NULL` makes p null on this path only when nothing but this
-            # procedure's own straight-line code can change it: p must be a true
-            # local (a global or static can be reset by any callee) and its
-            # address must never be taken (`init(&p)` may assign it). Joins merge
-            # null-ness by INTERSECTION and any reassignment drops it above, so
-            # the ubiquitous `T *p = NULL; if(cond) p = real; use(p)` idiom stays
-            # clean: p is null on only one incoming path at the join. What this
-            # leaves is the genuine bug -- a local that is NULL on every path to a
-            # dereference. Null-ness is also established by a branch that confirms
-            # `p == NULL` (see `_edge_null_vars`).
-            if (target in (getattr(self._cur_proc, "locals", None) or {})
-                    and target not in self._proc_address_taken()
-                    and target not in (getattr(self._cur_proc, "expr_assigned", None) or ())):
-                state.null_ptrs[target] = exp
+            # Null-ness is a path fact (`p == nil`), recorded by
+            # _advance_path_facts and decided by the solver, not tracked here.
             return
         src = self._sole_var(exp)
         if src is not None:
-            if src in state.null_ptrs:
-                state.null_ptrs[target] = state.null_ptrs[src]
             if src in state.heap_origin:
                 state.heap_origin[target] = state.heap_origin[src]
             if src in state.freed:
                 state.freed.add(target)
-
-    def _edge_nonnull_vars(self, edge_exp: Exp, assume_true: bool) -> Set[str]:
-        """Variables a branch edge proves are NOT null.
-
-        `edge_exp` is the branch condition; `assume_true` says which side of the
-        branch this edge takes. `if(p==NULL)` proves p non-null on its false
-        side; `if(p!=NULL)` and `if(p)` prove it on their true side; `if(!p)`
-        proves it on its false side."""
-        if edge_exp is None:
-            return set()
-        # `!e` flips the side.
-        if isinstance(edge_exp, ExpUnOp) and edge_exp.op == "!":
-            return self._edge_nonnull_vars(edge_exp.operand, not assume_true)
-        if isinstance(edge_exp, ExpBinOp) and edge_exp.op in ("==", "!="):
-            for a, b in ((edge_exp.left, edge_exp.right),
-                         (edge_exp.right, edge_exp.left)):
-                if self._is_null_literal(b):
-                    var = self._sole_var(a)
-                    if var is not None:
-                        # p == NULL proves non-null on the FALSE side; p != NULL
-                        # on the TRUE side.
-                        proves = (edge_exp.op == "!=") == assume_true
-                        return {var} if proves else set()
-            return set()
-        # A bare pointer used as a truthiness test: `if(p)` proves non-null on
-        # its true side.
-        var = self._sole_var(edge_exp)
-        if var is not None and assume_true:
-            return {var}
-        return set()
 
     # Standard C/C++ library functions that never return to the caller. A call
     # to one ends the current path, so nothing after it on that branch runs.
@@ -4546,29 +4882,6 @@ class SILTranslator:
         if not name:
             return False
         return self._strip_self_receiver(name) in self._NORETURN_FUNCS
-
-    def _edge_null_vars(self, edge_exp: Exp, assume_true: bool) -> Set[str]:
-        """Variables a branch edge proves ARE null. `if(p==NULL)` proves it on
-        its true side, `if(p!=NULL)` on its false side, `if(!p)` on its true
-        side, `if(p)` on its false side. This is the mirror of
-        `_edge_nonnull_vars`."""
-        if edge_exp is None:
-            return set()
-        if isinstance(edge_exp, ExpUnOp) and edge_exp.op == "!":
-            return self._edge_null_vars(edge_exp.operand, not assume_true)
-        if isinstance(edge_exp, ExpBinOp) and edge_exp.op in ("==", "!="):
-            for a, b in ((edge_exp.left, edge_exp.right),
-                         (edge_exp.right, edge_exp.left)):
-                if self._is_null_literal(b):
-                    var = self._sole_var(a)
-                    if var is not None:
-                        proves = (edge_exp.op == "==") == assume_true
-                        return {var} if proves else set()
-            return set()
-        var = self._sole_var(edge_exp)
-        if var is not None and not assume_true:
-            return {var}
-        return set()
 
     def _deref_base(self, exp: Exp) -> Optional[str]:
         """The base pointer variable a dereference address reads through.
@@ -4655,9 +4968,11 @@ class SILTranslator:
         for base in self._iter_deref_bases(instr):
             if base in state.freed:
                 checks.append(self._create_uaf_check(instr, state, proc_name, base))
-            elif base in state.null_ptrs:
-                checks.append(
-                    self._create_null_deref_check(instr, state, proc_name, base))
+            elif self._provably_null(base, state.feasibility_constraints):
+                # Candidate only: decided against the path-fact fixpoint in
+                # _confirm_path_candidates.
+                self._null_candidates.append(
+                    (getattr(self, "_cur_pos", None), instr, base, proc_name))
         return checks
 
     # =========================================================================
@@ -4697,9 +5012,6 @@ class SILTranslator:
     def _uninit_trackable(self, name: str) -> bool:
         """Should the reaching-definition analysis track `name`? Only a scalar or
         pointer declared local qualifies; arrays and aggregates are excluded."""
-        proc = self._cur_proc
-        if proc is not None and name in (proc.expr_assigned or ()):
-            return False
         return bool(name) and name not in self._uninit_aggregate_locals()
 
     def _collect_value_reads(self, exp: Exp, out: Set[str]) -> None:
@@ -4766,7 +5078,13 @@ class SILTranslator:
             name = str(func.value)
         elif func is not None:
             name = str(func)
-        return name.strip('"') in self._C_BARE_OUT_PARAM_CALLS
+        name = name.strip('"')
+        # A function-like macro defined in this file is expanded in place and
+        # may assign its arguments (`GET_ADDR(x, ...)`); only a real function
+        # call passes a bare variable by value.
+        if name in (getattr(self.program, "function_macros", None) or ()):
+            return True
+        return name in self._C_BARE_OUT_PARAM_CALLS
 
     def _is_addressable_arg(self, arg: Exp) -> bool:
         """Is a call argument a bare variable `x` or its address `&x` (through
@@ -4860,8 +5178,12 @@ class SILTranslator:
         if state.uninitialized and not self._cur_proc_unreliable():
             for v in self._uninit_value_reads(instr):
                 if v in state.uninitialized:
-                    checks.append(
-                        self._create_uninit_check(instr, state, proc_name, v))
+                    # Candidate only: the walk merges "maybe uninitialized" as a
+                    # set, which cannot see branch correlation. The read is
+                    # reported only if the solver finds a feasible path to it on
+                    # which v is still uninitialized (_confirm_path_candidates).
+                    self._uninit_candidates.append(
+                        (getattr(self, "_cur_pos", None), instr, v, proc_name))
 
         if isinstance(instr, Assign) and getattr(instr, "is_uninit_decl", False):
             target = self._get_var_name(instr.id)
@@ -5659,7 +5981,7 @@ class SILTranslator:
         checks: List[VulnerabilityCheck] = []
         seen = set()
         for var, aid in list(state.owned_allocs.items()):
-            if aid in seen or var in state.null_ptrs:
+            if aid in seen or self._provably_null(var, state.feasibility_constraints):
                 continue
             seen.add(aid)
             checks.append(self._leak_check(aid, proc_name))
@@ -6000,6 +6322,18 @@ class SILTranslator:
 
     def _exp_to_formula(self, exp: Exp) -> Formula:
         """Convert SIL expression to Frame formula"""
+        if self._is_c_lang:
+            # C: casts do not change the value the solver reasons about, and
+            # arithmetic is real arithmetic over the program variables -- not an
+            # opaque name like "(nbits % 4)" that no write or call would know to
+            # invalidate, and that cannot relate to a guard on `nbits`.
+            if isinstance(exp, ExpCast):
+                return self._exp_to_formula(exp.exp)
+            if isinstance(exp, ExpBinOp) and exp.op in ("+", "-", "*", "/", "%"):
+                left = self._exp_to_formula(exp.left)
+                right = self._exp_to_formula(exp.right)
+                if isinstance(left, (Var, Const, ArithExpr)) and isinstance(right, (Var, Const, ArithExpr)):
+                    return ArithExpr({"/": "div", "%": "mod"}.get(exp.op, exp.op), left, right)
         if isinstance(exp, ExpVar):
             return Var(self._get_var_name(exp.var))
         if isinstance(exp, ExpConst):
@@ -6078,12 +6412,6 @@ class SILTranslator:
         # Freed: union (freed in either path)
         merged.freed = s1.freed | s2.freed
 
-        # Null pointers: intersection. A var is DEFINITELY null after the join
-        # only if it was null on both incoming paths; if either path gave it a
-        # real value the join is not a provable null, so we must not fire.
-        for v in set(s1.null_ptrs) & set(s2.null_ptrs):
-            merged.null_ptrs[v] = s1.null_ptrs[v]
-
         # Heap origin: keep only origins the two paths agree on. A var reaching a
         # free with different origins on different paths has no single provable
         # origin, so CWE-590 stays silent (precision over recall).
@@ -6133,9 +6461,14 @@ class SILTranslator:
 
         # Path constraints: drop (would need disjunction)
         merged.path_constraints = []
-        # Conditions from two joined paths cannot both be assumed; drop them at a
-        # merge (conservative: fewer feasibility drops, never a wrong one).
-        merged.feasibility_constraints = []
+        # Conditions from two joined paths cannot both be assumed. For C/C++ keep
+        # what the join knows -- the shared facts plus the DISJUNCTION of the rest
+        # (pc1 | pc2) -- so the solver still sees, e.g., that p is null exactly on
+        # the path where n == 0. Other languages keep the old drop-everything join.
+        merged.feasibility_constraints = (
+            self._join_path_conditions(s1.feasibility_constraints,
+                                       s2.feasibility_constraints)
+            if self._is_c_lang else [])
 
         # Constants: intersection (only keep if same value in both states)
         for var in set(s1.constants.keys()) & set(s2.constants.keys()):

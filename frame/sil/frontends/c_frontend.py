@@ -13,7 +13,7 @@ for parsing. It handles:
 """
 
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field
 
 try:
@@ -124,12 +124,30 @@ class CFrontend:
         self._node_counter = 0
         self._ident_counter = 0
 
+        self._jump_targets: List[Tuple[str, Optional[Node], Optional[Node]]] = []
+
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="c")
         program.source_files.append(filename)
+        program.function_macros = self._function_macro_names(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
         return program
+
+    def _function_macro_names(self, root: TSNode) -> Set[str]:
+        """Names of the function-like macros `#define`d in this file. A macro
+        call is not a function call: `GET_ADDR(x, ...)` may assign `x` (macros
+        are expanded in place), so its arguments are not by-value reads."""
+        names: Set[str] = set()
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "preproc_function_def":
+                name = n.child_by_field_name("name")
+                if name is not None:
+                    names.add(self._get_text(name))
+            stack.extend(n.children)
+        return names
 
     def _translate_translation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C translation unit (file)"""
@@ -351,9 +369,11 @@ class CFrontend:
         elif node.type == "compound_statement":
             self._translate_compound_statement(node)
         elif node.type == "break_statement":
-            pass  # Skip break for now
+            self._translate_jump(is_break=True)
         elif node.type == "continue_statement":
-            pass  # Skip continue for now
+            self._translate_jump(is_break=False)
+        elif node.type in ("preproc_if", "preproc_ifdef"):
+            self._translate_preproc_conditional(node)
         elif node.type == "goto_statement":
             # A goto leaves the straight-line path. The jump target is not
             # modelled, so end the path here the way a call that never returns
@@ -574,10 +594,18 @@ class CFrontend:
 
         loc = self._get_location(node)
 
+        op_node = node.child_by_field_name("operator")
+        op = self._get_text(op_node) if op_node is not None else "="
+
         # Get target variable/field
         if left.type == "identifier":
             target = self._get_text(left)
-            if right.type == "call_expression":
+            if op != "=":
+                # Compound assignment `x += e` is `x = x + e`; lowering it as
+                # `x = e` dropped the old value (and made `x == e` a false fact).
+                exp = ExpBinOp(op[:-1], ExpVar(PVar(target)), self._translate_expression(right))
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+            elif right.type == "call_expression":
                 instrs = self._translate_call_assignment(target, right, loc)
                 self._add_instrs(instrs)
             else:
@@ -692,6 +720,99 @@ class CFrontend:
 
         return instrs
 
+    def _preproc_arms(self, node: TSNode) -> List[List[TSNode]]:
+        """The statement lists of each arm of an `#if` / `#ifdef` chain (through
+        `#elif` / `#else`). A chain with no `#else` has an implicit empty arm,
+        and an `#if 0` arm is dead code and contributes nothing."""
+        arms: List[List[TSNode]] = []
+        cur = node
+        while cur is not None:
+            alt = cur.child_by_field_name("alternative")
+            cond = cur.child_by_field_name("condition")
+            header = {c.id for c in (cur.child_by_field_name("name"), cond, alt) if c is not None}
+            dead = cond is not None and cond.type == "number_literal" and self._get_text(cond).strip() == "0"
+            if not dead:
+                arms.append([c for c in cur.children if c.is_named and c.id not in header])
+            if alt is None:
+                if cur.type != "preproc_else":
+                    arms.append([])
+                break
+            cur = alt
+        return arms
+
+    def _translate_preproc_conditional(self, node: TSNode) -> None:
+        """`#if` / `#ifdef` inside a function body. Which arm is compiled is not
+        known, so each arm is a branch from the current node with no guard, and
+        the arms rejoin afterwards. Skipping the directive (as before) dropped
+        every statement in it, e.g. both assignments of `src` in
+        `#ifdef X  src = a(); #else  src = b(); #endif`."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        for stmts in self._preproc_arms(node):
+            arm = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm)
+            proc.connect(before.id, arm.id)
+            self._current_node = arm
+            for stmt in stmts:
+                self._translate_statement(stmt)
+            if self._current_node:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
+
+    def _translate_jump(self, is_break: bool) -> None:
+        """`break` / `continue`: an edge to the innermost enclosing loop's exit
+        (or next iteration), then a fresh unreachable node, so nothing after the
+        jump falls through. Without these edges a loop exited only by `break`
+        looked as if it could leave through its condition before the body ran,
+        and every path fact after the loop described the wrong paths.
+
+        Switch cases are lowered one after another on a single path (see
+        _translate_switch), so a `break` that belongs to a switch stays a no-op;
+        a `continue` inside a switch still targets the enclosing loop."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        target = None
+        for kind, exit_node, next_node in reversed(self._jump_targets):
+            if is_break:
+                if kind == "switch":
+                    return
+                target = exit_node
+                break
+            if next_node is not None:
+                target = next_node
+                break
+        if target is None:
+            return
+        proc.connect(self._current_node.id, target.id)
+        unreachable = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(unreachable)
+        self._current_node = unreachable
+
+    def _translate_effects(self, node: TSNode) -> None:
+        """Lower an expression evaluated only for its side effects (a `for`
+        initializer or update), including every element of a comma list:
+        `for (i = 0, j = s; ...; i++, j += step)`."""
+        if node is None:
+            return
+        if node.type == "comma_expression":
+            self._translate_effects(node.child_by_field_name("left"))
+            self._translate_effects(node.child_by_field_name("right"))
+        elif node.type == "assignment_expression":
+            self._translate_assignment(node)
+        elif node.type == "update_expression":
+            self._translate_update(node)
+        elif node.type == "parenthesized_expression":
+            for child in node.children:
+                if child.type not in ("(", ")"):
+                    self._translate_effects(child)
+        else:
+            self._translate_expression(node)
+
     def _translate_update(self, node: TSNode) -> None:
         """Translate update expression: i++ or ++i"""
         loc = self._get_location(node)
@@ -786,12 +907,16 @@ class CFrontend:
 
         loc = self._get_location(node)
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
 
         loop_head = proc.new_node(NodeKind.LOOP_HEAD)
         proc.add_node(loop_head)
+
+        # The condition is evaluated in the loop head on every iteration, so any
+        # assignment inside it (`while ((e = next(f)))`) is lowered there.
+        self._current_node = loop_head
+        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         # `break` has no SIL representation, so record here, the only place the
         # loop's parse tree is still available, whether any statement in the body
@@ -817,7 +942,11 @@ class CFrontend:
         body = node.child_by_field_name("body")
         if body:
             self._current_node = body_node
-            self._translate_statement(body)
+            self._jump_targets.append(("loop", after_node, loop_head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jump_targets.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -837,12 +966,13 @@ class CFrontend:
         if init:
             if init.type == "declaration":
                 self._translate_declaration(init)
-            elif init.type == "assignment_expression":
-                # A bare `for(i = 0; ...)` initializer is an assignment expression,
-                # not a statement, so `_translate_statement` would silently drop it
-                # (leaving the loop variable with no definition); lower it directly,
-                # the same way the update clause is handled below.
-                self._translate_assignment(init)
+            elif init.type in ("assignment_expression", "comma_expression",
+                               "update_expression"):
+                # A bare `for(i = 0; ...)` or `for(i = 0, j = s; ...)` initializer
+                # is an expression, not a statement, so `_translate_statement`
+                # would silently drop it (leaving the loop variables with no
+                # definition); lower each effect directly.
+                self._translate_effects(init)
             else:
                 self._translate_statement(init)
 
@@ -861,6 +991,7 @@ class CFrontend:
             proc.connect(before_node.id, loop_head.id)
 
         condition = node.child_by_field_name("condition")
+        self._current_node = loop_head   # evaluated (with any side effect) per iteration
         condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
@@ -869,18 +1000,29 @@ class CFrontend:
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.FOR_EXIT))
         proc.connect(loop_head.id, after_node.id)
 
+        # The update runs at the end of every iteration, including one ended by
+        # `continue`, so it gets its own node and `continue` jumps there.
+        update_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(update_node)
+
         body = node.child_by_field_name("body")
         if body:
             self._current_node = body_node
-            self._translate_statement(body)
+            self._jump_targets.append(("loop", after_node, update_node))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jump_targets.pop()
+        else:
+            self._current_node = body_node
 
-        # Update
+        if self._current_node:
+            proc.connect(self._current_node.id, update_node.id)
+        self._current_node = update_node
+
         update = node.child_by_field_name("update")
-        if update and self._current_node:
-            if update.type == "update_expression":
-                self._translate_update(update)
-            elif update.type == "assignment_expression":
-                self._translate_assignment(update)
+        if update is not None:
+            self._translate_effects(update)
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -912,12 +1054,17 @@ class CFrontend:
         body = node.child_by_field_name("body")
         if body:
             self._current_node = body_node
-            self._translate_statement(body)
+            self._jump_targets.append(("loop", after_node, loop_head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jump_targets.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
 
         condition = node.child_by_field_name("condition")
+        self._current_node = loop_head   # evaluated (with any side effect) per iteration
         condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
@@ -932,11 +1079,15 @@ class CFrontend:
         """Translate switch statement (simplified)"""
         body = node.child_by_field_name("body")
         if body:
-            for child in body.children:
-                if child.type == "case_statement":
-                    for stmt in child.children:
-                        if stmt.type not in ("case", "default", ":", "break_statement"):
-                            self._translate_statement(stmt)
+            self._jump_targets.append(("switch", None, None))
+            try:
+                for child in body.children:
+                    if child.type == "case_statement":
+                        for stmt in child.children:
+                            if stmt.type not in ("case", "default", ":", "break_statement"):
+                                self._translate_statement(stmt)
+            finally:
+                self._jump_targets.pop()
 
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression"""
@@ -1048,19 +1199,48 @@ class CFrontend:
             return ExpConst.integer(0)  # Placeholder
 
         elif node.type == "assignment_expression":
-            # An assignment nested in an expression (`while ((p = next()))`) writes
-            # its target, but only the value is lowered; note the write.
+            # An assignment nested in an expression (`while ((e = next(f)))`,
+            # `if ((p = malloc(n)) == NULL)`) still WRITES its target. Lower the
+            # write as an Assign in the current node, ahead of whatever consumes
+            # the value, and yield the target as the expression's value -- so the
+            # condition becomes a guard on `e` and the IR sees `e` change.
             left = node.child_by_field_name("left")
-            if left is not None and left.type == "identifier" and self._current_proc is not None:
-                self._current_proc.expr_assigned.add(self._get_text(left))
             right = node.child_by_field_name("right")
-            return self._translate_expression(right)
+            rhs = self._translate_expression(right)
+            if (left is not None and left.type == "identifier"
+                    and self._current_node is not None):
+                name = self._get_text(left)
+                op_node = node.child_by_field_name("operator")
+                op = self._get_text(op_node) if op_node is not None else "="
+                value = rhs if op == "=" else ExpBinOp(op[:-1], ExpVar(PVar(name)), rhs)
+                self._add_instr(Assign(loc=self._get_location(node), id=PVar(name), exp=value))
+                return ExpVar(PVar(name))
+            return rhs
 
         elif node.type == "update_expression":
+            # `x++` / `--x` inside an expression (`a[n++] = c`, `while (n--)`)
+            # writes x. Lower the write in the current node; a postfix form
+            # yields x's old value through a fresh temporary.
             arg = node.child_by_field_name("argument")
+            if (arg is not None and arg.type == "identifier"
+                    and self._current_node is not None):
+                name = self._get_text(arg)
+                text = self._get_text(node).strip()
+                loc = self._get_location(node)
+                bump = Assign(loc=loc, id=PVar(name), exp=ExpBinOp(
+                    "+" if "++" in text else "-", ExpVar(PVar(name)), ExpConst.integer(1)))
+                if text.startswith(("++", "--")):
+                    self._add_instr(bump)
+                    return ExpVar(PVar(name))
+                old = self._new_ident(name)
+                self._add_instr(Assign(loc=loc, id=old, exp=ExpVar(PVar(name))))
+                self._add_instr(bump)
+                return ExpVar(old)
             return self._translate_expression(arg)
 
         elif node.type == "comma_expression":
+            # Evaluate the left operand for its effects; the value is the right.
+            self._translate_expression(node.child_by_field_name("left"))
             right = node.child_by_field_name("right")
             return self._translate_expression(right)
 
