@@ -41,26 +41,37 @@ classifiers = [
 
 dependencies = [
     "z3-solver>=4.8.0",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
+# Security scanner: tree-sitter plus a grammar for every supported language.
 scan = [
     "tree-sitter>=0.21.0",
     "tree-sitter-python>=0.21.0",
+    "tree-sitter-c>=0.21.0",
+    "tree-sitter-cpp>=0.22.0",
+    "tree-sitter-java>=0.21.0",
+    "tree-sitter-javascript>=0.21.0",
+    "tree-sitter-typescript>=0.21.0",
+    "tree-sitter-c-sharp>=0.21.0",
+]
+# Downloading and running the SL-COMP / SMT-LIB benchmark suites.
+benchmarks = [
+    "requests>=2.25.0",
+    "zstandard>=0.22.0",
+    "pyyaml>=6.0",
 ]
 dev = [
+    "frame[scan,benchmarks]",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "requests>=2.25.0",
-    "zstandard>=0.22.0",
+    "pytest-xdist>=3.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.5.0",
 ]
 all = [
-    "tree-sitter>=0.21.0",
-    "tree-sitter-python>=0.21.0",
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "requests>=2.25.0",
-    "zstandard>=0.22.0",
+    "frame[scan,benchmarks,dev]",
 ]
 
 [project.scripts]
@@ -88,6 +99,22 @@ addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",
 ]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["benchmarks/cache"]
+
+[tool.ruff.lint]
+# Gate on real bugs only (syntax errors, undefined names, duplicate dict keys,
+# shadowed imports). Style rules (unused imports, star imports) are tracked
+# separately and are not enforced yet.
+select = ["E9", "F63", "F7", "F82", "F601", "F402"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+implicit_optional = true
+check_untyped_defs = false
 
 [tool.coverage.run]
 source = ["frame"]

@@ -402,10 +402,10 @@ class JavaFrontend:
                                 addcookies.append((None, self._get_location(c)))
                 st.extend(c.children)
 
-            for var, loc in addcookies:
-                if var is None or var not in httponly_set:
+            for cookie_var, loc in addcookies:
+                if cookie_var is None or cookie_var not in httponly_set:
                     hits_httponly.append(loc)
-                if var is None or var not in secure_set:
+                if cookie_var is None or cookie_var not in secure_set:
                     hits_secure.append(loc)
 
         self._emit_findings_proc(program, "<cookie-httponly>",

@@ -47,7 +47,8 @@ It runs the whole loop end to end. Detect vulnerabilities across 5 languages. Ex
 ```bash
 git clone https://github.com/lambdasec/frame.git
 cd frame
-pip install -e ".[scan]"
+pip install -e ".[scan]"      # scanner + all five language grammars
+# pip install -e ".[dev]"    # contributors: tests, ruff, mypy, benchmarks
 ```
 
 ## Quick Start
@@ -105,6 +106,32 @@ The analysis stages compose over a shared findings JSON, so the shell is the pip
 frame scan ./repo --ai -f json | \
   frame exploit --target http://app:8080 --guidance - --goal 'read the admin secret'
 ```
+
+## Suppressions & Configuration
+
+Triage once, stay triaged. Silence a reviewed finding inline, with an optional rule list:
+
+```python
+cursor.execute(query)  # frame: ignore[CWE-89] query is a static string
+```
+
+```js
+// frame: ignore
+eval(trustedExpression);
+```
+
+A marker applies to its own line or the comment-only line directly above the finding. `frame: ignore` alone silences every finding there; `frame: ignore[CWE-89, 79]` silences only those CWEs (or finding types such as `sql_injection`). Suppressed findings are counted in the output (`summary.suppressed`), never silently lost, and `--no-suppress` reports everything.
+
+Project defaults live in `.frame.toml` (or a `[tool.frame]` table in `pyproject.toml`), found by walking up from the scan target:
+
+```toml
+min_severity = "medium"
+fail_on = "high"
+disable = ["CWE-798", "weak_hash"]   # CWE ids or finding types
+exclude = ["vendor", "third_party"]  # extra directories, added to the defaults
+```
+
+Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--config PATH`, `--no-config`).
 
 ## Supported Languages
 

@@ -99,7 +99,6 @@ NODE_SPECS = {
     "path.join": _propagator([0, 1, 2, 3, 4, 5], "Path join (propagates taint)"),
     "path.resolve": _propagator([0, 1, 2, 3, 4, 5], "Path resolve (propagates taint)"),
     "path.normalize": _propagator([0], "Path normalize (propagates taint)"),
-    "path.normalize": _propagator([0], "Path normalize (propagates taint)"),
 
     # Child Process (command injection sinks)
     "child_process.exec": _sink("command", [0], "Node.js exec (command injection)"),
@@ -194,12 +193,11 @@ SQL_SPECS = {
     # mysql/mysql2
     "connection.query": _sink("sql", [0], "MySQL query (SQL injection)"),
     "connection.execute": _sink("sql", [0], "MySQL execute (SQL injection)"),
-    "pool.query": _sink("sql", [0], "MySQL pool query (SQL injection)"),
+    "pool.query": _sink("sql", [0], "MySQL/PostgreSQL pool query (SQL injection)"),
     "pool.execute": _sink("sql", [0], "MySQL pool execute (SQL injection)"),
 
     # pg (PostgreSQL)
     "client.query": _sink("sql", [0], "PostgreSQL query (SQL injection)"),
-    "pool.query": _sink("sql", [0], "PostgreSQL pool query (SQL injection)"),
 
     # Sequelize
     "sequelize.query": _sink("sql", [0], "Sequelize raw query (SQL injection)"),

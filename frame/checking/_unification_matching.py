@@ -5,11 +5,14 @@ Extracted from checker.py to reduce file size.
 Contains logic for proving entailments using unification of fresh variables.
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from frame.core.ast import (
     Formula, SepConj, PointsTo, PredicateCall, Or, Exists, Var,
     And, Not, Eq, Neq, ArithExpr
 )
+
+if TYPE_CHECKING:
+    from frame.checking.checker import EntailmentResult
 
 
 def try_unification_matching(

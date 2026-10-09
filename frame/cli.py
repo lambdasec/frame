@@ -91,9 +91,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--min-severity",
-        default="low",
+        default=None,
         choices=["critical", "high", "medium", "low", "info"],
-        help="Minimum severity to report (default: low)"
+        help="Minimum severity to report (default: config file, else low)"
     )
     scan_parser.add_argument(
         "-v", "--verbose",
@@ -109,8 +109,32 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--fail-on",
         choices=["critical", "high", "medium", "low", "any", "none"],
-        default="high",
-        help="Exit with error if vulnerabilities of this severity found (default: high)"
+        default=None,
+        help="Exit with error if vulnerabilities of this severity found "
+             "(default: config file, else high)"
+    )
+    scan_parser.add_argument(
+        "--config",
+        help="Path to a .frame.toml / pyproject.toml with a [tool.frame] table. "
+             "Default: the nearest one above the scan target. Flags override it."
+    )
+    scan_parser.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore any .frame.toml / [tool.frame] configuration"
+    )
+    scan_parser.add_argument(
+        "--disable",
+        action="append",
+        default=[],
+        metavar="RULE",
+        help="Drop findings for a CWE id or finding type (e.g. CWE-798, weak_hash). "
+             "Repeatable; adds to the config file's `disable` list."
+    )
+    scan_parser.add_argument(
+        "--no-suppress",
+        action="store_true",
+        help="Ignore inline `frame: ignore` comments and report everything"
     )
     scan_parser.add_argument(
         "--ai",

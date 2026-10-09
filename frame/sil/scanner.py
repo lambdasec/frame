@@ -270,6 +270,7 @@ class ScanResult:
     scan_time_ms: float = 0.0
     lines_scanned: int = 0
     procedures_analyzed: int = 0
+    suppressed: List[Vulnerability] = field(default_factory=list)
 
     @property
     def has_vulnerabilities(self) -> bool:
@@ -296,6 +297,7 @@ class ScanResult:
                 "total": len(self.vulnerabilities),
                 "critical": self.critical_count,
                 "high": self.high_count,
+                "suppressed": len(self.suppressed),
             }
         }
 
@@ -734,7 +736,9 @@ class FrameScanner:
         llm_triage: bool = False,
         llm_detect: bool = False,
         llm_config: Any = None,
-        llm_repo_scale: bool = False
+        llm_repo_scale: bool = False,
+        respect_suppressions: bool = True,
+        disabled_rules: Optional[Iterable[str]] = None,
     ):
         """
         Initialize the scanner.
@@ -747,7 +751,14 @@ class FrameScanner:
             library_mode: Treat exported-function parameters as untrusted input.
                 Correct threat model when analyzing a *library* (its public API
                 receives attacker-controlled data) rather than an application.
+            respect_suppressions: Honor inline ``frame: ignore`` comments (see
+                frame/sil/suppressions.py). Suppressed findings are kept on
+                ``ScanResult.suppressed`` rather than silently discarded.
+            disabled_rules: CWE ids or finding types to drop from results
+                (e.g. ``["CWE-798", "weak_hash"]``).
         """
+        self.respect_suppressions = respect_suppressions
+        self.disabled_rules = list(disabled_rules or [])
         self.language = language
         self.verify = verify
         self.timeout = timeout
@@ -844,6 +855,7 @@ class FrameScanner:
                 result.errors.append(
                     f"Language '{self.language}' has no symbolic frontend; "
                     f"re-run with --ai for LLM-based detection.")
+            self._apply_suppressions(result, source_code)
             result.scan_time_ms = (time.time() - start_time) * 1000
             return result
 
@@ -938,6 +950,7 @@ class FrameScanner:
                 import traceback
                 traceback.print_exc()
 
+        self._apply_suppressions(result, source_code)
         result.scan_time_ms = (time.time() - start_time) * 1000
 
         if self.verbose:
@@ -945,6 +958,19 @@ class FrameScanner:
             print(f"[Scanner] Time: {result.scan_time_ms:.2f}ms")
 
         return result
+
+    def _apply_suppressions(self, result: ScanResult, source_code: str) -> None:
+        """Move findings silenced by config or inline comments to ``result.suppressed``."""
+        from frame.sil.suppressions import matches_rules, split_suppressed
+        vulns = result.vulnerabilities
+        if self.disabled_rules:
+            kept = [v for v in vulns if not matches_rules(v, self.disabled_rules)]
+            result.suppressed.extend(v for v in vulns if v not in kept)
+            vulns = kept
+        if self.respect_suppressions:
+            vulns, inline = split_suppressed(vulns, source_code)
+            result.suppressed.extend(inline)
+        result.vulnerabilities = vulns
 
     def _apply_llm_triage(self, vulns, source_code: str, filename: str):
         """Adjudicate findings with an OpenAI-compatible LLM, dropping confident

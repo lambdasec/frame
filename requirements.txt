@@ -1,5 +1,6 @@
 # Core dependencies for Frame separation logic solver
 z3-solver>=4.8.0
+tomli>=2.0.0; python_version < "3.11"   # config file parsing on 3.10
 
 # For security scanning (tree-sitter based frontend)
 tree-sitter>=0.21.0

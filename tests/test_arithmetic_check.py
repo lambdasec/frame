@@ -271,13 +271,24 @@ class TestTimeoutHandling:
     """Test timeout behavior"""
 
     def test_short_timeout(self):
-        """Test with very short timeout"""
+        """A very short timeout must degrade gracefully, never crash.
+
+        Whether Z3 finishes inside 10ms depends on machine load, so only the
+        result type is asserted here; correctness is pinned with a generous
+        timeout below.
+        """
         x = z3.Int('x')
         pure = [x > 0]
         side = [x < 100]
-        # Should still work with short timeout for simple constraints
         result = verify_side_conditions(side, pure, timeout_ms=10)
-        assert result is True
+        assert isinstance(result, bool)
+
+    def test_generous_timeout(self):
+        """Simple constraints are verified given enough time"""
+        x = z3.Int('x')
+        pure = [x > 0]
+        side = [x < 100]
+        assert verify_side_conditions(side, pure, timeout_ms=5000) is True
 
     def test_zero_timeout(self):
         """Test with zero timeout (should handle gracefully)"""

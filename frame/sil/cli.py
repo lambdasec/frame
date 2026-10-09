@@ -82,9 +82,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--min-severity",
-        default="low",
+        default=None,
         choices=["critical", "high", "medium", "low", "info"],
-        help="Minimum severity to report (default: low)"
+        help="Minimum severity to report (default: config file, else low)"
     )
     scan_parser.add_argument(
         "-v", "--verbose",
@@ -100,8 +100,32 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--fail-on",
         choices=["critical", "high", "medium", "low", "any", "none"],
-        default="high",
-        help="Exit with error if vulnerabilities of this severity found (default: high)"
+        default=None,
+        help="Exit with error if vulnerabilities of this severity found "
+             "(default: config file, else high)"
+    )
+    scan_parser.add_argument(
+        "--config",
+        help="Path to a .frame.toml / pyproject.toml with a [tool.frame] table. "
+             "Default: the nearest one above the scan target. Flags override it."
+    )
+    scan_parser.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore any .frame.toml / [tool.frame] configuration"
+    )
+    scan_parser.add_argument(
+        "--disable",
+        action="append",
+        default=[],
+        metavar="RULE",
+        help="Drop findings for a CWE id or finding type (e.g. CWE-798, weak_hash). "
+             "Repeatable; adds to the config file's `disable` list."
+    )
+    scan_parser.add_argument(
+        "--no-suppress",
+        action="store_true",
+        help="Ignore inline `frame: ignore` comments and report everything"
     )
     scan_parser.add_argument(
         "--ai",
@@ -167,6 +191,9 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
     lines.append(f"\nLines scanned: {result.lines_scanned}")
     lines.append(f"Procedures analyzed: {result.procedures_analyzed}")
     lines.append(f"Scan time: {result.scan_time_ms:.2f}ms")
+    if result.suppressed:
+        lines.append(f"Suppressed findings: {len(result.suppressed)} "
+                     f"(inline `frame: ignore` or disabled rules)")
 
     # Errors
     if result.errors:
@@ -314,6 +341,24 @@ def cmd_scan(args) -> int:
         print(f"Error: Target not found: {args.target}", file=sys.stderr)
         return 1
 
+    # Project configuration: flags > config file > built-in defaults.
+    from frame.sil.suppressions import ConfigError, ScanConfig, find_config, load_config_file
+    config = ScanConfig()
+    if not getattr(args, "no_config", False):
+        try:
+            if getattr(args, "config", None):
+                config = load_config_file(Path(args.config)) or ScanConfig()
+            else:
+                config = find_config(target) or ScanConfig()
+        except (ConfigError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+    if args.min_severity is None:
+        args.min_severity = config.min_severity or "low"
+    if args.fail_on is None:
+        args.fail_on = config.fail_on or "high"
+    disabled_rules = list(config.disable) + list(getattr(args, "disable", []) or [])
+
     # Create scanner
     try:
         # AI layer: --ai turns on both; --llm-detect / --llm-triage are granular.
@@ -326,6 +371,8 @@ def cmd_scan(args) -> int:
             llm_detect=ai or getattr(args, "llm_detect", False),
             llm_triage=ai or getattr(args, "llm_triage", False),
             llm_repo_scale=getattr(args, "repo_scale", False),
+            respect_suppressions=not getattr(args, "no_suppress", False),
+            disabled_rules=disabled_rules,
         )
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -340,7 +387,13 @@ def cmd_scan(args) -> int:
             result = scanner.scan_file(str(target))
             results.append(result)
         else:
-            exclude_dirs = [] if getattr(args, "no_default_excludes", False) else None
+            if getattr(args, "no_default_excludes", False):
+                exclude_dirs = []
+            elif config.exclude:
+                from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+                exclude_dirs = list(DEFAULT_EXCLUDED_SCAN_DIRS) + config.exclude
+            else:
+                exclude_dirs = None
             results = scanner.scan_directory(str(target), args.pattern,
                                               exclude_dirs=exclude_dirs)
     except LLMUnavailableError as e:

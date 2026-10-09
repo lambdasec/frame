@@ -5,33 +5,76 @@ on:
     branches: [ main, master ]
   push:
     branches: [ main, master ]
+  schedule:
+    # Nightly: the full benchmark sweep is too slow for every push.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
+    - uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - name: Install
+      run: pip install -e ".[dev]"
+    - name: Ruff (real-bug rules, see pyproject.toml)
+      run: ruff check frame tests benchmarks
+    - name: Mypy (informational, not yet enforced)
+      continue-on-error: true
+      run: mypy frame
 
-    - name: Cache pip packages
-      uses: actions/cache@v4
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
+        python-version: ${{ matrix.python-version }}
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    # Install exactly what a user following the README gets (".[scan]"),
+    # plus dev tooling, so a missing grammar in the extra fails here.
+    - name: Install
+      run: pip install -e ".[dev]"
+    - name: Verify user install path
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+        python -m venv /tmp/userenv
+        /tmp/userenv/bin/pip install -q .[scan]
+        /tmp/userenv/bin/python -c "from frame.sil.scanner import FrameScanner; import frame.sil.frontends.c_frontend, frame.sil.frontends.java_frontend, frame.sil.frontends.javascript_frontend, frame.sil.frontends.csharp_frontend, frame.sil.frontends.python_frontend"
+    - name: Run tests
+      run: python -m pytest tests/ -n auto -q --tb=short
+    - name: Quick functionality test
+      run: |
+        python -c "
+        from frame import EntailmentChecker
+        result = EntailmentChecker().check_entailment('x |-> 5 |- x |-> 5')
+        assert result.valid, 'Basic entailment check failed'
+        print('Basic functionality test passed')
+        "
 
+  benchmarks:
+    # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).
+    # Runs nightly and on manual dispatch, plus on pushes to main.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - name: Install
+      run: pip install -e ".[dev]"
     - name: Cache benchmark files
       uses: actions/cache@v4
       with:
@@ -39,40 +82,10 @@ jobs:
         key: ${{ runner.os }}-benchmarks-${{ hashFiles('benchmarks/downloaders/**/*.py') }}
         restore-keys: |
           ${{ runner.os }}-benchmarks-
-
     - name: Download curated benchmarks
-      run: |
-        # Download and create ALL curated benchmark sets (cached by GitHub Actions)
-        # This creates all 4 curated sets: SL-COMP, QF_S, QF_AX, QF_BV
-        python -m benchmarks download --curated
-
-    - name: Run regression tests
-      run: |
-        python -m pytest tests/ -v --tb=short
-
-    - name: Test import
-      run: |
-        python -c "from frame import EntailmentChecker; print('Import successful')"
-
-    - name: Quick functionality test
-      run: |
-        python -c "
-        from frame import EntailmentChecker
-        checker = EntailmentChecker()
-        result = checker.check_entailment('x |-> 5 |- x |-> 5')
-        assert result.valid, 'Basic entailment check failed'
-        print('✓ Basic functionality test passed')
-        "
-
-    - name: Run curated benchmarks (sample)
-      run: |
-        # Run FULL curated benchmark sets (all 4,742 tests)
-        # - 692 SL-COMP (separation logic)
-        # - 3,300 QF_S (string theory)
-        # - 500 QF_AX (array theory)
-        # - 250 QF_BV (bitvector theory)
-        python -m benchmarks run --curated --output ci_results.json
-
+      run: python -m benchmarks download --curated
+    - name: Run curated benchmarks
+      run: python -m benchmarks run --curated --output ci_results.json
     - name: Check benchmark results
       run: |
         python -c "
@@ -83,7 +96,5 @@ jobs:
         total = len(results)
         accuracy = correct / total * 100 if total > 0 else 0
         print(f'Benchmark Results: {correct}/{total} correct ({accuracy:.1f}%)')
-        # Fail if accuracy drops below 80% (regression detection)
         assert accuracy >= 80, f'Accuracy too low: {accuracy:.1f}% < 80%'
-        print('✓ Benchmark accuracy check passed')
         "

@@ -1,10 +1,10 @@
-# Development dependencies for testing
-# First install core dependencies
+# Development dependencies. Prefer: pip install -e ".[dev]"
 -r requirements.txt
 
-# Testing dependencies
 pytest>=7.0.0
 pytest-cov>=4.0.0
+pytest-xdist>=3.0.0
 coverage>=7.0.0
-zstandard
 pyyaml>=6.0          # benchmarks/endor_corpus manifest + tests (test_endor_corpus)
+ruff>=0.5.0
+mypy>=1.5.0
