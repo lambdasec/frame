@@ -26,6 +26,12 @@ def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
                     description=desc)
 
 
+def _global_sink(kind: str, args: list, desc: str) -> ProcSpec:
+    """A sink that is a global function: `obj.name(...)` on an arbitrary
+    receiver is a different method and must not match (see ProcSpec.global_only)."""
+    return ProcSpec(is_sink=kind, sink_args=args, description=desc, global_only=True)
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -108,9 +114,9 @@ NODE_SPECS = {
     "child_process.execFile": _sink("command", [0, 1], "Node.js execFile (command injection)"),
     "child_process.execFileSync": _sink("command", [0, 1], "Node.js execFileSync (command injection)"),
     "child_process.fork": _sink("command", [0], "Node.js fork (command injection)"),
-    "exec": _sink("command", [0], "exec (command injection)"),
-    "execSync": _sink("command", [0], "execSync (command injection)"),
-    "spawn": _sink("command", [0, 1], "spawn (command injection)"),
+    "exec": _global_sink("command", [0], "exec (command injection)"),
+    "execSync": _global_sink("command", [0], "execSync (command injection)"),
+    "spawn": _global_sink("command", [0, 1], "spawn (command injection)"),
 
     # Process
     "process.env": _source("env", "Environment variables"),
@@ -130,12 +136,12 @@ NODE_SPECS = {
     "crypto.createHash": _propagator([0], "Hash creation"),
 
     # Eval (code injection)
-    "eval": _sink("code", [0], "eval (code injection)"),
+    "eval": _global_sink("code", [0], "eval (code injection)"),
     # new Function(argName1, ..., body): the code is the LAST argument, so flag
     # any argument -- they all influence the generated function body.
-    "Function": _sink("code", [0, 1, 2, 3], "Function constructor (code injection)"),
-    "setTimeout": _sink("code", [0], "setTimeout with string (code injection)"),
-    "setInterval": _sink("code", [0], "setInterval with string (code injection)"),
+    "Function": _global_sink("code", [0, 1, 2, 3], "Function constructor (code injection)"),
+    "setTimeout": _global_sink("code", [0], "setTimeout with string (code injection)"),
+    "setInterval": _global_sink("code", [0], "setInterval with string (code injection)"),
     "vm.runInThisContext": _sink("code", [0], "vm.runInThisContext (code injection)"),
     "vm.runInNewContext": _sink("code", [0], "vm.runInNewContext (code injection)"),
     "vm.runInContext": _sink("code", [0], "vm.runInContext (code injection)"),
@@ -201,6 +207,10 @@ SQL_SPECS = {
 
     # Sequelize
     "sequelize.query": _sink("sql", [0], "Sequelize raw query (SQL injection)"),
+    # sqlite3 / better-sqlite3: exec and prepare take SQL text. (db.get /
+    # db.run are left out: key-value stores such as LevelDB share the names.)
+    "db.exec": _sink("sql", [0], "SQLite exec (SQL injection)"),
+    "db.prepare": _sink("sql", [0], "SQLite prepare (SQL injection)"),
     "Model.findAll": _sink("sql", [0], "Sequelize findAll (potential SQL injection)"),
     "Model.findOne": _sink("sql", [0], "Sequelize findOne (potential SQL injection)"),
     "sequelize.literal": _sink("sql", [0], "Sequelize literal (SQL injection)"),
@@ -610,6 +620,14 @@ ALLOCATION_SIZE_SPECS = {
 }
 
 JAVASCRIPT_SPECS.update(ALLOCATION_SIZE_SPECS)
+
+# Every NoSQL sink is a method of a database handle (a MongoDB collection, a
+# Mongoose model or query): `find` / `update` / `remove` on an array, a hash
+# or a user object is not one (see ProcSpec.db_method and the frontend's
+# receiver-kind inference).
+for _spec in JAVASCRIPT_SPECS.values():
+    if _spec.is_sink == "nosql":
+        _spec.db_method = True
 
 # Alias for TypeScript (same specs)
 TYPESCRIPT_SPECS = JAVASCRIPT_SPECS

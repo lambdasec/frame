@@ -91,7 +91,10 @@ SERVLET_SPECS = {
     "nextElement": _source("user", "Enumeration element (from headers/params)"),
 
     # Common user input patterns
-    "getAttribute": _source("user", "Request/session attribute"),
+    # An attribute is as trusted as the object holding it: a DOM element of
+    # attacker XML yields attacker data, a session / request / MBean attribute
+    # is server state. So it propagates the receiver's taint, it is not a source.
+    "getAttribute": _propagator_from_receiver("getAttribute() - propagates receiver taint"),
     "getRemoteAddr": _source("network", "Remote IP address"),
     "getRemoteHost": _source("network", "Remote hostname"),
 
@@ -346,25 +349,32 @@ XPATH_SPECS = {
 # XML (XXE)
 # =============================================================================
 
+def _xxe_parse(desc: str) -> ProcSpec:
+    """An XML parse: an XXE sink for its input, and the parsed document is
+    derived from that input (an attribute of an attacker document is attacker
+    data), so taint also flows from argument 0 to the result."""
+    return ProcSpec(is_sink="xxe", sink_args=[0], taint_propagates=[0], description=desc)
+
+
 XML_SPECS = {
     # DocumentBuilder (XXE)
     "DocumentBuilderFactory.newInstance": _propagator([0], "DocumentBuilderFactory"),
-    "documentBuilder.parse": _sink("xxe", [0], "DocumentBuilder.parse (XXE)"),
+    "documentBuilder.parse": _xxe_parse("DocumentBuilder.parse (XXE)"),
 
     # SAXParser (XXE)
     "SAXParserFactory.newInstance": _propagator([0], "SAXParserFactory"),
-    "saxParser.parse": _sink("xxe", [0], "SAXParser.parse (XXE)"),
+    "saxParser.parse": _xxe_parse("SAXParser.parse (XXE)"),
 
     # XMLReader (XXE)
     "XMLReaderFactory.createXMLReader": _propagator([0], "XMLReader"),
-    "xmlReader.parse": _sink("xxe", [0], "XMLReader.parse (XXE)"),
+    "xmlReader.parse": _xxe_parse("XMLReader.parse (XXE)"),
 
     # Transformer (XXE)
     "TransformerFactory.newInstance": _propagator([0], "TransformerFactory"),
     "transformer.transform": _sink("xxe", [0], "Transformer.transform (XXE)"),
 
     # Unmarshaller (XXE)
-    "unmarshaller.unmarshal": _sink("xxe", [0], "Unmarshaller.unmarshal (XXE)"),
+    "unmarshaller.unmarshal": _xxe_parse("Unmarshaller.unmarshal (XXE)"),
 }
 
 # =============================================================================
@@ -463,8 +473,11 @@ REFLECTION_SPECS = {
     "Class.forName": _sink("code", [0], "Class.forName (class injection)"),
     "loadClass": _sink("code", [0], "ClassLoader.loadClass (class injection)"),
 
-    # Method invocation
-    "method.invoke": _sink("code", [0], "Method.invoke (reflection injection)"),
+    # Method selection. The attacker-relevant choice is WHICH method runs, i.e.
+    # the name passed to getMethod; Method.invoke's arguments are the target
+    # object and ordinary call arguments, so it is not itself a sink.
+    "Class.getMethod": _sink("code", [0], "Class.getMethod with a chosen name (reflection injection)"),
+    "Class.getDeclaredMethod": _sink("code", [0], "Class.getDeclaredMethod with a chosen name (reflection injection)"),
 
     # ScriptEngine (code injection)
     "scriptEngine.eval": _sink("code", [0], "ScriptEngine.eval (code injection)"),
@@ -657,7 +670,17 @@ ACCESS_CONTROL_SPECS = {
 
     # Session handling
     "HttpSession": _propagator([0], "HTTP session"),
-    "session.getAttribute": _source("user", "Session attribute"),
+    # Session and request ATTRIBUTES are server-side state the application
+    # put there itself, not client input; putting user input INTO the session
+    # is the CWE-501 report, and reading it back is not a new source.
+    "session.getAttribute": ProcSpec(description="Session attribute (server state)"),
+    "HttpSession.getAttribute": ProcSpec(description="Session attribute (server state)"),
+    "request.getAttribute": ProcSpec(description="Request attribute (server state)"),
+    # Request attributes live for one request: storing input there crosses no
+    # trust boundary (OWASP's trustbound cases all store into the session).
+    "request.setAttribute": ProcSpec(description="Request attribute (request scope)"),
+    "ServletRequest.setAttribute": ProcSpec(description="Request attribute (request scope)"),
+    "ServletRequest.getAttribute": ProcSpec(description="Request attribute (server state)"),
     "session.setAttribute": _propagator([0, 1], "Session attribute set"),
     "session.invalidate": _propagator([0], "Session invalidation"),
 
@@ -679,6 +702,78 @@ ACCESS_CONTROL_SPECS = {
 # A02: Security Misconfiguration (OWASP 2025)
 # =============================================================================
 
+# In-memory writers: writing to one is building a string, not output, so the
+# written data flows into the buffer (read back by toString / toByteArray)
+# instead of reaching an HTML output sink through the bare `write` spec.
+IN_MEMORY_WRITER_SPECS = {
+    f"{cls}.{m}": _propagator([0], f"{cls}.{m} (in-memory buffer)")
+    for cls in ("StringWriter", "CharArrayWriter", "ByteArrayOutputStream")
+    for m in ("write", "append", "print", "println")
+}
+
+# Spec keys are written against the conventional variable name for a receiver
+# (`documentBuilder.parse`, `jdbcTemplate.query`). The frontend knows each
+# variable's declared type, so a call on `DocumentBuilder b` is looked up under
+# the type's decapitalised name (`documentBuilder`) and under these aliases,
+# whatever the variable is called. Only types whose decapitalised name is NOT
+# the spec receiver need an entry.
+JAVA_TYPE_RECEIVERS = {
+    "HttpServletRequest": ("request",), "ServletRequest": ("request",),
+    "HttpServletRequestWrapper": ("request",),
+    "HttpServletResponse": ("response",), "ServletResponse": ("response",),
+    "HttpSession": ("session",),
+    "Session": ("session",), "StatelessSession": ("session",),
+    "XPath": ("xpath",),
+    "InitialDirContext": ("dirContext",), "LdapContext": ("dirContext",),
+    "InitialLdapContext": ("dirContext",),
+    "SpelExpressionParser": ("expressionParser",),
+    "CloseableHttpClient": ("httpClient",),
+    "HttpsURLConnection": ("httpURLConnection",),
+    "Logger": ("log",),
+}
+
+
+# Documented return types of factory methods, so `var b = f.newDocumentBuilder()`
+# has a type to match specs against (a `var` initialised by `new T(...)` needs
+# no entry).
+JAVA_FACTORY_RETURN_TYPES = {
+    "newDocumentBuilder": "DocumentBuilder",
+    "newSAXParser": "SAXParser",
+    "getXMLReader": "XMLReader",
+    "createXMLReader": "XMLReader",
+    "newTransformer": "Transformer",
+    "createUnmarshaller": "Unmarshaller",
+    "newXPath": "XPath",
+    "getEngineByName": "ScriptEngine",
+    "getEngineByExtension": "ScriptEngine",
+    "getRuntime": "Runtime",
+    "openConnection": "URLConnection",
+    "createDefault": "CloseableHttpClient",
+}
+
+
+def type_spec_receivers(type_name: str) -> tuple:
+    """Spec receiver names under which a call on a `type_name` value is looked
+    up: the type itself, its decapitalised form (DocumentBuilder ->
+    documentBuilder, SAXParser -> saxParser, URL -> url) and any alias."""
+    upper = len(type_name) - len(type_name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+    if upper == len(type_name):
+        decap = type_name.lower()
+    elif upper > 1:
+        decap = type_name[:upper - 1].lower() + type_name[upper - 1:]
+    else:
+        decap = type_name[:1].lower() + type_name[1:]
+    return (type_name, decap) + JAVA_TYPE_RECEIVERS.get(type_name, ())
+
+
+# Library verifier objects documented to accept every host; passing one where
+# a verifier is expected is as permissive as `(host, session) -> true`.
+PERMISSIVE_VERIFIERS = frozenset({
+    "NoopHostnameVerifier", "NoopHostnameVerifier.INSTANCE",
+    "AllowAllHostnameVerifier",
+    "ALLOW_ALL_HOSTNAME_VERIFIER", "SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER",
+})
+
 MISCONFIGURATION_SPECS = {
     # Debug/verbose mode
     "printStackTrace": _sink("info_disclosure", [0], "Stack trace print (CWE-209)"),
@@ -688,7 +783,12 @@ MISCONFIGURATION_SPECS = {
     # SSL/TLS verification disabled
     "TrustAllCerts": _sink("ssl", [0], "Trust all certificates (CWE-295)"),
     "ALLOW_ALL_HOSTNAME_VERIFIER": _sink("ssl", [0], "Allow all hostnames (CWE-295)"),
-    "setHostnameVerifier": _sink("ssl", [0], "Custom hostname verifier (CWE-295)"),
+    "setHostnameVerifier": ProcSpec(is_sink="cert_validation", sink_args=[0],
+                                    permissive_callback_arg=0,
+                                    description="Hostname verifier accepts every host (CWE-295)"),
+    "setDefaultHostnameVerifier": ProcSpec(is_sink="cert_validation", sink_args=[0],
+                                           permissive_callback_arg=0,
+                                           description="Hostname verifier accepts every host (CWE-295)"),
     "X509TrustManager": _sink("ssl", [0], "Custom trust manager (CWE-295)"),
 
     # Hardcoded secrets
@@ -724,13 +824,20 @@ CRYPTO_SPECS = {
     # Insecure randomness is CWE-330 (insecure_random), NOT CWE-327 (weak crypto).
     "java.util.Random": _sink("insecure_random", [], "Insecure random (CWE-330)"),
     "Math.random": _sink("insecure_random", [], "Math.random (CWE-330)"),
-    "Random.nextFloat": _sink("insecure_random", [], "Random.nextFloat (CWE-330)"),
-    "Random.nextDouble": _sink("insecure_random", [], "Random.nextDouble (CWE-330)"),
-    "Random.nextInt": _sink("insecure_random", [], "Random.nextInt (CWE-330)"),
-    "Random.nextLong": _sink("insecure_random", [], "Random.nextLong (CWE-330)"),
-    "Random.nextBoolean": _sink("insecure_random", [], "Random.nextBoolean (CWE-330)"),
-    "Random.nextGaussian": _sink("insecure_random", [], "Random.nextGaussian (CWE-330)"),
-    "Random.nextBytes": _sink("insecure_random", [], "Random.nextBytes (CWE-330)"),
+    "Random.nextFloat": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextFloat (CWE-330)"),
+    "Random.nextDouble": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextDouble (CWE-330)"),
+    "Random.nextInt": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextInt (CWE-330)"),
+    "Random.nextLong": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextLong (CWE-330)"),
+    "Random.nextBoolean": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextBoolean (CWE-330)"),
+    "Random.nextGaussian": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextGaussian (CWE-330)"),
+    "Random.nextBytes": ProcSpec(is_sink="insecure_random", sink_args=[], exact_class=True,
+                           description="Random.nextBytes (CWE-330)"),
     "new java.util.Random": _sink("insecure_random", [], "new Random() (CWE-330)"),
     "nextFloat": _sink("insecure_random", [], "Random.nextFloat (CWE-330)"),
     "nextDouble": _sink("insecure_random", [], "Random.nextDouble (CWE-330)"),
@@ -878,6 +985,7 @@ JAVA_SPECS.update(REFLECTION_SPECS)
 JAVA_SPECS.update(SANITIZER_SPECS)
 JAVA_SPECS.update(STRING_SPECS)
 JAVA_SPECS.update(COLLECTION_SPECS)
+JAVA_SPECS.update(IN_MEMORY_WRITER_SPECS)
 JAVA_SPECS.update(ENCODING_SPECS)
 JAVA_SPECS.update(COMMAND_INJECTION_SPECS)
 # OWASP 2025 enhanced coverage

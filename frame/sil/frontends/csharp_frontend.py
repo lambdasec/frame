@@ -12,6 +12,7 @@ for parsing. It handles:
 - Async/await patterns
 """
 
+import re
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -268,6 +269,7 @@ class CSharpFrontend:
             loc=self._get_location(node),
             is_method=True,
         )
+        proc.has_varargs = self._has_params_array(node)
 
         # Check for static modifier
         for child in node.children:
@@ -348,6 +350,14 @@ class CSharpFrontend:
         self._current_proc = None
         return proc
 
+    def _has_params_array(self, node: TSNode) -> bool:
+        """Does the last parameter carry the `params` modifier (varargs)?"""
+        params = node.child_by_field_name("parameters")
+        # The grammar does not always wrap a `params` parameter in a
+        # `parameter` node, so look at the tokens of the list itself.
+        return params is not None and bool(
+            re.search(r"[(,]\s*params\s", self._get_text(params)))
+
     def _translate_constructor(self, node: TSNode) -> Optional[Procedure]:
         """Translate constructor"""
         name_node = node.child_by_field_name("name")
@@ -361,6 +371,7 @@ class CSharpFrontend:
             loc=self._get_location(node),
             is_method=True,
         )
+        proc.has_varargs = self._has_params_array(node)
 
         self._current_proc = proc
         self._node_counter = 0

@@ -13,6 +13,7 @@ using tree-sitter for parsing. It handles:
 """
 
 import re
+from collections import Counter
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -42,7 +43,9 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
-from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.procedure import (
+    Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS, DB_HANDLE,
+    RECEIVER_UNKNOWN, db_method_applies)
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
@@ -194,6 +197,13 @@ class JavaScriptFrontend:
         # File-level prototype-pollution guard signal (see _scan_proto_pollution);
         # needed up front so call-style sinks like merge(a, b) honour it too.
         self._proto_guarded = bool(self._PROTO_GUARD_RE.search(source_code))
+
+        # Module bindings (`const cp = require('child_process')`, `import {exec}
+        # from 'child_process'`): calls through them are named after the module
+        # so module specs match whatever the local name is (_get_call_name).
+        self._module_aliases, self._imported_names = self._module_bindings(tree.root_node)
+        self._declared_names = self._file_declared_names(tree.root_node)
+        self._binding_cache = {}
 
         # Create program with library specs
         program = Program(library_specs=self.specs.copy(), language=self.language)
@@ -1544,9 +1554,340 @@ class JavaScriptFrontend:
         for key in candidates:
             spec = self.specs.get(key)
             if (spec and spec.is_taint_sink()
-                    and spec.is_sink not in self._CALL_ONLY_SINK_KINDS):
+                    and spec.is_sink not in self._CALL_ONLY_SINK_KINDS
+                    and not spec.global_only and not spec.db_method):
                 return spec
         return None
+
+    def _lookup_call_spec(self, func_name: str, call_node: Optional[TSNode] = None):
+        spec = self._lookup_call_spec_by_name(func_name)
+        if not db_method_applies(spec, func_name, self._receiver_kind(call_node)):
+            return None
+        return spec
+
+    def _lookup_call_spec_by_name(self, func_name: str):
+        """Spec for a call, trying suffixes of a member chain
+        (`models.sequelize.query` -> `sequelize.query` -> `query`). A
+        `global_only` spec matched through a suffix needs the rest of the chain
+        to be the global object: `window.setTimeout` is the timer,
+        `self.req.setTimeout` is a method that happens to share its name."""
+        spec = self.specs.get(func_name)
+        if spec or '.' not in func_name:
+            return spec
+        parts = func_name.split('.')
+        for i in range(1, len(parts)):
+            spec = self.specs.get('.'.join(parts[i:]))
+            if spec:
+                if spec.global_only and not self._may_be_global('.'.join(parts[:i])):
+                    return None
+                return spec
+        return None
+
+    def _may_be_global(self, receiver: str) -> bool:
+        """Can `receiver` be the global object (or a module bound outside this
+        file)? Yes for window/global/globalThis and for a bare name the file
+        never declares; no for a local, parameter, function or class, for a
+        member chain (`self.req`), and for a literal (`/re/`)."""
+        if receiver in GLOBAL_OBJECTS:
+            return True
+        return receiver.isidentifier() and receiver not in getattr(self, "_declared_names", {})
+
+    # -- what kind of value a receiver is (for db_method specs) ------------------
+
+    # Node core modules hand out hashes, buffers, streams and handles of their
+    # own -- never a database collection; nor do the in-memory collection
+    # utilities, whose find / remove operate on arrays and objects.
+    _NODE_CORE_MODULES = frozenset({
+        "assert", "async_hooks", "buffer", "child_process", "cluster", "console",
+        "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs",
+        "fs/promises", "http", "http2", "https", "inspector", "module", "net", "os",
+        "path", "perf_hooks", "process", "punycode", "querystring", "readline",
+        "repl", "stream", "string_decoder", "timers", "tls", "tty", "url", "util",
+        "v8", "vm", "wasi", "worker_threads", "zlib"})
+    _IN_MEMORY_LIBS = frozenset({"lodash", "lodash-es", "lodash/fp", "underscore", "ramda"})
+    # A call of one of these methods returns a database handle (`db.collection
+    # ('users')`, `mongoose.model('User', schema)`).
+    _DB_HANDLE_FACTORIES = frozenset({"collection", "model"})
+    # Methods that return a value of the receiver's own kind.
+    _ARRAY_TO_ARRAY = frozenset({"map", "filter", "slice", "concat", "splice", "flat",
+                                 "flatMap", "sort", "reverse", "fill", "copyWithin", "toSorted",
+                                 "toReversed", "toSpliced", "with"})
+    _STRING_TO_STRING = frozenset({"toString", "trim", "trimStart", "trimEnd", "toLowerCase",
+                                   "toUpperCase", "replace", "replaceAll", "slice", "substring",
+                                   "substr", "padStart", "padEnd", "repeat", "normalize",
+                                   "charAt", "concat", "toLocaleLowerCase", "toLocaleUpperCase"})
+    # String methods no database driver or common container shares, so the
+    # result kind does not depend on knowing the receiver.
+    _STRING_ONLY_METHODS = {"split": "Array", "toLowerCase": "String", "toUpperCase": "String",
+                            "trim": "String", "trimStart": "String", "trimEnd": "String",
+                            "padStart": "String", "padEnd": "String", "charAt": "String",
+                            "toLocaleLowerCase": "String", "toLocaleUpperCase": "String"}
+    _GLOBAL_CONSTRUCTOR_KINDS = {"Array": "Array", "Map": "Map", "Set": "Set", "WeakMap": "Map",
+                                 "WeakSet": "Set", "RegExp": "RegExp", "String": "String",
+                                 "Number": "Number", "Boolean": "Boolean", "Date": "Date",
+                                 "Promise": "Promise", "Error": "Error", "URL": "URL",
+                                 "URLSearchParams": "URLSearchParams", "Buffer": "Buffer"}
+    _GLOBAL_FACTORIES = {"Array.from": "Array", "Array.of": "Array", "Object.keys": "Array",
+                         "Object.values": "Array", "Object.entries": "Array",
+                         "Object.assign": "Object", "Object.create": "Object",
+                         "JSON.parse": "Object", "Buffer.from": "Buffer", "Buffer.alloc": "Buffer",
+                         "Buffer.concat": "Buffer", "String": "String", "Number": "Number"}
+
+    def _module_kind(self, module: str) -> Optional[str]:
+        """Kind of the values a module hands out, if it is known not to be a
+        database driver; None for anything else (a relative `./models/user`
+        may well export a Mongoose model)."""
+        if module in self._NODE_CORE_MODULES or module.split("/")[0] in self._NODE_CORE_MODULES:
+            return f"module:{module}"
+        if module in self._IN_MEMORY_LIBS or module.startswith("lodash."):
+            return f"module:{module}"
+        return None
+
+    def _value_kind(self, node: Optional[TSNode], depth: int = 0) -> Optional[str]:
+        """What kind of value an expression is, as far as the file shows:
+        "Array", "String", "Object", "Function", a `module:` value, an
+        instance (`new:X`), DB_HANDLE, or None when unknown. Follows a name to
+        its lexically resolved initializer (`_resolve_binding`) and a property
+        to its value in an object literal bound to a name."""
+        if node is None or depth > 6:
+            return None
+        t = node.type
+        literal = {"array": "Array", "string": "String", "template_string": "String",
+                   "number": "Number", "regex": "RegExp", "true": "Boolean", "false": "Boolean",
+                   "object": "Object", "arrow_function": "Function", "function": "Function",
+                   "function_expression": "Function", "class": "Function"}
+        if t in literal:
+            return literal[t]
+        if t == "parenthesized_expression" and node.named_child_count == 1:
+            return self._value_kind(node.named_children[0], depth + 1)
+        if t == "new_expression":
+            ctor = node.child_by_field_name("constructor")
+            name = self._get_text(ctor) if ctor is not None else ""
+            return self._GLOBAL_CONSTRUCTOR_KINDS.get(name, f"new:{name}")
+        if t == "identifier":
+            name = self._get_text(node)
+            module = getattr(self, "_module_aliases", {}).get(name)
+            if module is not None:
+                return self._module_kind(module)
+            bound = self._resolve_binding(node)
+            return self._value_kind(bound, depth + 1) if bound is not None else None
+        if t == "member_expression":
+            obj, prop = node.child_by_field_name("object"), node.child_by_field_name("property")
+            if obj is None or prop is None:
+                return None
+            obj_kind = self._value_kind(obj, depth + 1)
+            if obj_kind and obj_kind.startswith("module:"):
+                return obj_kind              # `crypto.webcrypto`, `fs.promises`
+            if obj.type == "identifier":
+                value = self._resolve_binding(obj)
+                if value is not None and value.type == "object":
+                    return self._value_kind(self._object_property(value, self._get_text(prop)), depth + 1)
+            return None
+        if t == "call_expression":
+            return self._call_result_kind(node, depth)
+        return None
+
+    def _call_result_kind(self, call: TSNode, depth: int) -> Optional[str]:
+        func = call.child_by_field_name("function")
+        if func is None:
+            return None
+        name = self._get_call_name(call)
+        if name in self._GLOBAL_FACTORIES and not self._declared_names.get(name.split(".")[0]):
+            return self._GLOBAL_FACTORIES[name]
+        if func.type == "member_expression":
+            obj, prop = func.child_by_field_name("object"), func.child_by_field_name("property")
+            method = self._get_text(prop) if prop is not None else ""
+            if method in self._DB_HANDLE_FACTORIES:
+                return DB_HANDLE
+            obj_kind = self._value_kind(obj, depth + 1)
+            if obj_kind and obj_kind.startswith("module:"):
+                return obj_kind              # anything a core module computes
+            if obj_kind == "Array" and method in self._ARRAY_TO_ARRAY:
+                return "Array"
+            if obj_kind == "String":
+                if method == "split" or method == "match":
+                    return "Array"
+                if method in self._STRING_TO_STRING:
+                    return "String"
+            # Methods only strings have: whatever the receiver, the result
+            # kind is known (`q.split(',')` is an array).
+            if method in self._STRING_ONLY_METHODS:
+                return self._STRING_ONLY_METHODS[method]
+            return None
+        # `createHash('md5')` imported from a core module.
+        module = name.split(".")[0] if "." in name else None
+        if module is not None and name in getattr(self, "_imported_names", {}).values():
+            return self._module_kind(module)
+        return None
+
+    def _object_property(self, obj: TSNode, key: str) -> Optional[TSNode]:
+        for pair in obj.named_children:
+            if pair.type == "pair":
+                k = pair.child_by_field_name("key")
+                if k is not None and self._get_text(k).strip("'\"") == key:
+                    return pair.child_by_field_name("value")
+        return None
+
+    def _receiver_kind(self, call_node: Optional[TSNode]) -> Optional[str]:
+        """Kind of the object a method call is made on (see _value_kind):
+        RECEIVER_UNKNOWN when nothing is known, None for a call with no
+        receiver at all. A call whose first argument is a function literal is
+        also told apart: a
+        database query is data, never code, so `xs.find(x => ...)` is an
+        in-memory search whatever `xs` is."""
+        if call_node is None:
+            return None
+        func = call_node.child_by_field_name("function")
+        if func is None or func.type != "member_expression":
+            return None
+        args = self._get_call_args(call_node)
+        if args and args[0].type in ("arrow_function", "function", "function_expression"):
+            return "callback-search"
+        return self._value_kind(func.child_by_field_name("object")) or RECEIVER_UNKNOWN
+
+    _FUNCTION_SCOPES = frozenset({"function_declaration", "function_expression", "function",
+                                  "arrow_function", "method_definition",
+                                  "generator_function_declaration", "generator_function",
+                                  "program"})
+
+    def _resolve_binding(self, ident: TSNode) -> Optional[TSNode]:
+        """The initializer an identifier refers to, resolved lexically: the
+        nearest enclosing function scope that declares the name (a variable or
+        a parameter) is its scope; the binding is known only if that scope
+        declares it exactly once, as `const/let/var x = e`, and nothing in the
+        scope assigns it again. Block scoping is not modelled, so two
+        declarations in one function make the name unknown."""
+        name = self._get_text(ident)
+        scope = ident.parent
+        cache = self.__dict__.setdefault("_binding_cache", {})
+        while scope is not None:
+            if scope.type in self._FUNCTION_SCOPES:
+                key = (scope.start_byte, scope.end_byte, name)
+                if key not in cache:
+                    cache[key] = self._scope_binding(scope, name)
+                found, value = cache[key]
+                if found:
+                    return value
+            scope = scope.parent
+        return None
+
+    def _scope_binding(self, scope: TSNode, name: str):
+        """(declared here?, initializer or None) for `name` in one scope."""
+        decls, assigned = [], False
+        params = scope.child_by_field_name("parameters") or scope.child_by_field_name("parameter")
+        if params is not None:
+            for x in [params] + self._descendants_js(params):
+                if x.type == "identifier" and self._get_text(x) == name:
+                    decls.append(None)
+        if scope.type in ("function_declaration", "generator_function_declaration"):
+            pass  # the function's own name belongs to the enclosing scope
+        stack = list(scope.named_children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNCTION_SCOPES:
+                # A nested function: its declarations are its own, but an
+                # assignment there to our variable still changes it.
+                if n.type in ("function_declaration", "generator_function_declaration"):
+                    fname = n.child_by_field_name("name")
+                    if fname is not None and self._get_text(fname) == name:
+                        decls.append(None)
+                if self._assigns(n, name) and not self._declares(n, name):
+                    assigned = True
+                continue
+            if n.type == "variable_declarator":
+                nm = n.child_by_field_name("name")
+                if nm is not None and nm.type == "identifier" and self._get_text(nm) == name:
+                    decls.append(n.child_by_field_name("value"))
+                elif nm is not None and nm.type != "identifier" and any(
+                        x.type in ("identifier", "shorthand_property_identifier_pattern")
+                        and self._get_text(x) == name for x in self._descendants_js(nm)):
+                    decls.append(None)          # bound by destructuring
+            elif n.type in ("class_declaration",):
+                cname = n.child_by_field_name("name")
+                if cname is not None and self._get_text(cname) == name:
+                    decls.append(None)
+            elif n.type in ("assignment_expression", "augmented_assignment_expression"):
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier" and self._get_text(left) == name:
+                    assigned = True
+            elif n.type == "update_expression":
+                arg = n.child_by_field_name("argument")
+                if arg is not None and arg.type == "identifier" and self._get_text(arg) == name:
+                    assigned = True
+            stack.extend(n.named_children)
+        if not decls:
+            return False, None
+        if len(decls) == 1 and decls[0] is not None and not assigned:
+            return True, decls[0]
+        return True, None
+
+    def _assigns(self, root: TSNode, name: str) -> bool:
+        for n in self._descendants_js(root):
+            if n.type in ("assignment_expression", "augmented_assignment_expression"):
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier" and self._get_text(left) == name:
+                    return True
+            elif n.type == "update_expression":
+                arg = n.child_by_field_name("argument")
+                if arg is not None and arg.type == "identifier" and self._get_text(arg) == name:
+                    return True
+        return False
+
+    def _declares(self, fn: TSNode, name: str) -> bool:
+        """Does this function scope bind `name` itself (shadowing ours)?"""
+        found, _ = self._scope_binding(fn, name)
+        return found
+
+    @staticmethod
+    def _descendants_js(root: TSNode) -> List[TSNode]:
+        out, stack = [], list(root.named_children)
+        while stack:
+            n = stack.pop()
+            out.append(n)
+            stack.extend(n.named_children)
+        return out
+
+    def _file_declared_names(self, root: TSNode) -> Counter:
+        """Every name the file binds -- variables (including destructuring),
+        parameters, functions, classes, imports and catch parameters -- with
+        the number of places that bind it."""
+        names: Counter = Counter()
+        binders = {"variable_declarator", "function_declaration", "class_declaration",
+                   "generator_function_declaration", "import_specifier", "namespace_import",
+                   "import_clause", "catch_clause"}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            t = n.type
+            if t in binders or t in ("formal_parameters", "required_parameter",
+                                     "optional_parameter", "arrow_function"):
+                target = (n.child_by_field_name("alias") if t == "import_specifier" else None) \
+                    or n.child_by_field_name("name") or n.child_by_field_name("parameter")
+                pool = [target] if target is not None else []
+                if t in ("formal_parameters", "import_clause", "namespace_import"):
+                    pool = list(n.named_children)
+                if t == "arrow_function":
+                    p = n.child_by_field_name("parameter")
+                    pool = [p] if p is not None else []
+                for b in pool:
+                    sub = [b]
+                    while sub:
+                        x = sub.pop()
+                        if x.type in ("identifier", "shorthand_property_identifier_pattern"):
+                            names[self._get_text(x)] += 1
+                        elif x.type in ("object_pattern", "array_pattern", "pair_pattern",
+                                        "assignment_pattern", "rest_pattern",
+                                        "required_parameter", "optional_parameter"):
+                            if x.type == "pair_pattern":
+                                v = x.child_by_field_name("value")
+                                sub.extend([v] if v is not None else [])
+                            elif x.type == "assignment_pattern":
+                                l = x.child_by_field_name("left")
+                                sub.extend([l] if l is not None else [])
+                            else:
+                                sub.extend(x.named_children)
+            stack.extend(n.named_children)
+        return names
 
     def _guarded_proto_sink(self, spec) -> bool:
         """A prototype-pollution call sink in a file that already checks keys
@@ -1579,7 +1920,8 @@ class JavaScriptFrontend:
             loc=loc,
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(func_name),
-            args=args_exp
+            args=args_exp,
+            receiver_type=self._receiver_kind(call_node),
         )
         instrs.append(call_instr)
 
@@ -1592,6 +1934,8 @@ class JavaScriptFrontend:
 
         # Check if this is a taint source
         spec = self.specs.get(func_name)
+        if not db_method_applies(spec, func_name, self._receiver_kind(call_node)):
+            spec = None
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(
@@ -1657,20 +2001,13 @@ class JavaScriptFrontend:
             loc=loc,
             ret=None,
             func=ExpConst.string(func_name),
-            args=args_exp
+            args=args_exp,
+            receiver_type=self._receiver_kind(call_node),
         )
         instrs.append(call_instr)
 
         # Check if this is a sink (with suffix matching for chained calls)
-        spec = self.specs.get(func_name)
-        if not spec and '.' in func_name:
-            # Try suffix matching: models.sequelize.query -> sequelize.query
-            parts = func_name.split('.')
-            for i in range(1, len(parts)):
-                suffix = '.'.join(parts[i:])
-                spec = self.specs.get(suffix)
-                if spec:
-                    break
+        spec = self._lookup_call_spec(func_name, call_node)
 
         if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec):
             kind = _get_sink_kind(spec.is_sink)
@@ -1693,13 +2030,7 @@ class JavaScriptFrontend:
         `return eval(x)` are not lost. Standalone-statement calls go through
         _translate_call_expr instead, so this avoids double emission."""
         func_name = self._get_call_name(call_node)
-        spec = self.specs.get(func_name)
-        if not spec and '.' in func_name:
-            parts = func_name.split('.')
-            for i in range(1, len(parts)):
-                spec = self.specs.get('.'.join(parts[i:]))
-                if spec:
-                    break
+        spec = self._lookup_call_spec(func_name, call_node)
         if spec and spec.is_taint_sink():
             kind = _get_sink_kind(spec.is_sink)
             loc = self._get_location(call_node)
@@ -2407,11 +2738,90 @@ class JavaScriptFrontend:
         )
 
     def _get_call_name(self, call_node: TSNode) -> str:
-        """Get full name of function being called"""
+        """Get full name of function being called. A call through a module
+        binding is named after the module: `cp.exec` with
+        `const cp = require('child_process')` is `child_process.exec`, and a
+        destructured / named import `run(...)` is the function it binds."""
         func = call_node.child_by_field_name("function")
-        if func:
-            return self._get_text(func)
-        return ""
+        if not func:
+            return ""
+        name = self._get_text(func)
+        root, dot, rest = name.partition(".")
+        if dot and root in getattr(self, "_module_aliases", {}):
+            return f"{self._module_aliases[root]}.{rest}"
+        if not dot and name in getattr(self, "_imported_names", {}):
+            return self._imported_names[name]
+        return name
+
+    def _module_bindings(self, root: TSNode):
+        """(alias -> module, local name -> module.function) for the file's
+        top-level `require` / `import` bindings. A name bound more than once
+        to different things is dropped: it cannot be resolved by name."""
+        aliases: Dict[str, str] = {}
+        names: Dict[str, str] = {}
+        conflicts = set()
+
+        def module_of(string_node) -> Optional[str]:
+            if string_node is None or string_node.type != "string":
+                return None
+            text = self._get_text(string_node)[1:-1]
+            return text[5:] if text.startswith("node:") else text or None
+
+        def bind(table, local, target):
+            if local in table and table[local] != target:
+                conflicts.add(local)
+            table[local] = target
+
+        for stmt in root.named_children:
+            decls = []
+            if stmt.type in ("lexical_declaration", "variable_declaration"):
+                decls = [d for d in stmt.named_children if d.type == "variable_declarator"]
+            for d in decls:
+                value, pattern = d.child_by_field_name("value"), d.child_by_field_name("name")
+                if value is None or value.type != "call_expression" or pattern is None:
+                    continue
+                fn = value.child_by_field_name("function")
+                args = value.child_by_field_name("arguments")
+                if fn is None or self._get_text(fn) != "require" or args is None or not args.named_children:
+                    continue
+                module = module_of(args.named_children[0])
+                if module is None:
+                    continue
+                if pattern.type == "identifier":
+                    bind(aliases, self._get_text(pattern), module)
+                elif pattern.type == "object_pattern":
+                    for prop in pattern.named_children:
+                        if prop.type == "shorthand_property_identifier_pattern":
+                            n = self._get_text(prop)
+                            bind(names, n, f"{module}.{n}")
+                        elif prop.type == "pair_pattern":
+                            key, val = prop.child_by_field_name("key"), prop.child_by_field_name("value")
+                            if key is not None and val is not None and val.type == "identifier":
+                                bind(names, self._get_text(val), f"{module}.{self._get_text(key)}")
+            if stmt.type == "import_statement":
+                module = module_of(stmt.child_by_field_name("source"))
+                clause = next((c for c in stmt.named_children if c.type == "import_clause"), None)
+                if module is None or clause is None:
+                    continue
+                for c in clause.named_children:
+                    if c.type == "identifier":                      # import os from 'os'
+                        bind(aliases, self._get_text(c), module)
+                    elif c.type == "namespace_import":              # import * as fs from 'fs'
+                        ident = next((x for x in c.named_children if x.type == "identifier"), None)
+                        if ident is not None:
+                            bind(aliases, self._get_text(ident), module)
+                    elif c.type == "named_imports":                 # import {a as b} from 'm'
+                        for spec in c.named_children:
+                            if spec.type != "import_specifier":
+                                continue
+                            name_n, alias_n = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                            if name_n is not None:
+                                local = self._get_text(alias_n if alias_n is not None else name_n)
+                                bind(names, local, f"{module}.{self._get_text(name_n)}")
+        for c in conflicts:
+            aliases.pop(c, None)
+            names.pop(c, None)
+        return aliases, names
 
     def _get_member_chain(self, node: TSNode) -> str:
         """

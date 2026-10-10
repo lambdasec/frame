@@ -1754,6 +1754,13 @@ class FrameScanner:
         'dir', 'prefix', 'suffix', 'param', 'attr', 'column', 'prop',
         'annotation'})
     _LEADING_DESCRIPTORS = frozenset({'action', 'permission'})
+    # Head nouns that make a credential-named variable METADATA about the
+    # credential: the last word of a compound name is what it denotes, so
+    # `secretKeyAlgorithm = "DESede"` names an algorithm, not a key.
+    _METADATA_HEADS = frozenset({
+        'algorithm', 'algorithms', 'alg', 'algo', 'cipher', 'transformation',
+        'mode', 'length', 'size', 'bits', 'format', 'provider', 'scheme',
+        'version', 'iterations', 'spec', 'kind'})
     # Kubernetes qualified key: DNS subdomain (2+ lowercase labels) + '/' +
     # name, e.g. "csi.storage.k8s.io/node-expand-secret-name".
     _QUALIFIED_KEY = re.compile(
@@ -1807,6 +1814,8 @@ class FrameScanner:
         if any(p.fullmatch(v) for p in cls._STRICT_NONSECRET_SHAPES):
             return True
         name = cls._name_tokens(target)
+        if name and name[-1] in cls._METADATA_HEADS:
+            return True
         if v.lower() in cls._HTTP_AUTH_NAMES:
             return not any(tok in cls._PASSWORD_WORDS for tok in name)
         qualified = cls._QUALIFIED_KEY.fullmatch(v)

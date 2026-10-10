@@ -837,6 +837,10 @@ class SILTranslator:
         self.vulnerability_checks: List[VulnerabilityCheck] = []
         # Cache for procedures that always return constants
         self._constant_return_procs: Dict[str, bool] = {}
+        # Procedure -> does every non-null return hand back an XXE-hardened
+        # parser? (_record_secure_parser_return / _track_xml_hardening)
+        self._secure_parser_returns: Dict[str, bool] = {}
+        self._summarising_parsers = False
         # Inter-procedural analysis: procedure summaries
         self._proc_summaries: Dict[str, ProcedureSummary] = {}
         # Track which parameters are freed at each call site
@@ -1034,7 +1038,7 @@ class SILTranslator:
             for instr in node.instrs:
                 if isinstance(instr, Call):
                     func_name = instr.get_full_name()
-                    spec = self.program.get_spec(func_name)
+                    spec = self.program.spec_for_call(instr)
 
                     # Check for taint source
                     if spec and spec.is_taint_source() and instr.ret:
@@ -1107,7 +1111,7 @@ class SILTranslator:
         # Check for Call instructions (free, delete, malloc, new)
         if isinstance(instr, Call):
             func_name = instr.get_full_name()
-            spec = self.program.get_spec(func_name)
+            spec = self.program.spec_for_call(instr)
 
             if spec and spec.is_deallocator() and len(instr.args) > 0:
                 # This call frees something
@@ -1233,6 +1237,20 @@ class SILTranslator:
             return 1  # Other methods in between
 
         sorted_procs = sorted(self.program.procedures.items(), key=sort_key)
+
+        # Helpers that build a hardened XML parser (`getDocumentBuilder()`)
+        # are summarised before their callers run: analyse each procedure that
+        # makes a hardening call once up front, keeping only the summary.
+        self._secure_parser_returns = {}
+        self._summarising_parsers = True
+        try:
+            for proc_name, proc in sorted_procs:
+                if any(isinstance(i, Call) and i.ret is None
+                       and self._xml_hardening_receiver(i.get_full_name(), i.args)
+                       for node in proc.nodes.values() for i in node.instrs):
+                    self.translate_procedure(proc)
+        finally:
+            self._summarising_parsers = False
 
         # Translate each procedure
         for proc_name, proc in sorted_procs:
@@ -1796,10 +1814,11 @@ class SILTranslator:
         # Check for path operations with tainted data
         # Only detect clear pathlib-style division operations: p = path / tainted_var
         # String concatenation is handled by existing filesystem sinks
+        # `/` joins paths only for Python's pathlib; in every other language
+        # (and for Python numbers) it is division.
         exp_str = str(instr.exp)
         is_path_division = (
-            ' / ' in exp_str or
-            (exp_str.startswith('(') and ' / ' in exp_str)
+            getattr(self.program, "language", "") == "python" and ' / ' in exp_str
         )
 
         if is_path_division:
@@ -2118,7 +2137,7 @@ class SILTranslator:
         func_name = instr.get_full_name()
 
         # Get specification for this function
-        spec = self.program.get_spec(func_name)
+        spec = self.program.spec_for_call(instr)
 
         # Sanitization of the tainted inputs as they stand BEFORE this call runs
         # (the result may overwrite one of them, e.g. q = join(q, basename(p))).
@@ -2289,6 +2308,11 @@ class SILTranslator:
                     # Special handling for XML parsers with secure parser argument
                     # xml.dom.minidom.parseString(data, parser) - safe if parser is secure
                     skip_xml_check = False
+                    # A parser hardened against external entities (see
+                    # _track_xml_hardening) is not an XXE sink for any input.
+                    hardened_parser = (
+                        sink_kind == SinkKind.XML_PARSE and '.' in func_name
+                        and func_name.rsplit('.', 1)[0] in state.secure_parsers)
                     if spec.is_sink == 'xml' and func_name in (
                         'xml.dom.minidom.parseString', 'xml.dom.minidom.parse',
                         'xml.sax.parseString', 'xml.sax.parse'
@@ -2302,7 +2326,9 @@ class SILTranslator:
                                     skip_xml_check = True
                                     break
 
-                    if skip_xml_check:
+                    if hardened_parser:
+                        pass
+                    elif skip_xml_check:
                         # Mark the data argument as safe for xml sink
                         # (since it's being processed by a secure parser)
                         if len(instr.args) >= 1:
@@ -2563,6 +2589,7 @@ class SILTranslator:
             if instr.ret:
                 ret_var = str(instr.ret[0])
                 state.secure_parsers.add(ret_var)
+        self._track_xml_hardening(instr, func_name, state)
 
         # Handle container modification with per-element tracking (separation logic)
         # When tainted data is stored in a container, track at element level if possible
@@ -3232,7 +3259,8 @@ class SILTranslator:
         # The mere usage of the function is the vulnerability
         usage_based_kinds = {'weak_hash', 'weak_crypto', 'insecure_random',
                              'insecure_cookie', 'insecure_cookie_httponly',
-                             'deserialize_unsafe', 'csrf_disabled'}
+                             'deserialize_unsafe', 'csrf_disabled',
+                             'cert_validation'}
         if instr.kind.value in usage_based_kinds:
             # For insecure_cookie, we need to check the description for setSecure(false)
             if instr.kind.value == 'insecure_cookie':
@@ -3307,6 +3335,9 @@ class SILTranslator:
                 continue
             for arg_var in arg_vars:
                 inline_sanitized_for.setdefault(arg_var, set()).update(spec.is_sanitizer)
+
+        if instr.kind == SinkKind.XML_PARSE and instr.receiver in state.secure_parsers:
+            return checks, state  # hardened parser: see _track_xml_hardening
 
         for var in sink_vars:
             # Skip xml sinks for variables that have been safely processed
@@ -3416,6 +3447,92 @@ class SILTranslator:
             state.asserted_safe[var] = [s.value for s in instr.for_sinks] if instr.for_sinks else []
         return state
 
+    # Parser configuration that stops external-entity resolution (CWE-611),
+    # per the OWASP XXE prevention cheat sheet: feature URI suffix -> the value
+    # that hardens; attributes/properties that, set to "", forbid external
+    # DTD access. `setExpandEntityReferences(false)` and secure-processing alone
+    # do not stop XXE, so they are deliberately absent.
+    _XXE_HARDENING_FEATURES = {
+        "disallow-doctype-decl": "true",
+        "external-general-entities": "false",
+        "load-external-dtd": "false",
+    }
+    _XXE_ACCESS_ATTRIBUTES = ("ACCESS_EXTERNAL_DTD", "accessExternalDTD")
+    # Factory methods whose product inherits the factory's configuration.
+    _XML_PARSER_PRODUCTS = frozenset({
+        "newDocumentBuilder", "newSAXParser", "getXMLReader", "newTransformer"})
+
+    def _xml_hardening_receiver(self, func_name: str, args) -> Optional[str]:
+        """The object a call hardens against XXE, if it does: a factory/parser
+        `setFeature`, `setAttribute`/`setProperty` with a hardening value, or
+        `setEntityResolver` with a non-null resolver (which then decides every
+        external entity, as Tomcat's WebdavResolver does)."""
+        if '.' not in func_name:
+            return None
+        recv, method = func_name.rsplit('.', 1)
+        vals = [str(a).strip() for a, _ in args]
+        if method == "setFeature" and len(vals) >= 2:
+            uri = vals[0].strip('"\'')
+            return recv if any(
+                uri.endswith(feature) and vals[1].lower() == value
+                for feature, value in self._XXE_HARDENING_FEATURES.items()) else None
+        if method in ("setAttribute", "setProperty") and len(vals) >= 2:
+            name = vals[0].strip('"\'')
+            return recv if (name.endswith(self._XXE_ACCESS_ATTRIBUTES)
+                            and vals[1] in ('""', "''")) else None
+        if method == "setEntityResolver" and vals:
+            return recv if vals[0].lower() not in ("null", "none") else None
+        return None
+
+    def _track_xml_hardening(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """Record parsers that cannot resolve external entities: the receiver
+        of a hardening call, the product of a hardened factory, and the result
+        of a same-class helper whose every non-null return is hardened."""
+        hardened = self._xml_hardening_receiver(func_name, instr.args)
+        if hardened:
+            state.secure_parsers.add(hardened)
+        if not instr.ret:
+            return
+        ret_var = str(instr.ret[0])
+        if '.' in func_name:
+            recv, method = func_name.rsplit('.', 1)
+            if method in self._XML_PARSER_PRODUCTS and recv in state.secure_parsers:
+                state.secure_parsers.add(ret_var)
+                return
+        callee = self._same_class_callee(func_name, len(instr.args), instr.arg_types)
+        if callee is not None and self._secure_parser_returns.get(callee):
+            state.secure_parsers.add(ret_var)
+
+    def _same_class_callee(self, func_name: str, n_args: int,
+                           arg_types=None) -> Optional[str]:
+        """The procedure an unqualified (or `this.`) call names in the class
+        being analysed, if the program defines it; for an overloaded name, the
+        one overload the argument count selects."""
+        name = func_name[5:] if func_name.startswith("this.") else func_name
+        cls = getattr(self._cur_proc, "class_name", None)
+        if '.' in name or not cls:
+            return None
+        if getattr(self.program, "language", "") == "java" and arg_types is not None:
+            target = self.program.resolve_java_call(cls, name, list(arg_types))
+            return target.name if target is not None else None
+        matches = [p.name for p in self.program.procedures.values()
+                   if p.class_name == cls and p.simple_name == name
+                   and p.accepts_arity(n_args)]
+        return matches[0] if len(matches) == 1 else None
+
+    def _record_secure_parser_return(self, instr: Return, state: SymbolicState,
+                                     proc_name: str) -> None:
+        """Summary for _track_xml_hardening: does every non-null return of
+        `proc_name` hand back a hardened parser?"""
+        value = instr.value
+        if not self._summarising_parsers or value is None \
+                or str(value).lower() in ("null", "none"):
+            return
+        returned = self._sole_var(value)
+        secure = returned is not None and returned in state.secure_parsers
+        self._secure_parser_returns[proc_name] = (
+            self._secure_parser_returns.get(proc_name, True) and secure)
+
     def _exec_return(
         self,
         instr: Return,
@@ -3437,6 +3554,7 @@ class SILTranslator:
         # Intentionally emits no XSS checks -- see docstring. Real XSS is detected
         # at explicit HTML output sinks, not at return statements.
         checks: List[VulnerabilityCheck] = []
+        self._record_secure_parser_return(instr, state, proc_name)
         if self._is_c_lang:
             # CWE-562: returning the address of a local hands back a dangling
             # pointer. Checked before the escape below so the returned pointer's
@@ -3535,7 +3653,7 @@ class SILTranslator:
             for instr in node.instrs:
                 if not isinstance(instr, Call) or not instr.ret:
                     continue
-                spec = self.program.get_spec(instr.get_full_name())
+                spec = self.program.spec_for_call(instr)
                 if not (spec and spec.is_taint_sink() and spec.is_sink == 'resource_select'):
                     continue
                 obj = str(instr.ret[0])
@@ -3785,10 +3903,30 @@ class SILTranslator:
         if not isinstance(instr, Call):
             return False
 
-        simple_name = proc.name.rsplit(".", 1)[-1]
+        simple_name = proc.simple_name
         called = instr.get_func_name()
         if instr.receiver is not None:
             called = f"{instr.receiver}.{called}"
+        language = getattr(self.program, "language", "") or ""
+        # Java: resolve the call the way the compiler does, by argument and
+        # parameter types (Program.resolve_java_call), so `h(n - 1)` inside
+        # `h(int)` is recursion while `h(s)` there calls `h(String)`. A call the
+        # file cannot settle -- an inherited overload could take it -- is not
+        # claimed as a self-call.
+        if language == "java" and proc.class_name and instr.arg_types is not None:
+            if self._strip_self_receiver(called) != simple_name:
+                return False
+            target = self.program.resolve_java_call(
+                proc.class_name, simple_name, list(instr.arg_types))
+            return target is proc
+        # An overloaded name is a self-call only when this overload is the one
+        # the argument count selects (`f(x)` calling `f(x, 0)` is delegation).
+        if not proc.accepts_arity(len(instr.args)):
+            return False
+        # C#: the argument count must at least fit THIS method; an overload
+        # with another arity may be inherited and invisible in this file.
+        if language in self._IMPLICIT_RECEIVER_LANGUAGES and not self._arity_fits(proc, len(instr.args)):
+            return False
 
         stripped = self._strip_self_receiver(called)
         if stripped != called:
@@ -3799,6 +3937,11 @@ class SILTranslator:
             return True
         language = getattr(self.program, "language", "") or ""
         return language in self._IMPLICIT_RECEIVER_LANGUAGES
+
+    @staticmethod
+    def _arity_fits(proc: Procedure, n_args: int) -> bool:
+        n = len(proc.params)
+        return n_args == n or (proc.has_varargs and n_args >= n - 1)
 
     # Languages where an unqualified call inside a method resolves against the
     # implicit receiver before any free function of the same name.
@@ -3907,7 +4050,7 @@ class SILTranslator:
         if proc.has_exception_handler:
             return checks
 
-        simple_name = proc.name.rsplit(".", 1)[-1]
+        simple_name = proc.simple_name
 
         self_calls = [
             (node.id, idx, instr)
@@ -4114,7 +4257,7 @@ class SILTranslator:
             for instr in node.instrs:
                 if not isinstance(instr, Call) or instr.ret is not None:
                     continue
-                spec = self.program.get_spec(instr.get_full_name())
+                spec = self.program.spec_for_call(instr)
                 if spec is None or not spec.return_must_be_checked:
                     continue
                 name = instr.get_func_name()
@@ -4156,7 +4299,7 @@ class SILTranslator:
             for instr in node.instrs:
                 if not isinstance(instr, Call):
                     continue
-                spec = self.program.get_spec(instr.get_full_name())
+                spec = self.program.spec_for_call(instr)
                 if spec is None or spec.stack_allocation_size_arg is None:
                     continue
                 index = spec.stack_allocation_size_arg
@@ -4204,7 +4347,7 @@ class SILTranslator:
             for instr in node.instrs:
                 if not isinstance(instr, Call):
                     continue
-                spec = self.program.get_spec(instr.get_full_name())
+                spec = self.program.spec_for_call(instr)
                 if spec is None or spec.permission_mode_arg is None:
                     continue
                 index = spec.permission_mode_arg
@@ -6534,7 +6677,8 @@ class SILTranslator:
                 merged.constants[var] = s2.constants[var]
 
         # Secure parsers: union
-        merged.secure_parsers = s1.secure_parsers | s2.secure_parsers
+        # "Hardened" must hold on every incoming path.
+        merged.secure_parsers = s1.secure_parsers & s2.secure_parsers
 
         # Safe for XML sink: union
         merged.safe_for_xml_sink = s1.safe_for_xml_sink | s2.safe_for_xml_sink
@@ -6580,5 +6724,10 @@ class SILTranslator:
         # the finite pool of declared locals and grows monotonically at joins, so
         # this cannot oscillate.
         if s1.uninitialized != s2.uninitialized:
+            return False
+        # A parser hardened on only some incoming paths is not hardened at the
+        # join, and that can expose a downstream XXE sink. The set only shrinks
+        # at joins (intersection), so this cannot oscillate.
+        if s1.secure_parsers != s2.secure_parsers:
             return False
         return True

@@ -454,6 +454,12 @@ class Call(Instr):
     is_virtual: bool = False           # Virtual/dynamic dispatch
     is_static: bool = False            # Static method call
     receiver: Optional[Exp] = None     # Object receiver for method calls
+    # Declared type of the receiver, when the frontend knows it (Java): specs
+    # are then matched by type, not by the receiver variable's name.
+    receiver_type: Optional[str] = None
+    receiver_exact: bool = False       # receiver's runtime class IS receiver_type
+    # Static type of each argument where the frontend knows it, else None.
+    arg_types: Optional[List[Optional[str]]] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)
@@ -548,6 +554,9 @@ class TaintSink(Instr):
     kind: SinkKind           # What kind of sink
     description: str = ""    # Human-readable description
     arg_index: int = 0       # Which argument is the sink (for calls)
+    # Object whose method is the sink (`builder` in `builder.parse(x)`), when
+    # the sink's safety depends on how that object was configured.
+    receiver: Optional[str] = None
 
     def __str__(self) -> str:
         return f"taint_sink({self.exp}, {self.kind.value})"

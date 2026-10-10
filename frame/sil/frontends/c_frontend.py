@@ -218,6 +218,12 @@ class CFrontend:
         )
 
         proc.has_parse_errors = bool(node.has_error)
+        fdecl = declarator
+        while fdecl is not None and fdecl.type != "function_declarator":
+            fdecl = fdecl.child_by_field_name("declarator")
+        plist = fdecl.child_by_field_name("parameters") if fdecl is not None else None
+        proc.has_varargs = plist is not None and any(
+            c.type in ("...", "variadic_parameter") for c in plist.children)
 
         self._current_proc = proc
         self._node_counter = 0

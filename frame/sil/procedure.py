@@ -14,7 +14,7 @@ The CFG representation enables:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple, Iterator
+from typing import Callable, List, Dict, Optional, Set, Tuple, Iterator
 from enum import Enum, auto
 
 from .types import Ident, PVar, Typ, Location
@@ -24,6 +24,60 @@ from .instructions import Instr, TaintKind, SinkKind
 # =============================================================================
 # Procedure Specification
 # =============================================================================
+
+def typed_spec_lookup(specs, recv_type: str, func_name: str, exact: bool,
+                      by_name, receivers) -> Optional["ProcSpec"]:
+    """Spec for `recv.method(...)` whose receiver has the declared type
+    `recv_type`; `receivers(type)` names the spec keys for a type (Java:
+    java_specs.type_spec_receivers).
+
+    - A spec keyed on the type (`documentBuilder.parse` for DocumentBuilder)
+      wins over any name-based match.
+    - An `exact_class` spec (`Random.nextInt`) needs the receiver's runtime
+      class to be known (`exact`); a value merely DECLARED Random may be a
+      SecureRandom, and then nothing is reported.
+    - Otherwise fall back to the name-based lookup (`by_name()`), except for a
+      sink that needs no taint at all (`sink_args == []`): its name alone is
+      not evidence once the receiver's type is known to be something else.
+    """
+    method = func_name.rsplit('.', 1)[1]
+    for receiver in receivers(recv_type):
+        spec = specs.get(f"{receiver}.{method}")
+        if spec:
+            return spec if (exact or not spec.exact_class) else None
+    spec = by_name()
+    if spec is not None and spec.is_sink and spec.sink_args == []:
+        return None
+    return spec
+
+
+# `Call.receiver_type` values a frontend sets for a method call's receiver
+# when it is not a declared type: DB_HANDLE for a known database handle,
+# RECEIVER_UNKNOWN for a receiver of unknown kind (a chained call's IR name is
+# only the method, so the name alone cannot tell it has a receiver). Any other
+# kind ("Array", "module:crypto", ...) is known not to be a database handle.
+DB_HANDLE = "DbHandle"
+RECEIVER_UNKNOWN = "Unknown"
+
+
+def db_method_applies(spec: Optional["ProcSpec"], func_name: str,
+                      receiver_type: Optional[str]) -> bool:
+    """False when `spec` is a database-handle method that this call cannot be:
+    a call without a receiver (`find(xs, fn)`, a local function) or a receiver
+    known to be something else (an array, a hash, a user object)."""
+    if spec is None or not spec.db_method:
+        return True
+    if receiver_type in (DB_HANDLE, RECEIVER_UNKNOWN):
+        return True
+    if receiver_type is None:
+        return '.' in func_name     # no receiver information: the name decides
+    return False
+
+
+# Receivers through which a member call still reaches a global function
+# (`window.setTimeout`); see ProcSpec.global_only.
+GLOBAL_OBJECTS = frozenset({"window", "global", "globalThis"})
+
 
 @dataclass
 class ProcSpec:
@@ -132,6 +186,34 @@ class ProcSpec:
     # normally called for their effect with the result ignored, so without this
     # the attacker data they deliver never becomes tainted.
     taint_out_args: List[int] = field(default_factory=list)
+
+    # Does this spec name a GLOBAL function (`setTimeout`, `eval`)? Frontends
+    # match a dotless spec key against the last segment of a member call
+    # (`models.sequelize.query` -> `query`); for a global function that would
+    # make any same-named method a sink (`req.setTimeout(ms, cb)` is the HTTP
+    # request timeout, not the timer that evaluates strings). When set, a
+    # member call matches only through the global object (`window.eval`).
+    global_only: bool = False
+
+    # Index of a verification-callback argument, if any (CWE-295). Installing
+    # a verifier is not itself a flaw -- `setHostnameVerifier(getVerifier())`
+    # usually installs a stricter one -- so such a sink fires only when the
+    # callback provably accepts everything (a lambda / anonymous class whose
+    # every return is `true`, or a library object documented as permissive).
+    permissive_callback_arg: Optional[int] = None
+
+    # Is the flaw specific to this exact class, not to every subtype? A value
+    # DECLARED `java.util.Random` may be a SecureRandom, so `Random.nextInt` is
+    # only matched when the class is named at the call (`new Random().nextInt`,
+    # name-based lookup), never through a receiver's declared type.
+    exact_class: bool = False
+
+    # Is this a method of a DATABASE HANDLE (a MongoDB collection, a Mongoose
+    # model or query)? The names -- find, update, remove, count -- are shared
+    # with arrays, hashes, lodash and user code, so the spec applies only to a
+    # call with a receiver, and not when the frontend knows the receiver is
+    # some other kind of value (`Call.receiver_type` other than DB_HANDLE).
+    db_method: bool = False
 
     # =========================================================================
     # Additional metadata
@@ -332,6 +414,36 @@ class Procedure:
     # facts derived from it (null-ness, definedness, freed state) are unreliable.
     has_parse_errors: bool = False
 
+    # Procedures sharing one name (overloads; see Program.add_procedure): the
+    # group's (parameter count, has varargs) and this one's position in it.
+    # Members after the first are named `name#2`, `name#3`, ...; empty when
+    # the name is unique.
+    overload_arities: List[Tuple[int, bool]] = field(default_factory=list)
+    overload_index: int = 0
+    has_varargs: bool = False         # last parameter takes any number of args
+    # Declared parameter types where the frontend knows them (Java), else
+    # None per parameter; lets a call whose argument types differ be told
+    # apart from a same-arity overload (e.g. one inherited from a superclass).
+    param_type_names: List[Optional[str]] = field(default_factory=list)
+    ret_type_name: Optional[str] = None
+    # Does the enclosing class declare supertypes (extends / implements)? Then
+    # an inherited overload, invisible in this file, may take a call.
+    class_open: bool = True
+
+    @property
+    def simple_name(self) -> str:
+        """The method/function name as called: `f` for `A.f` and `A.f#2`."""
+        return self.name.rsplit(".", 1)[-1].split("#", 1)[0]
+
+    def accepts_arity(self, n_args: int) -> bool:
+        """Can a call with `n_args` arguments resolve to this overload? With no
+        overload information, any call by this name can."""
+        if not self.overload_arities:
+            return True
+        accepting = [i for i, (n, varargs) in enumerate(self.overload_arities)
+                     if n_args == n or (varargs and n_args >= n - 1)]
+        return accepting == [self.overload_index]
+
     # Internal state for building CFG
     _next_node_id: int = field(default=0, repr=False)
 
@@ -465,6 +577,15 @@ class Program:
     # `_arg_may_define`).
     function_macros: Set[str] = field(default_factory=set)
 
+    # Language-specific map from a receiver's declared type to the receiver
+    # names its specs are keyed under (Java: java_specs.type_spec_receivers);
+    # used by spec_for_call when a Call carries `receiver_type`.
+    type_spec_receivers: Optional[Callable[[str], tuple]] = None
+
+    # Declared supertypes of each class in the program (Java), for overload
+    # resolution's subtype test.
+    class_supertypes: Dict[str, List[str]] = field(default_factory=dict)
+
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]
         for name in self.procedures:
@@ -475,8 +596,160 @@ class Program:
     # Procedure management
     # =========================================================================
 
+    # -- Java overload resolution (JLS 15.12, approximated soundly) ------------
+
+    _WIDENING = {
+        "byte": {"short", "int", "long", "float", "double"},
+        "short": {"int", "long", "float", "double"},
+        "char": {"int", "long", "float", "double"},
+        "int": {"long", "float", "double"},
+        "long": {"float", "double"},
+        "float": {"double"},
+        "double": set(), "boolean": set(),
+    }
+    _BOX = {"int": "Integer", "long": "Long", "short": "Short", "byte": "Byte",
+            "char": "Character", "float": "Float", "double": "Double", "boolean": "Boolean"}
+    # Every supertype of these final JDK types: nothing else accepts them.
+    _NUMBER_SUPERS = frozenset({"Object", "Number", "Comparable", "Serializable",
+                                "Constable", "ConstantDesc"})
+    _FINAL_SUPERTYPES = dict.fromkeys(("Integer", "Long", "Short", "Byte", "Float", "Double"),
+                                      _NUMBER_SUPERS)
+    _FINAL_SUPERTYPES.update({
+        "String": frozenset({"Object", "CharSequence", "Comparable", "Serializable",
+                             "Constable", "ConstantDesc"}),
+        "Boolean": frozenset({"Object", "Comparable", "Serializable", "Constable"}),
+        "Character": frozenset({"Object", "Comparable", "Serializable", "Constable"}),
+    })
+
+    def _supertypes(self, cls: str) -> Optional[set]:
+        """All supertypes of an in-file class, or None when its hierarchy
+        leaves the file (an unknown superclass could be anything)."""
+        if cls not in self.class_supertypes:
+            return None
+        seen, todo, known = set(), [cls], True
+        while todo:
+            c = todo.pop()
+            if c in seen:
+                continue
+            seen.add(c)
+            if c not in self.class_supertypes:
+                if c != cls:
+                    known = False
+                continue
+            todo.extend(self.class_supertypes[c])
+        seen.discard(cls)
+        return (seen | {"Object"}) if known else None
+
+    def java_convertible(self, arg: Optional[str], param: Optional[str]) -> str:
+        """Can an argument of static type `arg` be passed for `param`?
+        "yes", "no", or "maybe" when the types do not settle it."""
+        if arg is None or param is None:
+            return "maybe"
+        if arg == param:
+            return "yes"
+        prim = self._WIDENING
+        if arg == "null":
+            return "no" if param in prim else "yes"
+        if param == "Object":
+            return "yes"
+        if arg in prim:
+            if param in prim:
+                return "yes" if param in prim[arg] else "no"
+            if param == self._BOX[arg] or param in ("Number", "Comparable", "Serializable") \
+                    and arg != "boolean":
+                return "yes"
+            return "no"
+        if param in prim:
+            unboxed = {v: k for k, v in self._BOX.items()}.get(arg)
+            if unboxed is None:
+                return "no"
+            return "yes" if unboxed == param or param in prim[unboxed] else "no"
+        if arg.endswith("[]") or param.endswith("[]"):
+            if arg.endswith("[]") and param.endswith("[]"):
+                a_elem, p_elem = arg[:-2], param[:-2]
+                if a_elem in prim or p_elem in prim:   # no widening of primitive arrays
+                    return "yes" if a_elem == p_elem else "no"
+                return self.java_convertible(a_elem, p_elem)
+            if arg.endswith("[]"):
+                return "yes" if param in ("Cloneable", "Serializable") else "no"
+            return "no"
+        if arg in self._FINAL_SUPERTYPES:
+            return "yes" if param in self._FINAL_SUPERTYPES[arg] else "no"
+        supers = self._supertypes(arg)
+        if supers is not None:
+            return "yes" if param in supers else "no"
+        return "maybe"
+
+    def resolve_java_call(self, class_name: str, method: str,
+                          arg_types: List[Optional[str]]) -> Optional[Procedure]:
+        """The procedure an unqualified call `method(args)` inside
+        `class_name` invokes, or None when the file cannot settle it.
+
+        Candidates are the class's methods of that name whose arity fits and
+        none of whose parameters provably rejects its argument. The call
+        resolves only to a single remaining candidate, and only if no hidden
+        overload could win: every argument matches its parameter exactly (no
+        inherited method is more specific than an exact match), or the class
+        has no supertypes at all."""
+        n = len(arg_types)
+        cands = []
+        for p in self.procedures.values():
+            if p.class_name != class_name or p.simple_name != method:
+                continue
+            params = p.param_type_names or [None] * len(p.params)
+            if not (n == len(params) or (p.has_varargs and n >= len(params) - 1)):
+                continue
+            verdicts = []
+            for i, a in enumerate(arg_types):
+                if p.has_varargs and i >= len(params) - 1:
+                    last = params[-1]
+                    if n == len(params) and self.java_convertible(a, last) == "yes":
+                        verdicts.append("yes")
+                        continue
+                    t = last[:-2] if last and last.endswith("[]") else None
+                else:
+                    t = params[i]
+                verdicts.append(self.java_convertible(a, t))
+            if "no" not in verdicts:
+                cands.append((p, verdicts, params))
+        def exact(params):
+            return len(arg_types) == len(params) and all(
+                a is not None and a == t for a, t in zip(arg_types, params))
+
+        # An exact match is the most specific applicable method: any other
+        # applicable overload (here or inherited) takes supertypes of these
+        # argument types, so Java picks the exact one.
+        exact_cands = [p for p, _, params in cands if exact(params)]
+        if len(exact_cands) == 1:
+            return exact_cands[0]
+        if len(cands) != 1:
+            return None
+        p, verdicts, params = cands[0]
+        # Only one candidate here: it is the method called unless a supertype
+        # of the class could contribute an overload this file does not show.
+        return None if p.class_open else p
+
     def add_procedure(self, proc: Procedure) -> None:
-        """Add a procedure to the program"""
+        """Add a procedure to the program.
+
+        A second procedure with a name already present -- a Java/C#/C++
+        overload, a Python property setter, the other arm of a C `#ifdef` -- is
+        kept as `name#2`, `name#3`, ... rather than replacing the first, whose
+        body would otherwise never be analysed. Every member of such a group
+        records the group's arities so calls resolve to the right one
+        (Procedure.accepts_arity)."""
+        if self.procedures.get(proc.name) is proc:
+            return
+        base = proc.name
+        if base in self.procedures:
+            group = [p for p in self.procedures.values()
+                     if p.name == base or p.name.startswith(base + "#")]
+            proc.name = f"{base}#{len(group) + 1}"
+            group.append(proc)
+            arities = [(len(p.params), p.has_varargs) for p in group]
+            for i, p in enumerate(group):
+                p.overload_arities = list(arities)
+                p.overload_index = i
         self.procedures[proc.name] = proc
 
     def get_procedure(self, name: str) -> Optional[Procedure]:
@@ -491,6 +764,35 @@ class Program:
     # Specification lookup
     # =========================================================================
 
+    def spec_for_call(self, call) -> Optional[ProcSpec]:
+        """Spec for a Call instruction: by the receiver's declared type first
+        (`DocumentBuilder b; b.parse` -> `documentBuilder.parse`), then by name."""
+        spec = self._spec_for_call(call)
+        if not db_method_applies(spec, call.get_full_name(), getattr(call, "receiver_type", None)):
+            return None
+        return spec
+
+    def _spec_for_call(self, call) -> Optional[ProcSpec]:
+        func_name = call.get_full_name()
+        recv_type = getattr(call, "receiver_type", None)
+        if recv_type:
+            # A method defined in this program (`m(x)` inside the class that
+            # declares m, or a call on a variable of a class in this file) is
+            # that procedure, not a same-named library API: no library spec, so
+            # the translator's default handling of program calls applies
+            # (argument taint flows to the result). Returning the procedure's
+            # own empty ProcSpec would switch that propagation off.
+            method = func_name.rsplit('.', 1)[-1]
+            for proc in self.procedures.values():
+                if proc.class_name == recv_type and proc.simple_name == method:
+                    return None
+        if recv_type and self.type_spec_receivers and '.' in func_name:
+            return typed_spec_lookup(
+                self.library_specs, recv_type, func_name,
+                getattr(call, "receiver_exact", False),
+                lambda: self.get_spec(func_name), self.type_spec_receivers)
+        return self.get_spec(func_name)
+
     def get_spec(self, func_name: str) -> Optional[ProcSpec]:
         """
         Get specification for a function.
@@ -499,7 +801,14 @@ class Program:
         1. User-defined procedure specs
         2. Library specs (exact match)
         3. Library specs (method name match for var.method patterns)
+
+        A database-handle method (`db_method`) never matches an unqualified
+        call; with a receiver, see spec_for_call.
         """
+        spec = self._get_spec(func_name)
+        return spec if db_method_applies(spec, func_name, None) else None
+
+    def _get_spec(self, func_name: str) -> Optional[ProcSpec]:
         # Check user procedures first
         if func_name in self.procedures:
             return self.procedures[func_name].spec
@@ -519,9 +828,18 @@ class Program:
                 suffix = '.'.join(parts[i:])
                 spec = self.library_specs.get(suffix)
                 if spec:
+                    if spec.global_only and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:
+                        return None
                     return spec
 
             method_name = parts[-1]
+            # A capitalised receiver names a class or a module constant
+            # (`GSSManager.getInstance`, `SUBPROCESS_OPTIONS.get`), whose type
+            # is not ours to guess: guessing made every `Calendar.getInstance()`
+            # a MessageDigest.getInstance and every WeakMap lookup a request.get.
+            receiver = '.'.join(parts[:-1])
+            if receiver.rsplit('.', 1)[-1][:1].isupper():
+                return None
             # Try common type prefixes for the method (Python and Java)
             for prefix in ['str', 'bytes', 'list', 'dict', 'set', 'object',
                            'ConfigParser', 'configparser.ConfigParser',
@@ -539,11 +857,14 @@ class Program:
                            'XPath', 'xpath', 'DirContext', 'ldapTemplate']:
                 qualified_name = f"{prefix}.{method_name}"
                 spec = self.library_specs.get(qualified_name)
-                if spec:
+                # A guessed type is not evidence for a sink that fires on mere
+                # use (`getFactory().getInstance()` is not MessageDigest's).
+                if spec and not (spec.exact_class or
+                                 (spec.is_sink and spec.sink_args == [])):
                     return spec
             # Also try bare method name (e.g., "xpath" for "root.xpath")
             spec = self.library_specs.get(method_name)
-            if spec:
+            if spec and not spec.global_only:
                 return spec
 
         return None
