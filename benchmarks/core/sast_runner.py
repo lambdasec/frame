@@ -79,12 +79,15 @@ def run_frame_scanner(
     """
     try:
         from frame.sil import FrameScanner
+        from frame.sil.scanner import collapse_per_file_cwe
 
         scanner = FrameScanner(language=language, verify=verify)
         result = scanner.scan_file(filepath)
 
+        # These suites label a whole file with one CWE and count every other
+        # report as a false positive, so score one finding per (file, CWE).
         detected = []
-        for vuln in result.vulnerabilities:
+        for vuln in collapse_per_file_cwe(result.vulnerabilities):
             # Convert VulnType enum to string for JSON serialization
             vuln_type_str = vuln.type.value if hasattr(vuln.type, 'value') else str(vuln.type)
             detected.append(DetectedVulnerability(

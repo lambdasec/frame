@@ -53,17 +53,8 @@ def create_parser() -> argparse.ArgumentParser:
         "target",
         help="File or directory to scan"
     )
-    scan_parser.add_argument(
-        "-l", "--language",
-        default="python",
-        choices=["python"],
-        help="Source language (default: python)"
-    )
-    scan_parser.add_argument(
-        "-p", "--pattern",
-        default="**/*.py",
-        help="Glob pattern for directory scan (default: **/*.py)"
-    )
+    from frame.sil.cli import add_language_and_pattern_args
+    add_language_and_pattern_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
         action="store_true",
@@ -155,6 +146,13 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--model",
         help="Override FRAME_LLM_MODEL for this scan (same as setting the env var)"
+    )
+    scan_parser.add_argument(
+        "--repo-scale",
+        action="store_true",
+        help="Analyze the whole repository in one LLM session instead of one per "
+             "file. Far faster and cheaper on real projects, and lets the model "
+             "follow flows across files. Requires --ai or --llm-detect."
     )
 
     # === EXPLOIT command ===

@@ -142,3 +142,95 @@ def test_java_and_csharp_label_constants_are_clean():
                     language="java")
     assert not cwes('class A { const string PasswordField = "password"; string Name = "bob"; }',
                     language="csharp")
+
+
+# ---- chained calls, await, destructuring, Prisma ---------------------------
+
+def test_call_chained_on_sink_call_in_declaration():
+    code = ("const { execSync } = require('child_process');\n"
+            "function handler(req, res) {\n"
+            "  const out = execSync('git log ' + req.query.cmd).toString();\n"
+            "  res.json({ out });\n}\nmodule.exports = handler;")
+    assert "CWE-78" in cwes(code)
+
+
+def test_awaited_sink_call_in_declaration():
+    code = ("const express = require('express'); const app = express();\n"
+            "app.get('/u', async (req, res) => {\n"
+            "  const rows = await prisma.$queryRawUnsafe('SELECT * FROM u WHERE id = ' + req.query.id);\n"
+            "  res.json(rows);\n});")
+    assert "CWE-89" in cwes(code)
+
+
+def test_prisma_tagged_template_query_raw_is_clean():
+    code = ("const express = require('express'); const app = express();\n"
+            "app.get('/u', async (req, res) => {\n"
+            "  const rows = await prisma.$queryRaw`SELECT * FROM u WHERE id = ${req.query.id}`;\n"
+            "  res.json(rows);\n});")
+    assert "CWE-89" not in cwes(code)
+
+
+DESTRUCTURE = ("const express = require('express'); const { exec } = require('child_process');\n"
+               "const app = express();\n"
+               "app.get('/a', (req, res) => {\n"
+               "  const BINDING = VALUE;\n"
+               "  exec('ls ' + dir);\n"
+               "});")
+
+
+def destructure(binding, value):
+    return DESTRUCTURE.replace("BINDING", binding).replace("VALUE", value)
+
+
+def test_destructured_request_field_to_exec():
+    assert "CWE-78" in cwes(destructure("{ dir }", "req.query"))
+
+
+def test_destructured_renamed_request_field_to_exec():
+    assert "CWE-78" in cwes(destructure("{ path: dir, x = 1 }", "req.body"))
+
+
+def test_destructured_constant_object_is_clean():
+    assert "CWE-78" not in cwes(destructure("{ dir }", "{ dir: '/tmp' }"))
+
+
+def test_anonymous_procedure_names_are_deterministic():
+    code = ("const app = require('express')();\n"
+            "app.get('/a', (req, res) => { res.send('a'); });\n"
+            "app.get('/b', (req, res) => { res.send('b'); });")
+    from frame.sil.frontends.javascript_frontend import JavaScriptFrontend
+    names = [sorted(JavaScriptFrontend().translate(code, "t.js").procedures) for _ in range(2)]
+    assert names[0] == names[1]
+    assert not any(any(ch.isdigit() for ch in n.split("_L")[0]) for n in names[0])
+
+
+# ---- a sink constructed inside another call's argument (Java, C#) ----------
+
+def test_java_nested_filereader_in_bufferedreader():
+    code = """
+import org.springframework.web.bind.annotation.*;
+import java.io.*;
+
+@RestController
+public class F {
+    @GetMapping("/file")
+    public String file(@RequestParam String name) throws IOException {
+        BufferedReader r = new BufferedReader(new FileReader("/data/" + name));
+        return r.readLine();
+    }
+}
+"""
+    assert "CWE-22" in cwes(code, language="java", name="F.java")
+
+
+def test_csharp_file_read_inside_content_result():
+    code = """
+using Microsoft.AspNetCore.Mvc;
+
+public class HController : Controller {
+    public IActionResult Q(string id) {
+        return Content(System.IO.File.ReadAllText("/data/" + id));
+    }
+}
+"""
+    assert "CWE-22" in cwes(code, language="csharp", name="H.cs")

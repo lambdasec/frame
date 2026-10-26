@@ -100,3 +100,102 @@ def test_inline_subscript_wrapped_in_sanitizer_is_clean():
 def test_inline_subscript_of_non_request_dict_is_clean():
     assert "CWE-78" not in cwes(FLASK.format(arg='CONFIG["d"]').replace(
         "app = Flask", 'CONFIG = {"d": "/tmp"}\napp = Flask'))
+
+
+# ---- an inline source call under a sanitizer, and shell == command -------
+
+def test_inline_source_call_wrapped_in_shlex_quote_is_clean():
+    assert "CWE-78" not in cwes(FLASK.format(arg='shlex.quote(request.args.get("d"))'))
+
+
+def test_shlex_quote_through_a_variable_covers_os_system():
+    code = """
+from flask import Flask, request
+import os, shlex
+app = Flask(__name__)
+
+@app.route("/a")
+def a():
+    q = shlex.quote(request.args.get("d"))
+    os.system("ls " + q)
+    return "ok"
+"""
+    assert "CWE-78" not in cwes(code)
+
+
+def test_unquoted_variable_to_os_system_still_flagged():
+    code = """
+from flask import Flask, request
+import os
+app = Flask(__name__)
+
+@app.route("/a")
+def a():
+    q = request.args.get("d")
+    os.system("ls " + q)
+    return "ok"
+"""
+    assert "CWE-78" in cwes(code)
+
+
+def test_source_call_inside_returned_chained_sink_call():
+    code = """
+from flask import Flask, request
+import requests
+app = Flask(__name__)
+
+@app.route("/a")
+def a():
+    return requests.get(request.args.get("url")).text
+"""
+    assert "CWE-918" in cwes(code)
+
+
+# ---- Flask send_file, Django HttpResponse ---------------------------------
+
+SEND_FILE = """
+from flask import Flask, request, send_file
+import os
+app = Flask(__name__)
+
+@app.route("/f")
+def f():
+    fn = {arg}
+    return send_file(os.path.join("/srv/files", fn))
+"""
+
+
+def test_flask_send_file_path_traversal():
+    assert "CWE-22" in cwes(SEND_FILE.format(arg='request.args.get("f")'))
+
+
+def test_flask_send_file_constant_is_clean():
+    assert "CWE-22" not in cwes(SEND_FILE.format(arg='"report.pdf"'))
+
+
+DJANGO = """
+from django.http import HttpResponse
+from django.utils.html import escape
+import json
+
+def view(request):
+    return {body}
+"""
+
+
+def test_django_httpresponse_reflected_xss():
+    assert "CWE-79" in cwes(DJANGO.format(body='HttpResponse("<p>" + request.GET["msg"] + "</p>")'))
+
+
+def test_django_httpresponse_escaped_is_clean():
+    assert "CWE-79" not in cwes(DJANGO.format(
+        body='HttpResponse("<p>" + escape(request.GET.get("msg")) + "</p>")'))
+
+
+def test_django_httpresponse_non_html_content_type_is_clean():
+    assert "CWE-79" not in cwes(DJANGO.format(
+        body='HttpResponse(json.dumps({"m": request.GET["msg"]}), content_type="application/json")'))
+
+
+def test_django_request_user_is_server_state():
+    assert "CWE-79" not in cwes(DJANGO.format(body='HttpResponse("Hello " + request.user.username)'))

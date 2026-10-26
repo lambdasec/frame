@@ -217,6 +217,10 @@ SQL_SPECS = {
 
     # Knex
     "knex.raw": _sink("sql", [0], "Knex raw query (SQL injection)"),
+    # Prisma's *Unsafe raw APIs take a plain string; the tagged-template
+    # `$queryRaw` / `$executeRaw` parameterise and are not sinks.
+    "$queryRawUnsafe": _sink("sql", [0], "Prisma $queryRawUnsafe (SQL injection)"),
+    "$executeRawUnsafe": _sink("sql", [0], "Prisma $executeRawUnsafe (SQL injection)"),
     "whereRaw": _sink("sql", [0], "Knex whereRaw (SQL injection)"),
     "havingRaw": _sink("sql", [0], "Knex havingRaw (SQL injection)"),
     "orderByRaw": _sink("sql", [0], "Knex orderByRaw (SQL injection)"),

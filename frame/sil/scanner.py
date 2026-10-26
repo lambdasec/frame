@@ -469,6 +469,140 @@ DEFAULT_EXCLUDED_SCAN_DIRS: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset({
 })
 
 
+_SEVERITY_ORDER = {
+    Severity.CRITICAL: 5,
+    Severity.HIGH: 4,
+    Severity.MEDIUM: 3,
+    Severity.LOW: 2,
+    Severity.INFO: 1,
+}
+
+
+def _vuln_is_better(new_vuln: "Vulnerability", existing: "Vulnerability") -> bool:
+    """Is `new_vuln` the better report of the same finding: higher severity,
+    then a witness, more data-flow detail, higher confidence."""
+    new_sev = _SEVERITY_ORDER.get(new_vuln.severity, 0)
+    old_sev = _SEVERITY_ORDER.get(existing.severity, 0)
+    if new_sev > old_sev:
+        return True
+    if new_sev == old_sev:
+        if new_vuln.witness and not existing.witness:
+            return True
+        if len(new_vuln.data_flow) > len(existing.data_flow):
+            return True
+        if new_vuln.confidence > existing.confidence:
+            return True
+    return False
+
+
+def _keep_best_per_key(vulns: List["Vulnerability"], key) -> List["Vulnerability"]:
+    """The best vulnerability per `key(v)`, at the position of the first one
+    with that key. Findings without a CWE are kept as they are."""
+    best: Dict[Any, "Vulnerability"] = {}
+    for v in vulns:
+        if not v.cwe_id:
+            continue
+        k = key(v)
+        if k not in best or _vuln_is_better(v, best[k]):
+            best[k] = v
+    out, added = [], set()
+    for v in vulns:
+        if not v.cwe_id:
+            out.append(v)
+            continue
+        k = key(v)
+        if k not in added:
+            out.append(best[k])
+            added.add(k)
+    return out
+
+
+def collapse_per_file_cwe(vulns: List["Vulnerability"]) -> List["Vulnerability"]:
+    """The view of benchmarks that label a whole test file with one CWE and
+    count every further report as a false positive (OWASP, Juliet, IssueBlot).
+    Scoring code applies it; the scanner itself reports every finding.
+
+    - One finding per (file, CWE).
+    - An XSS at an HTML sink is dropped from a procedure that also has a
+      non-XSS finding: such a test case returns the injected page, and its
+      label is the other CWE.
+
+    IDOR findings are per endpoint and are left alone."""
+    from frame.sil.translator import VulnType as _VT
+    idor = [v for v in vulns if v.type == _VT.IDOR]
+    rest = [v for v in vulns if v.type != _VT.IDOR]
+    has_other = {(v.location, v.procedure) for v in rest if v.type != _VT.XSS}
+    rest = [v for v in rest
+            if not (v.type == _VT.XSS and v.sink_type == "html"
+                    and (v.location, v.procedure) in has_other)]
+    return _keep_best_per_key(rest, lambda v: (v.location, v.cwe_id)) + idor
+
+
+# Source extension -> symbolic frontend language. The one table both
+# `FrameScanner.scan_file` and the module-level `scan_file` use, and the set a
+# directory scan with no pattern walks.
+EXTENSION_LANGUAGES: Dict[str, str] = {
+    '.py': 'python',
+    '.js': 'javascript',
+    '.jsx': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    '.mts': 'typescript',
+    '.cts': 'typescript',
+    '.java': 'java',
+    '.c': 'c',
+    '.h': 'c',          # refined by `language_for_file` (C++ headers)
+    '.cpp': 'cpp',
+    '.cc': 'cpp',
+    '.cxx': 'cpp',
+    '.c++': 'cpp',
+    '.hpp': 'cpp',
+    '.hh': 'cpp',
+    '.hxx': 'cpp',
+    '.h++': 'cpp',
+    '.cs': 'csharp',
+}
+
+# Constructs a C compiler rejects: a `.h` that uses one is a C++ header, and
+# C vs C++ changes the analysis (reference out-parameters, see `_arg_may_define`).
+_CPP_HEADER_RE = re.compile(
+    r"^\s*(?:class\s+\w+\s*[:{]|namespace\s+\w*\s*\{|template\s*<|"
+    r"(?:public|private|protected)\s*:)|\bstd::|\busing\s+namespace\b",
+    re.MULTILINE)
+
+
+def language_for_file(path: Union[str, Path], source: Optional[str] = None,
+                      default: Optional[str] = None) -> Optional[str]:
+    """The frontend language for `path` by extension (a `.h` whose `source`
+    uses C++ syntax is `cpp`), else `default`."""
+    lang = EXTENSION_LANGUAGES.get(Path(path).suffix.lower(), default)
+    if lang == 'c' and Path(path).suffix.lower() == '.h' and source \
+            and _CPP_HEADER_RE.search(source):
+        return 'cpp'
+    return lang
+
+
+def language_extensions(language: Optional[str]) -> List[str]:
+    """Extensions a directory scan for `language` walks: every supported one
+    when `language` is None, else that language's (`c` and `cpp` share
+    headers). A language with no symbolic frontend (LLM-detect only, e.g.
+    php) gets its conventional extension."""
+    if language is None:
+        return sorted(EXTENSION_LANGUAGES)
+    family = {'c': {'c', 'cpp'}, 'cpp': {'c', 'cpp'}}.get(language, {language})
+    exts = sorted(e for e, lang in EXTENSION_LANGUAGES.items()
+                  if lang in family and (language != 'c' or e in ('.c', '.h')))
+    return exts or ['.' + _LLM_ONLY_EXTENSIONS.get(language, language)]
+
+
+_LLM_ONLY_EXTENSIONS = {
+    'ruby': 'rb', 'golang': 'go', 'rust': 'rs', 'kotlin': 'kt',
+    'python3': 'py', 'perl': 'pl', 'shell': 'sh', 'bash': 'sh',
+}
+
+
 class FrameScanner:
     """
     Main vulnerability scanner.
@@ -1077,31 +1211,16 @@ class FrameScanner:
             result.errors.append(f"File not found: {filepath}")
             return result
 
+        # Use utf-8-sig to automatically strip BOM (common in C# files)
+        source_code = path.read_text(encoding='utf-8-sig')
+
         # Auto-detect language from extension if not already set correctly
-        ext_to_lang = {
-            '.py': 'python',
-            '.js': 'javascript',
-            '.ts': 'typescript',
-            '.tsx': 'typescript',
-            '.jsx': 'javascript',
-            '.java': 'java',
-            '.c': 'c',
-            '.h': 'c',
-            '.cpp': 'cpp',
-            '.cc': 'cpp',
-            '.cxx': 'cpp',
-            '.hpp': 'cpp',
-            '.cs': 'csharp',
-        }
-        detected_lang = ext_to_lang.get(path.suffix.lower(), self.language)
+        detected_lang = language_for_file(path, source_code, self.language)
 
         # If detected language differs from current, update
         if detected_lang != self.language:
             self.language = detected_lang
             self.frontend = self._get_frontend(detected_lang)
-
-        # Use utf-8-sig to automatically strip BOM (common in C# files)
-        source_code = path.read_text(encoding='utf-8-sig')
 
         # Minified and generated artifacts are not source: they are build output,
         # they are never the file a security advisory points at, and analysing them
@@ -1171,15 +1290,20 @@ class FrameScanner:
                     return True
         return False
 
-    def scan_directory(self, dirpath: str, pattern: str = "**/*.py",
-                        exclude_dirs: Optional[Iterable[Union[str, Tuple[str, ...]]]] = None
+    def scan_directory(self, dirpath: str, pattern: Optional[str] = "**/*.py",
+                        exclude_dirs: Optional[Iterable[Union[str, Tuple[str, ...]]]] = None,
+                        extensions: Optional[Iterable[str]] = None
                         ) -> List[ScanResult]:
         """
         Scan all matching files in a directory.
 
         Args:
             dirpath: Directory path
-            pattern: Glob pattern for files
+            pattern: Glob pattern for files. None scans every file with a
+                supported source extension (`EXTENSION_LANGUAGES`), each in
+                its own language -- what a mixed-language repository needs.
+            extensions: With `pattern=None`, scan only these extensions
+                (e.g. `language_extensions("java")`).
             exclude_dirs: Directory names (or component-sequence tuples) to
                 skip anywhere under `dirpath` (matched against path
                 components relative to `dirpath`, so a scan root that itself
@@ -1214,7 +1338,13 @@ class FrameScanner:
             self.llm_detect = False          # suppress the per-file LLM pass
 
         try:
-            for filepath in dir_path.glob(pattern):
+            if pattern is None:
+                exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
+                candidates = sorted(p for p in dir_path.rglob("*")
+                                    if p.suffix.lower() in exts)
+            else:
+                candidates = dir_path.glob(pattern)
+            for filepath in candidates:
                 if not filepath.is_file():
                     continue
                 if self._is_excluded_dir_member(filepath, dir_path, excluded_dirs):
@@ -1393,32 +1523,7 @@ class FrameScanner:
         idor_vulns = [v for v in vulns if v.type == _VT.IDOR]
         vulns = [v for v in vulns if v.type != _VT.IDOR]
 
-        # Severity order for comparison
-        severity_order = {
-            Severity.CRITICAL: 5,
-            Severity.HIGH: 4,
-            Severity.MEDIUM: 3,
-            Severity.LOW: 2,
-            Severity.INFO: 1,
-        }
-
-        def is_better(new_vuln: Vulnerability, existing: Vulnerability) -> bool:
-            """Check if new_vuln is better than existing."""
-            new_sev = severity_order.get(new_vuln.severity, 0)
-            old_sev = severity_order.get(existing.severity, 0)
-            if new_sev > old_sev:
-                return True
-            if new_sev == old_sev:
-                # Same severity - prefer one with witness
-                if new_vuln.witness and not existing.witness:
-                    return True
-                # Or prefer one with more data flow info
-                if len(new_vuln.data_flow) > len(existing.data_flow):
-                    return True
-                # Or prefer higher confidence
-                if new_vuln.confidence > existing.confidence:
-                    return True
-            return False
+        is_better = _vuln_is_better
 
         # Phase 1: Group by exact location (line, procedure, vuln_type/cwe)
         exact_seen = {}  # key -> best vulnerability
@@ -1492,39 +1597,17 @@ class FrameScanner:
                 final_vulns.append(best)
                 added_windows.add(window_key)
 
-        # Phase 3: File-level CWE deduplication
-        # Keep only one instance of each CWE per file (for benchmark compatibility)
-        # This prevents the same vulnerability type being reported thousands of times
-        file_cwe_seen = {}  # (file, cwe_id) -> best vulnerability
-
-        for vuln in final_vulns:
-            if not vuln.cwe_id:
-                continue
-
-            file_cwe_key = (vuln.location, vuln.cwe_id)
-            existing = file_cwe_seen.get(file_cwe_key)
-
-            if existing is None:
-                file_cwe_seen[file_cwe_key] = vuln
-            elif is_better(vuln, existing):
-                file_cwe_seen[file_cwe_key] = vuln
-
-        # Build final list with file-level deduplication
-        deduplicated = []
-        added_file_cwes = set()
-
-        for vuln in final_vulns:
-            if not vuln.cwe_id:
-                # No CWE - keep as-is
-                deduplicated.append(vuln)
-                continue
-
-            file_cwe_key = (vuln.location, vuln.cwe_id)
-            best = file_cwe_seen.get(file_cwe_key)
-
-            if best is not None and file_cwe_key not in added_file_cwes:
-                deduplicated.append(best)
-                added_file_cwes.add(file_cwe_key)
+        # Phase 3: one finding per (file, procedure, CWE). Control-flow variants
+        # of one bug inside a function collapse; the same bug class in another
+        # function is another finding -- five injectable endpoints in one
+        # controller are five findings, not one. (Benchmarks that score one
+        # label per file collapse further with `collapse_per_file_cwe`.)
+        deduplicated = _keep_best_per_key(
+            final_vulns, lambda v: (v.location, v.procedure, v.cwe_id))
+        # Phase 4: two analyzers reporting the same line under different
+        # procedure names (`main` and `<interprocedural-analysis>`) are one finding.
+        deduplicated = _keep_best_per_key(
+            deduplicated, lambda v: (v.location, v.line, v.cwe_id))
 
         # Re-attach IDOR findings, deduped per endpoint+selector (one per distinct
         # procedure + attacker-controlled selector), not per file.
@@ -2201,25 +2284,10 @@ def scan_file(filepath: str, language: str = None) -> ScanResult:
     Returns:
         ScanResult with vulnerabilities found
     """
-    # Auto-detect language from extension
+    # Auto-detect language from extension (FrameScanner.scan_file refines it
+    # from the source, e.g. a C++ `.h`)
     if language is None:
-        ext = Path(filepath).suffix.lower()
-        language_map = {
-            ".py": "python",
-            ".js": "javascript",
-            ".jsx": "javascript",
-            ".ts": "typescript",
-            ".tsx": "typescript",
-            ".java": "java",
-            ".c": "c",
-            ".cpp": "cpp",
-            ".cc": "cpp",
-            ".cxx": "cpp",
-            ".h": "c",
-            ".hpp": "cpp",
-            ".cs": "csharp",
-        }
-        language = language_map.get(ext, "python")
+        language = language_for_file(filepath, default="python")
 
     scanner = FrameScanner(language=language)
     return scanner.scan_file(filepath)

@@ -386,9 +386,14 @@ class JavaScriptFrontend:
                     # Distinct nested functions (e.g. a route handler and a
                     # .then()/callback arrow inside it) would otherwise both be
                     # 'anonymous' and collide in the procedures dict, silently
-                    # overwriting the handler that holds the sink. Disambiguate.
+                    # overwriting the handler that holds the sink. Disambiguate
+                    # by source position (never `node.id`, a memory address that
+                    # changes every run and breaks baselines and diffs).
                     if program.has_procedure(name):
-                        name = f"{name}_{cur.id}"
+                        row, col = cur.start_point
+                        name = f"{name}_L{row + 1}"
+                        if program.has_procedure(name):
+                            name = f"{name}C{col + 1}"
                     proc = self._translate_function(cur, name=name)
                 if proc:
                     program.add_procedure(proc)
@@ -1444,6 +1449,7 @@ class JavaScriptFrontend:
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
         for child in node.children:
+            child = self._unwrap_await(child)
             if child.type == "call_expression":
                 instrs = self._translate_call_expr(child)
                 self._add_instrs(instrs)
@@ -1462,6 +1468,73 @@ class JavaScriptFrontend:
                 # the expression emits the TaintSink as a side effect.
                 self._translate_expression(child)
 
+    def _translate_destructuring(self, pattern: TSNode, value_node: TSNode,
+                                 loc: Location) -> None:
+        """`const {id, cmd} = req.query` / `const [a, b] = f()`: each bound name
+        is an Assign of its part of the value (`id = req.query.id`), with the
+        value's taint. Unlowered, the bindings were never assigned and a
+        destructured request field reached sinks untainted."""
+        value_node = self._unwrap_await(value_node)
+        src_node = None
+        if value_node.type == "call_expression":
+            base_name = f"$destr{self._ident_counter}"
+            self._ident_counter += 1
+            self._add_instrs(self._translate_call_assignment(base_name, value_node, loc))
+            base: Exp = ExpVar(PVar(base_name))
+        else:
+            base = self._translate_expression(value_node)
+            src_node = value_node
+        self._bind_pattern(pattern, base, src_node, loc)
+
+    def _bind_pattern(self, pattern: TSNode, base: Exp, src_node: Optional[TSNode],
+                      loc: Location) -> None:
+        t = pattern.type
+        if t in ("identifier", "shorthand_property_identifier_pattern"):
+            name = self._get_text(pattern)
+            self._add_instr(Assign(loc=loc, id=PVar(name), exp=base))
+            if src_node is not None:
+                self._add_instrs(self._check_expression_for_taint_source(src_node, name, loc))
+        elif t in ("assignment_pattern", "object_assignment_pattern"):
+            left = pattern.child_by_field_name("left")
+            if left is not None:
+                self._bind_pattern(left, base, src_node, loc)
+        elif t == "rest_pattern":
+            for c in pattern.named_children:
+                self._bind_pattern(c, base, src_node, loc)
+        elif t == "object_pattern":
+            for prop in pattern.named_children:
+                if prop.type == "pair_pattern":
+                    key = prop.child_by_field_name("key")
+                    val = prop.child_by_field_name("value")
+                    if key is not None and val is not None:
+                        self._bind_pattern(val, ExpFieldAccess(base, self._get_text(key).strip("'\"")),
+                                           src_node, loc)
+                elif prop.type == "rest_pattern":
+                    self._bind_pattern(prop, base, src_node, loc)
+                elif prop.type in ("shorthand_property_identifier_pattern",
+                                   "object_assignment_pattern"):
+                    name_node = prop if prop.type != "object_assignment_pattern" \
+                        else prop.child_by_field_name("left")
+                    if name_node is not None:
+                        self._bind_pattern(
+                            prop, ExpFieldAccess(base, self._get_text(name_node)), src_node, loc)
+        elif t == "array_pattern":
+            for i, el in enumerate(c for c in pattern.named_children if c.type != "comment"):
+                self._bind_pattern(el, ExpIndex(base, ExpConst.integer(i)), src_node, loc)
+
+    @staticmethod
+    def _unwrap_await(node: TSNode) -> TSNode:
+        """`await f(x)` (or `(await f(x))`) is the call `f(x)` for lowering:
+        the promise's resolved value is the call's result. Without this the
+        awaited call in `const r = await db.query(q)` was an opaque Assign."""
+        while node is not None and node.type in ("await_expression",
+                                                 "parenthesized_expression"):
+            inner = [c for c in node.named_children if c.type != "comment"]
+            if len(inner) != 1:
+                break
+            node = inner[0]
+        return node
+
     def _translate_var_declaration(self, node: TSNode) -> None:
         """Translate variable declaration: const/let/var x = value"""
         for child in node.children:
@@ -1475,7 +1548,12 @@ class JavaScriptFrontend:
                 target_name = self._get_text(name_node)
                 loc = self._get_location(child)
 
+                if value_node and name_node.type in ("object_pattern", "array_pattern"):
+                    self._translate_destructuring(name_node, value_node, loc)
+                    continue
+
                 if value_node:
+                    value_node = self._unwrap_await(value_node)
                     if value_node.type == "call_expression":
                         instrs = self._translate_call_assignment(target_name, value_node, loc)
                         self._add_instrs(instrs)
@@ -1502,6 +1580,7 @@ class JavaScriptFrontend:
 
         target_name = self._get_text(left)
         loc = self._get_location(node)
+        right = self._unwrap_await(right)
 
         if right.type == "call_expression":
             instrs = self._translate_call_assignment(target_name, right, loc)
@@ -1909,6 +1988,19 @@ class JavaScriptFrontend:
         instrs = []
 
         func_name = self._get_call_name(call_node)
+        # A call chained on a call -- `execSync(cmd).toString()`,
+        # `fetch(u).then(f)` -- lowers the inner call first, into a temporary
+        # that is the outer call's receiver. Named as one opaque string, the
+        # inner sink was never a Call at all.
+        func_node = call_node.child_by_field_name("function")
+        if func_node is not None and func_node.type == "member_expression":
+            obj_node = func_node.child_by_field_name("object")
+            prop_node = func_node.child_by_field_name("property")
+            if obj_node is not None and obj_node.type == "call_expression" and prop_node is not None:
+                inner = f"$chain{self._ident_counter}"
+                self._ident_counter += 1
+                instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
+                func_name = f"{inner}.{self._get_text(prop_node)}"
         args = self._get_call_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 

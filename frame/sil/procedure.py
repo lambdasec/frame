@@ -225,6 +225,19 @@ class ProcSpec:
     # Is this a pure function (no side effects)?
     is_pure: bool = False
 
+    # Sink kinds that name the same injection: OS command sinks are spelled
+    # `shell` in some specs and `command` in others, so a sanitizer for one
+    # (`shlex.quote`: shell) must cover the other (`os.system`: command).
+    _SANITIZER_KIND_FAMILIES = (frozenset({"shell", "command", "shell_command"}),)
+
+    def __post_init__(self):
+        if self.is_sanitizer:
+            kinds = list(self.is_sanitizer)
+            for family in self._SANITIZER_KIND_FAMILIES:
+                if family & set(kinds):
+                    kinds.extend(sorted(family - set(kinds)))
+            self.is_sanitizer = kinds
+
     def is_taint_source(self) -> bool:
         """Check if this function is a taint source"""
         return self.is_source is not None

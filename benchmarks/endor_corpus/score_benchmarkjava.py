@@ -47,6 +47,7 @@ def _git_commit(repo: Path) -> str:
 def _scan_repo(repo: Path) -> List[Dict[str, Any]]:
     """Scan BenchmarkJava's testcode directory with Frame; return normalized findings."""
     from frame.sil import FrameScanner
+    from frame.sil.scanner import collapse_per_file_cwe
 
     testcode = repo / OB.TESTCODE_REL
     files = sorted(testcode.glob("*.java")) if testcode.exists() else \
@@ -63,7 +64,8 @@ def _scan_repo(repo: Path) -> List[Dict[str, Any]]:
             log(f"  scanner error on {f.name}: {exc}")
             continue
         rel = str(f.relative_to(repo)) if str(f).startswith(str(repo)) else str(f)
-        for v in res.vulnerabilities:
+        # One CWE label per test file: score that view (see collapse_per_file_cwe).
+        for v in collapse_per_file_cwe(res.vulnerabilities):
             findings.append({"path": rel, "cwe": v.cwe_id,
                              "severity": v.severity.value, "line": v.line})
     return findings

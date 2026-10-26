@@ -28,6 +28,23 @@ from frame.sil.scanner import FrameScanner, ScanResult, Severity
 from frame.sil.llm_client import LLMUnavailableError
 
 
+
+LANGUAGE_HELP = (
+    "Source language. Each file is analysed in the language its extension names; "
+    "this picks which files a directory scan walks (default: every supported "
+    "source file) and the language of files with an unknown extension. Symbolic "
+    "frontends: python, javascript, typescript, java, c, cpp, csharp. Any other "
+    "language (e.g. php, ruby, go) runs LLM-detect only under --ai.")
+PATTERN_HELP = ("Glob pattern for directory scan (default: every file of --language, "
+                "or every supported source file)")
+
+
+def add_language_and_pattern_args(scan_parser) -> None:
+    """`-l` / `-p` for `scan`, shared by this parser and `frame/cli.py`'s so the
+    two cannot drift. Both default to None; `cmd_scan` resolves them."""
+    scan_parser.add_argument("-l", "--language", default=None, help=LANGUAGE_HELP)
+    scan_parser.add_argument("-p", "--pattern", default=None, help=PATTERN_HELP)
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser"""
     parser = argparse.ArgumentParser(
@@ -43,18 +60,7 @@ def create_parser() -> argparse.ArgumentParser:
         "target",
         help="File or directory to scan"
     )
-    scan_parser.add_argument(
-        "-l", "--language",
-        default="python",
-        help="Source language (default: python). Symbolic frontends: python, "
-             "javascript, typescript, java, c, cpp, csharp. Any other language "
-             "(e.g. php, ruby, go) runs LLM-detect only under --ai."
-    )
-    scan_parser.add_argument(
-        "-p", "--pattern",
-        default="**/*.py",
-        help="Glob pattern for directory scan (default: **/*.py)"
-    )
+    add_language_and_pattern_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
         action="store_true",
@@ -248,9 +254,12 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
     return "\n".join(lines)
 
 
-def format_json_result(results: List[ScanResult]) -> str:
-    """Format results as JSON"""
-    if len(results) == 1:
+def format_json_result(results: List[ScanResult], directory: bool = False) -> str:
+    """Format results as JSON: one file's object for a file target, the
+    `{"files": [...], "summary": ...}` shape for a directory target -- even when
+    it holds a single file, so the schema depends on what was scanned, never on
+    how many files matched."""
+    if len(results) == 1 and not directory:
         return results[0].to_json()
     else:
         combined = {
@@ -364,7 +373,7 @@ def cmd_scan(args) -> int:
         # AI layer: --ai turns on both; --llm-detect / --llm-triage are granular.
         ai = getattr(args, "ai", False)
         scanner = FrameScanner(
-            language=args.language,
+            language=args.language or "python",
             verify=not args.no_verify,
             timeout=args.timeout,
             verbose=args.verbose,
@@ -394,8 +403,10 @@ def cmd_scan(args) -> int:
                 exclude_dirs = list(DEFAULT_EXCLUDED_SCAN_DIRS) + config.exclude
             else:
                 exclude_dirs = None
-            results = scanner.scan_directory(str(target), args.pattern,
-                                              exclude_dirs=exclude_dirs)
+            from frame.sil.scanner import language_extensions
+            results = scanner.scan_directory(
+                str(target), args.pattern, exclude_dirs=exclude_dirs,
+                extensions=language_extensions(args.language))
     except LLMUnavailableError as e:
         print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
               file=sys.stderr)
@@ -418,7 +429,7 @@ def cmd_scan(args) -> int:
                 print(output)
 
     elif args.format == "json":
-        output = format_json_result(results)
+        output = format_json_result(results, directory=target.is_dir())
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)

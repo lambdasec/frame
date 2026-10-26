@@ -57,8 +57,12 @@ pip install -e ".[scan]"      # scanner + all five language grammars
 # Scan for vulnerabilities
 frame scan app.py
 
-# Scan a directory
-frame scan src/ --pattern "**/*.py"
+# Scan a directory: every Python, JS/TS, Java, C/C++ and C# file, each in its own language
+frame scan src/
+
+# Only one language, or a custom glob
+frame scan src/ -l java
+frame scan src/ --pattern "app/**/*.py"
 
 # AI-assisted scan: LLM detection + triage (needs an LLM endpoint, see below)
 frame scan src/ --ai
@@ -91,7 +95,7 @@ Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus
 
 | Command | What it does |
 |---------|--------------|
-| `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. Directory scans skip agent/tool and dependency directories by default (`.git`, `.claude/worktrees`, `.cursor/worktrees`, `.worktrees`, `.idea`, `.vscode`, `node_modules`, `.venv`, `venv` only if it looks like a virtualenv, `.tox`, `__pycache__`, `.mypy_cache`, `.pytest_cache`); `--no-default-excludes` to scan them anyway. |
+| `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. A directory scan walks every supported source file (`-l <lang>` or `-p <glob>` to narrow it) and its JSON is always `{"files": [...], "summary": ...}`. Findings are reported per function: the same CWE in two handlers is two findings. Directory scans skip agent/tool and dependency directories by default (`.git`, `.claude/worktrees`, `.cursor/worktrees`, `.worktrees`, `.idea`, `.vscode`, `node_modules`, `.venv`, `venv` only if it looks like a virtualenv, `.tox`, `__pycache__`, `.mypy_cache`, `.pytest_cache`); `--no-default-excludes` to scan them anyway. |
 | `frame exploit --target <url>` | Drive an LLM agent to exploit a live, authorized target. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |
 | `frame fix <path>` | Generate a fix for each scan finding, then re-scan the patched code to confirm the vulnerability is gone. `--guidance <findings.json\|->`, `--in-place` or `--diff`. |
 | `frame solve "<P> \|- <Q>"` | Check a single separation-logic entailment. |

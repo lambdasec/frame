@@ -1426,12 +1426,10 @@ class SILTranslator:
         if self._null_candidates or self._uninit_candidates:
             checks.extend(self._confirm_path_candidates(proc))
 
-        # Post-process: If we found non-XSS vulnerabilities, remove XSS-on-return checks
-        # to avoid duplicate reporting (e.g., SQLi test shouldn't also report XSS)
-        non_xss_vuln_types = {c.vuln_type for c in checks if c.vuln_type != VulnType.XSS}
-        if non_xss_vuln_types:
-            # Keep XSS only if it's at a real XSS sink, not just return
-            checks = [c for c in checks if c.vuln_type != VulnType.XSS or c.sink_type != SinkKind.HTML_OUTPUT.value]
+        # (A handler with another finding used to lose its XSS checks here so
+        # that a one-label benchmark file scored no extra report; that is
+        # benchmark scoring, applied by `scanner.collapse_per_file_cwe`. A
+        # handler with SQLi and reflected XSS has both.)
 
         # Post-hoc ownership discharge: drop IDOR checks whose fetched object is
         # later validated against the authenticated principal (a dominating
@@ -1933,18 +1931,9 @@ class SILTranslator:
             spec = self.program.get_spec(prop_name)
             if spec and spec.is_taint_sink():
                 sink_kind_str = spec.is_sink
-                sink_kind_map = {
-                    'sql': SinkKind.SQL_QUERY,
-                    'command': SinkKind.SHELL_COMMAND,
-                    'html': SinkKind.HTML_OUTPUT,
-                    'path': SinkKind.FILE_PATH,
-                    'ssrf': SinkKind.SSRF,
-                    'redirect': SinkKind.REDIRECT,
-                    'xpath': SinkKind.XPATH_QUERY,
-                    'ldap': SinkKind.LDAP_QUERY,
-                    'deserialize': SinkKind.DESERIALIZATION,
-                }
-                sink_enum = sink_kind_map.get(sink_kind_str, SinkKind.SQL_QUERY)
+                # Through the alias map like every other sink: a hand-rolled
+                # table with a SQL fallback reported unlisted kinds as SQLi.
+                sink_enum = resolve_sink_kind(sink_kind_str)
 
                 # Check if expression contains tainted variables
                 for src_var in source_vars:
@@ -2143,6 +2132,16 @@ class SILTranslator:
         # (the result may overwrite one of them, e.g. q = join(q, basename(p))).
         pre_call_input_kinds = self._call_input_sanitization(
             instr, spec, func_name, state)
+
+        # A sink call nested inside an argument -- the `new FileReader(path)` in
+        # `new BufferedReader(new FileReader(path))` -- is evaluated too, though
+        # the frontend lowered only the outer call to an instruction.
+        for arg_exp, _ in instr.args:
+            for _f, inner_kind, tainted_args in self._get_embedded_sink_calls(arg_exp, state):
+                for tainted_var in tainted_args:
+                    checks.append(self._create_taint_check(
+                        instr, state, proc_name, tainted_var,
+                        resolve_sink_kind(inner_kind, default=SinkKind.EVAL)))
 
         # C/C++: a taint-source call nested inside an argument -- the `getenv(...)`
         # in `atoi(getenv("X"))` -- never reaches the IR as its own instruction, so
@@ -2468,6 +2467,25 @@ class SILTranslator:
                                         location=instr.loc or Location.unknown(),
                                         description=f"Tainted data from '{src_chain}' flows to {spec.is_sink} sink",
                                         source_var=src_chain,
+                                        source_location=instr.loc or Location.unknown(),
+                                        sink_type=spec.is_sink,
+                                        procedure_name=proc_name,
+                                    ))
+
+                                # Inline source CALLS in the sink argument, e.g.
+                                # requests.get(request.args.get("u")) inside a
+                                # return expression, where the frontend emits the
+                                # Call but no TaintSink. Not through a sanitizer
+                                # for this sink.
+                                for src_func, src_kind in self._get_embedded_source_calls(
+                                        arg_exp, sink_kind):
+                                    checks.append(VulnerabilityCheck(
+                                        formula=And(Source(Var(src_func), src_kind),
+                                                    Sink(Var(src_func), spec.is_sink)),
+                                        vuln_type=VulnType.from_sink_kind(sink_kind),
+                                        location=instr.loc or Location.unknown(),
+                                        description=f"Tainted data from '{src_func}' flows to {spec.is_sink} sink",
+                                        source_var=src_func,
                                         source_location=instr.loc or Location.unknown(),
                                         sink_type=spec.is_sink,
                                         procedure_name=proc_name,
@@ -3385,7 +3403,7 @@ class SILTranslator:
         # Check for embedded taint source calls in the sink expression
         # E.g., Process.Start("cmd", "/C " + Console.ReadLine()) - the ReadLine() is a source
         # flowing directly to the sink without going through a variable
-        embedded_sources = self._get_embedded_source_calls(instr.exp)
+        embedded_sources = self._get_embedded_source_calls(instr.exp, instr.kind)
         for func_name, source_kind_str in embedded_sources:
             # This is a direct taint source -> sink flow
             # Create vulnerability check for this direct flow
@@ -6248,6 +6266,24 @@ class SILTranslator:
             return f"{self._exp_to_str(exp.base)}[{self._exp_to_str(exp.index)}]"
         return str(exp)
 
+    # Attributes of a Python web request that the server sets, not the client:
+    # the authenticated user (Django/DRF), the server-side session, the auth
+    # token object. A Django handler's `request` parameter is tainted as a
+    # whole, so without this `request.user.username` reached sinks as input.
+    _REQUEST_SERVER_STATE_ATTRS = frozenset({"user", "session", "auth"})
+
+    def _is_request_server_state(self, exp: ExpFieldAccess) -> bool:
+        """Is `exp` a read of `request.user...` / `request.session...` /
+        `request.auth...` in Python?"""
+        if (getattr(self.program, "language", "") or "").lower() != "python":
+            return False
+        cur = exp
+        while isinstance(cur.base, ExpFieldAccess):
+            cur = cur.base
+        return (isinstance(cur.base, ExpVar)
+                and self._get_var_name(cur.base.var) == "request"
+                and cur.field_name in self._REQUEST_SERVER_STATE_ATTRS)
+
     def _get_exp_vars(self, exp: Exp) -> List[str]:
         """Get all variable names referenced in expression"""
         if isinstance(exp, ExpVar):
@@ -6279,6 +6315,8 @@ class SILTranslator:
         if isinstance(exp, ExpUnOp):
             return self._get_exp_vars(exp.operand)
         if isinstance(exp, ExpFieldAccess):
+            if self._is_request_server_state(exp):
+                return []
             return self._get_exp_vars(exp.base)
         if isinstance(exp, ExpIndex):
             return self._get_exp_vars(exp.base) + self._get_exp_vars(exp.index)
@@ -6352,9 +6390,14 @@ class SILTranslator:
 
         return result
 
-    def _get_embedded_source_calls(self, exp: Exp) -> List[Tuple[str, str]]:
+    def _get_embedded_source_calls(self, exp: Exp,
+                                   sink_kind=None) -> List[Tuple[str, str]]:
         """
         Extract all function calls from an expression that are taint sources.
+
+        With `sink_kind`, a source nested inside a call that sanitizes for that
+        sink (`shlex.quote(request.args.get("d"))` under a command sink) does
+        not count.
 
         Returns list of (func_name, source_kind) tuples for each source call found.
         """
@@ -6383,28 +6426,31 @@ class SILTranslator:
             spec = self.program.get_spec(func_name)
             if spec and spec.is_taint_source():
                 result.append((func_name, spec.is_source))
+            if sink_kind is not None and spec and spec.is_taint_sanitizer() \
+                    and self._sanitizes_kind(spec.is_sanitizer, sink_kind):
+                return result
 
             # Recurse into arguments to find nested source calls
             for arg in exp.args:
-                result.extend(self._get_embedded_source_calls(arg))
+                result.extend(self._get_embedded_source_calls(arg, sink_kind))
 
         elif isinstance(exp, ExpBinOp):
-            result.extend(self._get_embedded_source_calls(exp.left))
-            result.extend(self._get_embedded_source_calls(exp.right))
+            result.extend(self._get_embedded_source_calls(exp.left, sink_kind))
+            result.extend(self._get_embedded_source_calls(exp.right, sink_kind))
 
         elif isinstance(exp, ExpUnOp):
-            result.extend(self._get_embedded_source_calls(exp.operand))
+            result.extend(self._get_embedded_source_calls(exp.operand, sink_kind))
 
         elif isinstance(exp, ExpStringConcat):
             for part in exp.parts:
-                result.extend(self._get_embedded_source_calls(part))
+                result.extend(self._get_embedded_source_calls(part, sink_kind))
 
         elif isinstance(exp, ExpIndex):
-            result.extend(self._get_embedded_source_calls(exp.base))
-            result.extend(self._get_embedded_source_calls(exp.index))
+            result.extend(self._get_embedded_source_calls(exp.base, sink_kind))
+            result.extend(self._get_embedded_source_calls(exp.index, sink_kind))
 
         elif isinstance(exp, ExpFieldAccess):
-            result.extend(self._get_embedded_source_calls(exp.base))
+            result.extend(self._get_embedded_source_calls(exp.base, sink_kind))
 
         return result
 

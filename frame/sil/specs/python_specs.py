@@ -97,6 +97,10 @@ DJANGO_SPECS = {
     "raw": _sink("sql", [0], "Django Manager.raw()"),
 
     # Template rendering (XSS)
+    # HttpResponse's default content type is text/html, so its body renders.
+    # The frontend renames a call with a non-HTML content_type/mimetype literal
+    # so it does not resolve here (`_NON_HTML_RESPONSE_SUFFIX`).
+    "HttpResponse": _sink("html", [0], "Django HttpResponse body (XSS)"),
     "mark_safe": _sink("html", [0], "Django mark_safe (XSS)"),
     "SafeString": _sink("html", [0], "Django SafeString (XSS)"),
 
@@ -187,6 +191,8 @@ FILESYSTEM_SPECS = {
     "builtins.open": _sink("filesystem", [0], "File open"),
     "io.open": _sink("filesystem", [0], "File open"),
     "codecs.open": _sink("filesystem", [0], "codecs.open (path traversal CWE-22)"),
+    "send_file": _sink("filesystem", [0], "Flask send_file (path traversal CWE-22)"),
+    "flask.send_file": _sink("filesystem", [0], "Flask send_file (path traversal CWE-22)"),
 
     # Path operations
     "os.path.join": _propagator([0, 1], "Path join"),

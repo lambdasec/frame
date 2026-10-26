@@ -1731,12 +1731,36 @@ class PythonFrontend:
             end_column=node.end_point[1]
         )
 
+    # Response constructors whose body is HTML unless a content type says
+    # otherwise. With an explicit non-HTML `content_type=` / `mimetype=` literal
+    # the call is renamed so the XSS sink spec does not match it.
+    _HTML_RESPONSE_CALLS = frozenset({"HttpResponse", "http.HttpResponse",
+                                      "django.http.HttpResponse"})
+    _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
+
     def _get_call_name(self, call_node: TSNode) -> str:
         """Get full name of function being called"""
         func = call_node.child_by_field_name("function")
-        if func:
-            return self._get_text(func)
-        return ""
+        if not func:
+            return ""
+        name = self._get_text(func)
+        if name in self._HTML_RESPONSE_CALLS and self._has_non_html_content_type(call_node):
+            return name + self._NON_HTML_RESPONSE_SUFFIX
+        return name
+
+    def _has_non_html_content_type(self, call_node: TSNode) -> bool:
+        args_node = call_node.child_by_field_name("arguments")
+        for child in (args_node.children if args_node else []):
+            if child.type != "keyword_argument":
+                continue
+            key = child.child_by_field_name("name")
+            value = child.child_by_field_name("value")
+            if key is None or value is None or value.type != "string":
+                continue
+            if self._get_text(key) in ("content_type", "mimetype") \
+                    and "html" not in self._get_text(value).lower():
+                return True
+        return False
 
     def _get_call_args(self, call_node: TSNode) -> List[TSNode]:
         """Get argument nodes from call"""
