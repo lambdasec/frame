@@ -460,6 +460,10 @@ class Call(Instr):
     receiver_exact: bool = False       # receiver's runtime class IS receiver_type
     # Static type of each argument where the frontend knows it, else None.
     arg_types: Optional[List[Optional[str]]] = None
+    # The class whose method this call names, when the frontend can say (Java): the
+    # receiver's declared type, a class used as a qualifier (`Shell.run`), or the
+    # calling class for an unqualified call. Project-wide call resolution starts here.
+    callee_class: Optional[str] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)

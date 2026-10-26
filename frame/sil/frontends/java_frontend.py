@@ -1151,6 +1151,42 @@ class JavaFrontend:
                 return self._field_types.get(self._get_text(obj.child_by_field_name("field"))) or None
         return None
 
+    def _hoist_creation_receiver(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
+        """`new ProcessBuilder(cmd).start()`: the creation is a call of its own (a sink in its own
+        right), bound to a temporary that the method is then called on. Without this the whole
+        creation text became the method's name and neither call was analysed."""
+        name = self._get_method_name(call_node)
+        obj = call_node.child_by_field_name("object")
+        method = call_node.child_by_field_name("name")
+        if obj is not None and obj.type == "object_creation_expression" and method is not None:
+            tmp = f"$new{self._ident_counter}"
+            self._ident_counter += 1
+            return self._translate_object_creation_assignment(tmp, obj, loc), f"{tmp}.{self._get_text(method)}"
+        return [], name
+
+    def _callee_class(self, call_node: Optional[TSNode]) -> Optional[str]:
+        """The class a call's method belongs to: the receiver's declared type, a class name
+        used as a qualifier (`Shell.run(x)`: an identifier that is no variable and starts upper
+        case), or this class for `m(x)` / `this.m(x)` (which may be inherited)."""
+        if call_node is None:
+            return None
+        obj = call_node.child_by_field_name("object")
+        if obj is None or obj.type == "this":
+            return self._current_class
+        if obj.type == "identifier":
+            name = self._get_text(obj)
+            if name in self._var_types:
+                return self._var_types[name]
+            return name if name[:1].isupper() else None
+        if obj.type == "field_access":
+            target = obj.child_by_field_name("object")
+            if target is not None and target.type == "this":
+                return self._field_types.get(self._get_text(obj.child_by_field_name("field"))) or None
+            return None
+        if obj.type == "object_creation_expression":
+            return self._type_name(obj.child_by_field_name("type"))
+        return None
+
     def _receiver_exact(self, call_node: Optional[TSNode]) -> bool:
         obj = call_node.child_by_field_name("object") if call_node is not None else None
         return obj is not None and obj.type == "identifier" and self._get_text(obj) in self._exact_vars
@@ -1209,9 +1245,10 @@ class JavaFrontend:
         """Translate: target = method(args)"""
         instrs = []
 
-        method_name = self._get_method_name(call_node)
+        pre, method_name = self._hoist_creation_receiver(call_node, loc)
         args = self._get_method_args(call_node)
         instrs, args_exp = self._translate_args(args, loc)
+        instrs = pre + instrs
 
         ret_id = self._new_ident(target)
 
@@ -1223,6 +1260,7 @@ class JavaFrontend:
             receiver_type=self._receiver_type(call_node),
             receiver_exact=self._receiver_exact(call_node),
             arg_types=[self._arg_type(a) for a in args],
+            callee_class=self._callee_class(call_node),
         )
         instrs.append(call_instr)
 
@@ -1536,7 +1574,8 @@ class JavaFrontend:
         instrs = []
         loc = self._get_location(call_node)
 
-        method_name = self._get_method_name(call_node)
+        pre, method_name = self._hoist_creation_receiver(call_node, loc)
+        instrs.extend(pre)
         args = self._get_method_args(call_node)
         hoisted, args_exp = self._translate_args(args, loc)
         instrs.extend(hoisted)
@@ -1549,6 +1588,7 @@ class JavaFrontend:
             receiver_type=self._receiver_type(call_node),
             receiver_exact=self._receiver_exact(call_node),
             arg_types=[self._arg_type(a) for a in args],
+            callee_class=self._callee_class(call_node),
         )
         instrs.append(call_instr)
 

@@ -316,8 +316,8 @@ RUNTIME_SPECS = {
     "r.exec": _sink("command", [0, 1], "Runtime.exec (command injection)"),
 
     # ProcessBuilder - constructor takes command array
-    "ProcessBuilder": _sink("command", [0], "ProcessBuilder (command injection)"),
-    "new ProcessBuilder": _sink("command", [0], "ProcessBuilder (command injection)"),
+    "ProcessBuilder": _sink("command", [0, 1, 2, 3], "ProcessBuilder (command injection)"),
+    "new ProcessBuilder": _sink("command", [0, 1, 2, 3], "ProcessBuilder (command injection)"),
     "processBuilder.command": _sink("command", [0], "ProcessBuilder.command (command injection)"),
 }
 

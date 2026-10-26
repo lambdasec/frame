@@ -1729,6 +1729,27 @@ class SILTranslator:
         ref = self._project.resolve_call(
             self._file_key, func_name,
             self._cur_proc.class_name if self._cur_proc is not None else None)
+        if (ref is None and "." in func_name and func_name[:1].isupper()
+                and (getattr(self.program, "language", "") or "").lower() == "java"):
+            owner, _, method = func_name.rpartition(".")          # `Params.path(req)` nested in an expression
+            ref = self._project.resolve_java_call(self._file_key, owner, method, None)
+        proc = self._project.procedure(ref) if ref is not None else None
+        if proc is None or not self._plain_callee(proc):
+            return None
+        return Callee(ref, proc)
+
+    def _resolve_call_instr(self, instr: Call, func_name: str) -> Optional[Callee]:
+        """`_resolve_callee`, and for a Java call in a project the method of the class the frontend
+        says the call names (`Call.callee_class`), found through imports, packages, supertypes and
+        the single implementation of an interface (`ProjectContext.resolve_java_call`)."""
+        callee = self._resolve_callee(func_name)
+        if callee is not None or self._project is None:
+            return callee
+        owner = getattr(instr, "callee_class", None)
+        if not owner or (getattr(self.program, "language", "") or "").lower() != "java":
+            return None
+        ref = self._project.resolve_java_call(self._file_key, owner, func_name.rsplit(".", 1)[-1],
+                                              getattr(instr, "arg_types", None))
         proc = self._project.procedure(ref) if ref is not None else None
         if proc is None or not self._plain_callee(proc):
             return None
@@ -2826,7 +2847,7 @@ class SILTranslator:
         # A call to a procedure of this file: pass its argument taint on, and
         # take the result's taint from the callee's return summary (or, before
         # the callee has one, by default argument->result propagation).
-        callee = self._resolve_callee(func_name) if self._ipa_on else None
+        callee = self._resolve_call_instr(instr, func_name) if self._ipa_on else None
         if callee is not None:
             self._record_entry_taints(callee, instr, func_name, state)
             summary = self._ipa.return_summaries.get(callee.ref)

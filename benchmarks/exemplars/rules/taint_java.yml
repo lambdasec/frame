@@ -1,0 +1,54 @@
+rules:
+  - id: exemplar-java-sqli
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: request data reaches a SQL statement
+    pattern-sources:
+      - pattern: $REQ.getParameter(...)
+      - patterns:
+          - pattern: $T $X
+          - pattern-inside: |
+              $RET $M(..., @RequestParam $T $X, ...) { ... }
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $S.executeQuery($Q, ...)
+              - pattern: $S.executeUpdate($Q, ...)
+              - pattern: $S.execute($Q, ...)
+              - pattern: $J.queryForList($Q, ...)
+              - pattern: $J.query($Q, ...)
+          - focus-metavariable: $Q
+  - id: exemplar-java-cmdi
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: request data reaches a command
+    pattern-sources:
+      - pattern: $REQ.getParameter(...)
+    pattern-sinks:
+      - pattern: Runtime.getRuntime().exec(...)
+      - pattern: new ProcessBuilder(...)
+  - id: exemplar-java-path
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: request data reaches a file path
+    pattern-sources:
+      - pattern: $REQ.getParameter(...)
+    pattern-sinks:
+      - pattern: new File(...)
+      - pattern: new FileInputStream(...)
+  - id: exemplar-java-xss
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: request data reaches the response writer
+    pattern-sources:
+      - pattern: $REQ.getParameter(...)
+    pattern-sanitizers:
+      - pattern: StringEscapeUtils.escapeHtml4(...)
+    pattern-sinks:
+      - pattern: $W.println(...)
+      - pattern: $W.print(...)
+      - pattern: $W.write(...)

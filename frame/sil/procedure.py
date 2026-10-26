@@ -702,7 +702,8 @@ class Program:
         return "maybe"
 
     def resolve_java_call(self, class_name: str, method: str,
-                          arg_types: List[Optional[str]]) -> Optional[Procedure]:
+                          arg_types: List[Optional[str]],
+                          assume_closed: bool = False) -> Optional[Procedure]:
         """The procedure an unqualified call `method(args)` inside
         `class_name` invokes, or None when the file cannot settle it.
 
@@ -748,7 +749,8 @@ class Program:
         p, verdicts, params = cands[0]
         # Only one candidate here: it is the method called unless a supertype
         # of the class could contribute an overload this file does not show.
-        return None if p.class_open else p
+        # (A project that has seen the supertypes passes assume_closed.)
+        return None if (p.class_open and not assume_closed) else p
 
     def add_procedure(self, proc: Procedure) -> None:
         """Add a procedure to the program.

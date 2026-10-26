@@ -46,6 +46,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 
 PY_EXTENSIONS = (".py",)
 JS_EXTENSIONS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts")
+JAVA_EXTENSIONS = (".java",)
 # Extensions tried, in order, when a JS import omits one.
 _JS_TRY = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 # A TS import may name the emitted `.js` of a `.ts` source.
@@ -69,6 +70,8 @@ def language_family(path: Path) -> Optional[str]:
         return "python"
     if suffix in JS_EXTENSIONS:
         return "javascript"
+    if suffix in JAVA_EXTENSIONS:
+        return "java"
     return None
 
 
@@ -111,6 +114,15 @@ class FileModule:
     star_imports: List[str] = field(default_factory=list)         # Python `from m import *` (target keys)
     defined: Set[str] = field(default_factory=set)                # Python top-level names
     all_names: Optional[List[str]] = None                         # Python `__all__`
+    # Java: the package, single-type imports (simple name -> qualified name), on-demand
+    # imports (packages), each declared type's kind, and every type name the file mentions.
+    package: str = ""
+    java_imports: Dict[str, str] = field(default_factory=dict)
+    java_wildcards: List[str] = field(default_factory=list)
+    java_kinds: Dict[str, str] = field(default_factory=dict)      # type -> class | interface | enum | record
+    java_abstract: Set[str] = field(default_factory=set)
+    java_mentions: Set[str] = field(default_factory=set)
+    java_methods: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)   # type -> method -> procedures
 
 
 @dataclass
@@ -152,10 +164,13 @@ class ProjectIndex:
             if mod.family == "python":
                 self._read_python(mod, tree.root_node)
                 self._read_python_types(mod, tree.root_node)
+            elif mod.family == "java":
+                self._read_java(mod, tree.root_node)
             else:
                 self._read_javascript(mod, tree.root_node)
                 self._read_javascript_types(mod, tree.root_node)
         self._apply_star_imports()
+        self._link_java()
         for mod in self.modules.values():
             mod.imports.discard(mod.key)
             for target in mod.imports:
@@ -192,6 +207,133 @@ class ProjectIndex:
             if not changed:
                 break
 
+    # ---- Java ---------------------------------------------------------------
+
+    _JAVA_TYPE_NODES = ("class_declaration", "interface_declaration", "enum_declaration",
+                        "record_declaration", "annotation_type_declaration")
+
+    def _read_java(self, mod: FileModule, root: Any) -> None:
+        """Package, imports, declared types with their supertypes, and every type name used."""
+        for st in root.children:
+            if st.type == "package_declaration":
+                mod.package = next((_text(c) for c in st.named_children
+                                    if c.type in ("scoped_identifier", "identifier")), "")
+            elif st.type == "import_declaration":
+                text = _text(st).strip().removeprefix("import").strip().rstrip(";").strip()
+                if text.startswith("static "):
+                    continue                                   # static imports: members, not types
+                if text.endswith(".*"):
+                    mod.java_wildcards.append(text[:-2].strip())
+                else:
+                    mod.java_imports[text.rsplit(".", 1)[-1]] = text
+        stack = list(root.children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._JAVA_TYPE_NODES:
+                name = _text(n.child_by_field_name("name"))
+                if name:
+                    kind = n.type.split("_")[0]
+                    mod.java_kinds[name] = kind
+                    mod.classes.setdefault(name, {})
+                    supers = []
+                    for field_name in ("superclass", "interfaces", "extends_interfaces"):
+                        sn = n.child_by_field_name(field_name)
+                        if sn is None:
+                            sn = next((c for c in n.children if c.type == field_name), None)
+                        if sn is not None:
+                            supers += [_text(t).split("<")[0].rsplit(".", 1)[-1]
+                                       for t in self._java_types_in(sn)]
+                    for c in n.children:                        # `interface A extends B, C`
+                        if c.type == "extends_interfaces":
+                            supers += [_text(t).split("<")[0].rsplit(".", 1)[-1] for t in self._java_types_in(c)]
+                    mod.bases[name] = [x for x in dict.fromkeys(supers) if x]
+                    if any(c.type == "modifiers" and "abstract" in _text(c) for c in n.children):
+                        mod.java_abstract.add(name)
+            elif n.type == "type_identifier":
+                mod.java_mentions.add(_text(n))
+            elif n.type == "scoped_type_identifier":
+                mod.java_mentions.add(_text(n).rsplit(".", 1)[-1])
+            stack.extend(n.children)
+
+    @staticmethod
+    def _java_types_in(node: Any) -> List[Any]:
+        out, stack = [], [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "type_identifier" or n.type == "scoped_type_identifier":
+                out.append(n)
+                continue
+            if n.type == "type_arguments":
+                continue
+            stack.extend(reversed(n.children))
+        return out
+
+    def _link_java(self) -> None:
+        """Index Java types by qualified name and package; draw an edge from each file to the
+        files of the project types it mentions; record the implementers of each type."""
+        self.java_types: Dict[str, Tuple[str, str]] = {}
+        self.java_by_package: Dict[str, Dict[str, Tuple[str, str]]] = {}
+        ambiguous: Set[Tuple[str, str]] = set()
+        for mod in self.modules.values():
+            if mod.family != "java":
+                continue
+            for name in mod.java_kinds:
+                fqn = f"{mod.package}.{name}" if mod.package else name
+                self.java_types[fqn] = (mod.key, name)
+                pkg = self.java_by_package.setdefault(mod.package, {})
+                if name in pkg and pkg[name] != (mod.key, name):
+                    ambiguous.add((mod.package, name))
+                pkg[name] = (mod.key, name)
+        for pkg, name in ambiguous:                          # two files declare it: unresolvable by name
+            self.java_by_package[pkg].pop(name, None)
+        self.java_implementers: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+        for mod in self.modules.values():
+            if mod.family != "java":
+                continue
+            for cls, supers in mod.bases.items():
+                for sup in supers:
+                    target = self.resolve_java_type(mod.key, sup)
+                    if target is not None:
+                        self.java_implementers.setdefault(target, []).append((mod.key, cls))
+            for name in mod.java_mentions:
+                target = self.resolve_java_type(mod.key, name)
+                if target is not None:
+                    mod.imports.add(target[0])
+
+    def resolve_java_type(self, key: str, name: str) -> Optional[Tuple[str, str]]:
+        """(file, type) a type name written in file `key` means: its own file's, an explicit
+        import, the same package, an on-demand import. A name imported from outside the
+        project is not a project type."""
+        mod = self.modules.get(key)
+        if mod is None or mod.family != "java" or not name:
+            return None
+        if "." in name:
+            hit = self.java_types.get(name)
+            if hit is not None:
+                return hit
+            name = name.rsplit(".", 1)[-1]
+        if name in mod.java_kinds:
+            return key, name
+        if name in mod.java_imports:
+            return self.java_types.get(mod.java_imports[name])
+        same = self.java_by_package.get(mod.package, {}).get(name)
+        if same is not None:
+            return same
+        found = [self.java_by_package[p][name] for p in mod.java_wildcards
+                 if name in self.java_by_package.get(p, {})]
+        return found[0] if len(set(found)) == 1 else None
+
+    def java_supertypes(self, cls: Tuple[str, str]) -> List[Tuple[str, str]]:
+        mod = self.modules.get(cls[0])
+        if mod is None:
+            return []
+        out = []
+        for sup in mod.bases.get(cls[1], []):
+            target = self.resolve_java_type(cls[0], sup)
+            if target is not None:
+                out.append(target)
+        return out
+
     # ---- keys and paths -----------------------------------------------------
 
     def _key(self, path: Path) -> str:
@@ -205,6 +347,8 @@ class ProjectIndex:
         suffix = path.suffix.lower()
         if suffix == ".py":
             return "python"
+        if suffix == ".java":
+            return "java"
         return "typescript" if suffix in (".ts", ".tsx", ".mts", ".cts") else "javascript"
 
     def key_for(self, path: Path) -> Optional[str]:
@@ -756,6 +900,14 @@ class ProjectIndex:
         mod = self.modules.get(key)
         if mod is None:
             return
+        if mod.family == "java":
+            mod.procs = set(procedures)
+            mod.java_methods = {}
+            for name, p in procedures.items():
+                cls, simple = getattr(p, "class_name", None), getattr(p, "simple_name", name)
+                if cls and not simple.startswith("<"):
+                    mod.java_methods.setdefault(cls, {}).setdefault(simple, []).append(name)
+            return
         if mod.family == "python":
             mod.procs = {name for name, p in procedures.items()
                          if "." not in name and "#" not in name and not name.startswith("<")
@@ -850,7 +1002,7 @@ class ProjectIndex:
         frontend) makes from file `key`, or None. `caller_class` is the class
         the calling procedure belongs to (for `self.x.m(...)` receivers)."""
         mod = self.modules.get(key)
-        if mod is None:
+        if mod is None or mod.family == "java":          # Java calls go through resolve_java_call
             return None
         if mod.family == "javascript":
             for spec in sorted(mod.specs, key=len, reverse=True):
@@ -1059,6 +1211,12 @@ class ProjectIndex:
         return Closure(files=ordered, truncated=truncated, seeds=seeds)
 
 
+def _arity_fits(proc: Any, n_args: int) -> bool:
+    """Whether a call with `n_args` arguments can reach this Java method (varargs included)."""
+    n = len(proc.params)
+    return n == n_args or (getattr(proc, "has_varargs", False) and n_args >= n - 1)
+
+
 def _module_parts(path: Path, root: Path) -> Sequence[str]:
     """`path` below `root` without its extension, as module-name parts."""
     try:
@@ -1145,6 +1303,72 @@ class ProjectContext:
             return None
         program = self.programs.get(ref[0])
         return ref if program is not None and ref[1] in program.procedures else None
+
+    # ---- Java ---------------------------------------------------------------
+
+    def resolve_java_call(self, key: str, class_name: str, method: str,
+                          arg_types: Optional[List[Optional[str]]] = None) -> Optional[ProcRef]:
+        """The method `class_name.method(args)` names, called from file `key`: the class's
+        own, else the nearest project supertype's, else -- for an interface or abstract type --
+        the one concrete implementation the project has. None when the choice is not forced
+        (an overload that argument types cannot settle, two implementations)."""
+        cls = self.index.resolve_java_type(key, class_name)
+        if cls is None:
+            return None
+        return self._java_method(cls, method, arg_types, set())
+
+    def _java_method(self, cls: Tuple[str, str], method: str, arg_types: Optional[List[Optional[str]]],
+                     seen: Set[Tuple[str, str]]) -> Optional[ProcRef]:
+        if cls in seen:
+            return None
+        seen.add(cls)
+        file, name = cls
+        mod, program = self.index.modules.get(file), self.programs.get(file)
+        if mod is None or program is None:
+            return None
+        declared = mod.java_methods.get(name, {}).get(method, [])
+        if declared:
+            fits = (declared if arg_types is None else
+                    [n for n in declared if _arity_fits(program.procedures[n], len(arg_types))])
+            if not fits:
+                return None
+            if len(fits) == 1 and len(declared) == 1:
+                return file, fits[0]
+            if arg_types is None:
+                return None                         # several overloads and nothing to choose by
+            proc = program.resolve_java_call(name, method, arg_types, assume_closed=True)
+            return (file, proc.name) if proc is not None else None
+        for sup in self.index.java_supertypes(cls):
+            found = self._java_method(sup, method, arg_types, seen)
+            if found is not None:
+                return found
+        if mod.java_kinds.get(name) == "interface" or name in mod.java_abstract:
+            impls = self._java_implementations(cls, method, arg_types)
+            if len(impls) == 1:
+                return impls[0]
+        return None
+
+    def _java_implementations(self, cls: Tuple[str, str], method: str,
+                              arg_types: Optional[List[Optional[str]]]) -> List[ProcRef]:
+        """Concrete classes below `cls` that declare `method`, as procedures."""
+        out: List[ProcRef] = []
+        todo, seen = list(self.index.java_implementers.get(cls, [])), set()
+        while todo:
+            sub = todo.pop()
+            if sub in seen:
+                continue
+            seen.add(sub)
+            file, name = sub
+            mod, program = self.index.modules.get(file), self.programs.get(file)
+            if mod is None or program is None:
+                continue
+            declared = mod.java_methods.get(name, {}).get(method, [])
+            fits = (declared if arg_types is None else
+                    [n for n in declared if _arity_fits(program.procedures[n], len(arg_types))])
+            if len(fits) == 1:
+                out.append((file, fits[0]))
+            todo.extend(self.index.java_implementers.get(sub, []))
+        return list(dict.fromkeys(out))
 
     def procedure(self, ref: Optional[ProcRef]) -> Optional[Any]:
         if ref is None:
