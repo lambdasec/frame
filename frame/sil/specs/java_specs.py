@@ -807,14 +807,31 @@ JAVA_RETURN_TYPES = {
     "HttpServerResponse.setStatusMessage": "io.vertx.core.http.HttpServerResponse",
     # Servlet / Spring
     "HttpServletRequest.getSession": "javax.servlet.http.HttpSession",
+    "HttpServletRequest.getInputStream": "javax.servlet.ServletInputStream",
+    "HttpServletRequest.getReader": "java.io.BufferedReader",
+    "BufferedReader.lines": "java.util.stream.Stream",
     "RequestContextHolder.currentRequestAttributes": "org.springframework.web.context.request.ServletRequestAttributes",
     "ServletRequestAttributes.getRequest": "javax.servlet.http.HttpServletRequest",
     # JPA / Hibernate
     "EntityManager.createQuery": "javax.persistence.Query",
     "EntityManager.createNativeQuery": "javax.persistence.Query",
+    "SessionFactory.getCurrentSession": "org.hibernate.Session",
+    "SessionFactory.openSession": "org.hibernate.Session",
+    "Session.createCriteria": "org.hibernate.Criteria",
     "Session.createQuery": "org.hibernate.query.Query",
     "Session.createSQLQuery": "org.hibernate.query.Query",
     "Session.createNativeQuery": "org.hibernate.query.Query",
+    # Play
+    "Http.Request.body": "play.mvc.Http.RequestBody",
+    "Request.body": "play.mvc.Http.RequestBody",
+    "RequestBody.asJson": "com.fasterxml.jackson.databind.JsonNode",
+    "Http.RequestBody.asJson": "com.fasterxml.jackson.databind.JsonNode",
+    "JsonNode.get": "com.fasterxml.jackson.databind.JsonNode",
+    "JsonNode.path": "com.fasterxml.jackson.databind.JsonNode",
+    # java.net.http
+    "HttpRequest.newBuilder": "java.net.http.HttpRequest.Builder",
+    # jOOQ
+    "DSL.using": "org.jooq.DSLContext",
     # JDK
     "Runtime.getRuntime": "java.lang.Runtime",
 }

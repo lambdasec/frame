@@ -1,0 +1,66 @@
+[pack]
+name = "template-engines"
+language = "java"
+description = "Template and expression engines that evaluate their source: Velocity, FreeMarker, Thymeleaf, Groovy, MVEL, JEXL, OGNL, Pebble, Handlebars, Jinjava"
+detect = { imports = ["org.apache.velocity", "freemarker", "org.thymeleaf", "groovy", "org.mvel2", "org.apache.commons.jexl3",
+                      "org.apache.commons.jexl2", "ognl", "com.mitchellbosecke.pebble", "io.pebbletemplates", "com.github.jknack.handlebars",
+                      "com.hubspot.jinjava"] }
+
+# Velocity.evaluate(context, writer, logTag, String template): the template text is argument 3.
+[[sink]]
+call = ["org.apache.velocity.app.Velocity.evaluate", "org.apache.velocity.app.VelocityEngine.evaluate"]
+args = [3]
+kind = "template"
+description = "Velocity evaluates the string as a template (arbitrary method calls)"
+
+[[sink]]
+call = ["org.apache.velocity.runtime.resource.util.StringResourceRepository.putStringResource"]
+args = [1]
+kind = "template"
+
+# new Template(name, Reader source, Configuration), StringTemplateLoader.putTemplate(name, source)
+[[sink]]
+call = ["freemarker.template.Template.<init>", "freemarker.cache.StringTemplateLoader.putTemplate"]
+args = [1]
+kind = "template"
+description = "FreeMarker compiles the source text as a template (?new / API built-ins reach arbitrary classes)"
+
+[[sink]]
+call = ["org.thymeleaf.TemplateEngine.process", "org.thymeleaf.ITemplateEngine.process",
+        "org.thymeleaf.spring5.SpringTemplateEngine.process", "org.thymeleaf.spring6.SpringTemplateEngine.process"]
+kind = "template"
+description = "Thymeleaf resolves the first argument as a template (name or inline text); fragment / SpEL expressions run"
+
+[[sink]]
+call = ["groovy.lang.GroovyShell.evaluate", "groovy.lang.GroovyShell.parse", "groovy.util.Eval.me", "groovy.util.Eval.x",
+        "groovy.util.Eval.xy", "groovy.util.Eval.xyz", "groovy.lang.GroovyClassLoader.parseClass"]
+kind = "code"
+description = "Groovy compiles and runs the script text"
+
+[[sink]]
+call = ["groovy.text.SimpleTemplateEngine.createTemplate", "groovy.text.GStringTemplateEngine.createTemplate",
+        "groovy.text.StreamingTemplateEngine.createTemplate", "groovy.text.markup.MarkupTemplateEngine.createTemplate",
+        "groovy.text.XmlTemplateEngine.createTemplate"]
+kind = "template"
+
+[[sink]]
+call = ["org.mvel2.MVEL.eval", "org.mvel2.MVEL.evalToString", "org.mvel2.MVEL.evalToBoolean", "org.mvel2.MVEL.compileExpression",
+        "org.mvel2.MVEL.executeExpression", "org.mvel2.templates.TemplateRuntime.eval", "org.mvel2.templates.TemplateCompiler.<init>"]
+kind = "el"
+description = "MVEL evaluates the expression (arbitrary method calls)"
+
+[[sink]]
+call = ["org.apache.commons.jexl3.JexlEngine.createExpression", "org.apache.commons.jexl3.JexlEngine.createScript",
+        "org.apache.commons.jexl2.JexlEngine.createExpression", "org.apache.commons.jexl2.JexlEngine.createScript"]
+kind = "el"
+description = "JEXL parses the expression; without a restricted permission set it can call arbitrary methods"
+
+[[sink]]
+call = ["ognl.Ognl.getValue", "ognl.Ognl.setValue", "ognl.Ognl.parseExpression"]
+kind = "el"
+description = "OGNL evaluates the expression"
+
+[[sink]]
+call = ["com.mitchellbosecke.pebble.PebbleEngine.getLiteralTemplate", "io.pebbletemplates.pebble.PebbleEngine.getLiteralTemplate",
+        "com.github.jknack.handlebars.Handlebars.compileInline", "com.hubspot.jinjava.Jinjava.render"]
+kind = "template"

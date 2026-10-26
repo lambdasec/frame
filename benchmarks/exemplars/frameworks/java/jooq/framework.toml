@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/jooq"]
+requires_pack = true
+description = "jOOQ plain SQL: DSLContext.fetch/execute/resultQuery with a String, DSL.condition/field/table/sql with concatenation, bind values with ? and DSL.val"

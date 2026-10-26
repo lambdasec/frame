@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/jdk-core"]
+requires_pack = true
+description = "JDK APIs behind a Spring-free servlet: Runtime.exec / ProcessBuilder, java.nio Files / Paths, XML parsers (XXE hardened vs default), JNDI lookup"

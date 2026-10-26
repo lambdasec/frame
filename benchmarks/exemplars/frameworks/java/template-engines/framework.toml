@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/template-engines"]
+requires_pack = true
+description = "Server-side template and expression injection: Velocity, FreeMarker, Thymeleaf, Groovy, MVEL, JEXL, Pebble; request data used as the template source"

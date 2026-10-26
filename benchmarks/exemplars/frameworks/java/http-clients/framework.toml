@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/http-clients"]
+requires_pack = true
+description = "Outbound HTTP (SSRF): Apache HttpClient, OkHttp, java.net.http, java.net.URL, Jsoup; a servlet takes the URL, a service fetches it"

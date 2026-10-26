@@ -1,0 +1,24 @@
+[pack]
+name = "hibernate-jpa"
+language = "java"
+description = "Hibernate and JPA: HQL / JPQL / native query text, Criteria sqlRestriction"
+detect = { imports = ["org.hibernate", "javax.persistence", "jakarta.persistence"] }
+
+# The query string is the first argument; values bound with setParameter are not part of it.
+[[sink]]
+call = [
+    "org.hibernate.Session.createQuery", "org.hibernate.Session.createSQLQuery", "org.hibernate.Session.createNativeQuery",
+    "org.hibernate.StatelessSession.createQuery", "org.hibernate.StatelessSession.createSQLQuery",
+    "org.hibernate.StatelessSession.createNativeQuery",
+    "org.hibernate.query.QueryProducer.createQuery", "org.hibernate.query.QueryProducer.createNativeQuery",
+    "javax.persistence.EntityManager.createQuery", "javax.persistence.EntityManager.createNativeQuery",
+    "jakarta.persistence.EntityManager.createQuery", "jakarta.persistence.EntityManager.createNativeQuery",
+]
+kind = "sql"
+description = "HQL / JPQL / native SQL text built from the argument"
+
+# Criteria restriction with a raw SQL fragment.
+[[sink]]
+call = ["org.hibernate.criterion.Restrictions.sqlRestriction", "org.hibernate.criterion.Order.sqlFormula"]
+kind = "sql"
+description = "a raw SQL fragment inside a Criteria query"

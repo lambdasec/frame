@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/play"]
+requires_pack = true
+description = "Play Framework (Java): Controller actions take route parameters and Http.Request, redirect(), JDBC through an injected Database"

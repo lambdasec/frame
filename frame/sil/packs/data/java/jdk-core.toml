@@ -1,0 +1,14 @@
+[pack]
+name = "jdk-core"
+language = "java"
+description = "JDK naming and remoting APIs that load attacker-chosen objects: JNDI lookups, RMI Naming"
+detect = { imports = ["javax.naming", "java.rmi"] }
+
+# JNDI injection: a name like ldap://host/obj or rmi://host/obj makes the lookup fetch and
+# instantiate a remote object (Log4Shell's mechanism). Distinct from LDAP filter injection.
+[[sink]]
+call = ["javax.naming.Context.lookup", "javax.naming.Context.lookupLink", "javax.naming.InitialContext.lookup",
+        "javax.naming.InitialContext.doLookup", "javax.naming.InitialContext.lookupLink",
+        "java.rmi.Naming.lookup"]
+kind = "code"
+description = "JNDI lookup of a name chosen by the request (remote object loading)"

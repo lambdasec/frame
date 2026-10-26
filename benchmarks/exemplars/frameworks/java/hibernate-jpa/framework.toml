@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/hibernate-jpa"]
+requires_pack = true
+description = "Hibernate / JPA: HQL and native queries built by concatenation (Session, SessionFactory.getCurrentSession, EntityManager), Criteria sqlRestriction, parameter binding"

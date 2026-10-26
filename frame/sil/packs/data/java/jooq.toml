@@ -1,0 +1,24 @@
+[pack]
+name = "jooq"
+language = "java"
+description = "jOOQ plain-SQL API: the String passed to DSLContext.fetch / execute / resultQuery, and DSL.condition / field / table / sql fragments"
+detect = { imports = ["org.jooq"] }
+
+[[sink]]
+call = [
+    "org.jooq.DSLContext.fetch", "org.jooq.DSLContext.fetchOne", "org.jooq.DSLContext.fetchSingle",
+    "org.jooq.DSLContext.fetchAny", "org.jooq.DSLContext.fetchMany", "org.jooq.DSLContext.fetchLazy",
+    "org.jooq.DSLContext.fetchStream", "org.jooq.DSLContext.fetchValue", "org.jooq.DSLContext.fetchValues",
+    "org.jooq.DSLContext.fetchGroups", "org.jooq.DSLContext.fetchMap", "org.jooq.DSLContext.fetchAsync",
+    "org.jooq.DSLContext.execute", "org.jooq.DSLContext.query", "org.jooq.DSLContext.resultQuery",
+    "org.jooq.DSLContext.batch", "org.jooq.DSLContext.queries",
+    "org.jooq.impl.DSL.sql", "org.jooq.impl.DSL.condition", "org.jooq.impl.DSL.field",
+    "org.jooq.impl.DSL.table", "org.jooq.impl.DSL.query", "org.jooq.impl.DSL.resultQuery",
+]
+kind = "sql"
+description = "jOOQ plain SQL: the argument is SQL text (bind values go after it, or through DSL.val)"
+
+# Identifiers are quoted and values are bound, so neither can change the statement's structure.
+[[sanitizer]]
+call = ["org.jooq.impl.DSL.name", "org.jooq.impl.DSL.quotedName", "org.jooq.impl.DSL.unquotedName", "org.jooq.impl.DSL.val"]
+kinds = ["sql"]

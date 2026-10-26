@@ -113,6 +113,8 @@ class JavaFrontend:
         self._current_class_annotations: list = []
         self._nested_calls: Dict[Tuple[int, int], str] = {}
         self._lambda_names: Dict[int, str] = {}
+        self._lambda_parents: List[Tuple[Procedure, Procedure]] = []
+        self._receiver_facts: Dict[str, set] = {}
         self._handler_lambdas: set = set()
         self._qualified_names: set = set()
         self._method_refs: List[Tuple[Optional[str], str, str]] = []
@@ -138,6 +140,7 @@ class JavaFrontend:
         self._ident_counter = 0
         self._nested_calls = {}
         self._lambda_names = {}
+        self._lambda_parents = []
         self._handler_lambdas = set()
         self._method_refs = []
         self._in_call_args = False
@@ -153,8 +156,11 @@ class JavaFrontend:
         self._qualified_names = set(re.findall(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\.([A-Z]\w*)", source_code))
         program.imports = self._imports.as_dict()
 
+        self._receiver_facts = self._collect_receiver_facts(tree.root_node)
         self._translate_compilation_unit(tree.root_node, program)
         self._apply_method_references(program)
+        for lam, parent in self._lambda_parents:             # the parents' names are final now
+            lam.parent = parent.name
         annotate_program_calls(program, self._imports, self._local_types)
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
@@ -165,6 +171,7 @@ class JavaFrontend:
             self._scan_csrf_disabled(tree.root_node, program)
         program.import_wildcards = list(self._imports.wildcards)
         finish_program(program, self.packs, source_code)
+        self._apply_neutral_specs(program)
         return program
 
     def _collect_declarations(self, root: TSNode):
@@ -402,8 +409,77 @@ class JavaFrontend:
             program.add_procedure(proc)
 
     def _translate_interface(self, node: TSNode, program: Program) -> None:
-        """Translate interface (skip method bodies as they're abstract)"""
+        """Translate interface (skip method bodies as they're abstract), except the methods whose
+        annotation IS the implementation: a MyBatis mapper's `@Select("... ${name} ...")`."""
         self._record_class_info(node, program, "interface")
+        name_node = node.child_by_field_name("name")
+        body = node.child_by_field_name("body")
+        if name_node is None or body is None:
+            return
+        iface = self._get_text(name_node)
+        for member in body.named_children:
+            if member.type == "method_declaration":
+                proc = self._mybatis_mapper_method(member, iface)
+                if proc is not None:
+                    program.add_procedure(proc)
+
+    _MYBATIS_STATEMENTS = ("Select", "Update", "Delete", "Insert")
+    _MYBATIS_SUBSTITUTION = re.compile(r"\$\{\s*([A-Za-z_][\w]*)")
+
+    def _mybatis_mapper_method(self, member: TSNode, iface: str) -> Optional[Procedure]:
+        """A mapper method whose SQL text substitutes a parameter with `${...}` (spliced into the
+        statement, unlike the bound `#{...}`): a procedure that sinks those parameters."""
+        sql = ""
+        annotations = self._get_annotations(member)
+        parsed = [parse_annotation(a, self._imports, value_alias=True) for a in annotations]
+        if not any(a.name in self._MYBATIS_STATEMENTS for a in parsed):
+            return None
+        mods = next((c for c in member.children if c.type == "modifiers"), None)
+        for ann in (mods.children if mods is not None else ()):
+            if ann.type == "annotation" and self._get_text(ann.child_by_field_name("name")) in self._MYBATIS_STATEMENTS:
+                sql += " ".join(self._get_text(n).strip('"') for n in self._descendants(ann, stop=())
+                                if n.type == "string_fragment")
+        roots = set(self._MYBATIS_SUBSTITUTION.findall(sql))
+        if not roots:
+            return None
+        params_node = member.child_by_field_name("parameters")
+        names: List[Tuple[str, str]] = []           # (java name, name the SQL uses)
+        for ch in (params_node.children if params_node is not None else ()):
+            if ch.type != "formal_parameter":
+                continue
+            nm = ch.child_by_field_name("name")
+            if nm is None:
+                continue
+            java = self._get_text(nm)
+            sql_name = java
+            for a in self._get_annotations(ch):
+                pa = parse_annotation(a, self._imports, value_alias=True)
+                if pa.name == "Param" and pa.args.get("value"):
+                    sql_name = str(pa.args["value"]).strip('"')
+            names.append((java, sql_name))
+        hit = [j for j, sn in names if sn in roots]
+        if not hit and len(names) == 1:                   # a lone parameter is `${anything}`
+            hit = [names[0][0]]
+        if not hit:
+            return None
+        loc = self._get_location(member)
+        proc = Procedure(name=f"{iface}.{self._get_text(member.child_by_field_name('name'))}",
+                         params=[(PVar(j), Typ.unknown_type()) for j, _ in names],
+                         ret_type=Typ.unknown_type(), loc=loc, is_method=True)
+        proc.class_name = iface
+        proc.annotations = parsed
+        proc.param_type_names = self._param_type_names(member)
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        for j in hit:
+            entry.add_instr(TaintSink(loc=loc, exp=ExpVar(PVar(j)), kind=SinkKind.SQL_QUERY,
+                                      description=f"MyBatis ${{{j}}} splices the value into the SQL text"))
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        proc.connect(entry.id, exit_node.id)
+        return proc
 
     def _translate_enum(self, node: TSNode, program: Program) -> None:
         """Translate enum (similar to class)"""
@@ -1146,7 +1222,10 @@ class JavaFrontend:
             if type_node is None:
                 return None
         if type_node.type == "scoped_type_identifier":
-            return self._get_text(type_node).rsplit(".", 1)[-1]
+            parts = self._get_text(type_node).split(".")
+            owners = [p for p in parts[:-1] if p[:1].isupper()]
+            # `Request.Builder` / `Map.Entry`: a nested class keeps its outer class's name
+            return ".".join(owners[-1:] + parts[-1:])
         if type_node.type == "type_identifier":
             text = self._get_text(type_node)
             if text == "var":
@@ -1320,13 +1399,17 @@ class JavaFrontend:
     def _implicit_import(self, qualified: str) -> str:
         """The simple name of a documented return type, made resolvable to its canonical name
         (the file need not import a type it only reaches through a chain)."""
-        simple = qualified.rsplit(".", 1)[-1]
-        if simple in self._imports.names or simple in self._local_types:
+        parts = qualified.split(".")
+        first_class = next((i for i, p in enumerate(parts) if p[:1].isupper()), len(parts) - 1)
+        outer = parts[first_class]
+        simple = ".".join(parts[first_class:])          # `HttpRequest.Builder` keeps its outer class
+        if outer in self._imports.names or outer in self._local_types:
             return simple
         if qualified.startswith(JAKARTA_MIGRATED) and any(
                 v.startswith("jakarta.") for v in self._imports.names.values()):
             qualified = "jakarta." + qualified[len("javax."):]
-        self._imports.names[simple] = qualified
+            parts = qualified.split(".")
+        self._imports.names[outer] = ".".join(parts[:first_class + 1])
         return simple
 
     def _hoist_creation_receiver(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
@@ -1451,6 +1534,9 @@ class JavaFrontend:
         recv_type = self._receiver_type(call_node)
         if self._name_spec_vetoed(method_name, recv_type):
             return None
+        if call_node is not None and self._receiver_tag(call_node) == "hardened" \
+                and method_name.rsplit(".", 1)[-1] in self._TAG_SENSITIVE["hardened"]:
+            return None
         if recv_type and recv_type == self._current_class and (
                 '.' not in method_name or method_name.startswith("this.")):
             return None  # the class's own method: its body is analysed instead
@@ -1470,15 +1556,44 @@ class JavaFrontend:
         """The receiver's type is known and is not what a bare-name spec (`search`, `execute`) is
         about: that call is a project method or another library's method of the same name. Only a
         spec keyed on the type applies (the caller already tried those)."""
-        if not recv_type or '.' not in method_name:
+        if '.' not in method_name:
             return False
-        return self._is_project_type(recv_type) or self._not_a_name_only_receiver(recv_type, method_name)
+        if recv_type and (self._is_project_type(recv_type) or self._not_a_name_only_receiver(recv_type, method_name)):
+            return True
+        # a class used as the qualifier (`Pattern.compile`, `Velocity.evaluate`)
+        head = method_name.rsplit(".", 1)[0]
+        return (not recv_type and head[:1].isupper() and "." not in head and head not in self._var_types
+                and self._not_a_name_only_receiver(head, method_name))
+
+    def _set_neutral_spec(self, call: Call, call_node: TSNode, method_name: str, nargs: int) -> None:
+        """A configured deserialiser's call is neutral for good (`pack_spec`, ahead of any pack rule);
+        a call whose bare-name library spec is vetoed gets the neutral spec only if no pack rule
+        claims it (`neutral_spec`, applied after the packs)."""
+        spec = self._neutral_spec(call_node, method_name, nargs)
+        if spec is None:
+            return
+        if self._receiver_tag(call_node) == "hardened":
+            call.pack_spec = spec
+        else:
+            call.neutral_spec = spec
+
+    def _apply_neutral_specs(self, program: Program) -> None:
+        for proc in program.procedures.values():
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    spec = getattr(instr, "neutral_spec", None)
+                    if spec is not None and getattr(instr, "pack_spec", None) is None:
+                        instr.pack_spec = spec
 
     def _neutral_spec(self, call_node: TSNode, method_name: str, nargs: int) -> Optional[ProcSpec]:
         """For a call whose bare-name spec is vetoed and that has no spec of its own: a spec that
         is neither source nor sink and keeps the default argument / receiver -> result flow, set on
         the Call so the translator's own name lookup cannot turn it into a sink either."""
         recv_type = self._receiver_type(call_node)
+        if self._receiver_tag(call_node) == "hardened" \
+                and method_name.rsplit(".", 1)[-1] in self._TAG_SENSITIVE["hardened"]:
+            return ProcSpec(taint_propagates=list(range(nargs)), taint_from_receiver=True,
+                            description="deserialiser configured with a type allow-list / safe constructor")
         if not self._name_spec_vetoed(method_name, recv_type):
             return None
         if self._lookup_spec(method_name, call_node) is not None \
@@ -1487,10 +1602,87 @@ class JavaFrontend:
         return ProcSpec(taint_propagates=list(range(nargs)), taint_from_receiver=True,
                         description="project / non-matching receiver: no library spec")
 
+    # -- configured receivers (hardened / polymorphic deserialisers) ----------------------------
+
+    _XSTREAM_HARDENING = frozenset({"allowTypes", "allowTypesByWildcard", "allowTypesByRegExp",
+                                    "addPermission", "setupDefaultSecurity"})
+    _JACKSON_POLYMORPHIC = frozenset({"enableDefaultTyping", "activateDefaultTyping",
+                                      "enableDefaultTypingAsProperty"})
+
+    def _collect_receiver_facts(self, root: TSNode) -> Dict[str, set]:
+        """Per variable name: the methods called on it and the text it was initialised with, over the
+        whole file, so `xstream.allowTypes(...)` anywhere marks that XStream as configured."""
+        facts: Dict[str, set] = {}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "variable_declarator":
+                nm, val = n.child_by_field_name("name"), n.child_by_field_name("value")
+                if nm is not None and val is not None:
+                    facts.setdefault(self._get_text(nm), set()).add("init:" + self._get_text(val))
+            elif n.type == "assignment_expression":
+                left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                if left is not None and right is not None:
+                    lname = self._get_text(left).replace("this.", "")
+                    facts.setdefault(lname, set()).add("init:" + self._get_text(right))
+            elif n.type == "method_invocation":
+                obj, nm = n.child_by_field_name("object"), n.child_by_field_name("name")
+                if nm is not None:
+                    method = self._get_text(nm)
+                    if obj is not None and obj.type in ("identifier", "field_access"):
+                        facts.setdefault(self._get_text(obj).replace("this.", ""), set()).add("call:" + method)
+                    # `XStream.setupDefaultSecurity(x)`: the argument is configured
+                    if method in self._XSTREAM_HARDENING:
+                        for a in self._get_method_args(n):
+                            if a.type == "identifier":
+                                facts.setdefault(self._get_text(a), set()).add("call:" + method)
+            stack.extend(n.children)
+        return facts
+
+    def _receiver_tag(self, call_node: Optional[TSNode]) -> Optional[str]:
+        """`hardened` for an XStream with a type allow-list / a SnakeYAML `Yaml(new SafeConstructor())`,
+        `polymorphic` for a Jackson ObjectMapper with default typing; else None."""
+        if call_node is None:
+            return None
+        obj = call_node.child_by_field_name("object")
+        if obj is None or obj.type not in ("identifier", "field_access"):
+            return None
+        name = self._get_text(obj).replace("this.", "")
+        facts = self._receiver_facts.get(name, set())
+        typ = self._receiver_type(call_node)
+        if typ == "XStream" and any(f.startswith("call:") and f[5:] in self._XSTREAM_HARDENING for f in facts):
+            return "hardened"
+        if typ == "XStream" and any("setupDefaultSecurity" in f or "allowTypes" in f or "addPermission" in f
+                                    for f in facts):
+            return "hardened"
+        if typ == "Yaml" and any(f.startswith("init:") and "SafeConstructor" in f for f in facts):
+            return "hardened"
+        if typ == "ObjectMapper" and any(
+                (f.startswith("call:") and f[5:] in self._JACKSON_POLYMORPHIC)
+                or (f.startswith("init:") and any(m in f for m in self._JACKSON_POLYMORPHIC)) for f in facts):
+            return "polymorphic"
+        return None
+
+    _TAG_SENSITIVE = {"hardened": frozenset({"fromXML", "load", "loadAs", "loadAll", "unmarshal"}),
+                      "polymorphic": frozenset({"readValue", "readValues", "convertValue", "treeToValue"})}
+
+    def _tag_sinks(self, call_node: TSNode, method_name: str, args_exp: list, loc: Location) -> List[Instr]:
+        """A Jackson mapper with default typing instantiates whatever class the JSON names."""
+        if self._receiver_tag(call_node) == "polymorphic" and args_exp \
+                and method_name.rsplit(".", 1)[-1] in self._TAG_SENSITIVE["polymorphic"]:
+            return [TaintSink(loc=loc, exp=args_exp[0][0], kind=SinkKind.DESERIALIZATION,
+                              description="Jackson with default typing instantiates the class the JSON names",
+                              receiver=self._call_receiver(method_name))]
+        return []
+
     # A bare method name that is a sink only on some library types (`execute` runs SQL on a JDBC
     # statement / template, not on a Vert.x query, an Executor or a Command).
     _NAME_ONLY_RECEIVERS = {
         "execute": re.compile(r"(Statement|Template|Connection|Operations|Session|Manager|Runner|Context|Client)$"),
+        "evaluate": re.compile(r"X[Pp]ath"),
+        "compile": re.compile(r"X[Pp]ath"),
+        "search": re.compile(r"(Context|Ldap|LDAP|Dir|Directory)"),
+        "lookup": re.compile(r"(Ldap|LDAP|Dir)"),
     }
 
     def _not_a_name_only_receiver(self, recv_type: str, method_name: str) -> bool:
@@ -1585,7 +1777,7 @@ class JavaFrontend:
             arg_types=[self._arg_type(a) for a in args],
             callee_class=self._callee_class(call_node),
         )
-        call_instr.pack_spec = self._neutral_spec(call_node, method_name, len(args))
+        self._set_neutral_spec(call_instr, call_node, method_name, len(args))
         instrs.append(call_instr)
 
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
@@ -1621,6 +1813,7 @@ class JavaFrontend:
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=spec.description))
 
+        instrs.extend(self._tag_sinks(call_node, method_name, args_exp, loc))
         if spec and spec.is_taint_sink() and self._sink_applies(spec, args):
             # Special handling for crypto/hash sinks that need algorithm checking
             if self._is_algorithm_based_sink(method_name):
@@ -1769,7 +1962,8 @@ class JavaFrontend:
         saved = (self._current_proc, self._current_node, self._node_counter, self._var_types,
                  self._constant_values, self._weak_algo_vars, self._in_call_args)
         parent_proc = self._current_proc
-        proc.parent = parent_proc.name if parent_proc is not None else None
+        if parent_proc is not None:
+            self._lambda_parents.append((proc, parent_proc))        # linked by final name later
         self._current_proc = proc
         self._node_counter = 0
         self._var_types = local_types
@@ -2115,11 +2309,12 @@ class JavaFrontend:
             arg_types=[self._arg_type(a) for a in args],
             callee_class=self._callee_class(call_node),
         )
-        call_instr.pack_spec = self._neutral_spec(call_node, method_name, len(args))
+        self._set_neutral_spec(call_instr, call_node, method_name, len(args))
         instrs.append(call_instr)
 
         # Use flexible spec lookup
         spec = self._lookup_spec(method_name, call_node)
+        instrs.extend(self._tag_sinks(call_node, method_name, args_exp, loc))
         if spec and spec.is_taint_sink() and self._sink_applies(spec, args):
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:

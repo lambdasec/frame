@@ -1,0 +1,29 @@
+[pack]
+name = "play"
+language = "java"
+description = "Play Framework (Java) controllers: route parameters, Http.Request, redirect()"
+detect = { imports = ["play.mvc"] }
+
+# Action methods of a Controller get the route's parameters (path / query values) directly.
+[[entrypoint]]
+id = "action-params"
+extends = ["play.mvc.Controller"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["Http.Request", "Request", "Http.RequestHeader", "RequestHeader", "Http.Context", "Context",
+                      "play.mvc.Http.*"]
+
+# The request carries everything else.
+[[entrypoint]]
+id = "action-request"
+extends = ["play.mvc.Controller"]
+method = ["*"]
+tainted_param_type = ["Http.Request", "Request", "Http.RequestHeader", "RequestHeader", "play.mvc.Http.Request",
+                      "play.mvc.Http.RequestHeader"]
+
+[[sink]]
+call = ["play.mvc.Results.redirect", "play.mvc.Controller.redirect", "play.mvc.Results.temporaryRedirect",
+        "play.mvc.Results.permanentRedirect", "play.mvc.Results.seeOther", "play.mvc.Results.movedPermanently"]
+name = ["redirect"]
+kind = "redirect"
+description = "redirect to a URL (the inherited Controller.redirect is written unqualified)"

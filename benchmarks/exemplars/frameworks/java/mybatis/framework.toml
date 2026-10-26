@@ -1,0 +1,4 @@
+language = "java"
+packs = []
+requires_pack = false
+description = "MyBatis annotation mappers: ${} splices a parameter into the SQL text, #{} binds it; mapper called from a Spring controller through a service"

@@ -1,0 +1,26 @@
+[pack]
+name = "javalin"
+language = "java"
+description = "Javalin handlers (lambdas and Handler method references taking a Context)"
+detect = { imports = ["io.javalin"] }
+
+# `app.get("/x", ctx -> ...)` (the frontend types the lambda's parameter from the registration)
+# and `handlers::search` / `void search(Context ctx)`: the Context hands out the request.
+[[entrypoint]]
+id = "javalin-context"
+method = ["*"]
+tainted_param_type = ["io.javalin.http.Context", "Context"]
+
+[[sink]]
+call = ["io.javalin.http.Context.html"]
+kind = "html"
+description = "ctx.html sends the string as a text/html body"
+
+[[sink]]
+call = ["io.javalin.http.Context.redirect"]
+kind = "redirect"
+
+[[sink]]
+call = ["io.javalin.http.Context.header"]
+args = [1]
+kind = "header"

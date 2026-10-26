@@ -1,0 +1,43 @@
+[pack]
+name = "http-clients"
+language = "java"
+description = "Outbound HTTP clients (SSRF): OkHttp, java.net.http, Jsoup, Apache HttpClient, Unirest, Retrofit and java.net.URL connections"
+detect = { imports = ["okhttp3", "java.net.http", "java.net.URL", "java.net.HttpURLConnection", "org.jsoup", "org.apache.http", "org.apache.hc", "kong.unirest", "com.mashape.unirest", "retrofit2"] }
+
+# `new Request.Builder().url(target).build()`
+[[sink]]
+call = ["okhttp3.Request.Builder.url"]
+kind = "ssrf"
+description = "OkHttp requests the URL"
+
+# `HttpRequest.newBuilder().uri(URI.create(target))` / `HttpRequest.newBuilder(URI.create(target))`
+[[sink]]
+call = ["java.net.http.HttpRequest.Builder.uri", "java.net.http.HttpRequest.newBuilder"]
+kind = "ssrf"
+description = "java.net.http requests the URI"
+
+[[sink]]
+call = ["org.jsoup.Jsoup.connect", "org.jsoup.Connection.url"]
+kind = "ssrf"
+description = "Jsoup fetches the URL"
+
+[[sink]]
+call = ["org.apache.http.client.methods.HttpGet.<init>", "org.apache.http.client.methods.HttpPost.<init>",
+        "org.apache.http.client.methods.HttpPut.<init>", "org.apache.http.client.methods.HttpDelete.<init>",
+        "org.apache.http.client.methods.HttpHead.<init>", "org.apache.http.client.methods.HttpPatch.<init>",
+        "org.apache.hc.client5.http.classic.methods.HttpGet.<init>", "org.apache.hc.client5.http.classic.methods.HttpPost.<init>",
+        "org.apache.http.client.fluent.Request.Get", "org.apache.http.client.fluent.Request.Post",
+        "org.apache.hc.client5.http.fluent.Request.get", "org.apache.hc.client5.http.fluent.Request.post"]
+kind = "ssrf"
+
+[[sink]]
+call = ["kong.unirest.Unirest.get", "kong.unirest.Unirest.post", "kong.unirest.Unirest.put",
+        "kong.unirest.Unirest.delete", "kong.unirest.Unirest.patch", "kong.unirest.Unirest.head",
+        "com.mashape.unirest.http.Unirest.get", "com.mashape.unirest.http.Unirest.post"]
+kind = "ssrf"
+
+# A form-urlencoded value cannot be an absolute URL (':' and '/' are escaped), so it can fill a
+# query parameter of a fixed endpoint but not choose the host.
+[[sanitizer]]
+call = ["java.net.URLEncoder.encode", "org.apache.commons.codec.net.URLCodec.encode"]
+kinds = ["ssrf", "redirect"]

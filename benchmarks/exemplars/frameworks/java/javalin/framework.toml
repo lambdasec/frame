@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/javalin"]
+requires_pack = true
+description = "Javalin: route lambdas and Handler method references taking a Context, ctx.queryParam/pathParam/formParam/body/header, ctx.html/redirect/header sinks, JDBC through a DAO"

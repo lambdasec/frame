@@ -1,0 +1,21 @@
+[pack]
+name = "deserialization"
+language = "java"
+description = "Deserialisers that instantiate attacker-chosen types: XStream, SnakeYAML, XMLDecoder, Kryo, Hessian, Jackson with default typing (the frontend tracks the typing state)"
+detect = { imports = ["com.thoughtworks.xstream", "org.yaml.snakeyaml", "com.fasterxml.jackson", "java.beans.XMLDecoder",
+                      "com.esotericsoftware.kryo", "com.caucho.hessian", "org.apache.commons.io.serialization"] }
+
+[[sink]]
+call = ["com.thoughtworks.xstream.XStream.fromXML"]
+kind = "deserialize"
+description = "XStream without a type allow-list instantiates any class named in the XML"
+
+[[sink]]
+call = ["org.yaml.snakeyaml.Yaml.load", "org.yaml.snakeyaml.Yaml.loadAs", "org.yaml.snakeyaml.Yaml.loadAll"]
+kind = "deserialize"
+description = "SnakeYAML's default Constructor instantiates any class named by a tag"
+
+[[sink]]
+call = ["com.esotericsoftware.kryo.Kryo.readObject", "com.esotericsoftware.kryo.Kryo.readClassAndObject",
+        "com.caucho.hessian.io.HessianInput.readObject", "com.caucho.hessian.io.Hessian2Input.readObject"]
+kind = "deserialize"

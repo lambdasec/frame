@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/deserialization"]
+requires_pack = true
+description = "Unsafe deserialisation of request data: ObjectInputStream, XStream, SnakeYAML, Jackson with default typing, XMLDecoder"
