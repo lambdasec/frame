@@ -247,6 +247,9 @@ class Vulnerability:
     # "naming-convention" when the source is a JS/TS `req.*` name and neither the
     # file nor the project shows a web framework (see framework_evidence.py).
     source_evidence: str = ""
+    # "hardening" for configuration that switches a protection off (debug mode, a cookie
+    # declared insecure); empty for ordinary findings. Never mixed into taint results.
+    category: str = ""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
@@ -268,6 +271,8 @@ class Vulnerability:
         }
         if self.source_evidence:
             d["source_evidence"] = self.source_evidence
+        if self.category:
+            d["category"] = self.category
         if self.fingerprint:
             d["path"] = self.path
             d["fingerprint"] = self.fingerprint
@@ -1078,6 +1083,10 @@ class FrameScanner:
             result.vulnerabilities.extend(literal_vulns)
             if self.verbose:
                 print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
+
+            # Step 3c: hardening -- explicit off switches (debug mode, insecure cookie flags).
+            hardening_vulns = self._scan_hardening(source_code, filename)
+            result.vulnerabilities.extend(hardening_vulns)
 
             # (Regex pattern layer removed -- the SL taint engine, Tier-2
             #  literal scanner, and memory analyzer are the only detectors.)
@@ -2129,6 +2138,33 @@ class FrameScanner:
         vals = [x for x in re.split(r'[-_.]', v.lower()) if x]
         return (any(x in grams for x in vals)
                 and all(x in grams or x in cls._STRUCTURAL_WORDS for x in vals))
+
+    def _scan_hardening(self, source_code: str, filename: str) -> List[Vulnerability]:
+        """Debug mode and explicit insecure cookie flags, read from the syntax tree
+        (`hardening.py`); Python and JS/TS."""
+        from frame.sil import hardening
+        if self.language == "python":
+            scan, lang = hardening.scan_python, "python"
+        elif self.language in ("javascript", "typescript"):
+            scan, lang = hardening.scan_javascript, self.language
+        else:
+            return []
+        try:
+            parser = self._get_frontend(lang).parser
+            root = parser.parse(source_code.encode("utf-8")).root_node
+            found = scan(source_code, root, filename)
+        except Exception:
+            return []
+        types = {"debug": VulnType.DEBUG_ENABLED, "cookie_secure": VulnType.INSECURE_COOKIE,
+                 "cookie_httponly": VulnType.INSECURE_COOKIE_HTTPONLY}
+        out = []
+        for f in found:
+            vt = types[f.kind]
+            out.append(Vulnerability(
+                type=vt, severity=self.SEVERITY_MAP.get(vt, Severity.MEDIUM), location=filename,
+                line=f.line, column=f.column, description=f.description, procedure="<module>",
+                sink_type=f.kind, confidence=0.95, cwe_id=self.CWE_MAP.get(vt), category=hardening.CATEGORY))
+        return out
 
     def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
         """Tier-2 structural scan over the SIL for hardcoded secrets (CWE-798/

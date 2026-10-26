@@ -15,7 +15,7 @@ each tool does and why.
   packs 9/14 with 8 false alarms; taint rules 1/14. The first Frame run scored 7/14; the fixes that followed are listed under "Blind hold-out".
 - **Four deliberately vulnerable apps** at pinned commits: Frame found **10/10** of the cross-file vulnerabilities in the answer key;
   CodeQL 7/10 (it misses dvpwa's static async DAO and NodeGoat's DAOs); Semgrep and OpenGrep intrafile taint rules 0/10, OpenGrep's interfile build 3/10.
-- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 49 real, 1 false, 4 debatable of 54
+- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 52 real, 1 false, 4 debatable of 57
   (98%); CodeQL 38 real, 2 false, 3 debatable, 14 hardening-only of 57 (95%).
 - **The app authors' own answer key** (vulnerable-node ships `sast/ground-truth.yaml`): Frame 10/12 seeds and 0 of 2 clean seeds flagged; CodeQL 8/12 and 1 of 2.
 - Not run: Semgrep Pro, Snyk Code, SonarQube, Checkmarx and other commercial tools (they need an account or server;
@@ -122,13 +122,13 @@ Every report Frame and CodeQL make on the four apps, labelled by reading the cod
 
 | app | Frame reports | real | false | debatable | CodeQL reports | real | false | debatable | advisory |
 |---|---|---|---|---|---|---|---|---|---|
-| `vulpy` | 4 | 4 | 0 | 0 | 9 | 5 | 1 | 3 | 0 |
+| `vulpy` | 6 | 6 | 0 | 0 | 9 | 5 | 1 | 3 | 0 |
 | `dvpwa` | 2 | 2 | 0 | 0 | 1 | 1 | 0 | 0 | 0 |
-| `vulnerable-node` | 35 | 32 | 1 | 2 | 46 | 31 | 1 | 0 | 14 |
+| `vulnerable-node` | 36 | 33 | 1 | 2 | 46 | 31 | 1 | 0 | 14 |
 | `NodeGoat` | 13 | 11 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
-| **all four** | 54 | 49 | 1 | 4 | 57 | 38 | 2 | 3 | 14 |
+| **all four** | 57 | 52 | 1 | 4 | 57 | 38 | 2 | 3 | 14 |
 
-Frame's precision on the labelled reports is 98%; CodeQL's is 95% (advisory queries excluded). Both are lists of what each tool
+Frame's precision on the labelled reports is 98%; CodeQL's is 95% (advisory queries excluded; Frame's count includes its three hardening findings: two `debug=True` and one `secure: false`). Both are lists of what each tool
 reported, not recall: neither is exhaustive. The other tools' extra reports in the real-app table above are not labelled.
 
 vulnerable-node also ships its own answer key (`sast/ground-truth.yaml`: twelve seed files, plus two "clean" seeds that must produce nothing),

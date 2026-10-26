@@ -3,11 +3,11 @@
  "summary": {
   "Frame": {
    "vulpy": {
-    "TP": 4,
+    "TP": 6,
     "FP": 0,
     "DEBATABLE": 0,
     "ADVISORY": 0,
-    "total": 4
+    "total": 6
    },
    "dvpwa": {
     "TP": 2,
@@ -17,11 +17,11 @@
     "total": 2
    },
    "vulnerable-node": {
-    "TP": 32,
+    "TP": 33,
     "FP": 1,
     "DEBATABLE": 2,
     "ADVISORY": 0,
-    "total": 35
+    "total": 36
    },
    "NodeGoat": {
     "TP": 11,
@@ -31,11 +31,11 @@
     "total": 13
    },
    "ALL": {
-    "TP": 49,
+    "TP": 52,
     "FP": 1,
     "DEBATABLE": 4,
     "ADVISORY": 0,
-    "total": 54
+    "total": 57
    }
   },
   "CodeQL": {
@@ -106,6 +106,20 @@
      "id": "CWE-89",
      "label": "TP",
      "note": "cross-file"
+    },
+    {
+     "file": "bad/vulpy-ssl.py",
+     "line": 29,
+     "id": "CWE-215",
+     "label": "TP",
+     "note": "hardening: app.run(debug=True)"
+    },
+    {
+     "file": "bad/vulpy.py",
+     "line": 55,
+     "id": "CWE-215",
+     "label": "TP",
+     "note": "hardening: app.run(debug=True)"
     }
    ],
    "dvpwa": [
@@ -362,6 +376,13 @@
      "id": "CWE-1333",
      "label": "FP",
      "note": "nested quantifier, but the input is a trusted local file"
+    },
+    {
+     "file": "server.js",
+     "line": 60,
+     "id": "CWE-614",
+     "label": "TP",
+     "note": "hardening: session cookie secure: false"
     },
     {
      "file": "tests/exploits.js",
