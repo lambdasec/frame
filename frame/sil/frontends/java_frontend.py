@@ -113,6 +113,7 @@ class JavaFrontend:
         self._current_class_annotations: list = []
         self._nested_calls: Dict[Tuple[int, int], str] = {}
         self._lambda_names: Dict[int, str] = {}
+        self._spec_receivers: set = {k.split(".")[0] for k in JAVA_SPECS if "." in k}
         self._lambda_parents: List[Tuple[Procedure, Procedure]] = []
         self._receiver_facts: Dict[str, set] = {}
         self._handler_lambdas: set = set()
@@ -1532,25 +1533,23 @@ class JavaFrontend:
         3. Common object patterns (request., response., etc.)
         """
         recv_type = self._receiver_type(call_node)
-        if self._name_spec_vetoed(method_name, recv_type):
-            return None
         if call_node is not None and self._receiver_tag(call_node) == "hardened" \
                 and method_name.rsplit(".", 1)[-1] in self._TAG_SENSITIVE["hardened"]:
             return None
         if recv_type and recv_type == self._current_class and (
                 '.' not in method_name or method_name.startswith("this.")):
             return None  # the class's own method: its body is analysed instead
+        # A receiver of one of the project's own classes (`service.search(q)`), or a class that is
+        # not what a bare method name (`search`, `execute`, `evaluate`) is about, is not that
+        # library API: only a spec keyed on the type or on the exact written name applies.
+        vetoed = self._name_spec_vetoed(method_name, recv_type)
+        by_name = (lambda: self.specs.get(method_name)) if vetoed \
+            else (lambda: self._lookup_spec_by_name(method_name))
         if recv_type and '.' in method_name:
-            # A receiver of one of the project's own classes (`service.search(q)`) is not the
-            # library API a bare method name (`search`, `execute`, `evaluate`) happens to share:
-            # only a spec keyed on its type applies; the project call is followed into its body.
-            by_name = (lambda: None) if (self._is_project_type(recv_type)
-                                         or self._not_a_name_only_receiver(recv_type, method_name)) \
-                else (lambda: self._lookup_spec_by_name(method_name))
             return typed_spec_lookup(self.specs, recv_type, method_name,
                                      self._receiver_exact(call_node),
                                      by_name, type_spec_receivers)
-        return self._lookup_spec_by_name(method_name)
+        return by_name()
 
     def _name_spec_vetoed(self, method_name: str, recv_type: Optional[str]) -> bool:
         """The receiver's type is known and is not what a bare-name spec (`search`, `execute`) is
@@ -1711,6 +1710,8 @@ class JavaFrontend:
         imported = self._imports.names.get(simple)
         if imported is not None:
             return self._same_project_package(imported.rsplit(".", 1)[0])
+        if self._spec_receivers & set(type_spec_receivers(simple)):
+            return False                                   # a library type the specs know by name
         return not self._imports.wildcards or all(
             self._same_project_package(w) for w in self._imports.wildcards)
 
@@ -1835,7 +1836,7 @@ class JavaFrontend:
         `"/a/" + UriUtils.encodePath(x)`) is lowered like `tmp = call` right before the statement
         that uses it, so its spec (source, sink, sanitizer) and, in a project, its callee's
         summary apply. As an ExpCall it was only a name that a few places looked at."""
-        if os.environ.get('FRAME_NO_HOIST') or self._current_node is None or self._current_proc is None or not self._in_call_args:
+        if self._current_node is None or self._current_proc is None or not self._in_call_args:
             return None
         key = (node.start_byte, node.end_byte)
         tmp = self._nested_calls.get(key)

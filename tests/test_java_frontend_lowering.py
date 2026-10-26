@@ -55,6 +55,11 @@ def test_comment_between_arguments_is_not_an_argument():
     assert "CWE-89" in cwes(code)
 
 
+def _project(root):
+    res = FrameScanner(verify=False).scan_directory(str(root), None, project_root=str(root))
+    return sorted((v.cwe_id, v.line) for r in res for v in r.vulnerabilities)
+
+
 def test_project_class_receiver_is_not_a_library_sink(tmp_path):
     (tmp_path / "Svc.java").write_text("package p;\npublic class Svc { public String search(String q) { return q; } }\n")
     (tmp_path / "C.java").write_text(
@@ -62,8 +67,7 @@ def test_project_class_receiver_is_not_a_library_sink(tmp_path):
         "public class C extends HttpServlet {\n  private Svc svc = new Svc();\n"
         "  protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {\n"
         "    svc.search(req.getParameter(\"q\"));\n  }\n}\n")
-    r = FrameScanner(language="java").scan_directory(str(tmp_path))
-    assert not [v for f in r for v in f.vulnerabilities]      # `search` is not an LDAP query here
+    assert not _project(tmp_path)      # `search` is not an LDAP query here
 
 
 _SPARK = ("package p;\nimport static spark.Spark.get;\nimport java.sql.*;\n"
@@ -103,6 +107,4 @@ def test_mybatis_dollar_substitution(tmp_path):
         "public class C extends HttpServlet {\n  M m;\n"
         "  protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {\n"
         "    m.byName(req.getParameter(\"a\"));\n    m.safe(req.getParameter(\"b\"));\n  }\n}\n")
-    found = [(f.file if hasattr(f, "file") else "", v.line) for f in FrameScanner(language="java").scan_directory(str(tmp_path))
-             for v in f.vulnerabilities if v.cwe_id == "CWE-89"]
-    assert len(found) == 1
+    assert [v for v in _project(tmp_path) if v[0] == "CWE-89"] == [("CWE-89", 4)]      # `${n}`, not `#{n}`

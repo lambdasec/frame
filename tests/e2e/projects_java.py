@@ -331,8 +331,8 @@ public final class Storage {
     private Storage() {}
 
     public static byte[] read(String name) throws IOException {
-        File f = new File(ROOT, name);
-        return Files.readAllBytes(f.toPath());  // frame-expect: CWE-22
+        File f = new File(ROOT, name);  // frame-expect: CWE-22
+        return Files.readAllBytes(f.toPath());
     }
 }
 ''',

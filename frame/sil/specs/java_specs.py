@@ -265,9 +265,9 @@ JPA_SPECS = {
 IO_SPECS = {
     # File operations - various patterns for object creation
     # Using "filesystem" to match SinkKind.FILE_PATH.value
-    "new File": _sink("filesystem", [0], "File constructor (path traversal)"),
-    "File": _sink("filesystem", [0], "File constructor (path traversal)"),
-    "new java.io.File": _sink("filesystem", [0], "File constructor (path traversal)"),
+    "new File": _sink("filesystem", [0, 1], "File constructor (path traversal)"),
+    "File": _sink("filesystem", [0, 1], "File constructor (path traversal)"),
+    "new java.io.File": _sink("filesystem", [0, 1], "File constructor (path traversal)"),
 
     "FileInputStream": _sink("filesystem", [0], "FileInputStream (path traversal)"),
     "new FileInputStream": _sink("filesystem", [0], "FileInputStream (path traversal)"),
@@ -294,8 +294,8 @@ IO_SPECS = {
     "File.getName": _sanitizer(["filesystem", "path"], "File.getName (base name)"),
     "FilenameUtils.getName": _sanitizer(["filesystem", "path"], "FilenameUtils.getName (base name)"),
     "FilenameUtils.getBaseName": _sanitizer(["filesystem", "path"], "FilenameUtils.getBaseName (base name)"),
-    "Paths.get": _sink("filesystem", [0], "Paths.get (path traversal)"),
-    "Path.of": _sink("filesystem", [0], "Path.of (path traversal)"),
+    "Paths.get": _sink("filesystem", [0, 1, 2, 3], "Paths.get (path traversal)"),
+    "Path.of": _sink("filesystem", [0, 1, 2, 3], "Path.of (path traversal)"),
     "Files.readAllBytes": _sink("filesystem", [0], "Files.readAllBytes (path traversal)"),
     "Files.readAllLines": _sink("filesystem", [0], "Files.readAllLines (path traversal)"),
     "Files.write": _sink("filesystem", [0], "Files.write (path traversal)"),
