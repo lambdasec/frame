@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/tornado"]
+requires_pack = true
+description = "Tornado RequestHandler: argument sources, write() XSS, redirect, template compilation"

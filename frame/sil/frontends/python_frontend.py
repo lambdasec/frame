@@ -40,6 +40,7 @@ from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
+from frame.sil.packs import finish_program
 
 
 class PythonFrontend:
@@ -55,6 +56,8 @@ class PythonFrontend:
         translator = SILTranslator(program)
         checks = translator.translate_program()
     """
+
+    packs = None   # a frame.sil.packs.PackSet; None = the built-in packs
 
     def __init__(self, specs: Dict[str, ProcSpec] = None):
         """
@@ -113,6 +116,8 @@ class PythonFrontend:
         self._translate_module(tree.root_node, program)
 
         annotate_program_calls(program, self._imports)
+        program.import_wildcards = list(self._imports.wildcards)
+        finish_program(program, self.packs)
         return program
 
     def _collect_imports(self, root: TSNode) -> ImportTable:
@@ -289,10 +294,20 @@ class PythonFrontend:
                 bases.append(self._get_text(c))
         decorators = ([self._get_text(c) for c in node.parent.children if c.type == "decorator"]
                       if node.parent is not None and node.parent.type == "decorated_definition" else [])
+        fields: List[str] = []
+        cbody = node.child_by_field_name("body")
+        for stmt in (cbody.named_children if cbody is not None else ()):
+            target = None
+            if stmt.type == "expression_statement" and stmt.named_children:
+                a = stmt.named_children[0]
+                if a.type == "assignment":
+                    target = a.child_by_field_name("left")
+            if target is not None and target.type == "identifier":
+                fields.append(self._get_text(target))
         program.class_info[class_name] = ClassInfo(
             name=class_name, kind="class", bases=bases,
             canonical_bases=[self._imports.resolve(b) or b for b in bases],
-            annotations=[parse_annotation(d, self._imports) for d in decorators])
+            annotations=[parse_annotation(d, self._imports) for d in decorators], fields=fields)
 
         # Find class body
         body_node = node.child_by_field_name("body")
@@ -351,6 +366,8 @@ class PythonFrontend:
             if "@staticmethod" in dtext or "@classmethod" in dtext:
                 proc.is_static = True
         proc.annotations = [parse_annotation(d, self._imports) for d in decorator_texts]
+        if params_node:
+            proc.param_types = self._param_type_texts(params_node)
 
         self._current_proc = proc
         self._node_counter = 0
@@ -548,6 +565,31 @@ class PythonFrontend:
                         params.append((PVar(param_name), Typ.dict_of(Typ.string_type(), Typ.unknown_type())))
 
         return params
+
+    def _param_type_texts(self, params_node: TSNode) -> Dict[str, str]:
+        """Parameter name -> annotation as written (`Request`, `fastapi.Request`);
+        `Optional[X]` / `X | None` / a quoted forward reference yield `X`."""
+        out: Dict[str, str] = {}
+        for child in params_node.children:
+            if child.type not in ("typed_parameter", "typed_default_parameter"):
+                continue
+            if child.type == "typed_parameter":
+                first = child.children[0] if child.children else None
+                name = self._get_text(first) if first is not None and first.type == "identifier" else None
+            else:
+                nm = child.child_by_field_name("name")
+                name = self._get_text(nm) if nm is not None else None
+            tnode = child.child_by_field_name("type")
+            if not name or tnode is None:
+                continue
+            text = self._get_text(tnode).strip().strip("'\"")
+            m = re.match(r"(?:typing\.)?Optional\[(.+)\]$", text)
+            if m:
+                text = m.group(1)
+            text = text.split("|")[0].strip()
+            if text and text != "None":
+                out[name] = text
+        return out
 
     def _translate_nested_function(self, node: TSNode, program: Program) -> None:
         """Translate a function defined inside another function's body.

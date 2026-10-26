@@ -43,6 +43,7 @@ from frame.sil.instructions import (
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
+from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.c_specs import C_SPECS, CPP_SPECS
 
@@ -93,6 +94,9 @@ class CFrontend:
         checks = translator.translate_program()
     """
 
+    LANGUAGE = "c"
+    packs = None   # a frame.sil.packs.PackSet; None = the built-in packs
+
     def __init__(self, specs: Dict[str, ProcSpec] = None):
         """
         Initialize the C frontend.
@@ -128,7 +132,7 @@ class CFrontend:
         self._jump_targets: List[Tuple[str, Optional[Node], Optional[Node]]] = []
 
         tree = self.parser.parse(self._source_bytes)
-        program = Program(library_specs=self.specs.copy(), language="c")
+        program = Program(library_specs=self.specs.copy(), language=self.LANGUAGE)
         program.source_files.append(filename)
         program.function_macros = self._function_macro_names(tree.root_node)
 
@@ -147,6 +151,9 @@ class CFrontend:
                 continue
             stack.extend(n.children)
         annotate_program_calls(program, includes)
+        program.import_wildcards = list(includes.wildcards)
+        program.language = self.LANGUAGE
+        finish_program(program, self.packs)
         return program
 
     def _function_macro_names(self, root: TSNode) -> Set[str]:
@@ -1333,6 +1340,8 @@ class CppFrontend(CFrontend):
     - Templates (limited)
     - STL (via specs)
     """
+
+    LANGUAGE = "cpp"
 
     def __init__(self, specs: Dict[str, ProcSpec] = None):
         """

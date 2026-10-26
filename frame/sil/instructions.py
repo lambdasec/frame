@@ -20,7 +20,7 @@ Security Extensions (Frame-specific):
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 from enum import Enum, auto
 
 from .types import Ident, PVar, Exp, ExpVar, ExpConst, Typ, Location
@@ -472,6 +472,10 @@ class Call(Instr):
     # Keyword-argument names parallel to `args` (None for a positional argument),
     # for languages that have them (Python, C# named arguments). None = no names.
     kwarg_names: Optional[List[Optional[str]]] = None
+    # A ProcSpec a framework pack resolved for THIS call (canonical id, then
+    # name), already merged over the built-in spec; Program.spec_for_call
+    # returns it before any name lookup. See frame/sil/packs.
+    pack_spec: Optional[Any] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)

@@ -48,6 +48,7 @@ class ClassInfo:
     canonical_bases: List[str] = field(default_factory=list)  # resolved where possible, else as written
     annotations: List[Annotation] = field(default_factory=list)
     package: Optional[str] = None               # Java package / C# namespace
+    fields: List[str] = field(default_factory=list)   # declared instance fields / properties
 
 
 class ImportTable:
@@ -315,9 +316,26 @@ def _canonical_typed(language: str, func: str, table: ImportTable, receiver_type
             type_name = JAVA_FACTORY_RETURN_TYPES.get(inner, "")
     if not type_name or not method:
         return None
-    type_name = type_name.split("<", 1)[0].strip()
+    qualified = qualify_type(language, type_name, table, local_types)
+    if qualified is None:
+        return None
+    return f"{qualified}.{method}"
+
+
+def qualify_type(language: str, type_name: str, table: ImportTable,
+                 local_types: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """The fully qualified name of a type as written in this file, or None.
+
+    Resolved, in order, through the file's own declarations, its explicit imports,
+    an already-qualified name, the curated wildcard tables and the implicit
+    `java.lang` / `System` set. Never guessed.
+    """
+    type_name = type_name.split("<", 1)[0].rstrip("?").strip()
+    if not type_name:
+        return None
+    local_types = local_types or {}
     if type_name in local_types:
-        return f"{local_types[type_name]}.{method}"
+        return local_types[type_name]
     qualified = table.resolve(type_name)
     if qualified is None and "." in type_name:
         head = type_name.split(".", 1)[0]
@@ -333,9 +351,7 @@ def _canonical_typed(language: str, func: str, table: ImportTable, receiver_type
             qualified = "java.lang." + type_name
         elif language == "csharp" and type_name in _CSHARP_SYSTEM:
             qualified = "System." + type_name
-    if qualified is None:
-        return None
-    return f"{qualified}.{method}"
+    return qualified
 
 
 def _canonical_c(func: str, local: FrozenSet[str]) -> Optional[str]:

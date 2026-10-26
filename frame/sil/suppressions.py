@@ -125,6 +125,7 @@ class ScanConfig:
     fail_on: Optional[str] = None
     disable: List[str] = field(default_factory=list)
     exclude: List[str] = field(default_factory=list)
+    packs: List[str] = field(default_factory=list)   # extra framework packs (paths relative to the config)
     source: Optional[str] = None
 
 
@@ -133,7 +134,7 @@ class ConfigError(ValueError):
 
 
 def _from_table(table: dict, source: str) -> ScanConfig:
-    known = {"min_severity", "fail_on", "disable", "exclude"}
+    known = {"min_severity", "fail_on", "disable", "exclude", "packs"}
     unknown = set(table) - known
     if unknown:
         raise ConfigError(
@@ -149,7 +150,7 @@ def _from_table(table: dict, source: str) -> ScanConfig:
         if str(fail).lower() not in _FAIL_ON:
             raise ConfigError(f"{source}: fail_on must be one of {_FAIL_ON}")
         cfg.fail_on = str(fail).lower()
-    for key in ("disable", "exclude"):
+    for key in ("disable", "exclude", "packs"):
         val = table.get(key, [])
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
             raise ConfigError(f"{source}: {key} must be a list of strings")

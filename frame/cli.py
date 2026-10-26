@@ -43,15 +43,21 @@ def create_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    from frame.sil.packs.cli import add_packs_command
+    add_packs_command(subparsers)
+
     # === SCAN command ===
     scan_parser = subparsers.add_parser(
         "scan",
         help="Scan source code for security vulnerabilities",
         description="Scan source files for vulnerabilities using taint analysis and verification."
     )
-    from frame.sil.cli import add_incremental_args, add_language_and_pattern_args, add_target_arg
+    from frame.sil.cli import (
+        add_incremental_args, add_language_and_pattern_args, add_pack_args, add_target_arg,
+    )
     add_target_arg(scan_parser)
     add_language_and_pattern_args(scan_parser)
+    add_pack_args(scan_parser)
     add_incremental_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
@@ -1288,6 +1294,7 @@ def main(argv: List[str] = None) -> int:
         "check": cmd_check,
         "parse": cmd_parse,
         "repl": cmd_repl,
+        "packs": lambda a: __import__("frame.sil.packs.cli", fromlist=["cmd_packs"]).cmd_packs(a),
     }
 
     handler = commands.get(args.command)

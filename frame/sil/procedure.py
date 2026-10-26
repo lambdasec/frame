@@ -406,6 +406,12 @@ class Procedure:
     # parameter (by name), with their arguments. See metadata.Annotation.
     annotations: List[Annotation] = field(default_factory=list)
     param_annotations: Dict[str, List[Annotation]] = field(default_factory=dict)
+    # Declared type of each parameter as written (`Request`, `HttpServletRequest`),
+    # for the languages whose syntax declares one.
+    param_types: Dict[str, str] = field(default_factory=dict)
+    # Callees this function is passed to as an argument (`app.get('/x', handler)`
+    # -> ["app.get"]), by their textual names; set by the JS frontend.
+    registered_via: List[str] = field(default_factory=list)
     parent: Optional[str] = None
     span: Optional[Tuple[int, int]] = None
 
@@ -616,6 +622,9 @@ class Program:
     # annotations, and the file's local-name -> qualified-name import table.
     class_info: Dict[str, ClassInfo] = field(default_factory=dict)
     imports: Dict[str, str] = field(default_factory=dict)
+    import_wildcards: List[str] = field(default_factory=list)   # on-demand imports / usings / includes
+    # Names ("language/pack") of the framework packs applied to this program.
+    packs_applied: List[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]
@@ -800,6 +809,9 @@ class Program:
     def spec_for_call(self, call) -> Optional[ProcSpec]:
         """Spec for a Call instruction: by the receiver's declared type first
         (`DocumentBuilder b; b.parse` -> `documentBuilder.parse`), then by name."""
+        pack_spec = getattr(call, "pack_spec", None)
+        if pack_spec is not None:
+            return pack_spec
         spec = self._spec_for_call(call)
         if not db_method_applies(spec, call.get_full_name(), getattr(call, "receiver_type", None)):
             return None

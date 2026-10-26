@@ -1,0 +1,31 @@
+[pack]
+name = "tornado"
+language = "python"
+description = "Tornado request handlers and templates"
+detect = { imports = ["tornado"] }
+
+# A RequestHandler's verb methods receive the URL's regex groups as arguments.
+[[entrypoint]]
+id = "request-handler"
+extends = ["tornado.web.RequestHandler", "tornado.websocket.WebSocketHandler"]
+method = ["get", "post", "put", "delete", "patch", "head", "options", "on_message", "open"]
+params = "all"
+
+[[source]]
+name = ["self.get_argument", "self.get_arguments", "self.get_query_argument", "self.get_query_arguments",
+        "self.get_body_argument", "self.get_body_arguments", "self.get_cookie", "self.get_secure_cookie"]
+kind = "user_input"
+
+[[sink]]
+name = ["self.write"]
+kind = "html"
+description = "Tornado RequestHandler.write sends the value as the HTML response"
+
+[[sink]]
+name = ["self.redirect"]
+kind = "redirect"
+
+[[sink]]
+call = ["tornado.template.Template"]
+kind = "template"
+description = "tornado.template.Template compiles its argument as template code"

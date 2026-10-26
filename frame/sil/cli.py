@@ -34,6 +34,7 @@ from typing import List
 
 from frame.sil.scanner import FrameScanner, ScanResult, Severity
 from frame.sil.llm_client import LLMUnavailableError
+from frame.sil.packs import PackError
 
 
 
@@ -96,6 +97,18 @@ def add_incremental_args(scan_parser) -> None:
              "--fail-on none to accept the current state.")
 
 
+def add_pack_args(scan_parser) -> None:
+    """Framework-pack flags for `scan`, shared by this parser and `frame/cli.py`'s."""
+    scan_parser.add_argument(
+        "--pack", action="append", default=None, metavar="PATH",
+        help="Load an extra framework pack (a .toml file, or a directory of them) on top "
+             "of the built-in ones and the project's .frame/packs. Repeatable. "
+             "`frame packs check PATH` validates a pack.")
+    scan_parser.add_argument(
+        "--no-packs", action="store_true",
+        help="Do not load the built-in framework packs (project and --pack packs still load).")
+
+
 def add_language_and_pattern_args(scan_parser) -> None:
     """`-l` / `-p` for `scan`, shared by this parser and `frame/cli.py`'s so the
     two cannot drift. Both default to None; `cmd_scan` resolves them."""
@@ -115,6 +128,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan files for vulnerabilities")
     add_target_arg(scan_parser)
     add_language_and_pattern_args(scan_parser)
+    add_pack_args(scan_parser)
     add_incremental_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
@@ -483,6 +497,8 @@ def cmd_scan(args) -> int:
     try:
         # AI layer: --ai turns on both; --llm-detect / --llm-triage are granular.
         ai = getattr(args, "ai", False)
+        pack_paths = [str(Path(config.source).parent / p) if config.source and not Path(p).is_absolute() else p
+                      for p in config.packs] + list(getattr(args, "pack", None) or [])
         scanner = FrameScanner(
             language=args.language or "python",
             verify=not args.no_verify,
@@ -493,7 +509,12 @@ def cmd_scan(args) -> int:
             llm_repo_scale=getattr(args, "repo_scale", False),
             respect_suppressions=not getattr(args, "no_suppress", False),
             disabled_rules=disabled_rules,
+            packs=pack_paths,
+            use_builtin_packs=not getattr(args, "no_packs", False),
         )
+    except PackError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Install tree-sitter: pip install tree-sitter tree-sitter-python", file=sys.stderr)
@@ -533,6 +554,8 @@ def cmd_scan(args) -> int:
     # Stable identities for every finding, then the baseline comparison.
     assign_fingerprints(results, root)
     extra = {"root": str(root)}
+    if scanner.pack_set:
+        extra["packs"] = scanner.pack_set.names()
     scope = getattr(scanner, "last_project_scope", None)
     if scope:
         extra["scope"] = dict(scope)

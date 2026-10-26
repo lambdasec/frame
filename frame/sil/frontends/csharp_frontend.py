@@ -41,6 +41,7 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
     ClassInfo, ImportTable, canonical_call, parse_annotation,
 )
+from frame.sil.packs import finish_program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
 
 
@@ -56,6 +57,8 @@ class CSharpFrontend:
         translator = SILTranslator(program)
         checks = translator.translate_program()
     """
+
+    packs = None   # a frame.sil.packs.PackSet; None = the built-in packs
 
     def __init__(self, specs: Dict[str, ProcSpec] = None):
         """
@@ -135,6 +138,8 @@ class CSharpFrontend:
 
         self._translate_compilation_unit(tree.root_node, program)
         self._annotate_calls(program)
+        program.import_wildcards = list(self._imports.wildcards)
+        finish_program(program, self.packs)
         return program
 
     # -- canonical ids and declaration facts ---------------------------------
@@ -358,8 +363,20 @@ class CSharpFrontend:
                  for a in lst.children if a.type == "attribute"]
         kind = {"struct_declaration": "struct", "interface_declaration": "interface",
                 "enum_declaration": "enum"}.get(node.type, "class")
+        members = node.child_by_field_name("body")
+        fields: List[str] = []
+        for member in (members.children if members is not None else ()):
+            if member.type == "property_declaration" and member.child_by_field_name("name") is not None:
+                fields.append(self._get_text(member.child_by_field_name("name")))
+            elif member.type == "field_declaration":
+                for d in self._descendants_of(member):
+                    if d.type == "variable_declarator":
+                        nm = d.child_by_field_name("name") or next(
+                            (c for c in d.children if c.type == "identifier"), None)
+                        if nm is not None:
+                            fields.append(self._get_text(nm))
         program.class_info[name] = ClassInfo(
-            name=name, kind=kind, bases=bases,
+            name=name, kind=kind, bases=bases, fields=fields,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports) for a in attrs],
             package=self._current_namespace or None)
@@ -440,6 +457,9 @@ class CSharpFrontend:
                 if pn is not None and attrs:
                     proc.param_annotations[self._get_text(pn)] = [
                         parse_annotation(a, self._imports) for a in attrs]
+                tn = prm.child_by_field_name("type")
+                if pn is not None and tn is not None:
+                    proc.param_types[self._get_text(pn)] = self._get_text(tn).split("<")[0].rstrip("?").strip()
 
         # Check for static modifier
         for child in node.children:

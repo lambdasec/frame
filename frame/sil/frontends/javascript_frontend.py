@@ -49,6 +49,7 @@ from frame.sil.procedure import (
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
+from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
@@ -135,6 +136,8 @@ class JavaScriptFrontend:
         translator = SILTranslator(program)
         checks = translator.translate_program()
     """
+
+    packs = None   # a frame.sil.packs.PackSet; None = the built-in packs
 
     def __init__(self, specs: Dict[str, ProcSpec] = None, language: str = "javascript"):
         """
@@ -241,7 +244,44 @@ class JavaScriptFrontend:
             self._scan_redos(tree.root_node, program)
             self._scan_proto_pollution(tree.root_node, program)
 
+        self._record_declarations(tree.root_node, program)
+        finish_program(program, self.packs)
         return program
+
+    def _record_declarations(self, root: TSNode, program: Program) -> None:
+        """Parameter types (TypeScript), the callees each function is passed to
+        (`app.get('/x', handler)`), read from the tree for framework packs."""
+        by_span = {p.span: p for p in program.procedures.values() if p.span}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type in self._FUNC_LIKE:
+                proc = by_span.get((n.start_byte, n.end_byte))
+                params = n.child_by_field_name("parameters")
+                if proc is None or params is None:
+                    continue
+                for ch in params.children:
+                    if ch.type not in ("required_parameter", "optional_parameter"):
+                        continue
+                    pat, ty = ch.child_by_field_name("pattern"), ch.child_by_field_name("type")
+                    if pat is not None and pat.type == "identifier" and ty is not None:
+                        text = self._get_text(ty).lstrip(":").strip().split("<")[0].strip()
+                        if text:
+                            proc.param_types[self._get_text(pat)] = text
+            elif n.type == "call_expression":
+                callee, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
+                if callee is None or args is None:
+                    continue
+                callee_text = self._get_text(callee)
+                for a in args.named_children:
+                    target = None
+                    if a.type in self._FUNC_LIKE:
+                        target = by_span.get((a.start_byte, a.end_byte))
+                    elif a.type == "identifier":
+                        target = program.procedures.get(self._get_text(a))
+                    if target is not None and callee_text not in target.registered_via:
+                        target.registered_via.append(callee_text)
 
     # Third-party library / generated-bundle detection: filename conventions
     # plus a content check for minification. Used to suppress the structural
@@ -506,8 +546,14 @@ class JavaScriptFrontend:
                                             "nested_type_identifier", "generic_type", "call_expression")]
                 elif clause.type in ("identifier", "member_expression", "call_expression"):
                     bases.append(self._get_text(clause))     # plain JS: `class A extends B`
+        cfields = [self._get_text(f.child_by_field_name("property"))
+                   for f in (node.child_by_field_name("body").named_children
+                             if node.child_by_field_name("body") is not None else ())
+                   if f.type in ("field_definition", "public_field_definition")
+                   and f.child_by_field_name("property") is not None
+                   or f.type == "public_field_definition" and f.child_by_field_name("name") is not None]
         program.class_info[class_name] = ClassInfo(
-            name=class_name, kind="class", bases=bases,
+            name=class_name, kind="class", bases=bases, fields=cfields,
             canonical_bases=[self._imports.resolve(b) or b for b in bases],
             annotations=[parse_annotation(self._get_text(d), self._imports)
                          for d in self._leading_decorators(node)])

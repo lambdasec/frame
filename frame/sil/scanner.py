@@ -295,6 +295,8 @@ class ScanResult:
     # kept, like suppressed ones, but not reported as new.
     baselined: List[Vulnerability] = field(default_factory=list)
     baseline_applied: bool = False
+    # Framework packs ("language/name") that applied to this file's program.
+    packs: List[str] = field(default_factory=list)
 
     @property
     def has_vulnerabilities(self) -> bool:
@@ -322,6 +324,7 @@ class ScanResult:
             "scan_time_ms": self.scan_time_ms,
             "lines_scanned": self.lines_scanned,
             "procedures_analyzed": self.procedures_analyzed,
+            **({"packs": list(self.packs)} if self.packs else {}),
             "summary": {
                 "total": len(self.vulnerabilities),
                 "critical": self.critical_count,
@@ -917,6 +920,8 @@ class FrameScanner:
         llm_repo_scale: bool = False,
         respect_suppressions: bool = True,
         disabled_rules: Optional[Iterable[str]] = None,
+        packs: Optional[Iterable[str]] = None,
+        use_builtin_packs: bool = True,
     ):
         """
         Initialize the scanner.
@@ -934,7 +939,14 @@ class FrameScanner:
                 ``ScanResult.suppressed`` rather than silently discarded.
             disabled_rules: CWE ids or finding types to drop from results
                 (e.g. ``["CWE-798", "weak_hash"]``).
+            packs: extra framework pack files / directories (see frame/sil/packs),
+                loaded on top of the built-in ones and the project's .frame/packs.
+            use_builtin_packs: load the packs that ship with Frame.
         """
+        from frame.sil.packs import PackSet
+        self._pack_paths = list(packs or [])
+        self._use_builtin_packs = use_builtin_packs
+        self.pack_set = PackSet.build(self._pack_paths, builtin=use_builtin_packs)
         self.respect_suppressions = respect_suppressions
         self.disabled_rules = list(disabled_rules or [])
         self.language = language
@@ -967,8 +979,27 @@ class FrameScanner:
         else:
             self.checker = None
 
+    def use_project_packs(self, start) -> None:
+        """Add the `.frame/packs` of the project containing `start` to this scan's
+        packs (the nearest ancestor that has one, up to the repository root)."""
+        from frame.sil.packs import PackSet, discover_project_packs
+        found = tuple(str(p) for p in discover_project_packs(Path(start)))
+        if found == getattr(self, "_project_pack_dirs", ()):
+            return
+        self._project_pack_dirs = found
+        self.pack_set = PackSet.build(self._pack_paths, builtin=self._use_builtin_packs,
+                                      project_start=Path(start))
+        if self.frontend is not None:
+            self.frontend.packs = self.pack_set
+
     def _get_frontend(self, language: str):
         """Get frontend for specified language"""
+        fe = self._make_frontend(language)
+        if fe is not None:
+            fe.packs = self.pack_set
+        return fe
+
+    def _make_frontend(self, language: str):
         if language == "python":
             from frame.sil.frontends.python_frontend import PythonFrontend
             return PythonFrontend()
@@ -1054,6 +1085,7 @@ class FrameScanner:
             if program is None:
                 program = self.frontend.translate(source_code, filename)
             result.procedures_analyzed = len(program.procedures)
+            result.packs = list(program.packs_applied)
 
             if self.verbose:
                 print(f"[Scanner] Found {len(program.procedures)} procedures")
@@ -1263,6 +1295,7 @@ class FrameScanner:
             ScanResult with vulnerabilities found
         """
         path = Path(filepath)
+        self.use_project_packs(path)
 
         if not path.exists():
             result = ScanResult(filename=str(path))
@@ -1400,6 +1433,7 @@ class FrameScanner:
         excluded_dirs = (DEFAULT_EXCLUDED_SCAN_DIRS if exclude_dirs is None
                           else frozenset(exclude_dirs))
         self.last_project_scope = None
+        self.use_project_packs(project_root or dir_path)
 
         # The agentic detector can trace flows across files with its read_file and
         # grep tools, but only when it has a repo root; without one it silently
