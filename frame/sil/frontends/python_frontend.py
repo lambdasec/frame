@@ -37,6 +37,9 @@ from frame.sil.instructions import (
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.python_specs import PYTHON_SPECS
+from frame.sil.metadata import (
+    ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
+)
 
 
 class PythonFrontend:
@@ -77,6 +80,7 @@ class PythonFrontend:
         self._node_counter = 0
         self._ident_counter = 0
         self._current_class: Optional[str] = None
+        self._imports = ImportTable()
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """
@@ -102,10 +106,70 @@ class PythonFrontend:
         program = Program(library_specs=self.specs.copy(), language="python")
         program.source_files.append(filename)
 
+        self._imports = self._collect_imports(tree.root_node)
+        program.imports = self._imports.as_dict()
+
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
+        annotate_program_calls(program, self._imports)
         return program
+
+    def _collect_imports(self, root: TSNode) -> ImportTable:
+        """Local name -> qualified name for every `import` in the file (function-local
+        ones included: a name bound to two different modules is dropped)."""
+        table = ImportTable()
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "import_statement":
+                for c in n.named_children:
+                    if c.type == "dotted_name":
+                        full = self._get_text(c)
+                        table.bind(full.split(".", 1)[0], full.split(".", 1)[0])
+                    elif c.type == "aliased_import":
+                        name, alias = c.child_by_field_name("name"), c.child_by_field_name("alias")
+                        if name is not None and alias is not None:
+                            table.bind(self._get_text(alias), self._get_text(name))
+                continue
+            if n.type == "import_from_statement":
+                module = n.child_by_field_name("module_name")
+                mod = self._get_text(module) if module is not None else ""
+                for c in n.named_children:
+                    if module is not None and c.id == module.id:
+                        continue
+                    if c.type == "wildcard_import":
+                        table.wildcards.append(mod)
+                    elif c.type == "dotted_name":
+                        name = self._get_text(c)
+                        table.bind(name, f"{mod}.{name}" if not mod.endswith(".") else f"{mod}{name}")
+                    elif c.type == "aliased_import":
+                        name, alias = c.child_by_field_name("name"), c.child_by_field_name("alias")
+                        if name is not None and alias is not None:
+                            nm = self._get_text(name)
+                            table.bind(self._get_text(alias),
+                                       f"{mod}.{nm}" if not mod.endswith(".") else f"{mod}{nm}")
+                continue
+            stack.extend(n.children)
+        return table.finish()
+
+    def _kwarg_names(self, call_node: TSNode) -> Optional[List[Optional[str]]]:
+        """Names of the keyword arguments, parallel to `_get_call_args` (None per
+        positional argument); None when the call has no keyword argument."""
+        args_node = call_node.child_by_field_name("arguments")
+        names: List[Optional[str]] = []
+        for child in (args_node.children if args_node else []):
+            if child.type in ("(", ")", ",", "comment"):
+                continue
+            if child.type == "keyword_argument":
+                value = child.child_by_field_name("value")
+                if value is None:
+                    continue
+                key = child.child_by_field_name("name")
+                names.append(self._get_text(key) if key is not None else None)
+            else:
+                names.append(None)
+        return names if any(n is not None for n in names) else None
 
     # Top-level statement node types that carry executable code worth analyzing
     # as a synthetic module procedure (mirrors the cases _translate_statement
@@ -218,6 +282,18 @@ class PythonFrontend:
 
         self._current_class = class_name
 
+        bases: List[str] = []
+        supers = node.child_by_field_name("superclasses")
+        for c in (supers.named_children if supers is not None else ()):
+            if c.type not in ("keyword_argument", "comment"):
+                bases.append(self._get_text(c))
+        decorators = ([self._get_text(c) for c in node.parent.children if c.type == "decorator"]
+                      if node.parent is not None and node.parent.type == "decorated_definition" else [])
+        program.class_info[class_name] = ClassInfo(
+            name=class_name, kind="class", bases=bases,
+            canonical_bases=[self._imports.resolve(b) or b for b in bases],
+            annotations=[parse_annotation(d, self._imports) for d in decorators])
+
         # Find class body
         body_node = node.child_by_field_name("body")
         if body_node:
@@ -274,6 +350,7 @@ class PythonFrontend:
         for dtext in decorator_texts:
             if "@staticmethod" in dtext or "@classmethod" in dtext:
                 proc.is_static = True
+        proc.annotations = [parse_annotation(d, self._imports) for d in decorator_texts]
 
         self._current_proc = proc
         self._node_counter = 0
@@ -800,7 +877,8 @@ class PythonFrontend:
             loc=loc,
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(func_name),
-            args=args_exp
+            args=args_exp,
+            kwarg_names=self._kwarg_names(call_node)
         )
         instrs.append(call_instr)
 
@@ -879,7 +957,8 @@ class PythonFrontend:
                     loc=self._get_location(n),
                     ret=None,
                     func=ExpConst.string(func_name),
-                    args=args_exp
+                    args=args_exp,
+                    kwarg_names=self._kwarg_names(n)
                 )
                 instrs.append(call_instr)
 
@@ -913,7 +992,8 @@ class PythonFrontend:
             loc=loc,
             ret=None,
             func=ExpConst.string(func_name),
-            args=args_exp
+            args=args_exp,
+            kwarg_names=self._kwarg_names(call_node)
         )
         instrs.append(call_instr)
 

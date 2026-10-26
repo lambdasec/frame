@@ -46,6 +46,9 @@ from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import (
     Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS, DB_HANDLE,
     RECEIVER_UNKNOWN, db_method_applies)
+from frame.sil.metadata import (
+    ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
+)
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
@@ -209,10 +212,19 @@ class JavaScriptFrontend:
         program = Program(library_specs=self.specs.copy(), language=self.language)
         program.source_files.append(filename)
 
+        self._imports = ImportTable()
+        for local, module in self._module_aliases.items():
+            self._imports.bind(local, module)
+        for local, qualified in self._imported_names.items():
+            self._imports.bind(local, qualified)
+        self._imports.finish()
+        program.imports = self._imports.as_dict()
+
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
         self._link_enclosing_procedures(program)
+        annotate_program_calls(program, self._imports)
 
         # One-hop interprocedural taint: a request-derived value passed to a
         # same-file function taints that function's parameter (e.g. a handler
@@ -485,6 +497,21 @@ class JavaScriptFrontend:
 
         self._current_class = class_name
 
+        bases: List[str] = []
+        for heritage in (c for c in node.children if c.type == "class_heritage"):
+            for clause in heritage.named_children:
+                if clause.type in ("extends_clause", "implements_clause"):
+                    bases += [self._get_text(c).split("<")[0] for c in clause.named_children
+                              if c.type in ("identifier", "type_identifier", "member_expression",
+                                            "nested_type_identifier", "generic_type", "call_expression")]
+                elif clause.type in ("identifier", "member_expression", "call_expression"):
+                    bases.append(self._get_text(clause))     # plain JS: `class A extends B`
+        program.class_info[class_name] = ClassInfo(
+            name=class_name, kind="class", bases=bases,
+            canonical_bases=[self._imports.resolve(b) or b for b in bases],
+            annotations=[parse_annotation(self._get_text(d), self._imports)
+                         for d in self._leading_decorators(node)])
+
         # Find class body
         body_node = node.child_by_field_name("body")
         if body_node:
@@ -542,7 +569,32 @@ class JavaScriptFrontend:
                 proc.is_static = True
                 break
 
+        proc.annotations = [parse_annotation(self._get_text(d), self._imports)
+                            for d in self._leading_decorators(node)]
+        if params_node is not None:
+            for ch in params_node.children:
+                if ch.type in ("required_parameter", "optional_parameter"):
+                    pat = ch.child_by_field_name("pattern")
+                    decs = [self._get_text(d) for d in ch.children if d.type == "decorator"]
+                    if pat is not None and pat.type == "identifier" and decs:
+                        proc.param_annotations[self._get_text(pat)] = [
+                            parse_annotation(d, self._imports) for d in decs]
+
         return self._translate_function_body(node, proc)
+
+    @staticmethod
+    def _leading_decorators(node: TSNode) -> List[TSNode]:
+        """Decorators applying to a class or method: its own `decorator` children,
+        the decorator nodes just before it in the class body, and (for an
+        exported class) those on the `export` statement."""
+        found = [c for c in node.children if c.type == "decorator"]
+        prev = node.prev_sibling
+        while prev is not None and prev.type == "decorator":
+            found.insert(0, prev)
+            prev = prev.prev_sibling
+        if node.parent is not None and node.parent.type == "export_statement":
+            found = [c for c in node.parent.children if c.type == "decorator"] + found
+        return found
 
     def _translate_function(
         self,

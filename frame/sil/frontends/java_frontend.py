@@ -45,6 +45,9 @@ from frame.sil.instructions import (
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program, typed_spec_lookup
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.metadata import (
+    ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
+)
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
@@ -103,6 +106,9 @@ class JavaFrontend:
         # Methods declared by the class being translated: an unqualified (or
         # `this.`) call to one of them is that method, never a library API.
         self._class_methods: set = set()
+        self._imports = ImportTable()
+        self._package = ""
+        self._local_types: Dict[str, str] = {}
         # Overload resolution: static types (primitives and arrays included),
         # type variables in scope, return types of the class's methods.
         self._field_static_types: Dict[str, str] = {}
@@ -124,7 +130,11 @@ class JavaFrontend:
                           type_spec_receivers=type_spec_receivers)
         program.source_files.append(filename)
 
+        self._imports, self._package, self._local_types = self._collect_declarations(tree.root_node)
+        program.imports = self._imports.as_dict()
+
         self._translate_compilation_unit(tree.root_node, program)
+        annotate_program_calls(program, self._imports, self._local_types)
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
         self._scan_deserialization(tree.root_node, program)
@@ -133,6 +143,62 @@ class JavaFrontend:
         if _aggressive_detectors():
             self._scan_csrf_disabled(tree.root_node, program)
         return program
+
+    def _collect_declarations(self, root: TSNode):
+        """(import table, package, {declared type -> qualified name}) for the file."""
+        table = ImportTable()
+        package = ""
+        for child in root.children:
+            if child.type == "package_declaration":
+                ident = next((c for c in child.named_children
+                              if c.type in ("scoped_identifier", "identifier")), None)
+                package = self._get_text(ident) if ident is not None else ""
+            elif child.type == "import_declaration":
+                ident = next((c for c in child.named_children
+                              if c.type in ("scoped_identifier", "identifier")), None)
+                if ident is None:
+                    continue
+                name = self._get_text(ident)
+                if any(c.type == "asterisk" for c in child.children):
+                    table.wildcards.append(name)
+                else:
+                    table.bind(name.rsplit(".", 1)[-1], name)
+        types: Dict[str, str] = {}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type in ("class_declaration", "interface_declaration", "enum_declaration",
+                          "record_declaration", "annotation_type_declaration"):
+                nm = n.child_by_field_name("name")
+                if nm is not None:
+                    simple = self._get_text(nm)
+                    types.setdefault(simple, f"{package}.{simple}" if package else simple)
+            stack.extend(n.children)
+        return table.finish(), package, types
+
+    def _declared_bases(self, node: TSNode) -> List[str]:
+        """Superclass and interfaces of a type declaration, as written (no generics)."""
+        holders = [node.child_by_field_name(f) for f in ("superclass", "interfaces")]
+        holders += [c for c in node.named_children if c.type == "extends_interfaces"]  # `interface A extends B, C`
+        found = [t for h in holders if h is not None
+                 for t in self._descendants(h, stop=("type_arguments",))
+                 if t.type in ("type_identifier", "scoped_type_identifier")
+                 and t.parent is not None and t.parent.type != "scoped_type_identifier"]
+        found.sort(key=lambda t: t.start_byte)
+        return [self._get_text(t).split("<")[0] for t in found]
+
+    def _record_class_info(self, node: TSNode, program: Program, kind: str) -> None:
+        nm = node.child_by_field_name("name")
+        if nm is None:
+            return
+        name = self._get_text(nm)
+        bases = self._declared_bases(node)
+        program.class_info[name] = ClassInfo(
+            name=name, kind=kind, bases=bases,
+            canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
+            annotations=[parse_annotation(a, self._imports, value_alias=True)
+                         for a in self._get_annotations(node)],
+            package=self._package or None)
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
         """Translate Java compilation unit"""
@@ -151,6 +217,7 @@ class JavaFrontend:
         outer_class, outer_fields = self._current_class, self._field_types
         outer_methods = self._class_methods
         self._current_class = class_name
+        self._record_class_info(node, program, "enum" if node.type == "enum_declaration" else "class")
 
         body = node.child_by_field_name("body")
         self._class_methods = {
@@ -292,7 +359,7 @@ class JavaFrontend:
 
     def _translate_interface(self, node: TSNode, program: Program) -> None:
         """Translate interface (skip method bodies as they're abstract)"""
-        pass
+        self._record_class_info(node, program, "interface")
 
     def _translate_enum(self, node: TSNode, program: Program) -> None:
         """Translate enum (similar to class)"""
@@ -611,6 +678,15 @@ class JavaFrontend:
         proc.has_varargs = self._has_varargs(node)
         proc.param_type_names = self._param_type_names(node)
         proc.ret_type_name = self._static_type(node.child_by_field_name("type"))
+        proc.annotations = [parse_annotation(a, self._imports, value_alias=True) for a in annotations]
+        pnode = node.child_by_field_name("parameters")
+        for ch in (pnode.children if pnode is not None else ()):
+            if ch.type in ("formal_parameter", "spread_parameter"):
+                pn = ch.child_by_field_name("name")
+                anns = self._get_annotations(ch)
+                if pn is not None and anns:
+                    proc.param_annotations[self._get_text(pn)] = [
+                        parse_annotation(a, self._imports, value_alias=True) for a in anns]
 
         # Check for static modifier
         for child in node.children:

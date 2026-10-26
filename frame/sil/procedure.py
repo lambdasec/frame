@@ -19,6 +19,7 @@ from enum import Enum, auto
 
 from .types import Ident, PVar, Typ, Location
 from .instructions import Instr, TaintKind, SinkKind
+from .metadata import Annotation, ClassInfo
 
 
 # =============================================================================
@@ -401,6 +402,10 @@ class Procedure:
     # byte range used to find that parent. Set by the JS frontend; the
     # translator hands the enclosing procedure's taint to the captured names.
     captures: List[str] = field(default_factory=list)
+    # Decorators / annotations / attributes on the procedure and on each
+    # parameter (by name), with their arguments. See metadata.Annotation.
+    annotations: List[Annotation] = field(default_factory=list)
+    param_annotations: Dict[str, List[Annotation]] = field(default_factory=dict)
     parent: Optional[str] = None
     span: Optional[Tuple[int, int]] = None
 
@@ -606,6 +611,11 @@ class Program:
     # Declared supertypes of each class in the program (Java), for overload
     # resolution's subtype test.
     class_supertypes: Dict[str, List[str]] = field(default_factory=dict)
+
+    # Class-like declarations: bases/interfaces (as written and resolved) and
+    # annotations, and the file's local-name -> qualified-name import table.
+    class_info: Dict[str, ClassInfo] = field(default_factory=dict)
+    imports: Dict[str, str] = field(default_factory=dict)
 
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]

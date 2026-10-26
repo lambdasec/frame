@@ -464,6 +464,14 @@ class Call(Instr):
     # receiver's declared type, a class used as a qualifier (`Shell.run`), or the
     # calling class for an unqualified call. Project-wide call resolution starts here.
     callee_class: Optional[str] = None
+    # Best-effort fully qualified callee id resolved through the file's imports
+    # (`flask.request.args.get`, `java.sql.Statement.executeQuery`); None when it
+    # cannot be resolved. Set by the frontend's post-pass (see metadata.py). Nothing
+    # in the analysis reads it yet; framework packs match on it, name as fallback.
+    canonical: Optional[str] = None
+    # Keyword-argument names parallel to `args` (None for a positional argument),
+    # for languages that have them (Python, C# named arguments). None = no names.
+    kwarg_names: Optional[List[Optional[str]]] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)

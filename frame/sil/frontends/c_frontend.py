@@ -42,6 +42,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.c_specs import C_SPECS, CPP_SPECS
 
@@ -132,6 +133,20 @@ class CFrontend:
         program.function_macros = self._function_macro_names(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
+
+        includes = ImportTable()
+        stack = [tree.root_node]
+        while stack:
+            n = stack.pop()
+            if n.type == "preproc_include":
+                path = n.child_by_field_name("path")
+                if path is not None:
+                    header = self._get_text(path).strip('<>"')
+                    includes.wildcards.append(header)
+                    program.imports[self._get_text(path)] = header
+                continue
+            stack.extend(n.children)
+        annotate_program_calls(program, includes)
         return program
 
     def _function_macro_names(self, root: TSNode) -> Set[str]:
@@ -1398,6 +1413,13 @@ class CppFrontend(CFrontend):
         """Translate C++ class/struct"""
         name_node = node.child_by_field_name("name")
         class_name = self._get_text(name_node) if name_node else "UnknownClass"
+        bases = [self._get_text(b).split("<")[0] for c in node.children if c.type == "base_class_clause"
+                 for b in c.named_children
+                 if b.type in ("type_identifier", "qualified_identifier", "template_type")]
+        program.class_info[class_name] = ClassInfo(
+            name=class_name, kind="struct" if node.type == "struct_specifier" else "class",
+            bases=bases, canonical_bases=list(bases),
+            package=self._current_namespace or None)
 
         old_class = self._current_class
         self._current_class = class_name

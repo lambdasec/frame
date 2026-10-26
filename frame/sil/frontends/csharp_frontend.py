@@ -38,6 +38,9 @@ from frame.sil.instructions import (
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.metadata import (
+    ClassInfo, ImportTable, canonical_call, parse_annotation,
+)
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
 
 
@@ -79,6 +82,11 @@ class CSharpFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._current_namespace: Optional[str] = None
+        self._imports = ImportTable()
+        self._local_types: Dict[str, str] = {}
+        self._class_fields: Dict[str, str] = {}
+        self._class_fields_of: Dict[str, Dict[str, str]] = {}
+        self._proc_types: Dict[int, Dict[str, str]] = {}
         # Member-access values whose mere reference is insecure config. Emitted
         # as a Call so the usage-based sink path fires regardless of kind.
         self._DANGEROUS_MEMBER_VALUES = {
@@ -121,8 +129,138 @@ class CSharpFrontend:
         program = Program(library_specs=self.specs.copy(), language="csharp")
         program.source_files.append(filename)
 
+        self._imports, self._local_types = self._collect_declarations(tree.root_node)
+        program.imports = self._imports.as_dict()
+        self._proc_types = {}
+
         self._translate_compilation_unit(tree.root_node, program)
+        self._annotate_calls(program)
         return program
+
+    # -- canonical ids and declaration facts ---------------------------------
+
+    def _collect_declarations(self, root: TSNode):
+        """(using table, {declared type -> namespace-qualified name})."""
+        table = ImportTable()
+        types: Dict[str, str] = {}
+
+        def walk(node: TSNode, namespace: str) -> None:
+            for child in node.children:
+                if child.type == "using_directive":
+                    names = [c for c in child.named_children
+                             if c.type in ("identifier", "qualified_name")]
+                    is_static = any(c.type == "static" or self._get_text(c) == "static" for c in child.children)
+                    if is_static:
+                        continue
+                    if any(c.type == "=" for c in child.children) and len(names) >= 2:
+                        table.bind(self._get_text(names[0]), self._get_text(names[-1]))
+                    elif names:
+                        table.wildcards.append(self._get_text(names[-1]))
+                elif child.type in ("namespace_declaration", "file_scoped_namespace_declaration"):
+                    nm = child.child_by_field_name("name")
+                    ns = self._get_text(nm) if nm is not None else ""
+                    inner = f"{namespace}.{ns}" if namespace and ns else (ns or namespace)
+                    body = child.child_by_field_name("body")
+                    walk(body if body is not None else child, inner)
+                elif child.type in ("class_declaration", "struct_declaration", "interface_declaration",
+                                    "enum_declaration", "record_declaration"):
+                    nm = child.child_by_field_name("name")
+                    if nm is not None:
+                        simple = self._get_text(nm)
+                        types.setdefault(simple, f"{namespace}.{simple}" if namespace else simple)
+                    body = child.child_by_field_name("body")
+                    if body is not None:
+                        walk(body, namespace)
+                elif child.type == "declaration_list":
+                    walk(child, namespace)
+
+        walk(root, "")
+        return table.finish(), types
+
+    def _declared_types(self, node: TSNode) -> Dict[str, str]:
+        """Variable / parameter / field name -> declared type in the subtree; a name
+        declared with two different types is dropped."""
+        found: Dict[str, str] = {}
+        conflicts: set = set()
+
+        def type_text(t: Optional[TSNode]) -> str:
+            return self._get_text(t).split("<")[0].rstrip("?").strip() if t is not None else ""
+
+        def add(name: str, typ: str) -> None:
+            if not name or not typ:
+                return
+            if name in found and found[name] != typ:
+                conflicts.add(name)
+            found[name] = typ
+
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "parameter":
+                nm = n.child_by_field_name("name")
+                add(self._get_text(nm) if nm is not None else "", type_text(n.child_by_field_name("type")))
+            elif n.type == "variable_declaration":
+                tnode = n.child_by_field_name("type") or (n.named_children[0] if n.named_children else None)
+                typ = type_text(tnode)
+                for d in n.named_children:
+                    if d.type != "variable_declarator":
+                        continue
+                    nm = d.child_by_field_name("name") or next(
+                        (c for c in d.children if c.type == "identifier"), None)
+                    t = typ
+                    if typ == "var":
+                        creation = next((c for c in self._descendants_of(d)
+                                         if c.type == "object_creation_expression"), None)
+                        t = type_text(creation.child_by_field_name("type")) if creation is not None else ""
+                    add(self._get_text(nm) if nm is not None else "", t)
+            stack.extend(n.children)
+        for c in conflicts:
+            found.pop(c, None)
+        return found
+
+    @staticmethod
+    def _descendants_of(node: TSNode):
+        stack = list(node.children)
+        while stack:
+            n = stack.pop()
+            yield n
+            stack.extend(n.children)
+
+    def _annotate_calls(self, program: Program) -> None:
+        """Fill `Call.canonical` from the receiver's declared type (C# calls carry no
+        receiver type of their own; nothing else reads what is computed here)."""
+        for proc in program.procedures.values():
+            types = {**self._class_fields_of.get(proc.class_name or "", {}),
+                     **self._proc_types.get(id(proc), {})}
+            own_class = (proc.class_name or "").rsplit(".", 1)[-1]
+            own_methods = {p.name.rsplit(".", 1)[-1] for p in program.procedures.values()
+                           if p.class_name == proc.class_name}
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    if not isinstance(instr, Call) or instr.canonical is not None:
+                        continue
+                    func = str(getattr(instr.func, "value", instr.func))
+                    head, dot, rest = func.partition(".")
+                    receiver = None
+                    if not dot:
+                        if func in own_methods:
+                            receiver = own_class or None
+                        elif func[:1].isupper() and canonical_call(
+                                "csharp", f"{func}.<init>", self._imports, receiver_type=func,
+                                local_types=self._local_types):
+                            instr.canonical = canonical_call(
+                                "csharp", f"new {func}", self._imports, local_types=self._local_types)
+                            continue
+                    elif "." not in rest:
+                        receiver = types.get(head) or (head if head[:1].isupper() else None)
+                    elif head in ("System", "Microsoft"):
+                        receiver = func.rsplit(".", 1)[0]
+                    if receiver is None:
+                        continue
+                    method = func.rsplit(".", 1)[-1]
+                    instr.canonical = canonical_call(
+                        "csharp", f"{receiver}.{method}", self._imports,
+                        receiver_type=receiver, local_types=self._local_types)
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C# compilation unit"""
@@ -177,9 +315,15 @@ class CSharpFrontend:
 
         old_class = self._current_class
         self._current_class = full_class_name
+        self._record_class_info(node, program, class_name, full_class_name)
 
         body = node.child_by_field_name("body")
         if body:
+            fields = {}
+            for member in body.children:
+                if member.type == "field_declaration":
+                    fields.update(self._declared_types(member))
+            self._class_fields_of[full_class_name] = fields
             for child in body.children:
                 if child.type == "method_declaration":
                     proc = self._translate_method(child)
@@ -203,6 +347,22 @@ class CSharpFrontend:
             self._translate_literal_fields(body, full_class_name, program)
 
         self._current_class = old_class
+
+    def _record_class_info(self, node: TSNode, program: Program, name: str, full_name: str) -> None:
+        bases: List[str] = []
+        for c in node.children:
+            if c.type == "base_list":
+                bases = [self._get_text(b).split("<")[0] for b in c.named_children
+                         if b.type in ("identifier", "qualified_name", "generic_name")]
+        attrs = [self._get_text(a) for lst in node.children if lst.type == "attribute_list"
+                 for a in lst.children if a.type == "attribute"]
+        kind = {"struct_declaration": "struct", "interface_declaration": "interface",
+                "enum_declaration": "enum"}.get(node.type, "class")
+        program.class_info[name] = ClassInfo(
+            name=name, kind=kind, bases=bases,
+            canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
+            annotations=[parse_annotation(a, self._imports) for a in attrs],
+            package=self._current_namespace or None)
 
     _STRING_LITERAL_TYPES = frozenset({
         "string_literal", "verbatim_string_literal", "raw_string_literal"})
@@ -270,6 +430,16 @@ class CSharpFrontend:
             is_method=True,
         )
         proc.has_varargs = self._has_params_array(node)
+        proc.annotations = [parse_annotation(a, self._imports) for a in attributes]
+        self._proc_types[id(proc)] = self._declared_types(node)
+        pl = node.child_by_field_name("parameters")
+        for prm in (pl.children if pl is not None else ()):
+            if prm.type == "parameter":
+                pn = prm.child_by_field_name("name")
+                attrs = self._get_attributes(prm)
+                if pn is not None and attrs:
+                    proc.param_annotations[self._get_text(pn)] = [
+                        parse_annotation(a, self._imports) for a in attrs]
 
         # Check for static modifier
         for child in node.children:
@@ -748,7 +918,8 @@ class CSharpFrontend:
             loc=loc,
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(method_name),
-            args=args_exp
+            args=args_exp,
+            kwarg_names=self._named_arg_names(call_node)
         )
         instrs.append(call_instr)
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
@@ -891,7 +1062,8 @@ class CSharpFrontend:
             loc=loc,
             ret=None,
             func=ExpConst.string(method_name),
-            args=args_exp
+            args=args_exp,
+            kwarg_names=self._named_arg_names(call_node)
         )
         instrs.append(call_instr)
 
@@ -1442,6 +1614,26 @@ class CSharpFrontend:
             return self._get_text(expr)
 
         return ""
+
+    def _named_arg_names(self, node: TSNode) -> Optional[List[Optional[str]]]:
+        """Names of C# named arguments (`f(a: x)`), parallel to `_get_method_args`;
+        None when no argument is named."""
+        out: List[Optional[str]] = []
+        args_node = node.child_by_field_name("arguments")
+        for child in (args_node.children if args_node else []):
+            if child.type in ("(", ")", ",", "argument_list"):
+                continue
+            if child.type == "argument":
+                colon = next((c for c in child.children if c.type == ":"), None)
+                label = child.children[0] if colon is not None else None
+                name = self._get_text(label) if label is not None else None
+                for ac in child.children:
+                    if ac.type not in (":", "ref", "out", "in"):
+                        # the label node itself is also emitted by _get_method_args
+                        out.append(None if (label is not None and ac.id == label.id) else name)
+            else:
+                out.append(None)
+        return out if any(n is not None for n in out) else None
 
     def _get_method_args(self, node: TSNode) -> List[TSNode]:
         args = []
