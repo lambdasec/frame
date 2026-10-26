@@ -16,6 +16,14 @@ Usage:
 
     # Scan without verification (faster, may have FPs)
     python -m frame.sil.cli scan app.py --no-verify
+
+    # Record today's findings, then report only new ones in what changed
+    python -m frame.sil.cli scan . --write-baseline .frame-baseline.json --fail-on none
+    python -m frame.sil.cli scan . --changed --baseline .frame-baseline.json
+
+Exit status: 0 no finding at or above --fail-on (only new findings count when
+--baseline is given), 1 such a finding, 2 the scan could not run (bad target,
+configuration, baseline, git ref, or an unreachable LLM endpoint).
 """
 
 import argparse
@@ -39,6 +47,37 @@ PATTERN_HELP = ("Glob pattern for directory scan (default: every file of --langu
                 "or every supported source file)")
 
 
+def add_target_arg(scan_parser) -> None:
+    scan_parser.add_argument(
+        "target", nargs="?", default=".",
+        help="File or directory to scan (default: the current directory)")
+
+
+def add_incremental_args(scan_parser) -> None:
+    """Narrowing a scan to what changed and comparing it with a baseline, shared
+    by this parser and `frame/cli.py`'s."""
+    scan_parser.add_argument(
+        "--changed", nargs="?", const="HEAD", default=None, metavar="REF",
+        help="Scan only files that differ from REF (default HEAD: staged and "
+             "unstaged changes) plus untracked files; needs a git repository and "
+             "a directory target. Nothing changed is a clean scan.")
+    scan_parser.add_argument(
+        "--files", nargs="+", default=None, metavar="PATH",
+        help="Scan only these files (within the target directory), e.g. the ones "
+             "an agent just edited. Combines with --changed.")
+    scan_parser.add_argument(
+        "--baseline", metavar="FILE",
+        help="Report only findings not recorded in this baseline; known ones are "
+             "counted as `baselined` and do not affect the exit status. Baseline "
+             "findings no longer present in the scanned files are listed as fixed.")
+    scan_parser.add_argument(
+        "--write-baseline", metavar="FILE",
+        help="Record this run's findings as the baseline (written after --baseline "
+             "is applied, so both together update it). Entries for files this run "
+             "did not scan are kept. Does not change the exit status; add "
+             "--fail-on none to accept the current state.")
+
+
 def add_language_and_pattern_args(scan_parser) -> None:
     """`-l` / `-p` for `scan`, shared by this parser and `frame/cli.py`'s so the
     two cannot drift. Both default to None; `cmd_scan` resolves them."""
@@ -56,11 +95,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Scan command
     scan_parser = subparsers.add_parser("scan", help="Scan files for vulnerabilities")
-    scan_parser.add_argument(
-        "target",
-        help="File or directory to scan"
-    )
+    add_target_arg(scan_parser)
     add_language_and_pattern_args(scan_parser)
+    add_incremental_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
         action="store_true",
@@ -200,6 +237,8 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
     if result.suppressed:
         lines.append(f"Suppressed findings: {len(result.suppressed)} "
                      f"(inline `frame: ignore` or disabled rules)")
+    if result.baselined:
+        lines.append(f"Known findings (baseline): {len(result.baselined)}")
 
     # Errors
     if result.errors:
@@ -232,6 +271,9 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
             if vuln.cwe_id:
                 lines.append(f"   CWE: {vuln.cwe_id}")
 
+            if vuln.fingerprint:
+                lines.append(f"   ID: {vuln.fingerprint}")
+
             if vuln.source_var:
                 lines.append(f"   Source: {vuln.source_var}")
 
@@ -254,28 +296,39 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
     return "\n".join(lines)
 
 
-def format_json_result(results: List[ScanResult], directory: bool = False) -> str:
+# Version of the `frame scan -f json` document. Bump it when a field changes
+# meaning or is removed; adding a field does not need a bump.
+JSON_SCHEMA_VERSION = 1
+
+
+def format_json_result(results: List[ScanResult], directory: bool = False,
+                       extra: dict = None) -> str:
     """Format results as JSON: one file's object for a file target, the
     `{"files": [...], "summary": ...}` shape for a directory target -- even when
     it holds a single file, so the schema depends on what was scanned, never on
-    how many files matched."""
+    how many files matched. `extra` keys (e.g. `baseline`) go at the top level."""
     if len(results) == 1 and not directory:
-        return results[0].to_json()
+        doc = results[0].to_dict()
     else:
-        combined = {
+        doc = {
             "files": [r.to_dict() for r in results],
             "summary": {
                 "files_scanned": len(results),
                 "total_vulnerabilities": sum(len(r.vulnerabilities) for r in results),
                 "critical": sum(r.critical_count for r in results),
                 "high": sum(r.high_count for r in results),
+                "suppressed": sum(len(r.suppressed) for r in results),
+                "baselined": sum(len(r.baselined) for r in results),
             }
         }
-        return json.dumps(combined, indent=2)
+    doc = {"schema_version": JSON_SCHEMA_VERSION, **doc, **(extra or {})}
+    return json.dumps(doc, indent=2)
 
 
 def format_sarif_result(results: List[ScanResult]) -> str:
     """Format results as SARIF"""
+    if not results:
+        return json.dumps(ScanResult(filename="").to_sarif(), indent=2)
     if len(results) == 1:
         return json.dumps(results[0].to_sarif(), indent=2)
     else:
@@ -348,7 +401,43 @@ def cmd_scan(args) -> int:
 
     if not target.exists():
         print(f"Error: Target not found: {args.target}", file=sys.stderr)
-        return 1
+        return 2
+
+    changed_ref = getattr(args, "changed", None)
+    only_paths = getattr(args, "files", None)
+    narrowed = changed_ref is not None or only_paths is not None
+    if narrowed and not target.is_dir():
+        print("Error: --changed/--files need a directory target (the scope to scan "
+              "within), e.g. `frame scan . --changed`", file=sys.stderr)
+        return 2
+
+    from frame.sil.fingerprints import (
+        BaselineError, apply_baseline, assign_fingerprints,
+        load_baseline, project_root, write_baseline)
+    root = project_root(target)
+    baseline_entries = None
+    if getattr(args, "baseline", None):
+        try:
+            baseline_entries = load_baseline(args.baseline)
+        except BaselineError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
+    selection = None
+    if narrowed:
+        selection = []
+        if changed_ref is not None:
+            from frame.sil.changes import GitError, changed_files
+            try:
+                selection.extend(changed_files(target.resolve(), changed_ref))
+            except GitError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
+        for f in only_paths or []:
+            if Path(f).is_file():
+                selection.append(Path(f))
+            else:
+                print(f"Warning: --files: not a file, skipped: {f}", file=sys.stderr)
 
     # Project configuration: flags > config file > built-in defaults.
     from frame.sil.suppressions import ConfigError, ScanConfig, find_config, load_config_file
@@ -361,7 +450,7 @@ def cmd_scan(args) -> int:
                 config = find_config(target) or ScanConfig()
         except (ConfigError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)
-            return 1
+            return 2
     if args.min_severity is None:
         args.min_severity = config.min_severity or "low"
     if args.fail_on is None:
@@ -386,7 +475,7 @@ def cmd_scan(args) -> int:
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Install tree-sitter: pip install tree-sitter tree-sitter-python", file=sys.stderr)
-        return 1
+        return 2
 
     # Perform scan. An unreachable LLM endpoint (with --ai) surfaces as a hard
     # error, never a misleading "no vulnerabilities found".
@@ -406,22 +495,49 @@ def cmd_scan(args) -> int:
             from frame.sil.scanner import language_extensions
             results = scanner.scan_directory(
                 str(target), args.pattern, exclude_dirs=exclude_dirs,
-                extensions=language_extensions(args.language))
+                extensions=language_extensions(args.language), only_files=selection)
     except LLMUnavailableError as e:
         print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
               file=sys.stderr)
         return 2
 
-    if not results:
+    if not results and not narrowed:
         print("No files found to scan.", file=sys.stderr)
-        return 1
+        return 2
+
+    # Stable identities for every finding, then the baseline comparison.
+    assign_fingerprints(results, root)
+    extra = {"root": str(root)}
+    if baseline_entries is not None:
+        fixed = apply_baseline(results, baseline_entries, root)
+        for r in results:
+            r.baseline_applied = True
+        extra["baseline"] = {
+            "file": str(args.baseline),
+            "new": sum(len(r.vulnerabilities) for r in results),
+            "baselined": sum(len(r.baselined) for r in results),
+            "fixed": fixed,
+        }
+    if getattr(args, "write_baseline", None):
+        try:
+            written = write_baseline(args.write_baseline, results, root)
+        except OSError as e:
+            print(f"Error: cannot write baseline: {e}", file=sys.stderr)
+            return 2
+        print(f"Baseline written: {args.write_baseline} ({written} findings)", file=sys.stderr)
 
     # Format output
     min_severity = parse_severity(args.min_severity)
 
     if args.format == "text":
-        for result in results:
-            output = format_text_result(result, min_severity)
+        chunks = [format_text_result(result, min_severity) for result in results]
+        if not results:
+            chunks.append("No source files in the selection to scan.\n")
+        if "baseline" in extra:
+            b = extra["baseline"]
+            chunks.append(f"Baseline {b['file']}: {b['new']} new, {b['baselined']} known, "
+                          f"{len(b['fixed'])} fixed since it was written\n")
+        for output in chunks:
             if args.output:
                 with open(args.output, 'a') as f:
                     f.write(output)
@@ -429,7 +545,7 @@ def cmd_scan(args) -> int:
                 print(output)
 
     elif args.format == "json":
-        output = format_json_result(results, directory=target.is_dir())
+        output = format_json_result(results, directory=target.is_dir(), extra=extra)
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)

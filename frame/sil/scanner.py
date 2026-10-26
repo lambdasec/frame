@@ -239,10 +239,15 @@ class Vulnerability:
     witness: Optional[str] = None
     confidence: float = 1.0
     cwe_id: Optional[str] = None
+    # Set by `fingerprints.assign_fingerprints`: the file relative to the project
+    # root and the finding's stable identities (see that module).
+    path: Optional[str] = None
+    fingerprint: Optional[str] = None
+    fingerprint_loose: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
-        return {
+        d = {
             "type": self.type.value,
             "severity": self.severity.value,
             "location": self.location,
@@ -258,6 +263,11 @@ class Vulnerability:
             "confidence": self.confidence,
             "cwe_id": self.cwe_id,
         }
+        if self.fingerprint:
+            d["path"] = self.path
+            d["fingerprint"] = self.fingerprint
+            d["fingerprint_loose"] = self.fingerprint_loose
+        return d
 
 
 @dataclass
@@ -271,6 +281,10 @@ class ScanResult:
     lines_scanned: int = 0
     procedures_analyzed: int = 0
     suppressed: List[Vulnerability] = field(default_factory=list)
+    # Findings a baseline already records (`fingerprints.apply_baseline`):
+    # kept, like suppressed ones, but not reported as new.
+    baselined: List[Vulnerability] = field(default_factory=list)
+    baseline_applied: bool = False
 
     @property
     def has_vulnerabilities(self) -> bool:
@@ -288,6 +302,11 @@ class ScanResult:
         return {
             "filename": self.filename,
             "vulnerabilities": [v.to_dict() for v in self.vulnerabilities],
+            # Kept, never silently dropped: what a baseline or suppression hid.
+            # `frame verify` matches against them so a known finding is not
+            # mistaken for a new one moving.
+            "baselined": [v.to_dict() for v in self.baselined],
+            "suppressed": [v.to_dict() for v in self.suppressed],
             "errors": self.errors,
             "warnings": self.warnings,
             "scan_time_ms": self.scan_time_ms,
@@ -298,6 +317,7 @@ class ScanResult:
                 "critical": self.critical_count,
                 "high": self.high_count,
                 "suppressed": len(self.suppressed),
+                "baselined": len(self.baselined),
             }
         }
 
@@ -340,6 +360,13 @@ class ScanResult:
 
             if vuln.witness:
                 result["message"]["text"] += f"\n\nExploit witness: {vuln.witness}"
+            if vuln.fingerprint:
+                result["partialFingerprints"] = {
+                    "frame/v1": vuln.fingerprint,
+                    "frame-loose/v1": vuln.fingerprint_loose,
+                }
+            if self.baseline_applied:
+                result["baselineState"] = "new"
 
             results.append(result)
 
@@ -1292,7 +1319,8 @@ class FrameScanner:
 
     def scan_directory(self, dirpath: str, pattern: Optional[str] = "**/*.py",
                         exclude_dirs: Optional[Iterable[Union[str, Tuple[str, ...]]]] = None,
-                        extensions: Optional[Iterable[str]] = None
+                        extensions: Optional[Iterable[str]] = None,
+                        only_files: Optional[Iterable[Union[str, Path]]] = None
                         ) -> List[ScanResult]:
         """
         Scan all matching files in a directory.
@@ -1304,6 +1332,9 @@ class FrameScanner:
                 its own language -- what a mixed-language repository needs.
             extensions: With `pattern=None`, scan only these extensions
                 (e.g. `language_extensions("java")`).
+            only_files: Scan only these files (e.g. what `git diff` names),
+                still subject to the pattern/extensions and the excludes. Files
+                outside `dirpath` are ignored.
             exclude_dirs: Directory names (or component-sequence tuples) to
                 skip anywhere under `dirpath` (matched against path
                 components relative to `dirpath`, so a scan root that itself
@@ -1338,7 +1369,9 @@ class FrameScanner:
             self.llm_detect = False          # suppress the per-file LLM pass
 
         try:
-            if pattern is None:
+            if only_files is not None:
+                candidates = self._selected_files(dir_path, only_files, pattern, extensions)
+            elif pattern is None:
                 exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
                 candidates = sorted(p for p in dir_path.rglob("*")
                                     if p.suffix.lower() in exts)
@@ -1355,13 +1388,37 @@ class FrameScanner:
             self.llm_detect = per_file_detect
 
         if repo_scale:
-            results = self._apply_repo_scale_detect(dir_path, results, excluded_dirs)
+            selected = None if only_files is None else {Path(r.filename).resolve() for r in results}
+            results = self._apply_repo_scale_detect(dir_path, results, excluded_dirs, selected)
 
         return results
 
+    @staticmethod
+    def _selected_files(dir_path: Path, only_files: Iterable[Union[str, Path]],
+                        pattern: Optional[str],
+                        extensions: Optional[Iterable[str]]) -> List[Path]:
+        """`only_files` that lie under `dir_path` and match `pattern` (or, with no
+        pattern, have one of `extensions`), as paths under `dir_path` the way a
+        directory walk would name them."""
+        root = dir_path.resolve()
+        exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
+        globbed = {p.resolve() for p in dir_path.glob(pattern)} if pattern else None
+        out = []
+        for f in only_files:
+            p = Path(f).resolve()
+            if not p.is_relative_to(root):
+                continue
+            if globbed is not None and p not in globbed:
+                continue
+            if globbed is None and p.suffix.lower() not in exts:
+                continue
+            out.append(dir_path / p.relative_to(root))
+        return sorted(set(out))
+
     def _apply_repo_scale_detect(self, dir_path: Path,
                                  results: List[ScanResult],
-                                 excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset()
+                                 excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset(),
+                                 selected: Optional[set] = None
                                  ) -> List[ScanResult]:
         """Run one repository-wide LLM detection pass and merge its findings.
 
@@ -1372,7 +1429,8 @@ class FrameScanner:
         limited to the glob's matches, so a newly-created result is still checked
         against `excluded_dirs` before being kept. Fail-safe: any error leaves the
         symbolic results untouched, because a broken LLM tier must never discard
-        proven findings.
+        proven findings. With `selected` (a narrowed scan, e.g. `--changed`), a
+        finding in a file outside it is dropped.
         """
         try:
             from frame.sil.llm_detect import detect_repo
@@ -1396,6 +1454,8 @@ class FrameScanner:
         for vuln in found or []:
             target = getattr(vuln, "location", "") or ""
             if not target:
+                continue
+            if selected is not None and Path(target).resolve() not in selected:
                 continue
             result = by_file.get(target)
             if result is None:
@@ -1597,13 +1657,18 @@ class FrameScanner:
                 final_vulns.append(best)
                 added_windows.add(window_key)
 
-        # Phase 3: one finding per (file, procedure, CWE). Control-flow variants
-        # of one bug inside a function collapse; the same bug class in another
-        # function is another finding -- five injectable endpoints in one
-        # controller are five findings, not one. (Benchmarks that score one
-        # label per file collapse further with `collapse_per_file_cwe`.)
+        # Phase 3: a synthetic file-wide pass (`<module-proto-pollution>`,
+        # `<module-redos>`, ...) reports one finding per (file, CWE): it flags
+        # every matching line of a file, and its per-line reports are one issue.
+        # A real function keeps each distinct sink (phases 1-2 already merged
+        # control-flow variants of one): a second injectable query added to a
+        # function that already has one is a new finding, and five injectable
+        # endpoints in one controller are five. (Benchmarks that score one label
+        # per file collapse further with `collapse_per_file_cwe`.)
         deduplicated = _keep_best_per_key(
-            final_vulns, lambda v: (v.location, v.procedure, v.cwe_id))
+            final_vulns,
+            lambda v: (v.location, v.procedure, v.cwe_id)
+            + (() if (v.procedure or "").startswith("<") else (v.line,)))
         # Phase 4: two analyzers reporting the same line under different
         # procedure names (`main` and `<interprocedural-analysis>`) are one finding.
         deduplicated = _keep_best_per_key(

@@ -1,7 +1,8 @@
 """What a scan reports, and how the CLI finds and formats it.
 
-The scanner reports every finding a user must fix: one per (file, procedure,
-CWE), so five injectable endpoints in one controller are five findings. The
+The scanner reports every finding a user must fix: each distinct sink in a
+function (same-CWE reports within a few lines merge as one flow), so five
+injectable endpoints in one controller are five findings. The
 one-label-per-file view that OWASP/Juliet-style benchmarks score is
 `collapse_per_file_cwe`, applied by the scoring code -- not by the scanner.
 """

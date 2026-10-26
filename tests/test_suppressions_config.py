@@ -186,7 +186,7 @@ def test_cli_inline_suppression_and_no_suppress(tmp_path, capsys):
 
 def test_cli_bad_config_is_error(tmp_path, capsys):
     f = _project(tmp_path, 'bogus = 1\n')
-    assert main(["scan", str(f), "-f", "json"]) == 1
+    assert main(["scan", str(f), "-f", "json"]) == 2     # 2: the scan could not run
     assert "unknown key" in capsys.readouterr().err
 
 

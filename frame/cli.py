@@ -49,12 +49,10 @@ def create_parser() -> argparse.ArgumentParser:
         help="Scan source code for security vulnerabilities",
         description="Scan source files for vulnerabilities using taint analysis and verification."
     )
-    scan_parser.add_argument(
-        "target",
-        help="File or directory to scan"
-    )
-    from frame.sil.cli import add_language_and_pattern_args
+    from frame.sil.cli import add_incremental_args, add_language_and_pattern_args, add_target_arg
+    add_target_arg(scan_parser)
     add_language_and_pattern_args(scan_parser)
+    add_incremental_args(scan_parser)
     scan_parser.add_argument(
         "--no-default-excludes",
         action="store_true",
@@ -238,6 +236,32 @@ def create_parser() -> argparse.ArgumentParser:
     fix_parser.add_argument(
         "--format", default="text", choices=["text", "json"],
         help="Output format (default: text)"
+    )
+
+    # === VERIFY command ===
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Re-scan and report whether earlier scan findings are fixed",
+        description="Re-scan the files behind findings from `frame scan -f json` and "
+                    "report each as fixed, file_removed, present, suppressed, "
+                    "uncertain or unverifiable. Exit status: 0 every finding is fixed "
+                    "or its file removed, 1 otherwise, 2 the findings cannot be "
+                    "verified as given."
+    )
+    verify_parser.add_argument(
+        "findings", help="Findings JSON from `frame scan -f json` (file path, or '-' for stdin)"
+    )
+    verify_parser.add_argument(
+        "--id", action="append", default=[], metavar="FINGERPRINT",
+        help="Verify only this finding (repeatable; default: every finding in the JSON)"
+    )
+    verify_parser.add_argument(
+        "-f", "--format", default="text", choices=["text", "json"],
+        help="Output format (default: text)"
+    )
+    verify_parser.add_argument(
+        "--timeout", type=int, default=5000,
+        help="Verification timeout in ms (default: 5000)"
     )
 
     # === SOLVE command ===
@@ -566,6 +590,48 @@ def _resolve_finding_file(loc: Optional[str], source: str) -> Optional[str]:
         if os.path.isfile(cand):
             return cand
     return None
+
+
+def cmd_verify(args) -> int:
+    """Execute verify command - re-scan and report whether findings are fixed."""
+    from collections import Counter
+    from frame.sil.verify import RESOLVED, VerifyError, verify_findings
+
+    try:
+        raw = sys.stdin.read() if args.findings == "-" else Path(args.findings).read_text()
+        doc = json.loads(raw)
+        findings = _load_findings(raw)
+        files = doc.get("files", [doc]) if isinstance(doc, dict) else []
+        context = [v for f in files for key in ("baselined", "suppressed")
+                   for v in (f.get(key) or [])]
+        root = doc.get("root") if isinstance(doc, dict) else None
+    except Exception as e:
+        print(f"Error reading findings: {e}", file=sys.stderr)
+        return 2
+    if not findings and not args.id:
+        print("No findings to verify.", file=sys.stderr)
+        return 2
+    try:
+        verdicts = verify_findings(findings, args.id, timeout_ms=args.timeout,
+                                   context=context, root=root)
+    except VerifyError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+
+    counts = Counter(v.status for v in verdicts)
+    if args.format == "json":
+        print(json.dumps({"schema_version": 1,
+                          "results": [v.to_dict() for v in verdicts],
+                          "summary": dict(counts)}, indent=2))
+    else:
+        for v in verdicts:
+            moved = (f" (now line {v.current_line})"
+                     if v.current_line and v.current_line != v.line else "")
+            print(f"{v.status:<13} {v.cwe_id or '-':<8} {v.path}:{v.line}{moved}  "
+                  f"[{v.fingerprint}] {v.detail}".rstrip())
+        print(f"\n{len(verdicts)} finding(s): "
+              + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
+    return 0 if all(v.status in RESOLVED for v in verdicts) else 1
 
 
 def cmd_fix(args) -> int:
@@ -1214,6 +1280,7 @@ def main(argv: List[str] = None) -> int:
         "scan": cmd_scan,
         "exploit": cmd_exploit,
         "fix": cmd_fix,
+        "verify": cmd_verify,
         "solve": cmd_solve,
         "check": cmd_check,
         "parse": cmd_parse,
