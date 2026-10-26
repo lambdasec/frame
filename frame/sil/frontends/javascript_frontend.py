@@ -212,6 +212,8 @@ class JavaScriptFrontend:
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
+        self._link_enclosing_procedures(program)
+
         # One-hop interprocedural taint: a request-derived value passed to a
         # same-file function taints that function's parameter (e.g. a handler
         # computes `file` from req and calls a helper verify(file) that sends it).
@@ -594,6 +596,11 @@ class JavaScriptFrontend:
 
         # Find and translate body
         body_node = node.child_by_field_name("body")
+        proc.span = (node.start_byte, node.end_byte)
+        if body_node is not None:
+            own_params = {str(param) for param, _ in proc.params}
+            outer = (self._enclosing_param_names(node) | self._enclosing_local_names(node)) - own_params
+            proc.captures = sorted(outer & self._referenced_identifiers(body_node))
 
         # Treat the function's parameters as untrusted input (pure-SL recall
         # lever for real-world JS where the attack surface is exported APIs).
@@ -1256,6 +1263,24 @@ class JavaScriptFrontend:
                         stack.extend(c.children)
             cur = cur.parent
         return names
+
+    @staticmethod
+    def _link_enclosing_procedures(program: Program) -> None:
+        """Set `Procedure.parent` to the innermost procedure whose source range
+        contains a nested function's, so its captured variables can take the
+        enclosing procedure's taint."""
+        spans = [(p.span, name) for name, p in program.procedures.items() if p.span]
+        for name, proc in program.procedures.items():
+            if not proc.span or not proc.captures:
+                continue
+            best = None
+            for span, other in spans:
+                if other == name:
+                    continue
+                if span[0] <= proc.span[0] and proc.span[1] <= span[1] and span != proc.span:
+                    if best is None or (span[1] - span[0]) < (best[0][1] - best[0][0]):
+                        best = (span, other)
+            proc.parent = best[1] if best else None
 
     def _enclosing_request_derived_locals(self, node: TSNode) -> set:
         """Enclosing-function locals whose initializer is request-derived.
@@ -2002,7 +2027,7 @@ class JavaScriptFrontend:
                 instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
                 func_name = f"{inner}.{self._get_text(prop_node)}"
         args = self._get_call_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
 
         # Create return identifier
         ret_id = self._new_ident(target)
@@ -2042,13 +2067,13 @@ class JavaScriptFrontend:
             kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
-                    instrs.append(TaintSink(
-                        loc=loc,
-                        exp=arg_exp,
-                        kind=kind,
-                        description=spec.description
-                    ))
+                    for arg_exp in self._sink_arg_exps(func_name, args, arg_idx):
+                        instrs.append(TaintSink(
+                            loc=loc,
+                            exp=arg_exp,
+                            kind=kind,
+                            description=spec.description
+                        ))
 
         return instrs
 
@@ -2086,7 +2111,7 @@ class JavaScriptFrontend:
             func_name = self._get_call_name(call_node)
 
         args = self._get_call_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
 
         # Build Call instruction
         call_instr = Call(
@@ -2105,16 +2130,63 @@ class JavaScriptFrontend:
             kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
-                    instrs.append(TaintSink(
-                        loc=loc,
-                        exp=arg_exp,
-                        kind=kind,
-                        description=spec.description,
-                        arg_index=arg_idx
-                    ))
+                    for arg_exp in self._sink_arg_exps(func_name, args, arg_idx):
+                        instrs.append(TaintSink(
+                            loc=loc,
+                            exp=arg_exp,
+                            kind=kind,
+                            description=spec.description,
+                            arg_index=arg_idx
+                        ))
 
         return instrs
+
+    @staticmethod
+    def _call_argument_nodes(call_node: TSNode) -> List[TSNode]:
+        arguments = call_node.child_by_field_name("arguments")
+        return list(arguments.named_children) if arguments is not None else []
+
+    def _render_data_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> Optional[List[Exp]]:
+        """For `res.render("view", { a, b: x })` whose template is found and
+        readable: the data values the template prints without escaping
+        (`<%- a %>`, `{{{ a }}}`, `a | safe`). The rest is escaped by the engine
+        and is not an XSS sink. None when this is not such a call or the
+        template is unknown (every value then stays a sink)."""
+        node = args[arg_idx]
+        if not (arg_idx == 1 and func_name.rsplit(".", 1)[-1] == "render"
+                and args[0].type == "string" and node.type == "object"):
+            return None
+        from frame.sil.templates import keep_render_arguments
+        view = self._get_text(args[0]).strip("'\"`")
+        entries: List[Tuple[Optional[str], Optional[TSNode]]] = []
+        for child in node.children:
+            if child.type == "pair":
+                key = child.child_by_field_name("key")
+                entries.append((self._get_text(key).strip("'\"`") if key is not None else None,
+                                child.child_by_field_name("value")))
+            elif child.type == "shorthand_property_identifier":
+                entries.append((self._get_text(child), child))
+            elif child.type == "spread_element":
+                entries.append((None, child.named_children[0] if child.named_children else None))
+        keep = keep_render_arguments(view, self._filename, [k for k, _ in entries if k is not None])
+        if keep is None:
+            return None
+        return [self._translate_expression(v) for k, v in entries
+                if v is not None and (k is None or k in keep)]
+
+    def _call_arg_exp(self, func_name: str, args: List[TSNode], idx: int) -> Exp:
+        """The expression for argument `idx` of a call; a render call's data
+        object is narrowed to the values its template prints raw."""
+        kept = self._render_data_exps(func_name, args, idx)
+        if kept is None:
+            return self._translate_expression(args[idx])
+        return ExpStringConcat(kept) if kept else ExpConst.string("")
+
+    def _sink_arg_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> List[Exp]:
+        """The expressions of sink argument `arg_idx`: the argument itself, or
+        for a render call whose template is known, the raw-printed data values."""
+        kept = self._render_data_exps(func_name, args, arg_idx)
+        return kept if kept is not None else [self._translate_expression(args[arg_idx])]
 
     def _emit_nested_call_sink(self, call_node: TSNode, args: List[Exp]) -> None:
         """Emit a TaintSink for a call appearing inside a larger expression
@@ -2126,11 +2198,15 @@ class JavaScriptFrontend:
         if spec and spec.is_taint_sink():
             kind = _get_sink_kind(spec.is_sink)
             loc = self._get_location(call_node)
+            arg_nodes = self._call_argument_nodes(call_node)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
-                    self._add_instr(TaintSink(
-                        loc=loc, exp=args[arg_idx], kind=kind,
-                        description=spec.description, arg_index=arg_idx))
+                    exps = (self._sink_arg_exps(func_name, arg_nodes, arg_idx)
+                            if arg_idx < len(arg_nodes) else [args[arg_idx]])
+                    for exp in exps:
+                        self._add_instr(TaintSink(
+                            loc=loc, exp=exp, kind=kind,
+                            description=spec.description, arg_index=arg_idx))
 
     def _translate_template_assignment(
         self,

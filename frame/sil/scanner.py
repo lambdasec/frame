@@ -244,6 +244,9 @@ class Vulnerability:
     path: Optional[str] = None
     fingerprint: Optional[str] = None
     fingerprint_loose: Optional[str] = None
+    # "naming-convention" when the source is a JS/TS `req.*` name and neither the
+    # file nor the project shows a web framework (see framework_evidence.py).
+    source_evidence: str = ""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
@@ -263,6 +266,8 @@ class Vulnerability:
             "confidence": self.confidence,
             "cwe_id": self.cwe_id,
         }
+        if self.source_evidence:
+            d["source_evidence"] = self.source_evidence
         if self.fingerprint:
             d["path"] = self.path
             d["fingerprint"] = self.fingerprint
@@ -1098,6 +1103,7 @@ class FrameScanner:
 
             # Step 6: Apply confidence-based filtering
             result.vulnerabilities = self._filter_by_confidence(result.vulnerabilities, source_code)
+            self._tag_source_evidence(result.vulnerabilities, source_code)
 
             if self.verbose:
                 print(f"[Scanner] After confidence filter: {len(result.vulnerabilities)} vulnerabilities")
@@ -1343,7 +1349,8 @@ class FrameScanner:
                         extensions: Optional[Iterable[str]] = None,
                         only_files: Optional[Iterable[Union[str, Path]]] = None,
                         cross_file: bool = True,
-                        cross_file_limit: int = DEFAULT_CROSS_FILE_LIMIT
+                        cross_file_limit: int = DEFAULT_CROSS_FILE_LIMIT,
+                        project_root: Optional[Union[str, Path]] = None
                         ) -> List[ScanResult]:
         """
         Scan all matching files in a directory.
@@ -1407,7 +1414,7 @@ class FrameScanner:
             if cross_file:
                 candidates = self._start_project(
                     dir_path, pattern, extensions, excluded_dirs,
-                    candidates, only_files is not None, cross_file_limit)
+                    candidates, only_files is not None, cross_file_limit, project_root)
             for filepath in candidates:
                 result = self.scan_file(str(filepath))
                 results.append(result)
@@ -1440,7 +1447,8 @@ class FrameScanner:
     def _start_project(self, dir_path: Path, pattern: Optional[str],
                        extensions: Optional[Iterable[str]],
                        excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]],
-                       selected: List[Path], narrowed: bool, limit: int) -> List[Path]:
+                       selected: List[Path], narrowed: bool, limit: int,
+                       root: Optional[Union[str, Path]] = None) -> List[Path]:
         """Build the cross-file project for this directory scan (sets
         `self._project` and `last_project_scope`) and return the files to scan:
         `selected` itself, or -- for a narrowed scan -- everything the selected
@@ -1448,8 +1456,21 @@ class FrameScanner:
         `limit` files in a full scan, files are scanned alone."""
         from frame.sil.project import (
             ProjectContext, ProjectIndex, language_family)
-        universe = (self._candidate_files(dir_path, pattern, extensions, excluded_dirs)
-                    if narrowed else selected)
+        from frame.sil.fingerprints import project_root as resolve_project_root
+        target = dir_path.resolve()
+        base = resolve_project_root(dir_path, root)
+        # A scan of a subdirectory still resolves imports rooted above it
+        # (`from sqli.dao.student import ...` when scanning `sqli/`): the files
+        # between the target and the project root are context, analysed as
+        # callees/callers but never reported.
+        widen = base != target and target.is_relative_to(base)
+        if widen:
+            context = [p for p in self._candidate_files(base, None, None, excluded_dirs)
+                       if p.resolve() not in {s.resolve() for s in selected}]
+            universe = list(selected) + [p for p in context if p.resolve().is_relative_to(base)]
+        else:
+            universe = (self._candidate_files(dir_path, pattern, extensions, excluded_dirs)
+                        if narrowed else selected)
         files = []
         for p in universe:
             if language_family(p) is None:
@@ -1462,7 +1483,18 @@ class FrameScanner:
             files.append(p)
         if len(files) < 2:
             return selected
-        if not narrowed and len(files) > limit:
+        context_note = None
+        if widen and len(files) > limit:
+            keep = {s.resolve() for s in selected}
+            files = [p for p in files if p.resolve() in keep]
+            widen = False
+            context_note = (f"the project root {base} has more than {limit} Python/JS/TS files, so "
+                            f"imports rooted above the scan target will not resolve "
+                            f"(scan from the package root or raise --cross-file-limit)")
+            if len(files) < 2:
+                self.last_project_scope = {"cross_file": False, "reason": context_note}
+                return selected
+        if not narrowed and not widen and len(files) > limit:
             self.last_project_scope = {
                 "cross_file": False,
                 "reason": f"{len(files)} Python/JS/TS files exceed the cross-file limit "
@@ -1476,19 +1508,22 @@ class FrameScanner:
                 frontends[lang] = self._get_frontend(lang)
             return frontends[lang]
 
-        index = ProjectIndex(dir_path.resolve(), files, lambda lang: frontend_for(lang).parser)
+        index = ProjectIndex(base if widen else target, files,
+                             lambda lang: frontend_for(lang).parser)
         original = {p.resolve(): p for p in files}
         to_scan = selected
         scope_keys = list(index.modules)
         truncated = False
-        if narrowed:
+        if narrowed or widen:
             seeds = [k for k in (index.key_for(p) for p in selected) if k]
             closure = index.closure(seeds, limit)
             scope_keys, truncated = closure.files, closure.truncated
-            in_scope = [original[index.modules[k].path] for k in scope_keys
-                        if index.modules[k].path in original]
-            others = [p for p in selected if index.key_for(p) is None]
-            to_scan = in_scope + [p for p in others if p not in in_scope]
+            if narrowed:
+                in_scope = [original[index.modules[k].path] for k in scope_keys
+                            if index.modules[k].path in original
+                            and index.modules[k].path.is_relative_to(target)]
+                others = [p for p in selected if index.key_for(p) is None]
+                to_scan = in_scope + [p for p in others if p not in in_scope]
         display = {k: str(original[index.modules[k].path]) for k in index.modules
                    if index.modules[k].path in original}
         self._project = ProjectContext.build(index, scope_keys, frontend_for,
@@ -1497,6 +1532,10 @@ class FrameScanner:
             "cross_file": True, "files": len(scope_keys), "selected": len(selected),
             "truncated": truncated, "limit": limit,
             "complete": not self._project.ipa.incomplete}
+        if widen:
+            self.last_project_scope["context_root"] = str(base)
+        if context_note:
+            self.last_project_scope["context"] = context_note
         return to_scan
 
     @staticmethod
@@ -1765,6 +1804,33 @@ class FrameScanner:
         deduplicated.extend(idor_seen.values())
 
         return deduplicated
+
+    def _tag_source_evidence(self, vulns: List[Vulnerability], source_code: str) -> None:
+        """Mark JS/TS findings whose source is the guessed `req.*` name with no
+        web framework in the file or project (`source_evidence`)."""
+        if self.language not in ("javascript", "typescript") or not vulns:
+            return
+        from frame.sil.framework_evidence import has_framework_evidence, source_is_named_request
+        guessed = [v for v in vulns if source_is_named_request(v.source_var)]
+        if not guessed or has_framework_evidence(source_code):
+            return
+        project = self._project
+        if project is not None:
+            cached = getattr(project, "_framework_evidence", None)
+            if cached is None:
+                cached = False
+                for mod in project.index.modules.values():
+                    try:
+                        if has_framework_evidence(mod.path.read_text(encoding="utf-8", errors="replace")):
+                            cached = True
+                            break
+                    except OSError:
+                        continue
+                project._framework_evidence = cached
+            if cached:
+                return
+        for v in guessed:
+            v.source_evidence = "naming-convention"
 
     def _filter_by_confidence(self, vulns: List[Vulnerability], source_code: str) -> List[Vulnerability]:
         """

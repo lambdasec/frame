@@ -262,3 +262,39 @@ def build(resp, proxies):
     return response
 """
     assert cwes(code) == set()
+
+
+# ---- closures read their enclosing procedure's variables ----------------------
+
+CLOSURE_DAO = """
+const express = require('express');
+const app = express();
+function find(col, threshold) {{
+  const criteria = () => {{
+    if (threshold) {{ return {{ $where: "this.stocks > '" + threshold + "'" }}; }}
+    return {{ ok: 1 }};
+  }};
+  return col.find(criteria());
+}}
+app.get('/a', (req, res) => {{ res.json(find(db.collection('a'), {arg})); }});
+"""
+
+
+def test_closure_returns_a_captured_parameter_into_a_sink():
+    assert "CWE-943" in cwes(CLOSURE_DAO.format(arg="req.query.t"), language="javascript")
+
+
+def test_closure_with_a_constant_argument_is_clean():
+    assert "CWE-943" not in cwes(CLOSURE_DAO.format(arg="'5'"), language="javascript")
+
+
+def test_closure_over_a_numerically_converted_parameter_is_clean():
+    code = CLOSURE_DAO.format(arg="req.query.t").replace(
+        'const criteria', 'threshold = parseInt(threshold, 10);\n  const criteria')
+    assert "CWE-943" not in cwes(code, language="javascript")
+
+
+def test_closure_that_does_not_return_the_captured_value_is_clean():
+    code = CLOSURE_DAO.format(arg="req.query.t").replace(
+        "\"this.stocks > '\" + threshold + \"'\"", "'this.stocks > 5'")
+    assert "CWE-943" not in cwes(code, language="javascript")

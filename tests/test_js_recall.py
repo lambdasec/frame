@@ -242,3 +242,45 @@ def test_session_user_id_is_server_state_not_a_source():
             "app.get('/a', (req, res) => { db.collection('u').findOne({ _id: req.session.userId }); });\n")
     r = FrameScanner(language="javascript").scan(code, "t.js")
     assert not [v for v in r.vulnerabilities if v.cwe_id == "CWE-943"]
+
+
+# ---- `req` is a guess unless a web framework is in sight --------------------------------------
+
+def _evidence(code, lang="typescript", name="c.ts"):
+    from frame.sil.scanner import FrameScanner
+    r = FrameScanner(language=lang).scan(code, name)
+    return [v.source_evidence for v in r.vulnerabilities if v.source_var.startswith("req")]
+
+
+SINK = "require('child_process').exec('ls ' + req.query.dir);"
+
+
+def test_req_with_no_framework_is_tagged_as_a_naming_guess():
+    assert _evidence(f"export class C {{ list(req: any) {{ {SINK} }} }}") == ["naming-convention"]
+
+
+def test_req_in_an_express_file_is_not_tagged():
+    code = f"import express from 'express';\nconst app = express();\napp.get('/', (req, res) => {{ {SINK} }});"
+    assert _evidence(code, "javascript", "a.js") == [""]
+
+
+def test_a_typed_request_parameter_counts_as_framework_evidence():
+    assert _evidence(f"export function h(req: Request) {{ {SINK} }}") == [""]
+
+
+def test_framework_anywhere_in_the_project_removes_the_tag(tmp_path):
+    from frame.sil.scanner import FrameScanner
+    (tmp_path / "ctl.ts").write_text(f"export class C {{ list(req: any) {{ {SINK} }} }}\n")
+    (tmp_path / "app.ts").write_text(
+        "import express from 'express';\nimport { C } from './ctl';\nconst app = express();\n"
+        "const c = new C();\napp.get('/', (req, res) => c.list(req));\n")
+    s = FrameScanner(verify=False)
+    res = s.scan_directory(str(tmp_path), None)
+    tags = [v.source_evidence for r in res for v in r.vulnerabilities if v.source_var.startswith("req")]
+    assert tags and set(tags) == {""}
+
+
+def test_tag_is_in_the_json_only_when_set():
+    from frame.sil.scanner import FrameScanner
+    r = FrameScanner(language="typescript").scan(f"export class C {{ f(req: any) {{ {SINK} }} }}", "c.ts")
+    assert r.vulnerabilities[0].to_dict()["source_evidence"] == "naming-convention"

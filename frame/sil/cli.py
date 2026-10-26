@@ -519,7 +519,8 @@ def cmd_scan(args) -> int:
                 str(target), args.pattern, exclude_dirs=exclude_dirs,
                 extensions=language_extensions(args.language), only_files=selection,
                 cross_file=not getattr(args, "no_cross_file", False),
-                cross_file_limit=getattr(args, "cross_file_limit", None) or DEFAULT_CROSS_FILE_LIMIT)
+                cross_file_limit=getattr(args, "cross_file_limit", None) or DEFAULT_CROSS_FILE_LIMIT,
+                project_root=root)
     except LLMUnavailableError as e:
         print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
               file=sys.stderr)

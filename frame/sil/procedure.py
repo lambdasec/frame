@@ -396,6 +396,14 @@ class Procedure:
     is_static: bool = False           # Is this a static method?
     is_constructor: bool = False      # Is this a constructor?
 
+    # Nested functions: the enclosing function's variables this body reads
+    # (`captures`), the procedure it is defined in (`parent`), and the source
+    # byte range used to find that parent. Set by the JS frontend; the
+    # translator hands the enclosing procedure's taint to the captured names.
+    captures: List[str] = field(default_factory=list)
+    parent: Optional[str] = None
+    span: Optional[Tuple[int, int]] = None
+
     # Does the body contain a try/catch? The frontends translate handler bodies
     # inline instead of giving them their own edges, so for a procedure with one
     # the CFG understates the ways control can leave. Any analysis that concludes

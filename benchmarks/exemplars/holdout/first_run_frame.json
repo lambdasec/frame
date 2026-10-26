@@ -1,0 +1,60 @@
+{
+  "Frame": {
+    "py_aliased_module_call": {
+      "found": true,
+      "false_alarm": false
+    },
+    "py_parameterized_helper": {
+      "found": true,
+      "false_alarm": false
+    },
+    "py_helper_returns_dict": {
+      "found": false,
+      "false_alarm": false
+    },
+    "py_decorated_helper": {
+      "found": true,
+      "false_alarm": false
+    },
+    "py_star_import": {
+      "found": false,
+      "false_alarm": false
+    },
+    "py_factory_instance": {
+      "found": false,
+      "false_alarm": false
+    },
+    "py_fastapi_depends": {
+      "found": true,
+      "false_alarm": false
+    },
+    "js_router_service_object": {
+      "found": true,
+      "false_alarm": false
+    },
+    "js_default_class_static": {
+      "found": false,
+      "false_alarm": false
+    },
+    "ts_nest_three_layers": {
+      "found": false,
+      "false_alarm": false
+    },
+    "ts_path_alias_import": {
+      "found": false,
+      "false_alarm": false
+    },
+    "js_factory_instance": {
+      "found": false,
+      "false_alarm": false
+    },
+    "js_anonymous_module_function": {
+      "found": true,
+      "false_alarm": false
+    },
+    "js_sanitizer_module": {
+      "found": true,
+      "false_alarm": true
+    }
+  }
+}

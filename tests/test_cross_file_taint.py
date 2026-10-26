@@ -830,3 +830,50 @@ def test_js_constructor_function_exported_as_the_whole_module(tmp_path):
                  "  this.show = (req, res) => { dao.run(req.query.dir); res.send('ok'); };\n}\n"),
     })
     assert ("dao.js", "CWE-78") in findings(tmp_path)
+
+
+# ---- scanning a subdirectory of a project: imports rooted above the target -------------------
+
+def _pkg_repo(tmp_path):
+    write(tmp_path, {
+        "app/dao/student.py": ("import sqlite3\n\n\ndef create(name):\n"
+                               "    return sqlite3.connect('x').execute(\"INSERT INTO s VALUES ('%s')\" % name)\n"),
+        "app/views.py": (FLASK.format(imports="from app.dao.student import create")
+                         + "\n@app.route('/a')\ndef a():\n    create(request.args.get('n'))\n    return 'ok'\n"),
+        "other/unrelated.py": "import os\n\n\ndef f(x):\n    os.system('ls ' + x)\n",
+    })
+    return tmp_path
+
+
+def _scan_sub(root, sub, **kw):
+    s = FrameScanner(verify=False)
+    res = s.scan_directory(str(root / sub), None, project_root=str(root), **kw)
+    return s, {(Path(r.filename).relative_to(root).as_posix(), v.cwe_id)
+               for r in res for v in r.vulnerabilities}
+
+
+def test_subdirectory_scan_resolves_imports_rooted_above_it(tmp_path):
+    root = _pkg_repo(tmp_path)
+    scanner, found = _scan_sub(root, "app")
+    assert ("app/dao/student.py", "CWE-89") in found
+    assert scanner.last_project_scope["context_root"] == str(root.resolve())
+
+
+def test_subdirectory_scan_reports_only_the_target(tmp_path):
+    root = _pkg_repo(tmp_path)
+    _, found = _scan_sub(root, "app")
+    assert not any(f.startswith("other/") for f, _ in found)
+
+
+def test_subdirectory_scan_equals_the_same_files_in_a_root_scan(tmp_path):
+    root = _pkg_repo(tmp_path)
+    _, sub = _scan_sub(root, "app")
+    _, whole = _scan_sub(root, ".")
+    assert sub == {f for f in whole if f[0].startswith("app/")}
+
+
+def test_subdirectory_scan_over_the_limit_warns_and_scans_the_target_alone(tmp_path):
+    root = _pkg_repo(tmp_path)
+    scanner, found = _scan_sub(root, "app", cross_file_limit=2)
+    assert ("app/dao/student.py", "CWE-89") not in found
+    assert "imports rooted above" in scanner.last_project_scope.get("context", "")

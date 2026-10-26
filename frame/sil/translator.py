@@ -962,6 +962,7 @@ class SILTranslator:
         #   (`_apply_return_summary`) and inside expressions (`_arg_taint_leaves`).
         self._ipa_on = False           # summaries are in play (set by the fixpoint)
         self._ipa_summarising = False  # computing them: the only time they change
+        self._capture_children: Dict[str, List[Procedure]] = {}
         self._ipa_fixed = False        # a project already ran the fixpoint
         self._prepared = False
         self._sorted_procs: List[Tuple[str, Procedure]] = []
@@ -1356,6 +1357,10 @@ class SILTranslator:
             return 1  # Other methods in between
 
         self._sorted_procs = sorted(self.program.procedures.items(), key=sort_key)
+        self._capture_children = {}
+        for proc in self.program.procedures.values():
+            if proc.parent and proc.captures and proc.parent in self.program.procedures:
+                self._capture_children.setdefault(proc.parent, []).append(proc)
 
         # Helpers that build a hardened XML parser (`getDocumentBuilder()`)
         # are summarised before their callers run: analyse each procedure that
@@ -1774,10 +1779,15 @@ class SILTranslator:
             if summary is not None:
                 if summary.source is not None:
                     out.append((summary.source, set(wrap) | set(summary.source_sanitized or ())))
-                for arg, param in zip(exp.args, self._call_params(callee.proc, name)):
+                params = self._call_params(callee.proc, name)
+                for arg, param in zip(exp.args, params):
                     if param in summary.params:
                         out.extend(self._arg_taint_leaves(
                             arg, state, wrap | frozenset(summary.params[param])))
+                for cap in callee.proc.captures:          # a closure returning an enclosing variable
+                    if cap in summary.params and cap not in params:
+                        out.extend(self._arg_taint_leaves(
+                            ExpVar(PVar(cap)), state, wrap | frozenset(summary.params[cap])))
                 return out
             spec = self.program.get_spec(name)
             if spec and spec.is_taint_source():
@@ -1861,6 +1871,77 @@ class SILTranslator:
                 entry[param] = (known[0], known[1] & sanitized)
                 self._ipa.dirty.add(callee.ref)
 
+    def _closure_captured_vars(self, exp: Exp, sink_kind) -> List[str]:
+        """Enclosing-procedure variables that reach `exp` through a call to a
+        nested closure whose return carries them (and is not sanitized for the
+        sink)."""
+        out: List[str] = []
+        if not self._ipa_on:
+            return out
+
+        def walk(e: Exp) -> None:
+            if isinstance(e, ExpCall):
+                name = self._call_exp_name(e)
+                callee = self._resolve_callee(name)
+                summary = self._ipa.return_summaries.get(callee.ref) if callee else None
+                if summary is not None:
+                    params = self._call_params(callee.proc, name)
+                    for cap in callee.proc.captures:
+                        if (cap in summary.params and cap not in params
+                                and not self._sanitizes_kind(summary.params[cap], sink_kind)):
+                            out.append(cap)
+                for a in e.args:
+                    walk(a)
+            elif isinstance(e, ExpBinOp):
+                walk(e.left)
+                walk(e.right)
+            elif isinstance(e, ExpUnOp):
+                walk(e.operand)
+            elif isinstance(e, ExpStringConcat):
+                for part in e.parts:
+                    walk(part)
+            elif isinstance(e, ExpIndex):
+                walk(e.base)
+                walk(e.index)
+            elif isinstance(e, ExpFieldAccess):
+                walk(e.base)
+
+        walk(exp)
+        return out
+
+    def _record_capture_taints(self, instr: Instr, state: SymbolicState) -> None:
+        """A nested function sees its enclosing procedure's variables. Whatever
+        attacker data those variables carry while the enclosing procedure runs is
+        treated as entry taint of the nested one (flow-insensitive over the
+        enclosing procedure, as a closure can run at any later point). Only
+        while summaries are being computed."""
+        children = self._capture_children.get(self._cur_ref[1]) if self._cur_ref else None
+        if not children:
+            return
+        for child in children:
+            ref = (self._file_key, child.name)
+            for name in child.captures:
+                leaves = [(i, k) for i, k in self._arg_taint_leaves(ExpVar(PVar(name)), state)
+                          if not i.source_var.startswith(self._SEED_PREFIX)]
+                if not leaves:
+                    continue
+                sanitized = set.intersection(*(k for _, k in leaves))
+                entry = self._ipa.entry_taints.setdefault(ref, {})
+                known = entry.get(name)
+                if known is None:
+                    where = getattr(instr.loc, "line", None)
+                    caller = f"{self._file_key}:{where} -> " if self._file_key and where else ""
+                    marker = f"{caller}{ref[0]}::{ref[1]}({name})".lstrip(":")
+                    self._ipa.entry_markers[marker] = (ref, name)
+                    info = leaves[0][0]
+                    entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                                             source_location=info.source_location,
+                                             propagation_path=[marker]), sanitized)
+                    self._ipa.dirty.add(ref)
+                elif not known[1] <= sanitized:
+                    entry[name] = (known[0], known[1] & sanitized)
+                    self._ipa.dirty.add(ref)
+
     def _record_nested_entry_taints(self, instr: Instr, state: SymbolicState) -> None:
         roots: List[Exp] = []
         if isinstance(instr, Call):
@@ -1923,10 +2004,15 @@ class SILTranslator:
         leaves: List[Tuple[TaintInfo, Set[str]]] = []
         if summary.source is not None:
             leaves.append((summary.source, set(summary.source_sanitized or ())))
-        for (arg_exp, _), param in zip(instr.args, self._call_params(callee.proc, func_name)):
+        params = self._call_params(callee.proc, func_name)
+        for (arg_exp, _), param in zip(instr.args, params):
             if param in summary.params:
                 leaves.extend((info, kinds | summary.params[param])
                               for info, kinds in self._arg_taint_leaves(arg_exp, state))
+        for cap in callee.proc.captures:                  # a closure returning an enclosing variable
+            if cap in summary.params and cap not in params:
+                leaves.extend((info, kinds | summary.params[cap])
+                              for info, kinds in self._arg_taint_leaves(ExpVar(PVar(cap)), state))
         if not leaves:
             return
         info = leaves[0][0]
@@ -2040,6 +2126,8 @@ class SILTranslator:
         Returns:
             Tuple of (checks generated, new state)
         """
+        if self._ipa_summarising and self._capture_children:
+            self._record_capture_taints(instr, state)
         checks = []
 
         # A same-file call nested in an expression (`os.system(f(x))`, `return
@@ -3955,6 +4043,13 @@ class SILTranslator:
                             var, instr.kind
                         )
                         checks.append(check)
+
+        # A call to a closure whose return carries a variable it captured from
+        # this procedure (`find(searchCriteria())`, `searchCriteria` reading `threshold`).
+        for cap in self._closure_captured_vars(instr.exp, instr.kind):
+            if (state.is_tainted(cap) and not state.is_sanitized_for(cap, instr.kind.value)
+                    and not state.is_asserted_safe_for(cap, instr.kind.value)):
+                checks.append(self._create_taint_check(instr, state, proc_name, cap, instr.kind))
 
         # Check for embedded taint source calls in the sink expression
         # E.g., Process.Start("cmd", "/C " + Console.ReadLine()) - the ReadLine() is a source
