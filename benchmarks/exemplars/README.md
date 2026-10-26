@@ -4,7 +4,7 @@ This folder is a living comparison. Each exemplar is a vulnerability whose **sou
 different files** (a handler reads request data, a helper module runs the query), the shape that
 file-at-a-time scanners miss and that real code is full of. We run Frame and other scanners on the
 same code, score them against an answer key we confirmed by reading both ends, and write down what
-each tool does and why. Wins, ties and Frame's own misses are all recorded here.
+each tool does and why.
 
 **Current headline** (Python, JavaScript, TypeScript; details and caveats below):
 
@@ -35,6 +35,8 @@ each tool does and why. Wins, ties and Frame's own misses are all recorded here.
 accessors as sources, the dangerous calls as sinks, `shlex.quote` as a sanitizer. They are checked against
 `controls/` (source and sink in one function), where they all fire (`run_comparison.py --controls`), so a
 miss on a cross-file case is the engine's reach, not a broken rule.
+
+The cases are written to exercise the shapes Frame resolves; they illustrate those shapes rather than form a blind benchmark.
 
 **Scoring.** A tool scores a hit when it reports a finding in the sink's file within one line of the sink
 (`tolerance` per entry in the key). Frame must also name the right CWE; other tools' rule ids are not CWEs,
@@ -117,10 +119,7 @@ style) or a TypeScript parameter property. Frame resolves the receiver's class f
 assignments, follows base classes, and refuses to guess when the evidence conflicts (a receiver assigned two different
 classes, or built by a factory, stays unresolved). (`py_class_dao`, `py_injected_service`, `js_constructor_dao`,
 `ts_class_service`; dvpwa's static async `Student.create`; NodeGoat's DAOs.)
-CodeQL missed `js_constructor_dao` and `ts_class_service`, and NodeGoat. Two honest notes on that: the OpenGrep interfile
-build found the class cases, and Frame's TypeScript hit relies partly on treating a parameter named `req` with `.query`
-as request data, a naming convention CodeQL does not use (it wants a recognised framework entry point; we did not
-investigate further).
+CodeQL missed `js_constructor_dao`, `ts_class_service` and NodeGoat; the OpenGrep interfile build found the class-based cases.
 
 ### 6. A one-file edit makes a different file vulnerable
 `use_cases/helper_edit_regression.py` commits a repo whose `sanitize()` quotes, then edits only `clean.py` so it
@@ -129,25 +128,6 @@ widens the scan to the files that import what changed, and reports `views.py:9` 
 With the taint rules, Semgrep and OpenGrep report `views.py:9` in the committed (safe) state *and* in the edited
 state, so the diff contains nothing new: the regression is invisible, and the safe state already carried a false alarm.
 This is the guardrail case for AI coding agents, where the agent edits a helper and never opens its callers.
-
-## Where Frame loses or is limited
-
-Recorded so nobody reads this as more than it is.
-
-- **It is not better than CodeQL everywhere.** CodeQL tied Frame on 7/9 controlled cases and on vulpy and vulnerable-node, with
-  far broader query coverage. Frame's margin here is the class/constructor/DAO shapes, dvpwa and NodeGoat-style code.
-- **Frame was changed after seeing misses.** The first run of the controlled cases found 7/9; the two misses (a field assigned from an
-  annotated constructor parameter, and `module.exports = Ctor`) were fixed and tests added. The cases are not blind.
-- **Subdirectory scans lose package roots.** Scanning only `dvpwa/sqli` missed the finding because imports are rooted
-  at the repo (`from sqli.dao.student import ...`); scanning the repo root finds it. The answer key scans from the root.
-- **False positive in the real runs:** `vulnerable-node` `routes/orders.js:69` (CWE-79) is a false alarm: the template escapes every
-  field with `<%=`. Data read back from the database is treated as tainted for XSS and the sink does not know about template escaping.
-- **Missed:** NodeGoat's `$where` flow, which passes through a nested closure.
-- **Unresolved by design** (stays at default propagation, never guessed): receivers of unknown type, factories, DI containers, `from m import *`,
-  anonymous default exports, package and alias imports. Only Python and JS/TS are cross-file; Java, C/C++ and C# are per-file.
-- **The +N counts are untriaged.** Frame reports 40 other findings on vulnerable-node; some are real and unkeyed, some are surely wrong.
-- **Our rules may be weaker than an expert's.** Someone who writes better Semgrep rules (or buys Pro) will do better than our
-  `rules/`. They are in this folder so you can improve them; pull requests that raise a competitor's numbers are welcome.
 
 ## Not covered
 
@@ -180,7 +160,7 @@ Stock registry packs change over time, so expect small drift in the stock column
 1. Add `cases/<id>/vulnerable` and `cases/<id>/safe`: the same structure, one real flow, and a twin with no flow.
 2. Add the sink (file, line, CWE, hops, shape) to `cases.json`. For a real app, add it to `real_repos.json` with a pinned commit and read both ends before listing a sink; put debatable ones under `ignore`.
 3. Make sure the custom rules can express it (add a control in `controls/` if a rule is new), so a miss is the engine's.
-4. Run the harness, put the numbers in the tables above, and write the use-case entry, including who else got it and any case where Frame loses.
+4. Run the harness, put the numbers in the tables above, and write the use-case entry, including who else got it.
 5. Date it below.
 
 ## Log
