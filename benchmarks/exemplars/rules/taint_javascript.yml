@@ -1,0 +1,25 @@
+rules:
+  - id: exemplar-js-cmdi
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: request data reaches a shell command
+    pattern-sources:
+      - pattern: $REQ.query.$X
+      - pattern: $REQ.query
+      - pattern: $REQ.params.$X
+      - pattern: $REQ.body.$X
+    pattern-sinks:
+      - pattern: exec(...)
+      - pattern: child_process.exec(...)
+  - id: exemplar-js-sqli
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: request data reaches a SQL query
+    pattern-sources:
+      - pattern: $REQ.query.$X
+      - pattern: $REQ.params.$X
+      - pattern: $REQ.body.$X
+    pattern-sinks:
+      - pattern: $DB.query(...)

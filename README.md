@@ -97,6 +97,10 @@ frame repl                                      # interactive REPL
 
 </details>
 
+## Cross-file comparison
+
+[`benchmarks/exemplars/`](benchmarks/exemplars/README.md) compares Frame with Semgrep, OpenGrep, Bandit and CodeQL on vulnerabilities whose source and sink are in different files (controlled cases with safe twins, plus four vulnerable open-source apps at pinned commits), including where Frame loses. It is kept up to date as new use cases are added.
+
 ## Commands
 
 Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus the separation-logic solver. Run `frame <command> --help` for all flags.

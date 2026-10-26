@@ -61,6 +61,24 @@ FLASK_SPECS = {
     "request.files.get": _source("file", "Flask file upload"),
     "request.get_data": _source("user", "Flask raw data"),
     "request.get_json": _source("user", "Flask JSON data"),
+    # aiohttp / Starlette / FastAPI / Sanic: the request object's accessors. The
+    # `request.<attr>.get` / `request.<attr>[...]` forms need an entry per
+    # attribute, as for Flask's `request.args`.
+    "request.post": _source("user", "aiohttp form data"),
+    "request.text": _source("user", "aiohttp/Starlette request body text"),
+    "request.read": _source("user", "aiohttp request body bytes"),
+    "request.body": _source("user", "Starlette request body"),
+    "request.form": _source("user", "Starlette form data"),
+    "request.query.get": _source("user", "aiohttp query parameter"),
+    "request.query.__getitem__": _source("user", "aiohttp query parameter"),
+    "request.query_params.get": _source("user", "Starlette query parameter"),
+    "request.query_params.__getitem__": _source("user", "Starlette query parameter"),
+    "request.path_params.get": _source("user", "Starlette path parameter"),
+    "request.path_params.__getitem__": _source("user", "Starlette path parameter"),
+    "request.match_info.get": _source("user", "aiohttp route parameter"),
+    "request.match_info.__getitem__": _source("user", "aiohttp route parameter"),
+    "request.rel_url.query.get": _source("user", "aiohttp query parameter"),
+    "request.rel_url.query.__getitem__": _source("user", "aiohttp query parameter"),
 
     # Template rendering (potential XSS sinks)
     "render_template_string": _sink("html", [0], "Flask template string (XSS)"),

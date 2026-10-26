@@ -1721,7 +1721,9 @@ class SILTranslator:
             return None
         if self._project is None:
             return None
-        ref = self._project.resolve_call(self._file_key, func_name)
+        ref = self._project.resolve_call(
+            self._file_key, func_name,
+            self._cur_proc.class_name if self._cur_proc is not None else None)
         proc = self._project.procedure(ref) if ref is not None else None
         if proc is None or not self._plain_callee(proc):
             return None

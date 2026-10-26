@@ -234,3 +234,11 @@ public class HController : Controller {
 }
 """
     assert "CWE-22" in cwes(code, language="csharp", name="H.cs")
+
+
+def test_session_user_id_is_server_state_not_a_source():
+    from frame.sil.scanner import FrameScanner
+    code = ("const express = require('express');\nconst app = express();\n"
+            "app.get('/a', (req, res) => { db.collection('u').findOne({ _id: req.session.userId }); });\n")
+    r = FrameScanner(language="javascript").scan(code, "t.js")
+    assert not [v for v in r.vulnerabilities if v.cwe_id == "CWE-943"]

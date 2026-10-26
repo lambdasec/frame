@@ -377,9 +377,11 @@ ACCESS_CONTROL_SPECS = {
     "jsonwebtoken.decode": _sink("auth", [0], "JWT decode (CWE-347)"),
 
     # Session handling
-    "req.session": _source("user", "Express session data"),
-    "session.userId": _source("user", "Session user ID"),
-    "session.user": _source("user", "Session user object"),
+    # NOT sources: `req.session` (and `session.userId` / `session.user`) is state
+    # the server set at login, not input a client controls -- the Java specs make
+    # the same call ("Session/request getAttribute is server state"). Marking it
+    # tainted reported `findOne({userId: req.session.userId})` as injection, and
+    # with cross-file analysis every DAO that took the session user id.
 
     # CORS (misconfiguration detection)
     "cors": _sink("cors", [0], "CORS middleware configuration (CWE-942)"),

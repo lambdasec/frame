@@ -637,3 +637,196 @@ def test_cross_file_fingerprint_survives_unrelated_calls_added_above_the_flow(tm
         "def u():\n", "def u():\n    x = str(len('abc'))\n    y = str(len(x))\n", 1)
     (tmp_path / "views.py").write_text(text)
     assert fingerprints() == before
+
+
+# ---- classes: static calls, instances, injected and inherited receivers ---------------------------
+
+REPO_PY = """import sqlite3
+
+class Repo:
+    def find(self, name):
+        return sqlite3.connect("x").execute("SELECT * FROM u WHERE n = '%s'" % name)
+
+    @staticmethod
+    def create(name):
+        return sqlite3.connect("x").execute("INSERT INTO u VALUES ('%s')" % name)
+
+    @classmethod
+    def build(cls, name):
+        return sqlite3.connect("x").execute("INSERT INTO u VALUES ('%s')" % name)
+"""
+
+
+def handler(body: str, imports: str = "from repo import Repo") -> str:
+    return (FLASK.format(imports=imports) + f'\n@app.route("/a")\ndef a():\n{body}\n    return "ok"\n')
+
+
+@pytest.mark.parametrize("body", [
+    '    Repo.create(request.args.get("n"))',
+    '    Repo.build(request.args.get("n"))',
+    '    r = Repo()\n    r.find(request.args.get("n"))',
+    '    Repo().find(request.args.get("n"))',
+])
+def test_python_class_calls_carry_taint(tmp_path, body):
+    write(tmp_path, {"repo.py": REPO_PY, "views.py": handler(body)})
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+@pytest.mark.parametrize("body", [
+    '    Repo.create("bob")',
+    '    r = Repo()\n    r.find("bob")',
+])
+def test_python_class_calls_with_constant_arguments_are_clean(tmp_path, body):
+    write(tmp_path, {"repo.py": REPO_PY, "views.py": handler(body)})
+    assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_python_instance_held_on_self(tmp_path):
+    write(tmp_path, {"repo.py": REPO_PY, "views.py": (
+        FLASK.format(imports="from repo import Repo")
+        + "\nclass Service:\n    def __init__(self):\n        self.repo = Repo()\n\n"
+          "    def lookup(self):\n        return self.repo.find(request.args.get('n'))\n")})
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_python_annotated_parameter_gives_the_receiver_its_class(tmp_path):
+    write(tmp_path, {"repo.py": REPO_PY, "views.py": (
+        FLASK.format(imports="from repo import Repo")
+        + "\ndef lookup(repo: Repo):\n    return repo.find(request.args.get('n'))\n")})
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_python_method_inherited_from_a_base_class(tmp_path):
+    write(tmp_path, {"repo.py": REPO_PY + "\nclass Cached(Repo):\n    pass\n",
+                     "views.py": handler('    Cached().find(request.args.get("n"))',
+                                         "from repo import Cached")})
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_python_receiver_with_conflicting_classes_is_not_guessed(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY,
+        "other.py": "class Other:\n    def find(self, name):\n        return name\n",
+        "views.py": handler('    r = Repo()\n    r = Other()\n    r.find(request.args.get("n"))',
+                            "from repo import Repo\nfrom other import Other"),
+    })
+    assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_python_receiver_from_a_factory_is_not_guessed(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY,
+        "views.py": handler('    r = make_repo()\n    r.find(request.args.get("n"))',
+                            "from repo import Repo\n\ndef make_repo():\n    return Repo()"),
+    })
+    assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_python_instance_method_called_unbound_is_not_resolved(tmp_path):
+    # `Repo.find(obj, q)` passes the instance explicitly; only static/class methods are resolved
+    write(tmp_path, {"repo.py": REPO_PY,
+                     "views.py": handler('    Repo.find(None, request.args.get("n"))')})
+    assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_python_async_static_dao_like_dvpwa(tmp_path):
+    write(tmp_path, {
+        "dao.py": ("class Student:\n    @staticmethod\n    async def create(conn, name):\n"
+                   "        q = (\"INSERT INTO students (name) VALUES ('%(name)s')\" % {'name': name})\n"
+                   "        async with conn.cursor() as cur:\n            await cur.execute(q)\n"),
+        "views.py": ("from aiohttp.web import Request\nfrom dao import Student\n\n"
+                     "async def students(request: Request, conn):\n"
+                     "    data = await request.post()\n"
+                     "    await Student.create(conn, data['name'])\n"),
+    })
+    assert ("dao.py", "CWE-89") in findings(tmp_path)
+
+
+DAO_TS = ("import { exec } from 'child_process';\n"
+          "export class Dao {\n"
+          "  run(d: string) { exec('ls ' + d); }\n"
+          "  static go(d: string) { exec('ls ' + d); }\n"
+          "}\n")
+
+
+@pytest.mark.parametrize("body", [
+    "const d = new Dao(); d.run(req.query.dir as string);",
+    "Dao.go(req.query.dir as string);",
+])
+def test_ts_class_calls_carry_taint(tmp_path, body):
+    write(tmp_path, {"dao.ts": DAO_TS, "a.ts": (
+        "import express from 'express';\nimport { Dao } from './dao';\nconst app = express();\n"
+        "app.get('/a', (req, res) => { " + body + " res.send('ok'); });\n")})
+    assert ("dao.ts", "CWE-78") in findings(tmp_path)
+
+
+def test_ts_constructor_injected_dependency(tmp_path):
+    write(tmp_path, {"dao.ts": DAO_TS, "svc.ts": (
+        "import { Dao } from './dao';\n"
+        "export class Service {\n"
+        "  constructor(private readonly dao: Dao) {}\n"
+        "  handle(req: any) { this.dao.run(req.query.dir); }\n"
+        "}\n")})
+    assert ("dao.ts", "CWE-78") in findings(tmp_path)
+
+
+def test_js_constructor_function_dao_like_nodegoat(tmp_path):
+    write(tmp_path, {
+        "dao.js": ("const { exec } = require('child_process');\n"
+                   "const Dao = function (db) {\n"
+                   "  this.run = (d, cb) => { exec('ls ' + d); };\n"
+                   "  this.other = (x) => { return x; };\n"
+                   "};\n"
+                   "module.exports.Dao = Dao;\n"),
+        "handler.js": ("const Dao = require('./dao').Dao;\n"
+                       "function Handler(db) {\n"
+                       "  const dao = new Dao(db);\n"
+                       "  this.show = (req, res) => { dao.run(req.query.dir, () => res.send('ok')); };\n"
+                       "}\n"),
+    })
+    assert ("dao.js", "CWE-78") in findings(tmp_path)
+
+
+def test_js_constructor_function_dao_with_a_constant_is_clean(tmp_path):
+    write(tmp_path, {
+        "dao.js": ("const { exec } = require('child_process');\n"
+                   "const Dao = function (db) {\n  this.run = (d) => { exec('ls ' + d); };\n};\n"
+                   "module.exports.Dao = Dao;\n"),
+        "handler.js": ("const Dao = require('./dao').Dao;\n"
+                       "function Handler(db) {\n  const dao = new Dao(db);\n"
+                       "  this.show = (req, res) => { dao.run('/tmp'); res.send('ok'); };\n}\n"),
+    })
+    assert ("dao.js", "CWE-78") not in findings(tmp_path)
+
+
+def test_two_constructor_functions_with_the_same_method_name_are_kept_apart(tmp_path):
+    write(tmp_path, {
+        "dao.js": ("const { exec } = require('child_process');\n"
+                   "const Unsafe = function () { this.go = (d) => { exec('ls ' + d); }; };\n"
+                   "const Safe = function () { this.go = (d) => { return d; }; };\n"
+                   "module.exports = { Unsafe, Safe };\n"),
+        "h.js": ("const { Safe } = require('./dao');\n"
+                 "function H() {\n  const s = new Safe();\n"
+                 "  this.show = (req, res) => { s.go(req.query.dir); res.send('ok'); };\n}\n"),
+    })
+    assert ("dao.js", "CWE-78") not in findings(tmp_path)
+
+
+def test_python_field_assigned_from_annotated_constructor_parameter(tmp_path):
+    write(tmp_path, {"repo.py": REPO_PY, "svc.py": (
+        FLASK.format(imports="from repo import Repo")
+        + "\nclass Svc:\n    def __init__(self, repo: Repo):\n        self.repo = repo\n\n"
+          "    def go(self):\n        return self.repo.find(request.args.get('n'))\n")})
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_js_constructor_function_exported_as_the_whole_module(tmp_path):
+    write(tmp_path, {
+        "dao.js": ("const { exec } = require('child_process');\n"
+                   "function Dao() {\n  this.run = (d) => { exec('ls ' + d); };\n}\n"
+                   "module.exports = Dao;\n"),
+        "h.js": ("const Dao = require('./dao');\n"
+                 "function H() {\n  const dao = new Dao();\n"
+                 "  this.show = (req, res) => { dao.run(req.query.dir); res.send('ok'); };\n}\n"),
+    })
+    assert ("dao.js", "CWE-78") in findings(tmp_path)

@@ -1,0 +1,14 @@
+{
+  "description": "Controlled cross-file cases. Each has a vulnerable/ tree with exactly one real flow and a safe/ twin with the same structure and no flow. 'expected' is the sink (file, line, CWE); 'hops' is the number of files the data crosses before the sink.",
+  "cases": [
+    {"id": "py_helper_module",       "language": "python",     "cwe": "CWE-89", "file": "db.py",         "line": 6, "hops": 1, "shape": "handler passes request data to a helper module that builds the query"},
+    {"id": "py_three_hops",          "language": "python",     "cwe": "CWE-78", "file": "shell.py",      "line": 5, "hops": 2, "shape": "handler -> service -> shell helper, three files"},
+    {"id": "py_source_in_helper",    "language": "python",     "cwe": "CWE-22", "file": "views.py",      "line": 8, "hops": 1, "shape": "the request read is hidden in a helper module that returns it"},
+    {"id": "py_sanitizer_in_helper", "language": "python",     "cwe": "CWE-78", "file": "views.py",      "line": 9, "hops": 1, "shape": "a helper module either sanitizes (safe twin) or returns the value unchanged"},
+    {"id": "py_class_dao",           "language": "python",     "cwe": "CWE-89", "file": "repo.py",       "line": 9, "hops": 1, "shape": "module-level instance of a DAO class, method call across files"},
+    {"id": "py_injected_service",    "language": "python",     "cwe": "CWE-89", "file": "repo.py",       "line": 6, "hops": 1, "shape": "dependency injected through an annotated constructor parameter"},
+    {"id": "js_helper_module",       "language": "javascript", "cwe": "CWE-78", "file": "shell.js",      "line": 4, "hops": 1, "shape": "route passes req.query to a required helper that calls exec"},
+    {"id": "js_constructor_dao",     "language": "javascript", "cwe": "CWE-89", "file": "dao.js",        "line": 3, "hops": 1, "shape": "constructor-function DAO (NodeGoat style) instantiated in another file"},
+    {"id": "ts_class_service",       "language": "typescript", "cwe": "CWE-78", "file": "shell.ts",      "line": 5, "hops": 1, "shape": "TypeScript class injected through a constructor parameter property"}
+  ]
+}

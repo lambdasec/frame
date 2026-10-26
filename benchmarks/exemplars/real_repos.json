@@ -1,0 +1,28 @@
+{
+  "description": "Deliberately vulnerable open-source apps at pinned commits. 'expected' lists the real vulnerabilities whose sink is in a different file from its source (each was confirmed by reading both ends); 'ignore' lists sinks that are debatable and are neither credited nor penalised. Repos are cloned at run time, never vendored.",
+  "repos": [
+    {"id": "vulpy", "url": "https://github.com/fportantier/vulpy", "commit": "5249cc8b05a1c37f6b2f757b1cf16a509c327122", "language": "python", "scan_path": "bad",
+     "expected": [
+       {"file": "libuser.py", "line": 12, "cwe": "CWE-89", "note": "login(): username/password formatted into SELECT; request.form read in mod_user.py"},
+       {"file": "libuser.py", "line": 25, "cwe": "CWE-89", "note": "create(): INSERT built with %"},
+       {"file": "libuser.py", "line": 53, "cwe": "CWE-89", "note": "password_change(): UPDATE built with format()"}],
+     "ignore": []},
+    {"id": "dvpwa", "url": "https://github.com/anxolerd/dvpwa", "commit": "a1d8f89fac2e57093189853c6527c2b01fc1d9c1", "language": "python", "scan_path": ".",
+     "expected": [
+       {"file": "student.py", "line": 45, "cwe": "CWE-89", "note": "Student.create(): static async method, name formatted into INSERT; value comes from aiohttp request.post() in views.py"}],
+     "ignore": []},
+    {"id": "vulnerable-node", "url": "https://github.com/cr0hn/vulnerable-node", "commit": "d68f2a3c9277ece2c2feb9976052033bdecd7fbe", "language": "javascript", "scan_path": ".",
+     "expected": [
+       {"file": "db.js", "line": 14, "cwe": "CWE-89", "note": "login(): concatenated SELECT; req.body in routes/auth.js"},
+       {"file": "db.js", "line": 26, "cwe": "CWE-89", "note": "searchProducts(): ILIKE pattern concatenation; req.query in routes/shop.js"},
+       {"file": "db.js", "line": 101, "cwe": "CWE-89", "note": "ordersForUserSorted(): sort column interpolated into ORDER BY; req.query.sort in routes/orders.js"},
+       {"file": "merge.js", "line": 12, "tolerance": 2, "cwe": "CWE-1321", "note": "recursive merge() with no __proto__ guard; req.body passed from routes/account.js"}],
+     "ignore": []},
+    {"id": "NodeGoat", "url": "https://github.com/OWASP/NodeGoat", "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8", "language": "javascript", "scan_path": "app",
+     "expected": [
+       {"file": "user-dao.js", "line": 91, "cwe": "CWE-943", "note": "validateLogin(): findOne({userName}) with userName straight from req.body (operator injection)"},
+       {"file": "user-dao.js", "line": 104, "cwe": "CWE-943", "note": "getUserByUserName(): same shape, called from routes/session.js"}],
+     "ignore": [
+       {"file": "benefits-dao.js", "line": 24, "note": "updateBenefits(): request value lands in a $set value, not an operator position; debatable"}]}
+  ]
+}

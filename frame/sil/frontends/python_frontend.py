@@ -550,9 +550,40 @@ class PythonFrontend:
         elif node.type == "continue_statement":
             pass  # Handled by loop structure
 
+    def _aggregate_parts(self, node: TSNode) -> Optional[List[Exp]]:
+        """The element expressions of a tuple/list/set literal, or the values (and
+        `**` splats) of a dict literal; None for anything else."""
+        if node.type == "parenthesized_expression" and node.named_children:
+            return self._aggregate_parts(node.named_children[0])
+        if node.type in ("tuple", "list", "set"):
+            return [self._translate_expression(c) for c in node.named_children
+                    if c.type != "comment"]
+        if node.type == "dictionary":
+            parts: List[Exp] = []
+            for c in node.named_children:
+                if c.type == "pair":
+                    value = c.child_by_field_name("value")
+                    if value is not None:
+                        parts.append(self._translate_expression(value))
+                elif c.type == "dictionary_splat" and c.named_children:
+                    parts.append(self._translate_expression(c.named_children[0]))
+            return parts
+        return None
+
+    @staticmethod
+    def _unwrap_await(node: TSNode) -> TSNode:
+        """`await f(x)` is the call `f(x)` for lowering: the awaited value is the
+        call's result. Without this a statement `await cur.execute(q)` produced
+        no call at all, so sinks in aiohttp / FastAPI / async SQLAlchemy code
+        were invisible, and `x = await src()` attached no source to `x`."""
+        while node is not None and node.type == "await" and node.named_children:
+            node = node.named_children[-1]
+        return node
+
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement (usually a call or assignment)"""
         for child in node.children:
+            child = self._unwrap_await(child)
             if child.type == "call":
                 instrs = self._translate_call_expr(child)
                 self._add_instrs(instrs)
@@ -578,6 +609,7 @@ class PythonFrontend:
             return
 
         loc = self._get_location(node)
+        right = self._unwrap_await(right)
 
         # Check for subscript assignment: target[key] = value
         # This handles patterns like session['userid'] = bar (CWE-501)
@@ -1012,6 +1044,7 @@ class PythonFrontend:
                 break
 
         if value_node:
+            value_node = self._unwrap_await(value_node)
             # If the return value is a call, translate it as a call assignment
             if value_node.type == "call":
                 instrs = self._translate_call_assignment("__return_val", value_node, loc)
@@ -1523,6 +1556,16 @@ class PythonFrontend:
             right_exp = self._translate_expression(right)
             op = self._get_text(op_node) if op_node else "+"
 
+            # `fmt % (a, b)` / `fmt % {"k": v}`: every element is part of the
+            # resulting string. A collection literal elsewhere keeps its
+            # simplified lowering (a tuple is its first element, a dict is null),
+            # so the formatted string used to carry only the first element --
+            # `"%s %s" % ("a", user)` lost `user`, and `"%(n)s" % {"n": user}` too.
+            if op == "%" and right is not None:
+                parts = self._aggregate_parts(right)
+                if parts:
+                    right_exp = parts[0] if len(parts) == 1 else ExpStringConcat(parts)
+
             # Check for string concatenation
             if op == "+":
                 # Could be string concat - create StringConcat
@@ -1581,6 +1624,9 @@ class PythonFrontend:
             subscript_exp = self._translate_expression(subscript)
 
             return ExpIndex(value_exp, subscript_exp)
+
+        elif node.type == "await" and node.named_children:
+            return self._translate_expression(self._unwrap_await(node))
 
         elif node.type == "call":
             func = node.child_by_field_name("function")

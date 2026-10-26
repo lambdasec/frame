@@ -1,0 +1,41 @@
+# Best-effort taint rules for the exemplar cases. Written the way a Semgrep user would:
+# sources are the framework request accessors, sinks are the dangerous calls, and
+# the shlex.quote sanitizer is modelled. They are validated by control cases that put
+# source and sink in one function (see run_comparison.py --controls).
+rules:
+  - id: exemplar-py-sqli
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: request data reaches a SQL query
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $C.execute($Q, ...)
+          - focus-metavariable: $Q
+  - id: exemplar-py-cmdi
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: request data reaches a shell command
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+    pattern-sinks:
+      - pattern: os.system(...)
+  - id: exemplar-py-path
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: request data reaches a file open
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+    pattern-sinks:
+      - pattern: open(...)

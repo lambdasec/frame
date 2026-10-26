@@ -199,3 +199,28 @@ def test_django_httpresponse_non_html_content_type_is_clean():
 
 def test_django_request_user_is_server_state():
     assert "CWE-79" not in cwes(DJANGO.format(body='HttpResponse("Hello " + request.user.username)'))
+
+
+# ---- await statements, `%` operands, aiohttp sources -----------------------------------------
+
+def _py_cwes(code):
+    from frame.sil.scanner import FrameScanner
+    r = FrameScanner(language="python").scan(code, "t.py")
+    return {v.cwe_id for v in r.vulnerabilities}
+
+
+def test_awaited_statement_call_keeps_its_sink():
+    code = ("from aiohttp.web import Request\n"
+            "async def h(request: Request, cur):\n"
+            "    data = await request.post()\n"
+            "    await cur.execute(\"SELECT * FROM t WHERE n = '%s'\" % data['n'])\n")
+    assert "CWE-89" in _py_cwes(code)
+
+
+def test_percent_format_with_dict_and_tuple_operands_carries_taint():
+    base = ("from flask import request\nimport sqlite3\n"
+            "def h():\n    n = request.args.get('n')\n"
+            "    sqlite3.connect('x').execute({q})\n")
+    assert "CWE-89" in _py_cwes(base.format(q="\"SELECT '%(n)s'\" % {'n': n}"))
+    assert "CWE-89" in _py_cwes(base.format(q="\"SELECT '%s' '%s'\" % (n, 'x')"))
+    assert "CWE-89" not in _py_cwes(base.format(q="\"SELECT '%s'\" % ('x',)"))
