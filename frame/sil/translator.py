@@ -6408,7 +6408,8 @@ class SILTranslator:
 
         return result
 
-    def _get_embedded_member_sources(self, exp: Exp) -> List[Tuple[str, str]]:
+    def _get_embedded_member_sources(self, exp: Exp,
+                                     _in_call: bool = False) -> List[Tuple[str, str]]:
         """Find member-access chains in an expression that match a taint source
         spec (e.g. `req.query.id` matching the `req.query` source), so inline
         sources used directly in a sink -- `db.query("..." + req.query.id)` --
@@ -6429,21 +6430,37 @@ class SILTranslator:
                 if spec and spec.is_taint_source():
                     result.append(('.'.join(parts[:i]), spec.is_source))
                     break
-            result.extend(self._get_embedded_member_sources(exp.base))
+            result.extend(self._get_embedded_member_sources(exp.base, _in_call))
         elif isinstance(exp, ExpBinOp):
-            result.extend(self._get_embedded_member_sources(exp.left))
-            result.extend(self._get_embedded_member_sources(exp.right))
+            result.extend(self._get_embedded_member_sources(exp.left, _in_call))
+            result.extend(self._get_embedded_member_sources(exp.right, _in_call))
         elif isinstance(exp, ExpUnOp):
-            result.extend(self._get_embedded_member_sources(exp.operand))
+            result.extend(self._get_embedded_member_sources(exp.operand, _in_call))
         elif isinstance(exp, ExpStringConcat):
             for part in exp.parts:
-                result.extend(self._get_embedded_member_sources(part))
+                result.extend(self._get_embedded_member_sources(part, _in_call))
         elif isinstance(exp, ExpCall):
             for arg in exp.args:
-                result.extend(self._get_embedded_member_sources(arg))
+                result.extend(self._get_embedded_member_sources(arg, True))
         elif isinstance(exp, ExpIndex):
-            result.extend(self._get_embedded_member_sources(exp.base))
-            result.extend(self._get_embedded_member_sources(exp.index))
+            # A subscript read of a source container -- `request.args["d"]` --
+            # is the `<chain>.__getitem__` spec, which the assignment form
+            # (`d = request.args["d"]`) already matches; inline in a sink it
+            # was missed. Only a bare read: wrapped in a call (`int(...)`,
+            # `shlex.quote(...)`) it may be converted or sanitized.
+            parts = []
+            cur = exp.base
+            while isinstance(cur, ExpFieldAccess):
+                parts.insert(0, cur.field_name)
+                cur = cur.base
+            if isinstance(cur, ExpVar) and parts and not _in_call:
+                parts.insert(0, self._get_var_name(cur.var))
+                chain = '.'.join(parts)
+                spec = self.program.get_spec(chain + '.__getitem__')
+                if spec and spec.is_taint_source():
+                    result.append((chain, spec.is_source))
+            result.extend(self._get_embedded_member_sources(exp.base, _in_call))
+            result.extend(self._get_embedded_member_sources(exp.index, _in_call))
         return result
 
     def _get_embedded_sink_calls(self, exp: Exp, state: 'SymbolicState') -> List[Tuple[str, str, List[str]]]:

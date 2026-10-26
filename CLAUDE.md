@@ -305,7 +305,7 @@ Default timeout is 5000ms. Increase for complex benchmarks or decrease for faste
 - `test_c_control_flow_and_uninit.py`: break/continue/comma/`++`/compound-assignment lowering, function-like macros, solver-backed CWE-457
 - `test_sink_receiver_precision.py`: global-only JS sinks, permissive hostname verifiers, hardened XML parsers, Java try/catch lowering
 - `test_java_declared_types.py`, `test_overloaded_procedures.py`: spec matching by declared type; overloads kept apart
-- `test_js_recall.py`, `test_c_recall.py`: recall regressions from probing real-world patterns, each positive paired with the nearest correct idiom as a negative
+- `test_js_recall.py`, `test_c_recall.py`, `test_python_recall.py`: recall regressions from probing real-world patterns, each positive paired with the nearest correct idiom as a negative
 - `test_cwe*.py`, `test_c_*.py`, `test_sil_scanner.py`: scanner detection tests
 - `test_slcomp_*.py`: SL-COMP regression tests (need no download)
 

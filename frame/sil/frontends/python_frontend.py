@@ -433,10 +433,16 @@ class PythonFrontend:
                 params.append((PVar(param_name), Typ.unknown_type()))
 
             elif child.type == "typed_parameter":
-                name_node = child.child_by_field_name("name")
-                if name_node:
-                    param_name = self._get_text(name_node)
-                    params.append((PVar(param_name), Typ.unknown_type()))
+                # tree-sitter-python gives typed_parameter no `name` field: the
+                # name is its first child -- an identifier, or a *args / **kwargs
+                # splat pattern (`*args: str`). Dropping it lost every annotated
+                # parameter, so FastAPI handlers had no taint sources at all.
+                first = child.children[0] if child.children else None
+                if first is not None and first.type == "identifier":
+                    params.append((PVar(self._get_text(first)), Typ.unknown_type()))
+                elif first is not None and first.type in ("list_splat_pattern",
+                                                          "dictionary_splat_pattern"):
+                    params.extend(self._translate_parameters(child))
 
             elif child.type == "default_parameter":
                 name_node = child.child_by_field_name("name")
