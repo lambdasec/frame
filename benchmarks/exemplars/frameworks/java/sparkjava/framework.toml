@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/sparkjava"]
+requires_pack = true
+description = "Spark Java: route lambdas (req, res) -> ..., req.queryParams/params/body/headers/cookie, res.redirect/header, JDBC through a repository"

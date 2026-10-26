@@ -113,6 +113,7 @@ class JavaFrontend:
         self._current_class_annotations: list = []
         self._nested_calls: Dict[Tuple[int, int], str] = {}
         self._lambda_names: Dict[int, str] = {}
+        self._handler_lambdas: set = set()
         self._qualified_names: set = set()
         self._method_refs: List[Tuple[Optional[str], str, str]] = []
         self._program: Optional[Program] = None
@@ -137,6 +138,7 @@ class JavaFrontend:
         self._ident_counter = 0
         self._nested_calls = {}
         self._lambda_names = {}
+        self._handler_lambdas = set()
         self._method_refs = []
         self._in_call_args = False
 
@@ -1730,6 +1732,8 @@ class JavaFrontend:
         self._lambda_names[node.id] = name
         pnodes = self._lambda_param_nodes(node)
         inferred = self._framework_lambda_types(via)
+        if inferred:
+            self._handler_lambdas.add(name)
         outer_types = dict(self._var_types)
         params: List[Tuple[PVar, Typ]] = []
         proc = Procedure(name=name, params=params, ret_type=Typ.unknown_type(),
@@ -1801,8 +1805,10 @@ class JavaFrontend:
                 self._add_instrs(self._translate_call_assignment(tmp, expr, loc))
             else:
                 self._add_instrs(self._translate_object_creation_assignment(tmp, expr, loc))
+            self._add_instrs(self._handler_return_sinks(expr, loc))
             self._add_instr(Return(loc=loc, value=ExpVar(PVar(tmp))))
         else:
+            self._add_instrs(self._handler_return_sinks(expr, loc))
             self._add_instr(Return(loc=loc, value=self._translate_expression(expr)))
 
     def _note_method_reference(self, node: TSNode, via: str) -> None:
@@ -2168,13 +2174,15 @@ class JavaFrontend:
 
         self._add_instr(Return(loc=loc, value=value_exp))
 
-    _HANDLER_ANNOTATIONS = ("Mapping", "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path")
+    _HANDLER_ANNOTATIONS = ("Mapping", "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path",
+                            "Get", "Post", "Put", "Delete", "Patch", "Head", "Options", "Trace")
     _HTML_LITERAL = re.compile(r"<\s*[A-Za-z/!]")
 
     def _is_web_handler(self) -> bool:
         proc = self._current_proc
-        return proc is not None and any(
-            a.name.endswith("Mapping") or a.name in self._HANDLER_ANNOTATIONS for a in proc.annotations)
+        return proc is not None and (
+            proc.name in self._handler_lambdas or any(
+                a.name.endswith("Mapping") or a.name in self._HANDLER_ANNOTATIONS for a in proc.annotations))
 
     def _handler_return_sinks(self, expr: TSNode, loc: Location) -> List[Instr]:
         """Sinks that are the VALUE a web handler returns (no call to hang a spec on):
@@ -2224,8 +2232,10 @@ class JavaFrontend:
         """A String returned from a @Controller (not @RestController / @ResponseBody) handler is a
         view name; user data in it selects (and with Thymeleaf evaluates) the template."""
         proc = self._current_proc
-        info_anns = {a.name for a in (self._current_class_annotations or ())}
-        if proc is None or "Controller" not in info_anns or proc.ret_type_name != "String":
+        # Spring's view-resolving @Controller only (Micronaut / JAX-RS controllers return bodies)
+        is_spring = any(a.name == "Controller" and (a.canonical or "").startswith("org.springframework")
+                        for a in (self._current_class_annotations or ()))
+        if proc is None or not is_spring or proc.ret_type_name != "String":
             return False
         if "ResponseBody" in {a.name for a in proc.annotations}:
             return False

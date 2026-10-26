@@ -1,0 +1,38 @@
+[pack]
+name = "micronaut"
+language = "java"
+description = "Micronaut HTTP server controllers: binding annotations, HttpRequest accessors, HttpResponse redirects"
+detect = { imports = ["io.micronaut"] }
+
+# @Get/@Post/... methods: URI template variables bind to unannotated parameters by name, and
+# @QueryValue / @Body / @Header / @CookieValue / @Part / @RequestBean name where the rest comes
+# from. Everything but the framework's own request/auth objects is request data.
+[[entrypoint]]
+id = "route-method"
+annotation = ["Get", "Post", "Put", "Delete", "Patch", "Head", "Options", "Trace", "Error", "Consumes"]
+params = "all"
+exclude_param_type = [
+    "HttpRequest", "HttpResponse", "MutableHttpResponse", "Principal", "Authentication", "SecurityContext",
+    "Locale", "Pageable", "Sort", "io.micronaut.security.*", "io.micronaut.http.HttpRequest",
+]
+
+[[source]]
+call = [
+    "io.micronaut.http.HttpRequest.getParameters", "io.micronaut.http.HttpRequest.getHeaders",
+    "io.micronaut.http.HttpRequest.getBody", "io.micronaut.http.HttpRequest.getCookies",
+    "io.micronaut.http.HttpRequest.getUri", "io.micronaut.http.HttpRequest.getPath",
+    "io.micronaut.http.HttpRequest.getInputStream", "io.micronaut.http.HttpRequest.getReader",
+    "io.micronaut.http.HttpRequest.getAttribute",
+]
+kind = "user_input"
+
+[[sink]]
+call = ["io.micronaut.http.HttpResponse.redirect", "io.micronaut.http.HttpResponse.seeOther",
+        "io.micronaut.http.HttpResponse.temporaryRedirect", "io.micronaut.http.HttpResponse.permanentRedirect"]
+kind = "redirect"
+description = "HttpResponse redirect to the given URI"
+
+[[sink]]
+call = ["io.micronaut.http.MutableHttpResponse.header", "io.micronaut.http.MutableHttpResponse.headers"]
+args = [1]
+kind = "header"

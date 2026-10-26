@@ -780,6 +780,10 @@ JAVA_RETURN_TYPES = {
     "UriInfo.getQueryParameters": "javax.ws.rs.core.MultivaluedMap",
     "UriInfo.getPathParameters": "javax.ws.rs.core.MultivaluedMap",
     "HttpHeaders.getRequestHeaders": "javax.ws.rs.core.MultivaluedMap",
+    # Micronaut
+    "HttpRequest.getParameters": "io.micronaut.http.HttpParameters",
+    "HttpRequest.getHeaders": "io.micronaut.http.HttpHeaders",
+    "HttpRequest.getCookies": "io.micronaut.http.cookie.Cookies",
     # Vert.x
     "HttpServerRequest.params": "io.vertx.core.MultiMap",
     "HttpServerRequest.headers": "io.vertx.core.MultiMap",

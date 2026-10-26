@@ -1,0 +1,32 @@
+[pack]
+name = "sparkjava"
+language = "java"
+description = "Spark Java route handlers: spark.Request accessors as sources, spark.Response redirect / header / body as sinks"
+detect = { imports = ["spark"] }
+
+# `get("/x", (req, res) -> ...)`: the frontend types the lambda's parameters (spark.Request,
+# spark.Response) from the registration, so the accessors resolve to canonical callees.
+[[source]]
+call = [
+    "spark.Request.queryParams", "spark.Request.queryParamsValues", "spark.Request.queryMap", "spark.Request.queryString",
+    "spark.Request.params", "spark.Request.splat", "spark.Request.body", "spark.Request.bodyAsBytes",
+    "spark.Request.headers", "spark.Request.cookie", "spark.Request.cookies", "spark.Request.url",
+    "spark.Request.uri", "spark.Request.pathInfo", "spark.Request.raw", "spark.Request.userAgent",
+    "spark.Request.contentType", "spark.Request.host",
+]
+kind = "user_input"
+
+[[sink]]
+call = ["spark.Response.redirect"]
+kind = "redirect"
+description = "Response.redirect sends the browser to the URL"
+
+[[sink]]
+call = ["spark.Response.header"]
+args = [1]
+kind = "header"
+
+[[sink]]
+call = ["spark.Response.body"]
+kind = "html"
+description = "the response body is the page"

@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/micronaut"]
+requires_pack = true
+description = "Micronaut HTTP server: @Controller + @Get/@Post with @QueryValue/@PathVariable/@Body/@Header/@CookieValue, HttpRequest accessors, HttpResponse redirects, JDBC through a singleton repository"
