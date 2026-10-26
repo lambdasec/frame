@@ -239,7 +239,7 @@ class JavaScriptFrontend:
         r"bower_components|node_modules|jspm_packages|dist|build|min)/", re.I)
     _LIB_NAME_RE = re.compile(
         r"(?:^|[-_.])(?:jquery|jquery-?ui|bootstrap|angular|backbone|underscore|"
-        r"lodash|moment|modernizr|d3|react|react-dom|vue|ember|knockout|prototype|"
+        r"lodash|moment|modernizr|d3|react|react-dom|vue|ember|knockout|prototype(?=[-_.]?\d|\.js$|\.min\b|$)|"
         r"mootools|dojo|extjs|tinymce|ckeditor|wysihtml5|select2|datatables|"
         r"highcharts|chartjs|three|ace|requirejs|handlebars|mustache|popper|slick|"
         r"swiper|flatpickr|axios|zepto|hammer|normalize|polyfill)(?:[-_.]|\d|$)",
@@ -1339,6 +1339,25 @@ class JavaScriptFrontend:
     _REQUEST_PROPS = {"body", "params", "query", "cookies", "headers", "file",
                       "files", "param", "session", "signedCookies"}
 
+    # NestJS binds request data to parameters with decorators.
+    _NEST_SOURCE_DECORATORS = ("Query", "Body", "Param", "Headers", "Header", "Cookies", "UploadedFile",
+                               "UploadedFiles", "HostParam", "Ip")
+
+    def _nest_decorated_param_names(self, param_children: List[TSNode]) -> set:
+        """Parameters such as `@Query('q') q: string` / `@Body() dto: Dto`: Nest
+        fills them from the request, so they are untrusted input."""
+        names: set = set()
+        for ch in param_children:
+            if ch.type not in ("required_parameter", "optional_parameter"):
+                continue
+            decorators = [self._get_text(d) for d in ch.children if d.type == "decorator"]
+            if not any(re.match(r"@(?:" + "|".join(self._NEST_SOURCE_DECORATORS) + r")\b", d) for d in decorators):
+                continue
+            pat = ch.child_by_field_name("pattern")
+            if pat is not None and pat.type == "identifier":
+                names.add(self._get_text(pat))
+        return names
+
     def _express_request_source_names(self, node: TSNode) -> set:
         """Names bound by destructuring an Express Request handler parameter.
 
@@ -1374,9 +1393,9 @@ class JavaScriptFrontend:
             elif ch.type == "object_pattern":
                 destructured.append(ch)
 
+        names: set = self._nest_decorated_param_names(param_children)
         if not is_handler:
-            return set()
-        names: set = set()
+            return names
         for pat in destructured:
             for c in pat.children:
                 nm = None
@@ -1663,7 +1682,36 @@ class JavaScriptFrontend:
                 return spec
         return None
 
+    def _arg_qualified_spec(self, func_name: str, call_node: Optional[TSNode]):
+        """Specs keyed on the call's first string argument -- `crypto.createHash('md5')`,
+        `createCipheriv('des...` (a prefix) -- for the weak-algorithm sinks."""
+        if call_node is None:
+            return None
+        table = self.__dict__.get("_qualified_table")
+        if table is None:
+            table = {}
+            for key, spec in self.specs.items():
+                name, sep, rest = key.partition("('")
+                if sep:
+                    table.setdefault(name, []).append((rest.rstrip("')").lower(), spec))
+            self._qualified_table = table
+        if not table:
+            return None
+        args = self._get_call_args(call_node)
+        if not args or args[0].type != "string":
+            return None
+        value = self._get_text(args[0]).strip("'\"`").lower()
+        parts = func_name.split(".")
+        for i in range(len(parts)):
+            for prefix, spec in table.get(".".join(parts[i:]), ()):
+                if value.startswith(prefix):
+                    return spec
+        return None
+
     def _lookup_call_spec(self, func_name: str, call_node: Optional[TSNode] = None):
+        qualified = self._arg_qualified_spec(func_name, call_node)
+        if qualified is not None:
+            return qualified
         spec = self._lookup_call_spec_by_name(func_name)
         if not db_method_applies(spec, func_name, self._receiver_kind(call_node)):
             return None
@@ -2062,17 +2110,21 @@ class JavaScriptFrontend:
                 description=spec.description
             ))
 
-        # Check if this is a sink
-        if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec):
-            kind = _get_sink_kind(spec.is_sink)
-            for arg_idx in spec.sink_args:
+        # Check if this is a sink. Unlike the source check above this honours member-chain
+        # suffixes (`this.db.query`, `await repo.pool.query`) and arguments that qualify the
+        # spec (`createHash('md5')`), as a standalone call statement does.
+        sink_spec = self._lookup_call_spec(func_name, call_node)
+        if sink_spec and sink_spec.is_taint_sink() and not self._guarded_proto_sink(sink_spec):
+            kind = _get_sink_kind(sink_spec.is_sink)
+            for arg_idx in sink_spec.sink_args:
                 if arg_idx < len(args):
                     for arg_exp in self._sink_arg_exps(func_name, args, arg_idx):
                         instrs.append(TaintSink(
                             loc=loc,
                             exp=arg_exp,
                             kind=kind,
-                            description=spec.description
+                            description=sink_spec.description,
+                            call=func_name
                         ))
 
         return instrs
@@ -2136,7 +2188,8 @@ class JavaScriptFrontend:
                             exp=arg_exp,
                             kind=kind,
                             description=spec.description,
-                            arg_index=arg_idx
+                            arg_index=arg_idx,
+                            call=func_name
                         ))
 
         return instrs
@@ -2206,7 +2259,8 @@ class JavaScriptFrontend:
                     for exp in exps:
                         self._add_instr(TaintSink(
                             loc=loc, exp=exp, kind=kind,
-                            description=spec.description, arg_index=arg_idx))
+                            description=spec.description, arg_index=arg_idx,
+                            call=func_name))
 
     def _translate_template_assignment(
         self,

@@ -713,13 +713,64 @@ def test_python_receiver_with_conflicting_classes_is_not_guessed(tmp_path):
     assert ("repo.py", "CWE-89") not in findings(tmp_path)
 
 
-def test_python_receiver_from_a_factory_is_not_guessed(tmp_path):
+def test_python_receiver_from_a_factory_returning_one_class(tmp_path):
     write(tmp_path, {
         "repo.py": REPO_PY,
         "views.py": handler('    r = make_repo()\n    r.find(request.args.get("n"))',
                             "from repo import Repo\n\ndef make_repo():\n    return Repo()"),
     })
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_python_factory_in_another_module_and_through_a_local(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY + "\n\ndef make_repo():\n    r = Repo()\n    return r\n",
+        "views.py": handler('    r = make_repo()\n    r.find(request.args.get("n"))',
+                            "from repo import make_repo"),
+    })
+    assert ("repo.py", "CWE-89") in findings(tmp_path)
+
+
+def test_python_factory_with_two_classes_is_not_guessed(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY,
+        "other.py": "class Other:\n    def find(self, name):\n        return name\n",
+        "views.py": handler('    r = make(1)\n    r.find(request.args.get("n"))',
+                            "from repo import Repo\nfrom other import Other\n\n"
+                            "def make(k):\n    if k:\n        return Repo()\n    return Other()"),
+    })
     assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_python_factory_that_returns_something_else_is_not_guessed(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY,
+        "views.py": handler('    r = make()\n    r.find(request.args.get("n"))',
+                            "from repo import Repo\n\ndef make():\n    return Repo().conn"),
+    })
+    assert ("repo.py", "CWE-89") not in findings(tmp_path)
+
+
+def test_js_factory_function_returning_a_new_instance(tmp_path):
+    write(tmp_path, {
+        "dao.js": ("const { exec } = require('child_process');\n"
+                   "class Dao { run(d) { exec('ls ' + d); } }\n"
+                   "function createDao() { return new Dao(); }\n"
+                   "module.exports = { createDao };\n"),
+        "h.js": ("const { createDao } = require('./dao');\nconst dao = createDao();\n"
+                 "function H(req, res) { dao.run(req.query.dir); res.send('ok'); }\n"),
+    })
+    assert ("dao.js", "CWE-78") in findings(tmp_path)
+
+
+def test_js_default_class_static_method_through_the_import_name(tmp_path):
+    write(tmp_path, {
+        "pack.js": ("import { exec } from 'child_process';\n"
+                    "export default class Packer {\n  static pack(d) { exec('tar c ' + d); }\n}\n"),
+        "r.js": ("import express from 'express';\nimport Packer from './pack';\nconst app = express();\n"
+                 "app.get('/p', (req, res) => { Packer.pack(req.query.dir); res.send('ok'); });\n"),
+    })
+    assert ("pack.js", "CWE-78") in findings(tmp_path)
 
 
 def test_python_instance_method_called_unbound_is_not_resolved(tmp_path):
@@ -877,3 +928,124 @@ def test_subdirectory_scan_over_the_limit_warns_and_scans_the_target_alone(tmp_p
     scanner, found = _scan_sub(root, "app", cross_file_limit=2)
     assert ("app/dao/student.py", "CWE-89") not in found
     assert "imports rooted above" in scanner.last_project_scope.get("context", "")
+
+
+# ---- star imports, tsconfig aliases, Nest decorators, library-name sinks on project methods --
+
+HELPER_OS = "import os\n\n\ndef run_report(name):\n    os.system('report ' + name)\n"
+
+
+def test_python_star_import_binds_public_names(tmp_path):
+    write(tmp_path, {"helpers.py": HELPER_OS,
+                     "views.py": handler('    run_report(request.args.get("n"))', "from helpers import *")})
+    assert ("helpers.py", "CWE-78") in findings(tmp_path)
+
+
+def test_python_star_import_respects_all(tmp_path):
+    write(tmp_path, {"helpers.py": HELPER_OS + "\n__all__ = ['other']\n\n\ndef other():\n    pass\n",
+                     "views.py": handler('    run_report(request.args.get("n"))', "from helpers import *")})
+    assert ("helpers.py", "CWE-78") not in findings(tmp_path)
+
+
+def test_python_star_import_of_a_name_two_modules_define_is_not_guessed(tmp_path):
+    write(tmp_path, {
+        "a.py": HELPER_OS,
+        "b.py": "def run_report(name):\n    return name\n",
+        "views.py": handler('    run_report(request.args.get("n"))', "from a import *\nfrom b import *"),
+    })
+    assert ("a.py", "CWE-78") not in findings(tmp_path)
+
+
+def test_python_local_definition_beats_a_star_import(tmp_path):
+    write(tmp_path, {
+        "helpers.py": HELPER_OS,
+        "views.py": handler('    run_report(request.args.get("n"))',
+                            "from helpers import *\n\ndef run_report(name):\n    return name"),
+    })
+    assert ("helpers.py", "CWE-78") not in findings(tmp_path)
+
+
+def test_ts_paths_alias_resolves_through_tsconfig(tmp_path):
+    write(tmp_path, {
+        "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } }, }',
+        "src/shell.ts": "import { exec } from 'child_process';\nexport function ls(d: string) { exec('ls ' + d); }\n",
+        "src/app.ts": ("import express from 'express';\nimport { ls } from '@/shell';\nconst app = express();\n"
+                       "app.get('/', (req, res) => { ls(req.query.d as string); res.send('ok'); });\n"),
+    })
+    assert ("shell.ts", "CWE-78") in findings(tmp_path)
+
+
+def test_ts_base_url_resolves_bare_project_specifiers(tmp_path):
+    write(tmp_path, {
+        "tsconfig.json": '{ // comment\n "compilerOptions": { "baseUrl": "src" } }',
+        "src/lib/shell.ts": "import { exec } from 'child_process';\nexport function ls(d: string) { exec('ls ' + d); }\n",
+        "src/app.ts": ("import express from 'express';\nimport { ls } from 'lib/shell';\nconst app = express();\n"
+                       "app.get('/', (req, res) => { ls(req.query.d as string); res.send('ok'); });\n"),
+    })
+    assert ("shell.ts", "CWE-78") in findings(tmp_path)
+
+
+def test_alias_that_matches_no_project_file_is_left_alone(tmp_path):
+    write(tmp_path, {
+        "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } } }',
+        "src/app.ts": ("import express from 'express';\nimport { ls } from '@/missing';\nconst app = express();\n"
+                       "app.get('/', (req, res) => { ls(req.query.d as string); res.send('ok'); });\n"),
+        "src/other.ts": "export const x = 1;\n",
+    })
+    assert not findings(tmp_path)
+
+
+NEST_REPO = ("import { Injectable } from '@nestjs/common';\n@Injectable()\nexport class Repo {\n"
+             "  constructor(private readonly db: any) {}\n"
+             "  find(name: string) { return this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); }\n}\n")
+
+
+def _nest(tmp_path, call):
+    write(tmp_path, {
+        "repo.ts": NEST_REPO,
+        "ctl.ts": ("import { Controller, Get, Query } from '@nestjs/common';\nimport { Repo } from './repo';\n"
+                   "@Controller('u')\nexport class Ctl {\n  constructor(private readonly repo: Repo) {}\n"
+                   "  @Get()\n  list(" + call[0] + ") { return this.repo.find(" + call[1] + "); }\n}\n"),
+    })
+    return findings(tmp_path)
+
+
+def test_nest_query_decorator_is_a_source(tmp_path):
+    assert ("repo.ts", "CWE-89") in _nest(tmp_path, ("@Query('n') n: string", "n"))
+
+
+def test_nest_undecorated_parameter_is_not_a_source(tmp_path):
+    assert ("repo.ts", "CWE-89") not in _nest(tmp_path, ("n: string", "n"))
+
+
+def test_nest_method_is_not_reported_as_a_library_call_at_its_call_site(tmp_path):
+    found = _nest(tmp_path, ("@Query('n') n: string", "n"))
+    assert {cwe for f, cwe in found if f == "ctl.ts"} == set()
+
+
+def _db_handle(tmp_path, query):
+    write(tmp_path, {
+        "repo.js": ("class Repo {\n  constructor(db) { this.db = db; }\n"
+                    "  find(n) { return this.db.query(" + query + "); }\n}\nmodule.exports = { Repo };\n"),
+        "app.js": ("const express = require('express');\nconst { Repo } = require('./repo');\n"
+                   "const app = express();\nconst repo = new Repo({});\n"
+                   "app.get('/', (req, res) => { res.json(repo.find(req.query.n)); });\n"),
+    })
+    return findings(tmp_path)
+
+
+def test_db_handle_query_is_a_sql_sink(tmp_path):
+    assert ("repo.js", "CWE-89") in _db_handle(tmp_path, "\"SELECT * FROM u WHERE n = '\" + n + \"'\"")
+
+
+def test_db_handle_query_with_a_bound_parameter_is_clean(tmp_path):
+    assert ("repo.js", "CWE-89") not in _db_handle(tmp_path, "'SELECT * FROM u WHERE n = $1', [n]")
+
+
+def test_receivers_whose_factories_depend_on_each_other_do_not_recurse(tmp_path):
+    write(tmp_path, {
+        "repo.py": REPO_PY,
+        "views.py": handler('    a = b.make()\n    b = a.make()\n    a.find(request.args.get("n"))',
+                            "from repo import Repo"),
+    })
+    findings(tmp_path)          # resolves to nothing; the point is that it returns

@@ -1054,7 +1054,13 @@ class PythonFrontend:
                 # Extract nested calls from the expression first
                 nested_call_instrs = self._extract_all_calls_from_node(value_node, loc)
                 self._add_instrs(nested_call_instrs)
-                value_exp = self._translate_expression(value_node)
+                parts = self._aggregate_parts(value_node)
+                if parts:
+                    # `return {"name": request.args.get("name")}`: the container
+                    # carries its members, so a caller reading one key sees them.
+                    value_exp = ExpStringConcat(parts)
+                else:
+                    value_exp = self._translate_expression(value_node)
 
         self._add_instr(Return(loc=loc, value=value_exp))
 

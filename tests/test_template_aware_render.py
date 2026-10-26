@@ -102,3 +102,15 @@ def test_raw_data_keys_api(tmp_path):
     src = str(tmp_path / "routes" / "r.js")
     assert raw_data_keys("a", src) == frozenset({"y"})
     assert raw_data_keys("nope", src) is None
+
+
+def test_engine_with_escaping_turned_off_keeps_every_value_a_sink(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "server.js").write_text("swig.setDefaults({ autoescape: false });\n")
+    assert xss_lines(tmp_path, "<h1>{{ q }}</h1>", DATA, "page.html")
+
+
+def test_engine_default_escaping_still_narrows(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "server.js").write_text("swig.setDefaults({ autoescape: true });\n")
+    assert not xss_lines(tmp_path, "<h1>{{ q }}</h1>", DATA, "page.html")

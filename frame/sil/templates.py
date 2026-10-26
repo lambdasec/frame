@@ -192,11 +192,46 @@ def _raw_keys(path_str: str, mtime: float) -> Optional[FrozenSet[str]]:
     return frozenset(resolved)
 
 
+_ENGINE_ESCAPE_OFF = re.compile(
+    r"autoescape\s*:\s*(?:false|0)\b|noEscape\s*:\s*true|\bescape\s*:\s*false\b|autoescape\s*=\s*false", re.I)
+_MAX_CONFIG_FILES = 400
+
+
+def _app_root(path: Path) -> Path:
+    for parent in path.parents:
+        if (parent / "package.json").is_file():
+            return parent
+    return path.parent
+
+
+@lru_cache(maxsize=64)
+def _engine_escaping_disabled(root: str) -> bool:
+    """Whether the application turns the template engine's escaping off anywhere
+    (`swig.setDefaults({ autoescape: false })`, `nunjucks.configure({ autoescape: false })`,
+    Handlebars `noEscape: true`). Then `{{ x }}` is raw output and the template says nothing."""
+    seen = 0
+    for ext in ("*.js", "*.ts", "*.mjs", "*.cjs"):
+        for f in Path(root).rglob(ext):
+            if "node_modules" in f.parts or ".git" in f.parts:
+                continue
+            seen += 1
+            if seen > _MAX_CONFIG_FILES:
+                return False
+            try:
+                if _ENGINE_ESCAPE_OFF.search(f.read_text(encoding="utf-8", errors="replace")):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def raw_data_keys(view: str, source_file: str) -> Optional[FrozenSet[str]]:
     """The names the view `view` (rendered from `source_file`) can print without
     escaping, or None when that cannot be determined."""
     path = find_template(view, source_file)
     if path is None:
+        return None
+    if _engine_escaping_disabled(str(_app_root(path))):
         return None
     try:
         return _raw_keys(str(path), path.stat().st_mtime)

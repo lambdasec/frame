@@ -48,6 +48,18 @@ def run_json(cmd: List[str], cwd: Path = None) -> dict:
 
 
 def frame_tool(target: Path) -> List[Finding]:
+    """Frame in-process (one import, many scans); `frame_cli_tool` is the same through the CLI."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from frame.sil.scanner import FrameScanner
+    out: List[Finding] = []
+    for r in FrameScanner(verify=False).scan_directory(str(target), None, project_root=str(target)):
+        for v in r.vulnerabilities:
+            out.append((r.filename, int(v.line), v.cwe_id or ""))
+    return out
+
+
+def frame_cli_tool(target: Path) -> List[Finding]:
     data = run_json([sys.executable, "-m", "frame.sil.cli", "scan", str(target), "--format", "json"], cwd=ROOT)
     return [(fr["filename"], int(v["line"]), v.get("cwe_id", ""))
             for fr in data.get("files", []) for v in fr.get("vulnerabilities", [])]

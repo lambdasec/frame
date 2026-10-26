@@ -1464,11 +1464,20 @@ class FrameScanner:
         # between the target and the project root are context, analysed as
         # callees/callers but never reported.
         widen = base != target and target.is_relative_to(base)
+        context_note = None
+        universe = None
         if widen:
+            chosen = {s.resolve() for s in selected}
             context = [p for p in self._candidate_files(base, None, None, excluded_dirs)
-                       if p.resolve() not in {s.resolve() for s in selected}]
-            universe = list(selected) + [p for p in context if p.resolve().is_relative_to(base)]
-        else:
+                       if language_family(p) is not None and p.resolve() not in chosen]
+            if len(selected) + len(context) > limit:     # decided before reading any of them
+                widen = False
+                context_note = (f"the project root {base} has more than {limit} Python/JS/TS files, so "
+                                f"imports rooted above the scan target will not resolve "
+                                f"(scan from the package root or raise --cross-file-limit)")
+            else:
+                universe = list(selected) + context
+        if universe is None:
             universe = (self._candidate_files(dir_path, pattern, extensions, excluded_dirs)
                         if narrowed else selected)
         files = []
@@ -1482,18 +1491,9 @@ class FrameScanner:
                 continue
             files.append(p)
         if len(files) < 2:
-            return selected
-        context_note = None
-        if widen and len(files) > limit:
-            keep = {s.resolve() for s in selected}
-            files = [p for p in files if p.resolve() in keep]
-            widen = False
-            context_note = (f"the project root {base} has more than {limit} Python/JS/TS files, so "
-                            f"imports rooted above the scan target will not resolve "
-                            f"(scan from the package root or raise --cross-file-limit)")
-            if len(files) < 2:
+            if context_note:
                 self.last_project_scope = {"cross_file": False, "reason": context_note}
-                return selected
+            return selected
         if not narrowed and not widen and len(files) > limit:
             self.last_project_scope = {
                 "cross_file": False,
@@ -2097,6 +2097,8 @@ class FrameScanner:
                    + any(c.isdigit() for c in value))
         return classes == 3 and cls._shannon_entropy(value) >= 3.5
 
+    _REGEX_LITERAL = re.compile(r"/(?=.*[\^$\\\[\](){}*+?|]).+/[dgimsuyv]*")
+
     @classmethod
     def _is_nonsecret_value(cls, target: str, value: str) -> bool:
         """True when the literal bound to credential-named `target` names,
@@ -2106,6 +2108,8 @@ class FrameScanner:
             return False
         v = value.strip()
         if any(p.fullmatch(v) for p in cls._STRICT_NONSECRET_SHAPES):
+            return True
+        if cls._REGEX_LITERAL.fullmatch(v):      # `const PASS_RE = /^.{1,20}$/` validates a password
             return True
         name = cls._name_tokens(target)
         if name and name[-1] in cls._METADATA_HEADS:

@@ -213,6 +213,11 @@ SQL_SPECS = {
     # pg (PostgreSQL)
     "client.query": _sink("sql", [0], "PostgreSQL query (SQL injection)"),
 
+    # The usual names for a handle to those drivers (`this.db.query(...)`)
+    "db.query": _sink("sql", [0], "database handle query (SQL injection)"),
+    "conn.query": _sink("sql", [0], "database connection query (SQL injection)"),
+    "database.query": _sink("sql", [0], "database handle query (SQL injection)"),
+
     # Sequelize
     "sequelize.query": _sink("sql", [0], "Sequelize raw query (SQL injection)"),
     # sqlite3 / better-sqlite3: exec and prepare take SQL text. (db.get /
@@ -343,6 +348,12 @@ SANITIZER_SPECS = {
     # later "SQL sanitizers" entry below does not silently drop the html kind.
     "escape": _sanitizer(["html", "sql"], "HTML/SQL escape"),
     "encodeURIComponent": _sanitizer(["url"], "URL encode"),
+    # Shell quoting libraries: the argument is escaped for a POSIX shell word.
+    "shell-escape": _sanitizer(["shell", "command"], "shell-escape (shell quoting)"),
+    "shellEscape": _sanitizer(["shell", "command"], "shell-escape (shell quoting)"),
+    "shellescape": _sanitizer(["shell", "command"], "shell-escape (shell quoting)"),
+    "shell-quote.quote": _sanitizer(["shell", "command"], "shell-quote (shell quoting)"),
+    "shellQuote.quote": _sanitizer(["shell", "command"], "shell-quote (shell quoting)"),
     # A number cannot carry an injection payload (NaN is harmless too).
     "parseInt": _sanitizer(_NUMERIC_SAFE, "parseInt (numeric)"),
     "parseFloat": _sanitizer(_NUMERIC_SAFE, "parseFloat (numeric)"),
@@ -370,10 +381,10 @@ SANITIZER_SPECS = {
 
 ACCESS_CONTROL_SPECS = {
     # JWT handling (potential vulnerabilities)
-    "jwt.verify": _sink("auth", [0], "JWT verify - check algorithm (CWE-347)"),
+    # `jwt.verify(token, secret)` is the correct way to treat an attacker-supplied token; only
+    # `jwt.decode` (no signature check) is a sink.
     "jwt.decode": _sink("auth", [0], "JWT decode without verify (CWE-347)"),
     "jwt.sign": _propagator([0], "JWT sign"),
-    "jsonwebtoken.verify": _sink("auth", [0], "JWT verify (CWE-347)"),
     "jsonwebtoken.decode": _sink("auth", [0], "JWT decode (CWE-347)"),
 
     # Session handling

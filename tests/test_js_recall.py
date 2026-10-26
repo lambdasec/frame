@@ -284,3 +284,89 @@ def test_tag_is_in_the_json_only_when_set():
     from frame.sil.scanner import FrameScanner
     r = FrameScanner(language="typescript").scan(f"export class C {{ f(req: any) {{ {SINK} }} }}", "c.ts")
     assert r.vulnerabilities[0].to_dict()["source_evidence"] == "naming-convention"
+
+
+def _js(code):
+    from frame.sil.scanner import FrameScanner
+    r = FrameScanner(language="javascript").scan(code, "a.js")
+    return {(v.line, v.cwe_id) for v in r.vulnerabilities}
+
+
+def test_shell_escape_libraries_are_sanitizers():
+    base = ("const express = require('express');\nconst {{ exec }} = require('child_process');\n"
+            "const shellEscape = require('shell-escape');\nconst app = express();\n"
+            "app.get('/', (req, res) => {{ exec('grep ' + {arg} + ' f'); res.send('ok'); }});\n")
+    assert any(c == "CWE-78" for _, c in _js(base.format(arg="req.query.p")))
+    assert not any(c == "CWE-78" for _, c in _js(base.format(arg="shellEscape([req.query.p])")))
+
+
+# ---- findings from the independent seed files and the real apps ---------------------------
+
+def _scan_js(code, name="a.js", lang="javascript"):
+    from frame.sil.scanner import FrameScanner
+    r = FrameScanner(language=lang).scan(code, name)
+    return {(v.line, v.cwe_id) for v in r.vulnerabilities}
+
+
+REDIR = ("const express = require('express');\nconst app = express();\n"
+         "app.get('/r', (req, res) => {{\n  const next = req.query.u || '/';\n{body}\n}});")
+
+
+@pytest.mark.parametrize("body", [
+    "  if (!next.startsWith('/') || next.startsWith('//')) { return res.redirect('/'); }\n  res.redirect(next);",
+    "  if (next.startsWith('/') && !next.startsWith('//')) { res.redirect(next); }",
+])
+def test_same_origin_path_guard_clears_an_open_redirect(body):
+    assert not any(c == "CWE-601" for _, c in _scan_js(REDIR.format(body=body)))
+
+
+@pytest.mark.parametrize("body", [
+    "  res.redirect(next);",
+    "  if (next.startsWith('/')) { res.redirect(next); }",          # '//host' still passes
+    "  if (!next.startsWith('//')) { res.redirect(next); }",        # 'http://evil' still passes
+    "  res.redirect('//' + req.query.id);",
+])
+def test_incomplete_or_missing_redirect_guard_is_still_reported(body):
+    assert any(c == "CWE-601" for _, c in _scan_js(REDIR.format(body=body)))
+
+
+def test_redirect_to_a_constant_local_path_with_a_dynamic_tail_is_not_open():
+    assert not any(c == "CWE-601" for _, c in _scan_js(REDIR.format(body="  res.redirect('/p/' + req.query.id);")))
+
+
+def test_a_regex_literal_named_like_a_password_is_not_a_secret():
+    assert not _scan_js("const PASS_RE = /^.{1,20}$/;")
+    assert _scan_js('const PASSWORD = "Sup3rS3cret!2024";')
+
+
+def test_verifying_an_untrusted_jwt_is_not_a_finding():
+    code = ("const jwt = require('jsonwebtoken');\nfunction auth(req, res, next) {\n"
+            "  req.user = jwt.verify(req.query.token, 'k');\n  next();\n}\n")
+    assert not any(c == "CWE-863" for _, c in _scan_js(code))
+
+
+@pytest.mark.parametrize("arg,flagged", [("md5", True), ("sha1", True), ("sha256", False)])
+def test_create_hash_flags_only_weak_algorithms(arg, flagged):
+    code = f"const crypto = require('crypto');\nfunction h(p) {{ return crypto.createHash('{arg}').update(p).digest('hex'); }}\n"
+    assert any(c == "CWE-328" for _, c in _scan_js(code)) == flagged
+
+
+@pytest.mark.parametrize("alg,flagged", [("des-ecb", True), ("aes-256-gcm", False)])
+def test_create_cipheriv_flags_only_weak_algorithms(alg, flagged):
+    code = ("const crypto = require('crypto');\nfunction e(n, k, iv) {\n"
+            f"  const c = crypto.createCipheriv('{alg}', k, iv);\n  return c.update(n);\n}}\n")
+    assert any(c == "CWE-327" for _, c in _scan_js(code)) == flagged
+
+
+def test_sink_through_a_member_chain_is_found_in_an_assignment_too():
+    code = ("function f(name) { const rows = this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); return rows; }\n"
+            "function h(req) { f(req.query.n); }\n")
+    assert any(c == "CWE-89" for _, c in _scan_js(code))
+
+
+def test_file_named_prototype_something_is_not_the_prototype_library():
+    src = ("function deepMerge(t, s) { for (const k of Object.keys(s)) {"
+           " if (typeof s[k] === 'object') { if (!t[k]) t[k] = {}; deepMerge(t[k], s[k]); } else { t[k] = s[k]; } }"
+           " return t; }\nfunction apply(req) { return deepMerge({}, req.body.prefs); }\n")
+    assert any(c == "CWE-1321" for _, c in _scan_js(src, "/x/seeds/prototype-pollution.js"))
+    assert not any(c == "CWE-1321" for _, c in _scan_js(src, "/x/js/prototype.min.js"))

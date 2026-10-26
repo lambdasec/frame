@@ -557,6 +557,10 @@ class TaintSink(Instr):
     # Object whose method is the sink (`builder` in `builder.parse(x)`), when
     # the sink's safety depends on how that object was configured.
     receiver: Optional[str] = None
+    # The call this sink was derived from, when it comes from a call spec. A call
+    # that resolves to a project method is the project's code, not the library
+    # function the name matches, so the translator drops the name-based sink.
+    call: str = ""
 
     def __str__(self) -> str:
         return f"taint_sink({self.exp}, {self.kind.value})"

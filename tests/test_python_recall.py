@@ -224,3 +224,12 @@ def test_percent_format_with_dict_and_tuple_operands_carries_taint():
     assert "CWE-89" in _py_cwes(base.format(q="\"SELECT '%(n)s'\" % {'n': n}"))
     assert "CWE-89" in _py_cwes(base.format(q="\"SELECT '%s' '%s'\" % (n, 'x')"))
     assert "CWE-89" not in _py_cwes(base.format(q="\"SELECT '%s'\" % ('x',)"))
+
+
+def test_return_of_a_dict_carries_its_members_to_the_caller(tmp_path):
+    (tmp_path / "filters.py").write_text("from flask import request\n\n\ndef read():\n    return {'n': request.args.get('n'), 'p': 1}\n")
+    (tmp_path / "views.py").write_text("import sqlite3\nfrom filters import read\n\n\ndef u():\n    f = read()\n"
+                                       "    return sqlite3.connect('a').execute(\"SELECT '%s'\" % f['n'])\n")
+    from frame.sil.scanner import FrameScanner
+    res = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
+    assert any(v.cwe_id == "CWE-89" for r in res for v in r.vulnerabilities)

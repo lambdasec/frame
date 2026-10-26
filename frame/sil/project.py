@@ -37,6 +37,7 @@ key is what the translator keys summaries on. `closure` computes which files a
 change can affect.
 """
 
+import json
 import re
 from collections import deque
 from dataclasses import dataclass, field
@@ -56,6 +57,9 @@ _MAX_REEXPORT_DEPTH = 6
 _INLINE_CONSTRUCTION = re.compile(r"^([A-Za-z_][\w.]*)\(.*\)\.(\w+)$", re.S)
 
 ProcRef = Tuple[str, str]     # (file key, procedure name)
+
+
+_FACTORY_MARK = "()"      # evidence text for `x = f()` in JS: the class `f` builds, if it is a factory
 
 
 def language_family(path: Path) -> Optional[str]:
@@ -103,6 +107,10 @@ class FileModule:
     # JS constructor functions: (constructor, method, line of the function
     # assigned to `this.method`), tied to procedures by position.
     ctor_methods: List[Tuple[str, str, int]] = field(default_factory=list)
+    factory_calls: Dict[str, str] = field(default_factory=dict)   # function -> class text its returns build
+    star_imports: List[str] = field(default_factory=list)         # Python `from m import *` (target keys)
+    defined: Set[str] = field(default_factory=set)                # Python top-level names
+    all_names: Optional[List[str]] = None                         # Python `__all__`
 
 
 @dataclass
@@ -147,10 +155,42 @@ class ProjectIndex:
             else:
                 self._read_javascript(mod, tree.root_node)
                 self._read_javascript_types(mod, tree.root_node)
+        self._apply_star_imports()
         for mod in self.modules.values():
             mod.imports.discard(mod.key)
             for target in mod.imports:
                 self._importers.setdefault(target, set()).add(mod.key)
+
+    def _apply_star_imports(self) -> None:
+        """Bind the public names a `from m import *` brings in. A name defined
+        in the importing file wins; a name two star imports both bring is
+        ambiguous and stays unbound (never guessed)."""
+        for _ in range(3):                                  # star imports of star imports
+            changed = False
+            for mod in self.modules.values():
+                if not mod.star_imports:
+                    continue
+                offered: Dict[str, Set[Tuple[str, Optional[str]]]] = {}
+                for target in mod.star_imports:
+                    t = self.modules.get(target)
+                    if t is None:
+                        continue
+                    names = (set(t.all_names) if t.all_names is not None
+                             else {n for n in t.defined | set(t.bindings) if not n.startswith("_")})
+                    for n in names:
+                        if n in t.defined:
+                            offered.setdefault(n, set()).add((target, n))
+                        elif n in t.bindings and t.bindings[n].symbol is not None:
+                            b = t.bindings[n]
+                            offered.setdefault(n, set()).add((b.file, b.symbol))
+                for n, sources in offered.items():
+                    if len(sources) != 1 or n in mod.defined or n in mod.bindings:
+                        continue
+                    file, symbol = next(iter(sources))
+                    mod.bindings[n] = Binding(file, symbol)
+                    changed = True
+            if not changed:
+                break
 
     # ---- keys and paths -----------------------------------------------------
 
@@ -234,6 +274,20 @@ class ProjectIndex:
         return module_root.parent == self.root and module_root.name in _PY_SOURCE_DIRS
 
     def _read_python(self, mod: FileModule, root: Any) -> None:
+        for st in root.children:                      # what `from m import *` would bring in
+            inner = st.named_children[-1] if st.type == "decorated_definition" and st.named_children else st
+            if inner.type in ("function_definition", "class_definition"):
+                mod.defined.add(_text(inner.child_by_field_name("name")))
+            elif inner.type == "expression_statement" and inner.named_children:
+                a = inner.named_children[0]
+                if a.type == "assignment" and a.child_by_field_name("left") is not None:
+                    left = _text(a.child_by_field_name("left"))
+                    right = a.child_by_field_name("right")
+                    if left == "__all__" and right is not None and right.type in ("list", "tuple"):
+                        mod.all_names = [_text(x).strip("'\"") for x in right.named_children
+                                         if x.type == "string"]
+                    elif left.isidentifier():
+                        mod.defined.add(left)
         stack = [root]
         while stack:
             node = stack.pop()
@@ -276,6 +330,8 @@ class ProjectIndex:
         source = self._resolve_python(mod, parts, level)
         if source is not None:
             mod.imports.add(source)
+        if source is not None and any(c.type == "wildcard_import" for c in node.children):
+            mod.star_imports.append(source)
         for child in node.children_by_field_name("name"):
             if child.type == "aliased_import":
                 name = _text(child.child_by_field_name("name"))
@@ -367,10 +423,17 @@ class ProjectIndex:
     # ---- JavaScript / TypeScript --------------------------------------------
 
     def _resolve_js(self, importer: FileModule, spec: str) -> Optional[str]:
-        if not spec.startswith((".", "/")):
-            return None
-        base = Path(_normalise((importer.path.parent / spec) if not spec.startswith("/")
-                               else Path(spec)))
+        if spec.startswith((".", "/")):
+            base = Path(_normalise((importer.path.parent / spec) if not spec.startswith("/")
+                                   else Path(spec)))
+            return self._resolve_js_base(base)
+        for base in self._alias_candidates(importer.path.parent, spec):
+            key = self._resolve_js_base(base)
+            if key is not None:
+                return key
+        return None
+
+    def _resolve_js_base(self, base: Path) -> Optional[str]:
         cands: List[Path] = []
         if base.suffix:
             cands.append(base)
@@ -385,6 +448,70 @@ class ProjectIndex:
             if key is not None:
                 return key
         return None
+
+    # tsconfig.json / jsconfig.json `paths` and `baseUrl`, nearest file wins
+    def _alias_config(self, directory: Path) -> Optional[Tuple[Path, List[Tuple[str, List[str]]]]]:
+        cache = self.__dict__.setdefault("_alias_cache", {})
+        if directory in cache:
+            return cache[directory]
+        result = None
+        for name in ("tsconfig.json", "jsconfig.json"):
+            cfg = directory / name
+            if cfg.is_file():
+                result = self._read_alias_config(cfg)
+                if result is not None:
+                    break
+        if result is None and directory.parent != directory and directory != self.root:
+            result = self._alias_config(directory.parent)
+        cache[directory] = result
+        return result
+
+    def _read_alias_config(self, cfg: Path, depth: int = 0) -> Optional[Tuple[Path, List[Tuple[str, List[str]]]]]:
+        try:
+            text = cfg.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        text = re.sub(r'(?m)^\s*//.*$|(?<=[,{\[\s])//[^"\n]*$', "", text)
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return None
+        opts = data.get("compilerOptions") or {}
+        base_dir = (cfg.parent / opts["baseUrl"]).resolve() if opts.get("baseUrl") else None
+        paths = opts.get("paths")
+        ext = data.get("extends")
+        if (paths is None and base_dir is None) and isinstance(ext, str) and depth < 3 \
+                and ext.startswith("."):
+            parent = cfg.parent / (ext if ext.endswith(".json") else ext + ".json")
+            return self._read_alias_config(parent.resolve(), depth + 1)
+        anchor = base_dir or cfg.parent.resolve()
+        entries = [(pat, [t for t in targets if isinstance(t, str)])
+                   for pat, targets in (paths or {}).items() if isinstance(targets, list)]
+        if base_dir is not None:
+            entries.append(("*", ["*"]))                # bare specifiers resolve under baseUrl
+        return anchor, entries
+
+    def _alias_candidates(self, directory: Path, spec: str) -> List[Path]:
+        cfg = self._alias_config(directory)
+        if cfg is None:
+            return []
+        anchor, entries = cfg
+        out: List[Path] = []
+        for pattern, targets in sorted(entries, key=lambda e: -len(e[0])):
+            if "*" in pattern:
+                head, _, tail = pattern.partition("*")
+                if not (spec.startswith(head) and spec.endswith(tail) and len(spec) >= len(head) + len(tail)):
+                    continue
+                middle = spec[len(head): len(spec) - len(tail)]
+            elif spec == pattern:
+                middle = ""
+            else:
+                continue
+            for target in targets:
+                out.append(Path(_normalise(anchor / target.replace("*", middle))))
+        return out
 
     def _read_javascript(self, mod: FileModule, root: Any) -> None:
         for st in root.children:
@@ -461,6 +588,9 @@ class ProjectIndex:
             node = node.named_children[-1]
         if node is not None and node.type == "new_expression":
             return self._dotted(node.child_by_field_name("constructor"))
+        if node is not None and node.type == "call_expression":      # `createRepo()`: a factory, if it is one
+            fn = self._dotted(node.child_by_field_name("function"))
+            return _FACTORY_MARK + fn if fn and fn != "require" else ""
         return ""
 
     @staticmethod
@@ -642,11 +772,50 @@ class ProjectIndex:
             elif ".prototype." in name and "#" not in name:
                 owner, _, method = name.partition(".prototype.")
                 mod.classes.setdefault(owner, {})[method] = name
+        mod.factory_calls = {}
+        for name, p in procedures.items():
+            built = self._returned_class_text(p)
+            if built:
+                mod.factory_calls[name] = built
         for ctor, method, line in mod.ctor_methods:     # `this.m = fn` inside a constructor function
             for name, p in procedures.items():
                 if name.startswith(f"this.{method}") and getattr(getattr(p, "loc", None), "line", None) == line:
                     mod.classes.setdefault(ctor, {})[method] = name
                     break
+
+    @staticmethod
+    def _returned_class_text(proc: Any) -> str:
+        """The one callee text every non-null `return` of `proc` builds
+        (`return Repo()`, `r = Repo(); return r`, `return new Repo()`), or ''.
+        Whether that callee is a class is decided by the caller."""
+        from frame.sil.instructions import Assign, Call, Return
+        from frame.sil.types import ExpCall, ExpConst, ExpVar
+        defs: Dict[str, str] = {}
+        built: Set[str] = set()
+
+        def callee(e: Any) -> str:
+            name = str(getattr(e, "func", "")).strip('"')
+            return name[4:] if name.startswith("new ") else name
+
+        for i in proc.get_all_instrs():
+            if isinstance(i, Call) and i.ret:
+                defs[str(i.ret[0])] = i.get_full_name().removeprefix("new ")
+            elif isinstance(i, Assign):
+                if isinstance(i.exp, ExpCall):
+                    defs[str(i.id)] = callee(i.exp)
+                elif isinstance(i.exp, ExpVar) and str(i.exp.var) in defs:
+                    defs[str(i.id)] = defs[str(i.exp.var)]
+            elif isinstance(i, Return):
+                v = i.value
+                if v is None or (isinstance(v, ExpConst) and str(v).strip() in ("null", "None", "undefined")):
+                    continue
+                if isinstance(v, ExpCall):
+                    built.add(callee(v))
+                elif isinstance(v, ExpVar) and str(v.var) in defs:
+                    built.add(defs[str(v.var)])
+                else:
+                    return ""
+        return next(iter(built)) if len(built) == 1 else ""
 
     # ---- resolution ---------------------------------------------------------
 
@@ -686,7 +855,11 @@ class ProjectIndex:
         if mod.family == "javascript":
             for spec in sorted(mod.specs, key=len, reverse=True):
                 if name.startswith(spec + ".") and "." not in name[len(spec) + 1:]:
-                    found = self.lookup_symbol(mod.specs[spec], name[len(spec) + 1:])
+                    member = name[len(spec) + 1:]
+                    found = self.lookup_symbol(mod.specs[spec], member)
+                    if found is None:                 # `import C from './c'; C.m()`: the default class
+                        cls = self.lookup_class(mod.specs[spec], DEFAULT)
+                        found = self._find_method(cls, member) if cls else None
                     if found is not None:
                         return found
         b = mod.bindings.get(name)
@@ -732,7 +905,31 @@ class ProjectIndex:
 
     def resolve_class(self, key: str, text: str, depth: int = 0) -> Optional[Tuple[str, str]]:
         """(file, class) a class reference written as `text` in file `key` means:
-        a class of this file, an imported class, or `module.Class`."""
+        a class of this file, an imported class, or `module.Class` -- or, for a
+        function, the one class its returns build (a factory)."""
+        mark = text.startswith(_FACTORY_MARK)
+        text = text[len(_FACTORY_MARK):] if mark else text
+        found = None if mark else self._resolve_class_text(key, text, depth)
+        if found is None and depth <= _MAX_REEXPORT_DEPTH and text:
+            # Resolving a factory call can ask for the class of another receiver, which can
+            # ask for this one (`a = b.make(); b = a.make()`): a cycle resolves to nothing.
+            guard = self.__dict__.setdefault("_class_guard", set())
+            if (key, text) in guard:
+                return None
+            guard.add((key, text))
+            try:
+                here = self.modules.get(key)
+                ref = ((key, text) if here is not None and text in here.factory_calls
+                       else self.resolve_call(key, text))
+                if ref is not None:
+                    built = self.modules[ref[0]].factory_calls.get(ref[1])
+                    if built:
+                        found = self.resolve_class(ref[0], built, depth + 1)
+            finally:
+                guard.discard((key, text))
+        return found
+
+    def _resolve_class_text(self, key: str, text: str, depth: int = 0) -> Optional[Tuple[str, str]]:
         mod = self.modules.get(key)
         if mod is None or not text or depth > _MAX_REEXPORT_DEPTH:
             return None

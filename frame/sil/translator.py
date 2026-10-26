@@ -1871,6 +1871,23 @@ class SILTranslator:
                 entry[param] = (known[0], known[1] & sanitized)
                 self._ipa.dirty.add(callee.ref)
 
+    @staticmethod
+    def _has_local_redirect_prefix(exp: Exp) -> bool:
+        """Whether a redirect target starts with a constant path (`"/login?x=" + v`):
+        that stays on this origin, whatever follows. `//host` and `/\\host` are not local."""
+        first = exp
+        while True:
+            if isinstance(first, ExpStringConcat) and first.parts:
+                first = first.parts[0]
+            elif isinstance(first, ExpBinOp) and str(getattr(first, "op", "")) in ("+", "Plus", "BinOp.ADD", "add"):
+                first = first.left
+            else:
+                break
+        if not isinstance(first, ExpConst) or not isinstance(first.value, str):
+            return False
+        v = first.value
+        return len(v) >= 2 and v[0] == "/" and v[1] not in "/\\"
+
     def _closure_captured_vars(self, exp: Exp, sink_kind) -> List[str]:
         """Enclosing-procedure variables that reach `exp` through a call to a
         nested closure whose return carries them (and is not sanitized for the
@@ -2980,6 +2997,8 @@ class SILTranslator:
                         for arg_idx in spec.sink_args:
                             if arg_idx < len(instr.args):
                                 arg_exp, _ = instr.args[arg_idx]
+                                if spec.is_sink == 'redirect' and self._has_local_redirect_prefix(arg_exp):
+                                    continue          # "/p/" + id stays on this origin
                                 arg_vars = self._get_exp_vars(arg_exp)
                                 arg_str = str(arg_exp)
 
@@ -3845,6 +3864,25 @@ class SILTranslator:
                 for var in cond_vars:
                     state.asserted_safe.setdefault(var, []).append("xpath")
 
+        # Open-redirect guard: a same-origin path is `/x` and not `//host` (nor `/\\host`).
+        #   if (!next.startsWith("/") || next.startsWith("//")) return res.redirect("/");   -> FALSE branch
+        #   if (next.startsWith("/") && !next.startsWith("//")) res.redirect(next);         -> TRUE branch
+        import re as _re
+        _sw = r"\.(?:startsWith|startswith)\(\s*['\"]"
+        _not = r"(?:!|\bnot\b)\s*\(?\s*"
+        for var in set(_re.findall(r"(\w+)" + _sw + r"/['\"]", cond_str)):
+            v = _re.escape(var)
+            neg_slash = _re.search(_not + v + _sw + r"/['\"]", cond_str)
+            pos_slash = _re.search(r"(?<![!(])\b" + v + _sw + r"/['\"]", cond_str) \
+                or _re.search(r"(?<!!)\(\s*" + v + _sw + r"/['\"]", cond_str)
+            neg_double = _re.search(_not + v + _sw + r"//", cond_str)
+            pos_double = _re.search(r"(?<![!(])\b" + v + _sw + r"//", cond_str) \
+                or _re.search(r"(?<!!)\(\s*" + v + _sw + r"//", cond_str)
+            if instr.is_true_branch and pos_slash and neg_double and not neg_slash and not pos_double:
+                state.asserted_safe.setdefault(var, []).append("redirect")
+            elif not instr.is_true_branch and neg_slash and pos_double and not pos_slash and not neg_double:
+                state.asserted_safe.setdefault(var, []).append("redirect")
+
         # Code injection validation: startswith/endswith checks
         # Pattern: if not bar.startswith('\'') or not bar.endswith('\''):
         # On FALSE branch, the condition is FALSE, meaning validation PASSED
@@ -3912,6 +3950,12 @@ class SILTranslator:
     ) -> Tuple[List[VulnerabilityCheck], SymbolicState]:
         """Execute taint sink annotation"""
         checks = []
+        if instr.kind.value == "redirect" and self._has_local_redirect_prefix(instr.exp):
+            return checks, state          # "/products/" + id stays on this origin
+        if instr.call and self._ipa_on:
+            callee = self._resolve_callee(instr.call)
+            if callee is not None and (callee.ref[0] != self._file_key or callee.proc.is_method):
+                return checks, state          # the project's own method, analysed on its own
         sink_vars = self._get_exp_vars(instr.exp)
         exp_str = str(instr.exp)
 
