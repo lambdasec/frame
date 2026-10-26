@@ -347,6 +347,7 @@ class JavaFrontend:
         corresponding parameter becomes a taint source too.
         """
         methods: Dict[str, Dict[str, Any]] = {}
+        overloaded: set = set()
 
         def collect(mnode: TSNode) -> None:
             name_node = mnode.child_by_field_name("name")
@@ -369,7 +370,10 @@ class JavaFrontend:
             body = mnode.child_by_field_name("body")
             if body is not None:
                 self._collect_calls(body, calls)
-            # Last definition wins on overload/name clash (best-effort, intra-file).
+            # Last definition wins on overload/name clash (best-effort, intra-file); an
+            # overloaded name is not propagated into at all (see below).
+            if self._get_text(name_node) in methods:
+                overloaded.add(self._get_text(name_node))
             methods[self._get_text(name_node)] = {
                 "params": pnames, "req": set(req_bound),
                 "tainted": set(req_bound), "calls": calls}
@@ -391,8 +395,8 @@ class JavaFrontend:
                                  if i < len(info["params"]) and info["params"][i]}
                 for callee, arg_ids in info["calls"]:
                     cinfo = methods.get(callee)
-                    if cinfo is None:
-                        continue
+                    if cinfo is None or callee in overloaded:
+                        continue        # which overload is called is not decided by the name
                     for j, ids in enumerate(arg_ids):
                         if (ids & tainted_names) and j < len(cinfo["params"]) \
                                 and j not in cinfo["tainted"]:

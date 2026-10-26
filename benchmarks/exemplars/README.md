@@ -13,6 +13,7 @@ each tool does and why.
   6 safe twins too, because they match the sink pattern and not the flow.
 - **Blind hold-out** (14 cases keyed before Frame was run on them): Frame **14/14, 0 false alarms**; CodeQL 10/14 with 1; Semgrep stock
   packs 9/14 with 8 false alarms; taint rules 1/14. The first Frame run scored 7/14; the fixes that followed are listed under "Blind hold-out".
+- **Java** (10 cases keyed before the Java feature existed; Frame's first run found 1/10): Frame **10/10 with 0 false alarms**; CodeQL 10/10 with 3; Semgrep/OpenGrep taint rules 1/10 (stock packs 8/10, but 7 safe twins flagged).
 - **Four deliberately vulnerable apps** at pinned commits: Frame found **10/10** of the cross-file vulnerabilities in the answer key;
   CodeQL 7/10 (it misses dvpwa's static async DAO and NodeGoat's DAOs); Semgrep and OpenGrep intrafile taint rules 0/10, OpenGrep's interfile build 3/10.
 - **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 52 real, 1 false, 4 debatable of 57
@@ -92,6 +93,35 @@ regression check on the fixes; the 7/14 is the blind score.
 | `js_anonymous_module_function` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ❌ | ✅ |
 | `js_sanitizer_module` | ✅ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ❌ | ✅ ⚠️ |
 | **found · false alarms** | **14/14** · 0 | **1/14** · 1 | **9/14** · 8 | **1/14** · 1 | **9/14** · 8 | **3/14** · 1 | **7/14** · 6 | **10/14** · 1 |
+
+## Java
+
+Ten Java cross-file cases (`java/`), keyed **before the Java feature existed**: a servlet or Spring controller passes request data to a
+method of another class and the sink is there. Frame's first run found **1/10** (`java/first_run_frame.json`, before any Java cross-file code); the table is the run after the
+feature, so it is a regression check on what it added, like the hold-out. The shapes are a DAO imported from another package, a static
+utility, a Spring controller -> service -> repository chain with constructor injection and `@RequestParam`, an interface with one implementation,
+a sink in an inherited method, a helper that returns the request value, an HTML escaper in another class (real escaping or an identity function),
+`import com.app.dao.*;` with an `@Autowired` field, overloads where only the `String` one is injectable, and three hops through three packages.
+Semgrep/OpenGrep use `rules/taint_java.yml` (checked against `controls/Java*.java`); the stock run adds `p/java`.
+
+✅ found · ❌ missed · ⚠️ also reported on the safe twin
+
+| case | Frame | Semgrep (taint rules) | Semgrep (stock packs) | OpenGrep (taint rules) | OpenGrep (stock packs) | OpenGrep interfile (taint rules) | CodeQL |
+|---|---|---|---|---|---|---|---|
+| `java_dao_servlet` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ |
+| `java_static_util` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ ⚠️ |
+| `java_spring_three_layers` | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| `java_interface_impl` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ |
+| `java_inherited_sink` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `java_source_in_helper` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ |
+| `java_sanitizer_in_helper` | ✅ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ✅ ⚠️ | ✅ |
+| `java_wildcard_import` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ |
+| `java_overloads` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ |
+| `java_three_hops` | ✅ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ | ❌ | ✅ ⚠️ |
+| **found · false alarms** | **10/10** · 0 | **1/10** · 1 | **8/10** · 7 | **1/10** · 1 | **8/10** · 7 | **1/10** · 1 | **10/10** · 3 |
+
+CodeQL's whole-program taint handles all ten; it also reports three safe twins (`java_static_util`, `java_overloads`, `java_three_hops`),
+which Frame does not. On Java this is a recall tie and a false-alarm gap, not a recall win.
 
 ## Real applications
 
@@ -208,6 +238,14 @@ shape), a constant `/path` prefix, membership in a constant allowlist (`Object.v
 and a template that escapes the key being rendered. On vulnerable-node it stays silent on the app authors' clean seed and on the allowlisted
 `/labs/docs/:file`; CodeQL is silent on the allowlisted route too but reports the clean seed's redirect.
 
+### 10. Packages, interfaces and Spring layers (Java)
+Java cross-file means resolving a call the way the compiler would: the receiver's declared type, looked up through the file's explicit
+imports, its package and its `import pkg.*` lines; a method found on the class, else on the nearest project superclass, else -- for an
+interface or an abstract type -- on its one implementation in the project. Frame resolves exactly that and stops where the code does not decide:
+two implementations of an interface, or an overload the argument types cannot choose, stay unresolved instead of being guessed. It also analyses
+`new ProcessBuilder(cmd).start()` as two calls (the creation is a sink), which a plain method-name lookup never saw. On WebGoat (498 Java files) a
+project scan takes about 37 seconds and adds three reports to the single-file scan.
+
 ## Not covered
 
 Cross-file taint is documented as a **Semgrep Pro Engine** feature ([docs](https://semgrep.dev/docs/semgrep-code/semgrep-pro-engine-data-flow))
@@ -227,6 +265,7 @@ python benchmarks/exemplars/run_comparison.py \
     --stock-config p/default --stock-config p/python --stock-config p/javascript \
     --stock-config p/typescript --stock-config p/security-audit --stock-config p/owasp-top-ten
 python benchmarks/exemplars/run_comparison.py --holdout ...                  # the blind hold-out
+python benchmarks/exemplars/run_comparison.py --java ...                     # the Java cases
 python benchmarks/exemplars/run_comparison.py --real --repos-dir /tmp/repos ...   # the four apps
 python benchmarks/exemplars/use_cases/helper_edit_regression.py --semgrep semgrep --opengrep opengrep
 ```
@@ -248,3 +287,4 @@ Stock registry packs change over time, so expect small drift in the stock column
 - 2026-10: first release: 9 controlled cases, 4 real apps, 1 diff scenario; Frame 9/9 and 10/10, CodeQL 7/9 and 7/10.
 - 2026-10 (second pass): blind hold-out added (Frame 7/14 first run, 14/14 after the fixes it drove; CodeQL 10/14); labelled triage of every Frame and CodeQL report on the four apps;
   the vulnerable-node authors' seed key; resolution for factories, star imports, tsconfig aliases, Nest decorators, default-class statics; NoSQL query objects, redirect and allowlist guards.
+- 2026-10 (third pass): hardening findings (debug mode, explicit insecure cookie flags); Java cross-file support (Frame 1/10 -> 10/10 on cases keyed first; CodeQL 10/10 with 3 false alarms); OWASP BenchmarkJava +18 correct CWE-330.

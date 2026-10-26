@@ -171,3 +171,16 @@ def test_changed_file_widens_to_the_classes_that_mention_it(tmp_path):
                            project_root=str(tmp_path))
     scanned = {Path(r.filename).name for r in res}
     assert {"UserDao.java", "Web.java"} <= scanned
+
+
+def test_overloaded_method_names_are_not_tainted_by_name():
+    # `f(x)` from a request-bound parameter must not make the unrelated two-argument `f` a source.
+    code = """public class C {
+    void a(@org.springframework.web.bind.annotation.RequestParam String x) throws Exception { f(x); }
+    void f(String a) { }
+    void f(String a, String b) throws Exception {
+        java.sql.DriverManager.getConnection("jdbc:h2:mem:").createStatement().executeQuery("SELECT " + a + b);
+    }
+}"""
+    r = FrameScanner(language="java").scan(code, "C.java")
+    assert not [v for v in r.vulnerabilities if v.cwe_id == "CWE-89"]
