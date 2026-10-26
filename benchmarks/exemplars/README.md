@@ -172,6 +172,29 @@ written by the app's authors:
 Frame's two misses are library-style seeds that take untrusted input as a plain function parameter; its default treats only request reads as sources.
 We read this key after the first runs and fixed what it exposed (an `md5` hash call, a redirect guard, a file name), so this row is not blind either.
 
+## Framework coverage
+
+Frame ships *packs* -- small TOML files that teach it a framework's entry points, sources, sinks and
+sanitizers (`frame/sil/packs/data`) -- and every pack is proven the same way: a realistic application with the
+flaw, and the same application done correctly, scanned through the real `frame` CLI.
+
+86 applications, 406 labelled vulnerable lines, each with a safe twin that must stay silent
+(`benchmarks/exemplars/frameworks/<language>/<framework>/{vulnerable,safe}`):
+
+| Language | Apps | Labelled flaws | Frameworks and libraries |
+|---|---|---|---|
+| Python | 18 | 90 | aiohttp, bottle, cherrypy, deserialize-xml, django-views, drf, falcon, fastapi, flask-extras, http-clients, jinja-mako, nosql-pymongo, orm-raw-sql, process-exec, pyramid, sanic, starlette, tornado |
+| JavaScript / TypeScript | 21 | 85 | angular, apollo, dom-vanilla, electron, express, fastify, hapi, http-clients, koa, lambda, mongoose, nestjs, nextjs, prisma, react, restify, sails, serialization, socketio, template-engines, xml-jwt-redis |
+| Java | 17 | 105 | deserialization, hibernate-jpa, http-clients, javalin, jaxrs, jdk-core, jooq, jsf, micronaut, mybatis, play, servlet-jsp, sparkjava, spring-mvc, struts2, template-engines, vertx-web |
+| C# | 13 | 68 | aspnetcore-config, aspnetcore-minimal, aspnetcore-mvc, aspnetcore-razor-pages, azure-functions, blazor, data-access, dotnet-system-apis, dotnet-xml-deserialization, nhibernate-ef6, signalr-hub, wcf-grpc, webforms |
+| C | 11 | 36 | cgi, cli-getopt, db-clients, fastcgi, libarchive, libcurl, libmicrohttpd, libxml2, mongoose, openssl, posix-sockets |
+| C++ | 6 | 22 | boost-beast, cpp-httplib, crow, grpc, qt, sql-clients |
+
+`tests/e2e/test_framework_packs.py` runs all of them: every marked line must be reported with its CWE, nothing
+unmarked of those CWEs may appear in the vulnerable app, the safe twin must be clean, the packs the fixture names
+must have applied, and a scan with `--no-packs` must miss something -- a pack has to earn its place. Teams add
+their own the same way (`.frame/packs/`, `--pack`, `frame packs check`).
+
 ## Use cases
 
 Each entry: the situation, why a file-at-a-time scanner cannot see it, how Frame handles it. Add new
