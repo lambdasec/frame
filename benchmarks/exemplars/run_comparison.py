@@ -100,7 +100,8 @@ def codeql(binary: str) -> Tool:
 
 def at(finding: Finding, case: dict) -> bool:
     f, line, _ = finding
-    return ((f == case["file"] or f.endswith("/" + case["file"]))
+    want = case.get("path", case["file"])
+    return ((f == want or f.endswith("/" + want))
             and abs(line - case["line"]) <= case.get("tolerance", 1))
 
 
@@ -136,14 +137,15 @@ def md_table(header: List[str], rows: List[List[str]]) -> str:
     return "\n".join(out)
 
 
-def run_cases(tools: Dict[str, Tool]) -> Tuple[str, dict]:
-    cases = json.loads((HERE / "cases.json").read_text())["cases"]
+def run_cases(tools: Dict[str, Tool], holdout: bool = False) -> Tuple[str, dict]:
+    base_dir = HERE / "holdout" if holdout else HERE
+    cases = json.loads((base_dir / ("holdout.json" if holdout else "cases.json")).read_text())["cases"]
     table: Dict[str, Dict[str, Tuple[bool, bool]]] = {}
     for name, tool in tools.items():
         print(f"  {name} ...", file=sys.stderr, flush=True)
         table[name] = {}
         for case in cases:
-            base = HERE / "cases" / case["id"]
+            base = base_dir / "cases" / case["id"]
             table[name][case["id"]] = (hit(tool(base / "vulnerable"), case, name == "Frame"),
                                        hit(tool(base / "safe"), case, False))
 
@@ -199,6 +201,8 @@ def main() -> int:
     ap.add_argument("--codeql", help="path to your own CodeQL CLI (not bundled: its licence limits use to OSI-licensed code)")
     ap.add_argument("--stock-config", action="append", help="rule pack/dir for the stock run (repeatable)")
     ap.add_argument("--real", action="store_true", help="score the real apps in real_repos.json instead of cases.json")
+    ap.add_argument("--holdout", action="store_true",
+                    help="score holdout/ (cases keyed before Frame was run on them) instead of cases.json")
     ap.add_argument("--only", action="append", help="with --real: only these repo ids (repeatable)")
     ap.add_argument("--repos-dir", type=Path, default=Path("/tmp/frame-exemplar-repos"))
     ap.add_argument("--controls", action="store_true",
@@ -216,7 +220,7 @@ def main() -> int:
         a.repos_dir.mkdir(parents=True, exist_ok=True)
         text, raw = run_real(tools, a.repos_dir, a.only)
     else:
-        text, raw = run_cases(tools)
+        text, raw = run_cases(tools, a.holdout)
     print(text)
     if a.json:
         Path(a.json).write_text(json.dumps(raw, indent=2))

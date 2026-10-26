@@ -1,0 +1,131 @@
+{
+  "description": "Cases written and keyed BEFORE Frame was run on them. See README 'Hold-out'.",
+  "cases": [
+    {
+      "id": "py_aliased_module_call",
+      "language": "python",
+      "cwe": "CWE-89",
+      "file": "users.py",
+      "path": "services/users.py",
+      "line": 6,
+      "shape": "`from services import users as user_svc; user_svc.search(...)`"
+    },
+    {
+      "id": "py_parameterized_helper",
+      "language": "python",
+      "cwe": "CWE-89",
+      "file": "users.py",
+      "path": "services/users.py",
+      "line": 6,
+      "shape": "the request value reaches a helper that binds it as a parameter (safe twin) or formats it into the SQL (vulnerable)"
+    },
+    {
+      "id": "py_helper_returns_dict",
+      "language": "python",
+      "cwe": "CWE-89",
+      "file": "views.py",
+      "path": "views.py",
+      "line": 11,
+      "shape": "a helper returns a dict that holds the request value; the sink reads one key"
+    },
+    {
+      "id": "py_decorated_helper",
+      "language": "python",
+      "cwe": "CWE-78",
+      "file": "lookup.py",
+      "path": "lookup.py",
+      "line": 7,
+      "shape": "the helper is wrapped in a decorator (`functools.lru_cache`)"
+    },
+    {
+      "id": "py_star_import",
+      "language": "python",
+      "cwe": "CWE-78",
+      "file": "helpers.py",
+      "path": "helpers.py",
+      "line": 5,
+      "shape": "`from helpers import *`"
+    },
+    {
+      "id": "py_factory_instance",
+      "language": "python",
+      "cwe": "CWE-89",
+      "file": "repo.py",
+      "path": "repo.py",
+      "line": 6,
+      "shape": "the receiver comes from a factory function that returns `Repo()`"
+    },
+    {
+      "id": "py_fastapi_depends",
+      "language": "python",
+      "cwe": "CWE-89",
+      "file": "repo.py",
+      "path": "repo.py",
+      "line": 6,
+      "shape": "FastAPI `Depends(get_repo)` with an annotated parameter"
+    },
+    {
+      "id": "js_router_service_object",
+      "language": "javascript",
+      "cwe": "CWE-89",
+      "file": "userService.js",
+      "path": "services/userService.js",
+      "line": 4,
+      "shape": "router module calling a `module.exports = { find }` service through a namespace"
+    },
+    {
+      "id": "js_default_class_static",
+      "language": "javascript",
+      "cwe": "CWE-78",
+      "file": "repo.js",
+      "path": "repo.js",
+      "line": 5,
+      "shape": "`export default class` with a static method, imported by default name"
+    },
+    {
+      "id": "ts_nest_three_layers",
+      "language": "typescript",
+      "cwe": "CWE-89",
+      "file": "user.repository.ts",
+      "path": "user.repository.ts",
+      "line": 7,
+      "shape": "Nest controller -> service -> repository; the source is a `@Query()` parameter"
+    },
+    {
+      "id": "ts_path_alias_import",
+      "language": "typescript",
+      "cwe": "CWE-78",
+      "file": "shell.ts",
+      "path": "src/services/shell.ts",
+      "line": 4,
+      "shape": "`@/services/shell` resolved through tsconfig `paths`"
+    },
+    {
+      "id": "js_factory_instance",
+      "language": "javascript",
+      "cwe": "CWE-89",
+      "file": "repo.js",
+      "path": "repo.js",
+      "line": 3,
+      "shape": "receiver built by `createRepo()` that returns `new Repo()`"
+    },
+    {
+      "id": "js_anonymous_module_function",
+      "language": "javascript",
+      "cwe": "CWE-78",
+      "file": "render.js",
+      "path": "render.js",
+      "line": 4,
+      "shape": "`module.exports = function (file) {...}` imported under a local name"
+    },
+    {
+      "id": "js_sanitizer_module",
+      "language": "javascript",
+      "cwe": "CWE-78",
+      "file": "routes.js",
+      "path": "routes.js",
+      "line": 7,
+      "shape": "a sanitizer in another module: identity (vulnerable) vs `shell-escape` (safe)"
+    }
+  ]
+}
