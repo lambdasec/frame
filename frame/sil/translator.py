@@ -744,6 +744,23 @@ class SymbolicState:
 # =============================================================================
 
 @dataclass
+class ReturnSummary:
+    """What reaches a procedure's return value, over every analysed path.
+
+    `source`: attacker data the procedure reads itself (`return request.args[..]`),
+    with the sink kinds every such return was sanitized for. `params`: each
+    parameter whose taint reaches the return, with the kinds every path from it
+    sanitized it for (`return shlex.quote(x)` -> {x: {shell, ...}})."""
+    source: Optional[TaintInfo] = None
+    source_sanitized: Optional[Set[str]] = None
+    params: Dict[str, Set[str]] = field(default_factory=dict)
+
+    def key(self):
+        return (self.source.source_var if self.source else None,
+                frozenset(self.source_sanitized or ()),
+                tuple(sorted((p, frozenset(k)) for p, k in self.params.items())))
+
+@dataclass
 class ParameterEffect:
     """Effect of a procedure on a parameter"""
     param_index: int           # Which parameter (0-indexed)
@@ -841,6 +858,21 @@ class SILTranslator:
         # parser? (_record_secure_parser_return / _track_xml_hardening)
         self._secure_parser_returns: Dict[str, bool] = {}
         self._summarising_parsers = False
+        # Inter-procedural taint between the procedures of one file (Python,
+        # JS/TS; `_ipa_applies`). Summaries are computed to a fixpoint before the
+        # pass that reports (`translate_program`):
+        # - entry taints: proc -> param -> (taint, sink kinds every call that
+        #   passes attacker data had sanitized it for) (`_record_entry_taints`);
+        # - return summaries: what reaches each procedure's return value
+        #   (`ReturnSummary`, `_accumulate_return`), applied at call sites
+        #   (`_apply_return_summary`) and inside expressions (`_arg_taint_leaves`).
+        self._ipa_on = False
+        self._ipa_summarising = False
+        self._ipa_changed = False
+        self._entry_taints: Dict[str, Dict[str, Tuple[TaintInfo, Set[str]]]] = {}
+        self._entry_markers: Dict[str, Tuple[str, str]] = {}
+        self._return_summaries: Dict[str, "ReturnSummary"] = {}
+        self._return_acc: Optional["ReturnSummary"] = None
         # Inter-procedural analysis: procedure summaries
         self._proc_summaries: Dict[str, ProcedureSummary] = {}
         # Track which parameters are freed at each call site
@@ -1252,6 +1284,22 @@ class SILTranslator:
         finally:
             self._summarising_parsers = False
 
+        # Inter-procedural summaries first, to a fixpoint, discarding checks: a
+        # caller analysed before its callee would otherwise report with the
+        # callee's effects unknown, and a reported check cannot be withdrawn.
+        self._ipa_on = self._ipa_applies()
+        if self._ipa_on:
+            self._ipa_summarising = True
+            try:
+                for _ in range(self._ENTRY_TAINT_ROUNDS):
+                    self._ipa_changed = False
+                    for proc_name, proc in sorted_procs:
+                        self.translate_procedure(proc)
+                    if not self._ipa_changed:
+                        break
+            finally:
+                self._ipa_summarising = False
+
         # Translate each procedure
         for proc_name, proc in sorted_procs:
             if self.verbose:
@@ -1271,6 +1319,22 @@ class SILTranslator:
         return self.vulnerability_checks
 
     def translate_procedure(self, proc: Procedure) -> List[VulnerabilityCheck]:
+        """Translate a procedure, recording what reaches its return value when
+        inter-procedural taint is on (`ReturnSummary`)."""
+        if not self._ipa_on:
+            return self._translate_procedure(proc)
+        outer, self._return_acc = self._return_acc, ReturnSummary()
+        try:
+            checks = self._translate_procedure(proc)
+            previous = self._return_summaries.get(proc.name)
+            if previous is None or previous.key() != self._return_acc.key():
+                self._ipa_changed = True
+            self._return_summaries[proc.name] = self._return_acc
+            return checks
+        finally:
+            self._return_acc = outer
+
+    def _translate_procedure(self, proc: Procedure) -> List[VulnerabilityCheck]:
         """
         Translate a single procedure to vulnerability checks.
 
@@ -1462,6 +1526,316 @@ class SILTranslator:
 
         return checks
 
+    _ENTRY_TAINT_ROUNDS = 6
+    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript"})
+    _ALL_SINK_KINDS = frozenset(k.value for k in SinkKind) | frozenset(_SINK_KIND_ALIASES)
+    _SEED_PREFIX = "@param:"
+
+    def _ipa_applies(self) -> bool:
+        """Inter-procedural taint runs for Python and JS/TS files in which some
+        procedure calls another of the file's procedures. (Java taints every
+        String parameter already; C/C++/C# have their own passes.)"""
+        lang = (getattr(self.program, "language", "") or "").lower()
+        if lang not in self._ENTRY_TAINT_LANGUAGES:
+            return False
+        def nested_calls(e):
+            if isinstance(e, ExpCall):
+                yield self._call_exp_name(e)
+                for a in e.args:
+                    yield from nested_calls(a)
+            elif isinstance(e, ExpBinOp):
+                yield from nested_calls(e.left)
+                yield from nested_calls(e.right)
+            elif isinstance(e, ExpUnOp):
+                yield from nested_calls(e.operand)
+            elif isinstance(e, ExpStringConcat):
+                for part in e.parts:
+                    yield from nested_calls(part)
+            elif isinstance(e, ExpTernary):
+                yield from nested_calls(e.true_exp)
+                yield from nested_calls(e.false_exp)
+            elif isinstance(e, (ExpFieldAccess, ExpIndex, ExpCast)):
+                yield from nested_calls(e.base if not isinstance(e, ExpCast) else e.exp)
+
+        def calls_in(instr):
+            if isinstance(instr, Call):
+                yield instr.get_full_name()
+                for a, _ in instr.args:
+                    yield from nested_calls(a)
+            for attr in ("exp", "value"):
+                e = getattr(instr, attr, None)
+                if isinstance(e, Exp):
+                    yield from nested_calls(e)
+
+        saved = self._cur_proc
+        try:
+            for proc in self.program.procedures.values():
+                self._cur_proc = proc
+                for node in proc.nodes.values():
+                    for instr in node.instrs:
+                        for name in calls_in(instr):
+                            if self._same_file_callee(name) not in (None, proc):
+                                return True
+            return False
+        finally:
+            self._cur_proc = saved
+
+    def _same_file_callee(self, func_name: str) -> Optional[Procedure]:
+        """The procedure of this file a call names, or None. `f(...)` is the
+        function `f`; `self.m(...)` / `this.m(...)` / `cls.m(...)` is method `m`
+        of the caller's class. Nothing else resolves (an `obj.m(...)` receiver
+        of unknown type could be anything), and neither does a name two
+        procedures share. A procedure whose own spec says what it does (a
+        frontend-marked source, sink or sanitizer) is left to that spec."""
+        procs = self.program.procedures
+        caller = self._cur_proc
+        if "." not in func_name:
+            proc = procs.get(func_name)
+            if proc is None or f"{func_name}#2" in procs or proc.is_method:
+                return None
+        else:
+            head, _, method = func_name.rpartition(".")
+            if head not in ("self", "this", "cls") or caller is None or not caller.class_name:
+                return None
+            hits = [p for p in procs.values()
+                    if p.is_method and p.class_name == caller.class_name
+                    and p.simple_name == method]
+            if len(hits) != 1:
+                return None
+            proc = hits[0]
+        spec = proc.spec
+        if spec.is_taint_source() or spec.is_taint_sink() or spec.is_taint_sanitizer():
+            return None
+        return proc
+
+    @staticmethod
+    def _call_params(callee: Procedure, func_name: str) -> List[str]:
+        """The callee's parameters in call-argument order (a method called
+        through `self.`/`this.` does not pass `self`)."""
+        params = [p.name for p, _ in callee.params]
+        if "." in func_name and params and params[0] in ("self", "cls"):
+            params = params[1:]
+        return params
+
+    def _call_exp_name(self, exp: "ExpCall") -> str:
+        if isinstance(exp.func, ExpConst):
+            return str(exp.func.value).strip('"')
+        if isinstance(exp.func, ExpVar):
+            return self._get_var_name(exp.func.var)
+        if isinstance(exp.func, ExpFieldAccess):
+            parts, cur = [], exp.func
+            while isinstance(cur, ExpFieldAccess):
+                parts.insert(0, cur.field_name)
+                cur = cur.base
+            if isinstance(cur, ExpVar):
+                parts.insert(0, self._get_var_name(cur.var))
+            return '.'.join(parts)
+        return str(exp.func)
+
+    def _arg_taint_leaves(self, exp: Exp, state: SymbolicState,
+                          wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
+        """Each piece of attacker data an expression carries, with the sink
+        kinds it is sanitized for: tainted variables (with their sanitization),
+        inline request reads and source calls, and what a same-file callee's
+        return summary says its result carries. `wrap` is the kinds of the
+        sanitizer calls enclosing `exp`."""
+        out: List[Tuple[TaintInfo, Set[str]]] = []
+        loc = Location.unknown()
+        if isinstance(exp, ExpCall):
+            name = self._call_exp_name(exp)
+            callee = self._same_file_callee(name) if self._ipa_on else None
+            summary = self._return_summaries.get(callee.name) if callee else None
+            if summary is not None:
+                if summary.source is not None:
+                    out.append((summary.source, set(wrap) | set(summary.source_sanitized or ())))
+                for arg, param in zip(exp.args, self._call_params(callee, name)):
+                    if param in summary.params:
+                        out.extend(self._arg_taint_leaves(
+                            arg, state, wrap | frozenset(summary.params[param])))
+                return out
+            spec = self.program.get_spec(name)
+            if spec and spec.is_taint_source():
+                out.append((TaintInfo(
+                    source_kind=TaintKind(spec.is_source)
+                    if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT,
+                    source_var=name, source_location=loc), set(wrap)))
+            if spec and spec.is_taint_sanitizer():
+                wrap = wrap | frozenset(spec.is_sanitizer)
+            for arg in exp.args:
+                out.extend(self._arg_taint_leaves(arg, state, wrap))
+            return out
+        if isinstance(exp, ExpVar):
+            var = self._get_var_name(exp.var)
+            if state.is_tainted(var):
+                out.append((state.get_taint_info(var),
+                            set(wrap) | set(state.sanitized.get(var, []))))
+            return out
+        if isinstance(exp, (ExpFieldAccess, ExpIndex)):
+            if isinstance(exp, ExpFieldAccess) and self._is_request_server_state(exp):
+                return out
+            members = self._get_embedded_member_sources(exp)
+            if members:
+                src, kind = members[0]
+                out.append((TaintInfo(
+                    source_kind=TaintKind(kind) if kind in [t.value for t in TaintKind]
+                    else TaintKind.USER_INPUT, source_var=src, source_location=loc), set(wrap)))
+                return out
+            out.extend(self._arg_taint_leaves(exp.base, state, wrap))
+            if isinstance(exp, ExpIndex):
+                out.extend(self._arg_taint_leaves(exp.index, state, wrap))
+            return out
+        children: List[Exp] = []
+        if isinstance(exp, ExpBinOp):
+            children = [exp.left, exp.right]
+        elif isinstance(exp, ExpUnOp):
+            children = [exp.operand]
+        elif isinstance(exp, ExpStringConcat):
+            children = list(exp.parts)
+        elif isinstance(exp, ExpTernary):
+            children = [exp.true_exp, exp.false_exp]
+        elif isinstance(exp, ExpCast):
+            children = [exp.exp]
+        for c in children:
+            out.extend(self._arg_taint_leaves(c, state, wrap))
+        return out
+
+    def _record_entry_taints(self, callee: Procedure, instr, func_name: str,
+                             state: SymbolicState) -> None:
+        """Taint the parameters of a same-file callee that this call passes
+        attacker data. A parameter stays sanitized for a sink kind only if every
+        such call passed it sanitized for that kind."""
+        if callee is self._cur_proc:
+            return
+        for (arg_exp, _), param in zip(instr.args, self._call_params(callee, func_name)):
+            leaves = [(i, k) for i, k in self._arg_taint_leaves(arg_exp, state)
+                      if not i.source_var.startswith(self._SEED_PREFIX)]
+            if not leaves:
+                continue
+            sanitized = set.intersection(*(k for _, k in leaves))
+            entry = self._entry_taints.setdefault(callee.name, {})
+            known = entry.get(param)
+            if known is None:
+                marker = f"{callee.name}({param})"
+                self._entry_markers[marker] = (callee.name, param)
+                info = leaves[0][0]
+                entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                                          source_location=info.source_location,
+                                          propagation_path=[marker]), sanitized)
+                self._ipa_changed = True
+            elif not known[1] <= sanitized:
+                entry[param] = (known[0], known[1] & sanitized)
+                self._ipa_changed = True
+
+    def _record_nested_entry_taints(self, instr: Instr, state: SymbolicState) -> None:
+        roots: List[Exp] = []
+        if isinstance(instr, Call):
+            roots = [a for a, _ in instr.args]
+        for attr in ("exp", "value"):
+            e = getattr(instr, attr, None)
+            if isinstance(e, Exp):
+                roots.append(e)
+        stack = list(roots)
+        while stack:
+            e = stack.pop()
+            if isinstance(e, ExpCall):
+                name = self._call_exp_name(e)
+                callee = self._same_file_callee(name)
+                if callee is not None:
+                    self._record_entry_taints(
+                        callee, Call(loc=instr.loc, ret=None, func=e.func,
+                                     args=[(a, Typ.unknown_type()) for a in e.args]),
+                        name, state)
+                stack.extend(e.args)
+            elif isinstance(e, ExpBinOp):
+                stack.extend([e.left, e.right])
+            elif isinstance(e, ExpUnOp):
+                stack.append(e.operand)
+            elif isinstance(e, ExpStringConcat):
+                stack.extend(e.parts)
+            elif isinstance(e, ExpTernary):
+                stack.extend([e.true_exp, e.false_exp])
+            elif isinstance(e, (ExpFieldAccess, ExpIndex)):
+                stack.append(e.base)
+            elif isinstance(e, ExpCast):
+                stack.append(e.exp)
+
+    def _accumulate_return(self, value: Exp, state: SymbolicState, proc_name: str) -> None:
+        """Fold what this return hands back into the procedure's summary."""
+        acc = self._return_acc
+        for info, kinds in self._arg_taint_leaves(value, state):
+            origin = self._entry_markers.get(info.propagation_path[0]) \
+                if info.propagation_path else None
+            if origin is not None and origin[0] == proc_name:
+                param = origin[1]
+                acc.params[param] = set(kinds) if param not in acc.params \
+                    else acc.params[param] & kinds
+            elif info.source_var.startswith(self._SEED_PREFIX):
+                continue
+            else:
+                if acc.source is None:
+                    acc.source = info
+                acc.source_sanitized = set(kinds) if acc.source_sanitized is None \
+                    else acc.source_sanitized & kinds
+
+    def _apply_return_summary(self, callee: Procedure, summary: ReturnSummary,
+                              instr: Call, func_name: str, state: SymbolicState) -> None:
+        """The call's result carries what the callee's return does: its own
+        source, and the taint of each argument whose parameter reaches the
+        return, sanitized as both the caller and the callee left it."""
+        if not instr.ret:
+            return
+        ret_var = str(instr.ret[0])
+        leaves: List[Tuple[TaintInfo, Set[str]]] = []
+        if summary.source is not None:
+            leaves.append((summary.source, set(summary.source_sanitized or ())))
+        for (arg_exp, _), param in zip(instr.args, self._call_params(callee, func_name)):
+            if param in summary.params:
+                leaves.extend((info, kinds | summary.params[param])
+                              for info, kinds in self._arg_taint_leaves(arg_exp, state))
+        if not leaves:
+            return
+        info = leaves[0][0]
+        state.add_taint(ret_var, TaintInfo(
+            source_kind=info.source_kind, source_var=info.source_var,
+            source_location=info.source_location,
+            propagation_path=list(info.propagation_path) + [ret_var]))
+        sanitized = set.intersection(*(k for _, k in leaves))
+        if sanitized:
+            state.add_sanitization(ret_var, sorted(sanitized))
+
+    def _summary_inline_sanitized(self, exp: Exp) -> Dict[str, Set[str]]:
+        """Variables inside same-file calls in `exp`, with the sink kinds the
+        call's return is sanitized for on the way from them (every kind, when
+        the argument does not reach the return at all)."""
+        out: Dict[str, Set[str]] = {}
+        if not self._ipa_on:
+            return out
+
+        def walk(e: Exp) -> None:
+            if isinstance(e, ExpCall):
+                name = self._call_exp_name(e)
+                callee = self._same_file_callee(name)
+                summary = self._return_summaries.get(callee.name) if callee else None
+                if summary is not None:
+                    for arg, param in zip(e.args, self._call_params(callee, name)):
+                        kinds = summary.params.get(param, self._ALL_SINK_KINDS)
+                        for v in self._get_exp_vars(arg):
+                            out[v] = (out[v] & set(kinds)) if v in out else set(kinds)
+                for a in e.args:
+                    walk(a)
+            elif isinstance(e, ExpBinOp):
+                walk(e.left)
+                walk(e.right)
+            elif isinstance(e, ExpUnOp):
+                walk(e.operand)
+            elif isinstance(e, ExpStringConcat):
+                for part in e.parts:
+                    walk(part)
+            elif isinstance(e, (ExpFieldAccess, ExpIndex)):
+                walk(e.base)
+        walk(exp)
+        return out
+
     def _init_state_for_procedure(self, proc: Procedure) -> SymbolicState:
         """Initialize symbolic state for procedure entry"""
         state = SymbolicState()
@@ -1479,6 +1853,27 @@ class SILTranslator:
                     source_var=param_name,
                     source_location=proc.loc or Location.unknown(),
                 ))
+
+        # Parameters a same-file call passes attacker data (`_record_entry_taints`).
+        entry = self._entry_taints.get(proc.name, {})
+        for param_name, (info, sanitized) in entry.items():
+            state.add_taint(param_name, info)
+            if sanitized:
+                state.add_sanitization(param_name, sorted(sanitized))
+        # While summarising, every other parameter carries a seed taint, so the
+        # return summary learns which parameters reach the return whether or
+        # not a caller has passed attacker data yet. Seeds are never reported
+        # (summary-phase checks are discarded) nor passed on as entry taint.
+        if self._ipa_summarising:
+            for param, _ in proc.params:
+                if param.name in entry or param.name in ("self", "cls", "this"):
+                    continue
+                marker = f"{proc.name}({param.name})"
+                self._entry_markers[marker] = (proc.name, param.name)
+                state.add_taint(param.name, TaintInfo(
+                    source_kind=TaintKind.USER_INPUT, source_var=self._SEED_PREFIX + marker,
+                    source_location=proc.loc or Location.unknown(),
+                    propagation_path=[marker]))
 
         # For methods, initialize class member taints from inter-procedural analysis
         # If a constructor taints a class member, other methods should see it as tainted
@@ -1511,6 +1906,12 @@ class SILTranslator:
             Tuple of (checks generated, new state)
         """
         checks = []
+
+        # A same-file call nested in an expression (`os.system(f(x))`, `return
+        # g(h(y))`) has no Call instruction of its own; it still passes its
+        # arguments' taint to the callee.
+        if self._ipa_on:
+            self._record_nested_entry_taints(instr, state)
 
         # Heap-lifecycle deref checks (CWE-416 use-after-free, CWE-476 null
         # dereference) run over EVERY instruction before it executes, because a
@@ -1924,8 +2325,11 @@ class SILTranslator:
 
         # Check for property assignment sinks
         # E.g., sqlComm.CommandText = "SELECT ... " + userInput
-        # The property name (CommandText) may be a registered sink
-        if '.' in target:
+        # The property name (CommandText) may be a registered sink. Not in
+        # Python: its sink specs are all calls, and an attribute named like one
+        # (`response.raw = resp`) is not Django's `Manager.raw()`.
+        lang = (getattr(self.program, "language", "") or "").lower()
+        if '.' in target and lang != "python":
             # Extract property name (last part after .)
             prop_name = target.split('.')[-1]
             spec = self.program.get_spec(prop_name)
@@ -2127,6 +2531,19 @@ class SILTranslator:
 
         # Get specification for this function
         spec = self.program.spec_for_call(instr)
+
+        # A call to a procedure of this file: pass its argument taint on, and
+        # take the result's taint from the callee's return summary (or, before
+        # the callee has one, by default argument->result propagation).
+        callee = self._same_file_callee(func_name) if self._ipa_on else None
+        if callee is not None:
+            self._record_entry_taints(callee, instr, func_name, state)
+            summary = self._return_summaries.get(callee.name)
+            if summary is not None:
+                self._apply_return_summary(callee, summary, instr, func_name, state)
+                spec = ProcSpec()
+            else:
+                spec = None
 
         # Sanitization of the tainted inputs as they stand BEFORE this call runs
         # (the result may overwrite one of them, e.g. q = join(q, basename(p))).
@@ -2400,6 +2817,8 @@ class SILTranslator:
                                         continue
                                     for s_var in s_args:
                                         inline_sanitized_for.setdefault(s_var, set()).update(s_spec.is_sanitizer)
+                                for s_var, kinds in self._summary_inline_sanitized(arg_exp).items():
+                                    inline_sanitized_for.setdefault(s_var, set()).update(kinds)
 
                                 for arg_var in arg_vars:
                                     if state.is_tainted(arg_var):
@@ -3353,6 +3772,8 @@ class SILTranslator:
                 continue
             for arg_var in arg_vars:
                 inline_sanitized_for.setdefault(arg_var, set()).update(spec.is_sanitizer)
+        for arg_var, kinds in self._summary_inline_sanitized(instr.exp).items():
+            inline_sanitized_for.setdefault(arg_var, set()).update(kinds)
 
         if instr.kind == SinkKind.XML_PARSE and instr.receiver in state.secure_parsers:
             return checks, state  # hardened parser: see _track_xml_hardening
@@ -3573,6 +3994,8 @@ class SILTranslator:
         # at explicit HTML output sinks, not at return statements.
         checks: List[VulnerabilityCheck] = []
         self._record_secure_parser_return(instr, state, proc_name)
+        if self._return_acc is not None and instr.value is not None:
+            self._accumulate_return(instr.value, state, proc_name)
         if self._is_c_lang:
             # CWE-562: returning the address of a local hands back a dangling
             # pointer. Checked before the escape below so the returned pointer's
@@ -6421,6 +6844,25 @@ class SILTranslator:
                 func_name = '.'.join(parts)
             else:
                 func_name = str(exp.func)
+
+            # A same-file callee with a return summary: its own source, and the
+            # sources in the arguments whose parameters reach its return,
+            # unless the callee sanitizes that path for this sink.
+            callee = self._same_file_callee(func_name) if self._ipa_on else None
+            summary = self._return_summaries.get(callee.name) if callee else None
+            if summary is not None:
+                if summary.source is not None and not (
+                        sink_kind is not None
+                        and self._sanitizes_kind(summary.source_sanitized, sink_kind)):
+                    result.append((func_name, summary.source.source_kind.value))
+                for arg, param in zip(exp.args, self._call_params(callee, func_name)):
+                    if param not in summary.params:
+                        continue
+                    if sink_kind is not None and self._sanitizes_kind(
+                            summary.params[param], sink_kind):
+                        continue
+                    result.extend(self._get_embedded_source_calls(arg, sink_kind))
+                return result
 
             # Check if this function is a taint source
             spec = self.program.get_spec(func_name)

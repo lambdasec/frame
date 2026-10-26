@@ -32,6 +32,14 @@ def _global_sink(kind: str, args: list, desc: str) -> ProcSpec:
     return ProcSpec(is_sink=kind, sink_args=args, description=desc, global_only=True)
 
 
+# Sink kinds a numeric conversion neutralises: every injection whose payload
+# must be text. (Not usage sinks, and not sizes: a number still sizes an
+# allocation or a loop.)
+_NUMERIC_SAFE = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path",
+                 "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf",
+                 "template", "xml", "log"]
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -335,6 +343,12 @@ SANITIZER_SPECS = {
     # later "SQL sanitizers" entry below does not silently drop the html kind.
     "escape": _sanitizer(["html", "sql"], "HTML/SQL escape"),
     "encodeURIComponent": _sanitizer(["url"], "URL encode"),
+    # A number cannot carry an injection payload (NaN is harmless too).
+    "parseInt": _sanitizer(_NUMERIC_SAFE, "parseInt (numeric)"),
+    "parseFloat": _sanitizer(_NUMERIC_SAFE, "parseFloat (numeric)"),
+    "Number": _sanitizer(_NUMERIC_SAFE, "Number() (numeric)"),
+    "Number.parseInt": _sanitizer(_NUMERIC_SAFE, "Number.parseInt (numeric)"),
+    "Number.parseFloat": _sanitizer(_NUMERIC_SAFE, "Number.parseFloat (numeric)"),
     "encodeURI": _sanitizer(["url"], "URI encode"),
     "DOMPurify.sanitize": _sanitizer(["html"], "DOMPurify sanitize"),
     "sanitize-html": _sanitizer(["html"], "sanitize-html"),

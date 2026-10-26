@@ -71,6 +71,11 @@ def add_incremental_args(scan_parser) -> None:
              "counted as `baselined` and do not affect the exit status. Baseline "
              "findings no longer present in the scanned files are listed as fixed.")
     scan_parser.add_argument(
+        "--root", metavar="DIR",
+        help="Project root that finding paths and fingerprints are relative to "
+             "(default: the git top level, else the directory of the Frame "
+             "config, else the scanned directory)")
+    scan_parser.add_argument(
         "--write-baseline", metavar="FILE",
         help="Record this run's findings as the baseline (written after --baseline "
              "is applied, so both together update it). Entries for files this run "
@@ -412,9 +417,8 @@ def cmd_scan(args) -> int:
         return 2
 
     from frame.sil.fingerprints import (
-        BaselineError, apply_baseline, assign_fingerprints,
+        BaselineError, apply_baseline, assign_fingerprints, baseline_root_mismatch,
         load_baseline, project_root, write_baseline)
-    root = project_root(target)
     baseline_entries = None
     if getattr(args, "baseline", None):
         try:
@@ -451,6 +455,11 @@ def cmd_scan(args) -> int:
         except (ConfigError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 2
+    root = project_root(target, getattr(args, "root", None), config.source)
+    if baseline_entries and baseline_root_mismatch(baseline_entries, root):
+        print(f"Warning: no file the baseline names exists under the project root {root}; "
+              f"it was likely written against another root (pass --root), so every "
+              f"finding will look new.", file=sys.stderr)
     if args.min_severity is None:
         args.min_severity = config.min_severity or "low"
     if args.fail_on is None:

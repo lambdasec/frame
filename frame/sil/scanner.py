@@ -1568,7 +1568,8 @@ class FrameScanner:
         Duplicates occur when:
         - Same vulnerability type at same location (line) in same procedure
         - Same CWE at same location (even different vuln types if same underlying issue)
-        - Same CWE within 5-line window (control flow variants of same bug)
+        - A synthetic file-wide pass reports the same CWE on several lines
+        - Two analyzers report the same line and CWE under different procedure names
 
         Priority: Keep the highest severity, most detailed report.
         """
@@ -1623,51 +1624,24 @@ class FrameScanner:
                     phase1_vulns.append(best)
                     seen_ids.add(vuln_id)
 
-        # Phase 2: Window-based deduplication (5-line window)
-        # This catches FPs from control flow variants in same function
-        window_seen = {}  # (line // 5, cwe_id) -> best vulnerability
-
-        for vuln in phase1_vulns:
-            if not vuln.cwe_id:
-                continue
-
-            # Group by 5-line window and CWE
-            window_key = (vuln.location, vuln.line // 5, vuln.cwe_id)
-
-            existing = window_seen.get(window_key)
-            if existing is None:
-                window_seen[window_key] = vuln
-            elif is_better(vuln, existing):
-                window_seen[window_key] = vuln
-
-        # Build final list - keep vulns that are the best in their window
-        final_vulns = []
-        added_windows = set()
-
-        for vuln in phase1_vulns:
-            if not vuln.cwe_id:
-                # No CWE - keep as-is (won't be window-deduplicated)
-                final_vulns.append(vuln)
-                continue
-
-            window_key = (vuln.location, vuln.line // 5, vuln.cwe_id)
-            best = window_seen.get(window_key)
-
-            if best is not None and window_key not in added_windows:
-                final_vulns.append(best)
-                added_windows.add(window_key)
+        # (There is no line-window merge. A 5-line window used to fold
+        # same-CWE findings together as "control-flow variants"; measured on
+        # 1,500 npm files, 600 OWASP Java and 500 OWASP Python files it merged
+        # only distinct call sites -- and it hid a new sink added beside a known
+        # one behind a baseline. Phase 1 already merges reports of one line.)
+        final_vulns = phase1_vulns
 
         # Phase 3: a synthetic file-wide pass (`<module-proto-pollution>`,
-        # `<module-redos>`, ...) reports one finding per (file, CWE): it flags
+        # `<cookie-secure>-0`, ...) reports one finding per (file, CWE): it flags
         # every matching line of a file, and its per-line reports are one issue.
-        # A real function keeps each distinct sink (phases 1-2 already merged
-        # control-flow variants of one): a second injectable query added to a
+        # A real function keeps each distinct sink: a second injectable query added to a
         # function that already has one is a new finding, and five injectable
         # endpoints in one controller are five. (Benchmarks that score one label
         # per file collapse further with `collapse_per_file_cwe`.)
+        from frame.sil.fingerprints import normalize_procedure
         deduplicated = _keep_best_per_key(
             final_vulns,
-            lambda v: (v.location, v.procedure, v.cwe_id)
+            lambda v: (v.location, normalize_procedure(v.procedure), v.cwe_id)
             + (() if (v.procedure or "").startswith("<") else (v.line,)))
         # Phase 4: two analyzers reporting the same line under different
         # procedure names (`main` and `<interprocedural-analysis>`) are one finding.

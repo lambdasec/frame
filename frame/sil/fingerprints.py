@@ -2,7 +2,8 @@
 
 A finding's line number moves whenever code is added above it, so it cannot be an
 identity. Each finding gets two keys, both over the file's path relative to the
-project root (the git top level, else the current directory):
+project root (`project_root`: an explicit `--root`, else the git top level, else
+the directory of the project's Frame config, else the scanned directory):
 
 - ``fingerprint`` (exact): the path, CWE, function, taint source and sink kind,
   the whitespace-normalised text of the finding's line, and the finding's ordinal
@@ -46,21 +47,28 @@ class BaselineError(Exception):
     """A baseline file is missing, unreadable or not a Frame baseline."""
 
 
-def project_root(path: Union[str, Path]) -> Path:
-    """The root finding paths are relative to: the git top level containing
-    `path`, else the current directory. Fingerprints only compare across runs
-    that resolve the same root."""
-    p = Path(path)
+def project_root(path: Union[str, Path], explicit: Optional[Union[str, Path]] = None,
+                 config_file: Optional[Union[str, Path]] = None) -> Path:
+    """The root finding paths are relative to. Fingerprints only compare across
+    runs that resolve the same root, so it never depends on the directory the
+    scan is run from: `explicit` (`--root`), else the git top level containing
+    `path`, else the directory of the project's Frame config (`.frame.toml` or a
+    `pyproject.toml` with `[tool.frame]`), else the scanned directory."""
+    if explicit:
+        return Path(explicit).resolve()
+    p = Path(path).resolve()
     start = p if p.is_dir() else p.parent
     try:
         out = subprocess.run(
-            ["git", "-C", str(start or "."), "rev-parse", "--show-toplevel"],
+            ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=10)
         if out.returncode == 0 and out.stdout.strip():
             return Path(out.stdout.strip()).resolve()
     except (OSError, subprocess.SubprocessError):
         pass
-    return Path.cwd().resolve()
+    if config_file:
+        return Path(config_file).resolve().parent
+    return start
 
 
 def relative_path(filename: Union[str, Path], root: Path) -> str:
@@ -195,6 +203,14 @@ def load_baseline(path: Union[str, Path]) -> List[dict]:
     if not isinstance(findings, list):
         raise BaselineError(f"{p} has no findings list")
     return findings
+
+
+def baseline_root_mismatch(entries: List[dict], root: Path) -> bool:
+    """True when no baseline entry names a file that exists under `root`: the
+    baseline was almost certainly written against a different root, and every
+    finding would look new."""
+    paths = {str(e.get("path")) for e in entries if e.get("path")}
+    return bool(paths) and not any((root / p).is_file() for p in paths)
 
 
 def scanned_paths(results: Iterable["ScanResult"], root: Path) -> set:

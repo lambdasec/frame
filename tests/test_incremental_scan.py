@@ -335,3 +335,59 @@ def test_verify_needs_fingerprints(tmp_path, capsys):
                                                     "cwe_id": "CWE-89"}]}))
     assert frame_main(["verify", str(old)]) == 2
     assert "fingerprint" in capsys.readouterr().err
+
+
+# ---- project root resolution -----------------------------------------------
+
+def test_root_defaults_to_git_top_level(repo, capsys):
+    sub = repo / "pkg"
+    sub.mkdir()
+    (sub / "h.py").write_text(CMDI)
+    rc, doc = scan(capsys, ".", "--files", "pkg/h.py")
+    # path is relative to the git root, not the scanned subdir
+    assert doc["files"][0]["vulnerabilities"][0]["path"] == "pkg/h.py"
+
+
+def test_explicit_root_overrides(tmp_path, capsys, monkeypatch):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "h.py").write_text(CMDI)
+    monkeypatch.chdir(tmp_path)
+    rc = frame_main(["scan", "sub", "--root", str(tmp_path), "--no-verify",
+                     "-f", "json", "--fail-on", "none"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["files"][0]["vulnerabilities"][0]["path"] == "sub/h.py"
+    assert doc["root"] == str(tmp_path)
+
+
+def test_root_without_git_is_the_scanned_dir(tmp_path, capsys, monkeypatch):
+    (tmp_path / "h.py").write_text(CMDI)
+    monkeypatch.chdir(tmp_path / "..")
+    rc = frame_main(["scan", str(tmp_path), "--no-verify", "-f", "json", "--fail-on", "none"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["root"] == str(tmp_path.resolve())
+    assert doc["files"][0]["vulnerabilities"][0]["path"] == "h.py"
+
+
+def test_root_from_config_file_directory(tmp_path, capsys, monkeypatch):
+    (tmp_path / ".frame.toml").write_text('fail_on = "none"\n')
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "h.py").write_text(CMDI)
+    monkeypatch.chdir(sub)
+    rc = frame_main(["scan", str(sub), "-f", "json"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["root"] == str(tmp_path.resolve())
+    assert doc["files"][0]["vulnerabilities"][0]["path"] == "sub/h.py"
+
+
+def test_baseline_root_mismatch_warns(tmp_path, capsys):
+    bl = tmp_path / "bl.json"
+    bl.write_text(json.dumps({
+        "frame_baseline": 1, "fingerprint_version": 1,
+        "findings": [{"path": "nowhere/else.py", "line": 1, "cwe_id": "CWE-89",
+                      "fingerprint": "a" * 16, "fingerprint_loose": "b" * 16}]}))
+    (tmp_path / "h.py").write_text(CMDI)
+    frame_main(["scan", str(tmp_path), "--no-verify", "--baseline", str(bl),
+                "--root", str(tmp_path), "--fail-on", "none"])
+    assert "likely written against another root" in capsys.readouterr().err
