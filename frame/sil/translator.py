@@ -1871,6 +1871,10 @@ class SILTranslator:
                 entry[param] = (known[0], known[1] & sanitized)
                 self._ipa.dirty.add(callee.ref)
 
+    _ALLOWLIST_KINDS = ["filesystem", "path", "command", "shell", "shell_command", "sql", "nosql", "redirect",
+                        "ssrf", "html", "xss", "eval", "code", "ldap", "xpath", "xml", "template", "header",
+                        "regex", "log"]
+
     @staticmethod
     def _has_local_redirect_prefix(exp: Exp) -> bool:
         """Whether a redirect target starts with a constant path (`"/login?x=" + v`):
@@ -1887,6 +1891,52 @@ class SILTranslator:
             return False
         v = first.value
         return len(v) >= 2 and v[0] == "/" and v[1] not in "/\\"
+
+    # Containers whose members are not the object's own data: storing request data on
+    # them does not make the whole object attacker data.
+    _NON_AGGREGATE_BASES = frozenset({"this", "self", "cls", "module", "exports", "window", "global",
+                                      "globalThis", "document", "process", "res", "response", "req",
+                                      "request", "app", "console"})
+
+    def _taint_from_embedded_sources(self, instr: Assign, state: SymbolicState) -> None:
+        """`filter = { origin: req.body.tags }` lowers to `filter = req.body.tags`: a request
+        read inside the assigned expression (no call that could convert or sanitize it) taints the
+        target; and `obj.key = <tainted>` makes `obj` carry it for later `find(obj)`."""
+        if getattr(self.program, "language", "") not in ("javascript", "typescript"):
+            return                      # the JS frontend folds object literals into their values
+        target = self._get_var_name(instr.id)
+        if not state.is_tainted(target) and not self._exp_has_call(instr.exp):
+            sources = self._get_embedded_member_sources(instr.exp)
+            if sources:
+                chain, kind = sources[0]
+                state.add_taint(target, TaintInfo(
+                    source_kind=TaintKind(kind) if kind in [t.value for t in TaintKind] else TaintKind.USER_INPUT,
+                    source_var=chain, source_location=instr.loc or Location.unknown()))
+        if state.is_tainted(target) and ("." in target or "[" in target):
+            base = re.split(r"[.\[]", target, maxsplit=1)[0]
+            if base and base not in self._NON_AGGREGATE_BASES and not state.is_tainted(base):
+                info = state.get_taint_info(target)
+                if info is not None:
+                    state.add_taint(base, TaintInfo(
+                        source_kind=info.source_kind, source_var=info.source_var,
+                        source_location=info.source_location,
+                        propagation_path=list(info.propagation_path) + [base]))
+
+    @staticmethod
+    def _exp_has_call(exp: Exp) -> bool:
+        if isinstance(exp, ExpCall):
+            return True
+        if isinstance(exp, ExpBinOp):
+            return SILTranslator._exp_has_call(exp.left) or SILTranslator._exp_has_call(exp.right)
+        if isinstance(exp, ExpUnOp):
+            return SILTranslator._exp_has_call(exp.operand)
+        if isinstance(exp, ExpStringConcat):
+            return any(SILTranslator._exp_has_call(p) for p in exp.parts)
+        if isinstance(exp, ExpIndex):
+            return SILTranslator._exp_has_call(exp.base) or SILTranslator._exp_has_call(exp.index)
+        if isinstance(exp, ExpFieldAccess):
+            return SILTranslator._exp_has_call(exp.base)
+        return False
 
     def _closure_captured_vars(self, exp: Exp, sink_kind) -> List[str]:
         """Enclosing-procedure variables that reach `exp` through a call to a
@@ -2179,6 +2229,7 @@ class SILTranslator:
         if isinstance(instr, Assign):
             assign_checks, state = self._exec_assign(instr, state, proc_name)
             checks.extend(assign_checks)
+            self._taint_from_embedded_sources(instr, state)
 
         elif isinstance(instr, Load):
             checks, state = self._exec_load(instr, state, proc_name)
@@ -3882,6 +3933,20 @@ class SILTranslator:
                 state.asserted_safe.setdefault(var, []).append("redirect")
             elif not instr.is_true_branch and neg_slash and pos_double and not pos_slash and not neg_double:
                 state.asserted_safe.setdefault(var, []).append("redirect")
+
+        # Allowlist membership: a value that is one of a constant set of strings cannot carry a payload.
+        #   if (!Object.values(DOC_FILES).includes(file)) return res.status(404)...   -> FALSE branch
+        #   if (ALLOWED.includes(x)) {...}  /  if x in ALLOWED:                       -> TRUE branch
+        # Only constant-looking collections count (UPPER_CASE names), never an arbitrary array.
+        coll = r"(?:Object\.(?:values|keys)\(\s*[A-Z][A-Z0-9_]*\s*\)|[A-Z][A-Z0-9_]*)"
+        for m in _re.finditer(r"(!\s*\(?\s*)?" + coll + r"\.includes\(\s*(\w+)\s*\)", cond_str):
+            negated, var = bool(m.group(1)), m.group(2)
+            if negated != instr.is_true_branch:        # membership holds on this branch
+                state.add_sanitization(var, list(self._ALLOWLIST_KINDS))
+        for m in _re.finditer(r"(\w+)\s+(not\s+)?in\s+([A-Z][A-Z0-9_]*)\b", cond_str):
+            var, negated = m.group(1), bool(m.group(2))
+            if negated != instr.is_true_branch:
+                state.add_sanitization(var, list(self._ALLOWLIST_KINDS))
 
         # Code injection validation: startswith/endswith checks
         # Pattern: if not bar.startswith('\'') or not bar.endswith('\''):

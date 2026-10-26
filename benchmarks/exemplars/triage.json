@@ -1,0 +1,903 @@
+{
+ "labels": "TP real; FP not a vulnerability as reported; DEBATABLE; ADVISORY = hardening/policy query",
+ "summary": {
+  "Frame": {
+   "vulpy": {
+    "TP": 4,
+    "FP": 0,
+    "DEBATABLE": 0,
+    "ADVISORY": 0,
+    "total": 4
+   },
+   "dvpwa": {
+    "TP": 2,
+    "FP": 0,
+    "DEBATABLE": 0,
+    "ADVISORY": 0,
+    "total": 2
+   },
+   "vulnerable-node": {
+    "TP": 32,
+    "FP": 1,
+    "DEBATABLE": 2,
+    "ADVISORY": 0,
+    "total": 35
+   },
+   "NodeGoat": {
+    "TP": 11,
+    "FP": 0,
+    "DEBATABLE": 2,
+    "ADVISORY": 0,
+    "total": 13
+   },
+   "ALL": {
+    "TP": 49,
+    "FP": 1,
+    "DEBATABLE": 4,
+    "ADVISORY": 0,
+    "total": 54
+   }
+  },
+  "CodeQL": {
+   "vulpy": {
+    "TP": 5,
+    "FP": 1,
+    "DEBATABLE": 3,
+    "ADVISORY": 0,
+    "total": 9
+   },
+   "dvpwa": {
+    "TP": 1,
+    "FP": 0,
+    "DEBATABLE": 0,
+    "ADVISORY": 0,
+    "total": 1
+   },
+   "vulnerable-node": {
+    "TP": 31,
+    "FP": 1,
+    "DEBATABLE": 0,
+    "ADVISORY": 14,
+    "total": 46
+   },
+   "NodeGoat": {
+    "TP": 1,
+    "FP": 0,
+    "DEBATABLE": 0,
+    "ADVISORY": 0,
+    "total": 1
+   },
+   "ALL": {
+    "TP": 38,
+    "FP": 2,
+    "DEBATABLE": 3,
+    "ADVISORY": 14,
+    "total": 57
+   }
+  }
+ },
+ "findings": {
+  "Frame": {
+   "vulpy": [
+    {
+     "file": "bad/libapi.py",
+     "line": 14,
+     "id": "CWE-330",
+     "label": "TP",
+     "note": "API key from random.getrandbits"
+    },
+    {
+     "file": "bad/libuser.py",
+     "line": 12,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file: login() formats request values into SQL"
+    },
+    {
+     "file": "bad/libuser.py",
+     "line": 25,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "bad/libuser.py",
+     "line": 53,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file"
+    }
+   ],
+   "dvpwa": [
+    {
+     "file": "sqli/dao/student.py",
+     "line": 45,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file: static async create()"
+    },
+    {
+     "file": "sqli/dao/user.py",
+     "line": 41,
+     "id": "CWE-328",
+     "label": "TP",
+     "note": "md5 password hash"
+    }
+   ],
+   "vulnerable-node": [
+    {
+     "file": "db/seed-data.js",
+     "line": 142,
+     "id": "CWE-259",
+     "label": "DEBATABLE",
+     "note": "default credentials in demo seed data"
+    },
+    {
+     "file": "mocks/imds/server.js",
+     "line": 6,
+     "id": "CWE-798",
+     "label": "DEBATABLE",
+     "note": "token of a mock metadata server"
+    },
+    {
+     "file": "model/db.js",
+     "line": 14,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "model/db.js",
+     "line": 26,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "model/db.js",
+     "line": 101,
+     "id": "CWE-89",
+     "label": "TP",
+     "note": "cross-file ORDER BY"
+    },
+    {
+     "file": "model/merge.js",
+     "line": 12,
+     "id": "CWE-1321",
+     "label": "TP",
+     "note": "cross-file prototype pollution"
+    },
+    {
+     "file": "model/merge.js",
+     "line": 14,
+     "id": "CWE-1321",
+     "label": "TP",
+     "note": "same flaw, structural pass"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 23,
+     "id": "CWE-532",
+     "label": "TP",
+     "note": "password in log"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 35,
+     "id": "CWE-601",
+     "label": "TP",
+     "note": "open redirect"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 17,
+     "id": "CWE-22",
+     "label": "TP",
+     "note": "path traversal"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 33,
+     "id": "CWE-78",
+     "label": "TP",
+     "note": "command injection"
+    },
+    {
+     "file": "routes/pages.js",
+     "line": 26,
+     "id": "CWE-532",
+     "label": "TP",
+     "note": "user input in log (documented log injection; CWE label differs)"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 23,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "products.ejs prints q with <%-"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 26,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "same render in the error path"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 41,
+     "id": "CWE-943",
+     "label": "TP",
+     "note": "NoSQL: raw request JSON in the filter"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 58,
+     "id": "CWE-943",
+     "label": "TP",
+     "note": "NoSQL: operator objects via query string"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 72,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "stored XSS: product_detail.ejs prints r.body raw"
+    },
+    {
+     "file": "routes/tools.js",
+     "line": 21,
+     "id": "CWE-918",
+     "label": "TP",
+     "note": "SSRF"
+    },
+    {
+     "file": "routes/tools.js",
+     "line": 44,
+     "id": "CWE-1333",
+     "label": "TP",
+     "note": "user-supplied RegExp"
+    },
+    {
+     "file": "sast/seeds/crypto-weak.js",
+     "line": 5,
+     "id": "CWE-328",
+     "label": "TP",
+     "note": "repo ground truth: md5"
+    },
+    {
+     "file": "sast/seeds/crypto-weak.js",
+     "line": 14,
+     "id": "CWE-327",
+     "label": "TP",
+     "note": "repo ground truth: des-ecb"
+    },
+    {
+     "file": "sast/seeds/deserialization.js",
+     "line": 11,
+     "id": "CWE-502",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/deserialization.js",
+     "line": 21,
+     "id": "CWE-78",
+     "label": "TP",
+     "note": "command injection in the same seed"
+    },
+    {
+     "file": "sast/seeds/eval-code.js",
+     "line": 7,
+     "id": "CWE-94",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/eval-code.js",
+     "line": 16,
+     "id": "CWE-94",
+     "label": "TP",
+     "note": "new Function with request data"
+    },
+    {
+     "file": "sast/seeds/hardcoded-secret.js",
+     "line": 4,
+     "id": "CWE-798",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/hardcoded-secret.js",
+     "line": 5,
+     "id": "CWE-259",
+     "label": "TP",
+     "note": "hardcoded DB password"
+    },
+    {
+     "file": "sast/seeds/open-redirect.js",
+     "line": 7,
+     "id": "CWE-601",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/path-traversal.js",
+     "line": 12,
+     "id": "CWE-22",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/prototype-pollution.js",
+     "line": 8,
+     "id": "CWE-1321",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/redos-nested.js",
+     "line": 7,
+     "id": "CWE-1333",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/ssrf-fetch.js",
+     "line": 7,
+     "id": "CWE-918",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/xss-raw-echo.js",
+     "line": 7,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/tests/score.js",
+     "line": 14,
+     "id": "CWE-1333",
+     "label": "FP",
+     "note": "nested quantifier, but the input is a trusted local file"
+    },
+    {
+     "file": "tests/exploits.js",
+     "line": 17,
+     "id": "CWE-798",
+     "label": "TP",
+     "note": "committed dev secret (documented)"
+    }
+   ],
+   "NodeGoat": [
+    {
+     "file": "app/data/allocations-dao.js",
+     "line": 86,
+     "id": "CWE-943",
+     "label": "TP",
+     "note": "$where injection through a closure"
+    },
+    {
+     "file": "app/data/benefits-dao.js",
+     "line": 24,
+     "id": "CWE-943",
+     "label": "DEBATABLE",
+     "note": "request value inside $set, not an operator position"
+    },
+    {
+     "file": "app/data/profile-dao.js",
+     "line": 78,
+     "id": "CWE-943",
+     "label": "DEBATABLE",
+     "note": "request values inside $set"
+    },
+    {
+     "file": "app/data/user-dao.js",
+     "line": 91,
+     "id": "CWE-943",
+     "label": "TP",
+     "note": "cross-file operator injection"
+    },
+    {
+     "file": "app/data/user-dao.js",
+     "line": 104,
+     "id": "CWE-943",
+     "label": "TP",
+     "note": "cross-file operator injection"
+    },
+    {
+     "file": "app/routes/contributions.js",
+     "line": 32,
+     "id": "CWE-94",
+     "label": "TP",
+     "note": "eval of request body"
+    },
+    {
+     "file": "app/routes/contributions.js",
+     "line": 33,
+     "id": "CWE-94",
+     "label": "TP",
+     "note": "eval of request body"
+    },
+    {
+     "file": "app/routes/contributions.js",
+     "line": 34,
+     "id": "CWE-94",
+     "label": "TP",
+     "note": "eval of request body"
+    },
+    {
+     "file": "app/routes/index.js",
+     "line": 72,
+     "id": "CWE-601",
+     "label": "TP",
+     "note": "open redirect"
+    },
+    {
+     "file": "app/routes/profile.js",
+     "line": 59,
+     "id": "CWE-1333",
+     "label": "TP",
+     "note": "documented ReDoS"
+    },
+    {
+     "file": "app/routes/profile.js",
+     "line": 65,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "reflected into a swig template with autoescape off"
+    },
+    {
+     "file": "app/routes/session.js",
+     "line": 214,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "signup page, swig autoescape disabled in server.js"
+    },
+    {
+     "file": "app/routes/session.js",
+     "line": 249,
+     "id": "CWE-79",
+     "label": "TP",
+     "note": "same"
+    }
+   ]
+  },
+  "CodeQL": {
+   "vulpy": [
+    {
+     "file": "api_post.py",
+     "line": 24,
+     "id": "py/clear-text-logging-sensitive-data",
+     "label": "DEBATABLE",
+     "note": "client demo script prints the key"
+    },
+    {
+     "file": "api_post.py",
+     "line": 27,
+     "id": "py/clear-text-storage-sensitive-data",
+     "label": "DEBATABLE",
+     "note": "client demo script stores the key"
+    },
+    {
+     "file": "brute.py",
+     "line": 23,
+     "id": "py/clear-text-logging-sensitive-data",
+     "label": "FP",
+     "note": "a brute-force tool printing what it found"
+    },
+    {
+     "file": "libapi.py",
+     "line": 22,
+     "id": "py/path-injection",
+     "label": "DEBATABLE",
+     "note": "username in a /tmp filename with a fixed prefix"
+    },
+    {
+     "file": "libuser.py",
+     "line": 12,
+     "id": "py/sql-injection",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "libuser.py",
+     "line": 25,
+     "id": "py/sql-injection",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "libuser.py",
+     "line": 53,
+     "id": "py/sql-injection",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "vulpy-ssl.py",
+     "line": 29,
+     "id": "py/flask-debug",
+     "label": "TP",
+     "note": "debug=True"
+    },
+    {
+     "file": "vulpy.py",
+     "line": 55,
+     "id": "py/flask-debug",
+     "label": "TP",
+     "note": "debug=True"
+    }
+   ],
+   "dvpwa": [
+    {
+     "file": "sqli/dao/user.py",
+     "line": 41,
+     "id": "py/weak-sensitive-data-hashing",
+     "label": "TP",
+     "note": "md5 password hash"
+    }
+   ],
+   "vulnerable-node": [
+    {
+     "file": "model/db.js",
+     "line": 14,
+     "id": "js/sql-injection",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "model/db.js",
+     "line": 26,
+     "id": "js/sql-injection",
+     "label": "TP",
+     "note": "cross-file"
+    },
+    {
+     "file": "model/db.js",
+     "line": 101,
+     "id": "js/sql-injection",
+     "label": "TP",
+     "note": "cross-file ORDER BY"
+    },
+    {
+     "file": "model/merge.js",
+     "line": 11,
+     "id": "js/remote-property-injection",
+     "label": "TP",
+     "note": "same flaw as merge.js:14"
+    },
+    {
+     "file": "model/merge.js",
+     "line": 14,
+     "id": "js/prototype-pollution-utility",
+     "label": "TP",
+     "note": "cross-file prototype pollution"
+    },
+    {
+     "file": "model/merge.js",
+     "line": 14,
+     "id": "js/remote-property-injection",
+     "label": "TP",
+     "note": "same flaw, second query"
+    },
+    {
+     "file": "public/js/app.js",
+     "line": 16,
+     "id": "js/clear-text-storage-of-sensitive-data",
+     "label": "TP",
+     "note": "token in localStorage"
+    },
+    {
+     "file": "routes/api/v1.js",
+     "line": 14,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/api/v1.js",
+     "line": 29,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/api/v1.js",
+     "line": 38,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/api/v1.js",
+     "line": 48,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 20,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 20,
+     "id": "js/session-fixation",
+     "label": "TP",
+     "note": "session id not regenerated at login"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 23,
+     "id": "js/clear-text-logging",
+     "label": "TP",
+     "note": "password in log"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 23,
+     "id": "js/log-injection",
+     "label": "TP",
+     "note": "same line"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 35,
+     "id": "js/server-side-unvalidated-url-redirection",
+     "label": "TP",
+     "note": "open redirect"
+    },
+    {
+     "file": "routes/auth.js",
+     "line": 50,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 14,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 17,
+     "id": "js/path-injection",
+     "label": "TP",
+     "note": "path traversal"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 31,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/extras.js",
+     "line": 33,
+     "id": "js/command-line-injection",
+     "label": "TP",
+     "note": "command injection"
+    },
+    {
+     "file": "routes/pages.js",
+     "line": 24,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/pages.js",
+     "line": 26,
+     "id": "js/log-injection",
+     "label": "TP",
+     "note": "documented log injection"
+    },
+    {
+     "file": "routes/progress.js",
+     "line": 61,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 26,
+     "id": "js/stack-trace-exposure",
+     "label": "TP",
+     "note": "err and err.message rendered"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 35,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 41,
+     "id": "js/sql-injection",
+     "label": "TP",
+     "note": "NoSQL filter from request JSON"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 51,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "routes/shop.js",
+     "line": 58,
+     "id": "js/sql-injection",
+     "label": "TP",
+     "note": "NoSQL operator via query string"
+    },
+    {
+     "file": "routes/tools.js",
+     "line": 21,
+     "id": "js/request-forgery",
+     "label": "TP",
+     "note": "SSRF"
+    },
+    {
+     "file": "routes/tools.js",
+     "line": 44,
+     "id": "js/regex-injection",
+     "label": "TP",
+     "note": "user-supplied RegExp"
+    },
+    {
+     "file": "sast/seeds/clean-escaped.js",
+     "line": 23,
+     "id": "js/server-side-unvalidated-url-redirection",
+     "label": "FP",
+     "note": "the repo's own clean seed: guarded by startsWith('/') and not '//'"
+    },
+    {
+     "file": "sast/seeds/crypto-weak.js",
+     "line": 5,
+     "id": "js/insufficient-password-hash",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/deserialization.js",
+     "line": 11,
+     "id": "js/code-injection",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/deserialization.js",
+     "line": 20,
+     "id": "js/missing-rate-limiting",
+     "label": "ADVISORY",
+     "note": "hardening query"
+    },
+    {
+     "file": "sast/seeds/deserialization.js",
+     "line": 21,
+     "id": "js/command-line-injection",
+     "label": "TP",
+     "note": "command injection"
+    },
+    {
+     "file": "sast/seeds/eval-code.js",
+     "line": 7,
+     "id": "js/code-injection",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/eval-code.js",
+     "line": 16,
+     "id": "js/code-injection",
+     "label": "TP",
+     "note": "new Function"
+    },
+    {
+     "file": "sast/seeds/open-redirect.js",
+     "line": 7,
+     "id": "js/server-side-unvalidated-url-redirection",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/prototype-pollution.js",
+     "line": 8,
+     "id": "js/prototype-pollution-utility",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/redos-nested.js",
+     "line": 7,
+     "id": "js/redos",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/ssrf-fetch.js",
+     "line": 7,
+     "id": "js/request-forgery",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "sast/seeds/xss-raw-echo.js",
+     "line": 7,
+     "id": "js/reflected-xss",
+     "label": "TP",
+     "note": "repo ground truth"
+    },
+    {
+     "file": "server.js",
+     "line": 49,
+     "id": "js/missing-token-validation",
+     "label": "ADVISORY",
+     "note": "CSRF protection missing"
+    },
+    {
+     "file": "server.js",
+     "line": 55,
+     "id": "js/clear-text-cookie",
+     "label": "TP",
+     "note": "session cookie flags"
+    },
+    {
+     "file": "views/products.ejs",
+     "line": 14,
+     "id": "js/xss",
+     "label": "TP",
+     "note": "raw <%- q %>"
+    }
+   ],
+   "NodeGoat": [
+    {
+     "file": "routes/profile.js",
+     "line": 59,
+     "id": "js/redos",
+     "label": "TP",
+     "note": "documented ReDoS"
+    }
+   ]
+  }
+ },
+ "seed_ground_truth": {
+  "source": "vulnerable-node/sast/ground-truth.yaml (written by the app's authors; file-level)",
+  "results": {
+   "Frame": {
+    "seeds_found": "10/12",
+    "missed": [
+     "sqli-concat",
+     "nosql-operator"
+    ],
+    "clean_seeds_flagged": []
+   },
+   "CodeQL": {
+    "seeds_found": "8/12",
+    "missed": [
+     "sqli-concat",
+     "nosql-operator",
+     "path-traversal",
+     "hardcoded-secret"
+    ],
+    "clean_seeds_flagged": [
+     "clean-escaped"
+    ]
+   }
+  }
+ }
+}

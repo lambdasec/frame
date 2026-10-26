@@ -370,3 +370,50 @@ def test_file_named_prototype_something_is_not_the_prototype_library():
            " return t; }\nfunction apply(req) { return deepMerge({}, req.body.prefs); }\n")
     assert any(c == "CWE-1321" for _, c in _scan_js(src, "/x/seeds/prototype-pollution.js"))
     assert not any(c == "CWE-1321" for _, c in _scan_js(src, "/x/js/prototype.min.js"))
+
+
+# ---- request data inside an object literal, property stores, allowlists -------------------------
+
+NOSQL = ("const express = require('express');\nconst router = express.Router();\n"
+         "router.post('/t', async (req, res) => {{\n const col = db.collection('p');\n{body}\n"
+         " const docs = await col.find(filter).toArray();\n res.json(docs);\n}});")
+
+
+@pytest.mark.parametrize("body", [
+    " const filter = { origin: req.body.tags };",
+    " const filter = {};\n filter.origin = req.body.tags;",
+    " const q = {};\n q.a = 1;\n const filter = { $and: [{ a: 1 }, { b: req.query.b }] };",
+])
+def test_request_data_inside_a_query_object_reaches_a_nosql_sink(body):
+    assert any(c == "CWE-943" for _, c in _scan_js(NOSQL.format(body=body)))
+
+
+@pytest.mark.parametrize("body", [
+    " const filter = { origin: 'x' };",
+    " const filter = { n: parseInt(req.body.n, 10) };",
+    " const filter = {};\n filter.n = 5;",
+])
+def test_constant_or_converted_query_objects_are_clean(body):
+    assert not any(c == "CWE-943" for _, c in _scan_js(NOSQL.format(body=body)))
+
+
+FILE_ROUTE = ("const fs = require('fs');\nconst path = require('path');\nconst express = require('express');\n"
+              "const router = express.Router();\nconst DOC_FILES = {{ a: 'a.md' }};\nconst allowed = ['a.md'];\n"
+              "router.get('/d/:file', (req, res) => {{\n const file = req.params.file;\n{guard}\n"
+              " const full = path.join(__dirname, 'docs', file);\n fs.readFile(full, 'utf8', (e, d) => res.send(d));\n}});")
+
+
+@pytest.mark.parametrize("guard", [
+    " if (!Object.values(DOC_FILES).includes(file)) { return res.status(404).send('no'); }",
+    " if (!DOC_FILES_LIST.includes(file)) { return res.end(); }",
+])
+def test_membership_in_a_constant_allowlist_clears_path_traversal(guard):
+    assert not any(c == "CWE-22" for _, c in _scan_js(FILE_ROUTE.format(guard=guard)))
+
+
+@pytest.mark.parametrize("guard", [
+    "",
+    " if (!allowed.includes(file)) { return res.end(); }",     # lower-case: not a recognisable constant
+])
+def test_no_or_unrecognised_allowlist_is_still_reported(guard):
+    assert any(c == "CWE-22" for _, c in _scan_js(FILE_ROUTE.format(guard=guard)))

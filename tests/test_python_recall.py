@@ -233,3 +233,16 @@ def test_return_of_a_dict_carries_its_members_to_the_caller(tmp_path):
     from frame.sil.scanner import FrameScanner
     res = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
     assert any(v.cwe_id == "CWE-89" for r in res for v in r.vulnerabilities)
+
+
+def test_python_membership_in_a_constant_set_clears_path_traversal():
+    from frame.sil.scanner import FrameScanner
+    tpl = ("from flask import Flask, request\nimport os\nALLOWED = {{'a.txt'}}\napp = Flask(__name__)\n"
+           "@app.route('/f')\ndef f():\n    n = request.args.get('n')\n{g}\n"
+           "    return open(os.path.join('docs', n)).read()\n")
+
+    def paths(guard):
+        r = FrameScanner(language="python").scan(tpl.format(g=guard), "a.py")
+        return [v for v in r.vulnerabilities if v.cwe_id == "CWE-22"]
+    assert not paths("    if n not in ALLOWED:\n        return 'no'")
+    assert paths("    pass")
