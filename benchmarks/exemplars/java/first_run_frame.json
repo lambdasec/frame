@@ -1,0 +1,44 @@
+{
+  "Frame": {
+    "java_dao_servlet": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_static_util": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_spring_three_layers": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_interface_impl": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_inherited_sink": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_source_in_helper": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_sanitizer_in_helper": {
+      "found": true,
+      "false_alarm": true
+    },
+    "java_wildcard_import": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_overloads": {
+      "found": false,
+      "false_alarm": false
+    },
+    "java_three_hops": {
+      "found": false,
+      "false_alarm": false
+    }
+  }
+}

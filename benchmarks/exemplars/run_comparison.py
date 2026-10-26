@@ -91,13 +91,15 @@ def codeql(binary: str) -> Tool:
     def run(target: Path) -> List[Finding]:
         counts = {"python": len(list(target.rglob("*.py"))),
                   "javascript-typescript": len([p for ext in ("*.js", "*.ts") for p in target.rglob(ext)
-                                                if "node_modules" not in p.parts])}
+                                                if "node_modules" not in p.parts]),
+                  "java": len(list(target.rglob("*.java")))}
         lang = max(counts, key=counts.get)
-        suite = "python" if lang == "python" else "javascript"
+        suite = {"python": "python", "java": "java"}.get(lang, "javascript")
+        extra = ["--build-mode=none"] if lang == "java" else []
         with tempfile.TemporaryDirectory() as tmp:
             db, sarif = f"{tmp}/db", f"{tmp}/out.sarif"
             subprocess.run([binary, "database", "create", db, f"--language={lang}", f"--source-root={target}",
-                            "--overwrite"], capture_output=True, check=True)
+                            "--overwrite", *extra], capture_output=True, check=True)
             subprocess.run([binary, "database", "analyze", db,
                             f"codeql/{suite}-queries:codeql-suites/{suite}-security-extended.qls",
                             "--format=sarif-latest", f"--output={sarif}"], capture_output=True, check=True)
@@ -149,9 +151,10 @@ def md_table(header: List[str], rows: List[List[str]]) -> str:
     return "\n".join(out)
 
 
-def run_cases(tools: Dict[str, Tool], holdout: bool = False) -> Tuple[str, dict]:
-    base_dir = HERE / "holdout" if holdout else HERE
-    cases = json.loads((base_dir / ("holdout.json" if holdout else "cases.json")).read_text())["cases"]
+def run_cases(tools: Dict[str, Tool], holdout: bool = False, java: bool = False) -> Tuple[str, dict]:
+    base_dir = HERE / "java" if java else (HERE / "holdout" if holdout else HERE)
+    name = "java.json" if java else ("holdout.json" if holdout else "cases.json")
+    cases = json.loads((base_dir / name).read_text())["cases"]
     table: Dict[str, Dict[str, Tuple[bool, bool]]] = {}
     for name, tool in tools.items():
         print(f"  {name} ...", file=sys.stderr, flush=True)
@@ -215,6 +218,7 @@ def main() -> int:
     ap.add_argument("--real", action="store_true", help="score the real apps in real_repos.json instead of cases.json")
     ap.add_argument("--holdout", action="store_true",
                     help="score holdout/ (cases keyed before Frame was run on them) instead of cases.json")
+    ap.add_argument("--java", action="store_true", help="score java/ (cases keyed before Java cross-file support existed)")
     ap.add_argument("--only", action="append", help="with --real: only these repo ids (repeatable)")
     ap.add_argument("--repos-dir", type=Path, default=Path("/tmp/frame-exemplar-repos"))
     ap.add_argument("--controls", action="store_true",
@@ -232,7 +236,7 @@ def main() -> int:
         a.repos_dir.mkdir(parents=True, exist_ok=True)
         text, raw = run_real(tools, a.repos_dir, a.only)
     else:
-        text, raw = run_cases(tools, a.holdout)
+        text, raw = run_cases(tools, a.holdout, a.java)
     print(text)
     if a.json:
         Path(a.json).write_text(json.dumps(raw, indent=2))

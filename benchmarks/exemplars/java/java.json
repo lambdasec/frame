@@ -1,0 +1,95 @@
+{
+  "description": "Java cross-file cases, written and keyed BEFORE the Java cross-file feature existed. Each has a vulnerable tree and a safe twin.",
+  "cases": [
+    {
+      "id": "java_dao_servlet",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "UserDao.java",
+      "path": "src/main/java/com/app/dao/UserDao.java",
+      "line": 12,
+      "shape": "servlet in com.app.web calls a DAO in com.app.dao (explicit import)"
+    },
+    {
+      "id": "java_static_util",
+      "language": "java",
+      "cwe": "CWE-78",
+      "file": "Shell.java",
+      "path": "src/main/java/com/app/util/Shell.java",
+      "line": 9,
+      "shape": "a static method of a utility class in another package"
+    },
+    {
+      "id": "java_spring_three_layers",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "UserRepository.java",
+      "path": "src/main/java/com/app/repo/UserRepository.java",
+      "line": 17,
+      "shape": "Spring controller -> service -> repository, constructor injection, @RequestParam source"
+    },
+    {
+      "id": "java_interface_impl",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "JdbcUserRepository.java",
+      "path": "src/main/java/com/app/repo/JdbcUserRepository.java",
+      "line": 10,
+      "shape": "a field typed by an interface; the project has exactly one implementation"
+    },
+    {
+      "id": "java_inherited_sink",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "BaseDao.java",
+      "path": "src/main/java/com/app/dao/BaseDao.java",
+      "line": 10,
+      "shape": "the sink is in a base class method that the subclass reaches with a built query"
+    },
+    {
+      "id": "java_source_in_helper",
+      "language": "java",
+      "cwe": "CWE-22",
+      "file": "FileServlet.java",
+      "path": "src/main/java/com/app/web/FileServlet.java",
+      "line": 14,
+      "shape": "the request read is hidden in a static helper that returns it"
+    },
+    {
+      "id": "java_sanitizer_in_helper",
+      "language": "java",
+      "cwe": "CWE-79",
+      "file": "GreetServlet.java",
+      "path": "src/main/java/com/app/web/GreetServlet.java",
+      "line": 12,
+      "shape": "an HTML escaper in another class: real escaping (safe twin) or an identity function"
+    },
+    {
+      "id": "java_wildcard_import",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "AuditDao.java",
+      "path": "src/main/java/com/app/dao/AuditDao.java",
+      "line": 9,
+      "shape": "`import com.app.dao.*;` and an @Autowired field"
+    },
+    {
+      "id": "java_overloads",
+      "language": "java",
+      "cwe": "CWE-89",
+      "file": "ItemDao.java",
+      "path": "src/main/java/com/app/dao/ItemDao.java",
+      "line": 11,
+      "shape": "overloads: the String overload is injectable, the int overload is not"
+    },
+    {
+      "id": "java_three_hops",
+      "language": "java",
+      "cwe": "CWE-78",
+      "file": "Archive.java",
+      "path": "src/main/java/com/app/io/Archive.java",
+      "line": 7,
+      "shape": "servlet -> service -> io class, three packages"
+    }
+  ]
+}
