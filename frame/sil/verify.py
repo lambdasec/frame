@@ -23,7 +23,7 @@ Only ``fixed`` and ``file_removed`` count as resolved.
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from frame.sil.fingerprints import assign_fingerprints, match_findings, project_root
 
@@ -80,13 +80,18 @@ def _locate(finding: dict, root: Optional[Path]) -> Optional[Path]:
 
 def verify_findings(findings: List[dict], ids: Optional[Iterable[str]] = None,
                     timeout_ms: int = 5000, context: Iterable[dict] = (),
-                    root: Optional[str] = None) -> List[Verdict]:
+                    root: Optional[str] = None, cross_file: bool = False,
+                    cross_file_limit: Optional[int] = None) -> List[Verdict]:
     """Verdicts for `findings` (all of them, or those whose fingerprint is in
     `ids`). `context` holds the scan's other findings (baselined, suppressed):
     they and every finding of a re-scanned file are used for matching, so a
     finding that was already there is never mistaken for a moved one. `root` is
     the scan's project root (the JSON's `root`); without it a file that cannot
-    be found is unverifiable rather than removed."""
+    be found is unverifiable rather than removed. `cross_file` (the JSON's
+    `scope.cross_file`) re-scans the files inside the same cross-file scope the
+    scan used: a finding in a helper that only exists because a caller in another
+    file passes it request data is judged with that caller present -- re-scanning
+    the helper alone would call it fixed whatever the caller still does."""
     from frame.sil.scanner import FrameScanner, language_for_file
 
     context = [c for c in context if c.get("fingerprint")]
@@ -105,6 +110,26 @@ def verify_findings(findings: List[dict], ids: Optional[Iterable[str]] = None,
     groups: "OrderedDict[str, List[dict]]" = OrderedDict()
     for f in every:
         groups.setdefault(f.get("path") or f.get("location") or "", []).append(f)
+
+    prefetched: Dict[Path, Any] = {}
+    if cross_file and root_path is not None and root_path.is_dir():
+        located = []
+        for rel, pool in groups.items():
+            if not any(f is w for f in pool for w in wanted):
+                continue
+            found = next((p for p in (_locate(f, root_path) for f in pool) if p is not None), None)
+            if found is not None:
+                located.append(found)
+        if located:
+            from frame.sil.scanner import DEFAULT_CROSS_FILE_LIMIT
+            scanner = FrameScanner(language="python", verify=True, timeout=timeout_ms)
+            try:
+                for r in scanner.scan_directory(
+                        str(root_path), None, only_files=located, cross_file=True,
+                        cross_file_limit=cross_file_limit or DEFAULT_CROSS_FILE_LIMIT):
+                    prefetched[Path(r.filename).resolve()] = r
+            except Exception:
+                prefetched = {}                 # fall back to scanning each file alone
 
     verdicts: Dict[int, Verdict] = {}
     for rel, pool in groups.items():
@@ -127,8 +152,10 @@ def verify_findings(findings: List[dict], ids: Optional[Iterable[str]] = None,
                             "scan root, so run verify where the scan ran")
             continue
 
-        result = FrameScanner(language=language_for_file(file, default="python"),
-                              verify=True, timeout=timeout_ms).scan_file(str(file))
+        result = prefetched.get(file.resolve())
+        if result is None:
+            result = FrameScanner(language=language_for_file(file, default="python"),
+                                  verify=True, timeout=timeout_ms).scan_file(str(file))
         if result.errors:
             for f in asked:
                 verdict(f, "unverifiable", "re-scan failed: " + "; ".join(result.errors))

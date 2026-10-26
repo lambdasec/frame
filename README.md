@@ -70,6 +70,9 @@ frame scan src/ --ai
 # CI/CD integration (SARIF output)
 frame scan src/ --format sarif -o results.sarif --fail-on high
 
+# Cross-file: request data passed to a helper in another file is one flow
+# (Python and JS/TS directory scans do this by default; --no-cross-file to opt out)
+
 # Guardrail loop: accept today's findings, then check only what changed
 frame scan . --write-baseline .frame-baseline.json --fail-on none
 frame scan . --changed --baseline .frame-baseline.json -f json -o findings.json
@@ -101,7 +104,8 @@ Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus
 | Command | What it does |
 |---------|--------------|
 | `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. A directory scan walks every supported source file (`-l <lang>` or `-p <glob>` to narrow it) and its JSON is always `{"files": [...], "summary": ...}`. Findings are reported per function: the same CWE in two handlers is two findings. Directory scans skip agent/tool and dependency directories by default (`.git`, `.claude/worktrees`, `.cursor/worktrees`, `.worktrees`, `.idea`, `.vscode`, `node_modules`, `.venv`, `venv` only if it looks like a virtualenv, `.tox`, `__pycache__`, `.mypy_cache`, `.pytest_cache`); `--no-default-excludes` to scan them anyway. |
-| `frame scan --changed [REF]` / `--files <paths>` | Scan only files changed since REF (default `HEAD`, plus untracked) or the given files. Nothing changed is a clean scan. |
+| `frame scan --changed [REF]` / `--files <paths>` | Scan only files changed since REF (default `HEAD`, plus untracked) or the given files, widened (for Python and JS/TS) to the files that import them and everything those import, because a change to a caller can make an untouched helper vulnerable. Nothing changed is a clean scan. |
+| `frame scan --no-cross-file` / `--cross-file-limit N` | Directory scans follow taint across imports in Python and JS/TS (a handler passing request data to a helper in another file; a helper returning it). `--no-cross-file` analyses each file alone; over `N` files (default 2000) a full scan falls back to that with a warning. |
 | `frame scan --baseline <file>` / `--write-baseline <file>` | Report only findings the baseline does not record (known ones are counted as `baselined`; vanished ones listed as fixed); write or update a baseline. Every finding carries a stable `fingerprint` (also in SARIF `partialFingerprints`). Exit status: 0 clean, 1 findings at or above `--fail-on`, 2 the scan could not run. |
 | `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each as `fixed`, `file_removed`, `present`, `suppressed` (silenced, not fixed), `uncertain` or `unverifiable`. `--id <fingerprint>` for one finding. Exits 0 only when all are fixed or removed. |
 | `frame exploit --target <url>` | Drive an LLM agent to exploit a live, authorized target. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |

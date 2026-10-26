@@ -71,6 +71,19 @@ def add_incremental_args(scan_parser) -> None:
              "counted as `baselined` and do not affect the exit status. Baseline "
              "findings no longer present in the scanned files are listed as fixed.")
     scan_parser.add_argument(
+        "--no-cross-file", action="store_true",
+        help="Analyse each file alone. By default a directory scan follows taint "
+             "across the imports of Python and JS/TS files: request data passed to a "
+             "helper in another file reaches that file's sinks, and a helper that "
+             "returns request data taints its callers. With --changed the scan widens "
+             "to the files that import the changed ones and everything those import, "
+             "so each is analysed as a full scan would.")
+    scan_parser.add_argument(
+        "--cross-file-limit", type=int, default=None, metavar="N",
+        help="Most Python/JS/TS files one cross-file analysis spans (default 2000). "
+             "A full scan over the limit analyses files alone, with a warning; "
+             "--changed keeps the files nearest the change.")
+    scan_parser.add_argument(
         "--root", metavar="DIR",
         help="Project root that finding paths and fingerprints are relative to "
              "(default: the git top level, else the directory of the Frame "
@@ -501,10 +514,12 @@ def cmd_scan(args) -> int:
                 exclude_dirs = list(DEFAULT_EXCLUDED_SCAN_DIRS) + config.exclude
             else:
                 exclude_dirs = None
-            from frame.sil.scanner import language_extensions
+            from frame.sil.scanner import DEFAULT_CROSS_FILE_LIMIT, language_extensions
             results = scanner.scan_directory(
                 str(target), args.pattern, exclude_dirs=exclude_dirs,
-                extensions=language_extensions(args.language), only_files=selection)
+                extensions=language_extensions(args.language), only_files=selection,
+                cross_file=not getattr(args, "no_cross_file", False),
+                cross_file_limit=getattr(args, "cross_file_limit", None) or DEFAULT_CROSS_FILE_LIMIT)
     except LLMUnavailableError as e:
         print(f"Error: LLM layer unavailable -- scan aborted (findings NOT reliable): {e}",
               file=sys.stderr)
@@ -517,6 +532,18 @@ def cmd_scan(args) -> int:
     # Stable identities for every finding, then the baseline comparison.
     assign_fingerprints(results, root)
     extra = {"root": str(root)}
+    scope = getattr(scanner, "last_project_scope", None)
+    if scope:
+        extra["scope"] = dict(scope)
+        if scope.get("truncated"):
+            print(f"Warning: the cross-file scope was cut at {scope['limit']} files "
+                  f"(--cross-file-limit); a file analysed without its imports can report "
+                  f"findings a full scan would not", file=sys.stderr)
+        if scope.get("complete") is False:
+            print("Warning: the cross-file analysis ran out of its budget before the "
+                  "summaries settled; some flows between files may be missing", file=sys.stderr)
+        if scope.get("cross_file") is False and scope.get("reason"):
+            print(f"Warning: {scope['reason']}", file=sys.stderr)
     if baseline_entries is not None:
         fixed = apply_baseline(results, baseline_entries, root)
         for r in results:
@@ -542,6 +569,10 @@ def cmd_scan(args) -> int:
         chunks = [format_text_result(result, min_severity) for result in results]
         if not results:
             chunks.append("No source files in the selection to scan.\n")
+        sc = extra.get("scope")
+        if sc and sc.get("cross_file"):
+            chunks.append(f"Cross-file analysis: {sc['files']} files"
+                          + (f" (from {sc['selected']} selected)" if narrowed else "") + "\n")
         if "baseline" in extra:
             b = extra["baseline"]
             chunks.append(f"Baseline {b['file']}: {b['new']} new, {b['baselined']} known, "

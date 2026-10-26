@@ -605,6 +605,7 @@ def cmd_verify(args) -> int:
         context = [v for f in files for key in ("baselined", "suppressed")
                    for v in (f.get(key) or [])]
         root = doc.get("root") if isinstance(doc, dict) else None
+        scope = (doc.get("scope") or {}) if isinstance(doc, dict) else {}
     except Exception as e:
         print(f"Error reading findings: {e}", file=sys.stderr)
         return 2
@@ -613,7 +614,9 @@ def cmd_verify(args) -> int:
         return 2
     try:
         verdicts = verify_findings(findings, args.id, timeout_ms=args.timeout,
-                                   context=context, root=root)
+                                   context=context, root=root,
+                                   cross_file=bool(scope.get("cross_file")),
+                                   cross_file_limit=scope.get("limit"))
     except VerifyError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2

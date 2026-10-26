@@ -85,6 +85,17 @@ def relative_path(filename: Union[str, Path], root: Path) -> str:
         return p.as_posix()
 
 
+def normalize_source(name: Optional[str]) -> str:
+    """A taint source's name without the frontends' counters. A value that came
+    straight from a call has a synthetic name (`__nested_1`, `$st_3`) numbered
+    by how many temporaries the function created before it, so it changes
+    whenever unrelated code is added above; the digits are not identity."""
+    name = name or ""
+    if name.startswith(("$", "__")):
+        return re.sub(r"\d+", "#", name)
+    return name
+
+
 def normalize_procedure(name: Optional[str]) -> str:
     name = name or ""
     m = _SYNTHETIC_INDEX.match(name)
@@ -99,7 +110,7 @@ def _digest(*parts: str) -> str:
 
 def loose_key(rel_path: str, v: "Vulnerability") -> str:
     return _digest(f"v{FINGERPRINT_VERSION}", rel_path, v.cwe_id or v.type.value,
-                   normalize_procedure(v.procedure), v.source_var or "", v.sink_type or "")
+                   normalize_procedure(v.procedure), normalize_source(v.source_var), v.sink_type or "")
 
 
 def _read_lines(path: str) -> List[str]:

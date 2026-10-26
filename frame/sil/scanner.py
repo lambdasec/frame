@@ -496,6 +496,11 @@ DEFAULT_EXCLUDED_SCAN_DIRS: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset({
 })
 
 
+# Files a cross-file analysis may span. A directory scan over this many Python
+# and JS/TS files analyses each file alone (with a warning); a `--changed` scan
+# keeps the files nearest the change.
+DEFAULT_CROSS_FILE_LIMIT = 2000
+
 _SEVERITY_ORDER = {
     Severity.CRITICAL: 5,
     Severity.HIGH: 4,
@@ -941,6 +946,10 @@ class FrameScanner:
 
         # Initialize frontend
         self.frontend = self._get_frontend(language)
+        # Set while a directory scan runs with cross-file analysis (`ProjectContext`),
+        # and what it covered (for the CLI to report).
+        self._project: Any = None
+        self.last_project_scope: Optional[Dict[str, Any]] = None
 
         # Initialize verifier
         if verify:
@@ -981,13 +990,18 @@ class FrameScanner:
             # (LLM-tier findings only -- no sound symbolic analysis for this language).
             return None
 
-    def scan(self, source_code: str, filename: str = "<unknown>") -> ScanResult:
+    def scan(self, source_code: str, filename: str = "<unknown>",
+             program: Optional[Program] = None, translator: Any = None) -> ScanResult:
         """
         Scan source code for vulnerabilities.
 
         Args:
             source_code: Source code string
             filename: Filename for reporting
+            program: The file's already-translated SIL (a project scan translates
+                every file once, up front); parsed here when omitted
+            translator: With `program`, the project's translator for this file,
+                which resolves calls into other files and holds the summaries
 
         Returns:
             ScanResult with vulnerabilities found
@@ -1027,7 +1041,8 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] Parsing {filename}...")
 
-            program = self.frontend.translate(source_code, filename)
+            if program is None:
+                program = self.frontend.translate(source_code, filename)
             result.procedures_analyzed = len(program.procedures)
 
             if self.verbose:
@@ -1037,7 +1052,8 @@ class FrameScanner:
             if self.verbose:
                 print(f"[Scanner] Generating vulnerability checks...")
 
-            translator = SILTranslator(program, verbose=self.verbose)
+            if translator is None:
+                translator = SILTranslator(program, verbose=self.verbose)
             checks = translator.translate_program()
 
             if self.verbose:
@@ -1260,6 +1276,11 @@ class FrameScanner:
                 "Skipped: file looks generated or minified (extremely long lines)")
             return result
 
+        if self._project is not None:
+            translator = self._project.translator_for(path)
+            if translator is not None:
+                return self.scan(source_code, str(path), program=translator.program,
+                                 translator=translator)
         return self.scan(source_code, str(path))
 
     @staticmethod
@@ -1320,7 +1341,9 @@ class FrameScanner:
     def scan_directory(self, dirpath: str, pattern: Optional[str] = "**/*.py",
                         exclude_dirs: Optional[Iterable[Union[str, Tuple[str, ...]]]] = None,
                         extensions: Optional[Iterable[str]] = None,
-                        only_files: Optional[Iterable[Union[str, Path]]] = None
+                        only_files: Optional[Iterable[Union[str, Path]]] = None,
+                        cross_file: bool = True,
+                        cross_file_limit: int = DEFAULT_CROSS_FILE_LIMIT
                         ) -> List[ScanResult]:
         """
         Scan all matching files in a directory.
@@ -1334,7 +1357,16 @@ class FrameScanner:
                 (e.g. `language_extensions("java")`).
             only_files: Scan only these files (e.g. what `git diff` names),
                 still subject to the pattern/extensions and the excludes. Files
-                outside `dirpath` are ignored.
+                outside `dirpath` are ignored. With `cross_file` the scan widens
+                to the files a change to these can affect (see below).
+            cross_file: Follow taint across the imports of Python and JS/TS
+                files (`ProjectIndex`): a handler that passes request data to a
+                helper in another file, or calls a helper that returns it, is
+                one flow. With `only_files`, the scan covers those files, the
+                files that import them (their callee summaries changed), and
+                everything those import (so each is analysed exactly as a full
+                scan would). `last_project_scope` says what was done.
+            cross_file_limit: Most files a cross-file analysis spans.
             exclude_dirs: Directory names (or component-sequence tuples) to
                 skip anywhere under `dirpath` (matched against path
                 components relative to `dirpath`, so a scan root that itself
@@ -1351,6 +1383,7 @@ class FrameScanner:
         dir_path = Path(dirpath)
         excluded_dirs = (DEFAULT_EXCLUDED_SCAN_DIRS if exclude_dirs is None
                           else frozenset(exclude_dirs))
+        self.last_project_scope = None
 
         # The agentic detector can trace flows across files with its read_file and
         # grep tools, but only when it has a repo root; without one it silently
@@ -1369,29 +1402,102 @@ class FrameScanner:
             self.llm_detect = False          # suppress the per-file LLM pass
 
         try:
-            if only_files is not None:
-                candidates = self._selected_files(dir_path, only_files, pattern, extensions)
-            elif pattern is None:
-                exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
-                candidates = sorted(p for p in dir_path.rglob("*")
-                                    if p.suffix.lower() in exts)
-            else:
-                candidates = dir_path.glob(pattern)
+            candidates = self._candidate_files(dir_path, pattern, extensions,
+                                               excluded_dirs, only_files)
+            if cross_file:
+                candidates = self._start_project(
+                    dir_path, pattern, extensions, excluded_dirs,
+                    candidates, only_files is not None, cross_file_limit)
             for filepath in candidates:
-                if not filepath.is_file():
-                    continue
-                if self._is_excluded_dir_member(filepath, dir_path, excluded_dirs):
-                    continue
                 result = self.scan_file(str(filepath))
                 results.append(result)
         finally:
             self.llm_detect = per_file_detect
+            self._project = None
 
         if repo_scale:
             selected = None if only_files is None else {Path(r.filename).resolve() for r in results}
             results = self._apply_repo_scale_detect(dir_path, results, excluded_dirs, selected)
 
         return results
+
+    def _candidate_files(self, dir_path: Path, pattern: Optional[str],
+                         extensions: Optional[Iterable[str]],
+                         excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]],
+                         only_files: Optional[Iterable[Union[str, Path]]] = None) -> List[Path]:
+        """The files a directory scan covers: the glob (or the supported
+        extensions), or `only_files` among them, minus excluded directories."""
+        if only_files is not None:
+            raw: Iterable[Path] = self._selected_files(dir_path, only_files, pattern, extensions)
+        elif pattern is None:
+            exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
+            raw = sorted(p for p in dir_path.rglob("*") if p.suffix.lower() in exts)
+        else:
+            raw = dir_path.glob(pattern)
+        return [p for p in raw
+                if p.is_file() and not self._is_excluded_dir_member(p, dir_path, excluded_dirs)]
+
+    def _start_project(self, dir_path: Path, pattern: Optional[str],
+                       extensions: Optional[Iterable[str]],
+                       excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]],
+                       selected: List[Path], narrowed: bool, limit: int) -> List[Path]:
+        """Build the cross-file project for this directory scan (sets
+        `self._project` and `last_project_scope`) and return the files to scan:
+        `selected` itself, or -- for a narrowed scan -- everything the selected
+        files can affect. Without at least two Python/JS/TS files, or over
+        `limit` files in a full scan, files are scanned alone."""
+        from frame.sil.project import (
+            ProjectContext, ProjectIndex, language_family)
+        universe = (self._candidate_files(dir_path, pattern, extensions, excluded_dirs)
+                    if narrowed else selected)
+        files = []
+        for p in universe:
+            if language_family(p) is None:
+                continue
+            try:
+                if is_generated_source(p.read_text(encoding="utf-8-sig")):
+                    continue
+            except (OSError, UnicodeError):
+                continue
+            files.append(p)
+        if len(files) < 2:
+            return selected
+        if not narrowed and len(files) > limit:
+            self.last_project_scope = {
+                "cross_file": False,
+                "reason": f"{len(files)} Python/JS/TS files exceed the cross-file limit "
+                          f"({limit}); each is analysed alone (--cross-file-limit raises it)"}
+            return selected
+
+        frontends: Dict[str, Any] = {}
+
+        def frontend_for(lang: str):
+            if lang not in frontends:
+                frontends[lang] = self._get_frontend(lang)
+            return frontends[lang]
+
+        index = ProjectIndex(dir_path.resolve(), files, lambda lang: frontend_for(lang).parser)
+        original = {p.resolve(): p for p in files}
+        to_scan = selected
+        scope_keys = list(index.modules)
+        truncated = False
+        if narrowed:
+            seeds = [k for k in (index.key_for(p) for p in selected) if k]
+            closure = index.closure(seeds, limit)
+            scope_keys, truncated = closure.files, closure.truncated
+            in_scope = [original[index.modules[k].path] for k in scope_keys
+                        if index.modules[k].path in original]
+            others = [p for p in selected if index.key_for(p) is None]
+            to_scan = in_scope + [p for p in others if p not in in_scope]
+        display = {k: str(original[index.modules[k].path]) for k in index.modules
+                   if index.modules[k].path in original}
+        self._project = ProjectContext.build(index, scope_keys, frontend_for,
+                                             verbose=self.verbose, display=display)
+        self.last_project_scope = {
+            "cross_file": True, "files": len(scope_keys), "selected": len(selected),
+            "truncated": truncated, "limit": limit,
+            "complete": not self._project.ipa.incomplete}
+        return to_scan
 
     @staticmethod
     def _selected_files(dir_path: Path, only_files: Iterable[Union[str, Path]],
