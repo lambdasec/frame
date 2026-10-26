@@ -34,6 +34,7 @@ from frame.sil.instructions import (
     TaintSource, TaintSink, Sanitize,
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
+from frame.sil.frontends._python_types import infer_canonicals
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.python_specs import PYTHON_SPECS
@@ -84,6 +85,7 @@ class PythonFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._imports = ImportTable()
+        self._try_depth = 0
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """
@@ -111,14 +113,45 @@ class PythonFrontend:
 
         self._imports = self._collect_imports(tree.root_node)
         program.imports = self._imports.as_dict()
+        self._dicts_are_queries = any(
+            v == m or v.startswith(m + ".") for v in self._imports.names.values()
+            for m in self._DOCUMENT_DB_MODULES)
 
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
 
+        infer_canonicals(tree.root_node, program, self._imports, self._get_text)
         annotate_program_calls(program, self._imports)
+        self._alias_specs_by_canonical(program)
         program.import_wildcards = list(self._imports.wildcards)
-        finish_program(program, self.packs)
+        finish_program(program, self.packs, source_code)
         return program
+
+    def _alias_specs_by_canonical(self, program: Program) -> None:
+        """The built-in specs are keyed by the fully qualified name (`lxml.etree.fromstring`),
+        but code calls them through the file's own import names (`from lxml import etree`,
+        `import xml.etree.ElementTree as ET`, `from os import system`). Make the written
+        name resolve to the spec of its canonical id, so the spec applies however it was
+        imported. Only names bound by an import are aliased, and a name the file defines
+        itself never is."""
+        imported = set(self._imports.names)
+        local = {n.split("#", 1)[0] for n in program.procedures}
+        for proc in program.procedures.values():
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    if not isinstance(instr, Call) or not instr.canonical:
+                        continue
+                    func = str(getattr(instr.func, "value", instr.func))
+                    if func == instr.canonical or func in program.library_specs or func in local:
+                        continue
+                    if func.split(".", 1)[0] not in imported:
+                        continue
+                    spec = program.library_specs.get(instr.canonical)
+                    if spec is not None:
+                        program.library_specs[func] = spec
+
+    _DOCUMENT_DB_MODULES = ("pymongo", "motor", "mongoengine", "bson")
+    _dicts_are_queries = False
 
     def _collect_imports(self, root: TSNode) -> ImportTable:
         """Local name -> qualified name for every `import` in the file (function-local
@@ -395,6 +428,7 @@ class PythonFrontend:
             or any(t in decs for t in (".route(", ".get(", ".post(", ".put(", ".delete(", ".patch("))
             or func_name.startswith("resolve_") or func_name == "mutate"
             or "request." in body_text
+            or self._is_django_view_signature(params)
         )
         source_params = set(route_params)
         if is_handler:
@@ -425,6 +459,18 @@ class PythonFrontend:
 
         self._current_proc = None
         return proc
+
+    def _is_django_view_signature(self, params) -> bool:
+        """`def view(request, pk)` / `def get(self, request, slug)` in a file that imports
+        Django (or DRF): Django passes the URL's captured groups as the arguments after
+        `request`, and urls.py routes by name so the function carries no decorator."""
+        if not any(v == "django" or v.startswith(("django.", "rest_framework"))
+                   for v in self._imports.names.values()):
+            return False
+        names = [p[0].name for p in params]
+        if names[:1] in (["self"], ["cls"]):
+            names = names[1:]
+        return len(names) > 1 and names[0] == "request"
 
     @staticmethod
     def _route_path_param_names(decorator_texts: List[str]) -> List[str]:
@@ -475,6 +521,57 @@ class PythonFrontend:
                 return True
         return False
 
+    def _source_rule_index(self, program_imports_ready: bool = True):
+        """Index of the source rules of the packs detected in this file (built once per
+        translate); used to recognise `x = request.query.id` style attribute sources."""
+        idx = getattr(self, "_attr_source_index", None)
+        if idx is not None and idx[0] is self._imports:
+            return idx[1]
+        from ..packs.apply import _RuleIndex, _detected, default_packs
+        packs = self.packs if getattr(self, "packs", None) is not None else default_packs()
+        index = _RuleIndex()
+        view = type("V", (), {})()
+        view.imports = self._imports.as_dict()
+        view.import_wildcards = list(self._imports.wildcards)
+        view.procedures, view.class_info = {}, {}
+        for pack in packs.for_language("python"):
+            if _detected(pack, view):
+                for rule in pack.rules:
+                    if rule.role == "source":
+                        index.add(pack, rule)
+        self._attr_source_index = (self._imports, index)
+        return index
+
+    def _attribute_source_instrs(self, target: str, node: TSNode, loc: Location) -> bool:
+        """`x = request.query.id` / `x = request.data`: an attribute read of a request
+        container is a source when a built-in spec or a detected pack says its prefix is one.
+        Lowered to a source call on that prefix so the ordinary machinery taints `x`."""
+        parts: List[str] = []
+        cur = node
+        while cur is not None and cur.type == "attribute":
+            attr = cur.child_by_field_name("attribute")
+            parts.insert(0, self._get_text(attr) if attr else "")
+            cur = cur.child_by_field_name("object")
+        if cur is None or cur.type != "identifier" or not all(parts):
+            return False
+        parts.insert(0, self._get_text(cur))
+        index = self._source_rule_index()
+        for n in range(len(parts) - 1, 0, -1):          # longest prefix first, at least `a.b`
+            prefix = ".".join(parts[:n + 1])
+            spec = self.specs.get(prefix)
+            hit = bool(spec and spec.is_taint_source())
+            if not hit:
+                hit = bool(index.match(self._imports.resolve(prefix), prefix))
+            if not hit:
+                continue
+            ret_id = self._new_ident(target)
+            self._add_instrs([
+                Call(loc=loc, ret=(ret_id, Typ.unknown_type()), func=ExpConst.string(prefix), args=[]),
+                Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)),
+            ])
+            return True
+        return False
+
     def _translate_subscript_source_assignment(
         self, target: str, subscript_node: TSNode, loc: Location
     ) -> Optional[List[Instr]]:
@@ -492,7 +589,14 @@ class PythonFrontend:
         func_name = f"{base_text}.__getitem__"
         spec = self.specs.get(func_name)
         if not (spec and spec.is_taint_source()):
-            return None
+            # a source rule of a detected pack on the container itself
+            # (`self.request.params["doc"]` with a rule on `request.params`)
+            if re.fullmatch(r"[A-Za-z_][\w.]*", base_text) and \
+                    self._source_rule_index().match(self._imports.resolve(base_text), base_text):
+                spec = ProcSpec(is_source="user", description=f"{base_text} (framework request data)")
+                func_name = base_text
+            else:
+                return None
 
         key_exp = self._translate_expression(key)
         ret_id = self._new_ident(target)
@@ -660,6 +764,20 @@ class PythonFrontend:
         elif node.type == "match_statement":
             self._translate_match(node)
 
+        elif node.type == "raise_statement":
+            # `raise falcon.HTTPFound(url)` / `raise web.HTTPFound(url)`: the exception
+            # constructor is a call (redirects and error responses are raised).
+            for child in node.named_children:
+                child = self._unwrap_await(child)
+                if child.type == "call":
+                    self._add_instrs(self._translate_call_expr(child))
+                    break
+            # A raise ends the path. Inside a `try` the handlers are lowered as straight-line
+            # code after the body, so a Return there would cut off everything that follows
+            # the whole try statement: only a raise outside any try is a path end.
+            if self._try_depth == 0:
+                self._add_instr(Return(loc=self._get_location(node), value=None))
+
         elif node.type == "pass_statement":
             pass  # No SIL needed
 
@@ -768,6 +886,9 @@ class PythonFrontend:
                 exp = self._translate_expression(right)
                 self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp))
 
+        elif right.type == "attribute" and self._attribute_source_instrs(target_name, right, loc):
+            pass
+
         elif right.type == "formatted_string" or right.type == "f_string":
             # x = f"..."
             instrs = self._translate_fstring_assignment(target_name, right, loc)
@@ -826,6 +947,8 @@ class PythonFrontend:
 
         target_name = self._get_text(target)
         key_exp = self._translate_expression(key)
+        # `ctx["banner"] = mark_safe(user)`: the calls in the stored value still happen
+        self._add_instrs(self._extract_all_calls_from_node(value_node, loc))
         value_exp = self._translate_expression(value_node)
 
         # Generate synthetic __setitem__ call: target.__setitem__(key, value)
@@ -888,6 +1011,12 @@ class PythonFrontend:
                 method_name = self._get_text(attr_name)
                 # Create method call name like "var.method"
                 func_name = f"{inner_var}.{method_name}"
+                ctor = self._constructor_text(inner_call)
+                if ctor is not None:
+                    # `Repo(session).search(q)`: keep the written form so the project
+                    # index can resolve the method on the constructed class (a `__nested`
+                    # temporary carries no class evidence).
+                    func_name = f"{ctor}.{method_name}"
             else:
                 func_name = self._get_call_name(call_node)
         elif func_node and func_node.type == "call":
@@ -909,6 +1038,7 @@ class PythonFrontend:
                 instrs.extend(nested_instrs)
                 args_exp.append((ExpVar(PVar(nested_var)), Typ.unknown_type()))
             else:
+                instrs.extend(self._lost_call_instrs(arg, loc))
                 args_exp.append((self._translate_expression(arg), Typ.unknown_type()))
 
         # Create return identifier
@@ -966,6 +1096,17 @@ class PythonFrontend:
 
         return instrs
 
+    def _constructor_text(self, call_node: TSNode) -> Optional[str]:
+        """`Repo(session)` as written when it looks like a class construction (a plain or
+        dotted name whose last segment is capitalised); None otherwise."""
+        fn = call_node.child_by_field_name("function")
+        if fn is None or fn.type not in ("identifier", "attribute"):
+            return None
+        name = self._get_text(fn)
+        if not re.fullmatch(r"[A-Za-z_][\w.]*", name) or not name.rsplit(".", 1)[-1][:1].isupper():
+            return None
+        return f"{name}({self._get_text(call_node.child_by_field_name('arguments'))[1:-1]})"
+
     def _expand_nested_call(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
         """Expand a nested call and return (instructions, result_var_name)"""
         # Generate a temp variable for the result
@@ -1020,6 +1161,35 @@ class PythonFrontend:
         walk(node)
         return instrs
 
+    # Argument shapes whose lowering keeps no call (a dict is `null`, a list its
+    # first element, a comprehension / ternary / splat its first part), so a call
+    # inside them -- `jsonify({"rows": find(q)})`, `render(r, "t", {"x": f(v)})` --
+    # was never executed: its callee's sinks were unreachable and no entry taint
+    # was recorded for it.
+    _CALL_LOSING_ARGS = frozenset({
+        "dictionary", "list", "tuple", "set", "list_comprehension", "set_comprehension",
+        "dictionary_comprehension", "generator_expression", "conditional_expression",
+        "list_splat", "dictionary_splat", "parenthesized_expression"})
+
+    def _lost_call_instrs(self, arg: TSNode, loc: Location) -> List[Instr]:
+        """Call instructions for the calls inside an argument whose own lowering drops
+        them. The argument's value is unchanged: only the calls are made visible."""
+        if arg.type not in self._CALL_LOSING_ARGS:
+            return []
+        binds: List[Instr] = []
+        stack = [arg]
+        while stack:                      # `[f(x) for x in items]`: x is an element of items
+            n = stack.pop()
+            if n.type == "for_in_clause":
+                left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                names = ([left] if left is not None and left.type == "identifier" else
+                         [c for c in (left.named_children if left is not None else ()) if c.type == "identifier"])
+                if right is not None:
+                    elem = ExpCall(ExpConst.string("next"), [self._translate_expression(right)])
+                    binds += [Assign(loc=loc, id=PVar(self._get_text(nm)), exp=elem) for nm in names]
+            stack.extend(n.children)
+        return binds + self._extract_all_calls_from_node(arg, loc)
+
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone call: func(args)"""
         instrs = []
@@ -1028,6 +1198,8 @@ class PythonFrontend:
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        for a in args:
+            instrs.extend(self._lost_call_instrs(a, loc))
 
         # Build Call instruction (no return)
         call_instr = Call(
@@ -1444,22 +1616,26 @@ class PythonFrontend:
         if self._current_proc:
             self._current_proc.has_exception_handler = True
 
-        # Simplified: just translate the body
-        body = node.child_by_field_name("body")
-        if body:
-            self._translate_block(body)
+        self._try_depth += 1
+        try:
+            # Simplified: just translate the body
+            body = node.child_by_field_name("body")
+            if body:
+                self._translate_block(body)
 
-        # Also translate handlers (they might contain vulnerable code)
-        for child in node.children:
-            if child.type == "except_clause":
-                body = child.child_by_field_name("body")
-                if body:
-                    self._translate_block(body)
+            # Also translate handlers (they might contain vulnerable code)
+            for child in node.children:
+                if child.type == "except_clause":
+                    body = child.child_by_field_name("body")
+                    if body:
+                        self._translate_block(body)
 
-            elif child.type == "finally_clause":
-                body = child.child_by_field_name("body")
-                if body:
-                    self._translate_block(body)
+                elif child.type == "finally_clause":
+                    body = child.child_by_field_name("body")
+                    if body:
+                        self._translate_block(body)
+        finally:
+            self._try_depth -= 1
 
     def _translate_with(self, node: TSNode) -> None:
         """Translate with statement: with expr as var: body"""
@@ -1784,7 +1960,13 @@ class PythonFrontend:
             return elements[0] if elements else ExpConst.null()
 
         elif node.type == "dictionary":
-            # {k: v} - simplified
+            # {k: v} - simplified: a dict carries nothing. In a file that talks to a
+            # document database the dict IS the query ({"user": u, "pw": p} reaches find()),
+            # so it carries its values (nested dicts and `$where` strings included).
+            if self._dicts_are_queries:
+                parts = self._aggregate_parts(node)
+                if parts:
+                    return ExpStringConcat(parts)
             return ExpConst.null()
 
         elif node.type == "formatted_string" or node.type == "f_string":
@@ -1920,7 +2102,52 @@ class PythonFrontend:
         name = self._get_text(func)
         if name in self._HTML_RESPONSE_CALLS and self._has_non_html_content_type(call_node):
             return name + self._NON_HTML_RESPONSE_SUFFIX
+        if name.rsplit(".", 1)[-1] in self._LXML_PARSE_FUNCS and self._uses_hardened_xml_parser(call_node):
+            return name + self._HARDENED_PARSER_SUFFIX
         return name
+
+    # lxml parse functions take the parser as their second argument (or `parser=`). A parser
+    # built with `resolve_entities=False` does not expand external entities: the call is renamed
+    # so the XXE sink spec does not match it (the same device as the non-HTML response above).
+    _LXML_PARSE_FUNCS = frozenset({"fromstring", "XML", "parse", "fromstringlist", "iterparse"})
+    _HARDENED_PARSER_SUFFIX = "<hardened-parser>"
+    _SAFE_ENTITIES = re.compile(r"resolve_entities\s*=\s*(False|0)\b")
+
+    def _uses_hardened_xml_parser(self, call_node: TSNode) -> bool:
+        args = [c for c in (call_node.child_by_field_name("arguments").children
+                            if call_node.child_by_field_name("arguments") else [])
+                if c.type not in ("(", ")", ",", "comment")]
+        parser = None
+        for i, a in enumerate(args):
+            if a.type == "keyword_argument":
+                key = a.child_by_field_name("name")
+                if key is not None and self._get_text(key) == "parser":
+                    parser = a.child_by_field_name("value")
+            elif i == 1:
+                parser = a
+        if parser is None:
+            return False
+        if parser.type == "call":
+            return bool(self._SAFE_ENTITIES.search(self._get_text(parser)))
+        if parser.type != "identifier":
+            return False
+        var = self._get_text(parser)
+        scope = call_node.parent
+        while scope is not None and scope.type not in ("function_definition", "module"):
+            scope = scope.parent
+        verdicts = []
+        stack = [scope] if scope is not None else []
+        while stack:
+            n = stack.pop()
+            if n.type == "assignment":
+                left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                if left is not None and right is not None and left.type == "identifier" \
+                        and self._get_text(left) == var:
+                    verdicts.append(right.type == "call" and "XMLParser" in self._get_text(right)
+                                    and bool(self._SAFE_ENTITIES.search(self._get_text(right))))
+            if n is scope or n.type not in ("function_definition", "class_definition"):
+                stack.extend(n.children)
+        return bool(verdicts) and all(verdicts)
 
     def _has_non_html_content_type(self, call_node: TSNode) -> bool:
         args_node = call_node.child_by_field_name("arguments")

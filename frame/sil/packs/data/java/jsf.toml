@@ -1,0 +1,47 @@
+[pack]
+name = "jsf"
+language = "java"
+description = "JavaServer Faces managed beans: input components fill bean fields; FacesContext / ExternalContext request maps, redirects, response writer and EL evaluation"
+detect = { imports = ["javax.faces", "jakarta.faces"] }
+
+# Input components write straight into the bean (`value="#{catalog.term}"`) and
+# @ManagedProperty("#{param.id}") copies a request parameter into a field, so the non-injected
+# fields of a bean are request data in every method of the bean.
+[[entrypoint]]
+id = "managed-bean-fields"
+class_annotation = ["Named", "ManagedBean", "RequestScoped", "ViewScoped", "SessionScoped", "ConversationScoped",
+                    "javax.faces.bean.*", "jakarta.faces.bean.*", "javax.faces.view.ViewScoped", "jakarta.faces.view.ViewScoped"]
+method = ["*"]
+fields = true
+
+[[source]]
+call = [
+    "javax.faces.context.ExternalContext.getRequestParameterMap", "jakarta.faces.context.ExternalContext.getRequestParameterMap",
+    "javax.faces.context.ExternalContext.getRequestParameterValuesMap", "jakarta.faces.context.ExternalContext.getRequestParameterValuesMap",
+    "javax.faces.context.ExternalContext.getRequestParameterNames", "jakarta.faces.context.ExternalContext.getRequestParameterNames",
+    "javax.faces.context.ExternalContext.getRequestHeaderMap", "jakarta.faces.context.ExternalContext.getRequestHeaderMap",
+    "javax.faces.context.ExternalContext.getRequestHeaderValuesMap", "jakarta.faces.context.ExternalContext.getRequestHeaderValuesMap",
+    "javax.faces.context.ExternalContext.getRequestCookieMap", "jakarta.faces.context.ExternalContext.getRequestCookieMap",
+    "javax.faces.context.ExternalContext.getRequestPathInfo", "jakarta.faces.context.ExternalContext.getRequestPathInfo",
+]
+kind = "user_input"
+
+[[sink]]
+call = ["javax.faces.context.ExternalContext.redirect", "jakarta.faces.context.ExternalContext.redirect"]
+kind = "redirect"
+description = "ExternalContext.redirect sends the browser to the URL"
+
+[[sink]]
+call = ["javax.faces.context.ExternalContext.dispatch", "jakarta.faces.context.ExternalContext.dispatch"]
+kind = "path"
+description = "ExternalContext.dispatch forwards to the given path"
+
+[[sink]]
+call = [
+    "javax.faces.application.Application.evaluateExpressionGet", "jakarta.faces.application.Application.evaluateExpressionGet",
+    "javax.el.ExpressionFactory.createValueExpression", "jakarta.el.ExpressionFactory.createValueExpression",
+    "javax.el.ExpressionFactory.createMethodExpression", "jakarta.el.ExpressionFactory.createMethodExpression",
+]
+kind = "el"
+args = [1]
+description = "EL evaluates the expression string (method calls, class access)"

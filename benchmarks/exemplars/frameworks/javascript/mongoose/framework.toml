@@ -1,0 +1,4 @@
+language = "javascript"
+packs = []
+requires_pack = false
+description = "Mongoose: operator injection through req.body / req.query objects, $where"

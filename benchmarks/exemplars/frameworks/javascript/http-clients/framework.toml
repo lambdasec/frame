@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/http-clients"]
+requires_pack = false
+description = "SSRF through axios / got / node-fetch / superagent / needle"

@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/restify"]
+requires_pack = true
+description = "Restify handlers: req.params / query / body, res.sendRaw / redirect"

@@ -1,0 +1,23 @@
+[pack]
+name = "libcurl"
+language = "c"
+description = "libcurl: attacker-chosen URLs (SSRF) and disabled TLS verification"
+detect = { imports = ["curl/"] }
+
+# The C frontend gives curl_easy_setopt an option-qualified canonical id, so a rule
+# can target one option: `curl_easy_setopt:CURLOPT_URL`, and
+# `curl_easy_setopt:<OPTION>:off` when the value written is 0 / false.
+[[sink]]
+call = ["curl_easy_setopt:CURLOPT_URL",
+        "curl_multi_setopt:CURLOPT_URL"]
+args = [2]
+kind = "ssrf"
+description = "libcurl fetches the URL set with CURLOPT_URL"
+
+[[sink]]
+call = ["curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off", "curl_easy_setopt:CURLOPT_SSL_VERIFYHOST:off",
+        "curl_easy_setopt:CURLOPT_PROXY_SSL_VERIFYPEER:off", "curl_easy_setopt:CURLOPT_PROXY_SSL_VERIFYHOST:off",
+        "curl_easy_setopt:CURLOPT_SSL_VERIFYSTATUS:off"]
+args = []
+kind = "cert_validation"
+description = "libcurl TLS certificate verification disabled"

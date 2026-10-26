@@ -162,7 +162,13 @@ def _resolve_sink_args(rule: Rule, call: Optional[Call]) -> Optional[List[int]]:
     args = list(rule.args)
     if rule.arg_names and call.kwarg_names:
         args += [i for i, n in enumerate(call.kwarg_names) if n in rule.arg_names]
-    return sorted(set(a for a in args if a < len(call.args))) if call.args else sorted(set(args))
+    if not call.args:
+        return sorted(set(args))
+    resolved = sorted(set(a for a in args if a < len(call.args)))
+    # a rule that names argument positions this call does not have (a variadic sink called
+    # with fewer arguments) does not apply: an empty list would read as "the call itself is
+    # the vulnerability" to the translator
+    return resolved if resolved or not args else None
 
 
 def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
@@ -214,6 +220,21 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
         spec = _merge_spec(program.library_specs.get(n), [(pack, rule)], None)
         if spec is not None:
             program.library_specs[n] = spec
+    # A canonical id is also written in this file under the names its imports give it
+    # (`acme.text.sql_clean` as `text.sql_clean`, or `sql_clean` after a from-import).
+    for pack in packs:
+        for rule in pack.rules:
+            for canon in rule.call:
+                if any(ch in canon for ch in "*?["):
+                    continue
+                for local, qualified in program.imports.items():
+                    if canon == qualified or canon.startswith(qualified + "."):
+                        written = local + canon[len(qualified):]
+                        if written in program.procedures:
+                            continue
+                        spec = _merge_spec(program.library_specs.get(written), [(pack, rule)], None)
+                        if spec is not None:
+                            program.library_specs[written] = spec
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for instr in node.instrs:
@@ -229,8 +250,11 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
                 instr.pack_spec = spec
                 # The same call written inside an expression (no Call instruction) is
                 # looked up by name: make that name resolve to the same spec.
+                # A conditional rule (`when_kwarg`) holds for this call only: registering its spec
+                # by name would hand it to every other call of the same name.
                 if func and func not in program.library_specs and instr.canonical \
-                        and func not in program.procedures:
+                        and ":" not in instr.canonical and func not in program.procedures \
+                        and not any(r.when_kwarg is not None for _, r in matches):
                     program.library_specs[func] = spec
 
 
@@ -345,8 +369,13 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
                 description=f"{pack.name}: {e.id} entry point (attacker-controlled)"))
 
 
-def finish_program(program: Program, packs: Optional[PackSet] = None) -> Program:
-    """Apply the packs for `program.language`. Idempotent per call instruction."""
+def finish_program(program: Program, packs: Optional[PackSet] = None,
+                   source: Optional[str] = None) -> Program:
+    """Record source-level facts, then apply the packs for `program.language`.
+    Idempotent per call instruction."""
+    if source is not None:
+        from ..source_facts import constant_regexes
+        program.constant_regexes = constant_regexes(source, program.language)
     packs = packs if packs is not None else default_packs()
     active = [p for p in packs.for_language(program.language) if _detected(p, program)]
     if not active:

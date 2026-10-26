@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/nhibernate", "csharp/entity-framework6"]
+requires_pack = true
+description = "MVC 5 controller over NHibernate (native SQL, HQL) and Entity Framework 6 (Database.SqlQuery, ExecuteSqlCommand)"

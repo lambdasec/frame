@@ -1,0 +1,16 @@
+[pack]
+name = "graphql"
+language = "javascript"
+description = "GraphQL resolvers (Apollo Server, graphql-tools, graphql-yoga, mercurius): args are attacker data"
+
+# The frontend registers the functions of `Query: {}` / `Mutation: {}` / `Subscription: {}` and of a
+# `resolvers` object as "graphql.resolver". Resolver signature: (parent, args, context, info);
+# the parent object, context and info are server-side, `args` (often destructured) is the client's.
+[[entrypoint]]
+id = "resolver-args"
+registered_via = ["graphql.resolver"]
+params = "all"
+exclude_param = ["_", "__", "___", "parent", "_parent", "root", "_root", "obj", "source", "_source", "info",
+                 "_info", "context", "_context", "ctx", "_ctx", "dataSources", "dataSource", "loaders",
+                 "services", "user", "req", "res", "prisma", "db", "models", "pubsub"]
+description = "GraphQL resolver arguments"

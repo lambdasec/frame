@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/node-core", "javascript/redis"]
+requires_pack = true
+description = "libxmljs noent XXE, jsonwebtoken decode vs verify, redis EVAL script injection"

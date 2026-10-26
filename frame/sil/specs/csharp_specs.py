@@ -81,6 +81,12 @@ ASPNET_SOURCE_SPECS = {
     "Request.Body": _source("user", "ASP.NET request body"),
     "Request.Path": _source("user", "ASP.NET request path"),
     "Request.QueryString": _source("user", "ASP.NET query string"),
+    "Request.Params": _source("user", "ASP.NET combined query/form/cookie/server-variable collection"),
+    "Request.ServerVariables": _source("user", "ASP.NET server variables (headers, path info)"),
+    "Request.Item": _source("user", "ASP.NET Request.Item indexer"),
+    "Request.Host": _source("user", "ASP.NET Host header (attacker-controlled)"),
+    "Request.RouteValues": _source("user", "ASP.NET route values"),
+    "RouteData.Values": _source("user", "ASP.NET route values"),
 
     # Controller action parameters
     "[FromQuery]": _source("user", "ASP.NET FromQuery parameter"),
@@ -226,7 +232,7 @@ PROCESS_SPECS = {
     # Process.Start(fileName) or Process.Start(fileName, arguments)
     # Both arguments can be injection vectors
     "Process.Start": _sink("command", [0, 1], "Process.Start (command injection)"),
-    "ProcessStartInfo": _sink("command", [0], "ProcessStartInfo (command injection)"),
+    "ProcessStartInfo": _sink("command", [0, 1], "ProcessStartInfo (command injection: file name or arguments)"),
     "ProcessStartInfo.FileName": _sink("command", [0], "ProcessStartInfo.FileName (command injection)"),
     "ProcessStartInfo.Arguments": _sink("command", [0], "ProcessStartInfo.Arguments (command injection)"),
 
@@ -320,8 +326,8 @@ SERIALIZATION_SPECS = {
     # settings, so keep them taint-required (sink on the data argument).
     "JsonConvert.DeserializeObject": _propagator([0], "JsonConvert.DeserializeObject"),
     "JsonSerializer.Deserialize": _propagator([0], "JsonSerializer.Deserialize"),
-    "DataContractSerializer.ReadObject": _sink("deserialize", [0], "DataContractSerializer.ReadObject"),
-    "XmlSerializer.Deserialize": _sink("deserialize", [0], "XmlSerializer.Deserialize"),
+    # DataContractSerializer / XmlSerializer with a fixed type are safe on attacker data (the type, not the
+    # payload, selects the classes); an attacker-chosen *type* is caught by Type.GetType / Activator sinks.
 }
 
 # =============================================================================
@@ -343,9 +349,9 @@ LDAP_SPECS = {
 REGEX_SPECS = {
     # Regex (ReDoS)
     "Regex": _sink("regex", [0], "Regex (potential ReDoS)"),
-    "Regex.Match": _sink("regex", [0], "Regex.Match (potential ReDoS)"),
-    "Regex.Replace": _sink("regex", [0], "Regex.Replace (potential ReDoS)"),
-    "Regex.IsMatch": _sink("regex", [0], "Regex.IsMatch (potential ReDoS)"),
+    "Regex.Match": _sink("regex", [1], "Regex.Match (the pattern is attacker-controlled: ReDoS)"),
+    "Regex.Replace": _sink("regex", [1], "Regex.Replace (the pattern is attacker-controlled: ReDoS)"),
+    "Regex.IsMatch": _sink("regex", [1], "Regex.IsMatch (the pattern is attacker-controlled: ReDoS)"),
 }
 
 # =============================================================================

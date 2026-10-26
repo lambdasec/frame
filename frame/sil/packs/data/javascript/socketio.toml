@@ -1,0 +1,13 @@
+[pack]
+name = "socketio"
+language = "javascript"
+description = "Socket.IO / ws event handlers: the payload a client emits is attacker data"
+detect = { imports = ["socket.io", "ws", "engine.io", "uWebSockets.js", "sockjs", "websocket"] }
+
+[[entrypoint]]
+id = "socket-event"
+registered_via = ["socket.on", "socket.once", "socket.onAny", "socket.prependAny", "socket.addListener",
+                  "client.on", "conn.on", "connection.on", "ws.on", "ws.once", "ws.addEventListener", "*.socket.on"]
+params = "all"
+exclude_param = ["ack", "callback", "cb", "fn", "next", "done", "socket", "reason", "err", "error", "event"]
+description = "message received from a socket client"

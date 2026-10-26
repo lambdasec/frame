@@ -1,0 +1,22 @@
+[pack]
+name = "typeorm"
+language = "javascript"
+description = "TypeORM raw queries and QueryBuilder string fragments"
+detect = { imports = ["typeorm", "@nestjs/typeorm", "mikro-orm", "@mikro-orm/core"] }
+
+# repository.query(sql) / manager.query / dataSource.query / queryRunner.query
+[[sink]]
+name = ["query"]
+args = [0]
+kind = "sql"
+description = "TypeORM raw SQL"
+
+# createQueryBuilder().where("a.name = '" + x + "'") -- a string with named parameters
+# (`:name`) and a parameters object is the safe form
+[[sink]]
+name = ["where", "andWhere", "orWhere", "having", "andHaving", "orHaving", "orderBy", "addOrderBy",
+        "groupBy", "addGroupBy"]
+args = [0]
+kind = "sql"
+description = "TypeORM QueryBuilder clause (string is SQL text)"
+

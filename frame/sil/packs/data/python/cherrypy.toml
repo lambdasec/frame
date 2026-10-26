@@ -1,0 +1,30 @@
+[pack]
+name = "cherrypy"
+language = "python"
+description = "CherryPy exposed methods, request parameters, redirects and static file serving"
+detect = { imports = ["cherrypy"] }
+
+# Every @cherrypy.expose method receives query / form / path segments as arguments.
+[[entrypoint]]
+id = "exposed"
+decorator = ["cherrypy.expose", "expose", "*.expose"]
+params = "all"
+exclude_param = ["self"]
+
+[[source]]
+name = ["cherrypy.request.params", "cherrypy.request.params.get", "cherrypy.request.cookie",
+        "cherrypy.request.headers", "cherrypy.request.headers.get", "cherrypy.request.body.read",
+        "cherrypy.request.json", "cherrypy.request.query_string", "cherrypy.request.params.__getitem__",
+        "cherrypy.request.headers.__getitem__"]
+kind = "user_input"
+
+[[sink]]
+call = ["cherrypy.HTTPRedirect", "cherrypy._cperror.HTTPRedirect", "cherrypy.lib.httputil.HTTPRedirect"]
+kind = "redirect"
+args = [0]
+
+[[sink]]
+call = ["cherrypy.lib.static.serve_file", "cherrypy.lib.static.serve_download"]
+kind = "filesystem"
+args = [0]
+arg_names = ["path"]

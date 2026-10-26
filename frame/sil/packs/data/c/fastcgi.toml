@@ -1,0 +1,34 @@
+[pack]
+name = "fastcgi"
+language = "c"
+description = "FastCGI (fcgiapp / fcgi_stdio): request parameters, body reads and response writers"
+detect = { imports = ["fcgiapp.h", "fcgi_stdio.h", "fcgi_config.h", "fcgios.h"] }
+
+[[source]]
+call = ["FCGX_GetParam"]
+kind = "network_input"
+description = "FastCGI request parameter / CGI variable (QUERY_STRING, HTTP_*, PATH_INFO)"
+
+[[source]]
+call = ["FCGX_GetStr", "FCGX_GetLine"]
+out_args = [0]
+kind = "network_input"
+description = "FastCGI request body read into the buffer"
+
+[[sink]]
+call = ["FCGX_PutS"]
+args = [0]
+kind = "html"
+description = "FastCGI response body"
+
+[[sink]]
+call = ["FCGX_PutStr"]
+args = [0]
+kind = "html"
+description = "FastCGI response body"
+
+[[sink]]
+call = ["FCGX_FPrintF"]
+args = [1]
+kind = "format_string"
+description = "FCGX_FPrintF format string"

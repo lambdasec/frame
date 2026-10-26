@@ -1,0 +1,56 @@
+[pack]
+name = "fastapi"
+language = "python"
+description = "FastAPI / Starlette: route handlers, response classes that reflect, redirect or serve files"
+detect = { imports = ["fastapi", "starlette"] }
+
+# Route handlers: every parameter is client data (path, query, body model, header, cookie,
+# form, upload), except dependencies injected by Depends() which have no annotation worth
+# trusting here; the Request object itself is tainted as a whole.
+[[entrypoint]]
+id = "route"
+decorator = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options", "*.api_route",
+             "*.websocket", "fastapi.*.get", "fastapi.*.post"]
+params = "all"
+exclude_param = ["self", "background_tasks", "response"]
+exclude_param_type = ["fastapi.BackgroundTasks", "fastapi.Response", "starlette.responses.Response",
+                      "sqlalchemy.orm.Session", "sqlalchemy.ext.asyncio.AsyncSession"]
+
+# Starlette class-based endpoints and routes registered by Route("/x", handler).
+[[entrypoint]]
+id = "http-endpoint"
+extends = ["starlette.endpoints.HTTPEndpoint"]
+method = ["get", "post", "put", "patch", "delete"]
+params = "all"
+exclude_param = ["self"]
+
+[[sink]]
+call = ["fastapi.responses.HTMLResponse", "starlette.responses.HTMLResponse"]
+kind = "html"
+args = [0]
+arg_names = ["content"]
+description = "HTMLResponse sends its content as text/html"
+
+[[sink]]
+call = ["fastapi.responses.Response", "starlette.responses.Response"]
+kind = "html"
+args = [0]
+arg_names = ["content"]
+when_kwarg = { name = "media_type", value = "text/html" }
+
+[[sink]]
+call = ["fastapi.responses.RedirectResponse", "starlette.responses.RedirectResponse"]
+kind = "redirect"
+args = [0]
+arg_names = ["url"]
+
+[[sink]]
+call = ["fastapi.responses.FileResponse", "starlette.responses.FileResponse"]
+kind = "filesystem"
+args = [0]
+arg_names = ["path"]
+description = "FileResponse streams the file at path"
+
+[[sanitizer]]
+call = ["html.escape", "markupsafe.escape"]
+kinds = ["html"]

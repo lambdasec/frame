@@ -1451,6 +1451,7 @@ class SILTranslator:
         self._cur_proc = proc
         self._null_candidates = []
         self._uninit_candidates = []
+        self._branch_node_clean = False
 
         # Initialize state with parameters potentially tainted
         initial_state = self._init_state_for_procedure(proc)
@@ -1489,6 +1490,7 @@ class SILTranslator:
             # Execute instructions in node
             current_state = state.copy()
             returned = False
+            self._branch_node_clean = self._branch_edge_formula(node) is not None
             for instr_idx, instr in enumerate(node.instrs):
                 self._cur_pos = (node_id, instr_idx)
                 node_checks, current_state = self._execute_instr(
@@ -1575,6 +1577,8 @@ class SILTranslator:
                 succ_state = current_state.copy()
                 if hasattr(succ_state, '_skip_successor_indices'):
                     del succ_state._skip_successor_indices
+                if edge_exp is not None and idx in (0, 1):
+                    self._apply_branch_guards(succ_state, edge_exp, is_true_branch=(idx == 0))
                 if guard is not None:
                     succ_state.feasibility_constraints = (
                         succ_state.feasibility_constraints + [guard]
@@ -1633,14 +1637,14 @@ class SILTranslator:
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
-    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript"})
+    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript", "csharp"})
     _ALL_SINK_KINDS = frozenset(k.value for k in SinkKind) | frozenset(_SINK_KIND_ALIASES)
     _SEED_PREFIX = "@param:"
 
     def _ipa_applies(self) -> bool:
-        """Inter-procedural taint runs for Python and JS/TS files in which some
+        """Inter-procedural taint runs for Python, JS/TS and C# files in which some
         procedure calls another of the file's procedures. (Java taints every
-        String parameter already; C/C++/C# have their own passes.)"""
+        String parameter already; C/C++ have their own passes.)"""
         lang = (getattr(self.program, "language", "") or "").lower()
         if lang not in self._ENTRY_TAINT_LANGUAGES:
             return False
@@ -1704,16 +1708,65 @@ class SILTranslator:
         caller = self._cur_proc
         if "." not in func_name:
             proc = procs.get(func_name)
+            if proc is None and caller is not None and caller.class_name \
+                    and (getattr(self.program, "language", "") or "").lower() == "csharp":
+                own = [p for p in procs.values() if p.is_method and p.class_name == caller.class_name
+                       and p.simple_name == func_name]
+                return own[0] if len(own) == 1 else None      # `Helper(x)` inside a class method
             if proc is None or f"{func_name}#2" in procs or proc.is_method:
                 return None
             return proc
         head, _, method = func_name.rpartition(".")
-        if head not in ("self", "this", "cls") or caller is None or not caller.class_name:
-            return None
+        if head in ("self", "this", "cls") and caller is not None and caller.class_name:
+            owner = caller.class_name.rsplit(".", 1)[-1]
+        else:
+            owner = self._in_file_receiver_class(head, caller)
+            if owner is None:
+                return None
         hits = [p for p in procs.values()
-                if p.is_method and p.class_name == caller.class_name
+                if p.is_method and p.class_name and p.class_name.rsplit(".", 1)[-1] == owner
                 and p.simple_name == method]
         return hits[0] if len(hits) == 1 else None
+
+    _CTOR_RECEIVER = re.compile(r"^(?:new\s+)?([A-Za-z_]\w*)\(.*\)$")
+
+    def _in_file_receiver_class(self, receiver: str, caller: Optional[Procedure]) -> Optional[str]:
+        """The class of this file a method receiver is an instance of: `Reports().m(...)`
+        (the written constructor call) or a variable assigned from such a call in the caller
+        (`r = Reports(); r.m(...)`). A variable assigned two different classes has none."""
+        classes = {p.class_name.rsplit(".", 1)[-1] for p in self.program.procedures.values() if p.class_name}
+        m = self._CTOR_RECEIVER.match(receiver)
+        if m:
+            return m.group(1) if m.group(1) in classes else None
+        if caller is None or not receiver.isidentifier():
+            return None
+        declared = caller.var_types.get(receiver)
+        if declared and declared.rsplit(".", 1)[-1] in classes:
+            return declared.rsplit(".", 1)[-1]
+        cache = self.__dict__.setdefault("_var_class_cache", {})
+        if id(caller) not in cache:
+            seen: Dict[str, Optional[str]] = {}
+            pending: Dict[str, str] = {}
+            for node in caller.nodes.values():
+                for ins in node.instrs:
+                    if isinstance(ins, Call) and ins.ret is not None:
+                        name = self._call_exp_name(ExpCall(ins.func, []))
+                        name = name[4:] if name.startswith("new ") else name
+                        if name in classes:
+                            pending[str(ins.ret[0])] = name
+                    elif isinstance(ins, Assign) and isinstance(ins.exp, ExpVar):
+                        cls = pending.get(str(ins.exp.var))
+                        if cls is not None:
+                            target = str(ins.id)
+                            seen[target] = cls if seen.get(target, cls) == cls else None
+                    elif isinstance(ins, Assign) and isinstance(ins.exp, ExpCall):   # `const r = new R()`
+                        name = self._call_exp_name(ins.exp)
+                        name = name[4:] if name.startswith("new ") else name
+                        if name in classes:
+                            target = str(ins.id)
+                            seen[target] = name if seen.get(target, name) == name else None
+            cache[id(caller)] = seen
+        return cache[id(caller)].get(receiver)
 
     def _resolve_callee(self, func_name: str) -> Optional[Callee]:
         """The procedure a call makes: one of this file's (which wins over an
@@ -1729,10 +1782,15 @@ class SILTranslator:
         ref = self._project.resolve_call(
             self._file_key, func_name,
             self._cur_proc.class_name if self._cur_proc is not None else None)
-        if (ref is None and "." in func_name and func_name[:1].isupper()
-                and (getattr(self.program, "language", "") or "").lower() == "java"):
-            owner, _, method = func_name.rpartition(".")          # `Params.path(req)` nested in an expression
-            ref = self._project.resolve_java_call(self._file_key, owner, method, None)
+        if (ref is None and "." in func_name
+                and (getattr(self.program, "language", "") or "").lower() in ("java", "csharp")):
+            owner, _, method = func_name.rpartition(".")
+            if func_name[:1].isupper():                           # `Params.path(req)` nested in an expression
+                ref = self._project.resolve_java_call(self._file_key, owner, method, None)
+            elif self._cur_proc is not None and owner in self._cur_proc.var_types:
+                # `_service.Describe(x)` nested in an expression: the receiver's declared type
+                ref = self._project.resolve_java_call(
+                    self._file_key, self._cur_proc.var_types[owner], method, None)
         proc = self._project.procedure(ref) if ref is not None else None
         if proc is None or not self._plain_callee(proc):
             return None
@@ -1746,7 +1804,7 @@ class SILTranslator:
         if callee is not None or self._project is None:
             return callee
         owner = getattr(instr, "callee_class", None)
-        if not owner or (getattr(self.program, "language", "") or "").lower() != "java":
+        if not owner or (getattr(self.program, "language", "") or "").lower() not in ("java", "csharp"):
             return None
         ref = self._project.resolve_java_call(self._file_key, owner, func_name.rsplit(".", 1)[-1],
                                               getattr(instr, "arg_types", None))
@@ -1820,6 +1878,19 @@ class SILTranslator:
                 wrap = wrap | frozenset(spec.is_sanitizer)
             for arg in exp.args:
                 out.extend(self._arg_taint_leaves(arg, state, wrap))
+            # `name.trim()` / `req.query.q.toLowerCase()`: a method called on attacker data
+            # returns data derived from it, as when the same call is assigned to a variable.
+            parts = name.split(".")
+            if len(parts) > 1 and not (spec and spec.is_taint_sanitizer()):
+                head = parts[0]
+                if state.is_tainted(head):
+                    out.append((state.get_taint_info(head),
+                                set(wrap) | set(state.sanitized.get(head, []))))
+                elif len(parts) > 2 and all(p.isidentifier() for p in parts):
+                    receiver: Exp = ExpVar(PVar(head))        # `req.query.q` of `req.query.q.trim()`
+                    for attr in parts[1:-1]:
+                        receiver = ExpFieldAccess(receiver, attr)
+                    out.extend(self._arg_taint_leaves(receiver, state, wrap))
             return out
         if isinstance(exp, ExpVar):
             var = self._get_var_name(exp.var)
@@ -1891,6 +1962,219 @@ class SILTranslator:
             elif not known[1] <= sanitized:
                 entry[param] = (known[0], known[1] & sanitized)
                 self._ipa.dirty.add(callee.ref)
+
+    _CHARSET_METHODS = frozenset({"isdigit", "isnumeric", "isdecimal", "isalnum", "isalpha"})
+    _CONST_NAME = re.compile(r"[A-Z][A-Z0-9_]*$")
+    _HOST_KINDS = frozenset({"ssrf", "redirect"})
+    _HOST_PARSERS = frozenset({"urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL",
+                               "new URL.parse"})
+    _LITERAL_COLLECTION = re.compile(
+        r"^(?:[\w.]+\.)?(?:Set|List|Arrays|ImmutableSet|ImmutableList)\.(?:of|asList|copyOf)"
+        r"\((\s*\"[^\"]*\"\s*(?:,\s*\"[^\"]*\"\s*)*)\)\.contains$")
+
+    # one atom of a safe-charset regex: a class of letters / digits / underscore / hyphen
+    # (or \d, \w) with an optional quantifier. Anything else -- `.`, alternation, a
+    # negated class, an escaped metacharacter -- makes the pattern unprovable.
+    _SAFE_REGEX_ATOM = re.compile(
+        r"(?:\[(?:A-Z|a-z|0-9|[A-Za-z0-9_]|\\d|\\w|\\\.|\.|-)+\]|\\d|\\w)(?:[+*?]|\{\d+(?:,\d*)?\})?")
+    # kinds a dot in the charset (`[a-z0-9.-]`, hostnames) still leaves harmless: not path traversal
+    _DOT_UNSAFE_KINDS = frozenset({"filesystem", "path"})
+
+    @classmethod
+    def _safe_charset_regex(cls, pattern: str):
+        """(anchored at start, anchored at end, has a dot) for a pattern that matches only
+        letters, digits, underscores, hyphens and (in a class) dots; None for any other."""
+        p = pattern
+        start = p.startswith(("^", "\\A"))
+        if start:
+            p = p[1:] if p.startswith("^") else p[2:]
+        end = p.endswith(("$", "\\Z")) and not p.endswith("\\$")
+        if end:
+            p = p[:-1] if p.endswith("$") else p[:-2]
+        pos = 0
+        if not p:
+            return None
+        while pos < len(p):
+            m = cls._SAFE_REGEX_ATOM.match(p, pos)
+            if not m:
+                return None
+            pos = m.end()
+        has_dot = bool(re.search(r"\[[^\]]*\.[^\]]*\]", p))
+        return start, end, has_dot
+
+    @classmethod
+    def _regex_text(cls, exp, language: str):
+        """The pattern behind a regex literal argument, or None. The frontends keep the
+        literal as written: `r"..."`, `"..."`, `/.../flags`."""
+        if not isinstance(exp, ExpConst) or not isinstance(exp.value, str):
+            return None
+        text = exp.value
+        m = re.fullmatch(r"[rRuU]?('{3}|\"{3}|'|\")(.*)\1", text, re.S)
+        if m:
+            text = m.group(2)
+            if language in ("java", "csharp"):
+                text = text.replace("\\\\", "\\")
+            return text
+        m = re.fullmatch(r"/(.*)/([a-z]*)", text, re.S)
+        if m and "m" not in m.group(2):
+            return m.group(1)
+        if "/" in text[:1]:
+            return None
+        return text.replace("\\\\", "\\") if language in ("java", "csharp") else text
+
+    @staticmethod
+    def _flatten(exp) -> Optional[str]:
+        """`a.b.c` for a callee written as a name, an attribute chain or a dotted string."""
+        if isinstance(exp, ExpConst) and isinstance(exp.value, str):
+            return exp.value
+        if isinstance(exp, ExpVar):
+            return str(exp.var)
+        if isinstance(exp, ExpFieldAccess):
+            base = SILTranslator._flatten(exp.base)
+            return f"{base}.{exp.field_name}" if base else None
+        return None
+
+    @classmethod
+    def _host_var(cls, exp) -> Optional[str]:
+        """`u` for `urlparse(u).hostname` / `new URL(u).host`."""
+        if isinstance(exp, ExpFieldAccess) and exp.field_name in ("hostname", "netloc", "host", "Host") \
+                and isinstance(exp.base, ExpCall) and exp.base.args and isinstance(exp.base.args[0], ExpVar):
+            if cls._flatten(exp.base.func) in cls._HOST_PARSERS:
+                return str(exp.base.args[0].var)
+        return None
+
+    @classmethod
+    def _guard_facts(cls, cond, regexes=None, language: str = ""):
+        """[(variable, sanitized kinds, truth value of the condition under which they hold)]
+        for the guards that prove a value harmless -- a character class (`x.isdigit()`, an
+        anchored safe-charset regex, literal or compiled), membership in a constant collection
+        (`x in ALLOWED`, `ALLOWED.includes(x)`, `ALLOWED.contains(x)`, `Set.of("a").contains(x)`),
+        a URL host in an allowlist -- combined with and / or / not."""
+        out = []
+        for truth in (True, False):
+            for var, kinds in sorted(cls._guard_vars(cond, truth, regexes or {}, language).items()):
+                out.append((var, sorted(kinds), truth))
+        return out
+
+    @classmethod
+    def _guard_vars(cls, exp, truth: bool, regexes: dict, language: str) -> dict:
+        """{variable: kinds it is harmless for} when `exp` evaluates to `truth`."""
+        everything = frozenset(cls._ALLOWLIST_KINDS)
+        if isinstance(exp, ExpUnOp) and exp.op == "!":
+            return cls._guard_vars(exp.operand, not truth, regexes, language)
+        if isinstance(exp, ExpBinOp) and exp.op in ("&&", "||", "and", "or"):
+            facts = [cls._guard_vars(exp.left, truth, regexes, language),
+                     cls._guard_vars(exp.right, truth, regexes, language)]
+            if (exp.op in ("&&", "and")) == truth:        # `a && b` true / `a || b` false: both hold
+                merged: dict = {}
+                for f in facts:
+                    for var, kinds in f.items():
+                        merged[var] = merged.get(var, frozenset()) | kinds
+                return merged
+            common = set(facts[0]) & set(facts[1])
+            return {v: facts[0][v] & facts[1][v] for v in common}
+        if isinstance(exp, ExpBinOp) and exp.op in ("in", "not in"):
+            if truth != (exp.op == "in"):
+                return {}
+            return cls._member_fact(exp.left, exp.right)
+        if not truth or not isinstance(exp, ExpCall):
+            return {}
+        return cls._call_guard(exp, regexes, language)
+
+    @classmethod
+    def _member_fact(cls, subject, collection) -> dict:
+        everything = frozenset(cls._ALLOWLIST_KINDS)
+        constant = (isinstance(collection, ExpVar) and cls._CONST_NAME.match(str(collection.var))) \
+            or (isinstance(collection, ExpConst) and isinstance(collection.value, str)
+                and cls._CONST_NAME.match(collection.value))
+        if not constant:
+            return {}
+        if isinstance(subject, ExpVar):
+            return {str(subject.var): everything}
+        host = cls._host_var(subject)
+        return {host: cls._HOST_KINDS} if host else {}
+
+    @classmethod
+    def _call_guard(cls, call: ExpCall, regexes: dict, language: str) -> dict:
+        everything = frozenset(cls._ALLOWLIST_KINDS)
+        func, args = call.func, call.args
+        # `/^\d+$/.test(v)`: a regex literal receiver
+        if isinstance(func, ExpFieldAccess) and isinstance(func.base, ExpConst) and func.field_name == "test" \
+                and len(args) == 1 and isinstance(args[0], ExpVar):
+            pat = cls._regex_text(func.base, language)
+            kinds = cls._regex_proves(pat, "search") if pat is not None else None
+            return {str(args[0].var): kinds} if kinds else {}
+        # Object.values(CONST).includes(x): an attribute call on a call
+        if isinstance(func, ExpFieldAccess) and func.field_name == "includes" and len(args) == 1 \
+                and isinstance(func.base, ExpCall) and len(func.base.args) == 1 \
+                and cls._flatten(func.base.func) in ("Object.values", "Object.keys"):
+            return cls._member_fact(args[0], func.base.args[0])
+        text = cls._flatten(func)
+        if not text:
+            return {}
+        m = re.fullmatch(r"(\w+)\.(\w+)", text)
+        recv, meth = (m.group(1), m.group(2)) if m else (None, None)
+        if recv and meth in cls._CHARSET_METHODS and not args:
+            return {recv: everything}
+        # compiled constant: HOST.fullmatch(x) / HOST.test(x) / HOST.IsMatch(x)
+        if recv in regexes and len(args) == 1 and isinstance(args[0], ExpVar):
+            how = {"fullmatch": "full", "match": "prefix", "search": "search", "test": "search",
+                   "IsMatch": "search"}.get(meth)
+            kinds = cls._regex_proves(regexes[recv], how) if how else None
+            return {str(args[0].var): kinds} if kinds else {}
+        # Java: HOST.matcher(x).matches()
+        m = re.fullmatch(r"(\w+)\.matcher\((\w+)\)\.matches", text)
+        if m and not args and m.group(1) in regexes:
+            kinds = cls._regex_proves(regexes[m.group(1)], "full")
+            return {m.group(2): kinds} if kinds else {}
+        # re.fullmatch("lit", x), Pattern.matches("lit", x), Regex.IsMatch(x, "lit")
+        if re.fullmatch(r"(?:re\.)?(fullmatch|match|search)|(?:java\.util\.regex\.)?Pattern\.matches", text) \
+                and len(args) == 2 and isinstance(args[1], ExpVar):
+            how = {"fullmatch": "full", "matches": "full", "match": "prefix", "search": "search"}[
+                text.rsplit(".", 1)[-1]]
+            pat = cls._regex_text(args[0], language)
+            kinds = cls._regex_proves(pat, how) if pat is not None else None
+            return {str(args[1].var): kinds} if kinds else {}
+        if text in ("Regex.IsMatch", "System.Text.RegularExpressions.Regex.IsMatch") and len(args) == 2 \
+                and isinstance(args[0], ExpVar):
+            pat = cls._regex_text(args[1], language)
+            kinds = cls._regex_proves(pat, "search") if pat is not None else None
+            return {str(args[0].var): kinds} if kinds else {}
+        # String.matches("lit") is a full match of the receiver
+        if recv and meth == "matches" and len(args) == 1:
+            pat = cls._regex_text(args[0], language)
+            kinds = cls._regex_proves(pat, "full") if pat is not None else None
+            return {recv: kinds} if kinds else {}
+        # membership: ALLOWED.includes(x) / .contains(x), Object.values(ALLOWED).includes(x),
+        # Set.of("a", "b").contains(x)
+        if len(args) == 1:
+            subject = args[0]
+            if recv and cls._CONST_NAME.match(recv) and meth in ("includes", "contains", "Contains"):
+                return cls._member_fact(subject, ExpVar(PVar(recv)))
+            m = re.fullmatch(r"Object\.(?:values|keys)\(\s*([A-Z][A-Z0-9_]*)\s*\)\.includes", text)
+            if m:
+                return cls._member_fact(subject, ExpVar(PVar(m.group(1))))
+            if cls._LITERAL_COLLECTION.match(text):
+                return cls._member_fact(subject, ExpVar(PVar("LITERAL_COLLECTION")))
+        return {}
+
+    @classmethod
+    def _regex_proves(cls, pattern: str, how: str):
+        """The sink kinds a match of `pattern` (`how` = full | prefix | search) makes the whole
+        value harmless for -- it is made of letters, digits, underscores, hyphens (and dots) --
+        or None when the pattern proves nothing."""
+        anchors = cls._safe_charset_regex(pattern)
+        if anchors is None:
+            return None
+        start, end, has_dot = anchors
+        if not (how == "full" or (how == "prefix" and end) or (how == "search" and start and end)):
+            return None
+        kinds = frozenset(cls._ALLOWLIST_KINDS)
+        return kinds - cls._DOT_UNSAFE_KINDS if has_dot else kinds
+
+    # Set while a clean two-way branch node executes: its guards are applied per outgoing
+    # edge instead (see _exec_prune / _apply_branch_guards).
+    _branch_node_clean = False
 
     _ALLOWLIST_KINDS = ["filesystem", "path", "command", "shell", "shell_command", "sql", "nosql", "redirect",
                         "ssrf", "html", "xss", "eval", "code", "ldap", "xpath", "xml", "template", "header",
@@ -2796,9 +3080,51 @@ class SILTranslator:
         the call executes. Empty when the call has no result or no tainted input."""
         if not instr.ret:
             return []
-        return [set(state.sanitized.get(v, []))
+        wrapped = self._wrapped_var_kinds([a for a, _ in instr.args])
+        return [set(state.sanitized.get(v, [])) | wrapped.get(v, set())
                 for v in self._call_taint_inputs(instr, spec, func_name)
                 if state.is_tainted(v)]
+
+    def _wrapped_var_kinds(self, exps: List[Exp]) -> Dict[str, Set[str]]:
+        """For each variable read inside `exps`, the sink kinds the sanitizer calls
+        enclosing it neutralize: `basename(name)` inside `join(base, basename(name))`
+        sanitizes `name` for paths even though `name` itself is raw. A variable that also
+        appears unwrapped keeps only what every occurrence has (the unwrapped one has none)."""
+        out: Dict[str, Set[str]] = {}
+
+        def walk(e: Exp, wrap: frozenset) -> None:
+            if isinstance(e, ExpVar):
+                v = self._get_var_name(e.var)
+                out[v] = (out[v] & set(wrap)) if v in out else set(wrap)
+                return
+            if isinstance(e, ExpCall):
+                spec = self.program.get_spec(self._call_exp_name(e))
+                inner = wrap | frozenset(spec.is_sanitizer) if spec and spec.is_taint_sanitizer() else wrap
+                for a in e.args:
+                    walk(a, inner)
+                return
+            for child in self._walk_children(e):
+                walk(child, wrap)
+
+        for e in exps:
+            walk(e, frozenset())
+        return out
+
+    @staticmethod
+    def _walk_children(e: Exp) -> List[Exp]:
+        if isinstance(e, ExpBinOp):
+            return [e.left, e.right]
+        if isinstance(e, ExpUnOp):
+            return [e.operand]
+        if isinstance(e, ExpStringConcat):
+            return list(e.parts)
+        if isinstance(e, ExpTernary):
+            return [e.true_exp, e.false_exp]
+        if isinstance(e, ExpCast):
+            return [e.exp]
+        if isinstance(e, (ExpFieldAccess, ExpIndex)):
+            return [e.base] + ([e.index] if isinstance(e, ExpIndex) else [])
+        return []
 
     def _settle_call_sanitization(self, instr: Call, spec, state: SymbolicState,
                                   input_kinds: List[set]) -> None:
@@ -3069,7 +3395,7 @@ class SILTranslator:
                         for arg_idx in spec.sink_args:
                             if arg_idx < len(instr.args):
                                 arg_exp, _ = instr.args[arg_idx]
-                                if spec.is_sink == 'redirect' and self._has_local_redirect_prefix(arg_exp):
+                                if spec.is_sink in ('redirect', 'ssrf') and self._has_local_redirect_prefix(arg_exp):
                                     continue          # "/p/" + id stays on this origin
                                 arg_vars = self._get_exp_vars(arg_exp)
                                 arg_str = str(arg_exp)
@@ -3916,23 +4242,35 @@ class SILTranslator:
             formula = Not(formula)
         state.path_constraints.append(formula)
 
+        # What the condition proves about its variables (an allowlist, a character-class
+        # check, a same-origin test) holds on ONE branch, so for a clean two-way branch the
+        # walker applies it to the matching outgoing edge (_apply_branch_guards). Applying it
+        # here would hand it to both successors: `if x.isdigit(): pass` followed by a sink
+        # would look validated, and the early-return form only worked by accident.
+        if not self._branch_node_clean:
+            self._apply_branch_guards(state, instr.condition, instr.is_true_branch)
+        return state
+
+    def _apply_branch_guards(self, state: SymbolicState, condition, is_true_branch: bool) -> SymbolicState:
+        """Record what `condition` proves about its variables on the branch where it
+        evaluates to `is_true_branch`: sanitization for the sinks it rules out."""
         # Recognize validation patterns and mark variables as asserted safe
         # When we see "if '<pattern>' in var: return" and we're in the false branch,
         # the continuation has validated that the pattern is NOT present
-        cond_str = str(instr.condition)
+        cond_str = str(condition)
 
         # Path traversal validation patterns (false branch = safe)
-        if not instr.is_true_branch:
+        if not is_true_branch:
             # Patterns like "../" in var or ".." in var (with any quote style)
             if ("../" in cond_str or '".."' in cond_str):
                 # Extract variable being checked
-                cond_vars = self._get_exp_vars(instr.condition)
+                cond_vars = self._get_exp_vars(condition)
                 for var in cond_vars:
                     state.asserted_safe.setdefault(var, []).append("filesystem")
 
             # XPath injection validation: apostrophe check
             if ("'" in cond_str and " in " in cond_str):
-                cond_vars = self._get_exp_vars(instr.condition)
+                cond_vars = self._get_exp_vars(condition)
                 for var in cond_vars:
                     state.asserted_safe.setdefault(var, []).append("xpath")
 
@@ -3950,30 +4288,26 @@ class SILTranslator:
             neg_double = _re.search(_not + v + _sw + r"//", cond_str)
             pos_double = _re.search(r"(?<![!(])\b" + v + _sw + r"//", cond_str) \
                 or _re.search(r"(?<!!)\(\s*" + v + _sw + r"//", cond_str)
-            if instr.is_true_branch and pos_slash and neg_double and not neg_slash and not pos_double:
+            if is_true_branch and pos_slash and neg_double and not neg_slash and not pos_double:
                 state.asserted_safe.setdefault(var, []).append("redirect")
-            elif not instr.is_true_branch and neg_slash and pos_double and not pos_slash and not neg_double:
+            elif not is_true_branch and neg_slash and pos_double and not pos_slash and not neg_double:
                 state.asserted_safe.setdefault(var, []).append("redirect")
 
-        # Allowlist membership: a value that is one of a constant set of strings cannot carry a payload.
-        #   if (!Object.values(DOC_FILES).includes(file)) return res.status(404)...   -> FALSE branch
-        #   if (ALLOWED.includes(x)) {...}  /  if x in ALLOWED:                       -> TRUE branch
-        # Only constant-looking collections count (UPPER_CASE names), never an arbitrary array.
-        coll = r"(?:Object\.(?:values|keys)\(\s*[A-Z][A-Z0-9_]*\s*\)|[A-Z][A-Z0-9_]*)"
-        for m in _re.finditer(r"(!\s*\(?\s*)?" + coll + r"\.includes\(\s*(\w+)\s*\)", cond_str):
-            negated, var = bool(m.group(1)), m.group(2)
-            if negated != instr.is_true_branch:        # membership holds on this branch
-                state.add_sanitization(var, list(self._ALLOWLIST_KINDS))
-        for m in _re.finditer(r"(\w+)\s+(not\s+)?in\s+([A-Z][A-Z0-9_]*)\b", cond_str):
-            var, negated = m.group(1), bool(m.group(2))
-            if negated != instr.is_true_branch:
-                state.add_sanitization(var, list(self._ALLOWLIST_KINDS))
+        # Values proven harmless by the condition: a constant allowlist (`x in ALLOWED`,
+        # `ALLOWED.includes(x)`), a character class (`x.isdigit()`, an anchored safe-charset
+        # regex), a URL host in an allowlist. Only constant-looking collections count
+        # (UPPER_CASE names or literals), never an arbitrary array.
+        for var, kinds, holds_when in self._guard_facts(
+                condition, getattr(self.program, "constant_regexes", None),
+                getattr(self.program, "language", "")):
+            if holds_when == is_true_branch:
+                state.add_sanitization(var, list(kinds))
 
         # Code injection validation: startswith/endswith checks
         # Pattern: if not bar.startswith('\'') or not bar.endswith('\''):
         # On FALSE branch, the condition is FALSE, meaning validation PASSED
         # (the negated checks are all false -> the positive checks are true)
-        if not instr.is_true_branch:
+        if not is_true_branch:
             # Check for startswith/endswith validation patterns
             import re
             # Pattern matches: bar.startswith('\'') or bar.startswith("'")
@@ -4036,7 +4370,7 @@ class SILTranslator:
     ) -> Tuple[List[VulnerabilityCheck], SymbolicState]:
         """Execute taint sink annotation"""
         checks = []
-        if instr.kind.value == "redirect" and self._has_local_redirect_prefix(instr.exp):
+        if instr.kind.value in ("redirect", "ssrf") and self._has_local_redirect_prefix(instr.exp):
             return checks, state          # "/products/" + id stays on this origin
         if instr.call and self._ipa_on:
             callee = self._resolve_callee(instr.call)
@@ -5864,6 +6198,9 @@ class SILTranslator:
         "exit", "_exit", "_Exit", "quick_exit", "abort", "_abort",
         "longjmp", "siglongjmp", "__assert_fail", "err", "errx",
         "__frame_goto__",   # the C frontend's lowering of `goto`
+        # other languages' process exits and request aborts
+        "sys.exit", "quit", "os._exit", "os.abort", "flask.abort", "werkzeug.exceptions.abort",
+        "System.exit", "Environment.Exit", "process.exit", "os.Exit",
     })
 
     def _is_noreturn_call(self, instr: Instr) -> bool:

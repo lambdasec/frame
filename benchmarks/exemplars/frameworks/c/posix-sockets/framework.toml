@@ -1,0 +1,4 @@
+language = "c"
+packs = []
+requires_pack = false
+description = "POSIX sockets / epoll daemon: recv/read/recvfrom buffers reaching popen, fopen, syslog (built-in coverage guard)"

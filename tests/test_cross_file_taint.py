@@ -158,10 +158,18 @@ def test_python_unresolvable_import_is_harmless(tmp_path):
     assert findings(tmp_path) == set()
 
 
-def test_python_method_on_an_object_is_not_resolved(tmp_path):
+def test_python_method_on_a_constructed_object_is_resolved(tmp_path):
     write(tmp_path, {
         "svc.py": "import os\n\nclass Svc:\n    def run(self, d):\n        os.system('ls ' + d)\n",
         "views.py": views("from svc import Svc", 'Svc().run(request.args.get("d"))'),
+    })
+    assert ("svc.py", "CWE-78") in findings(tmp_path)
+
+
+def test_python_method_on_an_object_of_unknown_class_is_not_resolved(tmp_path):
+    write(tmp_path, {
+        "svc.py": "import os\n\nclass Svc:\n    def run(self, d):\n        os.system('ls ' + d)\n",
+        "views.py": views("from svc import make", 'make().run(request.args.get("d"))'),
     })
     assert ("svc.py", "CWE-78") not in findings(tmp_path)
 

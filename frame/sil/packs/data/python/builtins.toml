@@ -1,0 +1,15 @@
+[pack]
+name = "python-builtins"
+language = "python"
+description = "Values that cannot carry an injection payload once converted to a number, UUID or IP address"
+
+# int("12") is a number: whatever the request put in the string, the result is digits
+# (or the conversion raised). It is safe for every text-payload sink, so a query or
+# command built from it is not injectable.
+[[sanitizer]]
+call = ["builtins.int", "builtins.float", "builtins.bool", "builtins.complex", "builtins.ord", "builtins.len",
+        "decimal.Decimal", "fractions.Fraction", "uuid.UUID", "ipaddress.ip_address", "ipaddress.ip_network",
+        "ipaddress.IPv4Address", "ipaddress.IPv6Address", "ipaddress.ip_interface"]
+kinds = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "redirect", "ssrf", "eval",
+         "code", "ldap", "xpath", "xml", "template", "header", "regex", "log", "orm", "el", "xml_injection"]
+description = "numeric / UUID / IP conversion: the result cannot contain an injection payload"

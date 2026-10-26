@@ -1,0 +1,37 @@
+[pack]
+name = "fastify"
+language = "javascript"
+description = "Fastify route handlers (request.query / params / body / headers, reply.*)"
+detect = { imports = ["fastify"] }
+
+[[entrypoint]]
+id = "fastify-route"
+registered_via = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.all", "*.head", "*.options",
+                  "*.route.handler", "*.addHook", "*.setNotFoundHandler", "*.setErrorHandler"]
+params = "all"
+exclude_param = ["reply", "res", "response", "done", "next", "instance", "opts", "options"]
+exclude_param_type = ["fastify.FastifyReply", "FastifyReply"]
+description = "Fastify request object (query, params, body, headers, cookies)"
+
+[[sink]]
+name = ["reply.send", "res.send"]
+args = [0]
+kind = "html"
+description = "Fastify reply.send"
+
+[[sink]]
+name = ["reply.redirect"]
+args = [0, 1]
+kind = "redirect"
+description = "Fastify reply.redirect"
+
+[[sink]]
+name = ["reply.sendFile", "reply.download"]
+args = [0]
+kind = "path"
+description = "@fastify/static sendFile"
+
+[[sink]]
+name = ["reply.header", "reply.headers"]
+args = [1]
+kind = "header"

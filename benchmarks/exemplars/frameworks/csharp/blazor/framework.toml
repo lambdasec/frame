@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/aspnetcore"]
+requires_pack = true
+description = "Blazor components (code-behind): [Parameter] / [SupplyParameterFromQuery] properties, NavigationManager.NavigateTo, MarkupString"

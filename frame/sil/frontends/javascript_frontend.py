@@ -245,8 +245,43 @@ class JavaScriptFrontend:
             self._scan_proto_pollution(tree.root_node, program)
 
         self._record_declarations(tree.root_node, program)
-        finish_program(program, self.packs)
+        finish_program(program, self.packs, source_code)
+        self._entry_taint_into_closures(program)
         return program
+
+    @staticmethod
+    def _entry_taint_into_closures(program: Program) -> None:
+        """A framework pack taints a handler's parameters (`ipcMain.handle('x', (e, tool) =>
+        ...)`). A callback nested in the handler that reads such a parameter (`new Promise(
+        resolve => exec('t/' + tool))`) must see it tainted too."""
+        def entry_sources(proc):
+            node = proc.nodes.get(proc.entry_node)
+            if node is None:
+                return None, []
+            return node, [i for i in node.instrs
+                          if isinstance(i, TaintSource) and "entry point" in (i.description or "")]
+
+        for _ in range(4):                      # nesting depth
+            changed = False
+            for proc in program.procedures.values():
+                parent = program.procedures.get(proc.parent) if proc.parent else None
+                if parent is None or not proc.captures:
+                    continue
+                node, own = entry_sources(proc)
+                if node is None:
+                    continue
+                have = {str(i.var) for i in own}
+                _, inherited = entry_sources(parent)
+                for src in inherited:
+                    name = str(src.var)
+                    if name in proc.captures and name not in have \
+                            and name not in {str(p) for p, _ in proc.params}:
+                        node.instrs.insert(0, TaintSource(loc=src.loc, var=src.var, kind=src.kind,
+                                                          description=src.description))
+                        have.add(name)
+                        changed = True
+            if not changed:
+                break
 
     def _record_declarations(self, root: TSNode, program: Program) -> None:
         """Parameter types (TypeScript), the callees each function is passed to
@@ -269,6 +304,8 @@ class JavaScriptFrontend:
                         text = self._get_text(ty).lstrip(":").strip().split("<")[0].strip()
                         if text:
                             proc.param_types[self._get_text(pat)] = text
+            elif n.type in ("pair", "variable_declarator"):
+                self._register_graphql_resolvers(n, by_span)
             elif n.type == "call_expression":
                 callee, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
                 if callee is None or args is None:
@@ -282,6 +319,48 @@ class JavaScriptFrontend:
                         target = program.procedures.get(self._get_text(a))
                     if target is not None and callee_text not in target.registered_via:
                         target.registered_via.append(callee_text)
+                    elif a.type == "object":
+                        # `server.route({ handler: (request, h) => ... })`, `fastify.route({ handler() {} })`:
+                        # the function is registered as `<callee>.<property>`.
+                        for prop in a.named_children:
+                            key = prop.child_by_field_name("key") or prop.child_by_field_name("name")
+                            value = prop.child_by_field_name("value") if prop.type == "pair" else prop
+                            if key is None or value is None or value.type not in self._FUNC_LIKE:
+                                continue
+                            fn = by_span.get((value.start_byte, value.end_byte))
+                            via = f"{callee_text}.{self._get_text(key).strip(chr(39) + chr(34))}"
+                            if fn is not None and via not in fn.registered_via:
+                                fn.registered_via.append(via)
+
+    _GRAPHQL_ROOTS = frozenset({"Query", "Mutation", "Subscription"})
+
+    def _register_graphql_resolvers(self, node: TSNode, by_span) -> None:
+        """Apollo / graphql-tools resolver maps: the functions in `Query: { ... }` /
+        `Mutation: { ... }` and (one level deeper) in an object named `resolvers` are
+        registered as "graphql.resolver" -- (parent, args, context, info) callbacks."""
+        if node.type == "pair":
+            key_node, value = node.child_by_field_name("key"), node.child_by_field_name("value")
+        else:
+            key_node, value = node.child_by_field_name("name"), node.child_by_field_name("value")
+        if key_node is None or value is None or value.type != "object":
+            return
+        key = self._get_text(key_node).strip("'\"")
+
+        def functions(obj):
+            for member in obj.named_children:
+                fn_node = member.child_by_field_name("value") if member.type == "pair" else member
+                if fn_node is not None and fn_node.type in self._FUNC_LIKE:
+                    fn = by_span.get((fn_node.start_byte, fn_node.end_byte))
+                    if fn is not None and "graphql.resolver" not in fn.registered_via:
+                        fn.registered_via.append("graphql.resolver")
+
+        if key in self._GRAPHQL_ROOTS:
+            functions(value)
+        elif key.lower().endswith("resolvers"):
+            for member in value.named_children:
+                inner = member.child_by_field_name("value") if member.type == "pair" else None
+                if inner is not None and inner.type == "object":
+                    functions(inner)
 
     # Third-party library / generated-bundle detection: filename conventions
     # plus a content check for minification. Used to suppress the structural
@@ -755,8 +834,7 @@ class JavaScriptFrontend:
                 self._translate_block(body_node)
             else:
                 # Arrow function with expression body: () => expr
-                exp = self._translate_expression(body_node)
-                self._add_instr(Return(loc=self._get_location(body_node), value=exp))
+                self._add_return_value(body_node)
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -1744,6 +1822,9 @@ class JavaScriptFrontend:
         # vars). The taint engine then reports it only when that value is
         # actually attacker-tainted; a constant right-hand side stays untainted.
         sink_spec = self._assignment_sink_spec(left)
+        if sink_spec and sink_spec.is_sink in ("html", "xss") and right.type in ("object", "array") \
+                and self._get_text(left).rsplit(".", 1)[-1] == "body":
+            sink_spec = None            # `ctx.body = { q }` is serialised as JSON, not sent as HTML
         if sink_spec:
             self._add_instr(TaintSink(
                 loc=loc,
@@ -1805,6 +1886,16 @@ class JavaScriptFrontend:
                 if value.startswith(prefix):
                     return spec
         return None
+
+    # js-yaml: `load(text, { schema: JSON_SCHEMA })` (or the safe / core / failsafe schemas)
+    # cannot construct arbitrary objects, so it is not an unsafe-deserialization sink.
+    _YAML_SAFE_SCHEMA_RE = re.compile(r"\b(?:JSON_SCHEMA|CORE_SCHEMA|FAILSAFE_SCHEMA|DEFAULT_SAFE_SCHEMA|SAFE_SCHEMA)\b")
+
+    def _safe_yaml_load(self, func_name: str, call_node: Optional[TSNode]) -> bool:
+        if call_node is None or func_name.rsplit(".", 1)[-1] != "load" or "yaml" not in func_name.lower():
+            return False
+        args = self._get_call_args(call_node)
+        return len(args) > 1 and bool(self._YAML_SAFE_SCHEMA_RE.search(self._get_text(args[1])))
 
     def _lookup_call_spec(self, func_name: str, call_node: Optional[TSNode] = None):
         qualified = self._arg_qualified_spec(func_name, call_node)
@@ -2149,6 +2240,11 @@ class JavaScriptFrontend:
     # (`exports.md5 = md5`) is not a call and must not match.
     _CALL_ONLY_SINK_KINDS = frozenset({"weak_hash", "weak_crypto", "insecure_random"})
 
+    _PASSTHROUGH_CALLS = frozenset({
+        "decodeURIComponent", "decodeURI", "unescape", "atob", "btoa", "JSON.parse", "String", "Buffer.from",
+        "querystring.parse", "qs.parse", "url.parse", "URL.parse", "Object.assign", "structuredClone",
+        "querystring.unescape", "lodash.trim", "lodash.toString", "lodash.cloneDeep", "lodash.clone"})
+
     def _translate_call_assignment(
         self,
         target: str,
@@ -2157,6 +2253,7 @@ class JavaScriptFrontend:
     ) -> List[Instr]:
         """Translate: target = func(args)"""
         instrs = []
+        loc = self._chain_location(call_node, loc)
 
         func_name = self._get_call_name(call_node)
         # A call chained on a call -- `execSync(cmd).toString()`,
@@ -2167,13 +2264,19 @@ class JavaScriptFrontend:
         if func_node is not None and func_node.type == "member_expression":
             obj_node = func_node.child_by_field_name("object")
             prop_node = func_node.child_by_field_name("property")
-            if obj_node is not None and obj_node.type == "call_expression" and prop_node is not None:
+            fluent = self._fluent_call_name(call_node)
+            if fluent is not None:
+                # `res.status(200).send(x)`: the setter returns the same object
+                instrs.extend(self._translate_call_expr(obj_node))
+                func_name = fluent
+            elif obj_node is not None and obj_node.type == "call_expression" and prop_node is not None:
                 inner = f"$chain{self._ident_counter}"
                 self._ident_counter += 1
                 instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
                 func_name = f"{inner}.{self._get_text(prop_node)}"
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
+        args_exp, kwarg_names = self._with_option_kwargs(func_name, args, args_exp)
 
         # Create return identifier
         ret_id = self._new_ident(target)
@@ -2185,6 +2288,7 @@ class JavaScriptFrontend:
             func=ExpConst.string(func_name),
             args=args_exp,
             receiver_type=self._receiver_kind(call_node),
+            kwarg_names=kwarg_names,
         )
         instrs.append(call_instr)
 
@@ -2207,6 +2311,23 @@ class JavaScriptFrontend:
                 kind=kind,
                 description=spec.description
             ))
+
+        # `decodeURIComponent(location.hash.slice(1))`, `JSON.parse(req.body.data)`: functions that
+        # only re-encode their argument return request data when the argument is request data
+        if func_name in self._PASSTHROUGH_CALLS:
+            for arg in args:
+                found = self._check_expression_for_taint_source(arg, target, loc)
+                if found:
+                    instrs.extend(found)
+                    break
+
+        # `req.query.p.trim()`, `req.headers.authorization.split(' ')[0]`: a method called on an
+        # inline request value returns request data (a string method keeps the payload).
+        if func_node is not None and func_node.type == "member_expression":
+            receiver = func_node.child_by_field_name("object")
+            if receiver is not None and receiver.type in ("member_expression", "new_expression") \
+                    and not self._lookup_call_spec(func_name, call_node):
+                instrs.extend(self._check_expression_for_taint_source(receiver, target, loc))
 
         # Check if this is a sink. Unlike the source check above this honours member-chain
         # suffixes (`this.db.query`, `await repo.pool.query`) and arguments that qualify the
@@ -2234,7 +2355,7 @@ class JavaScriptFrontend:
         Each call in the chain is translated separately.
         """
         instrs = []
-        loc = self._get_location(call_node)
+        loc = self._chain_location(call_node, self._get_location(call_node))
 
         # Get the function node
         func_node = call_node.child_by_field_name("function")
@@ -2250,9 +2371,10 @@ class JavaScriptFrontend:
                 inner_instrs = self._translate_call_expr(obj_node)
                 instrs.extend(inner_instrs)
 
-                # Now translate this call with just the method name
+                # Now translate this call with just the method name (or, behind
+                # fluent setters, as a call on the original object)
                 method_name = self._get_text(prop_node) if prop_node else ""
-                func_name = method_name
+                func_name = self._fluent_call_name(call_node) or method_name
             else:
                 # Regular method call (e.g., obj.method())
                 func_name = self._get_call_name(call_node)
@@ -2262,6 +2384,7 @@ class JavaScriptFrontend:
 
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
+        args_exp, kwarg_names = self._with_option_kwargs(func_name, args, args_exp)
 
         # Build Call instruction
         call_instr = Call(
@@ -2270,6 +2393,7 @@ class JavaScriptFrontend:
             func=ExpConst.string(func_name),
             args=args_exp,
             receiver_type=self._receiver_kind(call_node),
+            kwarg_names=kwarg_names,
         )
         instrs.append(call_instr)
 
@@ -2330,6 +2454,8 @@ class JavaScriptFrontend:
         object is narrowed to the values its template prints raw."""
         kept = self._render_data_exps(func_name, args, idx)
         if kept is None:
+            if args[idx].type in ("object", "array") and func_name.rsplit(".", 1)[-1] in ("send", "response"):
+                return ExpConst.string("")      # serialised as JSON, not sent as HTML
             return self._translate_expression(args[idx])
         return ExpStringConcat(kept) if kept else ExpConst.string("")
 
@@ -2337,7 +2463,14 @@ class JavaScriptFrontend:
         """The expressions of sink argument `arg_idx`: the argument itself, or
         for a render call whose template is known, the raw-printed data values."""
         kept = self._render_data_exps(func_name, args, arg_idx)
-        return kept if kept is not None else [self._translate_expression(args[arg_idx])]
+        if kept is not None:
+            return kept
+        # `res.send({ q: req.query.q })` / `h.response([...])`: an object or array is
+        # serialised as JSON (application/json), not sent as HTML.
+        if (args[arg_idx].type in ("object", "array")
+                and func_name.rsplit(".", 1)[-1] in ("send", "response")):
+            return []
+        return [self._translate_expression(args[arg_idx])]
 
     def _emit_nested_call_sink(self, call_node: TSNode, args: List[Exp]) -> None:
         """Emit a TaintSink for a call appearing inside a larger expression
@@ -2435,6 +2568,25 @@ class JavaScriptFrontend:
             exp=ExpBinOp(bin_op, ExpVar(PVar(var_name)), ExpConst.integer(1))
         ))
 
+    def _return_value_exp(self, node: TSNode, loc: Location):
+        """The expression a `return` yields. A returned call (`return h.redirect(x)`,
+        `return db.query(q)`) is also emitted as a call statement, so specs (sinks,
+        sources, sanitizers) and framework packs apply to it as to a standalone call."""
+        inner = self._unwrap_await(node)
+        if inner is not None and inner.type == "call_expression":
+            # the call as a statement (a Call instruction for specs, packs and canonical ids) ...
+            spec = self._lookup_call_spec(self._get_call_name(inner), inner)
+            if not (spec is not None and spec.taint_propagates and not spec.is_taint_sink()
+                    and not spec.is_taint_source() and not spec.is_taint_sanitizer()):
+                self._add_instrs(self._translate_call_expr(inner))
+        # ... and the returned value as the expression, so argument -> result propagation is unchanged
+        return self._translate_expression(node)
+
+    def _add_return_value(self, body_node: TSNode) -> None:
+        """`() => expr`: the expression body is the returned value."""
+        loc = self._get_location(body_node)
+        self._add_instr(Return(loc=loc, value=self._return_value_exp(body_node, loc)))
+
     def _translate_return(self, node: TSNode) -> None:
         """Translate return statement"""
         loc = self._get_location(node)
@@ -2451,11 +2603,10 @@ class JavaScriptFrontend:
                             self._translate_block(body_node)
                         else:
                             # Expression body: () => expr
-                            exp = self._translate_expression(body_node)
-                            self._add_instr(Return(loc=self._get_location(body_node), value=exp))
+                            self._add_return_value(body_node)
                     return  # Don't add another return statement
                 else:
-                    value_exp = self._translate_expression(child)
+                    value_exp = self._return_value_exp(child, loc)
                 break
 
         self._add_instr(Return(loc=loc, value=value_exp))
@@ -2800,6 +2951,9 @@ class JavaScriptFrontend:
         elif node.type == "call_expression":
             func = node.child_by_field_name("function")
             func_exp = self._translate_expression(func)
+            fluent = self._fluent_call_name(node)
+            if fluent is not None:
+                func_exp = ExpVar(PVar(fluent))        # `$('<li>').text(v)` -> `$.text`
             args = []
             args_node = node.child_by_field_name("arguments")
             if args_node:
@@ -2907,7 +3061,14 @@ class JavaScriptFrontend:
             # A constructor can itself be a sink (e.g. new Function(userCode) is
             # code injection). Emit the TaintSink as a side effect so it fires in
             # any context (var initializer, argument, etc.).
-            spec = self.specs.get(cons_name) or self.specs.get(f"new {cons_name}")
+            qualified = cons_name
+            head, dot, rest = cons_name.partition(".")
+            if dot and head in self._module_aliases:
+                qualified = f"{self._module_aliases[head]}.{rest}"          # new vm.Script(...)
+            elif not dot and cons_name in self._imported_names:
+                qualified = self._imported_names[cons_name]                 # import { Script } from 'vm'
+            spec = (self.specs.get(qualified) or self.specs.get(cons_name)
+                    or self.specs.get(f"new {cons_name}"))
             if spec and spec.is_taint_sink():
                 kind = _get_sink_kind(spec.is_sink)
                 for arg_idx in spec.sink_args:
@@ -3057,6 +3218,123 @@ class JavaScriptFrontend:
             end_column=node.end_point[1]
         )
 
+    def _is_library_call(self, func_name: str) -> bool:
+        """Is this call named after an imported third-party package (not a relative import)?"""
+        modules = {m for m in self._module_aliases.values() if not m.startswith(".")}
+        modules |= {q.rsplit(".", 1)[0] for q in self._imported_names.values() if not q.startswith(".")}
+        return any(func_name.startswith(m + ".") for m in modules)
+
+    def _with_option_kwargs(self, func_name: str, args: List[TSNode], args_exp):
+        """`libxmljs.parseXml(xml, { noent: true })`: an options object literal passed to a
+        third-party package function also yields its simple properties as named arguments
+        (`Call.kwarg_names`), so framework packs can condition on them (`when_kwarg`).
+        Calls into the project's own modules are left alone (their parameters are positional)."""
+        if not args or args[-1].type != "object" or not self._is_library_call(func_name):
+            return args_exp, None
+        names: List[Optional[str]] = [None] * len(args_exp)
+        extra = []
+        for prop in args[-1].named_children:
+            if prop.type != "pair":
+                continue
+            key, value = prop.child_by_field_name("key"), prop.child_by_field_name("value")
+            if key is None or value is None or key.type not in ("property_identifier", "string"):
+                continue
+            extra.append(((self._translate_expression(value), Typ.unknown_type()),
+                          self._get_text(key).strip("'\"")))
+        if not extra:
+            return args_exp, None
+        return list(args_exp) + [e for e, _ in extra], names + [n for _, n in extra]
+
+    def _chain_location(self, call_node: TSNode, loc: Location) -> Location:
+        """A call in a multi-line chain (`repo\n  .createQueryBuilder()\n  .where(x)`) is
+        reported on the line of its method name, not on the line the chain starts."""
+        func = call_node.child_by_field_name("function")
+        prop = func.child_by_field_name("property") if func is not None and func.type == "member_expression" else None
+        if prop is None or prop.start_point[0] == call_node.start_point[0]:
+            return loc
+        return Location(file=self._filename, line=prop.start_point[0] + 1, column=prop.start_point[1],
+                        end_line=call_node.end_point[0] + 1, end_column=call_node.end_point[1])
+
+    # Methods that configure the object they are called on and return it, so
+    # `res.status(200).send(x)` is `res.send(x)` (Express/Fastify/Koa responses).
+    _FLUENT_SETTERS = frozenset({"status", "code", "type", "contentType", "set", "header", "headers",
+                                 "cookie", "clearCookie", "append", "vary", "location", "links",
+                                 "attachment", "hijack", "serializer", "statusCode"})
+
+    _JQUERY_ROOTS = frozenset({"$", "jQuery"})
+    # traversal / filtering methods that return another jQuery collection
+    _JQUERY_CHAIN = frozenset({"find", "children", "parent", "parents", "closest", "first", "last", "eq", "next",
+                               "prev", "siblings", "filter", "not", "has", "addClass", "removeClass", "css", "show",
+                               "hide", "empty", "end", "slice", "add", "contents", "nextAll", "prevAll", "wrap"})
+
+    def _jquery_call_name(self, call_node: TSNode) -> Optional[str]:
+        """`$('#x').find('li').html(v)` -> `$.html`: a method called on a jQuery collection."""
+        func = call_node.child_by_field_name("function")
+        if func is None or func.type != "member_expression":
+            return None
+        method = func.child_by_field_name("property")
+        obj = func.child_by_field_name("object")
+        while obj is not None and obj.type == "call_expression":
+            inner = obj.child_by_field_name("function")
+            if inner is None:
+                return None
+            if inner.type == "identifier" and self._get_text(inner) in self._JQUERY_ROOTS:
+                return f"$.{self._get_text(method)}" if method is not None else None
+            if inner.type != "member_expression":
+                return None
+            prop = inner.child_by_field_name("property")
+            if prop is None or self._get_text(prop) not in self._JQUERY_CHAIN:
+                return None
+            obj = inner.child_by_field_name("object")
+        return None
+
+    def _sets_non_html_content_type(self, setter: str, args: List[TSNode]) -> bool:
+        """`type('json')`, `contentType('text/plain')`, `set('Content-Type', 'image/png')`: a literal
+        content type that is not HTML / XML."""
+        value = None
+        if setter in ("type", "contentType") and args:
+            value = args[0]
+        elif setter in ("set", "header", "append") and len(args) >= 2 \
+                and args[0].type == "string" and self._get_text(args[0]).strip("'\"`").lower() == "content-type":
+            value = args[1]
+        if value is None or value.type != "string":
+            return False
+        text = self._get_text(value).strip("'\"`").lower()
+        return bool(text) and "html" not in text and "xml" not in text
+
+    def _fluent_call_name(self, call_node: TSNode) -> Optional[str]:
+        """`res.status(200).type('html').send` -> `res.send`: the call's name when its
+        receiver is an identifier chain followed only by fluent setter calls."""
+        func = call_node.child_by_field_name("function")
+        if func is None or func.type != "member_expression":
+            return None
+        jq = self._jquery_call_name(call_node)
+        if jq is not None:
+            return jq
+        method = func.child_by_field_name("property")
+        obj = func.child_by_field_name("object")
+        if method is None or obj is None or obj.type != "call_expression":
+            return None
+        while obj is not None and obj.type == "call_expression":
+            inner = obj.child_by_field_name("function")
+            if inner is None or inner.type != "member_expression":
+                return None
+            prop = inner.child_by_field_name("property")
+            if prop is None or self._get_text(prop) not in self._FLUENT_SETTERS:
+                return None
+            if self._sets_non_html_content_type(self._get_text(prop), self._get_call_args(obj)):
+                return None         # `res.type('text').send(x)` is not an HTML response
+            obj = inner.child_by_field_name("object")
+        if obj is None or obj.type not in ("identifier", "member_expression", "this"):
+            return None
+        root = self._get_text(obj)
+        if not all(part.isidentifier() for part in root.split(".")):
+            return None
+        head, dot, rest = root.partition(".")
+        if dot and head in getattr(self, "_module_aliases", {}):
+            root = f"{self._module_aliases[head]}.{rest}"
+        return f"{root}.{self._get_text(method)}"
+
     def _get_call_name(self, call_node: TSNode) -> str:
         """Get full name of function being called. A call through a module
         binding is named after the module: `cp.exec` with
@@ -3068,9 +3346,11 @@ class JavaScriptFrontend:
         name = self._get_text(func)
         root, dot, rest = name.partition(".")
         if dot and root in getattr(self, "_module_aliases", {}):
-            return f"{self._module_aliases[root]}.{rest}"
-        if not dot and name in getattr(self, "_imported_names", {}):
-            return self._imported_names[name]
+            name = f"{self._module_aliases[root]}.{rest}"
+        elif not dot and name in getattr(self, "_imported_names", {}):
+            name = self._imported_names[name]
+        if self._safe_yaml_load(name, call_node):
+            return name.rsplit(".", 1)[0] + ".safeLoad"     # load(text, { schema: JSON_SCHEMA }) is safeLoad
         return name
 
     def _module_bindings(self, root: TSNode):
@@ -3236,6 +3516,19 @@ class JavaScriptFrontend:
                 ))
                 return instrs
 
+        # The same keys behind a qualifier: `window.location.search`, `this.route.snapshot.queryParams`
+        # (only multi-segment keys, so a bare word never matches in the middle of a chain)
+        for j in range(1, len(parts)):
+            for i in range(len(parts), j + 1, -1):
+                key = ".".join(parts[j:i])
+                spec = self.specs.get(key)
+                if spec and spec.is_taint_source():
+                    kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+                    instrs.append(TaintSource(
+                        loc=loc, var=PVar(target), kind=kind,
+                        description=spec.description or f"Taint from {key}"))
+                    return instrs
+
         return instrs
 
     def _check_expression_for_taint_source(
@@ -3304,6 +3597,24 @@ class JavaScriptFrontend:
             obj = node.child_by_field_name("object")
             if obj:
                 return self._check_expression_for_taint_source(obj, target, loc)
+
+        # `new URLSearchParams(location.search)` / `new URL(location.href)` carry their argument
+        elif node_type == "new_expression":
+            cons = node.child_by_field_name("constructor")
+            args_node = node.child_by_field_name("arguments")
+            if cons is not None and self._get_text(cons) in ("URLSearchParams", "URL") \
+                    and args_node is not None and args_node.named_children:
+                return self._check_expression_for_taint_source(args_node.named_children[0], target, loc)
+
+        # A string method on an inline request value: `req.query.p.split(',')` (in `[1]`,
+        # `x || y`, ...) keeps the request data
+        elif node_type == "call_expression":
+            func = node.child_by_field_name("function")
+            if func is not None and func.type == "member_expression":
+                receiver = func.child_by_field_name("object")
+                if receiver is not None and receiver.type in ("member_expression", "call_expression", "new_expression") \
+                        and not self._lookup_call_spec(self._get_call_name(node), node):
+                    return self._check_expression_for_taint_source(receiver, target, loc)
 
         return []
 

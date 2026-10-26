@@ -1,0 +1,19 @@
+[pack]
+name = "aspnetcore-minimal"
+language = "csharp"
+description = "ASP.NET Core Minimal APIs: the lambda / method passed to MapGet, MapPost, ... receives request data"
+# No `detect`: a .NET 6+ Program.cs commonly has no using directives at all (implicit usings).
+
+# app.MapGet("/x", (string q, HttpRequest req) => ...): every bindable parameter comes from the
+# route, query string, headers or body. Services (DI), the HttpContext and value types are not data.
+[[entrypoint]]
+id = "minimal-api-handler"
+registered_via = ["*.MapGet", "*.MapPost", "*.MapPut", "*.MapDelete", "*.MapPatch", "*.MapMethods", "*.Map",
+                  "*.MapFallback"]
+params = "all"
+exclude_param_type = ["HttpContext", "*Context", "HttpResponse", "ILogger", "ILogger<*>", "I*Service", "I*Repository", "I*Context", "I*Manager", "I*Factory", "I*Provider",
+                      "I*Client", "I*Options*", "IConfiguration", "IWebHostEnvironment", "IHostEnvironment", "IMediator", "IMapper",
+                      "CancellationToken", "ClaimsPrincipal", "LinkGenerator", "*Service", "*Repository",
+                      "*Factory", "*Options", "int", "long", "short", "byte", "bool", "double", "float",
+                      "decimal", "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?"]
+tainted_param_type = ["HttpRequest", "Microsoft.AspNetCore.Http.HttpRequest"]

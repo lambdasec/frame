@@ -12,6 +12,7 @@ for parsing. It handles:
 """
 
 import os
+import re
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -52,7 +53,7 @@ from frame.sil.packs import finish_program
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
-    JAVA_FACTORY_RETURN_TYPES)
+    JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_LAMBDA_PARAMS)
 
 
 class JavaFrontend:
@@ -109,6 +110,13 @@ class JavaFrontend:
         # Methods declared by the class being translated: an unqualified (or
         # `this.`) call to one of them is that method, never a library API.
         self._class_methods: set = set()
+        self._current_class_annotations: list = []
+        self._nested_calls: Dict[Tuple[int, int], str] = {}
+        self._lambda_names: Dict[int, str] = {}
+        self._qualified_names: set = set()
+        self._method_refs: List[Tuple[Optional[str], str, str]] = []
+        self._program: Optional[Program] = None
+        self._in_call_args = False
         self._imports = ImportTable()
         self._package = ""
         self._local_types: Dict[str, str] = {}
@@ -127,16 +135,24 @@ class JavaFrontend:
         self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
+        self._nested_calls = {}
+        self._lambda_names = {}
+        self._method_refs = []
+        self._in_call_args = False
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="java",
                           type_spec_receivers=type_spec_receivers)
         program.source_files.append(filename)
+        self._program = program
 
         self._imports, self._package, self._local_types = self._collect_declarations(tree.root_node)
+        # simple names the file also spells with a package (`java.sql.Statement st`): library types
+        self._qualified_names = set(re.findall(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\.([A-Z]\w*)", source_code))
         program.imports = self._imports.as_dict()
 
         self._translate_compilation_unit(tree.root_node, program)
+        self._apply_method_references(program)
         annotate_program_calls(program, self._imports, self._local_types)
         self._propagate_interprocedural_taint(tree.root_node, program)
         self._scan_cookie_flags(tree.root_node, program)
@@ -146,7 +162,7 @@ class JavaFrontend:
         if _aggressive_detectors():
             self._scan_csrf_disabled(tree.root_node, program)
         program.import_wildcards = list(self._imports.wildcards)
-        finish_program(program, self.packs)
+        finish_program(program, self.packs, source_code)
         return program
 
     def _collect_declarations(self, root: TSNode):
@@ -202,6 +218,16 @@ class JavaFrontend:
         body = node.child_by_field_name("body")
         for member in (body.named_children if body is not None else ()):
             if member.type == "field_declaration":
+                # Fields that something else fills in or that never change are not the object's
+                # externally-bound state: injected collaborators, constants.
+                managed = any(a.name in ("Inject", "Autowired", "Resource", "EJB", "Value", "PersistenceContext",
+                                         "Mock", "MockBean", "Spy")
+                              for a in (parse_annotation(t, self._imports, value_alias=True)
+                                        for t in self._get_annotations(member)))
+                mods = next((c for c in member.children if c.type == "modifiers"), None)
+                fixed = mods is not None and bool(re.search(r"\b(static|final)\b", self._get_text(mods)))
+                if managed or fixed:
+                    continue
                 for d in member.named_children:
                     if d.type == "variable_declarator" and d.child_by_field_name("name") is not None:
                         fields.append(self._get_text(d.child_by_field_name("name")))
@@ -230,6 +256,9 @@ class JavaFrontend:
         outer_methods = self._class_methods
         self._current_class = class_name
         self._record_class_info(node, program, "enum" if node.type == "enum_declaration" else "class")
+        outer_class_anns = self._current_class_annotations
+        self._current_class_annotations = program.class_info[class_name].annotations \
+            if class_name in program.class_info else []
 
         body = node.child_by_field_name("body")
         self._class_methods = {
@@ -302,6 +331,7 @@ class JavaFrontend:
                 self._translate_literal_fields(body, class_name, program)
 
         self._current_class, self._field_types = outer_class, outer_fields
+        self._current_class_annotations = outer_class_anns
         self._class_methods = outer_methods
         self._field_static_types, self._class_type_vars = outer_static, outer_tvars
         self._class_method_returns = outer_returns
@@ -405,7 +435,7 @@ class JavaFrontend:
                 arg_ids: List[set] = []
                 if args_node is not None:
                     for a in args_node.children:
-                        if a.type in ("(", ")", ","):
+                        if a.type in ("(", ")", ",", "line_comment", "block_comment"):
                             continue
                         # Identifiers ANYWHERE in the arg (handles `a + "-" + b`),
                         # so taint flows through concatenations/expressions.
@@ -565,7 +595,7 @@ class JavaFrontend:
                     arg0 = None
                     if args is not None:
                         for a in args.children:
-                            if a.type not in ("(", ")", ","):
+                            if a.type not in ("(", ")", ",", "line_comment", "block_comment"):
                                 arg0 = a
                                 break
                     if mname == "setHttpOnly" and arg0 is not None \
@@ -1024,12 +1054,28 @@ class JavaFrontend:
             elif child.type == "update_expression":
                 self._translate_update(child)
 
+    @staticmethod
+    def _peel_cast_chain(node: Optional[TSNode]) -> Optional[TSNode]:
+        """`(Article) em.createQuery(q).getSingleResult()` -> the call: a cast around a CHAINED
+        call changes nothing about the data, and the call must be lowered as a call. (A cast
+        around a plain `map.get(k)` is left alone: it is analysed in its cast form.)"""
+        cur = node
+        while cur is not None and cur.type in ("cast_expression", "parenthesized_expression"):
+            inner = cur.child_by_field_name("value") if cur.type == "cast_expression" else \
+                next((c for c in cur.named_children), None)
+            cur = inner
+        if cur is not None and cur.type == "method_invocation":
+            obj = cur.child_by_field_name("object")
+            if obj is not None and obj.type == "method_invocation":
+                return cur
+        return node
+
     def _translate_local_var_declaration(self, node: TSNode) -> None:
         """Translate local variable declaration"""
         for child in node.children:
             if child.type == "variable_declarator":
                 name_node = child.child_by_field_name("name")
-                value_node = child.child_by_field_name("value")
+                value_node = self._peel_cast_chain(child.child_by_field_name("value"))
 
                 if name_node:
                     var_name = self._get_text(name_node)
@@ -1062,7 +1108,7 @@ class JavaFrontend:
     def _translate_assignment(self, node: TSNode) -> None:
         """Translate assignment"""
         left = node.child_by_field_name("left")
-        right = node.child_by_field_name("right")
+        right = self._peel_cast_chain(node.child_by_field_name("right"))
 
         if not left or not right:
             return
@@ -1244,7 +1290,42 @@ class JavaFrontend:
             target = obj.child_by_field_name("object")
             if target is not None and target.type == "this":
                 return self._field_types.get(self._get_text(obj.child_by_field_name("field"))) or None
+        if obj.type == "method_invocation":
+            return self._call_result_type(obj)
+        if obj.type == "object_creation_expression":
+            return self._type_name(obj.child_by_field_name("type"))
         return None
+
+    def _call_result_type(self, call_node: TSNode) -> Optional[str]:
+        """Declared type a documented API call returns (`JAVA_RETURN_TYPES`), so the next call of
+        a chain has a receiver type."""
+        name = call_node.child_by_field_name("name")
+        obj = call_node.child_by_field_name("object")
+        if name is None or obj is None:
+            return None
+        if obj.type == "identifier":
+            text = self._get_text(obj)
+            owner = self._var_types.get(text) or (text if text[:1].isupper() else None)
+        elif obj.type == "method_invocation":
+            owner = self._call_result_type(obj)
+        elif obj.type == "object_creation_expression":
+            owner = self._type_name(obj.child_by_field_name("type"))
+        else:
+            owner = None
+        qualified = JAVA_RETURN_TYPES.get(f"{owner}.{self._get_text(name)}") if owner else None
+        return self._implicit_import(qualified) if qualified else None
+
+    def _implicit_import(self, qualified: str) -> str:
+        """The simple name of a documented return type, made resolvable to its canonical name
+        (the file need not import a type it only reaches through a chain)."""
+        simple = qualified.rsplit(".", 1)[-1]
+        if simple in self._imports.names or simple in self._local_types:
+            return simple
+        if qualified.startswith(JAKARTA_MIGRATED) and any(
+                v.startswith("jakarta.") for v in self._imports.names.values()):
+            qualified = "jakarta." + qualified[len("javax."):]
+        self._imports.names[simple] = qualified
+        return simple
 
     def _hoist_creation_receiver(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
         """`new ProcessBuilder(cmd).start()`: the creation is a call of its own (a sink in its own
@@ -1256,8 +1337,78 @@ class JavaFrontend:
         if obj is not None and obj.type == "object_creation_expression" and method is not None:
             tmp = f"$new{self._ident_counter}"
             self._ident_counter += 1
-            return self._translate_object_creation_assignment(tmp, obj, loc), f"{tmp}.{self._get_text(method)}"
+            # `new File(userName).getName()` is the base-name idiom: the path is cut down to its
+            # last element, so the constructor is not a path sink here.
+            basename = (self._get_text(method) == "getName"
+                        and self._type_name(obj.child_by_field_name("type")) == "File")
+            return (self._translate_object_creation_assignment(tmp, obj, loc, sink=not basename),
+                    f"{tmp}.{self._get_text(method)}")
+        if obj is not None and obj.type == "method_invocation" and method is not None:
+            pre: List[Instr] = []
+            root = self._builder_chain_root(obj, loc, pre)
+            if root is not None:
+                # `sb.append(a).append(b).toString()`: every link acts on the one builder.
+                return pre, f"{root}.{self._get_text(method)}"
+            # `em.createQuery(q).getResultList()`, `http.get().uri(url)`: the outer call keeps
+            # its textual name; the inner call is analysed as a call of its own so its
+            # arguments reach its own sink / source / project callee.
+            tmp = f"$ch{self._ident_counter}"
+            self._ident_counter += 1
+            inner = self._translate_call_assignment(tmp, obj, loc)
+            if not self._chain_keyed(name) and (
+                    self._lookup_spec(name, call_node) is None or self._call_result_type(obj) is not None):
+                # No spec is keyed on the chain's text: the outer call is made on the inner
+                # call's RESULT, so its taint (a source such as `uriInfo.getQueryParameters()`)
+                # reaches the outer call's result by the ordinary receiver rule.
+                return inner, f"{tmp}.{self._get_text(method)}"
+            return inner, name
         return [], name
+
+    def _chain_keyed(self, name: str) -> bool:
+        """True when a spec is keyed on the CHAIN's own text (`getWriter().println`,
+        `Runtime.getRuntime().exec`): then the call keeps that name. Any other chain call is
+        made on the inner call's result."""
+        parts = name.split(".")
+        return any("(" in ".".join(parts[i:]) and ".".join(parts[i:]) in self.specs
+                   for i in range(len(parts)))
+
+    # Methods that return the receiver (or a view of it), so a chain of them is a sequence of
+    # calls on the first receiver.
+    _BUILDER_METHODS = frozenset({"append", "insert", "appendCodePoint", "reverse", "replace",
+                                  "delete", "deleteCharAt", "concat"})
+    _BUILDER_TYPES = frozenset({"StringBuilder", "StringBuffer"})
+
+    def _builder_chain_root(self, node: TSNode, loc: Location, pre: List[Instr]) -> Optional[str]:
+        """For `root.append(a).append(b)` (node = the chain up to the last builder call) where root
+        is a StringBuilder/StringBuffer variable or `new StringBuilder(..)`: emit each link as a
+        call on the root into `pre` and return the root's name; None if this is not such a chain."""
+        links: List[TSNode] = []
+        cur = node
+        while cur is not None and cur.type == "method_invocation":
+            nm = cur.child_by_field_name("name")
+            if nm is None or self._get_text(nm) not in self._BUILDER_METHODS:
+                return None
+            links.append(cur)
+            cur = cur.child_by_field_name("object")
+        if cur is None:
+            return None
+        if cur.type == "identifier" and self._var_types.get(self._get_text(cur)) in self._BUILDER_TYPES:
+            root = self._get_text(cur)
+        elif cur.type == "object_creation_expression" and \
+                self._type_name(cur.child_by_field_name("type")) in self._BUILDER_TYPES:
+            root = f"$new{self._ident_counter}"
+            self._ident_counter += 1
+            pre.extend(self._translate_object_creation_assignment(root, cur, loc))
+        else:
+            return None
+        for link in reversed(links):
+            name = self._get_text(link.child_by_field_name("name"))
+            args = self._get_method_args(link)
+            hoisted, args_exp = self._translate_args(args, loc)
+            pre.extend(hoisted)
+            pre.append(Call(loc=loc, ret=None, func=ExpConst.string(f"{root}.{name}"), args=args_exp,
+                            receiver_type=self._var_types.get(root) or "StringBuilder"))
+        return root
 
     def _callee_class(self, call_node: Optional[TSNode]) -> Optional[str]:
         """The class a call's method belongs to: the receiver's declared type, a class name
@@ -1296,15 +1447,90 @@ class JavaFrontend:
         3. Common object patterns (request., response., etc.)
         """
         recv_type = self._receiver_type(call_node)
+        if self._name_spec_vetoed(method_name, recv_type):
+            return None
         if recv_type and recv_type == self._current_class and (
                 '.' not in method_name or method_name.startswith("this.")):
             return None  # the class's own method: its body is analysed instead
         if recv_type and '.' in method_name:
+            # A receiver of one of the project's own classes (`service.search(q)`) is not the
+            # library API a bare method name (`search`, `execute`, `evaluate`) happens to share:
+            # only a spec keyed on its type applies; the project call is followed into its body.
+            by_name = (lambda: None) if (self._is_project_type(recv_type)
+                                         or self._not_a_name_only_receiver(recv_type, method_name)) \
+                else (lambda: self._lookup_spec_by_name(method_name))
             return typed_spec_lookup(self.specs, recv_type, method_name,
                                      self._receiver_exact(call_node),
-                                     lambda: self._lookup_spec_by_name(method_name),
-                                     type_spec_receivers)
+                                     by_name, type_spec_receivers)
         return self._lookup_spec_by_name(method_name)
+
+    def _name_spec_vetoed(self, method_name: str, recv_type: Optional[str]) -> bool:
+        """The receiver's type is known and is not what a bare-name spec (`search`, `execute`) is
+        about: that call is a project method or another library's method of the same name. Only a
+        spec keyed on the type applies (the caller already tried those)."""
+        if not recv_type or '.' not in method_name:
+            return False
+        return self._is_project_type(recv_type) or self._not_a_name_only_receiver(recv_type, method_name)
+
+    def _neutral_spec(self, call_node: TSNode, method_name: str, nargs: int) -> Optional[ProcSpec]:
+        """For a call whose bare-name spec is vetoed and that has no spec of its own: a spec that
+        is neither source nor sink and keeps the default argument / receiver -> result flow, set on
+        the Call so the translator's own name lookup cannot turn it into a sink either."""
+        recv_type = self._receiver_type(call_node)
+        if not self._name_spec_vetoed(method_name, recv_type):
+            return None
+        if self._lookup_spec(method_name, call_node) is not None \
+                or self._lookup_spec_by_name(method_name) is None:
+            return None
+        return ProcSpec(taint_propagates=list(range(nargs)), taint_from_receiver=True,
+                        description="project / non-matching receiver: no library spec")
+
+    # A bare method name that is a sink only on some library types (`execute` runs SQL on a JDBC
+    # statement / template, not on a Vert.x query, an Executor or a Command).
+    _NAME_ONLY_RECEIVERS = {
+        "execute": re.compile(r"(Statement|Template|Connection|Operations|Session|Manager|Runner|Context|Client)$"),
+    }
+
+    def _not_a_name_only_receiver(self, recv_type: str, method_name: str) -> bool:
+        pattern = self._NAME_ONLY_RECEIVERS.get(method_name.rsplit(".", 1)[-1])
+        if pattern is None:
+            return False
+        simple = recv_type.rsplit(".", 1)[-1]
+        return not pattern.search(simple) or simple in ("PreparedQuery", "RowSet", "SqlResult")
+
+    _JAVA_LANG_TYPES = frozenset({
+        "String", "StringBuilder", "StringBuffer", "Object", "Runtime", "Process", "ProcessBuilder",
+        "System", "Thread", "Class", "ClassLoader", "Math", "Integer", "Long", "Double", "Float",
+        "Short", "Byte", "Character", "Boolean", "Number", "Throwable", "Exception", "Iterable",
+        "Runnable", "Comparable", "CharSequence", "Enum", "Record", "Void"})
+
+    def _is_project_type(self, type_name: str) -> bool:
+        """True when `type_name` is known to be one of this project's own classes: declared in
+        this file, or neither imported nor java.lang and no wildcard import could supply it (same
+        package), or imported from a package sharing this file's package root. A type that might
+        come from a library (wildcard imports, any other import) is not."""
+        simple = type_name.rsplit(".", 1)[-1]
+        if simple in self._local_types:
+            return True
+        if simple in self._JAVA_LANG_TYPES or "." in type_name or simple in self._qualified_names:
+            return False
+        imported = self._imports.names.get(simple)
+        if imported is not None:
+            return self._same_project_package(imported.rsplit(".", 1)[0])
+        return not self._imports.wildcards or all(
+            self._same_project_package(w) for w in self._imports.wildcards)
+
+    def _same_project_package(self, package: str) -> bool:
+        own = self._package.split(".") if self._package else []
+        other = package.removesuffix(".*").split(".")
+        if len(own) < 2 or len(other) < 2:
+            return False
+        shared = 0
+        for a, b in zip(own, other):
+            if a != b:
+                break
+            shared += 1
+        return shared >= (3 if own[0] in ("org", "net", "io") else 2)
 
     def _lookup_spec_by_name(self, method_name: str) -> Optional[ProcSpec]:
         """Name-based lookup (receiver type unknown, or no typed spec)."""
@@ -1342,7 +1568,7 @@ class JavaFrontend:
 
         pre, method_name = self._hoist_creation_receiver(call_node, loc)
         args = self._get_method_args(call_node)
-        instrs, args_exp = self._translate_args(args, loc)
+        instrs, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
         instrs = pre + instrs
 
         ret_id = self._new_ident(target)
@@ -1357,9 +1583,11 @@ class JavaFrontend:
             arg_types=[self._arg_type(a) for a in args],
             callee_class=self._callee_class(call_node),
         )
+        call_instr.pack_spec = self._neutral_spec(call_node, method_name, len(args))
         instrs.append(call_instr)
 
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
+        instrs.extend(self._getter_receiver_flow(target, call_node, loc))
 
         # Track charAt results for path-sensitive switch analysis
         # Pattern: target = constantString.charAt(N)
@@ -1407,7 +1635,193 @@ class JavaFrontend:
 
         return instrs
 
-    def _translate_args(self, args: List[TSNode], loc: Location):
+    def _hoist_nested_call(self, node: TSNode) -> Optional[Exp]:
+        """A call written inside an expression (`new RedirectView(service.page(next))`,
+        `"/a/" + UriUtils.encodePath(x)`) is lowered like `tmp = call` right before the statement
+        that uses it, so its spec (source, sink, sanitizer) and, in a project, its callee's
+        summary apply. As an ExpCall it was only a name that a few places looked at."""
+        if os.environ.get('FRAME_NO_HOIST') or self._current_node is None or self._current_proc is None or not self._in_call_args:
+            return None
+        key = (node.start_byte, node.end_byte)
+        tmp = self._nested_calls.get(key)
+        if tmp is None:
+            tmp = f"$nc{self._ident_counter}"
+            self._ident_counter += 1
+            self._nested_calls[key] = tmp
+            self._add_instrs(self._translate_call_assignment(tmp, node, self._get_location(node)))
+        return ExpVar(PVar(tmp))
+
+    _GETTER = re.compile(r"^(get|is)[A-Z]\w*$")
+
+    def _is_bean_getter(self, call_node: TSNode) -> Optional[str]:
+        """`form.getName()`: a no-argument getter called on a local/parameter whose declared type is
+        one of the project's own classes. Returns the receiver variable, else None."""
+        obj = call_node.child_by_field_name("object")
+        name = call_node.child_by_field_name("name")
+        if obj is None or name is None or obj.type != "identifier" or self._get_method_args(call_node):
+            return None
+        var = self._get_text(obj)
+        typ = self._var_types.get(var)
+        if typ and self._GETTER.match(self._get_text(name)) and self._is_project_type(typ):
+            return var
+        return None
+
+    def _is_receiver_getter_arg(self, call_node: TSNode) -> bool:
+        """`save(file.getOriginalFilename())`: a no-argument getter on a variable, as an argument.
+        Inline it has no instruction of its own, so a callee in another file never learns that
+        the argument is tainted; lowered to a temporary it is an ordinary call result."""
+        obj = call_node.child_by_field_name("object")
+        name = call_node.child_by_field_name("name")
+        return (obj is not None and name is not None and obj.type == "identifier"
+                and not self._get_method_args(call_node) and bool(self._GETTER.match(self._get_text(name))))
+
+    def _getter_receiver_flow(self, target: str, call_node: TSNode, loc: Location) -> List[Instr]:
+        """The value a getter returns is state of its receiver. A getter that is resolved to the
+        project's own method (a bean bound from the request: @RequestBody / @ModelAttribute / a
+        Struts action) is summarised by what its PARAMETERS contribute, which is nothing, so the
+        receiver's taint is carried to the result here."""
+        var = self._is_bean_getter(call_node)
+        if var is None:
+            return []
+        return [Assign(loc=loc, id=PVar(target),
+                       exp=ExpBinOp("+", ExpVar(PVar(target)), ExpVar(PVar(var))))]
+
+    # -- lambdas and method references ------------------------------------------------
+
+    def _lambda_param_nodes(self, node: TSNode) -> List[Tuple[str, Optional[str]]]:
+        """(name, written type or None) of a lambda's parameters."""
+        params = node.child_by_field_name("parameters")
+        out: List[Tuple[str, Optional[str]]] = []
+        if params is None:
+            return out
+        if params.type == "identifier":
+            out.append((self._get_text(params), None))
+        elif params.type == "inferred_parameters":
+            out += [(self._get_text(c), None) for c in params.named_children if c.type == "identifier"]
+        else:
+            for c in params.named_children:
+                if c.type in ("formal_parameter", "spread_parameter"):
+                    nm = c.child_by_field_name("name")
+                    tn = c.child_by_field_name("type")
+                    if nm is not None:
+                        out.append((self._get_text(nm), self._type_name(tn) if tn is not None else None))
+        return out
+
+    def _framework_lambda_types(self, via: str) -> Tuple[str, ...]:
+        """Qualified parameter types for a lambda handed to this registration call."""
+        values = list(self._imports.names.values()) + list(self._imports.wildcards)
+        for prefixes, pattern, types in JAVA_LAMBDA_PARAMS:
+            if any(v.startswith(pre) or v.startswith(pre.rstrip(".")) for v in values for pre in prefixes) \
+                    and re.search(pattern, via):
+                return types
+        return ()
+
+    def _lower_lambda(self, node: TSNode, via: str) -> str:
+        """A lambda is a procedure of its own (handlers are lambdas in Spark, Javalin, Vert.x, ...):
+        its parameters are typed from the registration it is passed to, `registered_via` names that
+        call, and the enclosing method's variables it reads are recorded as `captures`."""
+        cached = self._lambda_names.get(node.id)
+        if cached is not None:
+            return cached
+        program = self._program
+        row, col = node.start_point
+        cls = self._current_class or ""
+        name = f"{cls}.lambda@{row + 1}_{col}"
+        self._lambda_names[node.id] = name
+        pnodes = self._lambda_param_nodes(node)
+        inferred = self._framework_lambda_types(via)
+        outer_types = dict(self._var_types)
+        params: List[Tuple[PVar, Typ]] = []
+        proc = Procedure(name=name, params=params, ret_type=Typ.unknown_type(),
+                         loc=self._get_location(node), is_method=False)
+        proc.class_name = cls or None
+        proc.registered_via.append(via)
+        proc.span = (node.start_byte, node.end_byte)
+        local_types = dict(outer_types)
+        for i, (pname, written) in enumerate(pnodes):
+            params.append((PVar(pname), Typ.unknown_type()))
+            local_types.pop(pname, None)
+            qualified = None
+            if written is None and i < len(inferred):
+                qualified = inferred[i]
+            if written:
+                proc.param_types[pname] = written
+                local_types[pname] = written
+            elif qualified:
+                simple = self._implicit_import(qualified)
+                if self._imports.names.get(simple) == qualified:
+                    proc.param_types[pname] = simple
+                    local_types[pname] = simple
+                else:                                   # the simple name means another type here
+                    proc.param_types[pname] = qualified
+                    local_types[pname] = simple
+        body = node.child_by_field_name("body")
+        own = {p.name for p, _ in params}
+        enclosing = set(self._current_proc.param_types) | {p.name for p, _ in self._current_proc.params} \
+            if self._current_proc is not None else set()
+        enclosing |= set(outer_types)
+        if body is not None:
+            proc.captures = sorted((enclosing - own) & self._identifiers_in(body))
+        saved = (self._current_proc, self._current_node, self._node_counter, self._var_types,
+                 self._constant_values, self._weak_algo_vars, self._in_call_args)
+        parent_proc = self._current_proc
+        proc.parent = parent_proc.name if parent_proc is not None else None
+        self._current_proc = proc
+        self._node_counter = 0
+        self._var_types = local_types
+        self._constant_values = {}
+        self._weak_algo_vars = set()
+        self._in_call_args = False
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        if body is not None:
+            if body.type == "block":
+                self._translate_block(body)
+            else:
+                self._translate_lambda_value(body)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        (self._current_proc, self._current_node, self._node_counter, self._var_types,
+         self._constant_values, self._weak_algo_vars, self._in_call_args) = saved
+        program.add_procedure(proc)
+        return name
+
+    def _translate_lambda_value(self, expr: TSNode) -> None:
+        """`ctx -> service.find(ctx.param("id"))`: the expression is the lambda's result."""
+        loc = self._get_location(expr)
+        if expr.type in ("method_invocation", "object_creation_expression"):
+            tmp = f"$ret{self._ident_counter}"
+            self._ident_counter += 1
+            if expr.type == "method_invocation":
+                self._add_instrs(self._translate_call_assignment(tmp, expr, loc))
+            else:
+                self._add_instrs(self._translate_object_creation_assignment(tmp, expr, loc))
+            self._add_instr(Return(loc=loc, value=ExpVar(PVar(tmp))))
+        else:
+            self._add_instr(Return(loc=loc, value=self._translate_expression(expr)))
+
+    def _note_method_reference(self, node: TSNode, via: str) -> None:
+        """`router.get("/x").handler(this::show)` / `Handlers::show`: the referenced method of a
+        class in this file is registered with that call (resolved when the file is done)."""
+        kids = [c for c in node.children if c.type not in ("::",)]
+        if len(kids) < 2:
+            return
+        owner, method = self._get_text(kids[0]), self._get_text(kids[-1])
+        self._method_refs.append((self._current_class if owner == "this" else owner, method, via))
+
+    def _apply_method_references(self, program: Program) -> None:
+        for owner, method, via in self._method_refs:
+            for proc in program.procedures.values():
+                if proc.simple_name == method and (owner is None or proc.class_name == owner):
+                    if via not in proc.registered_via:
+                        proc.registered_via.append(via)
+
+    def _translate_args(self, args: List[TSNode], loc: Location, via: str = ""):
         """Arguments of a call as SIL expressions, plus the instructions that
         must run first. An argument that is itself a call to a taint SOURCE
         (`parse(req.getInputStream())`) is hoisted into a temporary
@@ -1418,15 +1832,24 @@ class JavaFrontend:
         instrs: List[Instr] = []
         exps = []
         for a in args:
+            if a.type == "lambda_expression" and self._program is not None:
+                exps.append((ExpConst.string(self._lower_lambda(a, via or "<call>")), Typ.unknown_type()))
+                continue
+            if a.type == "method_reference":
+                self._note_method_reference(a, via or "<call>")
             if a.type == "method_invocation":
                 spec = self._lookup_spec(self._get_method_name(a), a)
-                if spec is not None and spec.is_taint_source():
+                if (spec is not None and spec.is_taint_source()) or self._is_receiver_getter_arg(a):
                     tmp = f"$arg{self._ident_counter}"
                     self._ident_counter += 1
                     instrs.extend(self._translate_call_assignment(tmp, a, loc))
                     exps.append((ExpVar(PVar(tmp)), Typ.unknown_type()))
                     continue
-            exps.append((self._translate_expression(a), Typ.unknown_type()))
+            outer, self._in_call_args = self._in_call_args, True
+            try:
+                exps.append((self._translate_expression(a), Typ.unknown_type()))
+            finally:
+                self._in_call_args = outer
         return instrs, exps
 
     def _sink_applies(self, spec: ProcSpec, args: List[TSNode]) -> bool:
@@ -1621,7 +2044,8 @@ class JavaFrontend:
         self,
         target: str,
         creation_node: TSNode,
-        loc: Location
+        loc: Location,
+        sink: bool = True,
     ) -> List[Instr]:
         """Translate: target = new ClassName(args)"""
         instrs = []
@@ -1633,13 +2057,13 @@ class JavaFrontend:
         args_node = creation_node.child_by_field_name("arguments")
         if args_node:
             for child in args_node.children:
-                if child.type not in ("(", ")", ","):
+                if child.type not in ("(", ")", ",", "line_comment", "block_comment"):
                     args.append(child)
 
-        instrs, args_exp = self._translate_args(args, loc)
+        instrs, args_exp = self._translate_args(args, loc, via=f"new {type_name}")
 
-        # Constructor call name
-        constructor_name = f"new {type_name}"
+        # Constructor call name (a creation whose own sinks are off is named so no spec matches it)
+        constructor_name = f"new {type_name}" if sink else f"new {type_name}$value"
 
         ret_id = self._new_ident(target)
 
@@ -1654,7 +2078,7 @@ class JavaFrontend:
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
 
         # Check specs for constructor sink (e.g., FileOutputStream, File)
-        spec = self._lookup_spec(constructor_name)
+        spec = self._lookup_spec(constructor_name) if sink else None
         if spec and spec.is_taint_sink() and self._sink_applies(spec, args):
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
@@ -1672,7 +2096,7 @@ class JavaFrontend:
         pre, method_name = self._hoist_creation_receiver(call_node, loc)
         instrs.extend(pre)
         args = self._get_method_args(call_node)
-        hoisted, args_exp = self._translate_args(args, loc)
+        hoisted, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
         instrs.extend(hoisted)
 
         call_instr = Call(
@@ -1685,6 +2109,7 @@ class JavaFrontend:
             arg_types=[self._arg_type(a) for a in args],
             callee_class=self._callee_class(call_node),
         )
+        call_instr.pack_spec = self._neutral_spec(call_node, method_name, len(args))
         instrs.append(call_instr)
 
         # Use flexible spec lookup
@@ -1724,6 +2149,7 @@ class JavaFrontend:
 
         for child in node.children:
             if child.type not in ("return", ";"):
+                child = self._peel_cast_chain(child)
                 if child.type in ("method_invocation", "object_creation_expression"):
                     # `return f(x)`: lower the call like `tmp = f(x)` so its
                     # spec (source, sink, sanitizer) applies, then return tmp.
@@ -1737,9 +2163,77 @@ class JavaFrontend:
                     value_exp = ExpVar(PVar(tmp))
                 else:
                     value_exp = self._translate_expression(child)
+                self._add_instrs(self._handler_return_sinks(child, loc))
                 break
 
         self._add_instr(Return(loc=loc, value=value_exp))
+
+    _HANDLER_ANNOTATIONS = ("Mapping", "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path")
+    _HTML_LITERAL = re.compile(r"<\s*[A-Za-z/!]")
+
+    def _is_web_handler(self) -> bool:
+        proc = self._current_proc
+        return proc is not None and any(
+            a.name.endswith("Mapping") or a.name in self._HANDLER_ANNOTATIONS for a in proc.annotations)
+
+    def _handler_return_sinks(self, expr: TSNode, loc: Location) -> List[Instr]:
+        """Sinks that are the VALUE a web handler returns (no call to hang a spec on):
+        `return "redirect:" + url;` (Spring redirect view), `return "<p>" + name + "</p>";` (the
+        body is the HTML response), and a tainted view name returned from a @Controller
+        (Thymeleaf / FreeMarker view-name expression injection)."""
+        if not self._is_web_handler():
+            return []
+        out: List[Instr] = []
+        literal_html = any(
+            self._HTML_LITERAL.search(self._get_text(n)) for n in self._descendants(expr, stop=())
+            if n.type == "string_literal")
+        if expr.type == "binary_expression" and literal_html:
+            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=SinkKind.HTML_OUTPUT,
+                                 description="Handler returns a string with raw HTML around user data (XSS)"))
+        for n in self._descendants(expr, stop=()):
+            # `ResponseEntity.ok("<p>" + x + "</p>")` / `String.format("<p>%s</p>", x)`
+            if n is expr:
+                continue
+            if n.type == "binary_expression" and n.parent is not None and n.parent.type == "argument_list" \
+                    and any(self._HTML_LITERAL.search(self._get_text(m)) for m in self._descendants(n, stop=())
+                            if m.type == "string_literal"):
+                out.append(TaintSink(loc=loc, exp=self._hoisted_expression(n), kind=SinkKind.HTML_OUTPUT,
+                                     description="Handler responds with raw HTML around user data (XSS)"))
+        # redirect views
+        first = expr
+        while first.type == "binary_expression" and first.child_by_field_name("left") is not None:
+            first = first.child_by_field_name("left")
+        if first.type == "string_literal" and self._get_text(first).strip('"').startswith("redirect:") \
+                and expr.type == "binary_expression":
+            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=SinkKind.REDIRECT,
+                                 description="Spring redirect view built from user data (open redirect)"))
+        elif self._returns_view_name(expr):
+            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=SinkKind.TEMPLATE,
+                                 description="View name built from user data (template / view-name injection)"))
+        return out
+
+    def _hoisted_expression(self, expr: TSNode) -> Exp:
+        """`_translate_expression` with the calls inside lowered to temporaries first."""
+        outer, self._in_call_args = self._in_call_args, True
+        try:
+            return self._translate_expression(expr)
+        finally:
+            self._in_call_args = outer
+
+    def _returns_view_name(self, expr: TSNode) -> bool:
+        """A String returned from a @Controller (not @RestController / @ResponseBody) handler is a
+        view name; user data in it selects (and with Thymeleaf evaluates) the template."""
+        proc = self._current_proc
+        info_anns = {a.name for a in (self._current_class_annotations or ())}
+        if proc is None or "Controller" not in info_anns or proc.ret_type_name != "String":
+            return False
+        if "ResponseBody" in {a.name for a in proc.annotations}:
+            return False
+        if expr.type == "identifier":
+            return True
+        if expr.type == "binary_expression":
+            return any(n.type == "identifier" for n in self._descendants(expr, stop=()))
+        return False
 
     def _translate_if(self, node: TSNode) -> None:
         """Translate if statement with dead path elimination"""
@@ -1912,7 +2406,15 @@ class JavaFrontend:
         name = node.child_by_field_name("name")
         value = node.child_by_field_name("value")
         loop_var = self._get_text(name) if name else "_iter"
-        iterable_exp = self._translate_expression(value) if value else ExpConst.null()
+        if value is not None and value.type == "method_invocation":
+            # `for (String r : dao.findByCustomer(c))`: the iterated call is evaluated once,
+            # before the loop, as a call of its own (its sinks, sources and callee apply).
+            tmp = f"$iter{self._ident_counter}"
+            self._ident_counter += 1
+            self._add_instrs(self._translate_call_assignment(tmp, value, loc))
+            iterable_exp = ExpVar(PVar(tmp))
+        else:
+            iterable_exp = self._translate_expression(value) if value else ExpConst.null()
 
         before_node = self._current_node
 
@@ -2139,7 +2641,14 @@ class JavaFrontend:
         elif node.type == "field_access":
             obj = node.child_by_field_name("object")
             field = node.child_by_field_name("field")
-            return ExpFieldAccess(self._translate_expression(obj), self._get_text(field) if field else "")
+            fname = self._get_text(field) if field else ""
+            if (obj is not None and obj.type == "this" and fname in self._field_types
+                    and self._current_proc is not None
+                    and fname not in {p.name for p, _ in self._current_proc.params}):
+                # `this.username` reads the field `username` (when no parameter shadows it):
+                # one name for one value, so a field an entry point taints is seen either way.
+                return ExpVar(PVar(fname))
+            return ExpFieldAccess(self._translate_expression(obj), fname)
 
         elif node.type == "array_access":
             arr = node.child_by_field_name("array")
@@ -2147,6 +2656,9 @@ class JavaFrontend:
             return ExpIndex(self._translate_expression(arr), self._translate_expression(idx))
 
         elif node.type == "method_invocation":
+            hoisted = self._hoist_nested_call(node)
+            if hoisted is not None:
+                return hoisted
             method_name = self._get_method_name(node)
             args = [self._translate_expression(a) for a in self._get_method_args(node)]
             return ExpCall(ExpConst.string(method_name), args)
@@ -2158,7 +2670,7 @@ class JavaFrontend:
             args_node = node.child_by_field_name("arguments")
             if args_node:
                 for child in args_node.children:
-                    if child.type not in ("(", ")", ","):
+                    if child.type not in ("(", ")", ",", "line_comment", "block_comment"):
                         args.append(self._translate_expression(child))
             return ExpCall(ExpConst.string(f"new {type_name}"), args)
 
@@ -2342,7 +2854,7 @@ class JavaFrontend:
         args_node = node.child_by_field_name("arguments")
         if args_node:
             for child in args_node.children:
-                if child.type not in ("(", ")", ","):
+                if child.type not in ("(", ")", ",", "line_comment", "block_comment"):
                     args.append(child)
         return args
 

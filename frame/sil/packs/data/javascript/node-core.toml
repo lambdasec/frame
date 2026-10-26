@@ -1,0 +1,53 @@
+[pack]
+name = "node-core"
+language = "javascript"
+description = "Node.js core and common utility libraries: fs/promises, vm.Script, shell wrappers, libxmljs (applies to every JS/TS file; rules are keyed on imported packages)"
+
+# -- file system, promise API ----------------------------------------------------------------
+[[sink]]
+call = ["fs/promises.readFile", "fs/promises.writeFile", "fs/promises.appendFile", "fs/promises.readdir",
+        "fs/promises.unlink", "fs/promises.rm", "fs/promises.rmdir", "fs/promises.stat", "fs/promises.lstat",
+        "fs/promises.access", "fs/promises.open", "fs/promises.copyFile", "fs/promises.mkdir", "fs/promises.truncate",
+        "fs/promises.opendir", "fs/promises.readlink", "fs/promises.chmod", "fs/promises.utimes",
+        "fs-extra.readFile", "fs-extra.readFileSync", "fs-extra.writeFile", "fs-extra.writeFileSync",
+        "fs-extra.readJson", "fs-extra.readJsonSync", "fs-extra.remove", "fs-extra.removeSync", "fs-extra.outputFile",
+        "fs-extra.pathExists", "fs-extra.emptyDir", "fs-extra.ensureFile", "fs-extra.ensureDir",
+        "fs-extra.createReadStream", "fs-extra.createWriteStream"]
+name = ["fs.promises.readFile", "fs.promises.writeFile", "fs.promises.appendFile", "fs.promises.readdir",
+        "fs.promises.unlink", "fs.promises.rm", "fs.promises.stat", "fs.promises.access", "fs.promises.open",
+        "fs.promises.copyFile", "fs.promises.mkdir"]
+args = [0]
+kind = "path"
+description = "file system access by path (promise API)"
+
+[[sink]]
+call = ["fs/promises.copyFile", "fs/promises.rename", "fs-extra.copy", "fs-extra.move", "fs-extra.copySync", "fs-extra.moveSync"]
+name = ["fs.promises.copyFile", "fs.promises.rename"]
+args = [0, 1]
+kind = "path"
+description = "file system copy / move between paths"
+
+# -- code ---------------------------------------------------------------------------------------
+# -- command execution ---------------------------------------------------------------------------
+[[sink]]
+call = ["child_process.spawn", "child_process.spawnSync", "child_process.execFile", "child_process.execFileSync"]
+args = [0, 1]
+when_kwarg = { name = "shell", value = "true" }
+kind = "command"
+description = "with { shell: true } the command line and its arguments are parsed by the shell"
+
+[[sink]]
+call = ["shelljs.exec", "shelljs.cd", "shell.exec", "execa.command", "execa.commandSync", "execa.shell", "execa.shellSync",
+        "exec-sh", "exec-sh.promise", "child-process-promise.exec", "node-cmd.run", "node-cmd.runSync", "shelljs.cat",
+        "shelljs.grep", "shelljs.sed"]
+args = [0]
+kind = "command"
+description = "wrappers that hand a command line to the shell"
+
+# -- XML ------------------------------------------------------------------------------------------
+[[sink]]
+call = ["libxmljs.parseXml", "libxmljs.parseXmlString", "libxmljs2.parseXml", "libxmljs2.parseXmlString"]
+args = [0]
+when_kwarg = { name = "noent", value = "true" }
+kind = "xxe"
+description = "libxmljs expands external entities when noent is true (XXE)"

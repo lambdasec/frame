@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/sql-clients"]
+requires_pack = true
+description = "libpqxx, SQLiteCpp and MySQL Connector/C++: SQL text built from environment data vs bound parameters"

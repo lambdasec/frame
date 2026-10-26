@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/azure-functions"]
+requires_pack = true
+description = "Azure Functions HTTP triggers: HttpRequest query/body, route parameters, IActionResult responses"

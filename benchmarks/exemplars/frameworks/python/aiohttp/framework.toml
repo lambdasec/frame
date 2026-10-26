@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/aiohttp", "python/asyncpg"]
+requires_pack = true
+description = "aiohttp server handlers (query, match_info, post, json) and client SSRF, with the SQL in a repository module"

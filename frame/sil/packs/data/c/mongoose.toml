@@ -1,0 +1,39 @@
+[pack]
+name = "mongoose"
+language = "c"
+description = "Cesanta Mongoose event handlers, request accessors and reply functions"
+detect = { imports = ["mongoose.h"] }
+
+# void fn(struct mg_connection *c, int ev, void *ev_data[, void *fn_data]): for
+# MG_EV_HTTP_MSG, ev_data is a struct mg_http_message* (uri, query, body, headers).
+[[entrypoint]]
+id = "event-handler"
+method = ["*"]
+params = ["ev_data"]
+kind = "network_input"
+
+[[source]]
+call = ["mg_http_get_var", "mg_http_get_cookie", "mg_get_http_var"]
+out_args = [2]
+kind = "network_input"
+description = "Mongoose query / form / cookie value copied into the caller's buffer"
+
+[[source]]
+call = ["mg_http_get_header", "mg_http_get_header_var", "mg_http_var"]
+kind = "network_input"
+description = "Mongoose request header / variable"
+
+# mg_http_reply(c, code, headers, fmt, ...) writes its variadic arguments into the response
+# body (reflected XSS), but a sink rule on argument positions 4+ fires as a usage sink on
+# every reply without such arguments (see the packs "Requests" note), so it is not enabled.
+
+[[sink]]
+call = ["mg_http_serve_file", "mg_http_serve_dir"]
+args = [2]
+kind = "filesystem"
+description = "Mongoose serves the named file or directory"
+
+[[sink]]
+call = ["mg_printf"]
+args = [1]
+kind = "format_string"

@@ -1,0 +1,53 @@
+[pack]
+name = "dotnet-system"
+language = "csharp"
+description = ".NET base class library APIs the built-in specs do not cover: async file IO, archives, LDAP, escaping"
+# No `detect`: every rule names a specific BCL member, so it applies wherever that call is written.
+
+# System.IO.File / Directory async and stream-returning members (the sync ReadAll*/WriteAll* are built in).
+[[sink]]
+name = ["File.ReadAllBytesAsync", "File.ReadAllLinesAsync", "File.WriteAllBytesAsync", "File.WriteAllLinesAsync",
+        "File.AppendAllTextAsync", "File.AppendAllLinesAsync", "File.AppendAllLines", "File.ReadLines",
+        "File.OpenRead", "File.OpenWrite", "File.OpenText", "File.AppendText", "File.CreateText",
+        "File.SetAttributes", "Directory.EnumerateFiles", "Directory.EnumerateDirectories", "Directory.Exists",
+        "Directory.Move", "FileInfo", "DirectoryInfo"]
+kind = "filesystem"
+description = "System.IO member that takes a path"
+
+# Zip Slip: the destination of an extraction is built from the archive's own entry names.
+[[sink]]
+name = ["ZipFile.ExtractToDirectory", "ZipFileExtensions.ExtractToDirectory"]
+args = [0, 1]
+kind = "filesystem"
+description = "extracts an archive: a hostile archive chooses the paths"
+
+[[sink]]
+name = ["ExtractToFile"]
+kind = "filesystem"
+description = "ZipArchiveEntry.ExtractToFile writes to the given path"
+
+# DirectorySearcher(filter) and DirectorySearcher(entry, filter, ...) both take the LDAP filter or search root.
+[[sink]]
+name = ["DirectorySearcher"]
+args = [0, 1]
+kind = "ldap"
+
+[[sink]]
+name = ["DirectoryEntry"]
+args = [0]
+kind = "ldap"
+description = "DirectoryEntry(path): the LDAP path is part of the query"
+
+# Escaping that keeps a value inside one URL / pattern / filter component.
+[[sanitizer]]
+name = ["Uri.EscapeDataString", "WebUtility.UrlEncode", "HttpUtility.UrlEncode"]
+kinds = ["ssrf"]
+
+[[sanitizer]]
+name = ["Regex.Escape"]
+kinds = ["regex"]
+
+[[sanitizer]]
+name = ["AntiXssEncoder.LdapFilterEncode", "AntiXssEncoder.LdapDistinguishedNameEncode", "Encoder.LdapFilterEncode",
+        "Encoder.LdapDistinguishedNameEncode"]
+kinds = ["ldap"]

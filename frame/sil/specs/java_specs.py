@@ -290,6 +290,10 @@ IO_SPECS = {
     "new java.io.RandomAccessFile": _sink("filesystem", [0], "RandomAccessFile (path traversal)"),
 
     # NIO Path
+    # The last element of a path cannot climb out of a directory.
+    "File.getName": _sanitizer(["filesystem", "path"], "File.getName (base name)"),
+    "FilenameUtils.getName": _sanitizer(["filesystem", "path"], "FilenameUtils.getName (base name)"),
+    "FilenameUtils.getBaseName": _sanitizer(["filesystem", "path"], "FilenameUtils.getBaseName (base name)"),
     "Paths.get": _sink("filesystem", [0], "Paths.get (path traversal)"),
     "Path.of": _sink("filesystem", [0], "Path.of (path traversal)"),
     "Files.readAllBytes": _sink("filesystem", [0], "Files.readAllBytes (path traversal)"),
@@ -750,6 +754,88 @@ JAVA_FACTORY_RETURN_TYPES = {
     "openConnection": "URLConnection",
     "createDefault": "CloseableHttpClient",
 }
+
+
+# Declared return types of well-known APIs that are reached through a call CHAIN
+# (`ActionContext.getContext().getParameters()`), keyed `OwnerType.method` (the owner is a class
+# used as a qualifier, a variable's declared type, or an earlier link's result). They give the
+# next link a receiver type, so it resolves to a canonical callee (framework packs match on it)
+# instead of staying an unknown `$chain.method`.
+JAVA_RETURN_TYPES = {
+    # Struts 2
+    "ActionContext.getContext": "com.opensymphony.xwork2.ActionContext",
+    "ActionContext.getValueStack": "com.opensymphony.xwork2.util.ValueStack",
+    "ServletActionContext.getRequest": "javax.servlet.http.HttpServletRequest",
+    "ServletActionContext.getResponse": "javax.servlet.http.HttpServletResponse",
+    "ServletActionContext.getServletContext": "javax.servlet.ServletContext",
+    # JSF
+    "FacesContext.getCurrentInstance": "javax.faces.context.FacesContext",
+    "FacesContext.getExternalContext": "javax.faces.context.ExternalContext",
+    "FacesContext.getApplication": "javax.faces.application.Application",
+    "ExternalContext.getRequestParameterMap": "java.util.Map",
+    "ExternalContext.getRequestHeaderMap": "java.util.Map",
+    "ExternalContext.getRequestCookieMap": "java.util.Map",
+    "ActionContext.getParameters": "java.util.Map",
+    # JAX-RS
+    "UriInfo.getQueryParameters": "javax.ws.rs.core.MultivaluedMap",
+    "UriInfo.getPathParameters": "javax.ws.rs.core.MultivaluedMap",
+    "HttpHeaders.getRequestHeaders": "javax.ws.rs.core.MultivaluedMap",
+    # Vert.x
+    "HttpServerRequest.params": "io.vertx.core.MultiMap",
+    "HttpServerRequest.headers": "io.vertx.core.MultiMap",
+    "RoutingContext.queryParams": "io.vertx.core.MultiMap",
+    "RoutingContext.queryParam": "java.util.List",
+    "Pool.query": "io.vertx.sqlclient.Query",
+    "Pool.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
+    "PgPool.query": "io.vertx.sqlclient.Query",
+    "PgPool.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
+    "SqlClient.query": "io.vertx.sqlclient.Query",
+    "SqlClient.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
+    "SqlConnection.query": "io.vertx.sqlclient.Query",
+    "SqlConnection.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
+    "RoutingContext.pathParams": "java.util.Map",
+    "RoutingContext.body": "io.vertx.ext.web.RequestBody",
+    "RoutingContext.request": "io.vertx.core.http.HttpServerRequest",
+    "RoutingContext.response": "io.vertx.core.http.HttpServerResponse",
+    "HttpServerResponse.putHeader": "io.vertx.core.http.HttpServerResponse",
+    "HttpServerResponse.setStatusCode": "io.vertx.core.http.HttpServerResponse",
+    "HttpServerResponse.setChunked": "io.vertx.core.http.HttpServerResponse",
+    "HttpServerResponse.setStatusMessage": "io.vertx.core.http.HttpServerResponse",
+    # Servlet / Spring
+    "HttpServletRequest.getSession": "javax.servlet.http.HttpSession",
+    "RequestContextHolder.currentRequestAttributes": "org.springframework.web.context.request.ServletRequestAttributes",
+    "ServletRequestAttributes.getRequest": "javax.servlet.http.HttpServletRequest",
+    # JPA / Hibernate
+    "EntityManager.createQuery": "javax.persistence.Query",
+    "EntityManager.createNativeQuery": "javax.persistence.Query",
+    "Session.createQuery": "org.hibernate.query.Query",
+    "Session.createSQLQuery": "org.hibernate.query.Query",
+    "Session.createNativeQuery": "org.hibernate.query.Query",
+    # JDK
+    "Runtime.getRuntime": "java.lang.Runtime",
+}
+
+# Lambdas passed to a framework's route / handler registration receive the framework's request
+# objects, but are written without parameter types (`get("/x", (req, res) -> ...)`). Each row:
+# (import prefixes of which the file must have one, regex over the registration call's text,
+# the qualified parameter types in order). The frontend gives the lambda's parameters these types.
+_HTTP_VERBS = r"get|post|put|delete|patch|head|options|trace|all|before|after|afterAfter|beforeMatched|afterMatched"
+JAVA_LAMBDA_PARAMS = [
+    (("spark.",), rf"(^|\.)({_HTTP_VERBS}|notFound|internalServerError|exception)$",
+     ("spark.Request", "spark.Response")),
+    (("io.javalin",), rf"(^|\.)({_HTTP_VERBS}|error|exception|sse)$", ("io.javalin.http.Context",)),
+    (("io.jooby",), rf"(^|\.)({_HTTP_VERBS}|decorator)$", ("io.jooby.Context",)),
+    (("io.vertx.ext.web",), r"\.(handler|blockingHandler|failureHandler)$", ("io.vertx.ext.web.RoutingContext",)),
+    (("ratpack.",), rf"(^|\.)({_HTTP_VERBS}|path|prefix|handler|insert)$", ("ratpack.handling.Context",)),
+    (("org.springframework.web.reactive.function.server",),
+     r"(^|\.)(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|route|andRoute|nest)$",
+     ("org.springframework.web.reactive.function.server.ServerRequest",)),
+]
+
+# `javax.*` packages that moved to `jakarta.*` (Jakarta EE 9+): a file that imports from jakarta
+# gets the jakarta spelling of the types above.
+JAKARTA_MIGRATED = ("javax.servlet", "javax.faces", "javax.persistence", "javax.ws", "javax.el",
+                    "javax.inject", "javax.enterprise", "javax.validation", "javax.websocket")
 
 
 def type_spec_receivers(type_name: str) -> tuple:

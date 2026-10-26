@@ -1,0 +1,38 @@
+[pack]
+name = "sql-drivers"
+language = "javascript"
+description = "SQL client libraries: mysql/mysql2, pg, sqlite3, knex, pg-promise, mssql, slonik raw-query APIs"
+detect = { imports = ["mysql", "mysql2", "pg", "pg-promise", "sqlite3", "sqlite", "better-sqlite3", "knex",
+                      "mssql", "oracledb", "@vercel/postgres", "@neondatabase/serverless", "pg-pool"] }
+
+# `pool.promise().query(sql)`, `conn.query(sql, params)`: the first argument is SQL text; a
+# parameterised call has a constant there and carries data in the second argument.
+[[sink]]
+name = ["query", "execute"]
+args = [0]
+kind = "sql"
+description = "SQL driver query / execute"
+
+# knex.raw / db.raw / trx.raw and the *Raw builder methods
+[[sink]]
+name = ["raw", "whereRaw", "andWhereRaw", "orWhereRaw", "havingRaw", "orderByRaw", "joinRaw", "groupByRaw", "selectRaw"]
+args = [0]
+kind = "sql"
+description = "knex raw SQL fragment"
+
+# sqlite3 Database methods take SQL text (db.get / db.run are not covered by the built-in specs
+# because key-value stores share the names; here the file imports a SQLite driver).
+[[sink]]
+name = ["db.all", "db.get", "db.run", "db.each", "db.exec", "db.prepare", "database.all", "database.get",
+        "database.run", "database.each", "database.exec", "database.prepare"]
+args = [0]
+kind = "sql"
+description = "SQLite statement"
+
+# pg-promise: db.any / db.one / db.none ... take SQL text
+[[sink]]
+name = ["db.any", "db.one", "db.many", "db.oneOrNone", "db.manyOrNone", "db.none", "db.result", "db.multi",
+        "t.any", "t.one", "t.many", "t.oneOrNone", "t.manyOrNone", "t.none", "t.result"]
+args = [0]
+kind = "sql"
+description = "pg-promise query"

@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/flask-extensions"]
+requires_pack = true
+description = "Flask beyond the basics: blueprints, flask-restful Resource, Flask-SocketIO handlers, send_file/send_from_directory, redirect, render_template_string, services in another module"

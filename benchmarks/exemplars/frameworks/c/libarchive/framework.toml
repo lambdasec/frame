@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/libarchive"]
+requires_pack = true
+description = "libarchive: archive entry names are attacker data; extraction path traversal"

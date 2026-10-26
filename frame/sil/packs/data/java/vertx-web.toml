@@ -1,0 +1,61 @@
+[pack]
+name = "vertx-web"
+language = "java"
+description = "Vert.x Web route handlers (lambdas and method references taking a RoutingContext), response writers and the reactive SQL clients"
+detect = { imports = ["io.vertx"] }
+
+# `router.get("/x").handler(ctx -> ...)`, `handler(this::show)`, or any method that takes the
+# RoutingContext: everything the context hands out (params, headers, body, cookies, session
+# data) is request data. The frontend types a lambda's parameter from the registration.
+[[entrypoint]]
+id = "routing-context"
+method = ["*"]
+tainted_param_type = ["io.vertx.ext.web.RoutingContext", "RoutingContext"]
+
+[[sink]]
+call = ["io.vertx.core.http.HttpServerResponse.end", "io.vertx.core.http.HttpServerResponse.write"]
+kind = "html"
+description = "the response body is the page"
+
+[[sink]]
+call = ["io.vertx.ext.web.RoutingContext.redirect"]
+kind = "redirect"
+
+[[sink]]
+call = ["io.vertx.core.http.HttpServerResponse.sendFile"]
+kind = "filesystem"
+description = "sendFile serves the named file"
+
+[[sink]]
+call = ["io.vertx.core.http.HttpServerResponse.putHeader", "io.vertx.core.http.HttpServerResponse.putHeaders"]
+args = [1]
+kind = "header"
+
+[[sink]]
+call = ["io.vertx.core.file.FileSystem.readFile", "io.vertx.core.file.FileSystem.readFileBlocking",
+        "io.vertx.core.file.FileSystem.writeFile", "io.vertx.core.file.FileSystem.delete",
+        "io.vertx.core.file.FileSystem.open", "io.vertx.core.file.FileSystem.copy", "io.vertx.core.file.FileSystem.move"]
+kind = "filesystem"
+
+# Reactive SQL clients (Pool, SqlClient, SqlConnection) and the JDBC client take the statement text.
+[[sink]]
+call = ["io.vertx.sqlclient.SqlClient.query", "io.vertx.sqlclient.SqlClient.preparedQuery",
+        "io.vertx.sqlclient.Pool.query", "io.vertx.sqlclient.Pool.preparedQuery",
+        "io.vertx.sqlclient.SqlConnection.query", "io.vertx.sqlclient.SqlConnection.preparedQuery",
+        "io.vertx.sqlclient.SqlConnection.prepare",
+        "io.vertx.pgclient.PgPool.query", "io.vertx.pgclient.PgPool.preparedQuery",
+        "io.vertx.mysqlclient.MySQLPool.query", "io.vertx.mysqlclient.MySQLPool.preparedQuery",
+        "io.vertx.ext.sql.SQLClient.query", "io.vertx.ext.sql.SQLClient.queryWithParams",
+        "io.vertx.ext.sql.SQLClient.update", "io.vertx.ext.sql.SQLClient.updateWithParams",
+        "io.vertx.ext.sql.SQLConnection.query", "io.vertx.ext.sql.SQLConnection.queryWithParams",
+        "io.vertx.ext.sql.SQLConnection.update", "io.vertx.ext.sql.SQLConnection.updateWithParams",
+        "io.vertx.ext.sql.SQLConnection.execute",
+        "io.vertx.jdbcclient.JDBCPool.query", "io.vertx.jdbcclient.JDBCPool.preparedQuery"]
+kind = "sql"
+description = "Vert.x SQL client executes the statement text"
+
+[[sink]]
+call = ["io.vertx.ext.web.client.WebClient.getAbs", "io.vertx.ext.web.client.WebClient.postAbs",
+        "io.vertx.ext.web.client.WebClient.putAbs", "io.vertx.ext.web.client.WebClient.deleteAbs",
+        "io.vertx.ext.web.client.WebClient.headAbs", "io.vertx.ext.web.client.WebClient.patchAbs"]
+kind = "ssrf"

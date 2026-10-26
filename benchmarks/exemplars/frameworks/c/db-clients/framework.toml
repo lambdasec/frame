@@ -1,0 +1,4 @@
+language = "c"
+packs = []
+requires_pack = false
+description = "libpq PQexec vs PQexecParams and MySQL C API mysql_query vs mysql_real_escape_string (built-in coverage guard)"

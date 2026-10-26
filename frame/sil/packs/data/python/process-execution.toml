@@ -1,0 +1,53 @@
+[pack]
+name = "process-execution"
+language = "python"
+description = "Command execution APIs beyond subprocess/os: asyncio shells, paramiko, fabric, invoke, pexpect, plumbum"
+detect = { imports = ["asyncio", "paramiko", "fabric", "invoke", "pexpect", "plumbum", "sh"] }
+
+# asyncio.create_subprocess_shell runs the string through /bin/sh. (create_subprocess_exec takes
+# an argument vector and is only a sink for its program name, argument 0.)
+[[sink]]
+call = ["asyncio.create_subprocess_shell", "asyncio.subprocess.create_subprocess_shell",
+        "asyncio.subprocess_shell"]
+kind = "shell"
+args = [0]
+arg_names = ["cmd"]
+
+[[sink]]
+call = ["asyncio.create_subprocess_exec", "asyncio.subprocess.create_subprocess_exec"]
+kind = "command"
+args = [0]
+description = "the program to run; the remaining arguments are an argument vector"
+
+# loop.subprocess_shell(factory, cmd): the command is the second argument.
+[[sink]]
+name = ["loop.subprocess_shell", "get_event_loop.subprocess_shell"]
+kind = "shell"
+args = [1]
+
+# paramiko runs the string in the remote user's shell. The client is built from
+# paramiko.SSHClient() (derived canonical id), or comes from a transport.
+[[sink]]
+call = ["paramiko.SSHClient.exec_command", "paramiko.client.SSHClient.exec_command",
+        "paramiko.SSHClient.**.exec_command", "paramiko.Transport.**.exec_command",
+        "paramiko.channel.Channel.exec_command"]
+kind = "shell"
+args = [0]
+arg_names = ["command"]
+
+# fabric / invoke: Connection.run / sudo / local and invoke.run take a shell string.
+[[sink]]
+call = ["fabric.Connection.run", "fabric.Connection.sudo", "fabric.Connection.local",
+        "fabric.connection.Connection.run", "fabric.connection.Connection.sudo",
+        "fabric.connection.Connection.local",
+        "invoke.run", "invoke.sudo", "invoke.context.Context.run", "invoke.Context.run",
+        "invoke.Context.sudo", "fabric.api.run", "fabric.api.sudo", "fabric.api.local"]
+kind = "shell"
+args = [0]
+arg_names = ["command"]
+
+[[sink]]
+call = ["pexpect.spawn", "pexpect.run", "pexpect.popen_spawn.PopenSpawn"]
+kind = "shell"
+args = [0]
+arg_names = ["command"]

@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/struts2"]
+requires_pack = true
+description = "Struts 2 actions: request data arrives in the action's fields (ParameterInterceptor), execute() uses them; ServletActionContext, ActionContext parameters, OGNL / ValueStack evaluation"

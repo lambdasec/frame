@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/spring"]
+requires_pack = true
+description = "Spring MVC/Boot: @RequestParam/@PathVariable/@RequestBody/@RequestHeader/@CookieValue, JdbcTemplate repository, redirect views, SpEL, RestTemplate"

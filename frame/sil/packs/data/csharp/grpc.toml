@@ -1,0 +1,16 @@
+[pack]
+name = "grpc"
+language = "csharp"
+description = "gRPC (Grpc.Core / Grpc.AspNetCore) service implementations: request messages are attacker data"
+detect = { imports = ["Grpc.Core", "Grpc.AspNetCore"] }
+
+# class Svc : Orders.OrdersBase { public override Task<Reply> Get(GetRequest request, ServerCallContext ctx) }
+# The generated base class is named `<Service>Base`; the request message and the request stream are data,
+# the ServerCallContext is not.
+[[entrypoint]]
+id = "grpc-service-method"
+extends = ["*Base"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["ServerCallContext", "CancellationToken", "IServerStreamWriter<*>", "ILogger<*>",
+                      "int", "long", "bool", "double", "float"]

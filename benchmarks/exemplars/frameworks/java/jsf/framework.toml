@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/jsf"]
+requires_pack = true
+description = "JSF managed beans (@Named / @ManagedBean): input components fill the bean's fields, FacesContext request parameter maps, ExternalContext redirect / response writer, EL evaluation"

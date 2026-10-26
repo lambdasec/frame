@@ -1,0 +1,11 @@
+[pack]
+name = "redis"
+language = "javascript"
+description = "Redis clients: EVAL runs a Lua script"
+detect = { imports = ["redis", "ioredis", "@redis/client", "@upstash/redis", "node-redis", "redis-om"] }
+
+[[sink]]
+name = ["redis.eval", "client.eval", "redis.evalsha", "client.evalsha", "redis.evalSha", "client.evalSha", "cache.eval"]
+args = [0]
+kind = "code"
+description = "Redis EVAL: the first argument is a Lua script"

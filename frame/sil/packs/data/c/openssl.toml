@@ -1,0 +1,42 @@
+[pack]
+name = "openssl"
+language = "c"
+description = "OpenSSL: certificate verification switched off, broken protocols / ciphers / digests, TLS reads"
+detect = { imports = ["openssl/"] }
+
+# The C frontend qualifies SSL_CTX_set_verify with the verify mode written at the call.
+[[sink]]
+call = ["SSL_CTX_set_verify:SSL_VERIFY_NONE", "SSL_set_verify:SSL_VERIFY_NONE"]
+args = []
+kind = "cert_validation"
+description = "OpenSSL peer certificate verification disabled (SSL_VERIFY_NONE)"
+
+# Broken protocol versions
+[[sink]]
+call = ["SSLv2_method", "SSLv2_client_method", "SSLv2_server_method",
+        "SSLv3_method", "SSLv3_client_method", "SSLv3_server_method",
+        "TLSv1_method", "TLSv1_client_method", "TLSv1_server_method",
+        "TLSv1_1_method", "TLSv1_1_client_method", "TLSv1_1_server_method"]
+args = []
+kind = "weak_crypto"
+description = "OpenSSL protocol method that negotiates SSLv2/SSLv3/TLS 1.0/1.1"
+
+# Broken digests and ciphers selected through EVP / legacy APIs
+[[sink]]
+call = ["EVP_md4", "EVP_md2", "EVP_md5", "EVP_sha1", "EVP_mdc2"]
+args = []
+kind = "weak_hash"
+description = "OpenSSL EVP digest that is broken or collision-prone (MD2/MD4/MD5/SHA-1)"
+
+[[sink]]
+call = ["RC4", "RC4_set_key", "BF_set_key", "BF_ecb_encrypt", "BF_cbc_encrypt", "RC2_set_key",
+        "DES_ecb3_encrypt", "EVP_des_ede3_cbc", "EVP_cast5_ecb", "EVP_idea_ecb"]
+args = []
+kind = "weak_crypto"
+description = "OpenSSL legacy cipher (RC4, Blowfish, RC2, 3DES, CAST5, IDEA)"
+
+# Data read from a TLS / BIO connection is attacker data
+[[source]]
+call = ["SSL_read", "SSL_read_ex", "SSL_peek", "BIO_read", "BIO_gets"]
+out_args = [1]
+kind = "network_input"

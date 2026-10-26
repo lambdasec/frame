@@ -1,0 +1,36 @@
+[pack]
+name = "struts2"
+language = "java"
+description = "Struts 2 actions: the ParameterInterceptor fills the action's fields from the request, action methods use them; OGNL / ValueStack evaluation"
+detect = { imports = ["com.opensymphony.xwork2", "org.apache.struts2"] }
+
+# An action is populated before it runs: every request parameter becomes a call of the matching
+# setter. So inside an action's methods (execute(), the mapped method="...", and the getters
+# result views call) its non-injected instance fields hold attacker data.
+[[entrypoint]]
+id = "action-fields"
+extends = ["com.opensymphony.xwork2.ActionSupport", "com.opensymphony.xwork2.Action",
+           "org.apache.struts2.dispatcher.ServletRedirectResult", "com.opensymphony.xwork2.ModelDriven"]
+method = ["*"]
+fields = true
+
+[[source]]
+call = ["com.opensymphony.xwork2.ActionContext.getParameters"]
+kind = "user_input"
+
+[[sink]]
+call = [
+    "com.opensymphony.xwork2.util.ValueStack.findValue",
+    "com.opensymphony.xwork2.util.ValueStack.findString",
+    "com.opensymphony.xwork2.util.ValueStack.setValue",
+    "com.opensymphony.xwork2.util.ValueStack.setParameter",
+    "com.opensymphony.xwork2.ognl.OgnlValueStack.findValue",
+    "com.opensymphony.xwork2.ognl.OgnlValueStack.setValue",
+    "com.opensymphony.xwork2.util.TextParseUtil.translateVariables",
+    "com.opensymphony.xwork2.util.TextParseUtil.translateVariablesCollection",
+    "com.opensymphony.xwork2.util.reflection.ReflectionProvider.getValue",
+    "com.opensymphony.xwork2.util.reflection.ReflectionProvider.setValue",
+    "ognl.Ognl.getValue", "ognl.Ognl.setValue", "ognl.Ognl.parseExpression",
+]
+kind = "el"
+description = "OGNL evaluates the expression against the value stack (arbitrary method calls)"

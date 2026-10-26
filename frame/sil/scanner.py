@@ -353,7 +353,19 @@ class ScanResult:
                     "defaultConfiguration": {
                         "level": self._severity_to_sarif_level(vuln.severity)
                     },
+                    "properties": {
+                        "tags": ["security"],
+                        "security-severity": self._SARIF_SECURITY_SEVERITY.get(vuln.severity, "5.0"),
+                    },
                 }
+            cwe = getattr(vuln, "cwe_id", None)
+            if cwe:
+                props = rules[rule_id]["properties"]
+                tag = f"external/cwe/{cwe.lower()}"
+                if tag not in props["tags"]:
+                    props["tags"].append(tag)
+                    rules[rule_id].setdefault(
+                        "helpUri", f"https://cwe.mitre.org/data/definitions/{cwe.split('-')[-1]}.html")
 
             result = {
                 "ruleId": rule_id,
@@ -371,6 +383,8 @@ class ScanResult:
                 }],
             }
 
+            if cwe:
+                result["properties"] = {"cwe": cwe}
             if vuln.witness:
                 result["message"]["text"] += f"\n\nExploit witness: {vuln.witness}"
             if vuln.fingerprint:
@@ -398,6 +412,12 @@ class ScanResult:
                 "results": results,
             }]
         }
+
+    # GitHub code scanning ranks alerts by this CVSS-like number
+    _SARIF_SECURITY_SEVERITY = {
+        Severity.CRITICAL: "9.5", Severity.HIGH: "8.0", Severity.MEDIUM: "5.5",
+        Severity.LOW: "3.0", Severity.INFO: "1.0",
+    }
 
     def _severity_to_sarif_level(self, severity: Severity) -> str:
         mapping = {

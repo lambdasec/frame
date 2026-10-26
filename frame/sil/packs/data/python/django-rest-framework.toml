@@ -1,0 +1,30 @@
+[pack]
+name = "django-rest-framework"
+language = "python"
+description = "Django REST Framework views, viewsets, @api_view and @action handlers"
+detect = { imports = ["rest_framework"] }
+
+# `request` is a DRF Request (data / query_params are client data; user / auth are not,
+# the translator already treats them as server state) and URL kwargs such as `pk` arrive
+# as strings the client chose.
+[[entrypoint]]
+id = "api-view"
+extends = ["rest_framework.views.APIView", "rest_framework.generics.*", "rest_framework.viewsets.*",
+           "rest_framework.mixins.*"]
+method = ["get", "post", "put", "patch", "delete", "head", "options",
+          "list", "retrieve", "create", "update", "partial_update", "destroy"]
+params = "all"
+exclude_param = ["self", "format"]
+
+[[entrypoint]]
+id = "api-view-function"
+decorator = ["api_view", "rest_framework.decorators.api_view"]
+params = "all"
+exclude_param = ["format"]
+
+[[entrypoint]]
+id = "viewset-action"
+decorator = ["action", "rest_framework.decorators.action"]
+params = "all"
+exclude_param = ["self", "format"]
+

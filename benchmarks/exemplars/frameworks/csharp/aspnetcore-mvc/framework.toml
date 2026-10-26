@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/aspnetcore"]
+requires_pack = true
+description = "ASP.NET Core MVC / Web API controllers: model-bound action parameters, Redirect, Content, File, EF Core raw SQL"

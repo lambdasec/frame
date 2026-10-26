@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/templates"]
+requires_pack = true
+description = "Server-side template injection: jinja2.Template / Environment.from_string, Mako Template(text=), autoescape off, Markup"

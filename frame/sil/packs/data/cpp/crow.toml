@@ -1,0 +1,37 @@
+[pack]
+name = "crow"
+language = "cpp"
+description = "CrowCpp / Crow route lambdas, request object, websockets and response helpers"
+detect = { imports = ["crow.h", "crow_all.h", "crow/"] }
+
+# CROW_ROUTE(app, "/path")([](const crow::request &req, std::string who) { ... })
+# `.methods("POST"_method)` and `CROW_BP_ROUTE(bp, ...)` are the same shape: the C++
+# frontend records the root macro as the lambda's `registered_via`. Typed path
+# arguments (<int>, <double>, <uint>) are numbers by the time the handler runs.
+[[entrypoint]]
+id = "route-lambda"
+registered_via = ["CROW_ROUTE", "CROW_BP_ROUTE", "CROW_CATCHALL_ROUTE"]
+params = "all"
+exclude_param_type = ["int", "unsigned", "unsigned int", "long", "unsigned long", "double", "float", "bool",
+                      "crow::response", "response", "crow::websocket::connection"]
+
+# CROW_WEBSOCKET_ROUTE(app, "/ws").onmessage([](crow::websocket::connection &c, const std::string &data, bool bin) {...})
+[[entrypoint]]
+id = "websocket-message"
+registered_via = ["CROW_WEBSOCKET_ROUTE"]
+params = ["data", "message", "msg"]
+
+# crow::json::load(req.body)["field"].s() yields a string of request data
+# (propagation through `load` and the accessor is the engine's default).
+
+[[sink]]
+name = ["set_static_file_info", "set_static_file_info_unsafe"]
+args = [0]
+kind = "filesystem"
+description = "Crow serves the named file"
+
+[[sink]]
+name = ["redirect", "redirect_perm"]
+args = [0]
+kind = "redirect"
+description = "Crow response redirect target"

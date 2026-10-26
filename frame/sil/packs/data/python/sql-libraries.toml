@@ -1,0 +1,47 @@
+[pack]
+name = "sql-libraries"
+language = "python"
+description = "Raw-SQL entry points of peewee, pony, pandas, SQLAlchemy and sqlite3"
+detect = { imports = ["peewee", "playhouse", "pony", "pandas", "sqlalchemy", "sqlite3", "records", "databases", "sqlmodel"] }
+
+[[sink]]
+call = ["pandas.read_sql", "pandas.read_sql_query", "pandas.io.sql.read_sql", "pandas.io.sql.read_sql_query"]
+kind = "sql"
+args = [0]
+arg_names = ["sql"]
+description = "pandas.read_sql runs a SQL string (a table name is also accepted but a query is the common use)"
+
+# peewee: Database.execute_sql(sql, params), Model.raw(sql), SQL(sql) fragments.
+[[sink]]
+name = ["execute_sql"]
+call = ["peewee.SQL", "peewee.Database.execute_sql"]
+kind = "sql"
+args = [0]
+
+# pony: Database.select / get / exists / execute / insert take SQL text; Entity.select_by_sql too.
+[[sink]]
+name = ["db.select", "db.get", "db.exists", "db.execute", "pony_db.select", "pony_db.get",
+        "pony_db.exists", "pony_db.execute", "database.select", "database.execute",
+        "select_by_sql", "get_by_sql"]
+kind = "sql"
+args = [0]
+
+# sqlite3 runs several statements, so injected text is arbitrary SQL.
+[[sink]]
+name = ["executescript"]
+kind = "sql"
+args = [0]
+
+# SQLAlchemy: Query.from_statement(text(...)) -- `text` is already a sink; literal_column and
+# the query's filter(text(...)) / order_by(text(...)) forms are covered by `text`.
+[[sink]]
+call = ["sqlalchemy.sql.expression.literal_column", "sqlalchemy.literal_column"]
+kind = "sql"
+args = [0]
+
+# records / databases (async): db.query("...") and database.fetch_all("...")
+[[sink]]
+name = ["database.fetch_all", "database.fetch_one", "database.execute", "database.fetch_val", "database.iterate"]
+kind = "sql"
+args = [0]
+arg_names = ["query"]

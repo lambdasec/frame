@@ -1,0 +1,4 @@
+language = "javascript"
+packs = []
+requires_pack = false
+description = "Prisma raw queries (tagged template is safe) and knex raw / whereRaw"

@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/process-execution"]
+requires_pack = true
+description = "Command execution beyond subprocess: asyncio.create_subprocess_shell/exec, paramiko exec_command, fabric/invoke run, pexpect.spawn, in a worker module"

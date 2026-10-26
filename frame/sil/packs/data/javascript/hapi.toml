@@ -1,0 +1,34 @@
+[pack]
+name = "hapi"
+language = "javascript"
+description = "hapi route handlers (request.query / payload / params / headers, h.response / h.redirect)"
+detect = { imports = ["@hapi/hapi", "hapi"] }
+
+[[entrypoint]]
+id = "hapi-route-handler"
+registered_via = ["*.route.handler", "*.route.options.handler", "*.ext"]
+params = ["request"]
+description = "hapi request object"
+
+[[entrypoint]]
+id = "hapi-handler-name"
+method = ["handler"]
+params = ["request"]
+description = "hapi handler exported as an object method"
+
+[[sink]]
+name = ["h.response"]
+args = [0]
+kind = "html"
+description = "hapi response toolkit: the value is the response body"
+
+[[sink]]
+name = ["h.redirect"]
+args = [0]
+kind = "redirect"
+
+[[sink]]
+name = ["h.file"]
+args = [0]
+kind = "path"
+description = "@hapi/inert h.file"

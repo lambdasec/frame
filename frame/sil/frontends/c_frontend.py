@@ -130,9 +130,15 @@ class CFrontend:
         self._ident_counter = 0
 
         self._jump_targets: List[Tuple[str, Optional[Node], Optional[Node]]] = []
+        self._lambda_names: Dict[int, str] = {}
+        self._hoisted_calls: Dict[int, Exp] = {}
+        self._var_types: Dict[int, Dict[str, str]] = {}      # id(Procedure) -> {variable: declared type}
+        self._class_field_types: Dict[str, Dict[str, str]] = {}
+        self._lambda_parent: Dict[int, Procedure] = {}
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language=self.LANGUAGE)
+        self._program = program
         program.source_files.append(filename)
         program.function_macros = self._function_macro_names(tree.root_node)
 
@@ -151,9 +157,13 @@ class CFrontend:
                 continue
             stack.extend(n.children)
         annotate_program_calls(program, includes)
+        _qualify_option_calls(program)
+        if self.LANGUAGE == "cpp":
+            self._qualify_member_calls(program)
+            _qualify_content_type_calls(program)
         program.import_wildcards = list(includes.wildcards)
         program.language = self.LANGUAGE
-        finish_program(program, self.packs)
+        finish_program(program, self.packs, source_code)
         return program
 
     def _function_macro_names(self, root: TSNode) -> Set[str]:
@@ -226,6 +236,7 @@ class CFrontend:
 
         # Get parameters
         params = self._translate_parameters(declarator)
+        param_types = dict(getattr(self, "_last_param_types", {}))
 
         # Get return type
         ret_type_node = node.child_by_field_name("type")
@@ -239,6 +250,7 @@ class CFrontend:
             is_method=False,
         )
 
+        proc.param_types = param_types
         proc.has_parse_errors = bool(node.has_error)
         fdecl = declarator
         while fdecl is not None and fdecl.type != "function_declarator":
@@ -255,6 +267,13 @@ class CFrontend:
         proc.add_node(entry)
         proc.entry_node = entry.id
         self._current_node = entry
+
+        # `optarg` (getopt's global) holds the text of a command-line option: attacker data
+        # in any function that reads it
+        if re.search(r"\boptarg\b", self._get_text(node)):
+            self._add_instr(TaintSource(
+                loc=self._get_location(node), var=PVar("optarg"),
+                kind=TaintKind.USER_INPUT, description="getopt option argument (optarg)"))
 
         # Mark main parameters as taint sources
         if func_name == "main":
@@ -288,16 +307,17 @@ class CFrontend:
         if declarator.type == "function_declarator":
             inner = declarator.child_by_field_name("declarator")
             if inner:
-                if inner.type == "identifier":
+                if inner.type in ("identifier", "field_identifier"):
                     return self._get_text(inner)
-                elif inner.type == "qualified_identifier":
+                elif inner.type in ("qualified_identifier", "destructor_name", "operator_name"):
                     # C++ class method: Class::method
                     return self._get_text(inner)
-                elif inner.type == "pointer_declarator":
+                elif inner.type in ("pointer_declarator", "reference_declarator"):
                     # Handle pointer return type
                     return self._get_function_name(inner)
-        elif declarator.type == "pointer_declarator":
-            inner = declarator.child_by_field_name("declarator")
+        elif declarator.type in ("pointer_declarator", "reference_declarator"):
+            inner = declarator.child_by_field_name("declarator") or (
+                declarator.named_children[-1] if declarator.named_children else None)
             if inner:
                 return self._get_function_name(inner)
         elif declarator.type == "identifier":
@@ -309,22 +329,26 @@ class CFrontend:
 
     def _translate_parameters(self, declarator: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
-        params = []
-
         if declarator.type != "function_declarator":
-            # Handle pointer declarator
-            if declarator.type == "pointer_declarator":
-                inner = declarator.child_by_field_name("declarator")
+            # Handle pointer / reference declarator around the function declarator
+            if declarator.type in ("pointer_declarator", "reference_declarator"):
+                inner = declarator.child_by_field_name("declarator") or (
+                    declarator.named_children[-1] if declarator.named_children else None)
                 if inner:
                     return self._translate_parameters(inner)
-            return params
+            return []
+        return self._params_from_list(declarator.child_by_field_name("parameters"))
 
-        params_node = declarator.child_by_field_name("parameters")
+    def _params_from_list(self, params_node: Optional[TSNode]) -> List[Tuple[PVar, Typ]]:
+        """The (name, type) of each parameter in a `parameter_list`; the written type
+        of each is left in `self._last_param_types` (name -> `httplib::Request`)."""
+        params: List[Tuple[PVar, Typ]] = []
+        self._last_param_types = {}
         if not params_node:
             return params
-
         for child in params_node.children:
-            if child.type == "parameter_declaration":
+            if child.type in ("parameter_declaration", "optional_parameter_declaration",
+                              "variadic_parameter_declaration"):
                 param_type = Typ.unknown_type()
                 param_name = None
 
@@ -338,19 +362,21 @@ class CFrontend:
 
                 if param_name:
                     params.append((PVar(param_name), param_type))
+                    if type_node is not None:
+                        self._last_param_types[param_name] = self._get_text(type_node)
 
         return params
 
     def _extract_identifier(self, node: TSNode) -> Optional[str]:
         """Extract identifier from declarator node"""
-        if node.type == "identifier":
+        if node.type in ("identifier", "field_identifier"):
             return self._get_text(node)
-        elif node.type == "pointer_declarator":
+        elif node.type in ("pointer_declarator", "array_declarator", "reference_declarator",
+                           "parenthesized_declarator", "init_declarator"):
             inner = node.child_by_field_name("declarator")
-            if inner:
-                return self._extract_identifier(inner)
-        elif node.type == "array_declarator":
-            inner = node.child_by_field_name("declarator")
+            if inner is None:
+                named = [c for c in node.named_children if c.type != "type_qualifier"]
+                inner = named[-1] if named else None
             if inner:
                 return self._extract_identifier(inner)
         return None
@@ -467,22 +493,28 @@ class CFrontend:
 
     def _translate_declaration(self, node: TSNode) -> None:
         """Translate variable declaration"""
+        type_node = node.child_by_field_name("type")
         for child in node.children:
             if child.type == "init_declarator":
                 decl = child.child_by_field_name("declarator")
                 self._record_fixed_array_bound(decl)
                 self._record_array_from_string_init(decl, child.child_by_field_name("value"))
                 self._record_local(self._extract_identifier(decl))
-                self._translate_init_declarator(child)
-            elif child.type in ("identifier", "pointer_declarator", "array_declarator"):
+                self._note_var_type(self._extract_identifier(decl), type_node)
+                self._translate_init_declarator(child, type_node)
+            elif child.type == "function_declarator" and self._translate_vexing_constructor(child, type_node):
+                continue
+            elif child.type in ("identifier", "pointer_declarator", "array_declarator",
+                                "reference_declarator"):
                 # Declaration without initialization
                 self._record_fixed_array_bound(child)
                 var_name = self._extract_identifier(child)
                 self._record_local(var_name)
+                self._note_var_type(var_name, type_node)
                 if var_name:
                     loc = self._get_location(child)
-                    self._add_instr(Assign(loc=loc, id=PVar(var_name),
-                                           exp=ExpConst.null(), is_uninit_decl=True))
+                    self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null(),
+                                           is_uninit_decl=not self._is_default_constructed(child, type_node)))
 
     def _record_array_from_string_init(self, declarator: Optional[TSNode],
                                        value: Optional[TSNode]) -> None:
@@ -587,7 +619,63 @@ class CFrontend:
             bounds[name] = bound
             self._note_char_array(declarator, name)
 
-    def _translate_init_declarator(self, node: TSNode) -> None:
+    def _translate_vexing_constructor(self, fdecl: TSNode, type_node: Optional[TSNode]) -> bool:
+        """`std::ifstream in(path);` inside a function body is a variable initialised by a
+        constructor call, but C++'s grammar also reads it as the declaration of a function `in`
+        taking a `path`. When every "parameter" is a bare identifier (no parameter name), it
+        is the constructor call: lower it as one."""
+        if (self._current_proc is None or type_node is None
+                or type_node.type not in ("type_identifier", "qualified_identifier", "template_type")):
+            return False
+        name_node = fdecl.child_by_field_name("declarator")
+        plist = fdecl.child_by_field_name("parameters")
+        if name_node is None or name_node.type != "identifier" or plist is None:
+            return False
+        args: List[Exp] = []
+        for p in plist.children:
+            if p.type in ("(", ")", ",", "comment"):
+                continue
+            if p.type != "parameter_declaration" or p.child_by_field_name("declarator") is not None:
+                return False
+            t = p.child_by_field_name("type")
+            if t is None or t.type != "type_identifier" or p.named_child_count != 1:
+                return False
+            args.append(ExpVar(PVar(self._get_text(t))))
+        var_name = self._get_text(name_node)
+        loc = self._get_location(fdecl)
+        self._record_local(var_name)
+        self._note_var_type(var_name, type_node)
+        ret_id = self._new_ident(var_name)
+        self._add_instr(Call(loc=loc, ret=(ret_id, Typ.unknown_type()),
+                             func=ExpConst.string(self._type_base_name(self._get_text(type_node))),
+                             args=[(a, Typ.unknown_type()) for a in args]))
+        self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpVar(ret_id)))
+        return True
+
+    _SCALAR_TYPEDEF = re.compile(r"(?:^|::)(?:u?int\d*_t|u?intptr_t|u?intmax_t|size_t|ssize_t|ptrdiff_t|off_t|"
+                                 r"time_t|pid_t|uid_t|gid_t|mode_t|socklen_t|sig_atomic_t|wchar_t|char\d*_t|"
+                                 r"DWORD|BOOL|BYTE|WORD|HANDLE|LPVOID|SOCKET|qint\d+|quint\d+|qreal|uint|ulong|ushort|uchar)$")
+
+    def _is_default_constructed(self, declarator: TSNode, type_node: Optional[TSNode]) -> bool:
+        """C++ `std::ostringstream out;` / `QString s;` / `boost::asio::io_context io;` runs a
+        constructor: it is not an uninitialised read waiting to happen (CWE-457 is about
+        scalars and raw buffers). A pointer, reference or array of such a type, and a
+        typedef that is a plain scalar (`size_t n;`), still are uninitialised."""
+        if self.LANGUAGE != "cpp" or type_node is None or declarator.type != "identifier":
+            return False
+        if type_node.type not in ("type_identifier", "qualified_identifier", "template_type"):
+            return False
+        return not self._SCALAR_TYPEDEF.search(self._get_text(type_node))
+
+    def _note_var_type(self, name: Optional[str], type_node: Optional[TSNode]) -> None:
+        """Remember the declared type of a local (C++): member calls on it are then
+        qualified with the type (`proc.start(...)` -> `QProcess::start`)."""
+        if name and type_node is not None and self._current_proc is not None:
+            text = self._get_text(type_node)
+            if text and text not in ("auto", "var"):
+                self._var_types.setdefault(id(self._current_proc), {})[name] = text
+
+    def _translate_init_declarator(self, node: TSNode, type_node: Optional[TSNode] = None) -> None:
         """Translate init_declarator (var = value)"""
         declarator = node.child_by_field_name("declarator")
         value = node.child_by_field_name("value")
@@ -600,6 +688,22 @@ class CFrontend:
             return
 
         loc = self._get_location(node)
+
+        if (value is not None and value.type == "argument_list" and type_node is not None
+                and type_node.type in ("type_identifier", "qualified_identifier", "template_type")):
+            # constructor-style initialisation `QFile f(path);` / `std::ifstream in(path);`:
+            # a call to the type's constructor, so specs and packs can see it
+            args = [a for a in value.children if a.type not in ("(", ")", ",", "comment")]
+            for a in args:
+                if a.type == "lambda_expression":
+                    self._lower_lambda(a)
+            type_text = self._type_base_name(self._get_text(type_node))
+            ret_id = self._new_ident(var_name)
+            self._add_instr(Call(loc=loc, ret=(ret_id, Typ.unknown_type()),
+                                 func=ExpConst.string(type_text),
+                                 args=[(self._translate_expression(a), Typ.unknown_type()) for a in args]))
+            self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpVar(ret_id)))
+            return
 
         if value:
             if value.type == "call_expression":
@@ -691,11 +795,20 @@ class CFrontend:
         """Translate: target = func(args)"""
         instrs = []
 
+        accessed = self._content_accessor_receiver(call_node)
+        if accessed is not None:
+            # `fmt = body["format"].s()` / `t = text.toStdString()`: the receiver's contents
+            self._add_instr(Assign(loc=loc, id=PVar(target), exp=self._translate_expression(accessed)))
+            return []
+
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
+        self._lower_lambda_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 
         ret_id = self._new_ident(target)
+        instrs.extend(self._alias_chain_receiver(func_name, loc))
+        instrs.extend(self._nested_usage_sink_calls(args, loc))
 
         call_instr = Call(
             loc=loc,
@@ -721,6 +834,38 @@ class CFrontend:
 
         return instrs
 
+    _CHAIN_CALL = re.compile(r"^([A-Za-z_]\w*)((?:\.[A-Za-z_]\w*)+)\.[A-Za-z_]\w*$")
+
+    def _alias_chain_receiver(self, func_name: str, loc: Location) -> List[Instr]:
+        """`req.url_params.get(k)`: the translator carries a receiver's taint to the call's
+        result by the receiver's name ("req.url_params"), which no assignment ever tainted.
+        Alias the receiver chain to its root variable first (C++ only)."""
+        if self.LANGUAGE != "cpp":
+            return []
+        m = self._CHAIN_CALL.match(func_name)
+        if not m or m.group(1) in ("this", "std"):
+            return []
+        receiver = func_name.rsplit(".", 1)[0]
+        return [Assign(loc=loc, id=PVar(receiver), exp=ExpVar(PVar(m.group(1))))]
+
+    def _nested_usage_sink_calls(self, args: List[TSNode], loc: Location) -> List[Instr]:
+        """Argument-less calls written as arguments whose use alone is the finding
+        (`EVP_md5()`, `EVP_des_ecb()`, `TLSv1_method()` in `EVP_DigestInit_ex(ctx,
+        EVP_md5(), NULL)`): lowered as arguments they have no Call instruction of
+        their own, so a usage-based sink spec or pack rule never fired. Emit the
+        bare call ahead of the enclosing one (it has no arguments to carry taint)."""
+        out: List[Instr] = []
+        for a in args:
+            while a is not None and a.type == "parenthesized_expression" and a.named_child_count == 1:
+                a = a.named_children[0]
+            if a is None or a.type != "call_expression":
+                continue
+            name = self._get_call_name(a)
+            if name and not self._get_call_args(a):
+                out.append(Call(loc=self._get_location(a), ret=None,
+                                func=ExpConst.string(name), args=[]))
+        return out
+
     def _translate_call(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone function call"""
         instrs = []
@@ -728,8 +873,11 @@ class CFrontend:
 
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
+        self._lower_lambda_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 
+        instrs.extend(self._alias_chain_receiver(func_name, loc))
+        instrs.extend(self._nested_usage_sink_calls(args, loc))
         call_instr = Call(
             loc=loc,
             ret=None,
@@ -798,17 +946,14 @@ class CFrontend:
         looked as if it could leave through its condition before the body ran,
         and every path fact after the loop described the wrong paths.
 
-        Switch cases are lowered one after another on a single path (see
-        _translate_switch), so a `break` that belongs to a switch stays a no-op;
-        a `continue` inside a switch still targets the enclosing loop."""
+        A `break` inside a switch is an edge to the join after the switch (see
+        _translate_switch); a `continue` inside a switch targets the enclosing loop."""
         proc = self._current_proc
         if proc is None or self._current_node is None:
             return
         target = None
         for kind, exit_node, next_node in reversed(self._jump_targets):
             if is_break:
-                if kind == "switch":
-                    return
                 target = exit_node
                 break
             if next_node is not None:
@@ -1104,18 +1249,52 @@ class CFrontend:
         self._current_node = after_node
 
     def _translate_switch(self, node: TSNode) -> None:
-        """Translate switch statement (simplified)"""
+        """Translate a switch: one unguarded branch per case, fall-through edges between
+        neighbouring cases, `break` as an edge to the join after the switch, and an edge past
+        every case when there is no `default`. Lowering the cases one after another on a
+        single path (as this used to) made `default: return 2;` end the path for every
+        statement after it -- the usual getopt loop lost all its assignments."""
         body = node.child_by_field_name("body")
-        if body:
-            self._jump_targets.append(("switch", None, None))
-            try:
-                for child in body.children:
-                    if child.type == "case_statement":
-                        for stmt in child.children:
-                            if stmt.type not in ("case", "default", ":", "break_statement"):
-                                self._translate_statement(stmt)
-            finally:
-                self._jump_targets.pop()
+        proc = self._current_proc
+        if not body or proc is None or self._current_node is None:
+            return
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        self._jump_targets.append(("switch", join, None))
+        has_default = False
+        fallthrough: Optional[Node] = None
+        try:
+            for child in body.children:
+                if child.type != "case_statement":
+                    continue
+                arm = proc.new_node(NodeKind.NORMAL)
+                proc.add_node(arm)
+                proc.connect(before.id, arm.id)
+                if fallthrough is not None:
+                    proc.connect(fallthrough.id, arm.id)
+                self._current_node = arm
+                value = child.child_by_field_name("value")
+                if value is None:
+                    has_default = True
+                for stmt in child.children:
+                    if not stmt.is_named or stmt.type == "comment" or (value is not None and stmt.id == value.id):
+                        continue
+                    if stmt.type == "break_statement":
+                        self._translate_jump(True)
+                    else:
+                        self._translate_statement(stmt)
+                # the arm falls through unless a `break` (a fresh unreachable node) ended it
+                ended = child.named_children[-1].type in ("break_statement", "return_statement") \
+                    if child.named_children else False
+                fallthrough = None if ended else self._current_node
+            if fallthrough is not None:
+                proc.connect(fallthrough.id, join.id)
+            if not has_default:
+                proc.connect(before.id, join.id)
+        finally:
+            self._jump_targets.pop()
+        self._current_node = join
 
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression"""
@@ -1197,10 +1376,41 @@ class CFrontend:
                                   self._get_text(field) if field else "",
                                   self._is_arrow_access(node))
 
+        elif node.type == "call_expression" and self._content_accessor_receiver(node) is not None:
+            return self._translate_expression(self._content_accessor_receiver(node))
+
+        elif (node.type == "call_expression" and self.LANGUAGE == "cpp"
+              and self._get_call_name(node) in self._VIEW_WRAPPERS and self._get_call_args(node)):
+            # asio::buffer(data, n) / std::span(buf) / std::ref(x) are views of their first argument:
+            # a read "into the buffer" fills `data`
+            return self._translate_expression(self._get_call_args(node)[0])
+
+        elif (node.type == "call_expression" and self.LANGUAGE == "cpp" and self._current_node is not None
+              and node.child_by_field_name("function") is not None
+              and node.child_by_field_name("function").type == "field_expression"):
+            # A member call written inside an expression (`QString::fromUtf8(sock->readLine())`,
+            # `run(req.get_param_value("n"))`) is its own Call, so sources, sinks and pack rules
+            # (matched on Call instructions) see it; the expression uses its result.
+            cached = self._hoisted_calls.get(node.id)
+            if cached is not None:
+                return cached
+            member = self._get_text(node.child_by_field_name("function").child_by_field_name("field"))
+            tmp = f"{member}_result{self._ident_counter}"
+            self._ident_counter += 1
+            exp = ExpVar(PVar(tmp))
+            self._hoisted_calls[node.id] = exp
+            self._add_instrs(self._translate_call_assignment(tmp, node, self._get_location(node)))
+            return exp
+
         elif node.type == "call_expression":
             func_name = self._get_call_name(node)
+            self._lower_lambda_args(node)
             args = [self._translate_expression(a) for a in self._get_call_args(node)]
             return ExpCall(ExpConst.string(func_name), args)
+
+        elif node.type == "lambda_expression":
+            # a lambda is its own procedure (handlers are lambdas in every C++ web framework)
+            return ExpConst.string(self._lower_lambda(node))
 
         elif node.type == "new_expression":
             # `new T` / `new T[n]` -> a call to the allocator operator, so the
@@ -1301,18 +1511,170 @@ class CFrontend:
             )
         return Location(file=self._filename, line=1, column=0)
 
+    # -- typed member calls (C++) ------------------------------------------------------
+
+    @staticmethod
+    def _type_base_name(text: str) -> str:
+        """`const QProcess *` -> `QProcess`; `std::unique_ptr<QProcess>` -> `QProcess`;
+        `httplib::Client&` -> `httplib::Client`; other templates lose their arguments."""
+        text = re.sub(r"\b(const|volatile|struct|class|typename|static|mutable|extern)\b", " ", text)
+        text = text.replace("*", " ").replace("&", " ")
+        m = re.search(r"(?:std::)?(?:unique_ptr|shared_ptr|weak_ptr|optional|scoped_ptr|QScopedPointer|"
+                      r"QSharedPointer|QPointer)\s*<\s*([\w:]+)", text)
+        if m:
+            return m.group(1)
+        text = re.sub(r"<.*>", "", text, flags=re.S)
+        return "".join(text.split())
+
+    _MEMBER_CALL = re.compile(r"^(?:this\.)?([A-Za-z_]\w*)\.([A-Za-z_]\w*)$")
+
+    def _qualify_member_calls(self, program: Program) -> None:
+        """`obj.method(...)` where `obj` is a local, parameter or field of a known class
+        type gets the canonical id `Type::method`, as a static call `Type::method(...)`
+        has. Packs then match `QProcess::start` instead of every `.start`."""
+        for proc in program.procedures.values():
+            types: Dict[str, str] = {}
+            chain: List[Procedure] = []
+            cur: Optional[Procedure] = proc
+            while cur is not None and cur not in chain:       # lambdas see the enclosing function
+                chain.append(cur)
+                cur = self._lambda_parent.get(id(cur))
+            fields = self._class_field_types.get(proc.class_name or "", {})
+            for c in reversed(chain):
+                types.update(self._var_types.get(id(c), {}))
+                types.update(c.param_types)
+            for node in proc.nodes.values():
+                for instr in node.instrs:
+                    if not isinstance(instr, Call) or instr.canonical:
+                        continue
+                    m = self._MEMBER_CALL.match(_func_str(instr))
+                    if not m:
+                        continue
+                    declared = types.get(m.group(1)) or fields.get(m.group(1))
+                    if not declared:
+                        continue
+                    base = self._type_base_name(declared)
+                    if base and base[0].isalpha() or base.startswith("::"):
+                        instr.canonical = f"{base}::{m.group(2)}"
+
+    # -- lambdas ---------------------------------------------------------------------
+
+    @staticmethod
+    def _registration_callee(call_node: TSNode) -> str:
+        """The callee a lambda argument is registered with: `svr.Get(path, [](..){..})`
+        -> "svr.Get"; `CROW_ROUTE(app, "/x").methods("POST"_method)([](..){..})` ->
+        "CROW_ROUTE" (the route macro at the root of the chain)."""
+        node = call_node.child_by_field_name("function")
+        while node is not None:
+            if node.type == "call_expression":
+                node = node.child_by_field_name("function")
+            elif node.type == "field_expression":
+                arg = node.child_by_field_name("argument")
+                if arg is not None and arg.type == "call_expression":
+                    node = arg
+                    continue
+                break
+            else:
+                break
+        return node.text.decode("utf-8", "replace") if node is not None else ""
+
+    def _lower_lambda_args(self, call_node: TSNode) -> None:
+        """Lower each lambda written directly as an argument of this call, recording the
+        callee it is registered with (`Procedure.registered_via`)."""
+        via = None
+        for a in self._get_call_args(call_node):
+            if a.type == "lambda_expression":
+                if via is None:
+                    via = self._registration_callee(call_node)
+                self._lower_lambda(a, via)
+
+    def _lower_lambda(self, node: TSNode, via: Optional[str] = None) -> str:
+        """Translate a lambda expression into a Procedure of its own and return its name."""
+        cached = self._lambda_names.get(node.id)
+        if cached is not None:
+            return cached
+        row, col = node.start_point
+        name = f"lambda@{row + 1}_{col}"
+        self._lambda_names[node.id] = name
+
+        decl = node.child_by_field_name("declarator")
+        params_node = decl.child_by_field_name("parameters") if decl is not None else None
+        params = self._params_from_list(params_node)
+        proc = Procedure(name=name, params=params, ret_type=Typ.unknown_type(),
+                         loc=self._get_location(node), is_method=False)
+        proc.param_types = dict(getattr(self, "_last_param_types", {}))
+        if via:
+            proc.registered_via.append(via)
+        proc.has_parse_errors = bool(node.has_error)
+
+        saved = (self._current_proc, self._current_node, self._node_counter, self._jump_targets)
+        if self._current_proc is not None:
+            self._lambda_parent[id(proc)] = self._current_proc
+        self._current_proc = proc
+        self._node_counter = 0
+        self._jump_targets = []
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        body = node.child_by_field_name("body")
+        if body:
+            self._translate_compound_statement(body)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc, self._current_node, self._node_counter, self._jump_targets = saved
+
+        program = getattr(self, "_program", None)
+        if program is not None:
+            program.add_procedure(proc)
+        return name
+
     def _get_call_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
         if func:
-            return self._get_text(func)
+            text = self._get_text(func)
+            # `p->m()` and `o.m()` are the same call shape to every spec and to the
+            # translator's receiver handling, which looks for a '.'
+            if self.LANGUAGE == "cpp" and func.type == "field_expression" and "->" in text:
+                text = text.replace("->", ".")
+            return text
         return ""
+
+    # Methods that hand back (a view of) the receiver's own contents: `cmd.c_str()`,
+    # `text.toStdString()`, `buf.data()`. In an expression they are the receiver itself,
+    # so taint on it reaches `system(cmd.c_str())` without a spec per container type.
+    _CONTENT_ACCESSORS = frozenset({
+        "c_str", "data", "str", "string", "c_string", "view", "get_str", "toStdString", "toUtf8",
+        "toLatin1", "toLocal8Bit", "toAscii", "constData", "toStdWString", "utf8", "trimmed",
+        "simplified", "toLower", "toUpper", "substr", "substring", "left", "right", "mid", "s",
+    })
+
+    _VIEW_WRAPPERS = frozenset({
+        "asio::buffer", "boost::asio::buffer", "asio::mutable_buffer", "boost::asio::mutable_buffer",
+        "boost::asio::buffer_cast", "std::span", "std::ref", "std::cref", "std::string_view",
+        "boost::asio::mutable_buffers_1",
+    })
+
+    def _content_accessor_receiver(self, node: TSNode) -> Optional[TSNode]:
+        """For `recv.c_str()`-style calls, the receiver node (else None)."""
+        func = node.child_by_field_name("function")
+        if func is None or func.type != "field_expression":
+            return None
+        field = func.child_by_field_name("field")
+        if field is None or self._get_text(field) not in self._CONTENT_ACCESSORS:
+            return None
+        return func.child_by_field_name("argument")
 
     def _get_call_args(self, node: TSNode) -> List[TSNode]:
         args = []
         args_node = node.child_by_field_name("arguments")
         if args_node:
             for child in args_node.children:
-                if child.type not in ("(", ")", ","):
+                # a comment between arguments is a child of the list, not an argument
+                if child.type not in ("(", ")", ",", "comment"):
                     args.append(child)
         return args
 
@@ -1412,8 +1774,9 @@ class CppFrontend(CFrontend):
             elif child.type == "preproc_ifdef" or child.type == "preproc_ifndef":
                 # Recurse into preprocessor conditional blocks
                 self._translate_translation_unit(child, program)
-            elif child.type == "declaration_list":
-                # Recurse into declaration lists (e.g., namespace bodies)
+            elif child.type in ("declaration_list", "template_declaration", "linkage_specification"):
+                # Recurse into declaration lists (namespace bodies), `template <...>`
+                # and `extern "C" { ... }`
                 self._translate_translation_unit(child, program)
             elif child.type == "declaration":
                 pass  # Skip global declarations
@@ -1440,12 +1803,29 @@ class CppFrontend(CFrontend):
                     proc = self._translate_function(child)
                     if proc:
                         proc.class_name = class_name
-                        proc.name = f"{class_name}::{proc.name}"
+                        if not proc.name.startswith(f"{class_name}::"):
+                            proc.name = f"{class_name}::{proc.name}"
                         proc.is_method = True
                         program.add_procedure(proc)
+                elif child.type == "template_declaration":
+                    # a templated member function
+                    for inner in child.children:
+                        if inner.type == "function_definition":
+                            proc = self._translate_function(inner)
+                            if proc:
+                                proc.class_name = class_name
+                                if not proc.name.startswith(f"{class_name}::"):
+                                    proc.name = f"{class_name}::{proc.name}"
+                                proc.is_method = True
+                                program.add_procedure(proc)
                 elif child.type == "field_declaration":
-                    # Member variable - skip
-                    pass
+                    # Member variable: remember its type for member-call qualification
+                    ftype = child.child_by_field_name("type")
+                    if ftype is not None:
+                        for d in child.children_by_field_name("declarator"):
+                            fname = self._extract_identifier(d)
+                            if fname:
+                                self._class_field_types.setdefault(class_name, {})[fname] = self._get_text(ftype)
                 elif child.type == "access_specifier":
                     # public, private, protected - skip
                     pass
@@ -1482,3 +1862,77 @@ class CppFrontend(CFrontend):
                 proc.class_name = self._current_class
 
         return proc
+
+
+def _func_str(call: Call) -> str:
+    return str(getattr(call.func, "value", call.func))
+
+
+# -- option-dispatch APIs ---------------------------------------------------------
+# `curl_easy_setopt(h, CURLOPT_URL, x)` is one function whose meaning is the constant
+# in its second argument; `xmlReadMemory(..., XML_PARSE_NOENT)` is only an XXE hazard
+# with certain flags. A pack rule matches calls by canonical id, so for these APIs the
+# canonical id carries the constant: `curl_easy_setopt:CURLOPT_URL`,
+# `curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off` (value 0/false),
+# `SSL_CTX_set_verify:SSL_VERIFY_NONE`, `xmlReadMemory:XML_PARSE_NOENT|XML_PARSE_DTDLOAD`.
+# Only identifier constants written at the call are read; an option held in a variable
+# leaves the plain id, which no rule matches (no guess).
+_OPTION_ARG = {
+    "curl_easy_setopt": 1, "curl_multi_setopt": 1, "curl_share_setopt": 1,
+    "SSL_CTX_set_verify": 1, "SSL_set_verify": 1,
+    "xmlReadMemory": 4, "xmlReadFile": 2, "xmlReadDoc": 3, "xmlReadIO": 5,
+    "xmlCtxtReadMemory": 5, "xmlCtxtReadFile": 3, "xmlCtxtReadDoc": 4, "xmlCtxtUseOptions": 1,
+    "xmlCtxtSetOptions": 1,
+}
+_OPTION_VALUE_ARG = {"curl_easy_setopt": 2, "curl_multi_setopt": 2, "curl_share_setopt": 2}
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+_OFF_VALUES = {"0", "0l", "0ul", "false", "null", "nullptr"}
+
+
+# A response writer whose meaning depends on the content type written beside the body:
+# `res.set_content(body, "text/html")` is an XSS sink, `res.set_content(json, "application/json")`
+# is not. Calls named here whose type argument is an HTML literal get the suffix ":html"
+# (`res.set_content:html`), which a pack's `name` rule can target.
+_CONTENT_TYPE_ARG = {"set_content": 1}
+
+
+def _qualify_content_type_calls(program: Program) -> None:
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call):
+                    continue
+                name = _func_str(instr)
+                idx = _CONTENT_TYPE_ARG.get(name.rsplit(".", 1)[-1])
+                if idx is None or "." not in name or idx >= len(instr.args):
+                    continue
+                arg = instr.args[idx][0]
+                if isinstance(arg, ExpConst) and "html" in str(getattr(arg, "value", "")).lower():
+                    instr.func = ExpConst.string(name + ":html")
+                    if instr.canonical:
+                        instr.canonical += ":html"
+
+
+def _qualify_option_calls(program: Program) -> None:
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call) or not instr.canonical:
+                    continue
+                idx = _OPTION_ARG.get(instr.canonical)
+                if idx is None or idx >= len(instr.args):
+                    continue
+                text = str(instr.args[idx][0])
+                idents = [w for w in _IDENT.findall(text) if w.isupper() or "_" in w]
+                if not idents:
+                    continue
+                canonical = f"{instr.canonical}:{'|'.join(idents)}"
+                vidx = _OPTION_VALUE_ARG.get(instr.canonical)
+                if vidx is not None and vidx < len(instr.args):
+                    if str(instr.args[vidx][0]).strip().lower() in _OFF_VALUES:
+                        canonical += ":off"
+                # The call is renamed as well: a pack rule that matches registers its spec under
+                # the call's plain name for later expression-nested calls, which would turn every
+                # other curl_easy_setopt / xmlReadMemory in the file into a sink.
+                instr.canonical = canonical
+                instr.func = ExpConst.string(canonical)

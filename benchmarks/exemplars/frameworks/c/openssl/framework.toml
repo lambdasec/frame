@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/openssl"]
+requires_pack = true
+description = "OpenSSL: SSL_VERIFY_NONE, broken protocol/digest/cipher selection, SSL_read as a source"

@@ -1,0 +1,104 @@
+[pack]
+name = "aspnetcore"
+language = "csharp"
+description = "ASP.NET Core MVC / Web API controllers, Razor Pages, SignalR hubs and the framework's response helpers"
+detect = { imports = ["Microsoft.AspNetCore"] }
+
+# MVC / Web API: a controller action's model-bound parameters (route, query, form, header, body)
+# are attacker data. The built-in rule covers classes whose name contains "Controller"; this one
+# follows the base class, so `class Orders : ControllerBase` and `class Api : Controller` count too.
+[[entrypoint]]
+id = "mvc-action"
+extends = ["ControllerBase", "Controller", "Microsoft.AspNetCore.Mvc.ControllerBase",
+           "Microsoft.AspNetCore.Mvc.Controller"]
+annotation = ["Http*", "Route", "AcceptVerbs", "Microsoft.AspNetCore.Mvc.Http*"]
+params = "all"
+exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# Explicit binding attributes are attacker data wherever they appear (also on helper actions).
+[[entrypoint]]
+id = "mvc-bound-parameter"
+extends = ["ControllerBase", "Controller", "Microsoft.AspNetCore.Mvc.ControllerBase",
+           "Microsoft.AspNetCore.Mvc.Controller"]
+method = ["*"]
+params = "annotated"
+param_annotation = ["FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeader",
+                    "Microsoft.AspNetCore.Mvc.From*"]
+
+# Razor Pages: handler methods (OnGet, OnPostLogin, OnGetExport...) take route / query / form values as
+# parameters, and [BindProperty] properties are filled from the request before the handler runs.
+[[entrypoint]]
+id = "razor-page-handler"
+extends = ["PageModel", "Microsoft.AspNetCore.Mvc.RazorPages.PageModel"]
+method = ["On[A-Z]*"]
+params = "all"
+fields = true
+exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# SignalR: every public hub method is invoked by a remote client with the arguments it chose.
+[[entrypoint]]
+id = "signalr-hub-method"
+extends = ["Hub", "Hub<*>", "DynamicHub", "Microsoft.AspNetCore.SignalR.Hub", "Microsoft.AspNetCore.SignalR.Hub<*>"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["Exception", "CancellationToken", "int", "long", "short", "byte", "bool", "double", "float",
+                      "decimal", "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan"]
+
+# Blazor components: [Parameter] / [SupplyParameterFromQuery] / [CascadingParameter] properties are set from
+# the URL, the query string or a parent component, before the lifecycle methods run.
+[[entrypoint]]
+id = "blazor-component"
+extends = ["ComponentBase", "Microsoft.AspNetCore.Components.ComponentBase", "LayoutComponentBase"]
+method = ["*"]
+fields = true
+
+# Request reads that are method calls (the property forms Request.Query[..], Request.Cookies[..] are built in).
+[[source]]
+name = ["Request.ReadFormAsync", "Request.ReadFromJsonAsync", "request.ReadFormAsync", "request.ReadFromJsonAsync",
+        "req.ReadFormAsync", "req.ReadFromJsonAsync"]
+kind = "user_input"
+
+# Response helpers whose argument is a file-system path.
+[[sink]]
+name = ["PhysicalFile", "Results.PhysicalFile", "TypedResults.PhysicalFile"]
+kind = "filesystem"
+description = "serves the file at the given path"
+
+[[sink]]
+name = ["RedirectPermanent", "RedirectPreserveMethod", "RedirectPermanentPreserveMethod",
+        "Results.Redirect", "TypedResults.Redirect"]
+kind = "redirect"
+
+[[sink]]
+name = ["Results.Content", "TypedResults.Content"]
+kind = "html"
+
+[[sink]]
+name = ["NavigationManager.NavigateTo", "Navigation.NavigateTo", "NavigationManager.NavigateToLogin"]
+kind = "redirect"
+description = "Blazor navigation to a caller-chosen URL"
+
+[[sink]]
+name = ["MarkupString"]
+kind = "html"
+description = "MarkupString renders its text as raw HTML"
+
+# The framework's own output encoders and URL checks.
+[[sanitizer]]
+name = ["HtmlEncoder.Default.Encode", "Html.Encode", "WebUtility.HtmlEncode", "HttpUtility.HtmlEncode"]
+kinds = ["xss"]
+
+[[sanitizer]]
+name = ["Url.IsLocalUrl", "Url.Content"]
+kinds = ["redirect"]
+
+# CORS: AllowAnyOrigin() on a policy lets any site call the API with the user's credentials.
+[[sink]]
+name = ["AllowAnyOrigin"]
+args = []
+kind = "cors"
+description = "CORS policy that allows any origin"

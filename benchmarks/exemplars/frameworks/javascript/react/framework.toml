@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/react-dom"]
+requires_pack = true
+description = "React: dangerouslySetInnerHTML with props / search params, location redirects"

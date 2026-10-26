@@ -1,0 +1,42 @@
+[pack]
+name = "civetweb"
+language = "c"
+description = "CivetWeb handlers and request accessors"
+detect = { imports = ["civetweb.h", "CivetServer.h"] }
+
+# int handler(struct mg_connection *conn, void *cbdata)
+[[source]]
+call = ["mg_get_request_info"]
+kind = "network_input"
+description = "struct mg_request_info: uri, query_string, headers"
+
+[[source]]
+call = ["mg_get_var", "mg_get_var2", "mg_get_cookie"]
+out_args = [3]
+kind = "network_input"
+
+[[source]]
+call = ["mg_read"]
+out_args = [1]
+kind = "network_input"
+description = "request body read into the buffer"
+
+[[source]]
+call = ["mg_get_header"]
+kind = "network_input"
+
+[[sink]]
+call = ["mg_printf"]
+args = [1]
+kind = "format_string"
+description = "mg_printf format string"
+
+[[sink]]
+call = ["mg_send_file", "mg_send_mime_file"]
+args = [1]
+kind = "filesystem"
+
+[[sink]]
+call = ["mg_send_http_redirect"]
+args = [1]
+kind = "redirect"

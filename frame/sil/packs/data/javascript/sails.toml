@@ -1,0 +1,15 @@
+[pack]
+name = "sails"
+language = "javascript"
+description = "Sails.js controllers and native queries (the sails global needs no import, so this pack has no detect clause; every rule is keyed on a Sails-only name)"
+
+[[source]]
+name = ["req.allParams"]
+kind = "user_input"
+description = "Sails: every request parameter (route, query string, body)"
+
+[[sink]]
+name = ["sails.sendNativeQuery", "sendNativeQuery"]
+args = [0]
+kind = "sql"
+description = "Waterline native SQL query"

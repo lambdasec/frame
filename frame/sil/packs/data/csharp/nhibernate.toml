@@ -1,0 +1,10 @@
+[pack]
+name = "nhibernate"
+language = "csharp"
+description = "NHibernate: native SQL and HQL queries built from strings"
+detect = { imports = ["NHibernate"] }
+
+[[sink]]
+name = ["CreateSQLQuery", "CreateQuery", "session.CreateSQLQuery", "session.CreateQuery"]
+kind = "sql"
+description = "NHibernate query from a string (SQL or HQL)"

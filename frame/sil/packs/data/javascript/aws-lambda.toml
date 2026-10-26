@@ -1,0 +1,16 @@
+[pack]
+name = "aws-lambda"
+language = "javascript"
+description = "AWS Lambda / API Gateway / serverless handlers: the event is attacker data"
+detect = { imports = ["aws-lambda", "aws-sdk", "@aws-sdk", "serverless-http", "@middy/core", "@vendia/serverless-express",
+                      "aws-serverless-express", "@aws-lambda-powertools", "@types/aws-lambda"] }
+
+# (event, context[, callback]): queryStringParameters, pathParameters, body, headers, Records[*]
+[[entrypoint]]
+id = "lambda-event"
+method = ["*"]
+params = ["event", "evt"]
+tainted_param_type = ["aws-lambda.APIGatewayProxyEvent", "aws-lambda.APIGatewayProxyEventV2", "aws-lambda.SQSEvent",
+                      "aws-lambda.S3Event", "aws-lambda.SNSEvent", "APIGatewayProxyEvent", "APIGatewayProxyEventV2",
+                      "APIGatewayEvent", "SQSEvent", "S3Event", "SNSEvent"]
+description = "Lambda event"

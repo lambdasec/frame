@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/fastcgi"]
+requires_pack = true
+description = "FastCGI: FCGX_GetParam / FCGX_GetStr sources, FCGX_PutS / FCGX_FPrintF sinks"

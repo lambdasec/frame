@@ -1,0 +1,43 @@
+[pack]
+name = "sql-clients"
+language = "cpp"
+description = "C++ SQL client libraries: libpqxx, SQLiteCpp, MySQL Connector/C++, SOCI"
+detect = { imports = ["pqxx/", "SQLiteCpp/", "cppconn/", "mysql_driver.h", "mysql_connection.h", "soci/"] }
+
+# The C++ frontend resolves `obj.method()` on a variable of a declared type to `Type::method`,
+# so `pqxx::work txn(c); txn.exec(sql)` is `pqxx::work::exec`.
+
+# libpqxx: exec* take SQL text; exec_params / exec_prepared bind values
+[[sink]]
+call = ["pqxx::*::exec", "pqxx::*::exec0", "pqxx::*::exec1", "pqxx::*::exec_n", "pqxx::*::query",
+        "pqxx::*::query_value", "pqxx::*::query01", "pqxx::*::for_query"]
+args = [0]
+kind = "sql"
+description = "libpqxx executes the SQL text it is given"
+
+# SQLiteCpp
+[[sink]]
+call = ["SQLite::Database::exec", "SQLite::Database::execAndGet"]
+args = [0]
+kind = "sql"
+description = "SQLiteCpp executes the SQL text it is given"
+
+[[sink]]
+call = ["SQLite::Statement", "SQLite::Statement::Statement"]
+args = [1]
+kind = "sql"
+description = "SQLiteCpp compiles the SQL text it is given"
+
+# MySQL Connector/C++
+[[sink]]
+call = ["sql::Statement::execute", "sql::Statement::executeQuery", "sql::Statement::executeUpdate",
+        "sql::Connection::prepareStatement"]
+args = [0]
+kind = "sql"
+description = "MySQL Connector/C++ sends the SQL text it is given"
+
+# SOCI: sql << "text" is an operator; `sql.once << ...` is not a call, but prepare()/execute(...) are
+[[sink]]
+call = ["soci::session::prepare"]
+args = [0]
+kind = "sql"

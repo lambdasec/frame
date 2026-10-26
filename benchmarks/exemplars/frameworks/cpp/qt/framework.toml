@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/qt"]
+requires_pack = true
+description = "Qt: QTcpSocket reads, QProcess, QSqlQuery, QFile, QNetworkAccessManager (typed member calls resolved from declarations)"

@@ -1,0 +1,46 @@
+[pack]
+name = "libmicrohttpd"
+language = "c"
+description = "GNU libmicrohttpd access-handler callbacks and connection value lookups"
+detect = { imports = ["microhttpd.h"] }
+
+# MHD_AccessHandlerCallback(cls, connection, url, method, version, upload_data,
+# upload_data_size, con_cls): url, method, version and upload_data are request data.
+# The callback has no fixed name (answer_to_connection, ahc_echo, handler...), so the
+# parameters are matched by their documented names in any function of a file that
+# includes microhttpd.h.
+[[entrypoint]]
+id = "access-handler"
+method = ["*"]
+params = ["url", "upload_data"]
+kind = "network_input"
+
+[[source]]
+call = ["MHD_lookup_connection_value", "MHD_get_connection_values"]
+kind = "network_input"
+description = "libmicrohttpd request header / query argument / cookie / POST field"
+
+[[source]]
+call = ["MHD_basic_auth_get_username_password", "MHD_digest_auth_get_username"]
+kind = "network_input"
+
+# POST bodies are delivered to an MHD_PostDataIterator(cls, kind, key, filename,
+# content_type, transfer_encoding, data, off, size)
+[[entrypoint]]
+id = "post-iterator"
+method = ["*iterate*", "*iterator*"]
+params = ["key", "data", "filename"]
+kind = "network_input"
+
+# What the client receives
+[[sink]]
+call = ["MHD_create_response_from_buffer", "MHD_create_response_from_data"]
+args = [1]
+kind = "html"
+description = "libmicrohttpd response body (served to the browser as the page)"
+
+[[sink]]
+call = ["MHD_add_response_header"]
+args = [1, 2]
+kind = "header"
+description = "libmicrohttpd response header name / value"

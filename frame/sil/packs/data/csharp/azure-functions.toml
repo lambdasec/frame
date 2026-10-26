@@ -1,0 +1,29 @@
+[pack]
+name = "azure-functions"
+language = "csharp"
+description = "Azure Functions (in-process and isolated worker): HTTP-triggered function parameters and request objects"
+detect = { imports = ["Microsoft.Azure.WebJobs", "Microsoft.Azure.Functions", "Microsoft.Azure.Functions.Worker"] }
+
+# A [FunctionName]/[Function] method: the HttpRequest / HttpRequestData is request data as a whole, and
+# route parameters (`Route = "receipt/{name}"`) arrive as plain method parameters.
+[[entrypoint]]
+id = "http-triggered-function"
+annotation = ["FunctionName", "Function", "Microsoft.Azure.WebJobs.FunctionName",
+              "Microsoft.Azure.Functions.Worker.Function"]
+params = "all"
+tainted_param_type = ["HttpRequest", "HttpRequestData", "HttpRequestMessage"]
+exclude_param_type = ["ILogger", "ILogger<*>", "FunctionContext", "ExecutionContext", "CancellationToken",
+                      "TimerInfo", "int", "long", "short", "byte", "bool", "double", "float", "decimal",
+                      "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan"]
+
+# Isolated worker: the body and the query string are read through helpers.
+[[source]]
+name = ["req.ReadAsStringAsync", "req.ReadAsString", "req.ReadFromJsonAsync", "request.ReadAsStringAsync",
+        "request.ReadAsString", "request.ReadFromJsonAsync", "HttpUtility.ParseQueryString"]
+kind = "user_input"
+
+# Results that echo into the response.
+[[sink]]
+name = ["RedirectResult", "RedirectPermanentResult"]
+kind = "redirect"
+description = "redirects the client to the given URL"

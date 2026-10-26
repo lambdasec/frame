@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/template-engines"]
+requires_pack = true
+description = "Server-side template injection: ejs / pug / handlebars / nunjucks / lodash.template compile attacker text"

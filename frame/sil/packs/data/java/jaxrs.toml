@@ -1,0 +1,45 @@
+[pack]
+name = "jaxrs"
+language = "java"
+description = "JAX-RS resources (Jersey, RESTEasy, Quarkus, Dropwizard): @QueryParam / @PathParam / @FormParam / @HeaderParam / @CookieParam / @MatrixParam / @BeanParam, the entity body, UriInfo and redirects"
+detect = { imports = ["javax.ws.rs", "jakarta.ws.rs"] }
+
+# Every parameter of a resource method is request data: the binding annotations name where it
+# comes from, and the single unannotated parameter is the entity (request body). Only @Context
+# injections (framework objects, not request data) are left out, by type.
+[[entrypoint]]
+id = "resource-method"
+annotation = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path"]
+params = "all"
+exclude_param_type = [
+    "UriInfo", "HttpHeaders", "SecurityContext", "Request", "Application", "Providers", "ResourceContext",
+    "ResourceInfo", "Configuration", "Sse", "SseEventSink", "AsyncResponse", "ContainerRequestContext",
+    "HttpServletRequest", "HttpServletResponse", "ServletContext", "ServletConfig",
+    "javax.ws.rs.core.*", "jakarta.ws.rs.core.*", "javax.ws.rs.container.*", "jakarta.ws.rs.container.*",
+    "javax.ws.rs.sse.*", "jakarta.ws.rs.sse.*", "javax.servlet.*", "jakarta.servlet.*",
+]
+
+# The parts of a request that a resource reads through an injected @Context object.
+[[source]]
+call = [
+    "javax.ws.rs.core.UriInfo.getQueryParameters", "jakarta.ws.rs.core.UriInfo.getQueryParameters",
+    "javax.ws.rs.core.UriInfo.getPathParameters", "jakarta.ws.rs.core.UriInfo.getPathParameters",
+    "javax.ws.rs.core.UriInfo.getRequestUri", "jakarta.ws.rs.core.UriInfo.getRequestUri",
+    "javax.ws.rs.core.UriInfo.getPath", "jakarta.ws.rs.core.UriInfo.getPath",
+    "javax.ws.rs.core.HttpHeaders.getHeaderString", "jakarta.ws.rs.core.HttpHeaders.getHeaderString",
+    "javax.ws.rs.core.HttpHeaders.getRequestHeader", "jakarta.ws.rs.core.HttpHeaders.getRequestHeader",
+    "javax.ws.rs.core.HttpHeaders.getRequestHeaders", "jakarta.ws.rs.core.HttpHeaders.getRequestHeaders",
+    "javax.ws.rs.core.HttpHeaders.getCookies", "jakarta.ws.rs.core.HttpHeaders.getCookies",
+    "javax.ws.rs.container.ContainerRequestContext.getHeaderString", "jakarta.ws.rs.container.ContainerRequestContext.getHeaderString",
+    "javax.ws.rs.container.ContainerRequestContext.getEntityStream", "jakarta.ws.rs.container.ContainerRequestContext.getEntityStream",
+]
+kind = "user_input"
+
+[[sink]]
+call = [
+    "javax.ws.rs.core.Response.seeOther", "jakarta.ws.rs.core.Response.seeOther",
+    "javax.ws.rs.core.Response.temporaryRedirect", "jakarta.ws.rs.core.Response.temporaryRedirect",
+    "javax.ws.rs.core.Response.ResponseBuilder.location", "jakarta.ws.rs.core.Response.ResponseBuilder.location",
+]
+kind = "redirect"
+description = "JAX-RS redirect response"

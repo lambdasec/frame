@@ -1,0 +1,25 @@
+[pack]
+name = "libxml2"
+language = "c"
+description = "libxml2: XXE when entities are substituted or external DTDs are loaded"
+detect = { imports = ["libxml/"] }
+
+# xmlReadMemory & co. take an options argument; the C frontend appends the option
+# constants written there to the canonical id (`xmlReadMemory:XML_PARSE_NOENT|XML_PARSE_DTDLOAD`).
+# Parsing is only an XXE hazard when XML_PARSE_NOENT (substitute entities) or
+# XML_PARSE_DTDLOAD (load the external DTD) is set; XML_PARSE_NONET alone is hardening.
+[[sink]]
+call = ["xmlReadMemory:*XML_PARSE_NOENT*", "xmlReadMemory:*XML_PARSE_DTDLOAD*",
+        "xmlReadFile:*XML_PARSE_NOENT*", "xmlReadFile:*XML_PARSE_DTDLOAD*",
+        "xmlReadDoc:*XML_PARSE_NOENT*", "xmlReadDoc:*XML_PARSE_DTDLOAD*"]
+args = [0]
+kind = "xxe"
+description = "libxml2 parses the document with entity substitution / external DTD loading enabled"
+
+[[sink]]
+call = ["xmlCtxtReadMemory:*XML_PARSE_NOENT*", "xmlCtxtReadMemory:*XML_PARSE_DTDLOAD*",
+        "xmlCtxtReadFile:*XML_PARSE_NOENT*", "xmlCtxtReadFile:*XML_PARSE_DTDLOAD*",
+        "xmlCtxtReadDoc:*XML_PARSE_NOENT*", "xmlCtxtReadDoc:*XML_PARSE_DTDLOAD*"]
+args = [1]
+kind = "xxe"
+description = "libxml2 parses the document with entity substitution / external DTD loading enabled"

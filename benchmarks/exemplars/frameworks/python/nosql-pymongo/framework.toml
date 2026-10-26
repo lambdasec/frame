@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/pymongo"]
+requires_pack = true
+description = "MongoDB through pymongo/motor: $where JavaScript, request JSON used as a query document, aggregation pipelines, in a repository module"

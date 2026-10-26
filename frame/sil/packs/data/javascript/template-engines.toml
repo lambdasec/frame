@@ -1,0 +1,18 @@
+[pack]
+name = "template-engines"
+language = "javascript"
+description = "Server-side template injection: engines asked to compile / render a template STRING"
+detect = { imports = ["ejs", "pug", "jade", "handlebars", "nunjucks", "lodash", "underscore", "dot", "doT", "swig", "swig-templates",
+                      "hogan.js", "mustache", "art-template", "eta", "liquidjs", "twig", "velocityjs", "squirrelly", "ejs-mate"] }
+
+[[sink]]
+call = ["ejs.render", "ejs.compile", "pug.compile", "pug.render", "pug.compileClient", "jade.compile", "jade.render",
+        "handlebars.compile", "handlebars.precompile", "nunjucks.renderString", "nunjucks.compile",
+        "lodash.template", "lodash/template", "underscore.template", "dot.template", "doT.template", "swig.render", "swig.compile",
+        "swig-templates.render", "hogan.js.compile", "art-template.compile", "art-template.render", "eta.render", "eta.compile",
+        "twig.twig", "squirrelly.render", "squirrelly.compile", "velocityjs.render", "liquidjs.Liquid.parse"]
+name = ["Handlebars.compile", "handlebars.compile", "nunjucks.renderString", "env.renderString", "ejs.render", "pug.compile",
+        "pug.render", "_.template", "engine.parseAndRender", "liquid.parseAndRender", "liquid.parse"]
+args = [0]
+kind = "template"
+description = "the argument is compiled as template source code"

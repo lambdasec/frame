@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/fastapi"]
+requires_pack = true
+description = "FastAPI: typed/Query/Body/Path/Depends parameters, Request, UploadFile, HTMLResponse/RedirectResponse/FileResponse, SQLAlchemy text() in a repository module"

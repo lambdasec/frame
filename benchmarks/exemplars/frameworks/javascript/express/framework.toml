@@ -1,0 +1,4 @@
+language = "javascript"
+packs = []
+requires_pack = false
+description = "Express routers: query/params/body sources, SQL, XSS, redirect, sendFile/download, exec (built-in coverage guard)"

@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/django-rest-framework", "python/django"]
+requires_pack = true
+description = "Django REST Framework APIView/ViewSet/@api_view: request.data / query_params, raw SQL in a service module, redirects, file responses"

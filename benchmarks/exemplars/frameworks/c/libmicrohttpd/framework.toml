@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/libmicrohttpd"]
+requires_pack = true
+description = "GNU libmicrohttpd: access-handler parameters, connection values, response body/header sinks"

@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/vertx-web"]
+requires_pack = true
+description = "Vert.x Web: route handlers as lambdas and method references taking a RoutingContext, request params/body/headers, response end/redirect/sendFile, reactive SQL client"

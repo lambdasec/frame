@@ -1,0 +1,24 @@
+[pack]
+name = "wcf"
+language = "csharp"
+description = "WCF services: the parameters of an operation implementation come from the remote caller"
+detect = { imports = ["System.ServiceModel"] }
+
+# A service class implements an `I...Service` / `I...Contract` interface marked [ServiceContract]; every
+# public operation receives what the client's message carried. (The interface is a separate declaration, so
+# the class is recognised by the interface it lists.)
+[[entrypoint]]
+id = "wcf-operation"
+extends = ["I*Service", "I*Contract", "I*Operations", "I*Api"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "OperationContext"]
+
+[[entrypoint]]
+id = "wcf-service-behavior"
+class_decorator = ["ServiceBehavior", "System.ServiceModel.ServiceBehavior"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "OperationContext"]

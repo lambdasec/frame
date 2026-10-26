@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/wcf", "csharp/grpc"]
+requires_pack = true
+description = "WCF service implementations and gRPC service overrides: operation parameters come from remote callers"

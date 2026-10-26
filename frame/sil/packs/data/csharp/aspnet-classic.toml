@@ -1,0 +1,45 @@
+[pack]
+name = "aspnet-classic"
+language = "csharp"
+description = "System.Web: ASP.NET WebForms code-behind, MVC 5 and Web API 2 controllers, HttpContext.Current"
+detect = { imports = ["System.Web"] }
+
+# MVC 5 / Web API 2: public actions bind route, query and body values to their parameters.
+[[entrypoint]]
+id = "mvc5-action"
+extends = ["Controller", "ApiController", "System.Web.Mvc.Controller", "System.Web.Http.ApiController"]
+method = ["*"]
+params = "all"
+exclude_param_type = ["CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# NameValueCollection reads (the indexer forms `Request.QueryString["x"]` are built in).
+[[source]]
+name = ["Request.QueryString.Get", "Request.QueryString.GetValues", "Request.Form.Get", "Request.Form.GetValues",
+        "Request.Params.Get", "Request.Params.GetValues", "Request.Headers.Get", "Request.Headers.GetValues",
+        "Request.Cookies.Get", "Request.ServerVariables.Get"]
+kind = "user_input"
+
+[[sink]]
+name = ["Response.TransmitFile", "Response.WriteFile"]
+kind = "filesystem"
+description = "sends the file at the given path"
+
+[[sink]]
+name = ["Response.AppendHeader", "Response.AddHeader"]
+args = [1]
+kind = "header_injection"
+
+[[sink]]
+name = ["Response.Output.Write", "Response.Output.WriteLine"]
+kind = "html"
+
+[[sanitizer]]
+name = ["Server.HtmlEncode", "HttpUtility.HtmlEncode", "HttpUtility.HtmlAttributeEncode", "AntiXssEncoder.HtmlEncode",
+        "Microsoft.Security.Application.Encoder.HtmlEncode", "Encoder.HtmlEncode"]
+kinds = ["xss"]
+
+[[sanitizer]]
+name = ["Server.UrlEncode", "HttpUtility.UrlEncode"]
+kinds = ["xss", "redirect"]

@@ -1,0 +1,38 @@
+[pack]
+name = "django"
+language = "python"
+description = "Django ORM escape hatches, template compilation and raw SQL"
+detect = { imports = ["django"] }
+
+# QuerySet.extra() splices where / select / order_by / tables strings into the SQL.
+[[sink]]
+name = ["objects.extra", "queryset.extra", "qs.extra"]
+kind = "sql"
+args = [0, 1, 2, 3]
+arg_names = ["where", "select", "order_by", "tables", "select_params"]
+description = "QuerySet.extra() is raw SQL"
+
+[[sink]]
+call = ["django.db.models.expressions.RawSQL", "django.db.models.RawSQL"]
+kind = "sql"
+args = [0]
+
+# django.template.Template(string) compiles the string as template source.
+[[sink]]
+call = ["django.template.Template", "django.template.base.Template"]
+kind = "template"
+args = [0]
+
+[[sink]]
+name = ["engine.from_string", "Engine.from_string", "get_template_from_string"]
+kind = "template"
+args = [0]
+description = "Engine.from_string compiles its argument as template source"
+
+# Class-based views keep the request on `self`.
+[[source]]
+name = ["self.request.GET.get", "self.request.GET.getlist", "self.request.POST.get", "self.request.POST.getlist",
+        "self.request.COOKIES.get", "self.request.META.get", "self.request.GET.__getitem__",
+        "self.request.POST.__getitem__", "self.request.GET", "self.request.POST", "self.request.body",
+        "self.request.headers.get", "self.request.FILES.get"]
+kind = "user_input"

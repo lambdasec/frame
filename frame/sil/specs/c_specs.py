@@ -198,6 +198,12 @@ MEMORY_SPECS = {
 # =============================================================================
 
 SYSTEM_SPECS = {
+    # Dynamic loading: an attacker-chosen library path is arbitrary code execution
+    "dlopen": _sink("eval", [0], "dlopen() - loads and runs code from the named library"),
+    "LoadLibrary": _sink("eval", [0], "LoadLibrary() - loads and runs code from the named library"),
+    "LoadLibraryA": _sink("eval", [0], "LoadLibraryA() - loads and runs code from the named library"),
+    "LoadLibraryW": _sink("eval", [0], "LoadLibraryW() - loads and runs code from the named library"),
+
     # Command execution (command injection sinks)
     "system": _sink("command", [0], "system() - command injection sink"),
     "popen": _sink("command", [0], "popen() - command injection sink"),
@@ -367,9 +373,9 @@ XML_SPECS = {
     "xmlParseFile": _sink("xxe", [0], "xmlParseFile() - XXE vulnerability"),
     "xmlParseDoc": _sink("xxe", [0], "xmlParseDoc() - XXE vulnerability"),
     "xmlParseMemory": _sink("xxe", [0], "xmlParseMemory() - XXE vulnerability"),
-    "xmlReadFile": _sink("xxe", [0], "xmlReadFile() - XXE vulnerability"),
-    "xmlReadMemory": _sink("xxe", [0], "xmlReadMemory() - XXE vulnerability"),
-    "xmlCtxtReadFile": _sink("xxe", [1], "xmlCtxtReadFile() - XXE vulnerability"),
+    # xmlRead*/xmlCtxtRead* take an options argument: they are XXE sinks only with
+    # XML_PARSE_NOENT / XML_PARSE_DTDLOAD, which the libxml2 pack matches on the
+    # option-qualified canonical id (`xmlReadMemory:XML_PARSE_NOENT`).
 
     # Expat
     "XML_Parse": _sink("xxe", [1], "XML_Parse() - XXE vulnerability"),
@@ -407,8 +413,8 @@ CRYPTO_SPECS = {
 
 SANITIZER_SPECS = {
     # Path sanitization
-    "realpath": _sanitizer(["path"], "realpath() - canonicalize path"),
-    "canonicalize_file_name": _sanitizer(["path"], "canonicalize_file_name()"),
+    "realpath": _sanitizer(["path", "filesystem"], "realpath() - canonicalize path"),
+    "canonicalize_file_name": _sanitizer(["path", "filesystem"], "canonicalize_file_name()"),
 
     # Integer validation
     "abs": _propagator([0], "abs() - absolute value"),
@@ -454,9 +460,8 @@ MISCONFIGURATION_SPECS = {
     "api_key": _sink("hardcoded_cred", [0], "Potential hardcoded API key (CWE-798)"),
     "private_key": _sink("hardcoded_cred", [0], "Potential hardcoded key (CWE-798)"),
 
-    # SSL/TLS issues
-    "SSL_CTX_set_verify": _sink("ssl", [0, 1], "SSL verification config (CWE-295)"),
-    "SSL_set_verify": _sink("ssl", [0, 1], "SSL verification config (CWE-295)"),
+    # SSL/TLS issues. SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, ...) is the SAFE call, so it is
+    # not a sink by name; the OpenSSL pack flags SSL_VERIFY_NONE (CWE-295) instead.
     "SSL_CTX_set_options": _sink("ssl", [0, 1], "SSL options (CWE-327)"),
     "OPENSSL_NO_SSL2": _propagator([0], "SSLv2 disabled"),
     "OPENSSL_NO_SSL3": _propagator([0], "SSLv3 disabled"),
@@ -468,15 +473,19 @@ MISCONFIGURATION_SPECS = {
 
 CRYPTO_ENHANCED_SPECS = {
     # OpenSSL deprecated functions
-    "EVP_des_ecb": _sink("weak_crypto", [0], "DES ECB (CWE-327)"),
-    "EVP_des_cbc": _sink("weak_crypto", [0], "DES CBC (CWE-327)"),
-    "EVP_rc4": _sink("weak_crypto", [0], "RC4 (CWE-327)"),
-    "EVP_rc2_cbc": _sink("weak_crypto", [0], "RC2 (CWE-327)"),
-    "EVP_bf_ecb": _sink("weak_crypto", [0], "Blowfish ECB (CWE-327)"),
+    "EVP_des_ecb": _usage_sink("weak_crypto", "DES ECB (CWE-327)"),
+    "EVP_des_cbc": _usage_sink("weak_crypto", "DES CBC (CWE-327)"),
+    "EVP_rc4": _usage_sink("weak_crypto", "RC4 (CWE-327)"),
+    "EVP_rc2_cbc": _usage_sink("weak_crypto", "RC2 (CWE-327)"),
+    "EVP_bf_ecb": _usage_sink("weak_crypto", "Blowfish ECB (CWE-327)"),
 
     # ECB mode
-    "EVP_aes_128_ecb": _sink("weak_crypto", [0], "AES-128 ECB (CWE-327)"),
-    "EVP_aes_256_ecb": _sink("weak_crypto", [0], "AES-256 ECB (CWE-327)"),
+    "EVP_aes_128_ecb": _usage_sink("weak_crypto", "AES-128 ECB (CWE-327)"),
+    "EVP_aes_256_ecb": _usage_sink("weak_crypto", "AES-256 ECB (CWE-327)"),
+    "EVP_aes_192_ecb": _usage_sink("weak_crypto", "AES-192 ECB (CWE-327)"),
+    "EVP_rc4_40": _usage_sink("weak_crypto", "RC4-40 (CWE-327)"),
+    "EVP_des_ede_ecb": _usage_sink("weak_crypto", "3DES ECB (CWE-327)"),
+    "EVP_des_ede3_ecb": _usage_sink("weak_crypto", "3DES ECB (CWE-327)"),
 
     # Weak key derivation
     "crypt": _sink("weak_crypto", [0], "crypt() weak hash (CWE-328)"),
@@ -810,3 +819,44 @@ for _specs in (C_SPECS, CPP_SPECS):
         _merge_spec_fields(_specs, _name, stack_allocation_size_arg=_arg)
     for _name, _args in _TAINT_OUT_ARGS.items():
         _merge_spec_fields(_specs, _name, taint_out_args=list(_args))
+
+# Formatted writes into a buffer: the destination (argument 0) carries whatever the
+# format or its arguments carried, so `snprintf(sql, n, "... '%s'", name)` makes
+# `sql` as tainted as `name`. Merged (not replaced) so the format-string sink stays.
+_FORMAT_TO_DEST = {
+    "sprintf": range(1, 12),
+    "snprintf": range(2, 12),
+    "vsprintf": [1],
+    "vsnprintf": [2],
+    "stpcpy": [1],
+    "strlcpy": [1],
+    "strlcat": [1],
+}
+for _specs in (C_SPECS, CPP_SPECS):
+    for _name, _srcs in _FORMAT_TO_DEST.items():
+        _merge_spec_fields(_specs, _name, taint_to_dest=list(_srcs))
+
+# A string-to-number conversion keeps its taint (a number still sizes an allocation or a
+# loop) but is no longer text: it cannot carry a SQL / shell / path / URL payload. So
+# `which = atoi(req); url = table[which]` is not an SSRF, exactly as JS parseInt is not.
+_NUMERIC_SAFE = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath",
+                 "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe",
+                 "log", "format", "format_string"]
+_NUMERIC_CONVERSIONS = (
+    "atoi", "atol", "atoll", "atof", "strtol", "strtoul", "strtoll", "strtoull", "strtod", "strtof",
+    "strtoimax", "strtoumax", "stoi", "stol", "stoll", "stoul", "stoull", "stof", "stod",
+)
+for _specs in (C_SPECS, CPP_SPECS):
+    for _name in _NUMERIC_CONVERSIONS:
+        _merge_spec_fields(_specs, _name, taint_propagates=[0], is_sanitizer=list(_NUMERIC_SAFE))
+
+# C++ spells the C library `std::system(cmd)` as often as `system(cmd)`: every plain C
+# function spec also answers to its `std::` (and global `::`) qualified name. Stream and
+# container specs are C++-only and keep their own keys.
+for _name in [n for n in C_SPECS if n.replace("_", "").isalnum()]:
+    for _prefix in ("std::", "::"):
+        CPP_SPECS.setdefault(_prefix + _name, CPP_SPECS[_name])
+
+# Constructing a file stream opens the path it is given.
+for _name in ("std::ifstream", "std::ofstream", "std::fstream", "std::basic_ifstream", "std::basic_ofstream"):
+    CPP_SPECS[_name] = _sink("filesystem", [0], f"{_name} opens its path argument")

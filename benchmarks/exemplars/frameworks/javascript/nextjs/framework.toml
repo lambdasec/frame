@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/nextjs"]
+requires_pack = true
+description = "Next.js pages/api, app-router route handlers, server actions"

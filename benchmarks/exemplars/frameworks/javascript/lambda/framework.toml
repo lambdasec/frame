@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/aws-lambda"]
+requires_pack = true
+description = "AWS Lambda / API Gateway handlers: event.* is attacker data"

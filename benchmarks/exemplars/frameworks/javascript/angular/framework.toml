@@ -1,0 +1,4 @@
+language = "typescript"
+packs = ["javascript/angular"]
+requires_pack = true
+description = "Angular: bypassSecurityTrust* with route / HTTP data"

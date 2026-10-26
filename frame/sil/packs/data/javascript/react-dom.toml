@@ -1,0 +1,20 @@
+[pack]
+name = "react-dom"
+language = "javascript"
+description = "React / React Router / Next.js client hooks that read the URL (sources feeding dangerouslySetInnerHTML and location sinks)"
+detect = { imports = ["react", "react-dom", "preact", "react-router", "react-router-dom", "next/router", "next/navigation", "@remix-run/react"] }
+
+# `const [params] = useSearchParams()`, `const { id } = useParams()`, `const location = useLocation()`
+[[source]]
+call = ["react-router-dom.useSearchParams", "react-router.useSearchParams", "react-router-dom.useParams",
+        "react-router.useParams", "react-router-dom.useLocation", "react-router.useLocation",
+        "next/navigation.useSearchParams", "next/navigation.useParams", "next/router.useRouter",
+        "@remix-run/react.useSearchParams", "@remix-run/react.useParams", "@remix-run/react.useLocation"]
+kind = "user_input"
+description = "values read from the URL (path parameters, query string, hash)"
+
+# searchParams.get('q'), params.get(...): a value read out of tainted URL data
+[[propagator]]
+name = ["get", "getAll", "toString"]
+receiver = true
+description = "value read from URLSearchParams"

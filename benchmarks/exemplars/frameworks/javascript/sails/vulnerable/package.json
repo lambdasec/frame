@@ -1,0 +1,1 @@
+{ "name": "shop", "dependencies": { "sails": "^1.5.0", "sails-mysql": "^2.0.0" } }

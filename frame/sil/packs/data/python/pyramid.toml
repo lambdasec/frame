@@ -1,0 +1,43 @@
+[pack]
+name = "pyramid"
+language = "python"
+description = "Pyramid views: request.params / matchdict / json_body, HTML responses, redirects, static files"
+detect = { imports = ["pyramid"] }
+
+# Pyramid views take the request (function views) or hold it on self (class views).
+[[source]]
+name = ["request.params", "request.GET", "request.POST", "request.matchdict", "request.json_body",
+        "request.cookies", "request.body", "request.text", "request.headers", "request.params.get", "request.GET.get",
+        "request.POST.get", "request.matchdict.get", "request.cookies.get", "request.headers.get",
+        "request.params.getall", "request.GET.getall", "request.POST.getall",
+        "request.params.__getitem__", "request.GET.__getitem__", "request.POST.__getitem__",
+        "request.matchdict.__getitem__", "request.json_body.__getitem__", "request.json_body.get"]
+kind = "user_input"
+
+[[sink]]
+call = ["pyramid.response.Response"]
+kind = "html"
+args = [0]
+arg_names = ["body", "text"]
+description = "a pyramid Response defaults to text/html"
+
+[[sink]]
+call = ["pyramid.httpexceptions.HTTPFound", "pyramid.httpexceptions.HTTPMovedPermanently",
+        "pyramid.httpexceptions.HTTPSeeOther", "pyramid.httpexceptions.HTTPTemporaryRedirect",
+        "pyramid.httpexceptions.HTTPPermanentRedirect"]
+kind = "redirect"
+args = [0]
+arg_names = ["location"]
+
+[[sink]]
+call = ["pyramid.response.FileResponse"]
+kind = "filesystem"
+args = [0]
+arg_names = ["path"]
+
+# URLs the framework builds from route names are not attacker data even though they are
+# methods of the request.
+[[sanitizer]]
+name = ["request.route_url", "request.route_path", "request.static_url", "request.static_path",
+        "request.resource_url", "request.application_url", "request.current_route_url"]
+kinds = ["redirect", "ssrf", "html", "xss", "filesystem", "sql"]

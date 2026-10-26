@@ -1,0 +1,4 @@
+language = "typescript"
+packs = ["javascript/fastify"]
+requires_pack = true
+description = "Fastify (TypeScript): request.query / body, reply.send / redirect, repository across files"

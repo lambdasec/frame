@@ -1,0 +1,32 @@
+[pack]
+name = "http-clients"
+language = "python"
+description = "SSRF through HTTP client objects (sessions, pools, async clients) whose variable type the frontend derives"
+detect = { imports = ["requests", "httpx", "urllib3", "aiohttp", "httplib2", "pycurl"] }
+
+# `s = requests.Session(); s.get(url)` -> canonical requests.Session.get (derived from the constructor);
+# `with httpx.Client() as c: c.get(url)` -> httpx.Client.get. Method calls on the module itself
+# (requests.get) are covered by the built-in specs.
+[[sink]]
+call = ["requests.Session.get", "requests.Session.post", "requests.Session.put", "requests.Session.patch",
+        "requests.Session.delete", "requests.Session.head", "requests.Session.options",
+        "requests.sessions.Session.get", "requests.sessions.Session.post",
+        "httpx.Client.get", "httpx.Client.post", "httpx.Client.put", "httpx.Client.patch",
+        "httpx.Client.delete", "httpx.Client.head", "httpx.Client.options", "httpx.Client.stream",
+        "httpx.AsyncClient.get", "httpx.AsyncClient.post", "httpx.AsyncClient.put", "httpx.AsyncClient.patch",
+        "httpx.AsyncClient.delete", "httpx.AsyncClient.head", "httpx.AsyncClient.options",
+        "httpx.AsyncClient.stream", "aiohttp.ClientSession.get", "aiohttp.ClientSession.post",
+        "aiohttp.ClientSession.put", "aiohttp.ClientSession.delete", "aiohttp.ClientSession.patch",
+        "aiohttp.ClientSession.head"]
+kind = "ssrf"
+args = [0]
+arg_names = ["url"]
+
+# request(method, url): the URL is the second argument.
+[[sink]]
+call = ["requests.Session.request", "httpx.Client.request", "httpx.AsyncClient.request",
+        "urllib3.PoolManager.request", "urllib3.PoolManager.urlopen", "urllib3.HTTPConnectionPool.request",
+        "aiohttp.ClientSession.request", "aiohttp.ClientSession.ws_connect"]
+kind = "ssrf"
+args = [1]
+arg_names = ["url"]

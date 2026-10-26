@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/libxml2"]
+requires_pack = true
+description = "libxml2: socket-fed documents parsed with XML_PARSE_NOENT / XML_PARSE_DTDLOAD (XXE)"

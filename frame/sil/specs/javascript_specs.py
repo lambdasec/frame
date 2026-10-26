@@ -80,6 +80,9 @@ EXPRESS_SPECS = {
     # Headers
     "res.setHeader": _sink("header", [1], "Express header injection"),
     "res.set": _sink("header", [1], "Express header injection"),
+
+    # Koa: `ctx.body = value` is the response body (a string is sent as text/html).
+    "ctx.body": _sink("html", [0], "Koa response body (XSS)"),
 }
 
 # =============================================================================
@@ -119,8 +122,8 @@ NODE_SPECS = {
     "child_process.execSync": _sink("command", [0], "Node.js execSync (command injection)"),
     "child_process.spawn": _sink("command", [0, 1], "Node.js spawn (command injection)"),
     "child_process.spawnSync": _sink("command", [0, 1], "Node.js spawnSync (command injection)"),
-    "child_process.execFile": _sink("command", [0, 1], "Node.js execFile (command injection)"),
-    "child_process.execFileSync": _sink("command", [0, 1], "Node.js execFileSync (command injection)"),
+    "child_process.execFile": _sink("command", [0], "Node.js execFile (command injection; arguments are not shell-parsed)"),
+    "child_process.execFileSync": _sink("command", [0], "Node.js execFileSync (command injection; arguments are not shell-parsed)"),
     "child_process.fork": _sink("command", [0], "Node.js fork (command injection)"),
     "exec": _global_sink("command", [0], "exec (command injection)"),
     "execSync": _global_sink("command", [0], "execSync (command injection)"),
@@ -154,6 +157,7 @@ NODE_SPECS = {
     "vm.runInNewContext": _sink("code", [0], "vm.runInNewContext (code injection)"),
     "vm.runInContext": _sink("code", [0], "vm.runInContext (code injection)"),
     "vm.compileFunction": _sink("code", [0], "vm.compileFunction (code injection)"),
+    "vm.Script": _sink("code", [0], "new vm.Script compiles its argument as JavaScript (code injection)"),
     "runInContext": _sink("code", [0], "runInContext (code injection)"),
 
     # Synthetic marker emitted by the frontend for a catastrophic-backtracking
@@ -253,6 +257,20 @@ DOM_SPECS = {
     "element.innerHTML": _sink("html", [0], "element.innerHTML (XSS)"),
     "element.outerHTML": _sink("html", [0], "element.outerHTML (XSS)"),
 
+    # jQuery: the frontend names a method called on a jQuery collection `$.<method>`
+    "$": _sink("html", [0], "jQuery selector / HTML string (XSS)"),
+    "jQuery": _sink("html", [0], "jQuery selector / HTML string (XSS)"),
+    "$.html": _sink("html", [0], "jQuery .html() (XSS)"),
+    "$.append": _sink("html", [0], "jQuery .append() (XSS)"),
+    "$.prepend": _sink("html", [0], "jQuery .prepend() (XSS)"),
+    "$.after": _sink("html", [0], "jQuery .after() (XSS)"),
+    "$.before": _sink("html", [0], "jQuery .before() (XSS)"),
+    "$.replaceWith": _sink("html", [0], "jQuery .replaceWith() (XSS)"),
+    "$.wrapAll": _sink("html", [0], "jQuery .wrapAll() (XSS)"),
+    "$.text": _sanitizer(["html", "xss"], "jQuery .text() escapes its argument"),
+    "$.getScript": _sink("code", [0], "jQuery.getScript loads and runs a script (code injection)"),
+    "$.globalEval": _sink("code", [0], "jQuery.globalEval (code injection)"),
+
     # Script injection
     "script.src": _sink("code", [0], "script.src (script injection)"),
     "script.text": _sink("code", [0], "script.text (script injection)"),
@@ -261,6 +279,8 @@ DOM_SPECS = {
     "location.href": _sink("redirect", [0], "location.href (open redirect)"),
     "location.assign": _sink("redirect", [0], "location.assign (open redirect)"),
     "location.replace": _sink("redirect", [0], "location.replace (open redirect)"),
+    "window.location": _sink("redirect", [0], "window.location = (open redirect)"),
+    "document.location": _sink("redirect", [0], "document.location = (open redirect)"),
     "window.open": _sink("redirect", [0], "window.open (open redirect)"),
 
     # Taint sources (browser)
@@ -272,6 +292,11 @@ DOM_SPECS = {
     "document.referrer": _source("user", "Document referrer"),
     "document.cookie": _source("user", "Document cookies"),
     "window.name": _source("user", "Window name"),
+
+    # Angular router: ActivatedRoute snapshot properties
+    "snapshot.queryParams": _source("user", "Angular route query parameters"),
+    "snapshot.params": _source("user", "Angular route parameters"),
+    "snapshot.fragment": _source("user", "Angular route fragment"),
 
     # postMessage
     "event.data": _source("user", "postMessage data"),

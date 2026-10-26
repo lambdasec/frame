@@ -1,0 +1,37 @@
+[pack]
+name = "boost-asio-beast"
+language = "cpp"
+description = "Boost.Asio socket reads and Boost.Beast HTTP request objects"
+detect = { imports = ["boost/asio", "boost/beast", "asio.hpp", "asio/"] }
+
+# Beast server handlers take the parsed request: handle_request(..., http::request<Body, Fields> &&req, Send &&send)
+[[entrypoint]]
+id = "beast-request-handler"
+method = ["*"]
+tainted_param_type = ["*::request", "request"]
+
+# Reads fill the buffer they are given
+[[source]]
+name = ["read_some", "receive", "async_read_some", "async_receive"]
+out_args = [0]
+kind = "network_input"
+description = "Boost.Asio socket read into the supplied buffer"
+
+[[source]]
+call = ["boost::asio::read", "asio::read", "boost::asio::read_until", "asio::read_until"]
+out_args = [1]
+kind = "network_input"
+description = "Boost.Asio free-function read"
+
+# http::read(stream, buffer, req) parses the request into req
+[[source]]
+call = ["http::read", "boost::beast::http::read", "beast::http::read"]
+out_args = [2]
+kind = "network_input"
+description = "Boost.Beast reads and parses an HTTP message"
+
+[[sink]]
+call = ["*::resolver::resolve", "boost::asio::ip::tcp::resolver::resolve"]
+args = [0]
+kind = "ssrf"
+description = "resolving an attacker-chosen host"

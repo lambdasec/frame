@@ -1,0 +1,83 @@
+[pack]
+name = "qt"
+language = "cpp"
+description = "Qt: socket reads, QHttpServer / QWebSocket handlers, QProcess, QSqlQuery, QFile, QNetworkAccessManager"
+detect = { imports = ["QProcess", "QTcpSocket", "QTcpServer", "QUdpSocket", "QLocalSocket", "QSqlQuery",
+                      "QNetworkRequest", "QNetworkAccessManager", "QWebSocket", "QHttpServer", "QFile",
+                      "QtNetwork/", "QtSql/", "QtWebSockets/", "QtHttpServer/", "QtCore/QProcess", "QtCore/QFile"] }
+
+# --- where attacker data enters -------------------------------------------------
+[[source]]
+call = ["Q*Socket::readAll", "Q*Socket::readLine", "Q*Socket::read", "QIODevice::readAll", "QIODevice::readLine",
+        "QNetworkReply::readAll", "QNetworkReply::readLine", "QNetworkReply::read",
+        "QWebSocket::receiveText"]
+kind = "network_input"
+description = "bytes received from a socket / network reply"
+
+# QWebSocket slots: void onText(const QString &message)
+[[entrypoint]]
+id = "websocket-slot"
+method = ["processTextMessage", "processBinaryMessage", "onTextMessageReceived", "onBinaryMessageReceived",
+          "textMessageReceived", "binaryMessageReceived", "*TextMessage*", "*BinaryMessage*"]
+params = "all"
+
+# QHttpServer::route("/user/<arg>", [](const QString &name, const QHttpServerRequest &request) {...})
+[[entrypoint]]
+id = "http-server-route"
+registered_via = ["*.route"]
+params = "all"
+exclude_param_type = ["QHttpServerResponder", "QHttpServerResponse", "int", "uint", "double", "bool", "qint64"]
+
+# --- where it becomes dangerous -------------------------------------------------
+[[sink]]
+call = ["QProcess::start", "QProcess::startDetached", "QProcess::execute", "QProcess::setProgram",
+        "QProcess::setArguments"]
+args = [0, 1]
+kind = "command"
+description = "QProcess runs the program / arguments it is given"
+
+[[sink]]
+call = ["QSqlQuery::exec", "QSqlQuery::prepare", "QSqlQuery", "QSqlDatabase::exec"]
+args = [0]
+kind = "sql"
+description = "QSqlQuery executes the SQL text it is given"
+
+[[sanitizer]]
+call = ["QSqlQuery::addBindValue", "QSqlQuery::bindValue"]
+kinds = ["sql"]
+description = "placeholder binding"
+
+[[sink]]
+call = ["QFile", "QFile::setFileName", "QFile::remove", "QFile::copy", "QFile::rename", "QSaveFile",
+        "QDir", "QFileInfo"]
+args = [0]
+kind = "filesystem"
+description = "Qt file API path argument"
+
+[[sink]]
+call = ["QNetworkAccessManager::get", "QNetworkAccessManager::post", "QNetworkAccessManager::put",
+        "QNetworkAccessManager::head", "QNetworkAccessManager::deleteResource",
+        "QNetworkAccessManager::sendCustomRequest", "QTcpSocket::connectToHost", "QSslSocket::connectToHostEncrypted",
+        "QWebSocket::open"]
+args = [0]
+kind = "ssrf"
+description = "Qt network client request target"
+
+[[propagator]]
+call = ["QNetworkRequest::setUrl", "QUrl::setUrl", "QUrl::setHost", "QUrl::setPath", "QUrl::setQuery"]
+from = [0]
+description = "the receiver now holds the argument"
+
+# QString::toInt() & co. keep the taint (a number still sizes things) but cannot carry a
+# URL / path / SQL / shell payload.
+[[propagator]]
+name = ["toInt", "toUInt", "toLong", "toULong", "toLongLong", "toULongLong", "toShort", "toUShort",
+        "toDouble", "toFloat"]
+receiver = true
+
+[[sanitizer]]
+name = ["toInt", "toUInt", "toLong", "toULong", "toLongLong", "toULongLong", "toShort", "toUShort",
+        "toDouble", "toFloat"]
+kinds = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code",
+         "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+description = "numeric conversion"

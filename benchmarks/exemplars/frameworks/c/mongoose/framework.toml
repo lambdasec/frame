@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/mongoose"]
+requires_pack = true
+description = "Mongoose: ev_data event handlers, mg_http_get_var, mg_http_reply / serve_file sinks"

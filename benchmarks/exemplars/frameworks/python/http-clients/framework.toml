@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/http-clients"]
+requires_pack = true
+description = "SSRF through client objects: requests.Session, httpx.Client/AsyncClient, urllib3.PoolManager held on self or a module variable"

@@ -1,0 +1,11 @@
+[pack]
+name = "entity-framework6"
+language = "csharp"
+description = "Entity Framework 6 (System.Data.Entity) raw SQL"
+detect = { imports = ["System.Data.Entity"] }
+
+# Database.SqlQuery<T>(sql, params) and DbSet.SqlQuery(sql, params) take a plain string in EF6.
+[[sink]]
+name = ["SqlQuery", "Database.SqlQuery"]
+kind = "sql"
+description = "EF6 raw SQL query: the first argument is SQL text"

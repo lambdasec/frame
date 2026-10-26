@@ -1,0 +1,4 @@
+language = "c"
+packs = []
+requires_pack = false
+description = "CGI: getenv(QUERY_STRING/CONTENT_LENGTH/HTTP_*), stdin body, SQLite, system, printf"

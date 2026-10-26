@@ -1,0 +1,4 @@
+language = "java"
+packs = []
+requires_pack = false
+description = "Plain Servlet / JSP: doGet/doPost, JDBC through a DAO, forward/include/sendRedirect, getRequestDispatcher, header and cookie handling (guard for built-in coverage)"

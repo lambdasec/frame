@@ -1,0 +1,52 @@
+[pack]
+name = "aiohttp"
+language = "python"
+description = "aiohttp server responses (HTML, redirects, files) and client requests (SSRF)"
+detect = { imports = ["aiohttp"] }
+
+# Handlers are plain coroutines registered with app.router.add_*; the request accessors
+# (request.query, request.match_info, await request.post()/json()) are sources in the built-in specs.
+
+[[sink]]
+call = ["aiohttp.web.HTTPFound", "aiohttp.web.HTTPMovedPermanently", "aiohttp.web.HTTPSeeOther",
+        "aiohttp.web.HTTPTemporaryRedirect", "aiohttp.web.HTTPPermanentRedirect", "aiohttp.web.HTTPUseProxy",
+        "aiohttp.web.HTTPMultipleChoices"]
+kind = "redirect"
+args = [0]
+arg_names = ["location"]
+
+[[sink]]
+call = ["aiohttp.web.FileResponse", "aiohttp.web_fileresponse.FileResponse"]
+kind = "filesystem"
+args = [0]
+arg_names = ["path"]
+
+[[sink]]
+call = ["aiohttp.web.Response", "aiohttp.web_response.Response"]
+kind = "html"
+args = []
+arg_names = ["text", "body"]
+when_kwarg = { name = "content_type", value = "text/html" }
+description = "a Response served as text/html reflects its body"
+
+# Client: ClientSession().get(url) fetches the URL; the session variable's type is not known to
+# the frontend, so the textual call name is the handle.
+[[sink]]
+name = ["session.get", "session.post", "session.put", "session.patch", "session.delete", "session.head",
+        "session.options", "client.get", "client.post"]
+kind = "ssrf"
+args = [0]
+arg_names = ["url", "str_or_url"]
+description = "aiohttp ClientSession request to a URL the caller controls"
+
+[[sink]]
+name = ["session.request", "session.ws_connect"]
+kind = "ssrf"
+args = [1]
+arg_names = ["url"]
+
+[[sink]]
+call = ["aiohttp.request"]
+kind = "ssrf"
+args = [1]
+arg_names = ["url"]

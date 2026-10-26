@@ -409,6 +409,10 @@ class Procedure:
     # Declared type of each parameter as written (`Request`, `HttpServletRequest`),
     # for the languages whose syntax declares one.
     param_types: Dict[str, str] = field(default_factory=dict)
+    # Declared class of the variables, parameters and fields this procedure's calls use as
+    # receivers (`_repo` -> "UserRepository"), as the frontend can read them; lets a call
+    # `_repo.Find(x)` resolve to the method of a class the program defines.
+    var_types: Dict[str, str] = field(default_factory=dict)
     # Callees this function is passed to as an argument (`app.get('/x', handler)`
     # -> ["app.get"]), by their textual names; set by the JS frontend.
     registered_via: List[str] = field(default_factory=list)
@@ -623,6 +627,9 @@ class Program:
     class_info: Dict[str, ClassInfo] = field(default_factory=dict)
     imports: Dict[str, str] = field(default_factory=dict)
     import_wildcards: List[str] = field(default_factory=list)   # on-demand imports / usings / includes
+    # Compiled-regex constants of the file (name -> pattern text), for judging guards such
+    # as `HOST.fullmatch(x)`; see frame/sil/source_facts.py.
+    constant_regexes: Dict[str, str] = field(default_factory=dict)
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
 
@@ -735,7 +742,8 @@ class Program:
         n = len(arg_types)
         cands = []
         for p in self.procedures.values():
-            if p.class_name != class_name or p.simple_name != method:
+            if (p.class_name or "").rsplit(".", 1)[-1] != class_name.rsplit(".", 1)[-1] \
+                    or p.simple_name != method:
                 continue
             params = p.param_type_names or [None] * len(p.params)
             if not (n == len(params) or (p.has_varargs and n >= len(params) - 1)):

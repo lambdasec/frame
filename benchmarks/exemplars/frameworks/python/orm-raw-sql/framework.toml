@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/sql-libraries"]
+requires_pack = true
+description = "Raw SQL escape hatches: peewee, pony, pandas.read_sql, SQLAlchemy from_statement/execute, psycopg2/pymysql cursors, executescript"

@@ -1,0 +1,39 @@
+[pack]
+name = "electron"
+language = "javascript"
+description = "Electron main process: IPC messages from renderers, shell / window navigation sinks"
+detect = { imports = ["electron"] }
+
+# A renderer (and anything running in it: remote content, an XSS) can send any argument.
+[[entrypoint]]
+id = "ipc-main"
+registered_via = ["ipcMain.on", "ipcMain.once", "ipcMain.handle", "ipcMain.handleOnce", "ipcMain.addListener"]
+params = "all"
+exclude_param = ["event", "_event", "_", "e", "evt"]
+description = "IPC message from a renderer process"
+
+[[sink]]
+call = ["electron.shell.openExternal"]
+name = ["shell.openExternal"]
+args = [0]
+kind = "command"
+description = "shell.openExternal hands the URL to the OS (file://, custom protocols: code execution)"
+
+[[sink]]
+call = ["electron.shell.openPath"]
+name = ["shell.openPath"]
+args = [0]
+kind = "command"
+description = "shell.openPath opens / executes the file"
+
+[[sink]]
+name = ["loadURL"]
+args = [0]
+kind = "redirect"
+description = "BrowserWindow.loadURL navigates the window to the URL"
+
+[[sink]]
+name = ["webContents.executeJavaScript", "executeJavaScript"]
+args = [0]
+kind = "code"
+description = "runs JavaScript in the page"

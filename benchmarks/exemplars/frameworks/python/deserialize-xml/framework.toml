@@ -1,0 +1,4 @@
+language = "python"
+packs = []
+requires_pack = false
+description = "Guard for existing coverage: yaml.load / pickle / marshal / jsonpickle deserialisation and lxml XXE (a hardened parser is clean), with safe_load / json as the fixes"

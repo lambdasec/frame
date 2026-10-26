@@ -1,0 +1,22 @@
+[pack]
+name = "grpc"
+language = "cpp"
+description = "gRPC C++ service implementations: request messages and call metadata"
+detect = { imports = ["grpcpp/", "grpc/", "grpc++/"] }
+
+# class Impl final : public Greeter::Service { Status Lookup(ServerContext*, const LookupRequest* request, LookupReply*) override; }
+# (callback API: ServerUnaryReactor *Lookup(CallbackServerContext*, const Req *request, Reply*) too)
+[[entrypoint]]
+id = "service-method"
+extends = ["*::Service", "*::CallbackService", "*::AsyncService", "*.Service"]
+tainted_param_type = ["*Request", "*Request*", "*Req", "*Message", "*Query", "*Command"]
+
+[[entrypoint]]
+id = "service-method-by-name"
+extends = ["*::Service", "*::CallbackService", "*::AsyncService", "*.Service"]
+params = ["request", "req"]
+
+[[source]]
+name = ["client_metadata"]
+kind = "network_input"
+description = "gRPC call metadata sent by the client"

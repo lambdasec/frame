@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/crow"]
+requires_pack = true
+description = "Crow: CROW_ROUTE lambdas (request object, typed path parameters), json body accessors"

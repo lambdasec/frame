@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/aspnetcore"]
+requires_pack = true
+description = "SignalR hub: public hub methods receive whatever a remote client sends"

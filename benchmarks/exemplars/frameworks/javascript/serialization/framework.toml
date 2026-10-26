@@ -1,0 +1,4 @@
+language = "javascript"
+packs = []
+requires_pack = false
+description = "node-serialize / js-yaml (full vs JSON schema) / vm.runInNewContext / vm.Script / new Function (built-in coverage guard)"

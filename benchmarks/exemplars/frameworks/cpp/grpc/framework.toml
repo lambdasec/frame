@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/grpc"]
+requires_pack = true
+description = "gRPC C++: Service subclasses, request message parameters and protobuf getters"

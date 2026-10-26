@@ -1,0 +1,4 @@
+language = "c"
+packs = []
+requires_pack = false
+description = "getopt/argv CLI: optarg reaching system, dlopen and printf (built-in coverage guard)"

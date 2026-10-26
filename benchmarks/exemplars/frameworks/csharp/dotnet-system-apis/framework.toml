@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/dotnet-system"]
+requires_pack = true
+description = "System.* APIs behind web endpoints: HttpClient/WebClient/WebRequest SSRF, File async IO, Regex, DirectorySearcher LDAP, Process"

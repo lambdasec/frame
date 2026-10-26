@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/graphql"]
+requires_pack = true
+description = "Apollo Server resolvers: (parent, args, ctx) -> args are attacker data"

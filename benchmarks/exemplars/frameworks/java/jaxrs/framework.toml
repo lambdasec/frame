@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/jaxrs"]
+requires_pack = true
+description = "JAX-RS (Jersey / RESTEasy / Quarkus): @QueryParam/@PathParam/@FormParam/@HeaderParam/@CookieParam/@MatrixParam/@BeanParam and the entity body, UriInfo, Response redirects, EntityManager native queries"

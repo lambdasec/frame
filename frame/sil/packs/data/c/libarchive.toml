@@ -1,0 +1,22 @@
+[pack]
+name = "libarchive"
+language = "c"
+description = "libarchive: entry names read from an archive are attacker data (zip-slip / tar path traversal)"
+detect = { imports = ["archive.h", "archive_entry.h"] }
+
+[[source]]
+call = ["archive_entry_pathname", "archive_entry_pathname_utf8", "archive_entry_hardlink",
+        "archive_entry_symlink", "archive_entry_sourcepath"]
+kind = "file_input"
+description = "name of an entry inside an archive (may contain ../ or be absolute)"
+
+[[sink]]
+call = ["archive_entry_set_pathname", "archive_entry_update_pathname_utf8", "archive_entry_copy_pathname"]
+args = [1]
+kind = "filesystem"
+description = "the path the extracting writer will create"
+
+# basename() drops every directory component
+[[sanitizer]]
+call = ["basename"]
+kinds = ["filesystem"]

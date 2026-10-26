@@ -1,0 +1,4 @@
+language = "csharp"
+packs = []
+requires_pack = false
+description = "Parsing and deserialising request bodies: XmlDocument / XmlReader (XXE), BinaryFormatter, NetDataContractSerializer, Json.NET TypeNameHandling"

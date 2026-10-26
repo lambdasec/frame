@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/boost-asio-beast"]
+requires_pack = true
+description = "Boost.Beast request handlers (templated, http::request&&) and Boost.Asio read_some into a buffer"

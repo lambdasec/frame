@@ -1,0 +1,4 @@
+language = "c"
+packs = ["c/libcurl"]
+requires_pack = true
+description = "libcurl: CURLOPT_URL fed from a socket (SSRF), TLS verification switched off"

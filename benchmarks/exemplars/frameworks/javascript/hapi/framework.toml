@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/hapi"]
+requires_pack = true
+description = "hapi: route handlers registered with server.route({ handler }), h.response / h.redirect"

@@ -90,6 +90,9 @@ class CSharpFrontend:
         self._class_fields: Dict[str, str] = {}
         self._class_fields_of: Dict[str, Dict[str, str]] = {}
         self._proc_types: Dict[int, Dict[str, str]] = {}
+        self._hoisted: Dict[Tuple[int, int], str] = {}
+        # variable -> XML parser configuration flags seen in the procedure being translated
+        self._xml_flags: Dict[str, set] = {}
         # Member-access values whose mere reference is insecure config. Emitted
         # as a Call so the usage-based sink path fires regardless of kind.
         self._DANGEROUS_MEMBER_VALUES = {
@@ -135,11 +138,13 @@ class CSharpFrontend:
         self._imports, self._local_types = self._collect_declarations(tree.root_node)
         program.imports = self._imports.as_dict()
         self._proc_types = {}
+        self._hoisted = {}
 
         self._translate_compilation_unit(tree.root_node, program)
+        self._record_method_group_registrations(tree.root_node, program)
         self._annotate_calls(program)
         program.import_wildcards = list(self._imports.wildcards)
-        finish_program(program, self.packs)
+        finish_program(program, self.packs, source_code)
         return program
 
     # -- canonical ids and declaration facts ---------------------------------
@@ -237,6 +242,7 @@ class CSharpFrontend:
         for proc in program.procedures.values():
             types = {**self._class_fields_of.get(proc.class_name or "", {}),
                      **self._proc_types.get(id(proc), {})}
+            proc.var_types = {k: v for k, v in types.items() if v and v != "var"}
             own_class = (proc.class_name or "").rsplit(".", 1)[-1]
             own_methods = {p.name.rsplit(".", 1)[-1] for p in program.procedures.values()
                            if p.class_name == proc.class_name}
@@ -263,12 +269,16 @@ class CSharpFrontend:
                     if receiver is None:
                         continue
                     method = func.rsplit(".", 1)[-1]
+                    instr.callee_class = receiver
                     instr.canonical = canonical_call(
                         "csharp", f"{receiver}.{method}", self._imports,
                         receiver_type=receiver, local_types=self._local_types)
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C# compilation unit"""
+        top_level = [c for c in root.children if c.type == "global_statement"]
+        if top_level:
+            self._translate_top_level(top_level, program)
         for child in root.children:
             if child.type == "namespace_declaration":
                 self._translate_namespace(child, program)
@@ -276,8 +286,8 @@ class CSharpFrontend:
                 self._translate_class(child, program)
             elif child.type == "interface_declaration":
                 pass  # Skip interfaces
-            elif child.type == "struct_declaration":
-                self._translate_class(child, program)  # Treat struct like class
+            elif child.type in ("struct_declaration", "record_declaration"):
+                self._translate_class(child, program)  # Treat struct / record like class
             elif child.type == "file_scoped_namespace_declaration":
                 self._translate_file_scoped_namespace(child, program)
 
@@ -292,7 +302,7 @@ class CSharpFrontend:
         body = node.child_by_field_name("body")
         if body:
             for child in body.children:
-                if child.type == "class_declaration":
+                if child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                     self._translate_class(child, program)
                 elif child.type == "namespace_declaration":
                     self._translate_namespace(child, program)
@@ -305,7 +315,7 @@ class CSharpFrontend:
         self._current_namespace = self._get_text(name_node) if name_node else ""
 
         for child in node.children:
-            if child.type == "class_declaration":
+            if child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                 self._translate_class(child, program)
 
     def _translate_class(self, node: TSNode, program: Program) -> None:
@@ -336,12 +346,21 @@ class CSharpFrontend:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}.{proc.name}"
                         program.add_procedure(proc)
+                        self._translate_lambdas(child, proc, program)
+                elif child.type in ("class_declaration", "struct_declaration", "record_declaration"):
+                    # a nested type: its members belong to Outer.Inner
+                    saved_ns = self._current_namespace
+                    self._current_namespace = full_class_name
+                    self._translate_class(child, program)
+                    self._current_namespace = saved_ns
+                    self._current_class = full_class_name
                 elif child.type == "constructor_declaration":
                     proc = self._translate_constructor(child)
                     if proc:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}..ctor"
                         program.add_procedure(proc)
+                        self._translate_lambdas(child, proc, program)
                 elif child.type == "property_declaration":
                     # Properties can have getters/setters
                     procs = self._translate_property(child)
@@ -364,22 +383,49 @@ class CSharpFrontend:
         kind = {"struct_declaration": "struct", "interface_declaration": "interface",
                 "enum_declaration": "enum"}.get(node.type, "class")
         members = node.child_by_field_name("body")
-        fields: List[str] = []
-        for member in (members.children if members is not None else ()):
-            if member.type == "property_declaration" and member.child_by_field_name("name") is not None:
-                fields.append(self._get_text(member.child_by_field_name("name")))
-            elif member.type == "field_declaration":
-                for d in self._descendants_of(member):
-                    if d.type == "variable_declarator":
-                        nm = d.child_by_field_name("name") or next(
-                            (c for c in d.children if c.type == "identifier"), None)
-                        if nm is not None:
-                            fields.append(self._get_text(nm))
+        fields = self._bindable_members(members, attrs)
         program.class_info[name] = ClassInfo(
             name=name, kind=kind, bases=bases, fields=fields,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports) for a in attrs],
             package=self._current_namespace or None)
+
+    _BINDING_ATTRIBUTES = ("Bind", "From", "Parameter", "SupplyParameterFrom", "CascadingParameter", "TempData")
+
+    def _bindable_members(self, body: Optional[TSNode], class_attrs: List[str]) -> List[str]:
+        """`ClassInfo.fields` for C#: the properties / fields the framework fills from the request.
+
+        A member is listed when it carries a binding attribute (`[BindProperty]`,
+        `[FromQuery]`, `[Parameter]`...); with a class-level `[BindProperties]` every settable
+        public property is. Constructor-injected services (private readonly fields) and
+        plain view-model properties are not request data, so they are left out."""
+        out: List[str] = []
+        if body is None:
+            return out
+        all_bound = any(re.match(r"\s*(\w+\.)*BindProperties\b", a) for a in class_attrs)
+        for member in body.children:
+            if member.type not in ("property_declaration", "field_declaration"):
+                continue
+            attrs = self._get_attributes(member)
+            marked = any(re.match(r"\s*(\w+\.)*(%s)" % "|".join(self._BINDING_ATTRIBUTES), a) for a in attrs)
+            mods = {self._get_text(c) for c in member.children if c.type == "modifier"}
+            settable = "public" in mods and "readonly" not in mods and "static" not in mods
+            if member.type == "property_declaration":
+                acc = next((c for c in member.children if c.type == "accessor_list"), None)
+                text = self._get_text(acc) if acc is not None else ""
+                settable = settable and bool(re.search(r"\b(set|init)\b", text))
+                if marked or (all_bound and settable):
+                    nm = member.child_by_field_name("name")
+                    if nm is not None:
+                        out.append(self._get_text(nm))
+            elif marked or (all_bound and settable):
+                for d in self._descendants_of(member):
+                    if d.type == "variable_declarator":
+                        nm = d.child_by_field_name("name") or next(
+                            (c for c in d.children if c.type == "identifier"), None)
+                        if nm is not None:
+                            out.append(self._get_text(nm))
+        return out
 
     _STRING_LITERAL_TYPES = frozenset({
         "string_literal", "verbatim_string_literal", "raw_string_literal"})
@@ -449,6 +495,7 @@ class CSharpFrontend:
         proc.has_varargs = self._has_params_array(node)
         proc.annotations = [parse_annotation(a, self._imports) for a in attributes]
         self._proc_types[id(proc)] = self._declared_types(node)
+        self._xml_flags = self._collect_xml_flags(node)
         pl = node.child_by_field_name("parameters")
         for prm in (pl.children if pl is not None else ()):
             if prm.type == "parameter":
@@ -539,6 +586,175 @@ class CSharpFrontend:
 
         self._current_proc = None
         return proc
+
+    # -- lambdas and top-level statements --------------------------------------
+    #
+    # A lambda passed to a call (`app.MapGet("/x", (string q) => ...)`,
+    # `Task.Run(() => { ... })`) is the handler in minimal APIs, so it becomes a
+    # procedure of its own: its parameters are real parameters (typed, attributed)
+    # and `registered_via` names the call it was passed to. The enclosing
+    # procedure still sees the lambda's body expression inline, as before.
+
+    _LAMBDA_TYPES = ("lambda_expression", "anonymous_method_expression")
+
+    def _lambda_args(self, root: TSNode):
+        """Outermost lambdas in `root` that are arguments of an invocation, with the call."""
+        out = []
+        stack = list(root.children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._LAMBDA_TYPES:
+                arg = n.parent
+                call = arg.parent.parent if (arg is not None and arg.type == "argument"
+                                             and arg.parent is not None and arg.parent.parent is not None) else None
+                if call is not None and call.type == "invocation_expression":
+                    out.append((n, call))
+                    continue            # nested lambdas are found when this one is translated
+            stack.extend(n.children)
+        out.sort(key=lambda t: t[0].start_byte)
+        return out
+
+    def _record_method_group_registrations(self, root: TSNode, program: Program) -> None:
+        """`app.MapGet("/x", Handlers.Get)`: a method passed by name is registered with that call
+        (like a lambda passed to it). Only an unambiguous name in this file is followed."""
+        for n in self._descendants_of(root):
+            if n.type != "invocation_expression":
+                continue
+            args = n.child_by_field_name("arguments")
+            if args is None:
+                continue
+            callee = None
+            for a in args.children:
+                inner = a.children[0] if a.type == "argument" and a.children else a
+                if inner.type not in ("identifier", "member_access_expression"):
+                    continue
+                text = self._get_text(inner)
+                hits = [p for p in program.procedures.values()
+                        if p.name == text or p.name.endswith("." + text)]
+                if len(hits) != 1:
+                    continue
+                callee = callee or self._get_method_name(n)
+                if callee and callee not in hits[0].registered_via:
+                    hits[0].registered_via.append(callee)
+
+    def _translate_lambdas(self, owner_node: TSNode, owner: Procedure, program: Program) -> None:
+        owner_types = self._proc_types.get(id(owner), {})
+        for lam, call in self._lambda_args(owner_node):
+            proc = self._translate_lambda(lam, call, owner.name, owner.class_name, owner_types, program)
+            if proc is not None:
+                self._translate_lambdas(lam, proc, program)
+
+    def _translate_lambda(self, lam: TSNode, call: TSNode, owner_name: str, class_name: Optional[str],
+                          outer_types: Dict[str, str], program: Program) -> Optional[Procedure]:
+        params: List[Tuple[PVar, Typ]] = []
+        ptypes: Dict[str, str] = {}
+        pann: Dict[str, list] = {}
+        plist = lam.child_by_field_name("parameters")
+        if plist is None:
+            plist = next((c for c in lam.children if c.type in ("implicit_parameter", "parameter_list")), None)
+        if plist is not None and plist.type in ("implicit_parameter", "identifier"):
+            params.append((PVar(self._get_text(plist)), Typ.unknown_type()))
+        elif plist is not None:
+            for prm in plist.children:
+                if prm.type == "implicit_parameter":
+                    params.append((PVar(self._get_text(prm)), Typ.unknown_type()))
+                elif prm.type == "parameter":
+                    nm = prm.child_by_field_name("name")
+                    if nm is None:
+                        continue
+                    pname = self._get_text(nm)
+                    params.append((PVar(pname), Typ.unknown_type()))
+                    attrs = self._get_attributes(prm)
+                    if attrs:
+                        pann[pname] = [parse_annotation(a, self._imports) for a in attrs]
+                    tn = prm.child_by_field_name("type")
+                    if tn is not None:
+                        ptypes[pname] = self._get_text(tn).split("<")[0].rstrip("?").strip()
+        base = f"{owner_name}.lambda_L{lam.start_point[0] + 1}"
+        name = base
+        if program.has_procedure(name):
+            name = f"{base}C{lam.start_point[1] + 1}"
+        proc = Procedure(name=name, params=params, ret_type=Typ.unknown_type(),
+                         loc=self._get_location(lam), is_method=True)
+        proc.class_name = class_name
+        proc.param_annotations = pann
+        proc.param_types = ptypes
+        proc.annotations = [parse_annotation(a, self._imports) for a in self._get_attributes(lam)]
+        callee = self._get_method_name(call)
+        proc.registered_via = [callee] if callee else []
+        proc.has_varargs = False
+        types = {**outer_types, **self._declared_types(lam)}
+        self._proc_types[id(proc)] = types
+        saved_xml = self._xml_flags
+        self._xml_flags = self._collect_xml_flags(lam)
+
+        saved = (self._current_proc, self._current_node, self._node_counter)
+        self._current_proc = proc
+        self._node_counter = 0
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        body = lam.child_by_field_name("body")
+        if body is None:
+            body = next((c for c in lam.children if c.type == "block"), None)
+        if body is not None and body.type == "block":
+            self._translate_block(body)
+        elif body is not None:
+            self._translate_lambda_expression_body(body)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc, self._current_node, self._node_counter = saved
+        self._xml_flags = saved_xml
+        program.add_procedure(proc)
+        return proc
+
+    def _translate_lambda_expression_body(self, body: TSNode) -> None:
+        """`x => Results.Redirect(x)`: the call is a statement-level call and the returned value."""
+        loc = self._get_location(body)
+        inner = body
+        if inner.type == "await_expression":
+            inner = next((c for c in inner.children if c.type not in ("await",)), inner)
+        if inner.type == "invocation_expression":
+            self._add_instrs(self._translate_invocation(inner))
+        elif inner.type == "object_creation_expression":
+            self._add_instrs(self._translate_object_creation(inner, None, loc))
+        elif inner.type == "assignment_expression":
+            self._translate_assignment(inner)
+        self._add_instr(Return(loc=loc, value=self._translate_expression(body)))
+
+    def _translate_top_level(self, statements: List[TSNode], program: Program) -> None:
+        """C# 9 top-level statements (`Program.cs` of a minimal API) form one procedure."""
+        proc = Procedure(name="TopLevelStatements", params=[], ret_type=Typ.unknown_type(),
+                         loc=self._get_location(statements[0]), is_method=False)
+        self._current_proc = proc
+        self._node_counter = 0
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        types: Dict[str, str] = {}
+        self._xml_flags = {}
+        for gs in statements:
+            types.update(self._declared_types(gs))
+            for k, v in self._collect_xml_flags(gs).items():
+                self._xml_flags.setdefault(k, set()).update(v)
+        self._proc_types[id(proc)] = types
+        for gs in statements:
+            for child in gs.children:
+                self._translate_statement(child)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc = None
+        program.add_procedure(proc)
+        for gs in statements:
+            self._translate_lambdas(gs, proc, program)
 
     def _has_params_array(self, node: TSNode) -> bool:
         """Does the last parameter carry the `params` modifier (varargs)?"""
@@ -807,13 +1023,20 @@ class CSharpFrontend:
                                               "member_access_expression", "element_access_expression"):
                                     value_node = nc
                                     break
+                        if not value_node:
+                            # the initializer is whatever follows `=` (a cast, `c ? a : b`, `a ?? b`, `x!`, ...)
+                            kids = decl.children
+                            for i, nc in enumerate(kids[:-1]):
+                                if nc.type == "=":
+                                    value_node = kids[i + 1]
+                                    break
 
                         if name_node:
                             var_name = self._get_text(name_node)
                             loc = self._get_location(decl)
 
                             if value_node:
-                                if value_node.type == "invocation_expression":
+                                if value_node.type == "invocation_expression" and self._source_in(value_node) is None:
                                     instrs = self._translate_call_assignment(var_name, value_node, loc)
                                     self._add_instrs(instrs)
                                 elif value_node.type == "object_creation_expression":
@@ -849,21 +1072,69 @@ class CSharpFrontend:
                     return self._get_member_chain(c)
         return ""
 
-    def _emit_member_source(self, value_node: TSNode, target: str, loc: Location) -> None:
-        """Emit a TaintSource if value_node is a property/indexer taint source
-        (e.g. Request.QueryString[...], Request.Form[...], User.Identity.Name).
+    _REQUEST_TYPES = frozenset({"HttpRequest", "HttpRequestBase", "HttpRequestMessage"})
 
-        C# web sources are property/indexer accesses, not method calls, so the
-        invocation path never tainted them -- this is the keystone fix that lets
-        SQL/command/path/LDAP/etc. taint flows be detected at all.
-        """
-        if value_node is None or value_node.type not in (
-            "member_access_expression", "element_access_expression"
-        ):
+    def _request_chain(self, chain: str) -> str:
+        """`req.Query` where `req` is declared as an HttpRequest reads like `Request.Query`
+        (the source specs are written against the conventional property name)."""
+        head, dot, rest = chain.partition(".")
+        if dot and head != "Request" and self._current_proc is not None:
+            types = self._proc_types.get(id(self._current_proc), {})
+            if types.get(head) in self._REQUEST_TYPES:
+                return f"Request.{rest}"
+        return chain
+
+    # Methods that hand back (a part of) the same text: `Request.Query["a"].ToString()` is still the
+    # query parameter, `Request.Query["a"].FirstOrDefault()` too.
+    _PASSTHROUGH_METHODS = frozenset({
+        "ToString", "Trim", "TrimStart", "TrimEnd", "ToLower", "ToLowerInvariant", "ToUpper", "ToUpperInvariant",
+        "FirstOrDefault", "First", "Single", "SingleOrDefault", "LastOrDefault", "Last", "ElementAt",
+        "ElementAtOrDefault", "Substring", "Normalize", "GetValueOrDefault", "ToArray"})
+
+    def _source_accesses(self, node: Optional[TSNode]):
+        """Property / indexer accesses a value expression is made of, looking through casts, parentheses,
+        `a ?? b`, `c ? a : b`, `x + y` and pass-through methods (`.ToString()`, `.Trim()`...)."""
+        if node is None:
             return
-        chain = self._get_member_chain(value_node)
+        t = node.type
+        if t in ("member_access_expression", "element_access_expression"):
+            yield node
+        elif t == "parenthesized_expression":
+            for c in node.children:
+                if c.type not in ("(", ")"):
+                    yield from self._source_accesses(c)
+        elif t == "cast_expression":
+            yield from self._source_accesses(node.child_by_field_name("value"))
+        elif t == "as_expression":
+            yield from self._source_accesses(node.child_by_field_name("left"))
+        elif t == "await_expression":
+            for c in node.children:
+                if c.type != "await":
+                    yield from self._source_accesses(c)
+        elif t == "conditional_expression":
+            yield from self._source_accesses(node.child_by_field_name("consequence"))
+            yield from self._source_accesses(node.child_by_field_name("alternative"))
+        elif t == "binary_expression":
+            op = node.child_by_field_name("operator")
+            if op is not None and self._get_text(op) in ("+", "??"):
+                yield from self._source_accesses(node.child_by_field_name("left"))
+                yield from self._source_accesses(node.child_by_field_name("right"))
+        elif t == "invocation_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "member_access_expression":
+                name = fn.child_by_field_name("name")
+                if name is not None and self._get_text(name) in self._PASSTHROUGH_METHODS:
+                    yield from self._source_accesses(fn.child_by_field_name("expression"))
+
+    def _member_source_spec(self, node: TSNode) -> Optional[ProcSpec]:
+        if node is None or node.type not in ("member_access_expression", "element_access_expression"):
+            return None
+        chain = self._get_member_chain(node)
         if not chain:
-            return
+            return None
+        chain = self._request_chain(chain)
+        if chain == "Request" and node.type == "element_access_expression":
+            chain = "Request.Item"            # classic ASP.NET: Request["id"] searches query, form, cookies
         spec = self.specs.get(chain)
         if not spec and '.' in chain:
             parts = chain.split('.')
@@ -871,7 +1142,32 @@ class CSharpFrontend:
                 spec = self.specs.get('.'.join(parts[i:]))
                 if spec:
                     break
-        if spec and spec.is_taint_source():
+            if not spec:
+                # a property of a source (`Request.Path.Value`, `Request.Host.Value`) reads the source
+                for i in range(len(parts) - 1, 1, -1):
+                    spec = self.specs.get('.'.join(parts[:i]))
+                    if spec and spec.is_taint_source():
+                        break
+                    spec = None
+        return spec if spec and spec.is_taint_source() else None
+
+    def _source_in(self, value_node: Optional[TSNode]) -> Optional[ProcSpec]:
+        for access in self._source_accesses(value_node):
+            spec = self._member_source_spec(access)
+            if spec is not None:
+                return spec
+        return None
+
+    def _emit_member_source(self, value_node: TSNode, target: str, loc: Location) -> None:
+        """Emit a TaintSource if value_node is (or is made of) a property/indexer taint source
+        (e.g. Request.QueryString[...], Request.Query["a"].ToString(), User.Identity.Name).
+
+        C# web sources are property/indexer accesses, not method calls, so the
+        invocation path never tainted them -- this is the keystone fix that lets
+        SQL/command/path/LDAP/etc. taint flows be detected at all.
+        """
+        spec = self._source_in(value_node)
+        if spec is not None:
             kind = (TaintKind(spec.is_source)
                     if spec.is_source in [t.value for t in TaintKind]
                     else TaintKind.USER_INPUT)
@@ -889,12 +1185,12 @@ class CSharpFrontend:
         target = self._get_text(left)
         loc = self._get_location(node)
 
-        if right.type == "invocation_expression":
+        if right.type == "invocation_expression" and self._source_in(right) is None:
             instrs = self._translate_call_assignment(target, right, loc)
             self._add_instrs(instrs)
         elif right.type == "object_creation_expression":
             self._add_instrs(self._translate_object_creation(right, target, loc))
-        elif right.type == "await_expression":
+        elif right.type == "await_expression" and self._source_in(right) is None:
             self._translate_await_assignment(target, right, loc)
         else:
             exp = self._translate_expression(right)
@@ -911,13 +1207,249 @@ class CSharpFrontend:
             self._add_instr(Call(loc=loc, ret=None,
                                  func=ExpConst.string("ServerCertificateValidationCallback"),
                                  args=[]))
+        if prop is not None:
+            recv_node = left.child_by_field_name("expression")
+            recv_chain = self._get_member_chain(recv_node)
+            recv_type = self._receiver_types().get(recv_chain, recv_chain)
+            self._add_instrs(self._config_flag_instrs(recv_type, self._get_text(prop), right, loc))
         sink_kind_str = self._ASSIGNMENT_SINK_PROPS.get(self._get_text(prop)) if prop else None
+        if sink_kind_str is None and prop is not None:
+            recv = self._get_member_chain(left.child_by_field_name("expression"))
+            rtype = self._proc_types.get(id(self._current_proc), {}).get(recv, "") if self._current_proc else ""
+            sink_kind_str = self._typed_prop_sink(rtype, self._get_text(prop))
         if sink_kind_str and right.type not in ("invocation_expression",
                                                 "object_creation_expression"):
             self._add_instr(TaintSink(
                 loc=loc, exp=self._translate_expression(right),
                 kind=resolve_sink_kind(sink_kind_str),
                 description=f"assignment to {self._get_text(prop)} sink", arg_index=0))
+
+    # Properties that are a sink only on a particular declared type (`FileName` on any
+    # other type is just a name): (type, property) -> sink kind.
+    _TYPED_PROP_SINKS = {
+        ("ProcessStartInfo", "FileName"): "command",
+        ("ProcessStartInfo", "Arguments"): "command",
+        ("DirectorySearcher", "Filter"): "ldap",
+    }
+
+    # -- configuration that switches a protection off -----------------------------
+    #
+    # `new CookieOptions { Secure = false }`, `options.Cookie.HttpOnly = false`,
+    # `handler.ServerCertificateCustomValidationCallback = (...) => true`: the source says so
+    # outright, so (like the other usage sinks) no taint is needed. Only the explicit off switch
+    # counts; an absent option is a default, not a finding.
+
+    def _config_flag_instrs(self, owner: str, prop: str, rhs: Optional[TSNode], loc: Location) -> List[Instr]:
+        if rhs is None:
+            return []
+        text = self._get_text(rhs).strip()
+        owner_l = owner.lower()
+        kind = desc = None
+        if "cookie" in owner_l:
+            if prop == "HttpOnly" and (text == "false" or text.endswith("HttpOnlyPolicy.None")):
+                kind, desc = "insecure_cookie_httponly", "cookie without HttpOnly"
+            elif prop == "Secure" and text == "false" or (
+                    prop == "SecurePolicy" and text.endswith(("CookieSecurePolicy.None", "CookieSecurePolicy.SameAsRequest"))):
+                kind, desc = "insecure_cookie", "cookie without Secure"
+        if kind is None and prop in ("ServerCertificateCustomValidationCallback",
+                                     "ServerCertificateValidationCallback") and self._always_true_callback(rhs):
+            kind, desc = "cert_validation", "TLS certificate validation disabled"
+        if kind is None:
+            return []
+        return [TaintSink(loc=loc, exp=ExpConst.string(text), kind=resolve_sink_kind(kind),
+                          description=f"{owner}.{prop} = {text}: {desc}", arg_index=0)]
+
+    def _always_true_callback(self, node: Optional[TSNode]) -> bool:
+        """`(m, c, ch, e) => true`, `delegate { return true; }`, `DangerousAcceptAnyServerCertificateValidator`."""
+        if node is None:
+            return False
+        if node.type == "member_access_expression":
+            return self._get_text(node).endswith("DangerousAcceptAnyServerCertificateValidator")
+        if node.type in self._LAMBDA_TYPES:
+            body = node.child_by_field_name("body") or next((c for c in node.children if c.type == "block"), None)
+            if body is None:
+                return False
+            if body.type in ("true_literal", "boolean_literal") and self._get_text(body) == "true":
+                return True
+            return bool(re.fullmatch(r"\{\s*return\s+true\s*;\s*\}", self._get_text(body).strip()))
+        return False
+
+    def _is_html_content_result(self, type_name: str, init: TSNode, lhs: Optional[TSNode]) -> bool:
+        """`new ContentResult { Content = x, ContentType = "text/html" }`: the content is markup
+        only when the initializer says so (the default content type is text/plain)."""
+        if type_name.split(".")[-1] != "ContentResult" or lhs is None or self._get_text(lhs) != "Content":
+            return False
+        for c in init.children:
+            if c.type == "assignment_expression":
+                left, right = c.child_by_field_name("left"), c.child_by_field_name("right")
+                if left is not None and right is not None and self._get_text(left) == "ContentType":
+                    return "html" in self._get_text(right).lower()
+        return False
+
+    def _typed_prop_sink(self, type_name: str, prop: str) -> Optional[str]:
+        return self._TYPED_PROP_SINKS.get((type_name.split(".")[-1], prop))
+
+    # -- XML parser hardening ----------------------------------------------------
+    #
+    # `new XmlDocument()` / `new XmlTextReader(x)` are XXE sinks unless the parser is configured:
+    # `XmlResolver = null` or `DtdProcessing = Prohibit|Ignore` makes them safe, and XmlReader.Create
+    # is unsafe only with settings that parse DTDs AND resolve external resources. The flags are
+    # read from the syntax tree of the procedure (assignments and object initializers).
+
+    def _xml_member_flags(self, prop: str, rhs: Optional[TSNode]) -> set:
+        text = self._get_text(rhs).strip() if rhs is not None else ""
+        flags = set()
+        if prop == "XmlResolver":
+            flags.add("null_resolver" if text == "null" else "resolver")
+        elif prop == "DtdProcessing":
+            if text.endswith("Parse"):
+                flags.add("parse")
+            elif text.endswith(("Prohibit", "Ignore")):
+                flags.add("no_dtd")
+        elif prop == "ProhibitDtd":
+            flags.add("no_dtd" if text == "true" else "parse")
+        return flags
+
+    def _collect_xml_flags(self, root: TSNode) -> Dict[str, set]:
+        out: Dict[str, set] = {}
+        for n in self._descendants_of(root):
+            if n.type == "assignment_expression":
+                left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                if left is not None and left.type == "member_access_expression":
+                    prop = left.child_by_field_name("name")
+                    recv = self._get_member_chain(left.child_by_field_name("expression"))
+                    if prop is not None and recv:
+                        out.setdefault(recv, set()).update(self._xml_member_flags(self._get_text(prop), right))
+            elif n.type == "variable_declarator":
+                name = n.child_by_field_name("name") or next((c for c in n.children if c.type == "identifier"), None)
+                create = next((c for c in n.children if c.type == "object_creation_expression"), None)
+                if create is None:
+                    eq = next((c for c in n.children if c.type == "equals_value_clause"), None)
+                    create = next((c for c in (eq.children if eq is not None else ())
+                                   if c.type == "object_creation_expression"), None)
+                if name is not None and create is not None:
+                    flags = self._initializer_xml_flags(create)
+                    if flags:
+                        out.setdefault(self._get_text(name), set()).update(flags)
+        return out
+
+    def _initializer_xml_flags(self, create: TSNode) -> set:
+        flags: set = set()
+        init = create.child_by_field_name("initializer")
+        for child in (init.children if init is not None else ()):
+            if child.type == "assignment_expression":
+                left, right = child.child_by_field_name("left"), child.child_by_field_name("right")
+                if left is not None:
+                    flags |= self._xml_member_flags(self._get_text(left), right)
+        return flags
+
+    def _xml_parser_hardened(self, var: Optional[str]) -> bool:
+        flags = self._xml_flags.get(var or "", set())
+        return "null_resolver" in flags or "no_dtd" in flags
+
+    def _xml_settings_unsafe(self, node: Optional[TSNode]) -> bool:
+        """Settings that parse DTDs and resolve external resources (a variable or an inline `new`)."""
+        if node is None:
+            return False
+        if node.type == "object_creation_expression":
+            flags = self._initializer_xml_flags(node)
+        else:
+            flags = self._xml_flags.get(self._get_text(node), set())
+        return "parse" in flags and "resolver" in flags and "null_resolver" not in flags
+
+    def _xml_create_instrs(self, call_node: TSNode, loc: Location) -> List[Instr]:
+        """`XmlReader.Create(input, settings)` with unsafe settings parses attacker XML with DTDs."""
+        name = self._get_method_name(call_node)
+        if name.split(".")[-1] != "Create" or "XmlReader" not in name:
+            return []
+        args = self._get_method_args(call_node)
+        if len(args) >= 2 and self._xml_settings_unsafe(args[1]):
+            return [TaintSink(loc=loc, exp=self._translate_expression(args[0]),
+                              kind=resolve_sink_kind("xxe"),
+                              description="XmlReader.Create with DTD processing and an XmlResolver (XXE)",
+                              arg_index=0)]
+        return []
+
+    def _hardened_xml_call(self, call_node: TSNode) -> bool:
+        """`doc.Load(...)` / `doc.LoadXml(...)` on an XmlDocument whose resolver is disabled."""
+        name = self._get_method_name(call_node)
+        recv, _, method = name.rpartition(".")
+        return (method in ("Load", "LoadXml") and bool(recv) and self._xml_parser_hardened(recv)
+                and self._proc_types.get(id(self._current_proc), {}).get(recv, "") == "XmlDocument")
+
+    def _receiver_types(self) -> Dict[str, str]:
+        """Declared types of the variables visible in the procedure being translated."""
+        proc = self._current_proc
+        if proc is None:
+            return {}
+        return {**self._class_fields_of.get(self._current_class or proc.class_name or "", {}),
+                **self._proc_types.get(id(proc), {})}
+
+    def _lookup_spec(self, name: str) -> Optional[ProcSpec]:
+        """The library spec of a call: the written name (`File.ReadAllText`), then the declared type of
+        the receiver (`_http.GetStringAsync` with `HttpClient _http` -> `HttpClient.GetStringAsync`),
+        then the bare method name (`context.Database.ExecuteSqlCommand` -> `ExecuteSqlCommand`)."""
+        spec = self.specs.get(name)
+        if spec or "." not in name:
+            return spec
+        recv, _, method = name.rpartition(".")
+        rtype = self._receiver_types().get(recv)
+        if rtype:
+            spec = self.specs.get(f"{rtype}.{method}")
+            if spec and not (spec.is_taint_source() and not spec.is_taint_sink()):
+                return spec               # (typed receivers add sinks / sanitizers, never new sources)
+        return self.specs.get(method)
+
+    def _sanitizer_spec(self, name: str) -> bool:
+        spec = self._lookup_spec(name)
+        return bool(spec and spec.is_sanitizer and not spec.is_taint_sink())
+
+    def _arg_initializer_instrs(self, call_node: TSNode, loc: Location) -> List[Instr]:
+        """Configuration switched off in an object initializer written as an argument:
+        `Cookies.Append(k, v, new CookieOptions { Secure = false })`."""
+        out: List[Instr] = []
+        args = call_node.child_by_field_name("arguments")
+        stack = list(args.children) if args is not None else []
+        while stack:
+            n = stack.pop()
+            if n.type in self._LAMBDA_TYPES:
+                continue
+            if n.type == "object_creation_expression":
+                type_node = n.child_by_field_name("type")
+                init = n.child_by_field_name("initializer")
+                for child in (init.children if init is not None else ()):
+                    if child.type == "assignment_expression" and type_node is not None:
+                        lhs = child.child_by_field_name("left")
+                        out.extend(self._config_flag_instrs(
+                            self._get_text(type_node), self._get_text(lhs) if lhs else "",
+                            child.child_by_field_name("right"), self._get_location(child)))
+            stack.extend(n.children)
+        return out
+
+    def _hoist_sanitizers(self, call_node: TSNode) -> List[Instr]:
+        """A sanitizer call nested in another call's argument (`GetFullPath(Combine(d,
+        GetFileName(x)))`) is lowered to a call of its own first, so the taint that comes
+        out of it is the sanitized value; the outer call then reads a temporary."""
+        found: List[TSNode] = []
+        args = call_node.child_by_field_name("arguments")
+        stack = list(args.children) if args is not None else []
+        while stack:
+            n = stack.pop()
+            if n.type in self._LAMBDA_TYPES:
+                continue
+            if n.type == "invocation_expression" and (n.start_byte, n.end_byte) not in self._hoisted \
+                    and self._sanitizer_spec(self._get_method_name(n)):
+                found.append(n)
+            stack.extend(n.children)
+        instrs: List[Instr] = []
+        for n in sorted(found, key=lambda x: x.end_byte - x.start_byte):      # innermost first
+            if (n.start_byte, n.end_byte) in self._hoisted:
+                continue
+            tmp = f"$san{len(self._hoisted)}"
+            instrs.extend(self._hoist_sanitizers(n))
+            instrs.extend(self._translate_call_assignment(tmp, n, self._get_location(n)))
+            self._hoisted[(n.start_byte, n.end_byte)] = tmp
+        return instrs
 
     def _translate_call_assignment(
         self,
@@ -926,7 +1458,7 @@ class CSharpFrontend:
         loc: Location
     ) -> List[Instr]:
         """Translate: target = method(args)"""
-        instrs = []
+        instrs = self._hoist_sanitizers(call_node)
 
         method_name = self._get_method_name(call_node)
         args = self._get_method_args(call_node)
@@ -945,11 +1477,7 @@ class CSharpFrontend:
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
 
         # Check specs - try full method name first, then just the last part
-        spec = self.specs.get(method_name)
-        if not spec and '.' in method_name:
-            # Try the last part of the method chain (e.g., ExecuteSqlCommand from context.Database.ExecuteSqlCommand)
-            short_name = method_name.split('.')[-1]
-            spec = self.specs.get(short_name)
+        spec = self._lookup_spec(method_name)
 
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
@@ -964,6 +1492,8 @@ class CSharpFrontend:
 
         instrs.extend(self._receiver_chain_instrs(call_node))
         instrs.extend(self._rsa_padding_instrs(call_node, loc))
+        instrs.extend(self._xml_create_instrs(call_node, loc))
+        instrs.extend(self._arg_initializer_instrs(call_node, loc))
         return instrs
 
     def _translate_object_creation(self, node: TSNode, target: Optional[str],
@@ -988,6 +1518,26 @@ class CSharpFrontend:
                     rhs = child.child_by_field_name("right")
                     if rhs:
                         self._translate_expression(rhs)
+                        lhs = child.child_by_field_name("left")
+                        kind = self._typed_prop_sink(type_name, self._get_text(lhs) if lhs else "")
+                        if kind is None and self._is_html_content_result(type_name, init, lhs):
+                            kind = "html"
+                        instrs.extend(self._config_flag_instrs(
+                            type_name, self._get_text(lhs) if lhs else "", rhs, self._get_location(child)))
+                        if kind:
+                            instrs.append(TaintSink(
+                                loc=self._get_location(child), exp=self._translate_expression(rhs),
+                                kind=resolve_sink_kind(kind),
+                                description=f"{type_name} initializer sets {self._get_text(lhs)}",
+                                arg_index=0))
+
+        # A parser configured not to resolve external entities is not an XXE sink.
+        if type_name.split(".")[-1] in ("XmlDocument", "XmlTextReader") and (
+                self._xml_parser_hardened(target)
+                or {"null_resolver", "no_dtd"} & self._initializer_xml_flags(node)):
+            if target is not None:
+                instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpConst.null()))
+            return instrs
 
         # Emit a Call named after the type so the translator's usage-based sink
         # path (empty sink_args) can fire on the constructor.
@@ -1049,9 +1599,13 @@ class CSharpFrontend:
             if recv.type == "invocation_expression":
                 loc = self._get_location(recv)
                 name = self._get_method_name(recv)
-                spec = self.specs.get(name)
-                if not spec and '.' in name:
-                    spec = self.specs.get(name.split('.')[-1])
+                # The inner call also gets a Call of its own, so framework packs see it
+                # (`conn.Query<T>(sql).ToList()`); it defines nothing.
+                instrs.append(Call(loc=loc, ret=None, func=ExpConst.string(name),
+                                   args=[(self._translate_expression(a), Typ.unknown_type())
+                                         for a in self._get_method_args(recv)],
+                                   kwarg_names=self._named_arg_names(recv)))
+                spec = self._lookup_spec(name)
                 if spec and spec.is_taint_sink():
                     kind = resolve_sink_kind(spec.is_sink)
                     rargs = self._get_method_args(recv)
@@ -1071,8 +1625,10 @@ class CSharpFrontend:
 
     def _translate_invocation(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone method invocation"""
-        instrs = []
+        instrs = self._hoist_sanitizers(call_node)
         loc = self._get_location(call_node)
+        if self._hardened_xml_call(call_node):
+            return instrs
 
         method_name = self._get_method_name(call_node)
         args = self._get_method_args(call_node)
@@ -1088,10 +1644,7 @@ class CSharpFrontend:
         instrs.append(call_instr)
 
         # Check specs - try full method name first, then just the last part
-        spec = self.specs.get(method_name)
-        if not spec and '.' in method_name:
-            short_name = method_name.split('.')[-1]
-            spec = self.specs.get(short_name)
+        spec = self._lookup_spec(method_name)
 
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
@@ -1102,6 +1655,8 @@ class CSharpFrontend:
 
         instrs.extend(self._receiver_chain_instrs(call_node))
         instrs.extend(self._rsa_padding_instrs(call_node, loc))
+        instrs.extend(self._xml_create_instrs(call_node, loc))
+        instrs.extend(self._arg_initializer_instrs(call_node, loc))
         return instrs
 
     def _translate_await(self, node: TSNode) -> None:
@@ -1522,9 +2077,15 @@ class CSharpFrontend:
             return ExpBinOp(op, left_exp, right_exp)
 
         elif node.type == "prefix_unary_expression":
-            op_node = node.child_by_field_name("operator")
-            operand = node.child_by_field_name("operand")
+            # the grammar names neither field: `!x` is the operator token then the operand
+            op_node = node.child_by_field_name("operator") or (node.children[0] if node.children else None)
+            operand = node.child_by_field_name("operand") or (node.named_children[-1] if node.named_children else None)
             op = self._get_text(op_node) if op_node else "-"
+            if op == "!":
+                local = self._local_url_exp(operand)
+                if local is not None:             # !IsLocalUrl(x)  ==  !x.startsWith("/") || x.startsWith("//")
+                    var_exp, slash, double = local
+                    return ExpBinOp("||", ExpUnOp("!", slash), double)
             return ExpUnOp(op, self._translate_expression(operand))
 
         elif node.type == "member_access_expression":
@@ -1553,7 +2114,26 @@ class CSharpFrontend:
             return ExpIndex(self._translate_expression(expr), idx_exp)
 
         elif node.type == "invocation_expression":
+            hoisted = self._hoisted.get((node.start_byte, node.end_byte))
+            if hoisted is not None:
+                return ExpVar(PVar(hoisted))
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "member_access_expression":
+                name = fn.child_by_field_name("name")
+                recv = fn.child_by_field_name("expression")
+                if (name is not None and self._get_text(name) in self._PASSTHROUGH_METHODS
+                        and self._source_in(recv) is not None):
+                    return self._translate_expression(recv)   # Request.Query["a"].ToString() reads like Request.Query["a"]
+            local = self._local_url_exp(node)
+            if local is not None:                 # IsLocalUrl(x)  ==  x.startsWith("/") && !x.startsWith("//")
+                _, slash, double = local
+                return ExpBinOp("&&", slash, ExpUnOp("!", double))
             method_name = self._get_method_name(node)
+            if method_name.endswith(".StartsWith"):
+                # the shared guard recognition (same-origin redirect targets) is written against `startsWith`
+                method_name = method_name[:-len("StartsWith")] + "startsWith"
+                return ExpCall(ExpVar(PVar(method_name)),
+                               [self._translate_expression(a) for a in self._get_method_args(node)[:1]])
             args = [self._translate_expression(a) for a in self._get_method_args(node)]
             return ExpCall(ExpConst.string(method_name), args)
 
@@ -1574,7 +2154,13 @@ class CSharpFrontend:
                     return self._translate_expression(child)
 
         elif node.type == "conditional_expression":
+            cond = node.child_by_field_name("condition")
             conseq = node.child_by_field_name("consequence")
+            alt = node.child_by_field_name("alternative")
+            if cond is not None and conseq is not None and alt is not None:
+                self._translate_expression(cond)
+                # either branch can be the value: the result carries the taint of both
+                return ExpBinOp("?:", self._translate_expression(conseq), self._translate_expression(alt))
             return self._translate_expression(conseq) if conseq else ExpConst.null()
 
         elif node.type == "cast_expression":
@@ -1604,6 +2190,25 @@ class CSharpFrontend:
     # Helpers
     # =========================================================================
 
+    def _local_url_exp(self, node: Optional[TSNode]):
+        """For `Url.IsLocalUrl(x)` (or `IsLocalUrl(x)`, parenthesised or not) on a plain variable,
+        the expressions `x.startsWith("/")` and `x.startsWith("//")` that say the same thing."""
+        while node is not None and node.type == "parenthesized_expression":
+            node = next((c for c in node.children if c.type not in ("(", ")")), None)
+        if node is None or node.type != "invocation_expression":
+            return None
+        name = self._get_method_name(node)
+        if name.split(".")[-1] != "IsLocalUrl":
+            return None
+        args = self._get_method_args(node)
+        if len(args) != 1 or args[0].type != "identifier":
+            return None
+        var = self._get_text(args[0])
+        start = ExpVar(PVar(f"{var}.startsWith"))
+        return (ExpVar(PVar(var)),
+                ExpCall(start, [ExpConst.string("/")]),
+                ExpCall(start, [ExpConst.string("//")]))
+
     def _get_text(self, node: TSNode) -> str:
         if node is None:
             return ""
@@ -1623,17 +2228,34 @@ class CSharpFrontend:
             )
         return Location(file=self._filename, line=1, column=0)
 
+    _GENERIC_ARGS = re.compile(r"<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>")
+
+    # Response helpers whose body is HTML unless the content type says otherwise: with an explicit
+    # non-HTML content-type literal the call is renamed so the XSS sink spec does not match it.
+    _HTML_RESPONSE_CALLS = frozenset({"Content", "Results.Content", "TypedResults.Content"})
+    _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
+
     def _get_method_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
         if func:
-            return self._get_text(func)
+            name = self._strip_generics(self._get_text(func))
+            if name.rsplit(".", 2)[-1] == "Content" or name in self._HTML_RESPONSE_CALLS:
+                args = self._get_method_args(node)
+                if len(args) >= 2 and args[1].type in ("string_literal", "verbatim_string_literal") \
+                        and "html" not in self._get_text(args[1]).lower():
+                    return name + self._NON_HTML_RESPONSE_SUFFIX
+            return name
 
         # Try expression field
         expr = node.child_by_field_name("expression")
         if expr:
-            return self._get_text(expr)
+            return self._strip_generics(self._get_text(expr))
 
         return ""
+
+    def _strip_generics(self, name: str) -> str:
+        """`conn.Query<Product>` names the method `conn.Query`: type arguments do not select a spec."""
+        return self._GENERIC_ARGS.sub("", name) if "<" in name else name
 
     def _named_arg_names(self, node: TSNode) -> Optional[List[Optional[str]]]:
         """Names of C# named arguments (`f(a: x)`), parallel to `_get_method_args`;

@@ -1,0 +1,11 @@
+[pack]
+name = "restify"
+language = "javascript"
+description = "Restify: raw HTML responses"
+detect = { imports = ["restify"] }
+
+[[sink]]
+name = ["res.sendRaw"]
+args = [0]
+kind = "html"
+description = "Restify res.sendRaw writes the body without serialising it"

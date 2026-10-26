@@ -1,0 +1,12 @@
+[pack]
+name = "entity-framework"
+language = "csharp"
+description = "EF Core raw SQL APIs that take a string"
+detect = { imports = ["Microsoft.EntityFrameworkCore"] }
+
+# FromSqlRaw / ExecuteSqlRaw are built in. SqlQueryRaw (EF Core 7+) runs the text as given;
+# SqlQuery / FromSqlInterpolated / ExecuteSqlInterpolated take a FormattableString and parameterise.
+[[sink]]
+name = ["SqlQueryRaw", "Database.SqlQueryRaw"]
+kind = "sql"
+description = "EF Core raw SQL query: the first argument is SQL text"

@@ -1,0 +1,19 @@
+[pack]
+name = "dapper"
+language = "csharp"
+description = "Dapper: Query / Execute extension methods on an IDbConnection take SQL text"
+detect = { imports = ["Dapper"] }
+
+# The SQL text is argument 0; the parameters object (`new { id }`) is the safe way to pass values.
+[[sink]]
+name = ["Query", "QueryAsync", "QueryFirst", "QueryFirstAsync", "QueryFirstOrDefault", "QueryFirstOrDefaultAsync",
+        "QuerySingle", "QuerySingleAsync", "QuerySingleOrDefault", "QuerySingleOrDefaultAsync",
+        "QueryMultiple", "QueryMultipleAsync", "ExecuteScalar", "ExecuteScalarAsync"]
+kind = "sql"
+description = "Dapper query: the first argument is SQL text"
+
+# `Execute` and `ExecuteReader` are common method names, so they are matched only on a database connection.
+[[sink]]
+call = ["**Connection.Execute", "**Connection.ExecuteAsync", "**Connection.ExecuteReader", "**Connection.ExecuteReaderAsync"]
+kind = "sql"
+description = "Dapper Execute on a database connection: the first argument is SQL text"

@@ -1,0 +1,51 @@
+[pack]
+name = "sanitizers"
+language = "javascript"
+description = "Common escaping / sanitising libraries (applies to every JS/TS file)"
+
+[[sanitizer]]
+call = ["escape-html", "lodash.escape", "he.encode", "he.escape", "html-entities.encode", "html-entities.encodeHTML",
+        "validator.escape", "entities.encodeHTML", "entities.escapeUTF8", "xss", "xss.filterXSS", "sanitize-html",
+        "sanitize-html.default", "dompurify.sanitize", "isomorphic-dompurify.sanitize", "escape-goat.htmlEscape",
+        "mustache.escape", "underscore.escape"]
+name = ["escapeHtml", "escapeHTML", "lodash.escape", "he.encode", "he.escape", "html-entities.encode",
+        "validator.escape", "entities.encodeHTML", "sanitizeHtml", "dompurify.sanitize", "DOMPurify.sanitize",
+        "isomorphic-dompurify.sanitize", "mustache.escape"]
+kinds = ["html", "xss"]
+description = "HTML escaping / sanitising library"
+
+[[sanitizer]]
+call = ["path.basename", "path.posix.basename", "path.win32.basename", "sanitize-filename", "sanitize-filename.default"]
+name = ["path.basename", "path.posix.basename", "path.win32.basename", "basename", "sanitizeFilename"]
+kinds = ["path", "filesystem"]
+description = "file name reduced to its last path component"
+
+[[sanitizer]]
+call = ["mysql.escape", "mysql2.escape", "sqlstring.escape", "pg.escapeLiteral", "pg.escapeIdentifier",
+        "mysql.escapeId", "sqlstring.escapeId"]
+name = ["mysql.escape", "mysql2.escape", "sqlstring.escape", "SqlString.escape", "pg.escapeLiteral", "mysql.escapeId"]
+kinds = ["sql"]
+description = "SQL value / identifier escaping"
+
+[[sanitizer]]
+call = ["shell-escape", "shell-quote.quote", "shell-quote", "shescape.quote", "shescape.escape"]
+kinds = ["shell", "command"]
+description = "shell quoting"
+
+[[sanitizer]]
+call = ["mongo-sanitize", "mongo-sanitize.default", "express-mongo-sanitize.sanitize", "mongo-sanitize.sanitize"]
+name = ["sanitize", "mongoSanitize"]
+kinds = ["nosql"]
+description = "strips $-operators from user input"
+
+# String(x) / x.toString() flattens an object like {"$gt": ""} into text: no operator injection
+[[sanitizer]]
+name = ["String"]
+kinds = ["nosql"]
+description = "coercion to string defeats operator injection"
+
+# encodeURIComponent output cannot contain '/', ':' or '@': spliced into a URL it cannot change the host
+[[sanitizer]]
+name = ["encodeURIComponent"]
+kinds = ["ssrf", "redirect"]
+description = "percent-encoding a URL component"

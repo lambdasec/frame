@@ -1,0 +1,4 @@
+language = "cpp"
+packs = ["cpp/cpp-httplib"]
+requires_pack = true
+description = "cpp-httplib: lambda route handlers (Request parameter), get_param_value/body/matches/path_params, text/html set_content"

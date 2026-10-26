@@ -1,0 +1,54 @@
+[pack]
+name = "cpp-httplib"
+language = "cpp"
+description = "yhirose/cpp-httplib server handlers, request accessors and response writers"
+detect = { imports = ["httplib.h", "httplib/"] }
+
+# svr.Get("/path", [](const httplib::Request &req, httplib::Response &res) { ... })
+# The C++ frontend lowers each lambda to a procedure whose `registered_via` is the
+# callee it was passed to, and records its parameters' written types.
+[[entrypoint]]
+id = "route-handler"
+registered_via = ["*.Get", "*.Post", "*.Put", "*.Patch", "*.Delete", "*.Options",
+                  "*.set_pre_routing_handler", "*.set_post_routing_handler", "*.set_file_request_handler"]
+tainted_param_type = ["httplib::Request", "Request"]
+
+# Content readers: Post("/up", [](const Request &req, Response &res, const ContentReader &reader)
+[[entrypoint]]
+id = "content-reader"
+registered_via = ["*.Post", "*.Put", "*.Patch"]
+tainted_param_type = ["httplib::ContentReader", "ContentReader"]
+
+# Same handler written as a free function / method taking the request
+[[entrypoint]]
+id = "handler-function"
+method = ["*handler*", "*Handler*", "*handle*", "*route*"]
+tainted_param_type = ["httplib::Request", "Request"]
+
+# Response writers. The body is the page only when the content type says HTML; the
+# frontend suffixes `set_content` calls whose literal type contains "html" with ":html".
+[[sink]]
+name = ["set_content:html"]
+args = [0]
+kind = "html"
+description = "cpp-httplib Response::set_content with an HTML content type"
+
+[[sink]]
+name = ["set_redirect"]
+args = [0]
+kind = "redirect"
+description = "cpp-httplib Response::set_redirect"
+
+# Outgoing requests: httplib::Client cli(host); cli.Get(path)
+[[sink]]
+call = ["httplib::Client"]
+args = [0]
+kind = "ssrf"
+description = "httplib::Client connects to the host it is constructed with"
+
+# cpp-httplib ships no escaping helper, so handlers define their own. Calls to the
+# conventional names are treated as HTML escaping (the helper's body is not analysed).
+[[sanitizer]]
+name = ["html_escape", "escape_html", "htmlEscape", "escapeHtml", "html_encode", "encode_html", "sanitize_html"]
+kinds = ["html", "xss"]
+description = "conventionally named HTML escaping helper"

@@ -1,0 +1,4 @@
+language = "javascript"
+packs = []
+requires_pack = false
+description = "Browser DOM: jQuery .html()/.append(), postMessage, location, document.write"

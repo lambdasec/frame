@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/aspnetcore"]
+requires_pack = true
+description = "ASP.NET Core Startup / token and password handling: weak hashes and ciphers, permissive CORS, cookies, certificate validation"

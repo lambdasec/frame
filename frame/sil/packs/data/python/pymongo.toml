@@ -1,0 +1,30 @@
+[pack]
+name = "pymongo"
+language = "python"
+description = "MongoDB through pymongo / motor: query documents built from request data"
+detect = { imports = ["pymongo", "motor", "mongoengine"] }
+
+# The collection is reached through a client variable (`db = client.app; db.users.find(q)`),
+# so the frontend's derived canonical ids (`pymongo.MongoClient.users.find`) are the handle.
+# Operator injection: a request JSON value that is a dict ({"$ne": ""}) changes the query; a
+# string spliced into $where / $function runs as JavaScript. Both are the "nosql" sink.
+[[sink]]
+call = ["pymongo.MongoClient.**.find", "pymongo.MongoClient.**.find_one", "pymongo.MongoClient.**.find_one_and_update",
+        "pymongo.MongoClient.**.find_one_and_delete", "pymongo.MongoClient.**.find_one_and_replace",
+        "pymongo.MongoClient.**.update_one", "pymongo.MongoClient.**.update_many",
+        "pymongo.MongoClient.**.replace_one", "pymongo.MongoClient.**.delete_one",
+        "pymongo.MongoClient.**.delete_many", "pymongo.MongoClient.**.count_documents",
+        "pymongo.MongoClient.**.distinct", "pymongo.MongoClient.**.aggregate",
+        "pymongo.MongoClient.**.watch",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.find", "motor.motor_asyncio.AsyncIOMotorClient.**.find_one",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.update_one", "motor.motor_asyncio.AsyncIOMotorClient.**.delete_one",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.count_documents", "motor.motor_asyncio.AsyncIOMotorClient.**.aggregate"]
+kind = "nosql"
+args = [0]
+arg_names = ["filter", "pipeline"]
+
+# Coercing to str / int / ObjectId keeps an operator object ({"$ne": ""}) out of the query. It does
+# not make a string spliced into a $where JavaScript expression safe.
+[[sanitizer]]
+call = ["bson.ObjectId", "bson.objectid.ObjectId", "builtins.str", "builtins.int", "builtins.float"]
+kinds = ["nosql"]

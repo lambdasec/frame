@@ -1,0 +1,24 @@
+[pack]
+name = "sanic"
+language = "python"
+description = "Sanic responses that reflect HTML or serve files"
+detect = { imports = ["sanic"] }
+
+[[sink]]
+call = ["sanic.response.html", "sanic.html"]
+kind = "html"
+args = [0]
+arg_names = ["body"]
+description = "sanic.response.html sends its body as text/html"
+
+[[sink]]
+call = ["sanic.response.file", "sanic.response.file_stream", "sanic.file", "sanic.file_stream"]
+kind = "filesystem"
+args = [0]
+arg_names = ["location"]
+
+[[sink]]
+call = ["sanic.response.redirect", "sanic.redirect"]
+kind = "redirect"
+args = [0]
+arg_names = ["to"]

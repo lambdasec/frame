@@ -1,0 +1,32 @@
+[pack]
+name = "angular"
+language = "javascript"
+description = "Angular: ActivatedRoute data as sources, DomSanitizer.bypassSecurityTrust* as sinks"
+detect = { imports = ["@angular/core", "@angular/router", "@angular/platform-browser", "@angular/common"] }
+
+[[source]]
+name = ["queryParamMap.get", "queryParamMap.getAll", "paramMap.get", "paramMap.getAll", "route.snapshot.paramMap.get",
+        "route.snapshot.queryParamMap.get"]
+kind = "user_input"
+description = "Angular route / query parameter"
+
+# route.queryParams.subscribe(params => ...)
+[[entrypoint]]
+id = "route-params-subscriber"
+registered_via = ["*.queryParams.subscribe", "*.params.subscribe", "*.queryParamMap.subscribe", "*.paramMap.subscribe",
+                  "*.fragment.subscribe"]
+params = "all"
+description = "values emitted by the router (URL controlled)"
+
+# DomSanitizer.bypassSecurityTrustHtml(x) tells Angular to stop escaping x
+[[sink]]
+name = ["bypassSecurityTrustHtml", "bypassSecurityTrustScript", "bypassSecurityTrustStyle",
+        "bypassSecurityTrustUrl", "bypassSecurityTrustResourceUrl"]
+args = [0]
+kind = "html"
+description = "Angular DomSanitizer bypass: the value is rendered without sanitising"
+
+# the sanitising sink: sanitize(SecurityContext.HTML, x) returns safe markup
+[[sanitizer]]
+name = ["sanitizer.sanitize", "domSanitizer.sanitize"]
+kinds = ["html", "xss"]

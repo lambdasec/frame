@@ -1,0 +1,59 @@
+[pack]
+name = "nextjs"
+language = "javascript"
+description = "Next.js: app-router route handlers, server actions, getServerSideProps, page props"
+detect = { imports = ["next"] }
+
+# app/**/route.js: `export async function GET(request)`; the Request carries the URL, headers and body
+[[entrypoint]]
+id = "route-handler"
+method = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+params = ["request", "req"]
+tainted_param_type = ["next/server.NextRequest", "NextRequest", "Request"]
+description = "Next.js route handler request"
+
+# server actions ('use server'): form data posted by the browser
+[[entrypoint]]
+id = "server-action"
+method = ["*"]
+params = ["formData"]
+tainted_param_type = ["FormData"]
+description = "Next.js server action form data"
+
+# pages router data fetching and app-router pages: context.query / params / searchParams
+[[entrypoint]]
+id = "data-fetching"
+method = ["getServerSideProps", "getStaticProps", "getInitialProps", "generateMetadata", "Page", "page", "Layout"]
+params = ["context", "ctx", "query", "params", "searchParams", "req"]
+description = "Next.js context.query / context.params / searchParams"
+
+[[source]]
+name = ["searchParams.get", "searchParams.getAll", "request.cookies.get", "request.headers.get", "req.cookies.get",
+        "req.headers.get", "nextUrl.searchParams.get"]
+kind = "user_input"
+description = "query string / cookie / header of a route-handler request"
+
+[[source]]
+call = ["next/headers.cookies", "next/headers.headers"]
+kind = "user_input"
+description = "request cookies / headers"
+
+[[sink]]
+call = ["next/server.NextResponse.redirect", "next/server.NextResponse.rewrite"]
+name = ["NextResponse.redirect", "NextResponse.rewrite"]
+args = [0]
+kind = "redirect"
+description = "NextResponse.redirect (open redirect)"
+
+[[sink]]
+call = ["next/navigation.redirect", "next/navigation.permanentRedirect"]
+args = [0]
+kind = "redirect"
+description = "next/navigation redirect (open redirect)"
+
+# request.nextUrl.searchParams.get('q'), formData.get('x'), await request.json(): reading a
+# value out of attacker-controlled request data is attacker-controlled
+[[propagator]]
+name = ["get", "getAll", "json", "text", "formData", "arrayBuffer", "toString"]
+receiver = true
+description = "value read from a request / FormData / URLSearchParams"

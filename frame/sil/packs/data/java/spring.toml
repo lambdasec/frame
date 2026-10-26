@@ -1,0 +1,98 @@
+[pack]
+name = "spring"
+language = "java"
+description = "Spring MVC / Boot / WebFlux: handler parameters, redirects, SpEL, RestTemplate / WebClient SSRF, JDBC templates"
+detect = { imports = ["org.springframework"] }
+
+# The frontend already taints parameters carrying a binding annotation
+# (@RequestParam, @PathVariable, @RequestBody, @RequestHeader, @CookieValue, @ModelAttribute,
+# @MatrixVariable, @RequestPart). Spring also binds UNannotated parameters of a handler: a simple
+# type is an implicit @RequestParam, a bean is an implicit @ModelAttribute (a form / command object).
+[[entrypoint]]
+id = "mapping-handler-unannotated"
+annotation = ["*Mapping"]
+params = "all"
+exclude_param_type = [
+    "Model", "ModelMap", "Map", "BindingResult", "Errors", "Principal", "Authentication", "Locale",
+    "HttpServletRequest", "HttpServletResponse", "HttpSession", "ServletRequest", "ServletResponse",
+    "WebRequest", "NativeWebRequest", "RedirectAttributes", "SessionStatus", "UriComponentsBuilder",
+    "InputStream", "OutputStream", "Reader", "Writer", "Pageable", "Sort", "HttpMethod", "TimeZone",
+    "ZoneId", "HttpHeaders", "ServerHttpRequest", "ServerHttpResponse", "ServerWebExchange",
+    "jakarta.servlet.*", "javax.servlet.*", "org.springframework.ui.*", "org.springframework.validation.*",
+]
+
+# WebFlux functional endpoints: the ServerRequest carries everything.
+[[source]]
+call = [
+    "org.springframework.web.reactive.function.server.ServerRequest.queryParam",
+    "org.springframework.web.reactive.function.server.ServerRequest.queryParams",
+    "org.springframework.web.reactive.function.server.ServerRequest.pathVariable",
+    "org.springframework.web.reactive.function.server.ServerRequest.pathVariables",
+    "org.springframework.web.reactive.function.server.ServerRequest.bodyToMono",
+    "org.springframework.web.reactive.function.server.ServerRequest.bodyToFlux",
+    "org.springframework.web.context.request.WebRequest.getParameter",
+    "org.springframework.web.context.request.WebRequest.getHeader",
+    "org.springframework.web.context.request.WebRequest.getParameterMap",
+]
+kind = "user_input"
+
+[[sink]]
+call = ["org.springframework.web.servlet.view.RedirectView.<init>"]
+kind = "redirect"
+description = "RedirectView sends the browser to the given URL"
+
+[[sink]]
+call = ["org.springframework.http.HttpHeaders.setLocation"]
+kind = "redirect"
+description = "HttpHeaders.setLocation sets the Location header of the response"
+
+[[sink]]
+call = ["org.springframework.expression.**.parseExpression", "org.springframework.expression.spel.standard.SpelExpressionParser.parseRaw"]
+name = ["parseExpression"]
+kind = "el"
+description = "SpEL evaluates the expression, which can call arbitrary Java"
+
+[[sink]]
+call = [
+    "org.springframework.web.client.RestTemplate.getForObject", "org.springframework.web.client.RestTemplate.getForEntity",
+    "org.springframework.web.client.RestTemplate.postForObject", "org.springframework.web.client.RestTemplate.postForEntity",
+    "org.springframework.web.client.RestTemplate.postForLocation", "org.springframework.web.client.RestTemplate.exchange",
+    "org.springframework.web.client.RestTemplate.execute", "org.springframework.web.client.RestTemplate.put",
+    "org.springframework.web.client.RestTemplate.delete", "org.springframework.web.client.RestTemplate.headForHeaders",
+]
+kind = "ssrf"
+description = "RestTemplate requests the URL"
+
+# WebClient / RestClient / WebTestClient: `client.get().uri(url)`
+[[sink]]
+name = ["uri"]
+kind = "ssrf"
+description = "WebClient / RestClient requests the URI"
+
+# Spring's JDBC templates take the SQL text as the first argument.
+[[sink]]
+call = [
+    "org.springframework.jdbc.core.JdbcTemplate.query", "org.springframework.jdbc.core.JdbcTemplate.queryForList",
+    "org.springframework.jdbc.core.JdbcTemplate.queryForMap", "org.springframework.jdbc.core.JdbcTemplate.queryForObject",
+    "org.springframework.jdbc.core.JdbcTemplate.queryForRowSet", "org.springframework.jdbc.core.JdbcTemplate.queryForStream",
+    "org.springframework.jdbc.core.JdbcTemplate.update", "org.springframework.jdbc.core.JdbcTemplate.execute",
+    "org.springframework.jdbc.core.JdbcTemplate.batchUpdate",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.query",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.queryForList",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.queryForMap",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.queryForObject",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.update",
+    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.execute",
+]
+kind = "sql"
+description = "Spring JDBC template executes the SQL text"
+
+[[sanitizer]]
+call = ["org.springframework.web.util.HtmlUtils.htmlEscape", "org.springframework.web.util.HtmlUtils.htmlEscapeDecimal",
+        "org.springframework.web.util.HtmlUtils.htmlEscapeHex"]
+kinds = ["html"]
+
+[[sanitizer]]
+call = ["org.springframework.web.util.UriUtils.encode", "org.springframework.web.util.UriUtils.encodePath",
+        "org.springframework.web.util.UriUtils.encodeQueryParam"]
+kinds = ["redirect"]

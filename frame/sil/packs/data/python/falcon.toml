@@ -1,0 +1,27 @@
+[pack]
+name = "falcon"
+language = "python"
+description = "Falcon resources: on_<verb> responders, req accessors, resp.text/body HTML, HTTPFound"
+detect = { imports = ["falcon"] }
+
+# Resource classes are plain objects registered with app.add_route(); the responders are
+# found by name. `req` carries query/body/headers/cookies, the URI template fields follow it.
+[[entrypoint]]
+id = "responder"
+method = ["on_get", "on_post", "on_put", "on_patch", "on_delete", "on_head", "on_options",
+          "on_get_*", "on_post_*", "on_put_*", "on_patch_*", "on_delete_*", "on_websocket"]
+params = "all"
+exclude_param = ["self", "resp", "response", "ws"]
+
+[[sink]]
+name = ["resp.render_body"]
+kind = "html"
+args = [0]
+
+[[sink]]
+call = ["falcon.HTTPFound", "falcon.HTTPMovedPermanently", "falcon.HTTPSeeOther",
+        "falcon.HTTPTemporaryRedirect", "falcon.HTTPPermanentRedirect",
+        "falcon.redirects.HTTPFound", "falcon.redirects.HTTPMovedPermanently",
+        "falcon.redirects.HTTPSeeOther"]
+kind = "redirect"
+args = [0]

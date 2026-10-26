@@ -1,0 +1,22 @@
+[pack]
+name = "http-clients"
+language = "javascript"
+description = "HTTP client libraries whose first argument is the request URL (SSRF)"
+detect = { imports = ["axios", "got", "node-fetch", "cross-fetch", "isomorphic-fetch", "superagent", "needle", "undici",
+                      "ky", "phin", "request-promise", "request-promise-native", "bent", "make-fetch-happen",
+                      "@angular/common/http", "urllib", "simple-get", "http2-wrapper", "supertest-as-promised"] }
+
+[[sink]]
+call = ["superagent", "superagent.get", "superagent.post", "superagent.put", "superagent.patch", "superagent.delete",
+        "superagent.del", "superagent.head", "superagent.options",
+        "needle", "needle.get", "needle.post", "needle.put", "needle.patch", "needle.delete", "needle.head", "needle.request",
+        "undici.request", "undici.fetch", "undici.stream", "undici.pipeline",
+        "ky", "ky.get", "ky.post", "ky.put", "ky.patch", "ky.delete", "ky.head",
+        "node-fetch", "node-fetch.default", "cross-fetch", "cross-fetch.default", "isomorphic-fetch",
+        "make-fetch-happen", "phin", "bent", "simple-get", "simple-get.concat", "urllib.request",
+        "axios.head", "axios.patch", "axios.options", "axios.getUri", "axios.default", "axios.default.get", "axios.default.post",
+        "got.put", "got.patch", "got.delete", "got.head", "got.stream", "got.default",
+        "request-promise", "request-promise-native"]
+args = [0]
+kind = "ssrf"
+description = "HTTP client: the first argument is the URL (or an options object with a url)"

@@ -1,0 +1,4 @@
+language = "csharp"
+packs = ["csharp/dapper", "csharp/entity-framework"]
+requires_pack = true
+description = "Dapper, Entity Framework (6 and Core), NHibernate, Npgsql and MySql connectors behind controller actions"

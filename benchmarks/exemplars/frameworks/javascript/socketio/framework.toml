@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/socketio"]
+requires_pack = true
+description = "Socket.IO event handlers: socket.on callbacks receive client data"

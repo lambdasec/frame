@@ -1,0 +1,34 @@
+[pack]
+name = "templates"
+language = "python"
+description = "Server-side template injection through Jinja2 and Mako: the template source is attacker data"
+detect = { imports = ["jinja2", "mako"] }
+
+# jinja2.Template(source) and Environment.from_string(source) compile `source`;
+# Mako's Template(text) / Template(text=...) do the same (Mako templates run arbitrary Python).
+[[sink]]
+call = ["jinja2.Template", "jinja2.environment.Template", "mako.template.Template", "mako.Template"]
+kind = "template"
+args = [0]
+arg_names = ["source", "text"]
+
+[[sink]]
+call = ["jinja2.Environment.from_string", "jinja2.environment.Environment.from_string",
+        "jinja2.sandbox.SandboxedEnvironment.from_string"]
+kind = "template"
+args = [0]
+arg_names = ["source"]
+
+# The environment is nearly always a module-level variable of unknown type: fall back to the
+# method name, which is specific to template engines once jinja2 / mako is imported.
+[[sink]]
+name = ["from_string"]
+kind = "template"
+args = [0]
+arg_names = ["source"]
+description = "Environment.from_string compiles its argument as template source"
+
+[[sink]]
+call = ["mako.lookup.TemplateLookup.put_string"]
+kind = "template"
+args = [1]

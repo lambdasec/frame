@@ -47,6 +47,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 PY_EXTENSIONS = (".py",)
 JS_EXTENSIONS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts")
 JAVA_EXTENSIONS = (".java",)
+CSHARP_EXTENSIONS = (".cs",)      # indexed with the Java family: both resolve types nominally
 # Extensions tried, in order, when a JS import omits one.
 _JS_TRY = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 # A TS import may name the emitted `.js` of a `.ts` source.
@@ -70,7 +71,7 @@ def language_family(path: Path) -> Optional[str]:
         return "python"
     if suffix in JS_EXTENSIONS:
         return "javascript"
-    if suffix in JAVA_EXTENSIONS:
+    if suffix in JAVA_EXTENSIONS or suffix in CSHARP_EXTENSIONS:
         return "java"
     return None
 
@@ -165,7 +166,7 @@ class ProjectIndex:
                 self._read_python(mod, tree.root_node)
                 self._read_python_types(mod, tree.root_node)
             elif mod.family == "java":
-                self._read_java(mod, tree.root_node)
+                (self._read_csharp if mod.path.suffix.lower() == ".cs" else self._read_java)(mod, tree.root_node)
             else:
                 self._read_javascript(mod, tree.root_node)
                 self._read_javascript_types(mod, tree.root_node)
@@ -255,6 +256,53 @@ class ProjectIndex:
                 mod.java_mentions.add(_text(n).rsplit(".", 1)[-1])
             stack.extend(n.children)
 
+    _CSHARP_TYPE_NODES = ("class_declaration", "interface_declaration", "struct_declaration",
+                          "record_declaration", "record_struct_declaration", "enum_declaration")
+    _CS = "cs:"      # namespace prefix: keeps C# types apart from Java packages in the shared maps
+
+    def _read_csharp(self, mod: FileModule, root: Any) -> None:
+        """Namespace, `using`s, declared types with their base types, every identifier used.
+        Mapped onto the Java fields: the namespace is the package, `using X;` an on-demand import,
+        `using A = X.Y;` an explicit one; the enclosing namespaces are visible without a using."""
+        ns = ""
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type in ("namespace_declaration", "file_scoped_namespace_declaration") and not ns:
+                nm = n.child_by_field_name("name")
+                ns = _text(nm) if nm is not None else ""
+            stack.extend(reversed(n.children))
+        mod.package = self._CS + ns
+        parts = ns.split(".") if ns else []
+        mod.java_wildcards.extend(self._CS + ".".join(parts[:i]) for i in range(len(parts) - 1, -1, -1))
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "using_directive":
+                names = [c for c in n.named_children if c.type in ("identifier", "qualified_name")]
+                if any(c.type == "static" or _text(c) == "static" for c in n.children):
+                    continue
+                if any(c.type == "=" for c in n.children) and len(names) >= 2:
+                    mod.java_imports[_text(names[0])] = self._CS + _text(names[-1])
+                elif names:
+                    mod.java_wildcards.append(self._CS + _text(names[-1]))
+            elif n.type in self._CSHARP_TYPE_NODES:
+                name = _text(n.child_by_field_name("name"))
+                if name:
+                    mod.java_kinds[name] = n.type.split("_")[0]
+                    mod.classes.setdefault(name, {})
+                    supers = []
+                    for c in n.children:
+                        if c.type == "base_list":
+                            supers += [_text(t).split("<")[0].rsplit(".", 1)[-1] for t in c.named_children
+                                       if t.type in ("identifier", "qualified_name", "generic_name")]
+                    mod.bases[name] = [x for x in dict.fromkeys(supers) if x]
+                    if any(c.type == "modifier" and _text(c) == "abstract" for c in n.children):
+                        mod.java_abstract.add(name)
+            elif n.type == "identifier":
+                mod.java_mentions.add(_text(n))
+            stack.extend(n.children)
+
     @staticmethod
     def _java_types_in(node: Any) -> List[Any]:
         out, stack = [], [node]
@@ -308,7 +356,7 @@ class ProjectIndex:
         if mod is None or mod.family != "java" or not name:
             return None
         if "." in name:
-            hit = self.java_types.get(name)
+            hit = self.java_types.get(name) or self.java_types.get(self._CS + name)
             if hit is not None:
                 return hit
             name = name.rsplit(".", 1)[-1]
@@ -349,6 +397,8 @@ class ProjectIndex:
             return "python"
         if suffix == ".java":
             return "java"
+        if suffix == ".cs":
+            return "csharp"
         return "typescript" if suffix in (".ts", ".tsx", ".mts", ".cts") else "javascript"
 
     def key_for(self, path: Path) -> Optional[str]:
@@ -906,7 +956,7 @@ class ProjectIndex:
             for name, p in procedures.items():
                 cls, simple = getattr(p, "class_name", None), getattr(p, "simple_name", name)
                 if cls and not simple.startswith("<"):
-                    mod.java_methods.setdefault(cls, {}).setdefault(simple, []).append(name)
+                    mod.java_methods.setdefault(cls.rsplit(".", 1)[-1], {}).setdefault(simple, []).append(name)
             return
         if mod.family == "python":
             mod.procs = {name for name, p in procedures.items()

@@ -1,0 +1,19 @@
+[pack]
+name = "asyncpg"
+language = "python"
+description = "asyncpg / aiomysql / aiopg query methods"
+detect = { imports = ["asyncpg", "aiomysql", "aiopg"] }
+
+# asyncpg Connection / Pool / Transaction methods run the first argument as SQL. The connection
+# comes from `pool.acquire()` so its type is unknown; the method names are specific enough
+# once the file imports asyncpg.
+[[sink]]
+name = ["fetch", "fetchrow", "fetchval", "fetchmany", "copy_from_query", "prepare", "executemany"]
+kind = "sql"
+args = [0]
+description = "asyncpg runs the string as SQL"
+
+[[sink]]
+name = ["conn.execute", "connection.execute", "pool.execute", "con.execute", "cur.execute", "cursor.execute"]
+kind = "sql"
+args = [0]

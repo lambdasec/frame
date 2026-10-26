@@ -1,0 +1,31 @@
+[pack]
+name = "koa"
+language = "javascript"
+description = "Koa middleware and @koa/router handlers (ctx.query / ctx.params / ctx.request.body)"
+detect = { imports = ["koa", "@koa/router", "koa-router", "koa-bodyparser", "@koa/bodyparser", "koa-body"] }
+
+# Everything on `ctx` is request data: ctx.query, ctx.params, ctx.request.body,
+# ctx.headers, ctx.cookies.get(...), ctx.request.files.
+[[entrypoint]]
+id = "koa-router-handler"
+registered_via = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.del", "*.all", "*.use", "*.param"]
+params = ["ctx", "context"]
+description = "Koa context object"
+
+[[sink]]
+name = ["ctx.redirect", "context.redirect"]
+args = [0]
+kind = "redirect"
+description = "Koa ctx.redirect (open redirect)"
+
+[[sink]]
+name = ["ctx.attachment", "ctx.set", "ctx.append"]
+args = [1]
+kind = "header"
+description = "Koa header value"
+
+[[sink]]
+call = ["koa-send", "koa-send.default", "@koa/send"]
+args = [1]
+kind = "path"
+description = "koa-send serves the file at the given path"

@@ -1,0 +1,32 @@
+[pack]
+name = "bottle"
+language = "python"
+description = "Bottle routes, request accessors, template(), static_file, redirect"
+detect = { imports = ["bottle"] }
+
+# Bottle's `request` is a module-level proxy: `request.query.id`, `request.forms.name`,
+# `request.params.get(...)`, `request.json`, `request.body` are all client data.
+[[source]]
+name = ["request.query", "request.forms", "request.params", "request.GET", "request.POST",
+        "request.json", "request.body", "request.get_cookie", "request.cookies", "request.files",
+        "request.headers.get", "request.query_string",
+        "request.query.get", "request.query.getunicode", "request.query.getall",
+        "request.forms.get", "request.forms.getunicode", "request.forms.getall",
+        "request.params.get", "request.params.getunicode", "request.params.getall",
+        "request.GET.get", "request.POST.get", "request.cookies.get", "request.files.get"]
+kind = "user_input"
+
+[[sink]]
+call = ["bottle.static_file"]
+kind = "filesystem"
+description = "static_file(filename, root=...) serves root/filename; the filename must not be client data"
+
+[[sink]]
+call = ["bottle.redirect"]
+kind = "redirect"
+
+# template("<h1>{{x}}</h1>") compiles a string that is not a template *name* as SimpleTemplate source.
+[[sink]]
+call = ["bottle.template", "bottle.SimpleTemplate", "bottle.jinja2_template"]
+kind = "template"
+args = [0]
