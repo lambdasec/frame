@@ -2448,7 +2448,7 @@ class SILTranslator:
                 a, b = call.args
                 var, lit = (a, b) if isinstance(b, ExpConst) else (b, a)
                 if isinstance(var, ExpVar) and isinstance(lit, ExpConst) and isinstance(lit.value, str):
-                    return {str(var.var): frozenset(cls._ALLOWLIST_KINDS)}
+                    return {str(var.var): cls._EXACT_VALUE_KINDS}
             if name == "strncmp" and isinstance(other, ExpConst) and other.value == 0 and len(call.args) == 3:
                 fact = cls._c_prefix_fact(call.args, strings or {})
                 if fact:
@@ -2466,7 +2466,7 @@ class SILTranslator:
 
     @classmethod
     def _member_fact(cls, subject, collection) -> dict:
-        everything = frozenset(cls._ALLOWLIST_KINDS)
+        everything = cls._EXACT_VALUE_KINDS
         constant = (isinstance(collection, ExpVar) and cls._CONST_NAME.match(str(collection.var))) \
             or (isinstance(collection, ExpConst) and isinstance(collection.value, str)
                 and cls._CONST_NAME.match(collection.value))
@@ -2567,6 +2567,11 @@ class SILTranslator:
     _ALLOWLIST_KINDS = ["filesystem", "path", "command", "shell", "shell_command", "sql", "nosql", "redirect",
                         "ssrf", "html", "xss", "eval", "code", "ldap", "xpath", "xml", "template", "header",
                         "regex", "log"]
+    # A value proven to be one of a few constants (membership in a constant collection, an exact
+    # comparison) is not attacker-chosen at all, so it also cannot reach a vulnerable library
+    # function as attacker data. A character class is not enough there (a long digit string is
+    # still a ReDoS input), so these kinds are added for exact-value guards only.
+    _EXACT_VALUE_KINDS = frozenset(_ALLOWLIST_KINDS) | {"vulnerable_dependency"}
 
     @staticmethod
     def _has_local_redirect_prefix(exp: Exp) -> bool:

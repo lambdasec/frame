@@ -42,6 +42,16 @@ frame scan src/ --ai
 frame fix app.py --guidance findings.json --diff
 ```
 
+For vulnerable dependencies the fix changes how the code uses the vulnerable function, the version unchanged (for when an upgrade is not possible yet; `frame deps --apply` does upgrades):
+
+```bash
+frame kb pull --advisories
+frame fix src/ --deps --diff          # each call site attacker data reaches (frame scan --sca)
+frame fix src/ --deps --in-place      # write only the verified patches
+```
+
+Every patch is verified by re-running the whole analysis on a patched copy of the project: it is kept only if attacker data no longer reaches the vulnerable function (or the call is gone) and the file has no new finding. A character-class check in front of the call is not enough (a long digit string is still a ReDoS input); a constant allowlist or the library's safe equivalent (`yaml.safe_load`) is. `--include-called` also takes call sites without a flow, verified only when the call is gone.
+
 `curl https://cloud.mlx-optiq.com/api/v1/models` lists the available models (also `deepseek-v4.1-flash` and `minimax-m3.1-flash`), each with a context window of about 1M tokens, enough for a whole service.
 
 ### Local, on Apple Silicon

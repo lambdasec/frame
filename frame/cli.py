@@ -274,9 +274,19 @@ def create_parser() -> argparse.ArgumentParser:
         "source", help="Source file or directory the findings refer to"
     )
     fix_parser.add_argument(
-        "--guidance", required=True,
+        "--guidance",
         help="Frame findings JSON to fix (file path, or '-' for stdin). Pipe from "
-             "`frame scan --ai -f json`."
+             "`frame scan --ai -f json`. Not used with --deps."
+    )
+    fix_parser.add_argument(
+        "--deps", action="store_true",
+        help="Mitigate vulnerable dependencies in code (SOURCE is the project directory): for each call "
+             "site that reaches a vulnerable function (frame scan --sca), patch how the code uses it, the "
+             "version unchanged, and keep only patches the taint engine verifies"
+    )
+    fix_parser.add_argument(
+        "--include-called", action="store_true",
+        help="With --deps: also call sites with no attacker data flow (verified only when the call is gone)"
     )
     fix_parser.add_argument(
         "--in-place", action="store_true",
@@ -804,6 +814,11 @@ def cmd_fix(args) -> int:
         print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
               "endpoint) to use fix.", file=sys.stderr)
         return 1
+    if getattr(args, "deps", False):
+        return _fix_deps(args, config)
+    if not args.guidance:
+        print("Error: --guidance is required (or --deps to mitigate vulnerable dependencies)", file=sys.stderr)
+        return 1
     try:
         raw = sys.stdin.read() if args.guidance == "-" else Path(args.guidance).read_text()
         findings = _load_findings(raw)
@@ -877,6 +892,37 @@ def cmd_fix(args) -> int:
         print(f"\n{applied_n}/{len(results)} findings patched ({mode}); "
               f"{verified_n} verified fixed by re-scan.")
     return 0 if applied_n > 0 else 1
+
+
+def _fix_deps(args, config) -> int:
+    """`frame fix DIR --deps`: verified code mitigations for vulnerable dependencies."""
+    from frame.sca.mitigate import mitigate
+    from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+    target = Path(args.source)
+    if not target.is_dir():
+        print("Error: --deps needs the project directory", file=sys.stderr)
+        return 1
+    results = mitigate(target, DEFAULT_EXCLUDED_SCAN_DIRS, config, write=args.in_place,
+                       include_called=args.include_called)
+    if args.format == "json":
+        print(json.dumps([{"file": r.site.file, "line": r.site.line, "function": r.site.function,
+                           "level": r.site.level, "advisories": [a["id"] for a in r.site.advisories],
+                           "applied": r.applied, "verdict": r.verdict, "verified": r.verified,
+                           "introduced": r.introduced, "rationale": r.rationale, "diff": r.diff}
+                          for r in results], indent=2))
+    else:
+        if not results:
+            print("No call site reaches a vulnerable function (frame kb pull --advisories; frame scan --sca).")
+        for r in results:
+            if r.diff and (r.verified or not args.in_place):
+                print(r.diff)
+            print(f"  {r.site.file}:{r.site.line} {r.site.function} ({r.site.level}) -> {r.verdict}"
+                  + (f": introduces {', '.join(r.introduced)}" if r.introduced else "")
+                  + (f"  [{r.rationale}]" if r.rationale else ""))
+        ok = sum(1 for r in results if r.verified)
+        mode = "written" if args.in_place else "shown as diffs; --in-place writes the verified ones"
+        print(f"\n{ok}/{len(results)} mitigations verified by the taint engine ({mode}).")
+    return 0 if results and all(r.verified for r in results) else (0 if not results else 1)
 
 
 # ============================================================================

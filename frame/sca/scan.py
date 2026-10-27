@@ -73,8 +73,8 @@ def sink_packs(run: ScaRun) -> list:
 
 def _rel(location: str, root: Path) -> str:
     p = Path(location)
-    try:
-        return (p.resolve() if p.is_absolute() or p.exists() else p).relative_to(root).as_posix()
+    try:                                   # both resolved: /var/... and /private/var/... are one place
+        return (p.resolve() if p.is_absolute() or p.exists() else p).relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return p.as_posix()
 
