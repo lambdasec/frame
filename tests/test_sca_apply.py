@@ -199,3 +199,61 @@ def test_live_npm_relock_clears_the_advisories(tmp_path, db):
     assert out.relocked == ["package-lock.json"], out.warnings
     after = match(read_dependencies(proj).files, db)
     assert after == [], [(f["package"], f["version"], f["id"]) for f in after]
+
+
+def _verify_cmd(tmp_path, body):
+    script = tmp_path / "check.py"
+    script.write_text(body)
+    return f'"{sys.executable}" "{script}"'
+
+
+def test_verify_keeps_an_upgrade_that_passes(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "requirements.txt").write_text("django==3.2.0\n")
+    cmd = _verify_cmd(tmp_path, "import sys; sys.exit(0)\n")
+    out = apply_plan([P("PyPI", "django", "3.2.0", "3.2.25", "raise-requirement", "requirements.txt")], proj,
+                     write=True, verify=cmd)
+    assert out.verify == "passed" and (proj / "requirements.txt").read_text() == "django==3.2.25\n"
+
+
+def test_verify_rolls_back_an_upgrade_that_breaks_a_passing_build(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "requirements.txt").write_text("django==3.2.0\n")
+    (proj / "package.json").write_text('{"dependencies": {"lodash": "~4.17.20"}}\n')
+    (proj / "package-lock.json").write_text('{"lockfileVersion": 3, "packages": {}}\n')
+    before = {p.name: p.read_text() for p in proj.iterdir()}
+    cmd = _verify_cmd(tmp_path, "import pathlib, sys\n"
+                                "sys.exit(1 if '3.2.25' in pathlib.Path('requirements.txt').read_text() else 0)\n")
+    out = apply_plan([P("PyPI", "django", "3.2.0", "3.2.25", "raise-requirement", "requirements.txt"),
+                      P("npm", "lodash", "4.17.20", "4.18.0", "raise-requirement", "package-lock.json")],
+                     proj, write=True, verify=cmd)
+    assert out.verify == "rolled-back"
+    assert {p.name: p.read_text() for p in proj.iterdir()} == before          # every file restored
+
+
+def test_verify_does_not_blame_an_upgrade_for_an_already_failing_build(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "requirements.txt").write_text("django==3.2.0\n")
+    out = apply_plan([P("PyPI", "django", "3.2.0", "3.2.25", "raise-requirement", "requirements.txt")], proj,
+                     write=True, verify=_verify_cmd(tmp_path, "import sys; sys.exit(3)\n"))
+    assert out.verify == "failing-before" and "3.2.25" in (proj / "requirements.txt").read_text()
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("npm"),
+                    reason="live: set FRAME_SCA_REAL=1 (runs npm against the registry)")
+def test_live_npm_upgrade_verified_by_the_projects_own_check(tmp_path, db):
+    """Real npm: raise lodash, re-lock, install, and run a check that uses the package."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"name": "app", "version": "1.0.0",
+                                                   "dependencies": {"lodash": "~4.17.20"}}, indent=2))
+    subprocess.run(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund",
+                    "lodash@4.17.20", "--save-prefix=~"], cwd=proj, check=True, capture_output=True)
+    report = read_dependencies(proj)
+    check = "npm ci --ignore-scripts --no-audit --no-fund >/dev/null && node -e \"require('lodash').template('<%= x %>')({x: 1})\""
+    out = apply_plan(plan(match(report.files, db), report.files, db), proj, write=True, relock_=True, verify=check)
+    assert out.verify == "passed", out.verify_output
+    assert [f for f in match(read_dependencies(proj).files, db) if f["package"] == "lodash"] == []

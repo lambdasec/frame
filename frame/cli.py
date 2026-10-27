@@ -100,6 +100,9 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--apply", action="store_true",
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
+    deps_parser.add_argument("--verify", metavar="COMMAND",
+                             help="With --apply: the project's own build / test command, run before and after; "
+                                  "an upgrade that breaks a passing command is rolled back (runs the command)")
     deps_parser.add_argument("--relock", action="store_true",
                              help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, "
                                   "cargo, go); runs the package manager")
@@ -559,7 +562,7 @@ def cmd_deps(args) -> int:
             from frame.sca.apply import apply_plan
             from frame.sca.plan import plan
             plans = plan(findings, report.files, db)
-            outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock)
+            outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock, verify=args.verify)
             if args.apply:
                 after = match(read_dependencies(target, exclude_dirs=excluded).files, db)
                 key = lambda f: (f["path"], f["package"], f["id"])
@@ -577,7 +580,8 @@ def cmd_deps(args) -> int:
                 data["edits"] = [{"path": c.path, "reason": c.reason, "diff": c.diff()} for c in outcome.changes]
                 data["manual"] = outcome.manual
                 if verified is not None:
-                    data["applied"] = {**verified, "relocked": outcome.relocked, "warnings": outcome.warnings}
+                    data["applied"] = {**verified, "relocked": outcome.relocked, "warnings": outcome.warnings,
+                                   **({"verify": outcome.verify} if outcome.verify else {})}
         out = json.dumps(data, indent=2)
     else:
         out = format_text(report)
@@ -600,6 +604,12 @@ def cmd_deps(args) -> int:
                                            else ""))
                     for w in outcome.warnings:
                         out += f"\nwarning: {w}"
+                    if outcome.verify:
+                        out += {"passed": "\nVerify: the command passes after the upgrade.",
+                                "rolled-back": "\nVerify: the command passed before and fails after the upgrade; "
+                                               "every edit was rolled back:\n" + outcome.verify_output,
+                                "failing-before": "\nVerify: the command already failed before the upgrade, so "
+                                                  "it proves nothing; the edits were kept."}[outcome.verify]
     if args.output:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:

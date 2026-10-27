@@ -42,6 +42,10 @@ class Outcome:
     manual: List[str] = field(default_factory=list)          # plan entries left to a person, and why
     relocked: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    # with a verify command: "passed" | "rolled-back" (it passed before and failed after: every
+    # edit and re-locked file restored) | "failing-before" (it already failed: proves nothing)
+    verify: str = ""
+    verify_output: str = ""
 
 
 class _Files:
@@ -425,13 +429,58 @@ def relock(plans: List[dict], root: Path) -> Tuple[List[str], List[str]]:
     return done, warnings
 
 
-def apply_plan(plans: List[dict], root: Path, write: bool = False, relock_: bool = False) -> Outcome:
+def _run_verify(command: str, root: Path) -> Tuple[bool, str]:
+    try:
+        proc = subprocess.run(command, shell=True, cwd=str(root), capture_output=True, text=True,  # nosec: the user's own command
+                              timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {TIMEOUT}s"
+    tail = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-20:])
+    return proc.returncode == 0, tail
+
+
+def _snapshot(plans: List[dict], changes: List[Change], root: Path) -> Dict[Path, Optional[bytes]]:
+    """Every file applying and re-locking may write: the edited manifests and, in each
+    plan's directory, the lockfiles a package manager regenerates."""
+    from frame.sca.lockfiles import LOCKFILES
+    paths = {root / c.path for c in changes}
+    for p in plans:
+        d = (root / p["path"]).parent
+        paths.add(root / p["path"])
+        paths.update(d / name for name in LOCKFILES if (d / name).is_file())
+    return {p: (p.read_bytes() if p.is_file() else None) for p in paths}
+
+
+def apply_plan(plans: List[dict], root: Path, write: bool = False, relock_: bool = False,
+               verify: Optional[str] = None) -> Outcome:
+    """Edit (and with `relock_`, re-lock). With `verify`, the project's own build or test
+    command runs before and after: if it passed before and fails after, every file the
+    upgrade touched is restored."""
     root = Path(root).resolve()
     files, manual = edits(plans, root)
     out = Outcome(changes=files.changes(), manual=manual)
-    if write:
-        for c in out.changes:
-            (root / c.path).write_text(c.after, encoding="utf-8")
-        if relock_:
-            out.relocked, out.warnings = relock(plans, root)
+    if not write:
+        return out
+    before_ok = None
+    saved = _snapshot(plans, out.changes, root)
+    if verify:
+        before_ok, _ = _run_verify(verify, root)
+    for c in out.changes:
+        (root / c.path).write_text(c.after, encoding="utf-8")
+    if relock_:
+        out.relocked, out.warnings = relock(plans, root)
+    if verify:
+        after_ok, out.verify_output = _run_verify(verify, root)
+        if after_ok:
+            out.verify = "passed"
+        elif before_ok:
+            for p, data in saved.items():
+                if data is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    p.write_bytes(data)
+            out.verify = "rolled-back"
+        else:
+            out.verify = "failing-before"
     return out
