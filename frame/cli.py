@@ -76,6 +76,8 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
                              help="Output format (default: text)")
     deps_parser.add_argument("-o", "--output", help="Write to this file instead of stdout")
+    deps_parser.add_argument("--vulns", action="store_true",
+                             help="Match the packages against the cached advisories (frame kb pull --advisories)")
     deps_parser.add_argument("--resolve", action="store_true",
                              help="Run Maven, Gradle and pip to resolve projects without a lockfile "
                                   "(runs the project's build configuration; downloads packages)")
@@ -460,7 +462,24 @@ def cmd_deps(args) -> int:
         print(f"Error: not a directory: {args.target}", file=sys.stderr)
         return 2
     report = read_dependencies(target, resolve=args.resolve)
-    out = json.dumps(report.to_dict(), indent=2) if args.format == "json" else format_text(report)
+    findings = None
+    if args.vulns:
+        from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
+        db = AdvisoryDB.cached(ecosystems_of(report.files))
+        findings = match(report.files, db)
+        if db.missing:
+            report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
+                                   "run `frame kb pull --advisories`")
+    if args.format == "json":
+        data = report.to_dict()
+        if findings is not None:
+            data["vulnerabilities"] = findings
+        out = json.dumps(data, indent=2)
+    else:
+        out = format_text(report)
+        if findings is not None:
+            from frame.sca.discover import format_vulns
+            out += "\n" + format_vulns(findings)
     if args.output:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:

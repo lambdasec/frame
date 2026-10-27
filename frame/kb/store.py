@@ -18,8 +18,8 @@ MANIFEST = "manifest.json"
 LOCKFILE = Path(".frame") / "kb.lock"
 SCHEMA = 1
 # What a knowledge base may contain: data under these directories, never code.
-_ALLOWED_PREFIXES = ("packs/", "specs/")
-_ALLOWED_SUFFIXES = (".toml", ".json")
+_ALLOWED_PREFIXES = ("packs/", "specs/", "advisories/")
+_ALLOWED_SUFFIXES = (".toml", ".json", ".json.gz")
 _TIMEOUT = 30
 
 

@@ -253,3 +253,18 @@ def format_text(report: DependencyReport) -> str:
 
 
 __all__: List[str] = ["DependencyReport", "read_dependencies", "format_text", "REPORTS"]
+
+
+def format_vulns(findings: List[dict]) -> str:
+    if not findings:
+        return "No known vulnerabilities in the resolved versions."
+    lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]
+    for f in findings:
+        sev = (f["severity"] or "unknown").upper()
+        fix = f"fixed in {f['fixed'][0]}" if f["fixed"] else "no fixed version"
+        kind = "direct" if f["direct"] else "transitive" if f["direct"] is False else "dependency"
+        lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}) "
+                     f"{f['id']}: {f['summary'][:80]}; {fix}  [{f['path']}]")
+        if len(f["via"]) > 1:
+            lines.append(f"           via {' -> '.join(f['via'])}")
+    return "\n".join(lines)

@@ -22,6 +22,13 @@ A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive
 
 `frame deps --resolve` produces those graphs itself: it runs `mvn dependency:tree` (or `./mvnw`) once per Maven build, `gradle dependencies` (or `./gradlew`) for every Gradle project, and pip's resolver (`pip install --dry-run --report`, wheels only, nothing installed) for each `requirements*.txt` and lockfile-less `pyproject.toml`. It is opt-in because it runs the project's build configuration and downloads packages; a missing or failing tool is a warning and the manifest is read as before.
 
+`frame deps --vulns` matches every resolved version against known vulnerabilities from OSV, shipped as a dataset (`lambdasec/frame-advisories`, rebuilt daily) that `frame kb pull --advisories` caches for the ecosystems the project uses. Each finding names the advisory (merged across GHSA, PYSEC, CVE and other ids), its severity (the CVSS v3 base score, else the database's rating), the lowest fixed version, whether the package is direct or dev only, and the chain of packages that pulls it in. Matching runs offline.
+
+```bash
+frame kb pull --advisories            # once, and whenever you want fresh advisories
+frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each
+```
+
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 
 ## Guardrails for CI and coding agents
@@ -181,8 +188,8 @@ frame kb pull --source /mnt/kb-2026.10 --lock          # in CI
 | `frame scan --baseline F` / `--write-baseline F` | Report only findings not in the baseline; write or update one |
 | `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each one's status |
 | `frame packs list \| check` | List the packs a scan would load; validate pack files |
-| `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror |
-| `frame deps [dir]` | The dependency graph from lockfiles, build-tool reports and manifests: versions, direct or transitive, dev only, edges. `--resolve` runs Maven, Gradle and pip |
+| `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror. `pull --advisories` caches the vulnerability advisories; `build-advisories` lays them out from OSV exports |
+| `frame deps [dir]` | The dependency graph from lockfiles, build-tool reports and manifests: versions, direct or transitive, dev only, edges. `--resolve` runs Maven, Gradle and pip; `--vulns` matches the cached advisories |
 | `frame inventory [dir]` | Languages, frameworks, dependencies, IaC, containers, LLM SDKs and MCP servers in a repository |
 | `frame exploit --target <url>` | Exploit a live, authorized target, primed with `--guidance` ([ai.md](ai.md)) |
 | `frame fix <path>` | Fix each finding, then re-scan to confirm (`--in-place` or `--diff`) |

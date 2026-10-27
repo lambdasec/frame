@@ -26,6 +26,9 @@ def add_kb_command(subparsers) -> None:
     pl.add_argument("--source", help="hf:org/name, an https mirror, or a local directory "
                                      "(default: $FRAME_KB_SOURCE, else hf:lambdasec/frame-kb)")
     pl.add_argument("--lock", action="store_true", help="Write the revision to <project>/.frame/kb.lock")
+    pl.add_argument("--advisories", action="store_true",
+                    help="Pull the vulnerability advisories (lambdasec/frame-advisories) instead of the packs, "
+                         "for the ecosystems the project's dependencies use (all with --all)")
     st = sub.add_parser("status", help="Which revision a scan of the project would use")
     st.add_argument("--project", default=".", metavar="DIR")
     st.add_argument("-f", "--format", default="text", choices=["text", "json"])
@@ -34,6 +37,11 @@ def add_kb_command(subparsers) -> None:
     bd.add_argument("out", help="Output directory (publish it, mirror it, or pull from it)")
     bd.add_argument("--revision", required=True, help="Revision id written to the manifest")
     bd.add_argument("--specs", metavar="DIR", help="Directory of library spec tables (<table>.toml) to include")
+    ba = sub.add_parser("build-advisories", help="Lay out an advisories revision from OSV exports")
+    ba.add_argument("inputs", nargs="+", help="OSV all.zip exports, directories of OSV JSON, or JSON files")
+    ba.add_argument("out", help="Output directory")
+    ba.add_argument("--revision", required=True, help="Revision id written to the manifest")
+    ba.add_argument("--ecosystems", help="Comma-separated OSV ecosystems (default: every one Frame reads)")
 
 
 def _languages(args) -> list:
@@ -52,6 +60,20 @@ def _languages(args) -> list:
 
 def cmd_kb(args) -> int:
     try:
+        if args.kb_command == "pull" and args.advisories:
+            from frame.sca.advisories import ECOSYSTEMS, ecosystems_of, source
+            if args.all:
+                ecos = list(ECOSYSTEMS)
+            else:
+                from frame.sca import read_dependencies
+                ecos = ecosystems_of(read_dependencies(Path(args.project)).files)
+            if not ecos:
+                print("no dependencies found; nothing to pull (use --all for every ecosystem)")
+                return 0
+            got = pull([e.lower() for e in ecos], revision=args.revision or "main", source=args.source or source())
+            print(f"{got.source}@{got.revision}: {len(got.files)} files ({got.fetched} downloaded) "
+                  f"for {', '.join(ecos)}")
+            return 0
         if args.kb_command == "pull":
             lock = read_lock(Path(args.project))
             revision = args.revision or (lock["revision"] if lock and not args.source else "main")
@@ -73,6 +95,14 @@ def cmd_kb(args) -> int:
                       f"cached:  {st['cached'] or '- (scans use the built-in packs)'}\n"
                       f"packs:   {st['packs']}\ncache:   {st['cache']}")
             return 0
+        if args.kb_command == "build-advisories":
+            from frame.sca.advisories import build_advisories
+            ecos = [e.strip() for e in args.ecosystems.split(",")] if args.ecosystems else None
+            manifest = build_advisories([Path(i) for i in args.inputs], Path(args.out), args.revision, ecos)
+            files = json.loads(manifest.read_text())["files"]
+            for rel, meta in sorted(files.items()):
+                print(f"{rel}: {meta['advisories']} advisories, {meta['size']} bytes")
+            return 0
         if args.kb_command == "build":
             manifest = build(Path(args.packs_dir), Path(args.out), args.revision,
                              Path(args.specs) if args.specs else None)
@@ -82,5 +112,5 @@ def cmd_kb(args) -> int:
     except KBError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-    print("usage: frame kb {pull,status,build}", file=sys.stderr)
+    print("usage: frame kb {pull,status,build,build-advisories}", file=sys.stderr)
     return 2
