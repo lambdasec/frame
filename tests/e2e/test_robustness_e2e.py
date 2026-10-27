@@ -351,3 +351,129 @@ def test_c_project_scan_equals_the_union_of_scanning_each_file_alone(tmp_path):
             _, doc = scan_json(tmp_path / rel, "--root", str(tmp_path))
             alone += reported(doc)
     assert reported(whole) == sorted(alone) and alone
+
+
+# ---- C/C++ frontend regressions found while writing the C matrix ------------------------------
+
+def _c_cwes(tmp_path, name, source):
+    (tmp_path / name).write_text(source)
+    _, doc = scan_json(tmp_path)
+    return sorted(c for _, _, c in reported(doc) if c)
+
+
+def test_nul_terminating_a_buffer_at_the_read_count_is_not_an_attacker_controlled_index(tmp_path):
+    src = '''#include <unistd.h>
+
+void handle(int fd)
+{
+    char line[200];
+    ssize_t n = read(fd, line, sizeof(line) - 1);
+    if (n <= 0) {
+        return;
+    }
+    line[n] = '\\0';
+}
+'''
+    assert "CWE-787" not in _c_cwes(tmp_path, "a.c", src)
+
+
+def test_buffer_released_after_being_read_into_is_not_an_unclassified_taint_flow(tmp_path):
+    src = '''#include <stdio.h>
+#include <stdlib.h>
+
+int slurp(const char *path)
+{
+    char *buf = malloc(4096);
+    if (buf == NULL) {
+        return -1;
+    }
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        free(buf);
+        return -1;
+    }
+    fread(buf, 1, 4095, fp);
+    fclose(fp);
+    free(buf);
+    return 0;
+}
+'''
+    (tmp_path / "a.c").write_text(src)
+    _, doc = scan_json(tmp_path)
+    assert [v for v in findings(doc) if not v.get("cwe_id")] == []
+
+
+def test_member_allocated_in_a_constructor_and_freed_in_the_destructor_is_not_a_leak(tmp_path):
+    src = '''#include <cstddef>
+
+class Scratch {
+public:
+    explicit Scratch(std::size_t n) { data_ = new unsigned char[n]; }
+    ~Scratch() { delete[] data_; }
+
+private:
+    unsigned char *data_;
+};
+'''
+    assert "CWE-401" not in _c_cwes(tmp_path, "a.cpp", src)
+
+
+def test_allocation_stored_through_an_out_parameter_is_not_a_leak(tmp_path):
+    src = '''#include <stdlib.h>
+#include <string.h>
+
+struct header {
+    char *key;
+};
+
+int parse(const char *line, struct header *out)
+{
+    out->key = strdup(line);
+    return out->key != NULL ? 0 : -1;
+}
+'''
+    assert "CWE-401" not in _c_cwes(tmp_path, "a.c", src)
+
+
+def test_macro_sized_array_is_bounds_checked_like_a_literal_one(tmp_path):
+    src = '''#define SLOTS (16 * 2)
+
+void fill(const unsigned char *src)
+{
+    unsigned char slots[SLOTS];
+    for (int i = 0; i <= SLOTS; i++) {
+        slots[i] = src[i];
+    }
+}
+'''
+    assert "CWE-787" in _c_cwes(tmp_path, "a.c", src)
+
+
+def test_redefined_macro_size_is_not_guessed(tmp_path):
+    src = '''#ifdef BIG
+#define SLOTS 64
+#else
+#define SLOTS 8
+#endif
+
+void fill(const unsigned char *src)
+{
+    unsigned char slots[SLOTS];
+    for (int i = 0; i < 8; i++) {
+        slots[i] = src[i];
+    }
+}
+'''
+    assert _c_cwes(tmp_path, "a.c", src) == []
+
+
+def test_call_in_a_return_statement_is_a_sink_call(tmp_path):
+    src = '''#include <stdlib.h>
+
+int run(void)
+{
+    char *cmd = getenv("JOB");
+    return system(cmd);
+}
+'''
+    assert "CWE-78" in _c_cwes(tmp_path, "a.c", src)
