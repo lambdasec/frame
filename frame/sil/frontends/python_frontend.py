@@ -2196,6 +2196,10 @@ class PythonFrontend:
         if not func:
             return ""
         name = self._get_text(func)
+        if name.endswith(".delay") and re.fullmatch(r"[A-Za-z_][\w.]*", name):
+            # Celery `task.delay(a, b)` runs `task(a, b)` in a worker: the enqueueing call passes
+            # its arguments to the task function (`tasks.convert.delay(path)` -> `tasks.convert`).
+            return name[:-len(".delay")]
         if name in self._HTML_RESPONSE_CALLS and self._has_non_html_content_type(call_node):
             return name + self._NON_HTML_RESPONSE_SUFFIX
         if name.rsplit(".", 1)[-1] in self._LXML_PARSE_FUNCS and self._uses_hardened_xml_parser(call_node):

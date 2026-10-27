@@ -2825,6 +2825,24 @@ class JavaFrontend:
         (the exception object is not what the method returns)."""
         self._add_instr(Return(loc=self._get_location(node), value=None))
 
+    _SHELL_BINARIES = frozenset({"sh", "/bin/sh", "bash", "/bin/bash", "zsh", "/bin/zsh", "dash", "ksh",
+                                 "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh"})
+
+    def _shell_command_array(self, node: TSNode) -> Optional[Exp]:
+        """`new String[] {"/bin/sh", "-c", cmd}`: an argument vector that hands `cmd` to a shell is
+        one command string (the elements joined), not separate arguments, so it carries `cmd`'s
+        taint. Any other vector (`{"ping", "-c", "1", host}`) is left as it was."""
+        init = node.child_by_field_name("value")
+        if init is None or init.type != "array_initializer":
+            return None
+        items = [c for c in init.named_children if c.type not in ("line_comment", "block_comment")]
+        if len(items) < 3 or items[0].type != "string_literal" or items[1].type != "string_literal":
+            return None
+        if self._get_text(items[0])[1:-1].lower() not in self._SHELL_BINARIES \
+                or self._get_text(items[1])[1:-1].lower() not in ("-c", "/c", "-command", "/k"):
+            return None
+        return ExpStringConcat([self._translate_expression(i) for i in items[2:]])
+
     def _starts_with_test(self, node: TSNode, args: List[Exp]) -> Optional[Exp]:
         """`next.startsWith("/")` written as a method on the variable (`next.startsWith(...)`),
         the shape the translator's same-origin redirect guard reads from the condition text."""
@@ -2974,6 +2992,11 @@ class JavaFrontend:
 
         elif node.type == "this":
             return ExpVar(PVar("this"))
+
+        elif node.type == "array_creation_expression":
+            shell = self._shell_command_array(node)
+            if shell is not None:
+                return shell
 
         # Default
         return ExpVar(PVar(self._get_text(node))) if self._get_text(node) else ExpConst.null()

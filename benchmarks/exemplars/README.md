@@ -22,6 +22,8 @@ each tool does and why.
 - Not run: Semgrep Pro, Snyk Code, SonarQube, Checkmarx and other commercial tools (they need an account or server;
   see "Not covered"). Nothing here supports a claim about them.
 
+Start with [`quickstart/`](quickstart/README.md) (three files, two cross-file flaws), then [`frameworks/`](frameworks/README.md) (a vulnerable app and a safe twin per framework). The sections below compare Frame with other scanners.
+
 ## What is compared
 
 | tool | version | how it was run |

@@ -152,8 +152,8 @@ STRING_SPECS = {
     "strtok_r": _propagator([0], "strtok_r() - reentrant tokenize"),
 
     # Memory functions (buffer sinks)
-    "memcpy": _sink("buffer", [2], "memcpy() - memory copy (buffer overflow risk)"),
-    "memmove": _sink("buffer", [2], "memmove() - memory move"),
+    "memcpy": _sink("buffer", [1], "memcpy() - memory copy (buffer overflow risk)"),
+    "memmove": _sink("buffer", [1], "memmove() - memory move"),
     "memset": _propagator([0], "memset() - memory set"),
     "memcmp": _propagator([0, 1], "memcmp() - memory compare"),
     "bcopy": _sink("buffer", [0], "bcopy() - BSD memory copy (buffer overflow)"),

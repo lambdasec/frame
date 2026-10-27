@@ -50,6 +50,10 @@ jobs:
         python -m venv /tmp/userenv
         /tmp/userenv/bin/pip install -q .[scan]
         /tmp/userenv/bin/python -c "from frame.sil.scanner import FrameScanner; import frame.sil.frontends.c_frontend, frame.sil.frontends.java_frontend, frame.sil.frontends.javascript_frontend, frame.sil.frontends.csharp_frontend, frame.sil.frontends.python_frontend"
+        # the built-in framework packs are package data: an install without them scans without framework knowledge
+        /tmp/userenv/bin/python -c "from frame.sil.packs import builtin_packs; n = len(builtin_packs()); assert n >= 70, n"
+        printf 'import tornado.web\nclass H(tornado.web.RequestHandler):\n    def get(self):\n        self.write("<b>" + self.get_argument("n"))\n' > /tmp/userenv/t.py
+        /tmp/userenv/bin/frame scan /tmp/userenv/t.py -f json --fail-on none | grep -q CWE-79
     - name: Run tests
       run: python -m pytest tests/ -n auto -q --tb=short
     - name: Quick functionality test
