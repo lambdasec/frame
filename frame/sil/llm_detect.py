@@ -182,7 +182,7 @@ def _to_vulnerability(f: Dict[str, Any], filename: str) -> Optional[Any]:
         type=vt, severity=Severity.MEDIUM, location=filename, line=line, column=0,
         description="[LLM-detected] " + str(f.get("reasoning", ""))[:200],
         procedure="<llm-detect>", source_var="llm_detect",
-        confidence=conf, cwe_id=cwe_id)
+        confidence=conf, cwe_id=cwe_id, evidence="llm-detected")
 
 
 # Detection reads whole files up to this many chars (~12k tokens). Handler files

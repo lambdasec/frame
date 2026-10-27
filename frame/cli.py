@@ -45,6 +45,24 @@ def create_parser() -> argparse.ArgumentParser:
 
     from frame.sil.packs.cli import add_packs_command
     add_packs_command(subparsers)
+    from frame.kb.cli import add_kb_command
+    add_kb_command(subparsers)
+
+    # === INVENTORY command ===
+    inv_parser = subparsers.add_parser(
+        "inventory",
+        help="List what a repository contains (languages, frameworks, dependencies, IaC, AI)",
+        description="Report the source languages, the frameworks Frame has packs for, dependency "
+                    "manifests and lockfiles, infrastructure-as-code, container definitions, LLM "
+                    "SDKs and MCP servers under a directory. Nothing is analysed."
+    )
+    inv_parser.add_argument("target", nargs="?", default=".", help="Directory (default: .)")
+    inv_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
+                            help="Output format (default: text)")
+    inv_parser.add_argument("--no-sources", action="store_true",
+                            help="Skip reading source files (no framework or AI detection)")
+    inv_parser.add_argument("--file-limit", type=int, default=5000,
+                            help="Most source files read for frameworks and AI imports (default: 5000)")
 
     # === SCAN command ===
     scan_parser = subparsers.add_parser(
@@ -404,6 +422,18 @@ def _apply_model_override(args) -> None:
     (scan/detect/triage/exploit) reading the env picks it up. Flag beats env."""
     if getattr(args, "model", None):
         os.environ["FRAME_LLM_MODEL"] = args.model
+
+
+def cmd_inventory(args) -> int:
+    """Execute inventory command."""
+    from frame.sil.inventory import build_inventory, format_text, to_json
+    target = Path(args.target)
+    if not target.is_dir():
+        print(f"Error: not a directory: {args.target}", file=sys.stderr)
+        return 2
+    inv = build_inventory(target, read_sources=not args.no_sources, file_limit=args.file_limit)
+    print(to_json(inv) if args.format == "json" else format_text(inv))
+    return 0
 
 
 def cmd_scan(args) -> int:
@@ -1287,6 +1317,7 @@ def main(argv: List[str] = None) -> int:
     # Dispatch to command handler
     commands = {
         "scan": cmd_scan,
+        "inventory": cmd_inventory,
         "exploit": cmd_exploit,
         "fix": cmd_fix,
         "verify": cmd_verify,
@@ -1295,6 +1326,7 @@ def main(argv: List[str] = None) -> int:
         "parse": cmd_parse,
         "repl": cmd_repl,
         "packs": lambda a: __import__("frame.sil.packs.cli", fromlist=["cmd_packs"]).cmd_packs(a),
+        "kb": lambda a: __import__("frame.kb.cli", fromlist=["cmd_kb"]).cmd_kb(a),
     }
 
     handler = commands.get(args.command)

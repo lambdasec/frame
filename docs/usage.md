@@ -12,6 +12,10 @@ frame scan src/ --ai                    # add LLM detection and triage (see ai.m
 
 Text output lists the files with findings and a summary line; `-f json` and `-f sarif` carry the same findings plus stable paths and fingerprints. Exit status: 0 clean, 1 findings at or above `--fail-on`, 2 the scan could not run.
 
+Every finding has a `category` (`taint`, `memory`, `crypto`, `secret`, `access-control`, `hardening`) and an `evidence` level saying how strongly it is proven, weakest first: `matched` (a usage or pattern), `llm-detected`, `llm-verified`, `data-flow` (a source-to-sink path), `solver-verified` (the solver proved the path reachable), `exploit-confirmed`. In SARIF both are result properties.
+
+`frame inventory [dir]` reports what a repository contains without analysing it: languages, the frameworks Frame has packs for, dependency manifests and lockfiles, infrastructure-as-code, Dockerfiles, LLM SDKs and MCP servers (`-f json` for every path).
+
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 
 ## Guardrails for CI and coding agents
@@ -143,6 +147,25 @@ packs = ["security/acme.toml"]       # extra framework packs
 
 Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--config PATH`, `--no-config`). Directory scans skip `.git`, `node_modules`, `.venv`, `__pycache__` and similar; `--no-default-excludes` scans them.
 
+## Knowledge base
+
+Framework packs also arrive as data, between Frame releases. `frame kb pull` downloads the packs for the languages a project uses, checks every file against the manifest's SHA-256, and caches them; scans read the cache and never go to the network (with nothing cached they use the packs built into Frame).
+
+```bash
+frame kb pull --lock          # this project's languages; pin the revision in .frame/kb.lock
+frame kb status               # which revision a scan here would use
+FRAME_KB=off frame scan .     # built-in packs only
+```
+
+For air-gapped CI, lay out a revision on a connected machine and pull from the directory (or an internal HTTPS mirror):
+
+```bash
+frame kb build packs/ kb-2026.10/ --revision 2026.10   # on the connected side
+frame kb pull --source /mnt/kb-2026.10 --lock          # in CI
+```
+
+`--source` (or `FRAME_KB_SOURCE`) takes `hf:org/dataset`, an `https://` mirror, or a directory. A knowledge base holds data files only (TOML and JSON); nothing in it runs.
+
 ## Commands
 
 | Command | What it does |
@@ -152,6 +175,8 @@ Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable 
 | `frame scan --baseline F` / `--write-baseline F` | Report only findings not in the baseline; write or update one |
 | `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each one's status |
 | `frame packs list \| check` | List the packs a scan would load; validate pack files |
+| `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror |
+| `frame inventory [dir]` | Languages, frameworks, dependencies, IaC, containers, LLM SDKs and MCP servers in a repository |
 | `frame exploit --target <url>` | Exploit a live, authorized target, primed with `--guidance` ([ai.md](ai.md)) |
 | `frame fix <path>` | Fix each finding, then re-scan to confirm (`--in-place` or `--diff`) |
 | `frame solve`, `check`, `parse`, `repl` | The separation logic engine ([engine.md](engine.md)) |

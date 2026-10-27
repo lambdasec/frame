@@ -51,6 +51,19 @@ def builtin_packs() -> tuple:
     return tuple(packs)
 
 
+def kb_dirs(project_start: Optional[Path]) -> List[Path]:
+    """Knowledge-base pack directories for a project (frame.kb.kb_pack_dirs); none when the
+    knowledge base is unavailable or broken (a scan must still run on the built-in packs)."""
+    try:
+        from frame.kb import KBError, kb_pack_dirs
+    except ImportError:                    # pragma: no cover
+        return []
+    try:
+        return kb_pack_dirs(project_start)
+    except KBError:
+        return []
+
+
 def discover_project_packs(start: Path) -> List[Path]:
     """`.frame/packs` of the project containing `start`: the nearest ancestor that has
     one, stopping at the repository root (a `.git` directory)."""
@@ -76,6 +89,14 @@ class PackSet:
     def build(cls, extra: Sequence[str] = (), *, builtin: bool = True,
               project_start: Optional[Path] = None) -> "PackSet":
         packs: List[Pack] = list(builtin_packs()) if builtin else []
+        if builtin:
+            # The knowledge base (frame.kb), when one is cached: a pack there replaces the
+            # built-in pack of the same language and name (it is the newer release of it).
+            kb = [load_pack_file(f, origin=f"kb:{f.parent.name}/{f.name}")
+                  for d in kb_dirs(project_start) for f in _pack_files(d)]
+            if kb:
+                newer = {(p.language, p.name) for p in kb}
+                packs = [p for p in packs if (p.language, p.name) not in newer] + kb
         paths: List[Path] = []
         if project_start is not None:
             paths += discover_project_packs(project_start)

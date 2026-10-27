@@ -33,15 +33,12 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 
 ## Phase 1: foundations
 
-- **Workspace inventory**: one pass that finds languages, frameworks, lockfiles, IaC files, Dockerfiles, LLM SDKs and MCP servers, and decides which analyzers run and which knowledge to fetch.
-- **Unified finding model** with `category` (taint, hardening, dependency, secret, iac, container, ai) and the evidence level.
+- Done: **workspace inventory** (`frame inventory`, `frame/sil/inventory.py`): languages, frameworks (packs whose `detect` matched), manifests and lockfiles by ecosystem, IaC (Terraform, Kubernetes, Helm, CloudFormation, Compose), Dockerfiles, LLM SDKs and MCP servers.
+- Done: **unified finding model** (`frame/sil/findings.py`): every finding has a `category` (taint, memory, crypto, secret, access-control, hardening; dependency, iac, container and ai reserved) and an `evidence` level (matched, llm-detected, llm-verified, data-flow, solver-verified, exploit-confirmed), in JSON and SARIF.
 - **Knowledge base (KB)**:
-  - Language specs (`frame/sil/specs/*_specs.py`) move into TOML language packs, with a benchmark-identical sweep.
-  - Packs, rules, policies, secret formats and advisories are published as public Hugging Face datasets under the lambdasec org.
-  - Frame downloads only what the inventory needs, verifies a signed manifest, caches it, and pins revisions in `.frame/kb.lock` for reproducible CI.
-  - `frame kb pull` builds an offline bundle for air-gapped CI; a mirror URL serves networks that block huggingface.co.
-  - A core bundle (language specs and the most used frameworks) ships in the wheel, so `pip install frame-security` scans offline on first run.
-  - New packs and rules reach users without a Frame release.
+  - Done: the client (`frame/kb`, `frame kb pull | status | build`). A revision is a directory with `manifest.json` (every file's SHA-256, size, language, kind) and data files; `pull` downloads only the project's languages, verifies each file, caches it, and can pin the revision in `.frame/kb.lock`; scans load cached packs (they replace built-in packs of the same name) and never fetch. Sources: `hf:org/dataset`, an HTTPS mirror, or a local directory for air-gapped CI.
+  - Next: create the `lambdasec/frame-kb` dataset and the publishing job (build on merge, upload to HF); sign the manifest once a publishing key exists, and verify the signature in `pull`.
+  - Next: move the language specs (`frame/sil/specs/*_specs.py`) into TOML language packs, with a benchmark-identical sweep, so they can ship through the KB too.
 - **Config cleanup**: `.frame.toml` holds project settings only (severities, excludes, pinned knowledge). Packs describe code; rules become pack kinds (pattern, policy, secret, advisory). Only what cannot be data (C memory analysis, the solver) stays in the engine.
 - **Licensing**: packs Apache-2.0, datasets CC-BY-4.0.
 

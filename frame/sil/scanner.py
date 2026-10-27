@@ -204,6 +204,7 @@ class BufferSizeTracker:
         return (dest_size, source_size)
 
 
+from frame.sil.findings import category_of, evidence_of_check
 from frame.sil.translator import SILTranslator, VulnerabilityCheck, VulnType
 from frame.checking.incorrectness import IncorrectnessChecker, BugReport, BugWitness
 
@@ -250,6 +251,8 @@ class Vulnerability:
     # "hardening" for configuration that switches a protection off (debug mode, a cookie
     # declared insecure); empty for ordinary findings. Never mixed into taint results.
     category: str = ""
+    # How strongly the finding is proven (frame.sil.findings.EVIDENCE_LEVELS).
+    evidence: str = "matched"
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
@@ -271,8 +274,8 @@ class Vulnerability:
         }
         if self.source_evidence:
             d["source_evidence"] = self.source_evidence
-        if self.category:
-            d["category"] = self.category
+        d["category"] = category_of(self.type.value, self.category)
+        d["evidence"] = self.evidence
         if self.fingerprint:
             d["path"] = self.path
             d["fingerprint"] = self.fingerprint
@@ -383,8 +386,10 @@ class ScanResult:
                 }],
             }
 
+            result["properties"] = {"category": category_of(vuln.type.value, vuln.category),
+                                    "evidence": vuln.evidence}
             if cwe:
-                result["properties"] = {"cwe": cwe}
+                result["properties"]["cwe"] = cwe
             if vuln.witness:
                 result["message"]["text"] += f"\n\nExploit witness: {vuln.witness}"
             if vuln.fingerprint:
@@ -1040,7 +1045,8 @@ class FrameScanner:
         """Add the `.frame/packs` of the project containing `start` to this scan's
         packs (the nearest ancestor that has one, up to the repository root)."""
         from frame.sil.packs import PackSet, discover_project_packs
-        found = tuple(str(p) for p in discover_project_packs(Path(start)))
+        from frame.sil.packs.loader import kb_dirs
+        found = tuple(str(p) for p in discover_project_packs(Path(start)) + kb_dirs(Path(start)))
         if found == getattr(self, "_project_pack_dirs", ()):
             return
         self._project_pack_dirs = found
@@ -1339,6 +1345,7 @@ class FrameScanner:
                 # Grounded in a real sink Frame recognizes (same file or a file the
                 # agent explored) -> higher-confidence tier.
                 v.source_var = "llm_verified"
+                v.evidence = "llm-verified"
                 v.confidence = max(v.confidence, 0.9)
                 v.description = v.description.replace(
                     "[LLM-detected]", "[LLM-detected, sink-verified]")
@@ -1823,6 +1830,7 @@ class FrameScanner:
             witness=witness_str,
             confidence=confidence,
             cwe_id=cwe_id,
+            evidence=evidence_of_check(verified, bool(check.source_var and check.sink_type)),
         )
 
     def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:
