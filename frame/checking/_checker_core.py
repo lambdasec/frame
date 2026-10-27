@@ -8,7 +8,10 @@ Contains the main check() implementation with all phases of entailment checking.
 import z3
 from typing import Optional
 from frame.core.ast import Formula, Or
-from frame.checking._formula_helpers import has_predicate_calls, has_concrete_spatial, try_instantiate_existential, try_instantiate_nested_existentials
+from frame.checking._formula_helpers import (
+    has_predicate_calls, has_concrete_spatial, strip_antecedent_existentials,
+    try_instantiate_existential, try_instantiate_nested_existentials,
+)
 from frame.checking._disjunct_handling import extract_disjuncts, score_disjuncts
 from frame.preprocessing.equality import EqualityPreprocessor
 from frame.encoding.encoder import Z3Encoder
@@ -120,6 +123,10 @@ def check_entailment_core(
         print(f"After wand elimination:")
         print(f"  Antecedent: {antecedent}")
         print(f"  Consequent: {consequent}")
+
+    # Skolemize the antecedent's existentials so the cells they bind are
+    # visible to folding, lemmas and the encoder.
+    antecedent = strip_antecedent_existentials(antecedent, consequent)
 
     # EXISTENTIAL INSTANTIATION: Handle existential quantifiers in consequent
     # For consequents like `exists w. dll(x,y,w,z)`, try each antecedent variable as witness

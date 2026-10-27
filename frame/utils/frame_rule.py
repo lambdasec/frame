@@ -8,7 +8,7 @@ Implements the frame rule for separation logic entailments with:
 """
 
 from typing import Tuple, Optional, Dict, List
-from frame.core.ast import Formula, Emp, And, True_, PredicateCall, PointsTo, Expr
+from frame.core.ast import Formula, Emp, And, True_, PredicateCall, PointsTo, Expr, Neq, Const
 from frame.analysis.formula import FormulaAnalyzer
 from frame.analysis.footprint import FootprintAnalyzer
 
@@ -224,6 +224,7 @@ class FrameRuleApplicator:
         remaining_ante = list(ante_parts)
         remaining_cons = list(cons_parts)
         substitutions_used = []  # Track substitutions for debugging
+        cancelled = []  # (antecedent part, consequent part) pairs removed from both sides
 
         for ante_part in ante_parts:
             matched = False
@@ -234,6 +235,7 @@ class FrameRuleApplicator:
                 # Strategy 1: Syntactic matching (fast path)
                 if self.analyzer.formulas_syntactically_equal(ante_part, cons_part):
                     common_parts.append(ante_part)
+                    cancelled.append((ante_part, cons_part))
                     remaining_ante.remove(ante_part)
                     remaining_cons.remove(cons_part)
                     matched = True
@@ -244,6 +246,7 @@ class FrameRuleApplicator:
                 # Strategy 2: Semantic matching via lemmas
                 if self._try_semantic_match(ante_part, cons_part):
                     common_parts.append(ante_part)
+                    cancelled.append((ante_part, cons_part))
                     remaining_ante.remove(ante_part)
                     remaining_cons.remove(cons_part)
                     matched = True
@@ -268,6 +271,25 @@ class FrameRuleApplicator:
 
             if matched:
                 continue  # Move to next ante_part
+
+        # Keep a cell whose address is an argument of a predicate left on either
+        # side: its allocation is what keeps that predicate acyclic. Cancelling
+        # z |-> w in ls(x,y) * ls(y,z) * z |-> w |- ls(x,z) * z |-> w leaves
+        # ls(x,y) * ls(y,z) |- ls(x,z), which is invalid (z may lie inside ls(x,y)).
+        endpoints = {str(arg) for part in remaining_ante + remaining_cons
+                     if isinstance(part, PredicateCall) for arg in part.args}
+        restored = [(a, c) for a, c in cancelled
+                    if isinstance(a, PointsTo) and str(a.location) in endpoints]
+        if restored:
+            for pair in restored:
+                cancelled.remove(pair)
+                common_parts.remove(pair[0])
+                if self.verbose:
+                    print(f"[Frame Rule] Keeping {pair[0]}: its address is a predicate endpoint")
+            cancelled_ante = {id(a) for a, _ in cancelled}
+            cancelled_cons = {id(c) for _, c in cancelled}
+            remaining_ante = [p for p in ante_parts if id(p) not in cancelled_ante]
+            remaining_cons = [p for p in cons_parts if id(p) not in cancelled_cons]
 
         # If we found common parts, check if safe to simplify
         if common_parts:
@@ -309,6 +331,17 @@ class FrameRuleApplicator:
                     return antecedent, consequent, False
                 # For predicates, continue with simplification (they might be empty)
 
+            # Cancelling a cell drops what its allocation implied: an allocated
+            # address is not nil and differs from every other allocated address.
+            # Keep those facts as pure constraints, or x |-> 1 * y |-> 2 |- ... & x != y
+            # reduces to emp |- x != y, which is invalid.
+            implied = self._allocation_facts(ante_parts, common_parts)
+            if implied is not None:
+                if ante_pure and not isinstance(ante_pure, True_):
+                    ante_pure = And(ante_pure, implied)
+                else:
+                    ante_pure = implied
+
             # Combine with pure parts if they exist
             if ante_pure and not isinstance(ante_pure, True_):
                 simplified_ante = And(ante_pure, simplified_ante_spatial)
@@ -325,6 +358,26 @@ class FrameRuleApplicator:
             return simplified_ante, simplified_cons, True
         else:
             return antecedent, consequent, False
+
+    def _allocation_facts(self, ante_parts: List[Formula], common_parts: List[Formula]) -> Optional[Formula]:
+        """Pure facts implied by the points-to cells the frame rule removes:
+        each removed address is non-nil and distinct from every other
+        points-to address in the antecedent."""
+        removed = [p.location for p in common_parts if isinstance(p, PointsTo)]
+        if not removed:
+            return None
+        removed_ids = {id(p) for p in common_parts if isinstance(p, PointsTo)}
+        kept = [p.location for p in ante_parts if isinstance(p, PointsTo) and id(p) not in removed_ids]
+
+        facts: List[Formula] = [Neq(loc, Const(None)) for loc in removed]
+        for i, loc in enumerate(removed):
+            for other in removed[i + 1:] + kept:
+                facts.append(Neq(loc, other))
+
+        result = facts[0]
+        for fact in facts[1:]:
+            result = And(result, fact)
+        return result
 
     def _extract_pure_part(self, formula: Formula) -> Formula:
         """Extract the pure (non-spatial) part of a formula"""

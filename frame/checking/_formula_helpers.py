@@ -185,6 +185,33 @@ def substitute_var_in_formula(formula: Formula, old_var: str, new_expr) -> Formu
         return formula
 
 
+def strip_antecedent_existentials(antecedent: Formula, consequent: Formula) -> Formula:
+    """
+    Skolemize existentials in the antecedent: (exists z. P) |- Q holds iff
+    P |- Q, provided z is not free in Q or elsewhere in the antecedent.
+
+    Bound cells are otherwise invisible to folding, lemmas and the encoder's
+    domain tracking, so `exists z. x |-> z * z |-> nil |- ls(x, nil)` failed.
+    Only quantifiers reachable through * and & are stripped (the prenex rule
+    does not hold under | or !); a clashing name is left bound.
+    """
+    from frame.core.ast import Exists, SepConj, And
+
+    taken = set(antecedent.free_vars()) | set(consequent.free_vars())
+
+    def strip(formula: Formula) -> Formula:
+        if isinstance(formula, Exists) and formula.var not in taken:
+            taken.add(formula.var)
+            return strip(formula.formula)
+        if isinstance(formula, SepConj):
+            return SepConj(strip(formula.left), strip(formula.right))
+        if isinstance(formula, And):
+            return And(strip(formula.left), strip(formula.right))
+        return formula
+
+    return strip(antecedent)
+
+
 def try_instantiate_existential(antecedent: Formula, consequent: Formula) -> list:
     """
     Try to instantiate existential quantifiers in consequent with witnesses from antecedent.
