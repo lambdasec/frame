@@ -48,6 +48,54 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.c_specs import C_SPECS, CPP_SPECS
 
 
+_MACRO_EXPR_OK = re.compile(r"^[\w\s()+\-*<>/]*$")
+
+
+def eval_macro_integer(text: str, known: Dict[str, int]) -> Optional[int]:
+    """Value of an object-like macro body that is a constant integer expression
+    (`32`, `(1 << 20)`, `BUF + 1`, `4 * KB`), else None. Only integer literals,
+    already-known macros and + - * / << parentheses are understood; anything else
+    (a cast, a call, `sizeof`, a string, an unknown name) is None."""
+    import ast
+    text = re.sub(r"/\*.*?\*/|//.*", "", text).strip()
+    if not text or not _MACRO_EXPR_OK.match(text):
+        return None
+    text = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+\b", r"\1", text)
+    try:
+        tree = ast.parse(text, mode="eval")
+    except SyntaxError:
+        return None
+
+    def ev(n):
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, int) and not isinstance(n.value, bool):
+            return n.value
+        if isinstance(n, ast.Name):
+            return known.get(n.id)
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
+            v = ev(n.operand)
+            return None if v is None else (-v if isinstance(n.op, ast.USub) else v)
+        if isinstance(n, ast.BinOp):
+            a, b = ev(n.left), ev(n.right)
+            if a is None or b is None:
+                return None
+            if isinstance(n.op, ast.Add):
+                return a + b
+            if isinstance(n.op, ast.Sub):
+                return a - b
+            if isinstance(n.op, ast.Mult):
+                return a * b
+            if isinstance(n.op, ast.LShift) and 0 <= b < 64:
+                return a << b
+            if isinstance(n.op, ast.FloorDiv) and b != 0:
+                return a // b
+        return None
+
+    value = ev(tree)
+    return value if value is not None and abs(value) < 2 ** 62 else None
+
+
 def parse_c_integer(text: str) -> Optional[int]:
     """Value of a C integer literal, or None if it is not one.
 
@@ -121,6 +169,7 @@ class CFrontend:
         self._node_counter = 0
         self._ident_counter = 0
         self._return_tmp_counter = 0
+        self._int_macros: Dict[str, int] = {}
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C source code to SIL Program."""
@@ -143,6 +192,7 @@ class CFrontend:
         self._program = program
         program.source_files.append(filename)
         program.function_macros = self._function_macro_names(tree.root_node)
+        self._int_macros = self._integer_macros(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
 
@@ -167,6 +217,45 @@ class CFrontend:
         program.language = self.LANGUAGE
         finish_program(program, self.packs, source_code)
         return program
+
+    def _integer_macros(self, root: TSNode) -> Dict[str, int]:
+        """Object-like macros that are one top-level integer constant (`#define SLOTS 32`).
+
+        A macro stands for its value wherever it is written, so `char buf[SLOTS]` is an array of
+        32 and `i <= SLOTS` compares with 32. Only a macro defined exactly once, outside every
+        conditional, and never `#undef`ed counts: with several definitions (or arms of an `#if`)
+        the file does not say which one applies, so the name stays unresolved."""
+        defs: Dict[str, List[Optional[str]]] = {}
+        undef: Set[str] = set()
+        top = root.children
+        stack = [(c, True) for c in top]
+        while stack:
+            n, at_top = stack.pop()
+            if n.type == "preproc_def":
+                name = n.child_by_field_name("name")
+                value = n.child_by_field_name("value")
+                if name is not None:
+                    key = self._get_text(name)
+                    text = self._get_text(value) if value is not None else ""
+                    defs.setdefault(key, []).append(text if at_top else None)
+            elif n.type == "preproc_call":
+                directive = n.child_by_field_name("directive")
+                if directive is not None and self._get_text(directive).strip() == "#undef":
+                    undef.add(self._get_text(n.child_by_field_name("argument")).strip())
+            elif n.type in ("preproc_function_def", "preproc_include"):
+                continue
+            for c in n.children:
+                if c.type not in ("comment", "string_literal"):
+                    stack.append((c, at_top and n.type == "translation_unit"))
+        known: Dict[str, int] = {}
+        for _ in range(4):                       # macros defined in terms of earlier ones
+            for name, bodies in defs.items():
+                if name in known or name in undef or len(bodies) != 1 or bodies[0] is None:
+                    continue
+                value = eval_macro_integer(bodies[0], known)
+                if value is not None:
+                    known[name] = value
+        return known
 
     def _function_macro_names(self, root: TSNode) -> Set[str]:
         """Names of the function-like macros `#define`d in this file. A macro
@@ -606,10 +695,13 @@ class CFrontend:
         if name:
             self._current_proc.array_locals.add(name)
         size_node = declarator.child_by_field_name("size")
-        if not name or size_node is None or size_node.type != "number_literal":
+        if not name or size_node is None:
             return
-
-        bound = parse_c_integer(self._get_text(size_node))
+        if size_node.type == "number_literal":
+            bound = parse_c_integer(self._get_text(size_node))
+        else:
+            # `char buf[SLOTS]`, `char buf[BUF_MAX + 1]`: an integer macro (or arithmetic over them)
+            bound = eval_macro_integer(self._get_text(size_node), self._int_macros)
         if bound is None or bound <= 0:
             return
 
@@ -744,6 +836,14 @@ class CFrontend:
                 self._add_instrs(instrs)
             else:
                 exp = self._translate_expression(right)
+                if isinstance(exp, ExpCall) and not self._is_local_name(target):
+                    # `data_ = new T[n]` / `g_buf = (char *)malloc(n)` where `data_` is a member or a
+                    # global: the allocation is handed to something that outlives the function. Bind it to
+                    # a temporary first, as for `p = malloc(n)`, so the ownership analysis sees the hand-off.
+                    self._return_tmp_counter += 1
+                    tmp = f"$own{self._return_tmp_counter}"
+                    self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=exp))
+                    exp = ExpVar(PVar(tmp))
                 self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
         elif left.type == "pointer_expression":
             # *ptr = value (store)
@@ -770,9 +870,19 @@ class CFrontend:
             if obj and field:
                 obj_exp = self._translate_expression(obj)
                 field_name = self._get_text(field)
-                val_exp = self._translate_expression(right)
                 # Model as assignment to synthetic variable
                 target = f"{self._get_text(obj)}_{field_name}"
+                if right.type == "call_expression" and op == "=" and self._current_node is not None:
+                    # `out->key = strdup(s)`: the call is its own Call bound to a temporary and the
+                    # field receives the temporary, exactly as for `p = strdup(s)`. The ownership
+                    # analysis then sees an allocation handed to a caller-visible location (an escape),
+                    # not a fresh allocation owned by a local called `out_key` that is never freed.
+                    self._return_tmp_counter += 1
+                    tmp = f"$fld{self._return_tmp_counter}"
+                    self._add_instrs(self._translate_call_assignment(tmp, right, loc))
+                    val_exp = ExpVar(PVar(tmp))
+                else:
+                    val_exp = self._translate_expression(right)
                 if self._is_arrow_access(left):
                     # `p->f = v` stores THROUGH p. The synthetic assignment below
                     # hides that, so expose the dereference of p as a marker read
@@ -1030,6 +1140,14 @@ class CFrontend:
                 break
 
         self._add_instr(Return(loc=loc, value=value_exp))
+
+    def _is_local_name(self, name: str) -> bool:
+        """Is `name` a local variable or parameter of the procedure being translated? Anything else
+        assigned in a function body is a member, a global or a captured variable."""
+        proc = self._current_proc
+        if proc is None:
+            return True
+        return name in (proc.locals or {}) or name in {p.name for p, _ in proc.params}
 
     def _delivers_into_arguments(self, call_node: TSNode) -> bool:
         """Does this call fill one of its arguments with input (`read`, `recv`, `fgets`, `fread`)?"""
@@ -1325,7 +1443,10 @@ class CFrontend:
             return ExpConst.null()
 
         if node.type == "identifier":
-            return ExpVar(PVar(self._get_text(node)))
+            text = self._get_text(node)
+            if text in self._int_macros:
+                return ExpConst.integer(self._int_macros[text])     # the preprocessor's view
+            return ExpVar(PVar(text))
 
         elif node.type == "number_literal":
             text = self._get_text(node)
@@ -1678,6 +1799,12 @@ class CFrontend:
             # translator's receiver handling, which looks for a '.'
             if self.LANGUAGE == "cpp" and func.type == "field_expression" and "->" in text:
                 text = text.replace("->", ".")
+            if self.LANGUAGE == "cpp" and func.type == "qualified_identifier":
+                # `std::memcpy` / `::free` are the C library function: the translator's name sets
+                # (non-retaining calls, allocators, deallocators) are keyed on the plain name
+                for prefix in ("std::", "::"):
+                    if text.startswith(prefix) and text[len(prefix):] in C_SPECS:
+                        return text[len(prefix):]
             return text
         return ""
 

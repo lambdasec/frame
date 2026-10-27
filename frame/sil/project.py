@@ -1184,6 +1184,15 @@ class ProjectIndex:
 
     def _resolve_method_call(self, mod: FileModule, name: str,
                              caller_class: Optional[str]) -> Optional[ProcRef]:
+        receiver, _, method = name.rpartition(".")
+        if receiver in ("super()", "super") and method and caller_class is not None:
+            # `super().m(...)`: the nearest base class that defines m (never the caller's own)
+            for base in mod.bases.get(caller_class, []):
+                base_cls = self.resolve_class(mod.key, base)
+                found = self._find_method(base_cls, method) if base_cls else None
+                if found is not None:
+                    return found
+            return None
         inline = _INLINE_CONSTRUCTION.match(name)        # Python `C(...).m`
         if inline:
             cls = self.resolve_class(mod.key, inline.group(1))
@@ -1193,6 +1202,9 @@ class ProjectIndex:
         receiver, _, method = name.rpartition(".")
         if not receiver or not method:
             return None
+        if receiver in ("self", "this", "cls") and caller_class is not None:
+            # a method the class inherits from a base defined in another file
+            return self._find_method((mod.key, caller_class), method)
         cls = self.resolve_class(mod.key, receiver)
         if cls is not None:                               # `Class.method(...)`: static/class methods only
             found = self._find_method(cls, method)

@@ -595,39 +595,30 @@ RACE_CONDITION_SPECS = {
 # Use After Free / Double Free (A10 related)
 # =============================================================================
 
-# Note: These specs combine is_sink for taint tracking with allocates/frees flags
-# for memory safety analysis. Both are needed for complete coverage.
+# Note: free/delete are NOT taint sinks. Taint says the CONTENTS of a buffer came from outside
+# (`fread(buf, ...)` taints `buf`), not that its address did; a "tainted" `free(buf)` was reported
+# as an unclassified taint flow on every release of a buffer that had been read into.
 
 MEMORY_SAFETY_SPECS = {
     # Free operations - mark as deallocators AND sinks for double-free/UAF detection
     "free": ProcSpec(
         frees=True,
-        is_sink="memory",
-        sink_args=[0],
         description="free (check for UAF/double-free CWE-416/CWE-415)"
     ),
     "delete": ProcSpec(
         frees=True,
-        is_sink="memory",
-        sink_args=[0],
         description="delete (check for UAF CWE-416)"
     ),
     "delete[]": ProcSpec(
         frees=True,
-        is_sink="memory",
-        sink_args=[0],
         description="delete[] (check for UAF CWE-416)"
     ),
     "operator delete": ProcSpec(
         frees=True,
-        is_sink="memory",
-        sink_args=[0],
         description="operator delete (C++ deallocation)"
     ),
     "operator delete[]": ProcSpec(
         frees=True,
-        is_sink="memory",
-        sink_args=[0],
         description="operator delete[] (C++ array deallocation)"
     ),
 

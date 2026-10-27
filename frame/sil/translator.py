@@ -7458,6 +7458,16 @@ class SILTranslator:
                 and self._get_var_name(cur.base.var) == "request"
                 and cur.field_name in self._REQUEST_SERVER_STATE_ATTRS)
 
+    def _field_path(self, exp: Exp) -> Optional[str]:
+        """`a.b.c` for a chain of field reads on a plain variable, else None."""
+        parts = []
+        while isinstance(exp, ExpFieldAccess):
+            parts.append(exp.field_name)
+            exp = exp.base
+        if isinstance(exp, ExpVar):
+            return ".".join([self._get_var_name(exp.var)] + parts[::-1])
+        return None
+
     def _get_exp_vars(self, exp: Exp) -> List[str]:
         """Get all variable names referenced in expression"""
         if isinstance(exp, ExpVar):
@@ -7491,7 +7501,11 @@ class SILTranslator:
         if isinstance(exp, ExpFieldAccess):
             if self._is_request_server_state(exp):
                 return []
-            return self._get_exp_vars(exp.base)
+            names = self._get_exp_vars(exp.base)
+            # `req.filter` written earlier (a middleware stores request data on the request)
+            # is tracked under its own name: reading it must look that name up too
+            dotted = self._field_path(exp)
+            return names + [dotted] if dotted else names
         if isinstance(exp, ExpIndex):
             return self._get_exp_vars(exp.base) + self._get_exp_vars(exp.index)
         if isinstance(exp, ExpStringConcat):

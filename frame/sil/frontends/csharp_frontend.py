@@ -89,6 +89,8 @@ class CSharpFrontend:
         self._local_types: Dict[str, str] = {}
         self._class_fields: Dict[str, str] = {}
         self._class_fields_of: Dict[str, Dict[str, str]] = {}
+        self._declared_methods: Dict[str, set] = {}
+        self._class_has_bases: Dict[str, bool] = {}
         self._proc_types: Dict[int, Dict[str, str]] = {}
         self._hoisted: Dict[Tuple[int, int], str] = {}
         # variable -> XML parser configuration flags seen in the procedure being translated
@@ -194,7 +196,10 @@ class CSharpFrontend:
         conflicts: set = set()
 
         def type_text(t: Optional[TSNode]) -> str:
-            return self._get_text(t).split("<")[0].rstrip("?").strip() if t is not None else ""
+            text = self._get_text(t).split("<")[0].rstrip("?").strip() if t is not None else ""
+            head, dot, rest = text.partition(".")
+            alias = self._imports.names.get(head) if dot else None
+            return f"{alias}.{rest}" if alias else text     # `using Repo = App.Data;` ... `Repo.UserRepository`
 
         def add(name: str, typ: str) -> None:
             if not name or not typ:
@@ -245,7 +250,7 @@ class CSharpFrontend:
             proc.var_types = {k: v for k, v in types.items() if v and v != "var"}
             own_class = (proc.class_name or "").rsplit(".", 1)[-1]
             own_methods = {p.name.rsplit(".", 1)[-1] for p in program.procedures.values()
-                           if p.class_name == proc.class_name}
+                           if p.class_name == proc.class_name} | self._declared_methods.get(proc.class_name, set())
             for node in proc.nodes.values():
                 for instr in node.instrs:
                     if not isinstance(instr, Call) or instr.canonical is not None:
@@ -261,6 +266,9 @@ class CSharpFrontend:
                                 local_types=self._local_types):
                             instr.canonical = canonical_call(
                                 "csharp", f"new {func}", self._imports, local_types=self._local_types)
+                            continue
+                        elif func.isidentifier() and own_class and self._class_has_bases.get(proc.class_name):
+                            instr.callee_class = own_class        # `Helper(x)`: may be inherited
                             continue
                     elif "." not in rest:
                         receiver = types.get(head) or (head if head[:1].isupper() else None)
@@ -339,8 +347,16 @@ class CSharpFrontend:
                 if member.type == "field_declaration":
                     fields.update(self._declared_types(member))
             self._class_fields_of[full_class_name] = fields
+            self._declared_methods[full_class_name] = {
+                self._get_text(c.child_by_field_name("name")) for c in body.children
+                if c.type == "method_declaration" and c.child_by_field_name("name") is not None}
+            self._class_has_bases[full_class_name] = any(c.type == "base_list" for c in node.children)
             for child in body.children:
                 if child.type == "method_declaration":
+                    if child.child_by_field_name("body") is None:
+                        # `abstract` / `extern` / interface member: no body, so no procedure. An empty
+                        # one is what a call would resolve to, hiding the override that implements it.
+                        continue
                     proc = self._translate_method(child)
                     if proc:
                         proc.class_name = full_class_name
@@ -642,6 +658,12 @@ class CSharpFrontend:
         for lam, call in self._lambda_args(owner_node):
             proc = self._translate_lambda(lam, call, owner.name, owner.class_name, owner_types, program)
             if proc is not None:
+                # the enclosing variables the lambda reads: attacker data they hold reaches its body
+                proc.parent = owner.name
+                body = lam.child_by_field_name("body") or lam
+                enclosing = (set(owner_types) | {p.name for p, _ in owner.params}) - {p.name for p, _ in proc.params}
+                used = {self._get_text(n) for n in self._descendants_of(body) if n.type == "identifier"}
+                proc.captures = sorted(enclosing & used)
                 self._translate_lambdas(lam, proc, program)
 
     def _translate_lambda(self, lam: TSNode, call: TSNode, owner_name: str, class_name: Optional[str],
@@ -1331,7 +1353,39 @@ class CSharpFrontend:
                     flags = self._initializer_xml_flags(create)
                     if flags:
                         out.setdefault(self._get_text(name), set()).update(flags)
+        self._derive_reader_flags(root, out)
         return out
+
+    def _derive_reader_flags(self, root: TSNode, flags: Dict[str, set]) -> None:
+        """`var reader = XmlReader.Create(input, settings)` is as hardened as `settings`, and an
+        `XmlDocument` that is only ever loaded from hardened readers (`doc.Load(reader)`) is too: the
+        reader, not the document, decides what the parse resolves."""
+        def hard(var: str) -> bool:
+            f = flags.get(var, set())
+            return "null_resolver" in f or "no_dtd" in f
+
+        loads: Dict[str, List[bool]] = {}
+        nodes = list(self._descendants_of(root))
+        for n in nodes:
+            if n.type == "variable_declarator":
+                name = n.child_by_field_name("name") or next((c for c in n.children if c.type == "identifier"), None)
+                call = next((c for c in self._descendants_of(n) if c.type == "invocation_expression"), None)
+                if name is None or call is None:
+                    continue
+                fn = self._get_method_name(call)
+                args = self._get_method_args(call)
+                if fn.endswith("XmlReader.Create") and len(args) >= 2 and hard(self._get_text(args[1])):
+                    flags.setdefault(self._get_text(name), set()).add("no_dtd")
+        for n in nodes:
+            if n.type == "invocation_expression":
+                recv, _, method = self._get_method_name(n).rpartition(".")
+                args = self._get_method_args(n)
+                if recv and method in ("Load", "LoadXml"):
+                    loads.setdefault(recv, []).append(method == "Load" and len(args) == 1
+                                                      and hard(self._get_text(args[0])))
+        for recv, results in loads.items():
+            if results and all(results):
+                flags.setdefault(recv, set()).add("no_dtd")
 
     def _initializer_xml_flags(self, create: TSNode) -> set:
         flags: set = set()
@@ -1426,6 +1480,18 @@ class CSharpFrontend:
             stack.extend(n.children)
         return out
 
+    def _own_method_call(self, call: TSNode) -> bool:
+        """`Lookup(x)` / `this.Lookup(x)` inside a class, for a method the class declares or may
+        inherit: lowered to a call of its own (not left inside an expression) so the project can
+        resolve it to the declaring class's method."""
+        cls = self._current_class or ""
+        name = self._get_method_name(call)
+        if name.startswith("this."):
+            name = name[5:]
+        if not name.isidentifier() or self._lookup_spec(name) is not None:
+            return False
+        return name in self._declared_methods.get(cls, set()) or bool(self._class_has_bases.get(cls))
+
     def _hoist_sanitizers(self, call_node: TSNode) -> List[Instr]:
         """A sanitizer call nested in another call's argument (`GetFullPath(Combine(d,
         GetFileName(x)))`) is lowered to a call of its own first, so the taint that comes
@@ -1438,7 +1504,7 @@ class CSharpFrontend:
             if n.type in self._LAMBDA_TYPES:
                 continue
             if n.type == "invocation_expression" and (n.start_byte, n.end_byte) not in self._hoisted \
-                    and self._sanitizer_spec(self._get_method_name(n)):
+                    and (self._sanitizer_spec(self._get_method_name(n)) or self._own_method_call(n)):
                 found.append(n)
             stack.extend(n.children)
         instrs: List[Instr] = []
@@ -1619,6 +1685,10 @@ class CSharpFrontend:
                     f and f.type == "member_access_expression") else None
             elif recv.type == "member_access_expression":
                 recv = recv.child_by_field_name("expression")
+            elif recv.type == "object_creation_expression":
+                # `new Regex(pattern).IsMatch(s)`: the creation is a call (and a sink) of its own
+                instrs.extend(self._translate_object_creation(recv, None, self._get_location(recv)))
+                break
             else:
                 break
         return instrs
@@ -1703,10 +1773,13 @@ class CSharpFrontend:
                 # A call/constructor in the returned value must still be analyzed
                 # as a sink -- e.g. `return File.ReadAllText("../" + tainted)` is
                 # a path traversal, not just a returned value.
-                if child.type == "invocation_expression":
-                    self._add_instrs(self._translate_invocation(child))
-                elif child.type == "object_creation_expression":
-                    self._add_instrs(self._translate_object_creation(child, None, loc))
+                inner = child
+                if inner.type == "await_expression":        # `return await client.GetStringAsync(url);`
+                    inner = next((c for c in inner.children if c.type != "await"), inner)
+                if inner.type == "invocation_expression":
+                    self._add_instrs(self._translate_invocation(inner))
+                elif inner.type == "object_creation_expression":
+                    self._add_instrs(self._translate_object_creation(inner, None, loc))
                 value_exp = self._translate_expression(child)
                 break
 
@@ -1986,28 +2059,9 @@ class CSharpFrontend:
 
     def _translate_using(self, node: TSNode) -> None:
         """Translate using statement"""
-        # Translate the variable declaration in the using clause
-        for child in node.children:
-            if child.type == "variable_declaration":
-                # Create a fake local_declaration_statement node to reuse translation
-                for decl in child.children:
-                    if decl.type == "variable_declarator":
-                        name_node = None
-                        value_node = None
-                        for nc in decl.children:
-                            if nc.type == "identifier":
-                                name_node = nc
-                            elif nc.type in ("invocation_expression", "object_creation_expression"):
-                                value_node = nc
-                        if name_node:
-                            var_name = self._get_text(name_node)
-                            loc = self._get_location(decl)
-                            if value_node and value_node.type == "invocation_expression":
-                                instrs = self._translate_call_assignment(var_name, value_node, loc)
-                                self._add_instrs(instrs)
-                            elif value_node:
-                                exp = self._translate_expression(value_node)
-                                self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
+        # `using (var cmd = new SqlCommand(...))`: the resource is an ordinary local declaration
+        # (its constructor and call sinks apply like any other)
+        self._translate_local_declaration(node)
 
         # Translate the body
         body = node.child_by_field_name("body")

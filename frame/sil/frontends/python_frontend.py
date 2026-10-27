@@ -1053,6 +1053,8 @@ class PythonFrontend:
     ) -> List[Instr]:
         """Translate: target = func(args)"""
         instrs = []
+        if self._is_const_table_lookup(call_node):             # `TABLE.get(key, default)`
+            return [Assign(loc=loc, id=PVar(target), exp=ExpConst.null())]
 
         # Check for method chain: obj.method1().method2()
         # The "function" field will be an "attribute" whose object is a "call"
@@ -1103,6 +1105,11 @@ class PythonFrontend:
                 instrs.extend(nested_instrs)
                 args_exp.append((ExpVar(PVar(nested_var)), Typ.unknown_type()))
             else:
+                hoisted = self._hoist_subscript_source(arg, loc)
+                if hoisted is not None:
+                    instrs.extend(hoisted[0])
+                    args_exp.append((hoisted[1], Typ.unknown_type()))
+                    continue
                 instrs.extend(self._lost_call_instrs(arg, loc))
                 args_exp.append((self._translate_expression(arg), Typ.unknown_type()))
 
@@ -1171,6 +1178,19 @@ class PythonFrontend:
         if not re.fullmatch(r"[A-Za-z_][\w.]*", name) or not name.rsplit(".", 1)[-1][:1].isupper():
             return None
         return f"{name}({self._get_text(call_node.child_by_field_name('arguments'))[1:-1]})"
+
+    def _hoist_subscript_source(self, arg: TSNode, loc: Location) -> Optional[Tuple[List[Instr], Exp]]:
+        """A call argument that reads a request container by subscript (`Job(request.form["n"])`,
+        `render(request.args["q"])`): lower it to `tmp = request.form.__getitem__("n")` so the source
+        spec applies and the call's argument (and so its result) carries the data."""
+        if arg.type != "subscript":
+            return None
+        temp = f"__subscript_{self._ident_counter}"
+        self._ident_counter += 1
+        instrs = self._translate_subscript_source_assignment(temp, arg, loc)
+        if instrs is None:
+            return None
+        return instrs, ExpVar(PVar(temp))
 
     def _expand_nested_call(self, call_node: TSNode, loc: Location) -> Tuple[List[Instr], str]:
         """Expand a nested call and return (instructions, result_var_name)"""
@@ -1262,7 +1282,14 @@ class PythonFrontend:
 
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        args_exp = []
+        for a in args:
+            hoisted = self._hoist_subscript_source(a, loc)
+            if hoisted is not None:
+                instrs.extend(hoisted[0])
+                args_exp.append((hoisted[1], Typ.unknown_type()))
+            else:
+                args_exp.append((self._translate_expression(a), Typ.unknown_type()))
         for a in args:
             instrs.extend(self._lost_call_instrs(a, loc))
 

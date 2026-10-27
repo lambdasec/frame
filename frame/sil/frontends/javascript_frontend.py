@@ -209,6 +209,8 @@ class JavaScriptFrontend:
         # so module specs match whatever the local name is (_get_call_name).
         self._module_aliases, self._imported_names = self._module_bindings(tree.root_node)
         self._declared_names = self._file_declared_names(tree.root_node)
+        self._const_tables = self._collect_const_tables(tree.root_node)
+        self._const_sets = self._collect_const_sets(tree.root_node)
         self._binding_cache = {}
 
         # Create program with library specs
@@ -2190,6 +2192,59 @@ class JavaScriptFrontend:
             stack.extend(n.named_children)
         return out
 
+    _const_tables: frozenset = frozenset()
+
+    _const_sets: frozenset = frozenset()
+
+    def _collect_const_sets(self, root: TSNode) -> frozenset:
+        """Top-level `const ALLOWED = new Set(["a", "b"])` of literals: `ALLOWED.has(x)` is a membership
+        test in a constant collection, the same guard as `ALLOWED.includes(x)`."""
+        sets = set()
+        for stmt in root.named_children:
+            if stmt.type == "export_statement" and stmt.named_children:
+                stmt = stmt.named_children[-1]
+            if stmt.type != "lexical_declaration" or not self._get_text(stmt).startswith("const"):
+                continue
+            for decl in stmt.named_children:
+                name, value = decl.child_by_field_name("name"), decl.child_by_field_name("value")
+                if decl.type != "variable_declarator" or name is None or value is None \
+                        or name.type != "identifier" or value.type != "new_expression":
+                    continue
+                cons, args = value.child_by_field_name("constructor"), value.child_by_field_name("arguments")
+                if cons is None or self._get_text(cons) != "Set" or args is None or not args.named_children:
+                    continue
+                arr = args.named_children[0]
+                if arr.type == "array" and all(e.type in ("string", "number") for e in arr.named_children):
+                    sets.add(self._get_text(name))
+        return frozenset(sets)
+
+    def _is_const_table_subscript(self, node: TSNode) -> bool:
+        obj = node.child_by_field_name("object")
+        return obj is not None and obj.type == "identifier" and self._get_text(obj) in self._const_tables
+
+    def _collect_const_tables(self, root: TSNode) -> frozenset:
+        """Top-level `const TABLE = { key: "literal", ... }` objects whose values are all literals:
+        `TABLE[userKey]` yields one of the table's own constants, never the key, so looking a request
+        value up in it (`FEEDS[req.query.name] || FEEDS.news`) is the allow-list idiom, not a flow."""
+        tables = set()
+        for stmt in root.named_children:
+            if stmt.type == "export_statement" and stmt.named_children:
+                stmt = stmt.named_children[-1]
+            if stmt.type != "lexical_declaration" or not self._get_text(stmt).startswith("const"):
+                continue
+            for decl in stmt.named_children:
+                name, value = decl.child_by_field_name("name"), decl.child_by_field_name("value")
+                if decl.type != "variable_declarator" or name is None or value is None \
+                        or name.type != "identifier" or value.type != "object" or not value.named_children:
+                    continue
+                if all(pair.type == "pair" and pair.child_by_field_name("value") is not None
+                       and (pair.child_by_field_name("value").type in ("string", "number", "true", "false", "null")
+                            or (pair.child_by_field_name("value").type == "template_string"
+                                and "${" not in self._get_text(pair.child_by_field_name("value"))))
+                       for pair in value.named_children):
+                    tables.add(self._get_text(name))
+        return frozenset(tables)
+
     def _file_declared_names(self, root: TSNode) -> Counter:
         """Every name the file binds -- variables (including destructuring),
         parameters, functions, classes, imports and catch parameters -- with
@@ -2322,6 +2377,17 @@ class JavaScriptFrontend:
                 if found:
                     instrs.extend(found)
                     break
+
+        # `const f = path.join(BASE, req.query.name)`: a propagator (path.join/resolve, JSON.parse,
+        # url helpers...) returns request data when one of the arguments it propagates is an inline
+        # request read -- not only when that argument is a variable.
+        prop_spec = self._lookup_call_spec(func_name, call_node)
+        if (prop_spec is not None and prop_spec.taint_propagates and not prop_spec.is_taint_sink()
+                and not prop_spec.is_taint_source() and not prop_spec.is_taint_sanitizer()
+                and func_name not in self._PASSTHROUGH_CALLS):
+            for idx in prop_spec.taint_propagates:
+                if 0 <= idx < len(args):
+                    instrs.extend(self._check_expression_for_taint_source(args[idx], target, loc))
 
         # `req.query.p.trim()`, `req.headers.authorization.split(' ')[0]`: a method called on an
         # inline request value returns request data (a string method keeps the payload).
@@ -2456,10 +2522,34 @@ class JavaScriptFrontend:
         object is narrowed to the values its template prints raw."""
         kept = self._render_data_exps(func_name, args, idx)
         if kept is None:
+            if self._spawn_argv_is_data(func_name, args, idx):
+                return ExpConst.string("")      # argv of a shell-less spawn: arguments, not a command line
             if args[idx].type in ("object", "array") and func_name.rsplit(".", 1)[-1] in ("send", "response"):
                 return ExpConst.string("")      # serialised as JSON, not sent as HTML
             return self._translate_expression(args[idx])
         return ExpStringConcat(kept) if kept else ExpConst.string("")
+
+    _SHELL_OPTION = re.compile(r"\bshell\s*:(?!\s*(?:false|0|null|undefined)\b)")
+
+    def _spawn_argv_is_data(self, func_name: str, args: List[TSNode], idx: int) -> bool:
+        """Argument `idx` is the argument vector of `spawn(program, [args])` that no shell parses:
+        the program is not a shell and the options do not say `shell: true`."""
+        if idx != 1 or len(args) < 2 or func_name.rsplit(".", 1)[-1] not in ("spawn", "spawnSync"):
+            return False
+        if args[1].type != "array" or self._is_shell_program(args[0]):
+            return False
+        return not (len(args) > 2 and self._SHELL_OPTION.search(self._get_text(args[2])))
+
+    _SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "csh", "fish", "cmd", "cmd.exe",
+                                 "powershell", "powershell.exe", "pwsh", "pwsh.exe"})
+
+    def _is_shell_program(self, node: TSNode) -> bool:
+        """Is a spawn's program argument a literal naming a shell? A program that is not a literal
+        stays a shell candidate (it may be `process.env.SHELL`, a variable...)."""
+        if node.type == "string":
+            text = self._get_text(node).strip("'\"")
+            return text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower() in self._SHELL_PROGRAMS
+        return node.type != "template_string"
 
     def _sink_arg_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> List[Exp]:
         """The expressions of sink argument `arg_idx`: the argument itself, or
@@ -2467,6 +2557,11 @@ class JavaScriptFrontend:
         kept = self._render_data_exps(func_name, args, arg_idx)
         if kept is not None:
             return kept
+        # `spawn("git", ["log", branch])`: the argument vector of a spawn without a shell is not a command
+        # line. It is one only when the program is itself a shell (`spawn("sh", ["-c", cmd])`); with
+        # `{ shell: true }` the framework-pack rule covers it.
+        if self._spawn_argv_is_data(func_name, args, arg_idx):
+            return []
         # `res.send({ q: req.query.q })` / `h.response([...])`: an object or array is
         # serialised as JSON (application/json), not sent as HTML.
         if (args[arg_idx].type in ("object", "array")
@@ -2943,6 +3038,9 @@ class JavaScriptFrontend:
             prop_name = self._get_text(prop) if prop else ""
             return ExpFieldAccess(obj_exp, prop_name)
 
+        elif node.type == "subscript_expression" and self._is_const_table_subscript(node):
+            return ExpConst.null()
+
         elif node.type == "subscript_expression":
             obj = node.child_by_field_name("object")
             index = node.child_by_field_name("index")
@@ -2953,6 +3051,12 @@ class JavaScriptFrontend:
         elif node.type == "call_expression":
             func = node.child_by_field_name("function")
             func_exp = self._translate_expression(func)
+            if (func is not None and func.type == "member_expression"
+                    and self._get_text(func.child_by_field_name("property")) == "has"
+                    and func.child_by_field_name("object").type == "identifier"
+                    and self._get_text(func.child_by_field_name("object")) in self._const_sets):
+                func_exp = ExpFieldAccess(self._translate_expression(func.child_by_field_name("object")),
+                                          "includes")                # Set.has == includes on a constant set
             fluent = self._fluent_call_name(node)
             if fluent is not None:
                 func_exp = ExpVar(PVar(fluent))        # `$('<li>').text(v)` -> `$.text`
@@ -3423,6 +3527,30 @@ class JavaScriptFrontend:
         for c in conflicts:
             aliases.pop(c, None)
             names.pop(c, None)
+
+        # `const execAsync = util.promisify(cp.exec)` / `promisify(exec)`: the promise form is the same
+        # function, so calls through it are named after the wrapped one (`child_process.exec`).
+        def promisified(fn_text: str) -> bool:
+            head, _, member = fn_text.rpartition(".")
+            return (member == "promisify" and aliases.get(head) == "util") or \
+                   (not head and names.get("promisify") == "util.promisify")
+        for stmt in root.named_children:
+            if stmt.type not in ("lexical_declaration", "variable_declaration"):
+                continue
+            for d in stmt.named_children:
+                value, pattern = d.child_by_field_name("value"), d.child_by_field_name("name")
+                if d.type != "variable_declarator" or value is None or pattern is None \
+                        or pattern.type != "identifier" or value.type != "call_expression":
+                    continue
+                fn = value.child_by_field_name("function")
+                args = value.child_by_field_name("arguments")
+                if fn is None or args is None or len(args.named_children) != 1 or not promisified(self._get_text(fn)):
+                    continue
+                wrapped = self._get_text(args.named_children[0])
+                head, _, member = wrapped.rpartition(".")
+                target = f"{aliases[head]}.{member}" if head in aliases else (names.get(wrapped) if not head else None)
+                if target:
+                    names[self._get_text(pattern)] = target
         return aliases, names
 
     def _get_member_chain(self, node: TSNode) -> str:

@@ -676,3 +676,70 @@ def reboot():
     return "scheduled"
 ''',
 })
+
+
+case("inherited_helper_via_subclass", {
+    "app/base.py": '''class BaseRepo:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def run(self, sql):
+        cur = self.conn.cursor()
+        cur.execute(sql)  # frame-expect: CWE-89
+        return cur.fetchall()
+''',
+    "app/users.py": '''from app.base import BaseRepo
+
+
+class UserRepo(BaseRepo):
+    def by_name(self, name):
+        return self.run(<<"SELECT * FROM users WHERE name = '" + name + "'"||"SELECT * FROM users WHERE name = '" + str(int(name)) + "'">>)
+''',
+    "app/web.py": '''from flask import Flask, request
+from app.users import UserRepo
+import sqlite3
+
+app = Flask(__name__)
+repo = UserRepo(sqlite3.connect("x.db"))
+
+
+@app.route("/u")
+def u():
+    return str(repo.by_name(request.args.get("name", "")))
+''',
+})
+
+
+case("super_call_passes_taint", {
+    "svc/base.py": '''import os
+
+
+class Runner:
+    def execute(self, arg):
+        os.system("tool " + arg)  # frame-expect: CWE-78
+''',
+    "svc/child.py": '''from svc.base import Runner
+
+
+class AuditedRunner(Runner):
+    def execute(self, arg):
+        print("running")
+        super().execute(<<arg||shlex_quote(arg)>>)
+
+
+def shlex_quote(s):
+    import shlex
+    return shlex.quote(s)
+''',
+    "svc/web.py": '''from flask import Flask, request
+from svc.child import AuditedRunner
+
+app = Flask(__name__)
+
+
+@app.route("/run")
+def run():
+    AuditedRunner().execute(request.args["target"])
+    return "ok"
+''',
+})

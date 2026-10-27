@@ -151,6 +151,10 @@ NODE_SPECS = {
     # new Function(argName1, ..., body): the code is the LAST argument, so flag
     # any argument -- they all influence the generated function body.
     "Function": _global_sink("code", [0, 1, 2, 3], "Function constructor (code injection)"),
+    # A module specifier built from attacker data loads (and runs) a module of their choosing.
+    # Constant specifiers carry no taint, so ordinary `require("x")` never fires.
+    "require": _global_sink("code", [0], "require() of an attacker-chosen module (code injection)"),
+    "import": _global_sink("code", [0], "dynamic import() of an attacker-chosen module (code injection)"),
     "setTimeout": _global_sink("code", [0], "setTimeout with string (code injection)"),
     "setInterval": _global_sink("code", [0], "setInterval with string (code injection)"),
     "vm.runInThisContext": _sink("code", [0], "vm.runInThisContext (code injection)"),
@@ -612,11 +616,11 @@ PROTOTYPE_POLLUTION_SPECS = {
     "__proto__": _sink("prototype_pollution", [0], "Prototype access (CWE-1321)"),
     "constructor.prototype": _sink("prototype_pollution", [0], "Constructor prototype (CWE-1321)"),
     "Object.assign": _sink("prototype_pollution", [1], "Object.assign (potential pollution)"),
-    "_.merge": _sink("prototype_pollution", [0, 1], "Lodash merge (prototype pollution)"),
-    "_.defaultsDeep": _sink("prototype_pollution", [0, 1], "Lodash defaultsDeep (prototype pollution)"),
-    "$.extend": _sink("prototype_pollution", [0, 1], "jQuery extend (prototype pollution)"),
-    "merge": _sink("prototype_pollution", [0, 1], "Deep merge (potential pollution)"),
-    "deepmerge": _sink("prototype_pollution", [0, 1], "Deep merge (potential pollution)"),
+    "_.merge": _sink("prototype_pollution", [0, 1, 2, 3], "Lodash merge (prototype pollution)"),
+    "_.defaultsDeep": _sink("prototype_pollution", [0, 1, 2, 3], "Lodash defaultsDeep (prototype pollution)"),
+    "$.extend": _sink("prototype_pollution", [0, 1, 2, 3], "jQuery extend (prototype pollution)"),
+    "merge": _sink("prototype_pollution", [0, 1, 2, 3], "Deep merge (potential pollution)"),
+    "deepmerge": _sink("prototype_pollution", [0, 1, 2, 3], "Deep merge (potential pollution)"),
 }
 
 # =============================================================================

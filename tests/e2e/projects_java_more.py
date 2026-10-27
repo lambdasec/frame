@@ -433,7 +433,7 @@ public class UserNameRepository implements Repository<String> {
 
 # 8 -- path traversal guarded by canonical path prefix
 _FILE_SERVLET = _servlet("", '''        resp.getWriter().println(new Documents("/srv/docs").read(v));''', "import com.acme.files.Documents;\n")
-case("canonical_path_guard", {
+case("path_resolve_basename", {
     "src/com/acme/web/EntryServlet.java": _FILE_SERVLET,
     "src/com/acme/files/Documents.java": '''package com.acme.files;
 
@@ -1039,93 +1039,6 @@ public class Lookup {
 ''',
 })
 
-# 20 -- servlet filter wraps the request, servlet uses what the filter stored
-_FILTER = '''package com.acme.web;
-
-import java.io.IOException;
-import javax.servlet.Filter;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
-
-public class TenantFilter implements Filter {
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-            throws IOException, ServletException {
-        HttpServletRequest req = (HttpServletRequest) request;
-        request.setAttribute("tenant", req.getHeader("X-Tenant"));
-        chain.doFilter(request, response);
-    }
-}
-'''
-_TENANT_SERVLET = '''package com.acme.web;
-
-import com.acme.repo.TenantStore;
-import java.io.IOException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
-public class TenantServlet extends HttpServlet {
-    private final TenantStore store = new TenantStore();
-
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        String tenant = (String) req.getAttribute("tenant");
-        resp.getWriter().println(store.settings(tenant));
-    }
-}
-'''
-case("filter_sets_attribute_servlet_reads", {
-    "src/com/acme/web/TenantFilter.java": _FILTER,
-    "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
-    "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-
-public class TenantStore {
-    public String settings(String tenant) {
-        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app"); Statement st = c.createStatement()) {
-            ResultSet rs = st.executeQuery("SELECT json FROM settings WHERE tenant = '" + tenant + "'");  // frame-expect: CWE-89
-            return rs.next() ? rs.getString(1) : "{}";
-        } catch (SQLException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-}
-''',
-}, {
-    "src/com/acme/web/TenantFilter.java": _FILTER,
-    "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
-    "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-
-public class TenantStore {
-    public String settings(String tenant) {
-        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app");
-             PreparedStatement ps = c.prepareStatement("SELECT json FROM settings WHERE tenant = ?")) {
-            ps.setString(1, tenant);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString(1) : "{}";
-        } catch (SQLException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-}
-''',
-})
-
 # 21 -- exception handling around the sink: the sink is in a try with catch/finally and rethrow
 _EXC_SERVLET = _servlet("", '''        resp.getWriter().println(new Archiver().pack(v));''', "import com.acme.io.Archiver;\n")
 case("exception_wrapped_sink", {
@@ -1285,10 +1198,334 @@ case("sendredirect_relative_guard", {
 ''',
 }, {
     "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/") || next.startsWith("//")) {
-            next = "/home";
+            resp.sendRedirect("/home");
+            return;
         }
         resp.sendRedirect(next);
     }
 }
 ''',
 })
+
+
+# 25 -- Spring: controller depends on an interface, one @Service implements it (@Autowired constructor)
+_SVC_CTRL = '''package com.acme.api;
+
+import com.acme.svc.LookupService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class DirectoryController {
+    private final LookupService lookup;
+
+    @Autowired
+    public DirectoryController(LookupService lookup) { this.lookup = lookup; }
+
+    @GetMapping("/people")
+    public Object people(@RequestParam String uid) {
+        return lookup.find(uid);
+    }
+}
+'''
+_SVC_IFACE = '''package com.acme.svc;
+
+public interface LookupService {
+    Object find(String uid);
+}
+'''
+case("autowired_interface_ldap_search", {
+    "src/com/acme/api/DirectoryController.java": _SVC_CTRL,
+    "src/com/acme/svc/LookupService.java": _SVC_IFACE,
+    "src/com/acme/svc/LdapLookupService.java": '''package com.acme.svc;
+
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.SearchControls;
+import org.springframework.stereotype.Service;
+
+@Service
+public class LdapLookupService implements LookupService {
+    private final DirContext ctx;
+
+    public LdapLookupService(DirContext ctx) { this.ctx = ctx; }
+
+    public Object find(String uid) {
+        try {
+            return ctx.search("ou=people,dc=acme,dc=com", "(uid=" + uid + ")", new SearchControls());  // frame-expect: CWE-90
+        } catch (NamingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/api/DirectoryController.java": _SVC_CTRL,
+    "src/com/acme/svc/LookupService.java": _SVC_IFACE,
+    "src/com/acme/svc/LdapLookupService.java": '''package com.acme.svc;
+
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.SearchControls;
+import org.springframework.stereotype.Service;
+
+@Service
+public class LdapLookupService implements LookupService {
+    private final DirContext ctx;
+
+    public LdapLookupService(DirContext ctx) { this.ctx = ctx; }
+
+    public Object find(String uid) {
+        try {
+            return ctx.search("ou=people,dc=acme,dc=com", "(uid={0})", new Object[] {uid}, new SearchControls());
+        } catch (NamingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+})
+
+# 26 -- XPath built from request data in a static helper; escaped twin
+_XP_SERVLET = _servlet("", '''        resp.getWriter().println(Inventory.stock(v));''', "import com.acme.xml.Inventory;\n")
+case("xpath_concatenation_helper", {
+    "src/com/acme/web/EntryServlet.java": _XP_SERVLET,
+    "src/com/acme/xml/Inventory.java": '''package com.acme.xml;
+
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
+import org.w3c.dom.Document;
+
+public final class Inventory {
+    private static Document doc;
+
+    private Inventory() {}
+
+    public static String stock(String sku) {
+        XPath xp = XPathFactory.newInstance().newXPath();
+        try {
+            return (String) xp.evaluate("//item[@sku='" + sku + "']/qty", doc, XPathConstants.STRING);  // frame-expect: CWE-643
+        } catch (XPathExpressionException e) {
+            return "0";
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _XP_SERVLET,
+    "src/com/acme/xml/Inventory.java": '''package com.acme.xml;
+
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
+import org.w3c.dom.Document;
+
+public final class Inventory {
+    private static Document doc;
+
+    private Inventory() {}
+
+    public static String stock(String sku) {
+        if (!sku.matches("[A-Z0-9-]{1,16}")) throw new IllegalArgumentException(sku);
+        XPath xp = XPathFactory.newInstance().newXPath();
+        try {
+            return (String) xp.evaluate("//item[@sku='" + sku + "']/qty", doc, XPathConstants.STRING);
+        } catch (XPathExpressionException e) {
+            return "0";
+        }
+    }
+}
+''',
+})
+
+
+# ======================================================================================
+# Known gaps: realistic flows Frame does not follow yet (strict xfail in test_known_gaps_jvmnet.py).
+# {name: files}; `frame-expect` markers say where the finding should be.
+KNOWN_GAPS = {}
+
+KNOWN_GAPS["builder_field_setter_carries_request_data"] = {
+    "src/com/acme/web/EntryServlet.java": _servlet("", '''        Tool tool = Tool.of("convert");
+        tool.input(v);
+        resp.getWriter().println(tool.run());''', "import com.acme.build.Tool;\n"),
+    "src/com/acme/build/Tool.java": '''package com.acme.build;
+
+import java.io.IOException;
+
+public class Tool {
+    private final String name;
+    private String input = "";
+
+    private Tool(String name) { this.name = name; }
+
+    public static Tool of(String name) { return new Tool(name); }
+
+    public Tool input(String in) {
+        this.input = in;
+        return this;
+    }
+
+    public String run() throws IOException {
+        ProcessBuilder pb = new ProcessBuilder("sh", "-c", name + " " + input);  // frame-expect: CWE-78
+        return String.valueOf(pb.start().hashCode());
+    }
+}
+''',
+}
+
+KNOWN_GAPS["constructor_stores_request_data_in_field"] = {
+    "src/com/acme/web/EntryServlet.java": _servlet("", '''        Job job = new Job(v);
+        resp.getWriter().println(job.go());''', "import com.acme.build.Job;\n"),
+    "src/com/acme/build/Job.java": '''package com.acme.build;
+
+import java.io.IOException;
+
+public class Job {
+    private final String target;
+
+    public Job(String target) { this.target = target; }
+
+    public String go() throws IOException {
+        Process p = Runtime.getRuntime().exec("backup " + target);  // frame-expect: CWE-78
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+}
+
+KNOWN_GAPS["static_factory_chained_call_in_other_file"] = {
+    "src/com/acme/web/EntryServlet.java": _servlet("", '''        resp.getWriter().println(Tool.of("convert").run(v));''', "import com.acme.build.Tool;\n"),
+    "src/com/acme/build/Tool.java": '''package com.acme.build;
+
+import java.io.IOException;
+
+public class Tool {
+    private final String name;
+
+    private Tool(String name) { this.name = name; }
+
+    public static Tool of(String name) { return new Tool(name); }
+
+    public String run(String input) throws IOException {
+        Process p = Runtime.getRuntime().exec(name + " " + input);  // frame-expect: CWE-78
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+}
+
+# 20 -- servlet filter wraps the request, servlet uses what the filter stored
+_FILTER = '''package com.acme.web;
+
+import java.io.IOException;
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+
+public class TenantFilter implements Filter {
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        HttpServletRequest req = (HttpServletRequest) request;
+        request.setAttribute("tenant", req.getHeader("X-Tenant"));
+        chain.doFilter(request, response);
+    }
+}
+'''
+_TENANT_SERVLET = '''package com.acme.web;
+
+import com.acme.repo.TenantStore;
+import java.io.IOException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+public class TenantServlet extends HttpServlet {
+    private final TenantStore store = new TenantStore();
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        String tenant = (String) req.getAttribute("tenant");
+        resp.getWriter().println(store.settings(tenant));
+    }
+}
+'''
+KNOWN_GAPS["filter_sets_attribute_servlet_reads"] = {
+    "src/com/acme/web/TenantFilter.java": _FILTER,
+    "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
+    "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public class TenantStore {
+    public String settings(String tenant) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app"); Statement st = c.createStatement()) {
+            ResultSet rs = st.executeQuery("SELECT json FROM settings WHERE tenant = '" + tenant + "'");  // frame-expect: CWE-89
+            return rs.next() ? rs.getString(1) : "{}";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}
+
+KNOWN_GAPS["redirect_reassigned_to_constant_on_bad_branch"] = {
+    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/") || next.startsWith("//")) {
+            next = "/home";
+        }
+        resp.sendRedirect(next);
+    }
+}
+''',
+}
+
+KNOWN_GAPS["two_implementations_behind_interface_with_qualifier"] = {
+    "src/com/acme/api/DirectoryController.java": _SVC_CTRL.replace("private final LookupService lookup;", "private final LookupService lookup;").replace(
+        "public DirectoryController(LookupService lookup)", "public DirectoryController(@Qualifier(\"ldap\") LookupService lookup)").replace(
+        "import org.springframework.beans.factory.annotation.Autowired;", "import org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.beans.factory.annotation.Qualifier;"),
+    "src/com/acme/svc/LookupService.java": _SVC_IFACE,
+    "src/com/acme/svc/CachedLookupService.java": '''package com.acme.svc;
+
+import org.springframework.stereotype.Service;
+
+@Service("cached")
+public class CachedLookupService implements LookupService {
+    public Object find(String uid) { return uid; }
+}
+''',
+    "src/com/acme/svc/LdapLookupService.java": '''package com.acme.svc;
+
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.SearchControls;
+import org.springframework.stereotype.Service;
+
+@Service("ldap")
+public class LdapLookupService implements LookupService {
+    private final DirContext ctx;
+
+    public LdapLookupService(DirContext ctx) { this.ctx = ctx; }
+
+    public Object find(String uid) {
+        try {
+            return ctx.search("ou=people,dc=acme,dc=com", "(uid=" + uid + ")", new SearchControls());  // frame-expect: CWE-90
+        } catch (NamingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}

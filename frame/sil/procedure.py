@@ -876,6 +876,8 @@ class Program:
 
         # For method calls like "var.method", try matching just the method name
         # This handles cases like "__nested_4.decode" matching "str.decode" or "bytes.decode"
+        if func_name.startswith(('super().', 'super.')):
+            return None           # a base-class method of the project, not a library call of that name
         if '.' in func_name:
             # First try suffix match for chained patterns like getWriter().format
             # This gives priority to more specific patterns like getWriter().format over String.format

@@ -122,6 +122,7 @@ class JavaFrontend:
         self._program: Optional[Program] = None
         self._in_call_args = False
         self._imports = ImportTable()
+        self._last_lambdas: List[Tuple[str, TSNode]] = []
         self._static_members: Dict[str, str] = {}
         self._static_star: List[str] = []
         self._package = ""
@@ -281,6 +282,18 @@ class JavaFrontend:
             elif child.type == "enum_declaration":
                 self._translate_enum(child, program)
 
+    @staticmethod
+    def _class_members(body: Optional[TSNode]) -> List[TSNode]:
+        """The members of a class body; an enum's methods and fields sit one level down, in its
+        `enum_body_declarations`."""
+        out: List[TSNode] = []
+        for c in (body.children if body is not None else ()):
+            if c.type == "enum_body_declarations":
+                out.extend(c.children)
+            elif c.is_named:
+                out.append(c)
+        return out
+
     def _translate_class(self, node: TSNode, program: Program) -> None:
         """Translate class definition"""
         name_node = node.child_by_field_name("name")
@@ -288,15 +301,17 @@ class JavaFrontend:
         outer_class, outer_fields = self._current_class, self._field_types
         outer_methods = self._class_methods
         self._current_class = class_name
-        self._record_class_info(node, program, "enum" if node.type == "enum_declaration" else "class")
+        self._record_class_info(node, program, {"enum_declaration": "enum", "interface_declaration": "interface"}
+                                .get(node.type, "class"))
         outer_class_anns = self._current_class_annotations
         self._current_class_annotations = program.class_info[class_name].annotations \
             if class_name in program.class_info else []
 
         body = node.child_by_field_name("body")
+        members = self._class_members(body)
         self._class_methods = {
             self._get_text(c.child_by_field_name("name"))
-            for c in (body.named_children if body else ())
+            for c in members
             if c.type == "method_declaration" and c.child_by_field_name("name") is not None}
         outer_static, outer_tvars = self._field_static_types, self._class_type_vars
         outer_returns = self._class_method_returns
@@ -304,7 +319,7 @@ class JavaFrontend:
         self._type_vars = set(self._class_type_vars)
         self._field_types = {}
         self._field_static_types = {}
-        for f in (body.named_children if body else ()):
+        for f in members:
             if f.type == "field_declaration":
                 for d in f.named_children:
                     if d.type == "variable_declarator":
@@ -320,7 +335,7 @@ class JavaFrontend:
         self._static_types = dict(self._field_static_types)
         # Return types of the class's methods, by name (overloads may differ).
         self._class_method_returns = {}
-        for c in (body.named_children if body else ()):
+        for c in members:
             if c.type == "method_declaration" and c.child_by_field_name("name") is not None:
                 self._class_method_returns.setdefault(
                     self._get_text(c.child_by_field_name("name")), set()).add(
@@ -337,7 +352,7 @@ class JavaFrontend:
                            and t.parent is not None and t.parent.type != "scoped_type_identifier"]
         program.class_supertypes[class_name] = supers
         if body:
-            for child in body.children:
+            for child in members:
                 if child.type == "method_declaration":
                     if child.child_by_field_name("body") is None:
                         # `abstract`/`native`: no body, so no procedure. An empty one would be
@@ -450,6 +465,10 @@ class JavaFrontend:
                 proc = self._mybatis_mapper_method(member, iface)
                 if proc is not None:
                     program.add_procedure(proc)
+        if any(m.type == "method_declaration" and m.child_by_field_name("body") is not None
+               for m in body.named_children):
+            # `default` / `static` methods have bodies: analysed like a class's methods
+            self._translate_class(node, program)
 
     _MYBATIS_STATEMENTS = ("Select", "Update", "Delete", "Insert")
     _MYBATIS_SUBSTITUTION = re.compile(r"\$\{\s*([A-Za-z_][\w]*)")
@@ -1161,6 +1180,17 @@ class JavaFrontend:
                 self._translate_update(child)
 
     @staticmethod
+    def _peel_cast_call(node: Optional[TSNode]) -> Optional[TSNode]:
+        """`return (String) xp.evaluate(q, doc)`: the call under a cast, so it is lowered as a call."""
+        cur = node
+        if cur is None or cur.type != "cast_expression":
+            return None
+        while cur is not None and cur.type in ("cast_expression", "parenthesized_expression"):
+            cur = cur.child_by_field_name("value") if cur.type == "cast_expression" else \
+                next((c for c in cur.named_children), None)
+        return cur if cur is not None and cur.type == "method_invocation" else None
+
+    @staticmethod
     def _peel_cast_chain(node: Optional[TSNode]) -> Optional[TSNode]:
         """`(Article) em.createQuery(q).getSingleResult()` -> the call: a cast around a CHAINED
         call changes nothing about the data, and the call must be lowered as a call. (A cast
@@ -1194,6 +1224,10 @@ class JavaFrontend:
                         elif value_node.type == "object_creation_expression":
                             instrs = self._translate_object_creation_assignment(var_name, value_node, loc)
                             self._add_instrs(instrs)
+                        elif value_node.type == "lambda_expression" and self._program is not None:
+                            lam = self._lower_lambda(value_node, "<assign>")
+                            self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.string(lam)))
+                            self._add_instrs(self._invoke_lambda(lam, value_node, "", loc))
                         else:
                             exp = self._translate_expression(value_node)
                             self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
@@ -1228,6 +1262,10 @@ class JavaFrontend:
         elif right.type == "object_creation_expression":
             instrs = self._translate_object_creation_assignment(target, right, loc)
             self._add_instrs(instrs)
+        elif right.type == "lambda_expression" and self._program is not None:
+            lam = self._lower_lambda(right, "<assign>")
+            self._add_instr(Assign(loc=loc, id=PVar(target), exp=ExpConst.string(lam)))
+            self._add_instrs(self._invoke_lambda(lam, right, "", loc))
         else:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
@@ -1799,6 +1837,7 @@ class JavaFrontend:
         pre, method_name = self._hoist_creation_receiver(call_node, loc)
         args = self._get_method_args(call_node)
         instrs, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
+        lams = self._last_lambdas
         instrs = pre + instrs
 
         ret_id = self._new_ident(target)
@@ -1815,6 +1854,7 @@ class JavaFrontend:
         )
         self._set_neutral_spec(call_instr, call_node, method_name, len(args))
         instrs.append(call_instr)
+        instrs.extend(self._invoke_lambdas(lams, method_name, loc))
 
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
         instrs.extend(self._getter_receiver_flow(target, call_node, loc))
@@ -2025,6 +2065,50 @@ class JavaFrontend:
         program.add_procedure(proc)
         return name
 
+    _IDENT = re.compile(r"^[A-Za-z_$][\w$]*$")
+
+    def _invoke_lambdas(self, lams: List[Tuple[str, TSNode]], call_name: str, loc: Location) -> List[Instr]:
+        out: List[Instr] = []
+        for lam, node in lams:
+            out.extend(self._invoke_lambda(lam, node, call_name, loc))
+        return out
+
+    def _invoke_lambda(self, lam: str, node: TSNode, via: str, loc: Location) -> List[Instr]:
+        """A lambda handed to a call (`pool.submit(() -> run(v))`, `names.forEach(n -> run(n))`)
+        is invoked by whatever receives it, so the file's analysis sees a call: the variables it
+        captures reach its body, and a receiver collection (`names`) is what its parameter holds.
+        A framework handler (`get("/x", (req, res) -> ...)`) is called by the framework instead."""
+        if lam in self._handler_lambdas:
+            return []
+        recv = via.rsplit(".", 1)[0] if "." in via else ""
+        args = []
+        if recv and self._IDENT.match(recv) and self._lambda_param_nodes(node):
+            args = [(ExpVar(PVar(recv)), Typ.unknown_type())]
+        return [self._lambda_call(lam, args, loc)]
+
+    def _lambda_call(self, lam: str, args: list, loc: Location) -> Call:
+        """The call that runs lambda `lam` of this class: `this.lambda@R_C(...)`, which the
+        translator resolves like a method call on the class."""
+        proc = self._program.procedures.get(lam)
+        if proc is not None:
+            proc.is_method = True
+        return Call(loc=loc, ret=None, func=ExpConst.string("this." + lam.rsplit(".", 1)[-1]), args=args)
+
+    def _lower_anonymous_class(self, creation: TSNode, loc: Location) -> List[Instr]:
+        """`new Runnable() { public void run() { ... } }`: each method of the anonymous class body is
+        a procedure of its own (like a lambda; the enclosing variables it reads are captures), and
+        creating the object is where the file's analysis sees it called."""
+        body = next((c for c in creation.children if c.type == "class_body"), None)
+        if body is None:
+            return []
+        type_name = self._get_text(creation.child_by_field_name("type"))
+        out: List[Instr] = []
+        for m in body.named_children:
+            if m.type == "method_declaration" and m.child_by_field_name("body") is not None:
+                name = self._lower_lambda(m, f"new {type_name}")
+                out.append(self._lambda_call(name, [], loc))
+        return out
+
     def _translate_lambda_value(self, expr: TSNode) -> None:
         """`ctx -> service.find(ctx.param("id"))`: the expression is the lambda's result."""
         loc = self._get_location(expr)
@@ -2067,10 +2151,15 @@ class JavaFrontend:
         that nothing but a sink ever looks into."""
         instrs: List[Instr] = []
         exps = []
+        lams: List[Tuple[str, TSNode]] = []
         for a in args:
             if a.type == "lambda_expression" and self._program is not None:
-                exps.append((ExpConst.string(self._lower_lambda(a, via or "<call>")), Typ.unknown_type()))
+                lam = self._lower_lambda(a, via or "<call>")
+                exps.append((ExpConst.string(lam), Typ.unknown_type()))
+                lams.append((lam, a))
                 continue
+            if a.type == "object_creation_expression" and self._program is not None:
+                instrs.extend(self._lower_anonymous_class(a, loc))
             if a.type == "method_reference":
                 self._note_method_reference(a, via or "<call>")
             if a.type == "method_invocation":
@@ -2086,6 +2175,7 @@ class JavaFrontend:
                 exps.append((self._translate_expression(a), Typ.unknown_type()))
             finally:
                 self._in_call_args = outer
+        self._last_lambdas = lams
         return instrs, exps
 
     def _sink_applies(self, spec: ProcSpec, args: List[TSNode]) -> bool:
@@ -2297,6 +2387,7 @@ class JavaFrontend:
                     args.append(child)
 
         instrs, args_exp = self._translate_args(args, loc, via=f"new {type_name}")
+        instrs.extend(self._lower_anonymous_class(creation_node, loc))
 
         # Constructor call name (a creation whose own sinks are off is named so no spec matches it)
         constructor_name = f"new {type_name}" if sink else f"new {type_name}$value"
@@ -2333,6 +2424,7 @@ class JavaFrontend:
         instrs.extend(pre)
         args = self._get_method_args(call_node)
         hoisted, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
+        lams = self._last_lambdas
         instrs.extend(hoisted)
 
         call_instr = Call(
@@ -2347,6 +2439,7 @@ class JavaFrontend:
         )
         self._set_neutral_spec(call_instr, call_node, method_name, len(args))
         instrs.append(call_instr)
+        instrs.extend(self._invoke_lambdas(lams, method_name, loc))
 
         # Use flexible spec lookup
         spec = self._lookup_spec(method_name, call_node)
@@ -2386,7 +2479,8 @@ class JavaFrontend:
 
         for child in node.children:
             if child.type not in ("return", ";"):
-                child = self._peel_cast_chain(child)
+                plain = self._peel_cast_call(child)
+                child = plain if plain is not None else self._peel_cast_chain(child)
                 if child.type in ("method_invocation", "object_creation_expression"):
                     # `return f(x)`: lower the call like `tmp = f(x)` so its
                     # spec (source, sink, sanitizer) applies, then return tmp.
