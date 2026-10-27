@@ -42,3 +42,19 @@ def test_github_action_installs_the_scan_extra():
     runs = "\n".join(step.get("run", "") for step in action["runs"]["steps"])
     assert '"${GITHUB_ACTION_PATH}[scan]"' in runs
     assert "frame scan" in runs
+
+
+def test_pyproject_ships_the_spec_tables():
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    patterns = data["tool"]["setuptools"]["package-data"]["frame"]
+    assert any(p.endswith("sil/specs/data/*.toml") for p in patterns)
+
+
+def test_spec_tables_load_and_are_strict():
+    from frame.sil.specs.tables import TABLES, SpecTableError, load_table, parse_table
+    sizes = {name: len(load_table(name)) for name in TABLES}
+    assert all(n > 200 for n in sizes.values()), sizes
+    with pytest.raises(SpecTableError, match="unknown field"):
+        parse_table({"spec": [{"name": "x", "is_snk": "sql"}]}, "t")
+    with pytest.raises(SpecTableError, match="twice"):
+        parse_table({"spec": [{"name": "x"}, {"name": "x"}]}, "t")

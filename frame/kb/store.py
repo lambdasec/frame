@@ -18,7 +18,7 @@ MANIFEST = "manifest.json"
 LOCKFILE = Path(".frame") / "kb.lock"
 SCHEMA = 1
 # What a knowledge base may contain: data under these directories, never code.
-_ALLOWED_PREFIXES = ("packs/",)
+_ALLOWED_PREFIXES = ("packs/", "specs/")
 _ALLOWED_SUFFIXES = (".toml", ".json")
 _TIMEOUT = 30
 
@@ -206,6 +206,16 @@ def kb_pack_dirs(project_start: Optional[Path] = None) -> List[Path]:
     return [packs] if packs.is_dir() else []
 
 
+def kb_spec_file(table: str) -> Optional[Path]:
+    """`specs/<table>.toml` of the last pulled revision, if it has one (spec tables load once
+    per process, so they follow the cache's current revision, not a project's lockfile)."""
+    if os.environ.get("FRAME_KB", "").lower() in ("off", "0", "false", "no"):
+        return None
+    d = _revision_dir(_source(None), None)
+    f = d / "specs" / f"{table}.toml" if d is not None else None
+    return f if f is not None and f.is_file() else None
+
+
 def status(project_start: Optional[Path] = None) -> Dict[str, object]:
     lock = read_lock(project_start) if project_start is not None else None
     src = lock["source"] if lock else _source(None)
@@ -218,7 +228,7 @@ def status(project_start: Optional[Path] = None) -> Dict[str, object]:
             "packs": files, "cache": str(cache_root())}
 
 
-def build(packs_dir: Path, out: Path, revision: str) -> Path:
+def build(packs_dir: Path, out: Path, revision: str, specs_dir: Optional[Path] = None) -> Path:
     """Lay out a knowledge-base revision from a directory of packs (`<language>/<name>.toml`):
     `out/packs/...` plus `out/manifest.json`. The result can be published as is, served by a
     mirror, or copied to an air-gapped machine and pulled with `--source DIR`."""
@@ -236,6 +246,19 @@ def build(packs_dir: Path, out: Path, revision: str) -> Path:
         shutil.copyfile(f, target)
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": pack.language,
                       "kind": "pack", "name": pack.name}
+    if specs_dir is not None:
+        from frame.sil.specs.tables import TABLES, _load
+        for f in sorted(Path(specs_dir).glob("*.toml")):
+            if f.stem not in TABLES:
+                raise KBError(f"{f}: not a spec table ({', '.join(TABLES)})")
+            _load(str(f))                               # a broken table never ships
+            rel = f"specs/{f.name}"
+            data = f.read_bytes()
+            target = out / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(f, target)
+            files[rel] = {"sha256": _sha256(data), "size": len(data), "language": f.stem,
+                          "kind": "specs", "name": f.stem}
     manifest = {"schema": SCHEMA, "revision": revision, "files": files}
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return out / MANIFEST

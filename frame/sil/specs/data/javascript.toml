@@ -1,0 +1,1554 @@
+# JavaScript and TypeScript library specifications: one [[spec]] per call name, in lookup order,
+# with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
+# Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
+
+[[spec]]
+name = "req.body"
+is_source = "user"
+description = "Express request body"
+
+[[spec]]
+name = "req.query"
+is_source = "user"
+description = "Express query parameters"
+
+[[spec]]
+name = "req.params"
+is_source = "user"
+description = "Express route parameters"
+
+[[spec]]
+name = "req.cookies"
+is_source = "user"
+description = "Express cookies"
+
+[[spec]]
+name = "req.headers"
+is_source = "user"
+description = "Express request headers"
+
+[[spec]]
+name = "req.get"
+is_source = "user"
+description = "Express header getter"
+
+[[spec]]
+name = "req.header"
+is_source = "user"
+description = "Express header getter"
+
+[[spec]]
+name = "req.param"
+is_source = "user"
+description = "Express parameter getter"
+
+[[spec]]
+name = "req.files"
+is_source = "file"
+description = "Express file uploads"
+
+[[spec]]
+name = "req.file"
+is_source = "file"
+description = "Express single file upload"
+
+[[spec]]
+name = "res.send"
+is_sink = "html"
+description = "Express response (XSS)"
+
+[[spec]]
+name = "res.write"
+is_sink = "html"
+description = "Express response write (XSS)"
+
+[[spec]]
+name = "res.end"
+is_sink = "html"
+description = "Express response end (XSS)"
+
+[[spec]]
+name = "res.render"
+is_sink = "html"
+sink_args = [1]
+description = "Express template render"
+
+[[spec]]
+name = "res.json"
+taint_propagates = [0]
+description = "JSON response (check for sensitive data)"
+
+[[spec]]
+name = "res.redirect"
+is_sink = "redirect"
+description = "Express redirect (open redirect)"
+
+[[spec]]
+name = "res.setHeader"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Set header (CWE-113)"
+
+[[spec]]
+name = "res.set"
+is_sink = "header"
+sink_args = [1]
+description = "Express header injection"
+
+[[spec]]
+name = "ctx.body"
+is_sink = "html"
+description = "Koa response body (XSS)"
+
+[[spec]]
+name = "fs.readFile"
+is_sink = "path"
+description = "Node.js file read (path traversal)"
+
+[[spec]]
+name = "fs.readFileSync"
+is_sink = "path"
+description = "Node.js file read sync (path traversal)"
+
+[[spec]]
+name = "fs.writeFile"
+is_sink = "path"
+description = "Node.js file write (path traversal)"
+
+[[spec]]
+name = "fs.writeFileSync"
+is_sink = "path"
+description = "Node.js file write sync (path traversal)"
+
+[[spec]]
+name = "fs.unlink"
+is_sink = "path"
+description = "Node.js file delete (path traversal)"
+
+[[spec]]
+name = "fs.unlinkSync"
+is_sink = "path"
+description = "Node.js file delete sync (path traversal)"
+
+[[spec]]
+name = "fs.readdir"
+is_sink = "path"
+description = "Node.js directory read (path traversal)"
+
+[[spec]]
+name = "fs.readdirSync"
+is_sink = "path"
+description = "Node.js directory read sync (path traversal)"
+
+[[spec]]
+name = "fs.stat"
+is_sink = "path"
+description = "Node.js file stat (path traversal)"
+
+[[spec]]
+name = "fs.statSync"
+is_sink = "path"
+description = "Node.js file stat sync (path traversal)"
+
+[[spec]]
+name = "fs.access"
+is_sink = "path"
+description = "Node.js file access (path traversal)"
+
+[[spec]]
+name = "fs.accessSync"
+is_sink = "path"
+description = "Node.js file access sync (path traversal)"
+
+[[spec]]
+name = "fs.createReadStream"
+is_sink = "path"
+description = "Node.js read stream (path traversal)"
+
+[[spec]]
+name = "fs.createWriteStream"
+is_sink = "path"
+description = "Node.js write stream (path traversal)"
+
+[[spec]]
+name = "res.sendFile"
+is_sink = "path"
+description = "Express sendFile (path traversal)"
+
+[[spec]]
+name = "res.download"
+is_sink = "path"
+description = "Express download (path traversal)"
+
+[[spec]]
+name = "sendFile"
+is_sink = "path"
+description = "Express sendFile (path traversal)"
+
+[[spec]]
+name = "path.join"
+taint_propagates = [0, 1, 2, 3, 4, 5]
+description = "Path join (propagates taint)"
+
+[[spec]]
+name = "path.resolve"
+taint_propagates = [0, 1, 2, 3, 4, 5]
+description = "Path resolve (propagates taint)"
+
+[[spec]]
+name = "path.normalize"
+taint_propagates = [0]
+description = "Path normalize (propagates taint)"
+
+[[spec]]
+name = "child_process.exec"
+is_sink = "command"
+description = "Node.js exec (command injection)"
+
+[[spec]]
+name = "child_process.execSync"
+is_sink = "command"
+description = "Node.js execSync (command injection)"
+
+[[spec]]
+name = "child_process.spawn"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Node.js spawn (command injection)"
+
+[[spec]]
+name = "child_process.spawnSync"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Node.js spawnSync (command injection)"
+
+[[spec]]
+name = "child_process.execFile"
+is_sink = "command"
+description = "Node.js execFile (command injection; arguments are not shell-parsed)"
+
+[[spec]]
+name = "child_process.execFileSync"
+is_sink = "command"
+description = "Node.js execFileSync (command injection; arguments are not shell-parsed)"
+
+[[spec]]
+name = "child_process.fork"
+is_sink = "command"
+description = "Node.js fork (command injection)"
+
+[[spec]]
+name = "exec"
+is_sink = "command"
+global_only = true
+description = "exec (command injection)"
+
+[[spec]]
+name = "execSync"
+is_sink = "command"
+global_only = true
+description = "execSync (command injection)"
+
+[[spec]]
+name = "spawn"
+is_sink = "command"
+sink_args = [0, 1]
+global_only = true
+description = "spawn (command injection)"
+
+[[spec]]
+name = "process.env"
+is_source = "env"
+description = "Environment variables"
+
+[[spec]]
+name = "process.argv"
+is_source = "user"
+description = "Command line arguments"
+
+[[spec]]
+name = "http.get"
+is_sink = "ssrf"
+description = "Node.js HTTP GET (SSRF)"
+
+[[spec]]
+name = "http.request"
+is_sink = "ssrf"
+description = "Node.js HTTP request (SSRF)"
+
+[[spec]]
+name = "https.get"
+is_sink = "ssrf"
+description = "Node.js HTTPS GET (SSRF)"
+
+[[spec]]
+name = "https.request"
+is_sink = "ssrf"
+description = "Node.js HTTPS request (SSRF)"
+
+[[spec]]
+name = "url.parse"
+taint_propagates = [0]
+description = "URL parsing"
+
+[[spec]]
+name = "new URL"
+taint_propagates = [0]
+description = "URL parsing"
+
+[[spec]]
+name = "crypto.createHash"
+taint_propagates = [0]
+description = "Hash creation"
+
+[[spec]]
+name = "eval"
+is_sink = "code"
+global_only = true
+description = "eval (code injection)"
+
+[[spec]]
+name = "Function"
+is_sink = "code"
+sink_args = [0, 1, 2, 3]
+global_only = true
+description = "Function constructor (code injection)"
+
+[[spec]]
+name = "require"
+is_sink = "code"
+global_only = true
+description = "require() of an attacker-chosen module (code injection)"
+
+[[spec]]
+name = "import"
+is_sink = "code"
+global_only = true
+description = "dynamic import() of an attacker-chosen module (code injection)"
+
+[[spec]]
+name = "setTimeout"
+is_sink = "code"
+global_only = true
+description = "setTimeout with string (code injection)"
+
+[[spec]]
+name = "setInterval"
+is_sink = "code"
+global_only = true
+description = "setInterval with string (code injection)"
+
+[[spec]]
+name = "vm.runInThisContext"
+is_sink = "code"
+description = "vm.runInThisContext (code injection)"
+
+[[spec]]
+name = "vm.runInNewContext"
+is_sink = "code"
+description = "vm.runInNewContext (code injection)"
+
+[[spec]]
+name = "vm.runInContext"
+is_sink = "code"
+description = "vm.runInContext (code injection)"
+
+[[spec]]
+name = "vm.compileFunction"
+is_sink = "code"
+description = "vm.compileFunction (code injection)"
+
+[[spec]]
+name = "vm.Script"
+is_sink = "code"
+description = "new vm.Script compiles its argument as JavaScript (code injection)"
+
+[[spec]]
+name = "runInContext"
+is_sink = "code"
+description = "runInContext (code injection)"
+
+[[spec]]
+name = "__redos__"
+is_sink = "regex"
+sink_args = []
+description = "Catastrophic-backtracking regex (ReDoS, CWE-1333)"
+
+[[spec]]
+name = "__proto_pollution__"
+is_sink = "prototype_pollution"
+sink_args = []
+description = "Prototype pollution (CWE-1321)"
+
+[[spec]]
+name = "find"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB find (NoSQL injection)"
+
+[[spec]]
+name = "findOne"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB findOne (NoSQL injection)"
+
+[[spec]]
+name = "findById"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB findById (NoSQL injection)"
+
+[[spec]]
+name = "findOneAndUpdate"
+is_sink = "nosql"
+sink_args = [0, 1]
+db_method = true
+description = "MongoDB findOneAndUpdate (NoSQL injection)"
+
+[[spec]]
+name = "findOneAndDelete"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB findOneAndDelete (NoSQL injection)"
+
+[[spec]]
+name = "findOneAndRemove"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB findOneAndRemove (NoSQL injection)"
+
+[[spec]]
+name = "findByIdAndUpdate"
+is_sink = "nosql"
+sink_args = [0, 1]
+db_method = true
+description = "MongoDB findByIdAndUpdate (NoSQL injection)"
+
+[[spec]]
+name = "findByIdAndDelete"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB findByIdAndDelete (NoSQL injection)"
+
+[[spec]]
+name = "updateOne"
+is_sink = "nosql"
+sink_args = [0, 1]
+db_method = true
+description = "MongoDB updateOne (NoSQL injection)"
+
+[[spec]]
+name = "updateMany"
+is_sink = "nosql"
+sink_args = [0, 1]
+db_method = true
+description = "MongoDB updateMany (NoSQL injection)"
+
+[[spec]]
+name = "update"
+is_sink = "nosql"
+sink_args = [0, 1]
+db_method = true
+description = "MongoDB/Mongoose update (NoSQL injection)"
+
+[[spec]]
+name = "remove"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB/Mongoose remove (NoSQL injection)"
+
+[[spec]]
+name = "count"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB count (NoSQL injection)"
+
+[[spec]]
+name = "countDocuments"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB countDocuments (NoSQL injection)"
+
+[[spec]]
+name = "distinct"
+is_sink = "nosql"
+sink_args = [1]
+db_method = true
+description = "MongoDB distinct (NoSQL injection)"
+
+[[spec]]
+name = "deleteOne"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB deleteOne (NoSQL injection)"
+
+[[spec]]
+name = "deleteMany"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB deleteMany (NoSQL injection)"
+
+[[spec]]
+name = "aggregate"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB aggregate (NoSQL injection)"
+
+[[spec]]
+name = "where"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB where (NoSQL injection)"
+
+[[spec]]
+name = "$where"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB $where (code injection)"
+
+[[spec]]
+name = "collection.find"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB collection.find (NoSQL injection)"
+
+[[spec]]
+name = "collection.findOne"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB collection.findOne (NoSQL injection)"
+
+[[spec]]
+name = "collection.insertOne"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB insertOne"
+
+[[spec]]
+name = "collection.insertMany"
+is_sink = "nosql"
+db_method = true
+description = "MongoDB insertMany"
+
+[[spec]]
+name = "connection.query"
+is_sink = "sql"
+description = "MySQL query (SQL injection)"
+
+[[spec]]
+name = "connection.execute"
+is_sink = "sql"
+description = "MySQL execute (SQL injection)"
+
+[[spec]]
+name = "pool.query"
+is_sink = "sql"
+description = "MySQL/PostgreSQL pool query (SQL injection)"
+
+[[spec]]
+name = "pool.execute"
+is_sink = "sql"
+description = "MySQL pool execute (SQL injection)"
+
+[[spec]]
+name = "client.query"
+is_sink = "sql"
+description = "PostgreSQL query (SQL injection)"
+
+[[spec]]
+name = "db.query"
+is_sink = "sql"
+description = "database handle query (SQL injection)"
+
+[[spec]]
+name = "conn.query"
+is_sink = "sql"
+description = "database connection query (SQL injection)"
+
+[[spec]]
+name = "database.query"
+is_sink = "sql"
+description = "database handle query (SQL injection)"
+
+[[spec]]
+name = "sequelize.query"
+is_sink = "sql"
+description = "Sequelize raw query (SQL injection)"
+
+[[spec]]
+name = "db.exec"
+is_sink = "sql"
+description = "SQLite exec (SQL injection)"
+
+[[spec]]
+name = "db.prepare"
+is_sink = "sql"
+description = "SQLite prepare (SQL injection)"
+
+[[spec]]
+name = "Model.findAll"
+is_sink = "sql"
+description = "Sequelize findAll (potential SQL injection)"
+
+[[spec]]
+name = "Model.findOne"
+is_sink = "sql"
+description = "Sequelize findOne (potential SQL injection)"
+
+[[spec]]
+name = "sequelize.literal"
+is_sink = "sql"
+description = "Sequelize literal (SQL injection)"
+
+[[spec]]
+name = "knex.raw"
+is_sink = "sql"
+description = "Knex raw query (SQL injection)"
+
+[[spec]]
+name = "$queryRawUnsafe"
+is_sink = "sql"
+description = "Prisma $queryRawUnsafe (SQL injection)"
+
+[[spec]]
+name = "$executeRawUnsafe"
+is_sink = "sql"
+description = "Prisma $executeRawUnsafe (SQL injection)"
+
+[[spec]]
+name = "whereRaw"
+is_sink = "sql"
+description = "Knex whereRaw (SQL injection)"
+
+[[spec]]
+name = "havingRaw"
+is_sink = "sql"
+description = "Knex havingRaw (SQL injection)"
+
+[[spec]]
+name = "orderByRaw"
+is_sink = "sql"
+description = "Knex orderByRaw (SQL injection)"
+
+[[spec]]
+name = "innerHTML"
+is_sink = "html"
+description = "innerHTML (XSS)"
+
+[[spec]]
+name = "outerHTML"
+is_sink = "html"
+description = "outerHTML (XSS)"
+
+[[spec]]
+name = "document.write"
+is_sink = "html"
+description = "document.write (XSS)"
+
+[[spec]]
+name = "document.writeln"
+is_sink = "html"
+description = "document.writeln (XSS)"
+
+[[spec]]
+name = "insertAdjacentHTML"
+is_sink = "html"
+sink_args = [1]
+description = "insertAdjacentHTML (XSS)"
+
+[[spec]]
+name = "element.innerHTML"
+is_sink = "html"
+description = "element.innerHTML (XSS)"
+
+[[spec]]
+name = "element.outerHTML"
+is_sink = "html"
+description = "element.outerHTML (XSS)"
+
+[[spec]]
+name = "$"
+is_sink = "html"
+description = "jQuery selector / HTML string (XSS)"
+
+[[spec]]
+name = "jQuery"
+is_sink = "html"
+description = "jQuery selector / HTML string (XSS)"
+
+[[spec]]
+name = "$.html"
+is_sink = "html"
+description = "jQuery .html() (XSS)"
+
+[[spec]]
+name = "$.append"
+is_sink = "html"
+description = "jQuery .append() (XSS)"
+
+[[spec]]
+name = "$.prepend"
+is_sink = "html"
+description = "jQuery .prepend() (XSS)"
+
+[[spec]]
+name = "$.after"
+is_sink = "html"
+description = "jQuery .after() (XSS)"
+
+[[spec]]
+name = "$.before"
+is_sink = "html"
+description = "jQuery .before() (XSS)"
+
+[[spec]]
+name = "$.replaceWith"
+is_sink = "html"
+description = "jQuery .replaceWith() (XSS)"
+
+[[spec]]
+name = "$.wrapAll"
+is_sink = "html"
+description = "jQuery .wrapAll() (XSS)"
+
+[[spec]]
+name = "$.text"
+is_sanitizer = ["html", "xss"]
+description = "jQuery .text() escapes its argument"
+
+[[spec]]
+name = "$.getScript"
+is_sink = "code"
+description = "jQuery.getScript loads and runs a script (code injection)"
+
+[[spec]]
+name = "$.globalEval"
+is_sink = "code"
+description = "jQuery.globalEval (code injection)"
+
+[[spec]]
+name = "script.src"
+is_sink = "code"
+description = "script.src (script injection)"
+
+[[spec]]
+name = "script.text"
+is_sink = "code"
+description = "script.text (script injection)"
+
+[[spec]]
+name = "location.href"
+is_sink = "redirect"
+description = "location.href (open redirect)"
+
+[[spec]]
+name = "location.assign"
+is_sink = "redirect"
+description = "location.assign (open redirect)"
+
+[[spec]]
+name = "location.replace"
+is_sink = "redirect"
+description = "location.replace (open redirect)"
+
+[[spec]]
+name = "window.location"
+is_sink = "redirect"
+description = "window.location = (open redirect)"
+
+[[spec]]
+name = "document.location"
+is_sink = "redirect"
+description = "document.location = (open redirect)"
+
+[[spec]]
+name = "window.open"
+is_sink = "redirect"
+description = "window.open (open redirect)"
+
+[[spec]]
+name = "location.search"
+is_source = "user"
+description = "URL query string"
+
+[[spec]]
+name = "location.hash"
+is_source = "user"
+description = "URL hash"
+
+[[spec]]
+name = "location.pathname"
+is_source = "user"
+description = "URL pathname"
+
+[[spec]]
+name = "document.URL"
+is_source = "user"
+description = "Document URL"
+
+[[spec]]
+name = "document.documentURI"
+is_source = "user"
+description = "Document URI"
+
+[[spec]]
+name = "document.referrer"
+is_source = "user"
+description = "Document referrer"
+
+[[spec]]
+name = "document.cookie"
+is_source = "user"
+description = "Document cookies"
+
+[[spec]]
+name = "window.name"
+is_source = "user"
+description = "Window name"
+
+[[spec]]
+name = "snapshot.queryParams"
+is_source = "user"
+description = "Angular route query parameters"
+
+[[spec]]
+name = "snapshot.params"
+is_source = "user"
+description = "Angular route parameters"
+
+[[spec]]
+name = "snapshot.fragment"
+is_source = "user"
+description = "Angular route fragment"
+
+[[spec]]
+name = "event.data"
+is_source = "user"
+description = "postMessage data"
+
+[[spec]]
+name = "message.data"
+is_source = "user"
+description = "Message event data"
+
+[[spec]]
+name = "dangerouslySetInnerHTML"
+is_sink = "html"
+description = "React dangerouslySetInnerHTML (XSS)"
+
+[[spec]]
+name = "setState"
+taint_propagates = [0]
+description = "React setState"
+
+[[spec]]
+name = "useState"
+taint_propagates = [0]
+description = "React useState"
+
+[[spec]]
+name = "axios"
+is_sink = "ssrf"
+description = "axios (SSRF)"
+
+[[spec]]
+name = "axios.get"
+is_sink = "ssrf"
+description = "axios.get (SSRF)"
+
+[[spec]]
+name = "axios.post"
+is_sink = "ssrf"
+description = "axios.post (SSRF)"
+
+[[spec]]
+name = "axios.put"
+is_sink = "ssrf"
+description = "axios.put (SSRF)"
+
+[[spec]]
+name = "axios.delete"
+is_sink = "ssrf"
+description = "axios.delete (SSRF)"
+
+[[spec]]
+name = "axios.request"
+is_sink = "ssrf"
+description = "axios.request (SSRF)"
+
+[[spec]]
+name = "fetch"
+is_sink = "ssrf"
+description = "fetch (SSRF)"
+
+[[spec]]
+name = "request"
+is_sink = "ssrf"
+description = "request (SSRF)"
+
+[[spec]]
+name = "request.get"
+is_sink = "ssrf"
+description = "request.get (SSRF)"
+
+[[spec]]
+name = "request.post"
+is_sink = "ssrf"
+description = "request.post (SSRF)"
+
+[[spec]]
+name = "got"
+is_sink = "ssrf"
+description = "got (SSRF)"
+
+[[spec]]
+name = "got.get"
+is_sink = "ssrf"
+description = "got.get (SSRF)"
+
+[[spec]]
+name = "got.post"
+is_sink = "ssrf"
+description = "got.post (SSRF)"
+
+[[spec]]
+name = "node-fetch"
+is_sink = "ssrf"
+description = "node-fetch (SSRF)"
+
+[[spec]]
+name = "JSON.parse"
+taint_propagates = [0]
+description = "JSON.parse (propagates taint)"
+
+[[spec]]
+name = "JSON.stringify"
+taint_propagates = [0]
+description = "JSON.stringify (propagates taint)"
+
+[[spec]]
+name = "serialize"
+taint_propagates = [0]
+description = "serialize"
+
+[[spec]]
+name = "unserialize"
+is_sink = "deserialize"
+description = "unserialize (unsafe deserialization)"
+
+[[spec]]
+name = "node-serialize.unserialize"
+is_sink = "deserialize"
+description = "node-serialize.unserialize (RCE)"
+
+[[spec]]
+name = "js-yaml.load"
+is_sink = "deserialize"
+description = "js-yaml.load (unsafe by default)"
+
+[[spec]]
+name = "yaml.load"
+is_sink = "deserialize"
+description = "yaml.load (unsafe deserialization)"
+
+[[spec]]
+name = "escape"
+is_sanitizer = ["html", "sql"]
+description = "HTML/SQL escape"
+
+[[spec]]
+name = "encodeURIComponent"
+is_sanitizer = ["url"]
+description = "URL encode"
+
+[[spec]]
+name = "shell-escape"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "shell-escape (shell quoting)"
+
+[[spec]]
+name = "shellEscape"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "shell-escape (shell quoting)"
+
+[[spec]]
+name = "shellescape"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "shell-escape (shell quoting)"
+
+[[spec]]
+name = "shell-quote.quote"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "shell-quote (shell quoting)"
+
+[[spec]]
+name = "shellQuote.quote"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "shell-quote (shell quoting)"
+
+[[spec]]
+name = "parseInt"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "parseInt (numeric)"
+
+[[spec]]
+name = "parseFloat"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "parseFloat (numeric)"
+
+[[spec]]
+name = "Number"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Number() (numeric)"
+
+[[spec]]
+name = "Number.parseInt"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Number.parseInt (numeric)"
+
+[[spec]]
+name = "Number.parseFloat"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Number.parseFloat (numeric)"
+
+[[spec]]
+name = "encodeURI"
+is_sanitizer = ["url"]
+description = "URI encode"
+
+[[spec]]
+name = "DOMPurify.sanitize"
+is_sanitizer = ["html"]
+description = "DOMPurify sanitize"
+
+[[spec]]
+name = "sanitize-html"
+is_sanitizer = ["html"]
+description = "sanitize-html"
+
+[[spec]]
+name = "xss"
+is_sanitizer = ["html"]
+description = "xss filter"
+
+[[spec]]
+name = "validator.escape"
+is_sanitizer = ["html"]
+description = "validator.escape"
+
+[[spec]]
+name = "mysql.escape"
+is_sanitizer = ["sql"]
+description = "MySQL escape"
+
+[[spec]]
+name = "pg.escapeLiteral"
+is_sanitizer = ["sql"]
+description = "PostgreSQL escape literal"
+
+[[spec]]
+name = "pg.escapeIdentifier"
+is_sanitizer = ["sql"]
+description = "PostgreSQL escape identifier"
+
+[[spec]]
+name = "path.basename"
+is_sanitizer = ["path"]
+description = "Path basename (partial sanitizer)"
+
+[[spec]]
+name = "jwt.decode"
+is_sink = "auth"
+description = "JWT decode without verify (CWE-347)"
+
+[[spec]]
+name = "jwt.sign"
+taint_propagates = [0]
+description = "JWT sign"
+
+[[spec]]
+name = "jsonwebtoken.decode"
+is_sink = "auth"
+description = "JWT decode (CWE-347)"
+
+[[spec]]
+name = "cors"
+is_sink = "cors"
+description = "CORS middleware configuration (CWE-942)"
+
+[[spec]]
+name = "Access-Control-Allow-Origin"
+is_sink = "cors"
+description = "CORS header (CWE-942)"
+
+[[spec]]
+name = "origin: '*'"
+is_sink = "cors"
+description = "CORS allow all origins (CWE-942)"
+
+[[spec]]
+name = "origin: true"
+is_sink = "cors"
+description = "CORS reflect origin (CWE-942)"
+
+[[spec]]
+name = "isAuthenticated"
+taint_propagates = [0]
+description = "Authentication check"
+
+[[spec]]
+name = "isAuthorized"
+taint_propagates = [0]
+description = "Authorization check"
+
+[[spec]]
+name = "requiresAuth"
+taint_propagates = [0]
+description = "Auth required middleware"
+
+[[spec]]
+name = "passport.authenticate"
+taint_propagates = [0]
+description = "Passport authentication"
+
+[[spec]]
+name = "NODE_ENV"
+taint_propagates = [0]
+description = "Node environment"
+
+[[spec]]
+name = "development"
+is_sink = "config"
+description = "Development mode"
+
+[[spec]]
+name = "app.set('env', 'development')"
+is_sink = "config"
+description = "Express dev mode"
+
+[[spec]]
+name = "secret"
+is_sink = "hardcoded_secret"
+description = "Hardcoded secret (CWE-798)"
+
+[[spec]]
+name = "SECRET_KEY"
+is_sink = "hardcoded_secret"
+description = "Hardcoded secret key (CWE-798)"
+
+[[spec]]
+name = "JWT_SECRET"
+is_sink = "hardcoded_secret"
+description = "Hardcoded JWT secret (CWE-798)"
+
+[[spec]]
+name = "API_KEY"
+is_sink = "hardcoded_secret"
+description = "Hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "privateKey"
+is_sink = "hardcoded_secret"
+description = "Hardcoded private key (CWE-798)"
+
+[[spec]]
+name = "rejectUnauthorized: false"
+is_sink = "ssl"
+description = "TLS verification disabled (CWE-295)"
+
+[[spec]]
+name = "NODE_TLS_REJECT_UNAUTHORIZED"
+is_sink = "ssl"
+description = "TLS verification disabled (CWE-295)"
+
+[[spec]]
+name = "strictSSL: false"
+is_sink = "ssl"
+description = "Strict SSL disabled (CWE-295)"
+
+[[spec]]
+name = "stack"
+is_sink = "info_disclosure"
+description = "Stack trace exposure (CWE-209)"
+
+[[spec]]
+name = "console.error"
+is_sink = "info_disclosure"
+description = "Console error (may leak info CWE-209)"
+
+[[spec]]
+name = "0.0.0.0"
+is_sink = "ssrf"
+description = "All interfaces (SSRF)"
+
+[[spec]]
+name = "crypto.createHash('md5')"
+is_sink = "weak_hash"
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "crypto.createHash('sha1')"
+is_sink = "weak_hash"
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "md5"
+is_sink = "weak_hash"
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "sha1"
+is_sink = "weak_hash"
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "createCipheriv('des"
+is_sink = "weak_crypto"
+description = "DES encryption (CWE-327)"
+
+[[spec]]
+name = "createCipheriv('des3"
+is_sink = "weak_crypto"
+description = "3DES encryption (CWE-327)"
+
+[[spec]]
+name = "createCipheriv('rc4"
+is_sink = "weak_crypto"
+description = "RC4 encryption (CWE-327)"
+
+[[spec]]
+name = "aes-128-ecb"
+is_sink = "weak_crypto"
+description = "AES ECB mode (CWE-327)"
+
+[[spec]]
+name = "aes-256-ecb"
+is_sink = "weak_crypto"
+description = "AES ECB mode (CWE-327)"
+
+[[spec]]
+name = "Math.random"
+is_sink = "insecure_random"
+description = "Math.random not cryptographic (CWE-330)"
+
+[[spec]]
+name = "crypto.randomBytes"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "crypto.randomUUID"
+is_sanitizer = ["random"]
+description = "Cryptographically secure UUID"
+
+[[spec]]
+name = "crypto.getRandomValues"
+is_sanitizer = ["random"]
+description = "Crypto getRandomValues (secure)"
+
+[[spec]]
+name = "modulusLength: 1024"
+is_sink = "weak_crypto"
+description = "Weak RSA key size (CWE-326)"
+
+[[spec]]
+name = "modulusLength: 512"
+is_sink = "weak_crypto"
+description = "Weak RSA key size (CWE-326)"
+
+[[spec]]
+name = "password"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "passwd"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "apiKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "api_key"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "token"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded token (CWE-798)"
+
+[[spec]]
+name = "bcrypt.hash"
+is_sanitizer = ["password"]
+description = "bcrypt password hashing (safe)"
+
+[[spec]]
+name = "bcrypt.compare"
+taint_propagates = [0, 1]
+description = "bcrypt password compare"
+
+[[spec]]
+name = "argon2.hash"
+is_sanitizer = ["password"]
+description = "Argon2 password hashing (safe)"
+
+[[spec]]
+name = "scrypt"
+is_sanitizer = ["password"]
+description = "scrypt password hashing (safe)"
+
+[[spec]]
+name = "pbkdf2"
+is_sanitizer = ["password"]
+description = "PBKDF2 password hashing"
+
+[[spec]]
+name = "maxAge"
+is_sink = "session"
+description = "Session max age config"
+
+[[spec]]
+name = "cookie.secure"
+taint_propagates = [0]
+description = "Secure cookie flag"
+
+[[spec]]
+name = "cookie.httpOnly"
+taint_propagates = [0]
+description = "HttpOnly cookie flag"
+
+[[spec]]
+name = "cookie.sameSite"
+taint_propagates = [0]
+description = "SameSite cookie flag"
+
+[[spec]]
+name = "express-rate-limit"
+taint_propagates = [0]
+description = "Rate limiting middleware"
+
+[[spec]]
+name = "rateLimit"
+taint_propagates = [0]
+description = "Rate limiting"
+
+[[spec]]
+name = "catch (e) {}"
+is_sink = "exception"
+description = "Empty catch block (CWE-390)"
+
+[[spec]]
+name = "catch {}"
+is_sink = "exception"
+description = "Empty catch block (CWE-390)"
+
+[[spec]]
+name = ".catch(() =>"
+is_sink = "exception"
+description = "Swallowed promise rejection (CWE-390)"
+
+[[spec]]
+name = "unhandledRejection"
+taint_propagates = [0]
+description = "Unhandled rejection handler"
+
+[[spec]]
+name = "uncaughtException"
+taint_propagates = [0]
+description = "Uncaught exception handler"
+
+[[spec]]
+name = "process.exit"
+is_sink = "exception"
+description = "Process exit (CWE-705)"
+
+[[spec]]
+name = "err.stack"
+is_sink = "info_disclosure"
+description = "Error stack disclosure (CWE-209)"
+
+[[spec]]
+name = "error.message"
+taint_propagates = [0]
+description = "Error message (may leak info)"
+
+[[spec]]
+name = "console.log"
+is_sink = "sensitive_log"
+description = "Console log (may contain sensitive data CWE-532)"
+
+[[spec]]
+name = "console.debug"
+is_sink = "sensitive_log"
+description = "Console debug (may contain sensitive data CWE-532)"
+
+[[spec]]
+name = "winston.info"
+is_sink = "sensitive_log"
+description = "Winston info log (CWE-532)"
+
+[[spec]]
+name = "winston.debug"
+is_sink = "sensitive_log"
+description = "Winston debug log (CWE-532)"
+
+[[spec]]
+name = "bunyan.info"
+is_sink = "sensitive_log"
+description = "Bunyan info log (CWE-532)"
+
+[[spec]]
+name = "pino.info"
+is_sink = "sensitive_log"
+description = "Pino info log (CWE-532)"
+
+[[spec]]
+name = "helmet"
+is_sanitizer = ["header"]
+description = "Helmet security headers"
+
+[[spec]]
+name = "X-Frame-Options"
+taint_propagates = [0]
+description = "X-Frame-Options header"
+
+[[spec]]
+name = "X-Content-Type-Options"
+taint_propagates = [0]
+description = "X-Content-Type-Options header"
+
+[[spec]]
+name = "X-XSS-Protection"
+taint_propagates = [0]
+description = "X-XSS-Protection header"
+
+[[spec]]
+name = "Content-Security-Policy"
+taint_propagates = [0]
+description = "CSP header"
+
+[[spec]]
+name = "Strict-Transport-Security"
+taint_propagates = [0]
+description = "HSTS header"
+
+[[spec]]
+name = "res.header"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Set header (CWE-113)"
+
+[[spec]]
+name = "169.254.169.254"
+is_sink = "ssrf"
+description = "Cloud metadata endpoint (SSRF)"
+
+[[spec]]
+name = "metadata.google.internal"
+is_sink = "ssrf"
+description = "GCP metadata (SSRF)"
+
+[[spec]]
+name = "localhost"
+is_sink = "ssrf"
+description = "Localhost access (SSRF)"
+
+[[spec]]
+name = "127.0.0.1"
+is_sink = "ssrf"
+description = "Loopback access (SSRF)"
+
+[[spec]]
+name = "__proto__"
+is_sink = "prototype_pollution"
+description = "Prototype access (CWE-1321)"
+
+[[spec]]
+name = "constructor.prototype"
+is_sink = "prototype_pollution"
+description = "Constructor prototype (CWE-1321)"
+
+[[spec]]
+name = "Object.assign"
+is_sink = "prototype_pollution"
+sink_args = [1]
+description = "Object.assign (potential pollution)"
+
+[[spec]]
+name = "_.merge"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Lodash merge (prototype pollution)"
+
+[[spec]]
+name = "_.defaultsDeep"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Lodash defaultsDeep (prototype pollution)"
+
+[[spec]]
+name = "$.extend"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "jQuery extend (prototype pollution)"
+
+[[spec]]
+name = "merge"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Deep merge (potential pollution)"
+
+[[spec]]
+name = "deepmerge"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Deep merge (potential pollution)"
+
+[[spec]]
+name = "new RegExp"
+is_sink = "redos"
+description = "Dynamic regex (potential ReDoS CWE-1333)"
+
+[[spec]]
+name = "RegExp"
+is_sink = "redos"
+description = "Dynamic regex (potential ReDoS CWE-1333)"
+
+[[spec]]
+name = ".match"
+is_sink = "redos"
+description = "Regex match (potential ReDoS)"
+
+[[spec]]
+name = ".replace"
+is_sink = "redos"
+description = "Regex replace (potential ReDoS)"
+
+[[spec]]
+name = ".split"
+is_sink = "redos"
+description = "Regex split (potential ReDoS)"
+
+[[spec]]
+name = ".search"
+is_sink = "redos"
+description = "Regex search (potential ReDoS)"
+
+[[spec]]
+name = "Buffer.alloc"
+is_sink = "alloc_size"
+description = "Buffer.alloc(size)"
+
+[[spec]]
+name = "Buffer.allocUnsafe"
+is_sink = "alloc_size"
+description = "Buffer.allocUnsafe(size)"
+
+[[spec]]
+name = "Buffer.allocUnsafeSlow"
+is_sink = "alloc_size"
+description = "Buffer.allocUnsafeSlow(size)"

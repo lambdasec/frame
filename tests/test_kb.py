@@ -96,3 +96,19 @@ def test_scans_load_kb_packs_and_never_fetch(kb, tmp_path, monkeypatch):
     assert kb_pack_dirs() and "CWE-78" in code_cwes()
     monkeypatch.setenv("FRAME_KB", "off")
     assert "CWE-78" not in code_cwes()
+
+
+def test_kb_spec_table_replaces_the_built_in_one(tmp_path, monkeypatch):
+    from frame.sil.specs.tables import DATA_DIR, load_table
+    monkeypatch.setenv("FRAME_KB_CACHE", str(tmp_path / "cache"))
+    packs, specs = tmp_path / "packs", tmp_path / "specs"
+    (packs / "python").mkdir(parents=True)
+    (packs / "python" / "acme.toml").write_text(ACME)
+    specs.mkdir()
+    (specs / "python.toml").write_text((DATA_DIR / "python.toml").read_text()
+                                       + '\n[[spec]]\nname = "acme.shell"\nis_sink = "command"\nsink_args = [0]\n')
+    build(packs, tmp_path / "mirror", "r1", specs_dir=specs)
+    assert "acme.shell" not in load_table("python")
+    pull(["python"], source=str(tmp_path / "mirror"))
+    monkeypatch.setenv("FRAME_KB_SOURCE", str(tmp_path / "mirror"))
+    assert load_table("python")["acme.shell"].is_sink == "command"

@@ -475,18 +475,17 @@ class TestLibrarySpecs:
 
     def test_flask_specs(self):
         """Test Flask specs are defined"""
-        from frame.sil.specs.python_specs import FLASK_SPECS
+        from frame.sil.specs.python_specs import PYTHON_SPECS
 
-        assert "request.args.get" in FLASK_SPECS
-        assert FLASK_SPECS["request.args.get"].is_taint_source()
+        assert "request.args.get" in PYTHON_SPECS
+        assert PYTHON_SPECS["request.args.get"].is_taint_source()
 
     def test_sql_sinks(self):
         """Test SQL sink specs"""
-        from frame.sil.specs.python_specs import SQLALCHEMY_SPECS, PYTHON_SPECS
+        from frame.sil.specs.python_specs import PYTHON_SPECS
 
-        # cursor.execute is in PYTHON_SPECS (combined) not just SQLALCHEMY_SPECS
-        assert "session.execute" in SQLALCHEMY_SPECS
-        assert SQLALCHEMY_SPECS["session.execute"].is_taint_sink()
+        assert "session.execute" in PYTHON_SPECS
+        assert PYTHON_SPECS["session.execute"].is_taint_sink()
 
         # Also check in combined specs
         assert "cursor.execute" in PYTHON_SPECS
@@ -494,10 +493,10 @@ class TestLibrarySpecs:
 
     def test_sanitizers(self):
         """Test sanitizer specs"""
-        from frame.sil.specs.python_specs import HTML_SPECS
+        from frame.sil.specs.python_specs import PYTHON_SPECS
 
-        assert "html.escape" in HTML_SPECS
-        assert HTML_SPECS["html.escape"].is_taint_sanitizer()
+        assert "html.escape" in PYTHON_SPECS
+        assert PYTHON_SPECS["html.escape"].is_taint_sanitizer()
 
     def test_all_specs_combined(self):
         """Test combined specs"""

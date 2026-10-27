@@ -1,0 +1,1591 @@
+# C library specifications: one [[spec]] per call name, in lookup order,
+# with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
+# Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
+
+[[spec]]
+name = "gets"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+taint_out_args = [0]
+description = "gets() - unbounded read (CWE-120), use fgets"
+
+[[spec]]
+name = "fgets"
+is_source = "user"
+taint_out_args = [0]
+description = "fgets() - reads line from stream"
+
+[[spec]]
+name = "getchar"
+is_source = "user"
+description = "getchar() - reads char from stdin"
+
+[[spec]]
+name = "getc"
+is_source = "user"
+description = "getc() - reads char from stream"
+
+[[spec]]
+name = "fgetc"
+is_source = "user"
+description = "fgetc() - reads char from stream"
+
+[[spec]]
+name = "scanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+taint_out_args = [1, 2, 3, 4, 5]
+description = "scanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "fscanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+taint_out_args = [2, 3, 4, 5, 6]
+description = "fscanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "sscanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+description = "sscanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "wscanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+description = "wscanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "swscanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+description = "swscanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "fwscanf"
+is_source = "user"
+is_sink = "buffer_overflow"
+sink_args = []
+description = "fwscanf() - unbounded %s read (CWE-120)"
+
+[[spec]]
+name = "getwd"
+is_sink = "dangerous_function"
+sink_args = []
+description = "getwd() - no bounds check (CWE-676), use getcwd"
+
+[[spec]]
+name = "fread"
+taint_out_args = [0]
+description = "fread() - reads from stream"
+
+[[spec]]
+name = "getline"
+is_source = "user"
+taint_out_args = [0]
+description = "getline() - reads line from stream"
+
+[[spec]]
+name = "getdelim"
+is_source = "user"
+taint_out_args = [0]
+description = "getdelim() - reads delimited from stream"
+
+[[spec]]
+name = "read"
+taint_out_args = [1]
+description = "read() - POSIX read from fd"
+
+[[spec]]
+name = "pread"
+taint_out_args = [1]
+description = "pread() - POSIX positional read"
+
+[[spec]]
+name = "getenv"
+is_source = "env"
+description = "getenv() - environment variable"
+
+[[spec]]
+name = "GETENV"
+is_source = "env"
+description = "GETENV macro - environment variable"
+
+[[spec]]
+name = "secure_getenv"
+is_source = "env"
+description = "secure_getenv() - secure environment variable"
+
+[[spec]]
+name = "argv"
+is_source = "user"
+description = "Command line arguments"
+
+[[spec]]
+name = "printf"
+is_sink = "format_string"
+description = "printf format string (CWE-134)"
+
+[[spec]]
+name = "fprintf"
+is_sink = "format_string"
+sink_args = [1]
+description = "fprintf format string (CWE-134)"
+
+[[spec]]
+name = "sprintf"
+is_sink = "format_string"
+sink_args = [1]
+taint_to_dest = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+description = "sprintf format string (CWE-134)"
+
+[[spec]]
+name = "snprintf"
+is_sink = "format_string"
+sink_args = [2]
+taint_to_dest = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+description = "snprintf format string (CWE-134)"
+
+[[spec]]
+name = "vprintf"
+is_sink = "format"
+description = "vprintf() - format string sink"
+
+[[spec]]
+name = "vfprintf"
+is_sink = "format"
+sink_args = [1]
+description = "vfprintf() - format string sink"
+
+[[spec]]
+name = "vsprintf"
+is_sink = "format"
+sink_args = [1]
+taint_to_dest = [1]
+description = "vsprintf() - format string sink"
+
+[[spec]]
+name = "vsnprintf"
+is_sink = "format"
+sink_args = [2]
+taint_to_dest = [2]
+description = "vsnprintf() - format string sink"
+
+[[spec]]
+name = "syslog"
+is_sink = "format_string"
+sink_args = [1]
+description = "syslog format string (CWE-134)"
+
+[[spec]]
+name = "fputs"
+taint_propagates = [0]
+description = "fputs() - writes string to stream"
+
+[[spec]]
+name = "puts"
+taint_propagates = [0]
+description = "puts() - writes string to stdout"
+
+[[spec]]
+name = "fwrite"
+taint_propagates = [0]
+description = "fwrite() - writes to stream"
+
+[[spec]]
+name = "write"
+taint_propagates = [0]
+description = "write() - POSIX write to fd"
+
+[[spec]]
+name = "pwrite"
+taint_propagates = [0]
+description = "pwrite() - POSIX positional write"
+
+[[spec]]
+name = "strcpy"
+is_sink = "buffer"
+sink_args = [1]
+taint_to_dest = [1]
+description = "strcpy() - copies taint from src to dest"
+
+[[spec]]
+name = "strcat"
+is_sink = "buffer"
+sink_args = [1]
+taint_to_dest = [1]
+description = "strcat() - copies taint from src to dest"
+
+[[spec]]
+name = "strncpy"
+taint_to_dest = [1]
+description = "strncpy() - bounded copy, taint to dest"
+
+[[spec]]
+name = "strncat"
+taint_to_dest = [1]
+description = "strncat() - bounded concat, taint to dest"
+
+[[spec]]
+name = "strlen"
+taint_propagates = [0]
+description = "strlen() - string length"
+
+[[spec]]
+name = "strcmp"
+taint_propagates = [0, 1]
+description = "strcmp() - string compare"
+
+[[spec]]
+name = "strncmp"
+taint_propagates = [0, 1]
+description = "strncmp() - bounded string compare"
+
+[[spec]]
+name = "strchr"
+taint_propagates = [0]
+description = "strchr() - find char in string"
+
+[[spec]]
+name = "strrchr"
+taint_propagates = [0]
+description = "strrchr() - find last char in string"
+
+[[spec]]
+name = "strstr"
+taint_propagates = [0, 1]
+description = "strstr() - find substring"
+
+[[spec]]
+name = "strdup"
+allocates = true
+may_return_null = true
+description = "strdup (string duplication)"
+
+[[spec]]
+name = "strndup"
+allocates = true
+may_return_null = true
+description = "strndup (bounded string duplication)"
+
+[[spec]]
+name = "strtok"
+taint_propagates = [0]
+description = "strtok() - tokenize string"
+
+[[spec]]
+name = "strtok_r"
+taint_propagates = [0]
+description = "strtok_r() - reentrant tokenize"
+
+[[spec]]
+name = "memcpy"
+is_sink = "buffer"
+sink_args = [2]
+description = "memcpy() - attacker-controlled length (buffer overflow)"
+
+[[spec]]
+name = "memmove"
+is_sink = "buffer"
+sink_args = [2]
+description = "memmove() - attacker-controlled length (buffer overflow)"
+
+[[spec]]
+name = "memset"
+taint_propagates = [0]
+description = "memset() - memory set"
+
+[[spec]]
+name = "memcmp"
+taint_propagates = [0, 1]
+description = "memcmp() - memory compare"
+
+[[spec]]
+name = "bcopy"
+is_sink = "buffer"
+sink_args = [2]
+description = "bcopy() - attacker-controlled length (buffer overflow)"
+
+[[spec]]
+name = "malloc"
+is_sink = "integer_overflow"
+allocates = true
+may_return_null = true
+description = "malloc (dynamic allocation, may return NULL)"
+
+[[spec]]
+name = "calloc"
+allocates = true
+may_return_null = true
+description = "calloc (zeroed allocation)"
+
+[[spec]]
+name = "realloc"
+allocates = true
+may_return_null = true
+description = "realloc (resize allocation)"
+
+[[spec]]
+name = "aligned_alloc"
+allocates = true
+may_return_null = true
+description = "aligned_alloc() - aligned allocation"
+
+[[spec]]
+name = "memalign"
+allocates = true
+may_return_null = true
+description = "memalign() - aligned allocation"
+
+[[spec]]
+name = "posix_memalign"
+allocates = true
+may_return_null = true
+description = "posix_memalign() - POSIX aligned allocation"
+
+[[spec]]
+name = "valloc"
+allocates = true
+may_return_null = true
+description = "valloc() - page-aligned allocation"
+
+[[spec]]
+name = "pvalloc"
+allocates = true
+may_return_null = true
+description = "pvalloc() - page-aligned allocation"
+
+[[spec]]
+name = "alloca"
+is_sink = "memory"
+allocates = true
+stack_allocation_size_arg = 0
+description = "alloca (stack allocation CWE-770)"
+
+[[spec]]
+name = "free"
+frees = true
+description = "free (check for UAF/double-free CWE-416/CWE-415)"
+
+[[spec]]
+name = "new"
+allocates = true
+description = "new (C++ heap allocation)"
+
+[[spec]]
+name = "new[]"
+allocates = true
+description = "new[] (C++ array allocation)"
+
+[[spec]]
+name = "operator new"
+allocates = true
+description = "operator new (C++ allocation)"
+
+[[spec]]
+name = "operator new[]"
+allocates = true
+description = "operator new[] (C++ array allocation)"
+
+[[spec]]
+name = "delete"
+frees = true
+description = "delete (check for UAF CWE-416)"
+
+[[spec]]
+name = "delete[]"
+frees = true
+description = "delete[] (check for UAF CWE-416)"
+
+[[spec]]
+name = "operator delete"
+frees = true
+description = "operator delete (C++ deallocation)"
+
+[[spec]]
+name = "operator delete[]"
+frees = true
+description = "operator delete[] (C++ array deallocation)"
+
+[[spec]]
+name = "dlopen"
+is_sink = "eval"
+description = "dlopen() - loads and runs code from the named library"
+
+[[spec]]
+name = "LoadLibrary"
+is_sink = "eval"
+description = "LoadLibrary() - loads and runs code from the named library"
+
+[[spec]]
+name = "LoadLibraryA"
+is_sink = "eval"
+description = "LoadLibraryA() - loads and runs code from the named library"
+
+[[spec]]
+name = "LoadLibraryW"
+is_sink = "eval"
+description = "LoadLibraryW() - loads and runs code from the named library"
+
+[[spec]]
+name = "system"
+is_sink = "command"
+description = "system() - command injection sink"
+
+[[spec]]
+name = "popen"
+is_sink = "command"
+description = "popen() - command injection sink"
+
+[[spec]]
+name = "execl"
+is_sink = "command"
+description = "execl() - command injection sink"
+
+[[spec]]
+name = "execle"
+is_sink = "command"
+description = "execle() - command injection sink"
+
+[[spec]]
+name = "execlp"
+is_sink = "command"
+description = "execlp() - command injection sink"
+
+[[spec]]
+name = "execv"
+is_sink = "command"
+sink_args = [0, 1]
+description = "execv() - command injection sink"
+
+[[spec]]
+name = "execve"
+is_sink = "command"
+sink_args = [0, 1]
+description = "execve() - command injection sink"
+
+[[spec]]
+name = "execvp"
+is_sink = "command"
+sink_args = [0, 1]
+description = "execvp() - command injection sink"
+
+[[spec]]
+name = "execvpe"
+is_sink = "command"
+sink_args = [0, 1]
+description = "execvpe() - command injection sink"
+
+[[spec]]
+name = "fork"
+taint_propagates = [0]
+description = "fork() - create process"
+
+[[spec]]
+name = "vfork"
+taint_propagates = [0]
+description = "vfork() - create process"
+
+[[spec]]
+name = "wordexp"
+is_sink = "command"
+description = "wordexp() - shell expansion"
+
+[[spec]]
+name = "glob"
+is_sink = "path"
+description = "glob() - path pattern expansion"
+
+[[spec]]
+name = "fopen"
+is_sink = "path"
+description = "fopen() - file open (path traversal)"
+
+[[spec]]
+name = "freopen"
+is_sink = "path"
+description = "freopen() - file reopen (path traversal)"
+
+[[spec]]
+name = "open"
+is_sink = "path"
+permission_mode_arg = 2
+description = "open() - POSIX open (path traversal)"
+
+[[spec]]
+name = "openat"
+is_sink = "path"
+sink_args = [1]
+permission_mode_arg = 3
+description = "openat() - POSIX open relative (path traversal)"
+
+[[spec]]
+name = "creat"
+is_sink = "path"
+permission_mode_arg = 1
+description = "creat() - create file (path traversal)"
+
+[[spec]]
+name = "remove"
+is_sink = "path"
+description = "remove() - delete file (path traversal)"
+
+[[spec]]
+name = "rename"
+is_sink = "path"
+sink_args = [0, 1]
+description = "rename() - rename file (path traversal)"
+
+[[spec]]
+name = "unlink"
+is_sink = "path"
+description = "unlink() - unlink file (path traversal)"
+
+[[spec]]
+name = "rmdir"
+is_sink = "path"
+description = "rmdir() - remove directory (path traversal)"
+
+[[spec]]
+name = "mkdir"
+is_sink = "path"
+permission_mode_arg = 1
+description = "mkdir() - create directory (path traversal)"
+
+[[spec]]
+name = "chdir"
+is_sink = "path"
+description = "chdir() - change directory (path traversal)"
+
+[[spec]]
+name = "chmod"
+is_sink = "path"
+permission_mode_arg = 1
+description = "chmod() - change permissions (path traversal)"
+
+[[spec]]
+name = "chown"
+is_sink = "path"
+description = "chown() - change owner (path traversal)"
+
+[[spec]]
+name = "stat"
+is_sink = "race"
+description = "stat() TOCTOU (CWE-367)"
+
+[[spec]]
+name = "lstat"
+is_sink = "race"
+description = "lstat() TOCTOU (CWE-367)"
+
+[[spec]]
+name = "access"
+is_sink = "race"
+description = "access() TOCTOU (CWE-367)"
+
+[[spec]]
+name = "readlink"
+is_sink = "path"
+description = "readlink() - read symlink (path traversal)"
+
+[[spec]]
+name = "symlink"
+is_sink = "path"
+sink_args = [0, 1]
+description = "symlink() - create symlink (path traversal)"
+
+[[spec]]
+name = "link"
+is_sink = "path"
+sink_args = [0, 1]
+description = "link() - create hard link (path traversal)"
+
+[[spec]]
+name = "opendir"
+is_sink = "path"
+description = "opendir() - open directory (path traversal)"
+
+[[spec]]
+name = "readdir"
+taint_propagates = [0]
+description = "readdir() - read directory entry"
+
+[[spec]]
+name = "scandir"
+is_sink = "path"
+description = "scandir() - scan directory (path traversal)"
+
+[[spec]]
+name = "realpath"
+is_sanitizer = ["path", "filesystem"]
+description = "realpath() - canonicalize path"
+
+[[spec]]
+name = "basename"
+taint_propagates = [0]
+description = "basename() - extract filename"
+
+[[spec]]
+name = "dirname"
+taint_propagates = [0]
+description = "dirname() - extract directory"
+
+[[spec]]
+name = "socket"
+taint_propagates = [0, 1, 2]
+description = "socket() - create socket"
+
+[[spec]]
+name = "connect"
+is_sink = "ssrf"
+sink_args = [1]
+description = "connect() - connect socket (SSRF)"
+
+[[spec]]
+name = "bind"
+is_sink = "ssrf"
+sink_args = [1]
+description = "bind() - bind socket"
+
+[[spec]]
+name = "listen"
+taint_propagates = [0]
+description = "listen() - listen on socket"
+
+[[spec]]
+name = "accept"
+is_source = "network"
+description = "accept() - accept connection"
+
+[[spec]]
+name = "recv"
+taint_out_args = [1]
+description = "recv() - receive from socket"
+
+[[spec]]
+name = "recvfrom"
+taint_out_args = [1]
+description = "recvfrom() - receive with address"
+
+[[spec]]
+name = "recvmsg"
+is_source = "network"
+description = "recvmsg() - receive message"
+
+[[spec]]
+name = "send"
+is_sink = "network"
+sink_args = [1]
+description = "send() - send to socket"
+
+[[spec]]
+name = "sendto"
+is_sink = "network"
+sink_args = [1]
+description = "sendto() - send with address"
+
+[[spec]]
+name = "sendmsg"
+is_sink = "network"
+sink_args = [1]
+description = "sendmsg() - send message"
+
+[[spec]]
+name = "gethostbyname"
+is_sink = "ssrf"
+description = "gethostbyname() - DNS lookup (SSRF)"
+
+[[spec]]
+name = "gethostbyaddr"
+is_sink = "ssrf"
+description = "gethostbyaddr() - reverse DNS"
+
+[[spec]]
+name = "getaddrinfo"
+is_sink = "ssrf"
+description = "getaddrinfo() - address lookup (SSRF)"
+
+[[spec]]
+name = "getnameinfo"
+taint_propagates = [0]
+description = "getnameinfo() - name lookup"
+
+[[spec]]
+name = "sqlite3_exec"
+is_sink = "sql"
+sink_args = [1]
+description = "sqlite3_exec() - SQL injection"
+
+[[spec]]
+name = "sqlite3_prepare"
+is_sink = "sql"
+sink_args = [1]
+description = "sqlite3_prepare() - SQL (usually safe)"
+
+[[spec]]
+name = "sqlite3_prepare_v2"
+is_sink = "sql"
+sink_args = [1]
+description = "sqlite3_prepare_v2() - SQL"
+
+[[spec]]
+name = "sqlite3_bind_text"
+is_sanitizer = ["sql"]
+description = "sqlite3_bind_text() - parameterized"
+
+[[spec]]
+name = "sqlite3_bind_int"
+is_sanitizer = ["sql"]
+description = "sqlite3_bind_int() - parameterized"
+
+[[spec]]
+name = "mysql_query"
+is_sink = "sql"
+sink_args = [1]
+description = "mysql_query() - SQL injection"
+
+[[spec]]
+name = "mysql_real_query"
+is_sink = "sql"
+sink_args = [1]
+description = "mysql_real_query() - SQL injection"
+
+[[spec]]
+name = "mysql_prepare"
+taint_propagates = [1]
+description = "mysql_prepare() - prepared statement"
+
+[[spec]]
+name = "mysql_stmt_bind_param"
+is_sanitizer = ["sql"]
+description = "mysql_stmt_bind_param() - parameterized"
+
+[[spec]]
+name = "mysql_real_escape_string"
+is_sanitizer = ["sql"]
+description = "mysql_real_escape_string() - escape"
+
+[[spec]]
+name = "PQexec"
+is_sink = "sql"
+sink_args = [1]
+description = "PQexec() - SQL injection"
+
+[[spec]]
+name = "PQexecParams"
+taint_propagates = [1]
+description = "PQexecParams() - parameterized query"
+
+[[spec]]
+name = "PQprepare"
+taint_propagates = [2]
+description = "PQprepare() - prepared statement"
+
+[[spec]]
+name = "PQescapeString"
+is_sanitizer = ["sql"]
+description = "PQescapeString() - escape"
+
+[[spec]]
+name = "PQescapeLiteral"
+is_sanitizer = ["sql"]
+description = "PQescapeLiteral() - escape literal"
+
+[[spec]]
+name = "xmlParseFile"
+is_sink = "xxe"
+description = "xmlParseFile() - XXE vulnerability"
+
+[[spec]]
+name = "xmlParseDoc"
+is_sink = "xxe"
+description = "xmlParseDoc() - XXE vulnerability"
+
+[[spec]]
+name = "xmlParseMemory"
+is_sink = "xxe"
+description = "xmlParseMemory() - XXE vulnerability"
+
+[[spec]]
+name = "XML_Parse"
+is_sink = "xxe"
+sink_args = [1]
+description = "XML_Parse() - XXE vulnerability"
+
+[[spec]]
+name = "XML_ParseBuffer"
+is_sink = "xxe"
+description = "XML_ParseBuffer() - XXE"
+
+[[spec]]
+name = "MD5"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 - weak hash (CWE-328), use SHA-256"
+
+[[spec]]
+name = "MD5_Init"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5_Init - weak hash (CWE-328)"
+
+[[spec]]
+name = "MD5_Update"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5_Update - weak hash (CWE-328)"
+
+[[spec]]
+name = "MD5_Final"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5_Final - weak hash (CWE-328)"
+
+[[spec]]
+name = "SHA1"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 - weak hash (CWE-328), use SHA-256"
+
+[[spec]]
+name = "SHA1_Init"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1_Init - weak hash (CWE-328)"
+
+[[spec]]
+name = "DES_ecb_encrypt"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES_ecb_encrypt - weak encryption (CWE-327), use AES"
+
+[[spec]]
+name = "DES_cbc_encrypt"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES_cbc_encrypt - weak encryption (CWE-327), use AES"
+
+[[spec]]
+name = "DES_set_key"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES_set_key - weak encryption (CWE-327), use AES"
+
+[[spec]]
+name = "rand"
+is_source = "weak_random"
+description = "rand() - predictable PRNG output"
+
+[[spec]]
+name = "srand"
+taint_propagates = [0]
+description = "srand() - seed weak random"
+
+[[spec]]
+name = "random"
+is_source = "weak_random"
+description = "random() - predictable PRNG output"
+
+[[spec]]
+name = "rand_r"
+is_source = "weak_random"
+description = "rand_r() - predictable PRNG output"
+
+[[spec]]
+name = "drand48"
+is_source = "weak_random"
+description = "drand48() - predictable PRNG output"
+
+[[spec]]
+name = "erand48"
+is_source = "weak_random"
+description = "erand48() - predictable PRNG output"
+
+[[spec]]
+name = "lrand48"
+is_source = "weak_random"
+description = "lrand48() - predictable PRNG output"
+
+[[spec]]
+name = "nrand48"
+is_source = "weak_random"
+description = "nrand48() - predictable PRNG output"
+
+[[spec]]
+name = "mrand48"
+is_source = "weak_random"
+description = "mrand48() - predictable PRNG output"
+
+[[spec]]
+name = "jrand48"
+is_source = "weak_random"
+description = "jrand48() - predictable PRNG output"
+
+[[spec]]
+name = "EVP_EncryptInit_ex"
+is_sink = "unpredictable"
+sink_args = [3, 4]
+description = "EVP_EncryptInit_ex key / IV"
+
+[[spec]]
+name = "EVP_DecryptInit_ex"
+is_sink = "unpredictable"
+sink_args = [3, 4]
+description = "EVP_DecryptInit_ex key / IV"
+
+[[spec]]
+name = "EVP_CipherInit_ex"
+is_sink = "unpredictable"
+sink_args = [3, 4]
+description = "EVP_CipherInit_ex key / IV"
+
+[[spec]]
+name = "EVP_EncryptInit"
+is_sink = "unpredictable"
+sink_args = [2, 3]
+description = "EVP_EncryptInit key / IV"
+
+[[spec]]
+name = "AES_set_encrypt_key"
+is_sink = "unpredictable"
+description = "AES key"
+
+[[spec]]
+name = "AES_set_decrypt_key"
+is_sink = "unpredictable"
+description = "AES key"
+
+[[spec]]
+name = "HMAC"
+is_sink = "unpredictable"
+sink_args = [1]
+description = "HMAC key"
+
+[[spec]]
+name = "PKCS5_PBKDF2_HMAC"
+is_sink = "unpredictable"
+sink_args = [2]
+description = "PBKDF2 salt"
+
+[[spec]]
+name = "RAND_seed"
+is_sink = "unpredictable"
+description = "CSPRNG seed"
+
+[[spec]]
+name = "RAND_add"
+is_sink = "unpredictable"
+description = "CSPRNG seed"
+
+[[spec]]
+name = "srandom"
+taint_propagates = [0]
+description = "srandom() - seed random"
+
+[[spec]]
+name = "canonicalize_file_name"
+is_sanitizer = ["path", "filesystem"]
+description = "canonicalize_file_name()"
+
+[[spec]]
+name = "abs"
+taint_propagates = [0]
+description = "abs() - absolute value"
+
+[[spec]]
+name = "labs"
+taint_propagates = [0]
+description = "labs() - long absolute value"
+
+[[spec]]
+name = "llabs"
+taint_propagates = [0]
+description = "llabs() - long long absolute value"
+
+[[spec]]
+name = "setuid"
+is_sink = "privilege"
+return_must_be_checked = true
+description = "setuid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "setgid"
+is_sink = "privilege"
+return_must_be_checked = true
+description = "setgid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "seteuid"
+is_sink = "privilege"
+return_must_be_checked = true
+description = "seteuid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "setegid"
+is_sink = "privilege"
+return_must_be_checked = true
+description = "setegid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "setreuid"
+is_sink = "privilege"
+sink_args = [0, 1]
+return_must_be_checked = true
+description = "setreuid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "setregid"
+is_sink = "privilege"
+sink_args = [0, 1]
+return_must_be_checked = true
+description = "setregid (privilege escalation CWE-269)"
+
+[[spec]]
+name = "umask"
+is_sink = "config"
+permission_mode_arg = 0
+permission_is_umask = true
+description = "umask setting (CWE-732)"
+
+[[spec]]
+name = "fchmod"
+is_sink = "config"
+sink_args = [0, 1]
+permission_mode_arg = 1
+description = "fchmod (CWE-732)"
+
+[[spec]]
+name = "fchown"
+is_sink = "config"
+sink_args = [0, 1, 2]
+description = "fchown (CWE-732)"
+
+[[spec]]
+name = "chroot"
+is_sink = "privilege"
+return_must_be_checked = true
+description = "chroot jail (check for breakout CWE-243)"
+
+[[spec]]
+name = "NDEBUG"
+taint_propagates = [0]
+description = "NDEBUG flag"
+
+[[spec]]
+name = "assert"
+is_sink = "assertion"
+description = "assert (disabled in release CWE-617)"
+
+[[spec]]
+name = "password"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "passwd"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "secret"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded secret (CWE-798)"
+
+[[spec]]
+name = "api_key"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "private_key"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded key (CWE-798)"
+
+[[spec]]
+name = "SSL_CTX_set_options"
+is_sink = "ssl"
+sink_args = [0, 1]
+description = "SSL options (CWE-327)"
+
+[[spec]]
+name = "OPENSSL_NO_SSL2"
+taint_propagates = [0]
+description = "SSLv2 disabled"
+
+[[spec]]
+name = "OPENSSL_NO_SSL3"
+taint_propagates = [0]
+description = "SSLv3 disabled"
+
+[[spec]]
+name = "EVP_des_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_des_cbc"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES CBC (CWE-327)"
+
+[[spec]]
+name = "EVP_rc4"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RC4 (CWE-327)"
+
+[[spec]]
+name = "EVP_rc2_cbc"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RC2 (CWE-327)"
+
+[[spec]]
+name = "EVP_bf_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "Blowfish ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_aes_128_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "AES-128 ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_aes_256_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "AES-256 ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_aes_192_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "AES-192 ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_rc4_40"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RC4-40 (CWE-327)"
+
+[[spec]]
+name = "EVP_des_ede_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "3DES ECB (CWE-327)"
+
+[[spec]]
+name = "EVP_des_ede3_ecb"
+is_sink = "weak_crypto"
+sink_args = []
+description = "3DES ECB (CWE-327)"
+
+[[spec]]
+name = "crypt"
+is_sink = "weak_crypto"
+description = "crypt() weak hash (CWE-328)"
+
+[[spec]]
+name = "crypt_r"
+is_sink = "weak_crypto"
+description = "crypt_r() weak hash (CWE-328)"
+
+[[spec]]
+name = "RAND_bytes"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "getrandom"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "arc4random"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "arc4random_buf"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "RSA_generate_key"
+is_sink = "weak_crypto"
+description = "RSA key generation (check size CWE-326)"
+
+[[spec]]
+name = "DSA_generate_parameters"
+is_sink = "weak_crypto"
+description = "DSA params (check size CWE-326)"
+
+[[spec]]
+name = "pam_authenticate"
+is_sink = "auth"
+description = "PAM authentication"
+
+[[spec]]
+name = "pam_start"
+is_sink = "auth"
+description = "PAM start"
+
+[[spec]]
+name = "pam_end"
+taint_propagates = [0]
+description = "PAM end"
+
+[[spec]]
+name = "getpass"
+is_source = "user"
+description = "getpass() password input"
+
+[[spec]]
+name = "getpwnam"
+taint_propagates = [0]
+description = "Get password entry by name"
+
+[[spec]]
+name = "getpwuid"
+taint_propagates = [0]
+description = "Get password entry by UID"
+
+[[spec]]
+name = "getspnam"
+taint_propagates = [0]
+description = "Get shadow password entry"
+
+[[spec]]
+name = "signal"
+is_sink = "exception"
+sink_args = [0, 1]
+description = "Signal handler (CWE-479)"
+
+[[spec]]
+name = "sigaction"
+is_sink = "exception"
+sink_args = [0, 1]
+description = "Signal action (CWE-479)"
+
+[[spec]]
+name = "raise"
+is_sink = "exception"
+description = "Raise signal"
+
+[[spec]]
+name = "perror"
+is_sink = "info_disclosure"
+description = "perror (may leak info CWE-209)"
+
+[[spec]]
+name = "strerror"
+taint_propagates = [0]
+description = "strerror (error message)"
+
+[[spec]]
+name = "errno"
+taint_propagates = [0]
+description = "errno value"
+
+[[spec]]
+name = "abort"
+is_sink = "exception"
+description = "abort (CWE-705)"
+
+[[spec]]
+name = "exit"
+is_sink = "exception"
+description = "exit (CWE-705)"
+
+[[spec]]
+name = "_exit"
+is_sink = "exception"
+description = "_exit"
+
+[[spec]]
+name = "quick_exit"
+is_sink = "exception"
+description = "quick_exit"
+
+[[spec]]
+name = "longjmp"
+is_sink = "exception"
+description = "longjmp (CWE-843)"
+
+[[spec]]
+name = "siglongjmp"
+is_sink = "exception"
+description = "siglongjmp (CWE-843)"
+
+[[spec]]
+name = "setjmp"
+taint_propagates = [0]
+description = "setjmp"
+
+[[spec]]
+name = "sizeof"
+taint_propagates = [0]
+description = "sizeof"
+
+[[spec]]
+name = "[]"
+is_sink = "buffer"
+description = "Array access (check bounds CWE-129)"
+
+[[spec]]
+name = "+"
+taint_propagates = [0, 1]
+description = "Addition (potential overflow)"
+
+[[spec]]
+name = "*"
+taint_propagates = [0, 1]
+description = "Multiplication (potential overflow)"
+
+[[spec]]
+name = "mktemp"
+is_sink = "insecure_temp_file"
+sink_args = []
+description = "mktemp race condition (CWE-377), use mkstemp"
+
+[[spec]]
+name = "tempnam"
+is_sink = "race"
+description = "tempnam race condition (CWE-377)"
+
+[[spec]]
+name = "tmpnam"
+is_sink = "insecure_temp_file"
+sink_args = []
+description = "tmpnam race condition (CWE-377), use tmpfile"
+
+[[spec]]
+name = "mkstemp"
+is_sanitizer = ["race"]
+description = "mkstemp (safe temp file)"
+
+[[spec]]
+name = "mkostemp"
+is_sanitizer = ["race"]
+description = "mkostemp (safe temp file)"
+
+[[spec]]
+name = "mkdtemp"
+is_sanitizer = ["race"]
+description = "mkdtemp (safe temp dir)"
+
+[[spec]]
+name = "flock"
+taint_propagates = [0, 1]
+description = "flock file lock"
+
+[[spec]]
+name = "lockf"
+taint_propagates = [0, 1]
+description = "lockf file lock"
+
+[[spec]]
+name = "fcntl"
+taint_propagates = [0, 1, 2]
+description = "fcntl (F_SETLK)"
+
+[[spec]]
+name = "err"
+is_sink = "format_string"
+sink_args = [1]
+description = "err format string (CWE-134)"
+
+[[spec]]
+name = "warn"
+is_sink = "format_string"
+description = "warn format string (CWE-134)"
+
+[[spec]]
+name = "setproctitle"
+is_sink = "format_string"
+description = "setproctitle format string (CWE-134)"
+
+[[spec]]
+name = "setresuid"
+return_must_be_checked = true
+
+[[spec]]
+name = "setresgid"
+return_must_be_checked = true
+
+[[spec]]
+name = "setfsuid"
+return_must_be_checked = true
+
+[[spec]]
+name = "setfsgid"
+return_must_be_checked = true
+
+[[spec]]
+name = "setgroups"
+return_must_be_checked = true
+
+[[spec]]
+name = "initgroups"
+return_must_be_checked = true
+
+[[spec]]
+name = "fchmodat"
+permission_mode_arg = 2
+
+[[spec]]
+name = "mkdirat"
+permission_mode_arg = 2
+
+[[spec]]
+name = "mkfifo"
+permission_mode_arg = 1
+
+[[spec]]
+name = "mkfifoat"
+permission_mode_arg = 2
+
+[[spec]]
+name = "mknod"
+permission_mode_arg = 2
+
+[[spec]]
+name = "shmget"
+permission_mode_arg = 2
+
+[[spec]]
+name = "semget"
+permission_mode_arg = 2
+
+[[spec]]
+name = "msgget"
+permission_mode_arg = 1
+
+[[spec]]
+name = "_alloca"
+stack_allocation_size_arg = 0
+
+[[spec]]
+name = "_malloca"
+stack_allocation_size_arg = 0
+
+[[spec]]
+name = "__builtin_alloca"
+stack_allocation_size_arg = 0
+
+[[spec]]
+name = "stpcpy"
+taint_to_dest = [1]
+
+[[spec]]
+name = "strlcpy"
+taint_to_dest = [1]
+
+[[spec]]
+name = "strlcat"
+taint_to_dest = [1]
+
+[[spec]]
+name = "atoi"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "atol"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "atoll"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "atof"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtol"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtoul"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtoll"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtoull"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtod"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtof"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtoimax"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "strtoumax"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stoi"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stol"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stoll"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stoul"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stoull"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stof"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]
+
+[[spec]]
+name = "stod"
+is_sanitizer = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
+taint_propagates = [0]

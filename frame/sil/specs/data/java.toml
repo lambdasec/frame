@@ -1,0 +1,2290 @@
+# Java library specifications: one [[spec]] per call name, in lookup order,
+# with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
+# Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
+
+[[spec]]
+name = "getParameter"
+is_source = "user"
+description = "Servlet request parameter"
+
+[[spec]]
+name = "getParameterValues"
+is_source = "user"
+description = "Servlet request parameter array"
+
+[[spec]]
+name = "getParameterMap"
+is_source = "user"
+description = "Servlet request parameter map"
+
+[[spec]]
+name = "getParameterNames"
+is_source = "user"
+description = "Servlet request parameter names"
+
+[[spec]]
+name = "getHeader"
+is_source = "user"
+description = "Servlet request header"
+
+[[spec]]
+name = "getHeaders"
+is_source = "user"
+description = "Servlet request headers"
+
+[[spec]]
+name = "getHeaderNames"
+is_source = "user"
+description = "Servlet request header names"
+
+[[spec]]
+name = "getCookies"
+is_source = "user"
+description = "Servlet cookies"
+
+[[spec]]
+name = "getQueryString"
+is_source = "user"
+description = "Servlet query string"
+
+[[spec]]
+name = "getPathInfo"
+is_source = "user"
+description = "Servlet path info"
+
+[[spec]]
+name = "getRequestURI"
+is_source = "user"
+description = "Servlet request URI"
+
+[[spec]]
+name = "getRequestURL"
+is_source = "user"
+description = "Servlet request URL"
+
+[[spec]]
+name = "getInputStream"
+is_source = "user"
+description = "Servlet input stream"
+
+[[spec]]
+name = "getReader"
+is_source = "user"
+description = "Servlet reader"
+
+[[spec]]
+name = "getServletPath"
+is_source = "user"
+description = "Servlet path"
+
+[[spec]]
+name = "request.getParameter"
+is_source = "user"
+description = "HTTP request parameter"
+
+[[spec]]
+name = "request.getHeader"
+is_source = "user"
+description = "HTTP request header"
+
+[[spec]]
+name = "request.getCookies"
+is_source = "user"
+description = "HTTP cookies"
+
+[[spec]]
+name = "request.getInputStream"
+is_source = "user"
+description = "HTTP input stream"
+
+[[spec]]
+name = "getTheParameter"
+is_source = "user"
+description = "OWASP Benchmark wrapper - getParameter"
+
+[[spec]]
+name = "getTheValue"
+is_source = "user"
+description = "OWASP Benchmark wrapper - getValue"
+
+[[spec]]
+name = "getTheName"
+is_source = "user"
+description = "OWASP Benchmark wrapper - getName"
+
+[[spec]]
+name = "getValue"
+taint_from_receiver = true
+description = "getValue() - propagates receiver taint"
+
+[[spec]]
+name = "nextElement"
+is_source = "user"
+description = "Enumeration element (from headers/params)"
+
+[[spec]]
+name = "getAttribute"
+taint_from_receiver = true
+description = "getAttribute() - propagates receiver taint"
+
+[[spec]]
+name = "getRemoteAddr"
+is_source = "network"
+description = "Remote IP address"
+
+[[spec]]
+name = "getRemoteHost"
+is_source = "network"
+description = "Remote hostname"
+
+[[spec]]
+name = "getWriter"
+taint_propagates = [0]
+description = "Servlet response writer"
+
+[[spec]]
+name = "getOutputStream"
+taint_propagates = [0]
+description = "Servlet response output stream"
+
+[[spec]]
+name = "print"
+is_sink = "html"
+description = "PrintWriter.print (XSS)"
+
+[[spec]]
+name = "println"
+is_sink = "html"
+description = "PrintWriter.println (XSS)"
+
+[[spec]]
+name = "printf"
+is_sink = "html"
+sink_args = [0, 1]
+description = "PrintWriter.printf (XSS)"
+
+[[spec]]
+name = "format"
+is_sink = "html"
+sink_args = [0, 1]
+description = "PrintWriter.format (XSS)"
+
+[[spec]]
+name = "write"
+is_sink = "html"
+description = "Writer.write (XSS)"
+
+[[spec]]
+name = "getWriter().print"
+is_sink = "html"
+description = "PrintWriter.print (XSS)"
+
+[[spec]]
+name = "getWriter().println"
+is_sink = "html"
+description = "PrintWriter.println (XSS)"
+
+[[spec]]
+name = "getWriter().printf"
+is_sink = "html"
+sink_args = [0, 1]
+description = "PrintWriter.printf (XSS)"
+
+[[spec]]
+name = "getWriter().format"
+is_sink = "html"
+sink_args = [0, 1]
+description = "PrintWriter.format (XSS)"
+
+[[spec]]
+name = "getWriter().write"
+taint_propagates = [0]
+description = "Response write"
+
+[[spec]]
+name = "sendRedirect"
+is_sink = "redirect"
+description = "Servlet redirect (open redirect)"
+
+[[spec]]
+name = "getRequestDispatcher"
+is_sink = "path"
+description = "Request dispatcher (path injection)"
+
+[[spec]]
+name = "forward"
+taint_propagates = [0]
+description = "Forward request"
+
+[[spec]]
+name = "putValue"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "HttpSession.putValue (trust boundary violation)"
+
+[[spec]]
+name = "setAttribute"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "HttpSession.setAttribute (trust boundary violation)"
+
+[[spec]]
+name = "session.putValue"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "Session.putValue (trust boundary violation)"
+
+[[spec]]
+name = "session.setAttribute"
+taint_propagates = [0, 1]
+description = "Session attribute set"
+
+[[spec]]
+name = "HttpSession.putValue"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "HttpSession.putValue (trust boundary violation)"
+
+[[spec]]
+name = "HttpSession.setAttribute"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "HttpSession.setAttribute (trust boundary violation)"
+
+[[spec]]
+name = "setSecure"
+taint_propagates = [0]
+description = "Secure cookie flag"
+
+[[spec]]
+name = "Cookie.setSecure"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie.setSecure (insecure cookie)"
+
+[[spec]]
+name = "cookie.setSecure"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie.setSecure (insecure cookie)"
+
+[[spec]]
+name = "__cookie_no_secure__"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie added without Secure flag (CWE-614)"
+
+[[spec]]
+name = "__cookie_no_httponly__"
+is_sink = "insecure_cookie_httponly"
+sink_args = []
+description = "Cookie added without HttpOnly flag (CWE-1004)"
+
+[[spec]]
+name = "__unsafe_deserialize__"
+is_sink = "deserialize_unsafe"
+sink_args = []
+description = "Unsafe deserializer construction (CWE-502)"
+
+[[spec]]
+name = "__csrf_disabled__"
+is_sink = "csrf_disabled"
+sink_args = []
+description = "CSRF protection disabled (CWE-352)"
+
+[[spec]]
+name = "@RequestParam"
+is_source = "user"
+description = "Spring request parameter"
+
+[[spec]]
+name = "@PathVariable"
+is_source = "user"
+description = "Spring path variable"
+
+[[spec]]
+name = "@RequestBody"
+is_source = "user"
+description = "Spring request body"
+
+[[spec]]
+name = "@RequestHeader"
+is_source = "user"
+description = "Spring request header"
+
+[[spec]]
+name = "@CookieValue"
+is_source = "user"
+description = "Spring cookie value"
+
+[[spec]]
+name = "@MatrixVariable"
+is_source = "user"
+description = "Spring matrix variable"
+
+[[spec]]
+name = "model.addAttribute"
+taint_propagates = [1]
+description = "Spring model attribute"
+
+[[spec]]
+name = "modelAndView.addObject"
+taint_propagates = [1]
+description = "Spring ModelAndView object"
+
+[[spec]]
+name = "ResponseEntity.ok"
+taint_propagates = [0]
+description = "Spring ResponseEntity"
+
+[[spec]]
+name = "ResponseEntity.body"
+is_sink = "html"
+description = "Spring response body"
+
+[[spec]]
+name = "redirect:"
+is_sink = "redirect"
+description = "Spring redirect"
+
+[[spec]]
+name = "RedirectView"
+is_sink = "redirect"
+description = "Spring RedirectView"
+
+[[spec]]
+name = "ModelAndView"
+is_sink = "redirect"
+description = "Spring ModelAndView (open redirect)"
+
+[[spec]]
+name = "new ModelAndView"
+is_sink = "redirect"
+description = "Spring ModelAndView (open redirect)"
+
+[[spec]]
+name = "restTemplate.getForObject"
+is_sink = "ssrf"
+description = "Spring RestTemplate GET (SSRF)"
+
+[[spec]]
+name = "restTemplate.postForObject"
+is_sink = "ssrf"
+description = "Spring RestTemplate POST (SSRF)"
+
+[[spec]]
+name = "restTemplate.exchange"
+is_sink = "ssrf"
+description = "Spring RestTemplate exchange (SSRF)"
+
+[[spec]]
+name = "restTemplate.getForEntity"
+is_sink = "ssrf"
+description = "Spring RestTemplate GET entity (SSRF)"
+
+[[spec]]
+name = "webClient.get"
+is_sink = "ssrf"
+description = "Spring WebClient GET (SSRF)"
+
+[[spec]]
+name = "webClient.post"
+is_sink = "ssrf"
+description = "Spring WebClient POST (SSRF)"
+
+[[spec]]
+name = "jdbcTemplate.query"
+is_sink = "sql"
+description = "Spring JdbcTemplate query (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.queryForObject"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForObject (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.queryForList"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForList (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.queryForRowSet"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.queryForMap"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForMap (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.update"
+is_sink = "sql"
+description = "Spring JdbcTemplate update (SQL injection)"
+
+[[spec]]
+name = "jdbcTemplate.execute"
+is_sink = "sql"
+description = "Spring JdbcTemplate execute (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.query"
+is_sink = "sql"
+description = "Spring JdbcTemplate query (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.queryForObject"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForObject (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.queryForList"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForList (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.queryForRowSet"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.queryForMap"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForMap (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.update"
+is_sink = "sql"
+description = "Spring JdbcTemplate update (SQL injection)"
+
+[[spec]]
+name = "JDBCtemplate.execute"
+is_sink = "sql"
+description = "Spring JdbcTemplate execute (SQL injection)"
+
+[[spec]]
+name = "queryForObject"
+is_sink = "sql"
+description = "JdbcTemplate queryForObject (SQL injection)"
+
+[[spec]]
+name = "queryForList"
+is_sink = "sql"
+description = "JdbcTemplate queryForList (SQL injection)"
+
+[[spec]]
+name = "queryForRowSet"
+is_sink = "sql"
+description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
+
+[[spec]]
+name = "queryForMap"
+is_sink = "sql"
+description = "JdbcTemplate queryForMap (SQL injection)"
+
+[[spec]]
+name = "namedParameterJdbcTemplate.query"
+is_sink = "sql"
+description = "Spring NamedParameterJdbcTemplate (SQL injection)"
+
+[[spec]]
+name = "namedParameterJdbcTemplate.update"
+is_sink = "sql"
+description = "Spring NamedParameterJdbcTemplate (SQL injection)"
+
+[[spec]]
+name = "executeQuery"
+is_sink = "sql"
+description = "JDBC executeQuery (SQL injection)"
+
+[[spec]]
+name = "executeUpdate"
+is_sink = "sql"
+description = "JDBC executeUpdate (SQL injection)"
+
+[[spec]]
+name = "execute"
+is_sink = "sql"
+description = "JDBC execute (SQL injection)"
+
+[[spec]]
+name = "addBatch"
+is_sink = "sql"
+description = "JDBC addBatch (SQL injection)"
+
+[[spec]]
+name = "prepareStatement"
+is_sanitizer = ["sql"]
+description = "Connection.prepareStatement (parameterized)"
+
+[[spec]]
+name = "prepareCall"
+is_sink = "sql"
+description = "JDBC prepareCall (SQL injection)"
+
+[[spec]]
+name = "nativeSQL"
+is_sink = "sql"
+description = "JDBC nativeSQL (SQL injection)"
+
+[[spec]]
+name = "createStatement"
+taint_propagates = [0]
+description = "JDBC createStatement"
+
+[[spec]]
+name = "connection.createStatement"
+taint_propagates = [0]
+description = "JDBC createStatement"
+
+[[spec]]
+name = "connection.prepareStatement"
+is_sink = "sql"
+description = "JDBC prepareStatement"
+
+[[spec]]
+name = "createQuery"
+is_sink = "sql"
+description = "JPA createQuery (HQL/JPQL injection)"
+
+[[spec]]
+name = "createNativeQuery"
+is_sink = "sql"
+description = "JPA createNativeQuery (SQL injection)"
+
+[[spec]]
+name = "criteriaBuilder.equal"
+taint_propagates = [1]
+description = "JPA Criteria equal"
+
+[[spec]]
+name = "criteriaBuilder.like"
+taint_propagates = [1]
+description = "JPA Criteria like"
+
+[[spec]]
+name = "session.createQuery"
+is_sink = "sql"
+description = "Hibernate createQuery (HQL injection)"
+
+[[spec]]
+name = "session.createSQLQuery"
+is_sink = "sql"
+description = "Hibernate createSQLQuery (SQL injection)"
+
+[[spec]]
+name = "session.createNativeQuery"
+is_sink = "sql"
+description = "Hibernate createNativeQuery (SQL injection)"
+
+[[spec]]
+name = "new File"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "File constructor (path traversal)"
+
+[[spec]]
+name = "File"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "File constructor (path traversal)"
+
+[[spec]]
+name = "new java.io.File"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "File constructor (path traversal)"
+
+[[spec]]
+name = "FileInputStream"
+is_sink = "filesystem"
+description = "FileInputStream (path traversal)"
+
+[[spec]]
+name = "new FileInputStream"
+is_sink = "filesystem"
+description = "FileInputStream (path traversal)"
+
+[[spec]]
+name = "new java.io.FileInputStream"
+is_sink = "filesystem"
+description = "FileInputStream (path traversal)"
+
+[[spec]]
+name = "FileOutputStream"
+is_sink = "filesystem"
+description = "FileOutputStream (path traversal)"
+
+[[spec]]
+name = "new FileOutputStream"
+is_sink = "filesystem"
+description = "FileOutputStream (path traversal)"
+
+[[spec]]
+name = "new java.io.FileOutputStream"
+is_sink = "filesystem"
+description = "FileOutputStream (path traversal)"
+
+[[spec]]
+name = "FileReader"
+is_sink = "filesystem"
+description = "FileReader (path traversal)"
+
+[[spec]]
+name = "new FileReader"
+is_sink = "filesystem"
+description = "FileReader (path traversal)"
+
+[[spec]]
+name = "new java.io.FileReader"
+is_sink = "filesystem"
+description = "FileReader (path traversal)"
+
+[[spec]]
+name = "FileWriter"
+is_sink = "filesystem"
+description = "FileWriter (path traversal)"
+
+[[spec]]
+name = "new FileWriter"
+is_sink = "filesystem"
+description = "FileWriter (path traversal)"
+
+[[spec]]
+name = "new java.io.FileWriter"
+is_sink = "filesystem"
+description = "FileWriter (path traversal)"
+
+[[spec]]
+name = "RandomAccessFile"
+is_sink = "filesystem"
+description = "RandomAccessFile (path traversal)"
+
+[[spec]]
+name = "new RandomAccessFile"
+is_sink = "filesystem"
+description = "RandomAccessFile (path traversal)"
+
+[[spec]]
+name = "new java.io.RandomAccessFile"
+is_sink = "filesystem"
+description = "RandomAccessFile (path traversal)"
+
+[[spec]]
+name = "File.getName"
+is_sanitizer = ["filesystem", "path"]
+description = "File.getName (base name)"
+
+[[spec]]
+name = "FilenameUtils.getName"
+is_sanitizer = ["filesystem", "path"]
+description = "FilenameUtils.getName (base name)"
+
+[[spec]]
+name = "FilenameUtils.getBaseName"
+is_sanitizer = ["filesystem", "path"]
+description = "FilenameUtils.getBaseName (base name)"
+
+[[spec]]
+name = "Paths.get"
+is_sink = "filesystem"
+sink_args = [0, 1, 2, 3]
+description = "Paths.get (path traversal)"
+
+[[spec]]
+name = "Path.of"
+is_sink = "filesystem"
+sink_args = [0, 1, 2, 3]
+description = "Path.of (path traversal)"
+
+[[spec]]
+name = "Files.readAllBytes"
+is_sink = "filesystem"
+description = "Files.readAllBytes (path traversal)"
+
+[[spec]]
+name = "Files.readAllLines"
+is_sink = "filesystem"
+description = "Files.readAllLines (path traversal)"
+
+[[spec]]
+name = "Files.write"
+is_sink = "filesystem"
+description = "Files.write (path traversal)"
+
+[[spec]]
+name = "Files.delete"
+is_sink = "filesystem"
+description = "Files.delete (path traversal)"
+
+[[spec]]
+name = "Files.copy"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "Files.copy (path traversal)"
+
+[[spec]]
+name = "Files.move"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "Files.move (path traversal)"
+
+[[spec]]
+name = "getResource"
+is_sink = "filesystem"
+description = "ClassLoader.getResource (path traversal)"
+
+[[spec]]
+name = "getResourceAsStream"
+is_sink = "filesystem"
+description = "ClassLoader.getResourceAsStream (path traversal)"
+
+[[spec]]
+name = "Runtime.exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "runtime.exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "Runtime.getRuntime().exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "r.exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "ProcessBuilder"
+is_sink = "command"
+sink_args = [0, 1, 2, 3]
+description = "ProcessBuilder (command injection)"
+
+[[spec]]
+name = "new ProcessBuilder"
+is_sink = "command"
+sink_args = [0, 1, 2, 3]
+description = "ProcessBuilder (command injection)"
+
+[[spec]]
+name = "processBuilder.command"
+is_sink = "command"
+description = "ProcessBuilder.command (command injection)"
+
+[[spec]]
+name = "search"
+is_sink = "ldap"
+sink_args = [1]
+description = "LDAP search (LDAP injection)"
+
+[[spec]]
+name = "lookup"
+is_sink = "ldap"
+description = "LDAP lookup (LDAP injection)"
+
+[[spec]]
+name = "dirContext.search"
+is_sink = "ldap"
+sink_args = [1]
+description = "DirContext.search (LDAP injection)"
+
+[[spec]]
+name = "ldapTemplate.search"
+is_sink = "ldap"
+description = "LdapTemplate.search (LDAP injection)"
+
+[[spec]]
+name = "evaluate"
+is_sink = "xpath"
+description = "XPath.evaluate (XPath injection)"
+
+[[spec]]
+name = "compile"
+is_sink = "xpath"
+description = "XPath.compile (XPath injection)"
+
+[[spec]]
+name = "xpath.evaluate"
+is_sink = "xpath"
+description = "XPath.evaluate (XPath injection)"
+
+[[spec]]
+name = "xpath.compile"
+is_sink = "xpath"
+description = "XPath.compile (XPath injection)"
+
+[[spec]]
+name = "DocumentBuilderFactory.newInstance"
+taint_propagates = [0]
+description = "DocumentBuilderFactory"
+
+[[spec]]
+name = "documentBuilder.parse"
+is_sink = "xxe"
+taint_propagates = [0]
+description = "DocumentBuilder.parse (XXE)"
+
+[[spec]]
+name = "SAXParserFactory.newInstance"
+taint_propagates = [0]
+description = "SAXParserFactory"
+
+[[spec]]
+name = "saxParser.parse"
+is_sink = "xxe"
+taint_propagates = [0]
+description = "SAXParser.parse (XXE)"
+
+[[spec]]
+name = "XMLReaderFactory.createXMLReader"
+taint_propagates = [0]
+description = "XMLReader"
+
+[[spec]]
+name = "xmlReader.parse"
+is_sink = "xxe"
+taint_propagates = [0]
+description = "XMLReader.parse (XXE)"
+
+[[spec]]
+name = "TransformerFactory.newInstance"
+taint_propagates = [0]
+description = "TransformerFactory"
+
+[[spec]]
+name = "transformer.transform"
+is_sink = "xxe"
+description = "Transformer.transform (XXE)"
+
+[[spec]]
+name = "unmarshaller.unmarshal"
+is_sink = "xxe"
+taint_propagates = [0]
+description = "Unmarshaller.unmarshal (XXE)"
+
+[[spec]]
+name = "ObjectInputStream"
+is_sink = "deserialize"
+description = "ObjectInputStream (unsafe deserialization)"
+
+[[spec]]
+name = "readObject"
+is_sink = "deserialize"
+description = "ObjectInputStream.readObject (unsafe deserialization)"
+
+[[spec]]
+name = "objectInputStream.readObject"
+is_sink = "deserialize"
+description = "readObject (unsafe deserialization)"
+
+[[spec]]
+name = "XMLDecoder"
+is_sink = "deserialize"
+description = "XMLDecoder (unsafe deserialization)"
+
+[[spec]]
+name = "xmlDecoder.readObject"
+is_sink = "deserialize"
+description = "XMLDecoder.readObject (unsafe deserialization)"
+
+[[spec]]
+name = "Yaml.load"
+is_sink = "deserialize"
+description = "Yaml.load (unsafe deserialization)"
+
+[[spec]]
+name = "yaml.load"
+is_sink = "deserialize"
+description = "Yaml.load (unsafe deserialization)"
+
+[[spec]]
+name = "objectMapper.readValue"
+taint_propagates = [0]
+description = "Jackson readValue"
+
+[[spec]]
+name = "objectMapper.enableDefaultTyping"
+is_sink = "deserialize"
+description = "Jackson default typing (unsafe)"
+
+[[spec]]
+name = "ExpressionFactory.createValueExpression"
+is_sink = "el"
+sink_args = [1]
+description = "EL createValueExpression (EL injection)"
+
+[[spec]]
+name = "ValueExpression.getValue"
+taint_propagates = [0]
+description = "EL getValue"
+
+[[spec]]
+name = "Ognl.getValue"
+is_sink = "el"
+description = "OGNL getValue (OGNL injection)"
+
+[[spec]]
+name = "Ognl.setValue"
+is_sink = "el"
+description = "OGNL setValue (OGNL injection)"
+
+[[spec]]
+name = "expressionParser.parseExpression"
+is_sink = "el"
+description = "SpEL parseExpression (SpEL injection)"
+
+[[spec]]
+name = "expression.getValue"
+taint_propagates = [0]
+description = "SpEL getValue"
+
+[[spec]]
+name = "new URL"
+is_sink = "ssrf"
+description = "URL constructor (SSRF)"
+
+[[spec]]
+name = "URL"
+is_sink = "ssrf"
+description = "URL constructor (SSRF)"
+
+[[spec]]
+name = "url.openConnection"
+is_sink = "ssrf"
+description = "URL.openConnection (SSRF)"
+
+[[spec]]
+name = "url.openStream"
+is_sink = "ssrf"
+description = "URL.openStream (SSRF)"
+
+[[spec]]
+name = "httpURLConnection.connect"
+taint_propagates = [0]
+description = "HttpURLConnection.connect"
+
+[[spec]]
+name = "httpClient.execute"
+is_sink = "ssrf"
+description = "HttpClient.execute (SSRF)"
+
+[[spec]]
+name = "httpClient.send"
+is_sink = "ssrf"
+description = "HttpClient.send (SSRF)"
+
+[[spec]]
+name = "HttpGet"
+is_sink = "ssrf"
+description = "HttpGet (SSRF)"
+
+[[spec]]
+name = "HttpPost"
+is_sink = "ssrf"
+description = "HttpPost (SSRF)"
+
+[[spec]]
+name = "logger.info"
+is_sink = "log"
+description = "Logger.info (log injection)"
+
+[[spec]]
+name = "logger.warning"
+is_sink = "log"
+description = "Logger.warning (log injection)"
+
+[[spec]]
+name = "logger.severe"
+is_sink = "log"
+description = "Logger.severe (log injection)"
+
+[[spec]]
+name = "logger.fine"
+is_sink = "log"
+description = "Logger.fine (log injection)"
+
+[[spec]]
+name = "log.info"
+is_sink = "log"
+description = "Log4j info (log injection)"
+
+[[spec]]
+name = "log.warn"
+is_sink = "log"
+description = "Log4j warn (log injection)"
+
+[[spec]]
+name = "log.error"
+is_sink = "log"
+description = "Log4j error (log injection)"
+
+[[spec]]
+name = "log.debug"
+is_sink = "log"
+description = "Log4j debug (log injection)"
+
+[[spec]]
+name = "slf4j.info"
+is_sink = "log"
+description = "SLF4J info (log injection)"
+
+[[spec]]
+name = "slf4j.warn"
+is_sink = "log"
+description = "SLF4J warn (log injection)"
+
+[[spec]]
+name = "slf4j.error"
+is_sink = "log"
+description = "SLF4J error (log injection)"
+
+[[spec]]
+name = "Class.forName"
+is_sink = "code"
+description = "Class.forName (class injection)"
+
+[[spec]]
+name = "loadClass"
+is_sink = "code"
+description = "ClassLoader.loadClass (class injection)"
+
+[[spec]]
+name = "Class.getMethod"
+is_sink = "code"
+description = "Class.getMethod with a chosen name (reflection injection)"
+
+[[spec]]
+name = "Class.getDeclaredMethod"
+is_sink = "code"
+description = "Class.getDeclaredMethod with a chosen name (reflection injection)"
+
+[[spec]]
+name = "scriptEngine.eval"
+is_sink = "code"
+description = "ScriptEngine.eval (code injection)"
+
+[[spec]]
+name = "engine.eval"
+is_sink = "code"
+description = "ScriptEngine.eval (code injection)"
+
+[[spec]]
+name = "encodeForHTML"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForHTML (XSS)"
+
+[[spec]]
+name = "encodeForJavaScript"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForJavaScript (XSS)"
+
+[[spec]]
+name = "encodeForCSS"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForCSS (XSS)"
+
+[[spec]]
+name = "encodeForURL"
+is_sanitizer = ["url", "redirect"]
+description = "ESAPI encodeForURL"
+
+[[spec]]
+name = "encodeForXML"
+is_sanitizer = ["xml", "xxe"]
+description = "ESAPI encodeForXML"
+
+[[spec]]
+name = "encodeForXMLAttribute"
+is_sanitizer = ["xml", "xxe"]
+description = "ESAPI encodeForXMLAttribute"
+
+[[spec]]
+name = "encodeForXPath"
+is_sanitizer = ["xpath"]
+description = "ESAPI encodeForXPath"
+
+[[spec]]
+name = "encodeForSQL"
+is_sanitizer = ["sql"]
+description = "ESAPI encodeForSQL"
+
+[[spec]]
+name = "encodeForLDAP"
+is_sanitizer = ["ldap"]
+description = "ESAPI encodeForLDAP"
+
+[[spec]]
+name = "encodeForDN"
+is_sanitizer = ["ldap"]
+description = "ESAPI encodeForDN"
+
+[[spec]]
+name = "encodeForOS"
+is_sanitizer = ["command", "shell", "shell_command"]
+description = "ESAPI encodeForOS (command injection)"
+
+[[spec]]
+name = "encodeForBase64"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForBase64"
+
+[[spec]]
+name = "ESAPI.encoder().encodeForBase64"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForBase64"
+
+[[spec]]
+name = "encodeForHTMLAttribute"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForHTMLAttribute"
+
+[[spec]]
+name = "ESAPI.encoder().encodeForHTML"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForHTML (XSS)"
+
+[[spec]]
+name = "ESAPI.encoder().encodeForJavaScript"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForJavaScript (XSS)"
+
+[[spec]]
+name = "org.owasp.esapi.ESAPI.encoder().encodeForHTML"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForHTML (XSS)"
+
+[[spec]]
+name = "Encode.forHtml"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtml"
+
+[[spec]]
+name = "Encode.forHtmlContent"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtmlContent"
+
+[[spec]]
+name = "Encode.forHtmlAttribute"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtmlAttribute"
+
+[[spec]]
+name = "Encode.forJavaScript"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forJavaScript"
+
+[[spec]]
+name = "Encode.forCssString"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forCssString"
+
+[[spec]]
+name = "Encode.forUriComponent"
+is_sanitizer = ["url"]
+description = "OWASP Encode.forUriComponent"
+
+[[spec]]
+name = "forHtml"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtml"
+
+[[spec]]
+name = "forHtmlContent"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtmlContent"
+
+[[spec]]
+name = "forHtmlAttribute"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forHtmlAttribute"
+
+[[spec]]
+name = "forJavaScript"
+is_sanitizer = ["html", "xss"]
+description = "OWASP Encode.forJavaScript"
+
+[[spec]]
+name = "StringEscapeUtils.escapeHtml4"
+is_sanitizer = ["html", "xss"]
+description = "Apache StringEscapeUtils.escapeHtml4"
+
+[[spec]]
+name = "StringEscapeUtils.escapeHtml"
+is_sanitizer = ["html", "xss"]
+description = "Apache StringEscapeUtils.escapeHtml"
+
+[[spec]]
+name = "StringEscapeUtils.escapeXml"
+is_sanitizer = ["html", "xml", "xss"]
+description = "Apache StringEscapeUtils.escapeXml"
+
+[[spec]]
+name = "StringEscapeUtils.escapeSql"
+is_sanitizer = ["sql"]
+description = "Apache StringEscapeUtils.escapeSql"
+
+[[spec]]
+name = "escapeHtml4"
+is_sanitizer = ["html", "xss"]
+description = "Apache StringEscapeUtils.escapeHtml4"
+
+[[spec]]
+name = "escapeHtml"
+is_sanitizer = ["html", "xss"]
+description = "Apache StringEscapeUtils.escapeHtml"
+
+[[spec]]
+name = "escapeXml"
+is_sanitizer = ["html", "xml", "xss"]
+description = "Apache StringEscapeUtils.escapeXml"
+
+[[spec]]
+name = "escapeSql"
+is_sanitizer = ["sql"]
+description = "Apache StringEscapeUtils.escapeSql"
+
+[[spec]]
+name = "HtmlUtils.htmlEscape"
+is_sanitizer = ["html", "xss"]
+description = "Spring HtmlUtils.htmlEscape"
+
+[[spec]]
+name = "htmlEscape"
+is_sanitizer = ["html", "xss"]
+description = "Spring HtmlUtils.htmlEscape"
+
+[[spec]]
+name = "setString"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setString"
+
+[[spec]]
+name = "setInt"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setInt"
+
+[[spec]]
+name = "setLong"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setLong"
+
+[[spec]]
+name = "setFloat"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setFloat"
+
+[[spec]]
+name = "setDouble"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setDouble"
+
+[[spec]]
+name = "setBoolean"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setBoolean"
+
+[[spec]]
+name = "setDate"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setDate"
+
+[[spec]]
+name = "setTimestamp"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setTimestamp"
+
+[[spec]]
+name = "setObject"
+is_sanitizer = ["sql"]
+description = "PreparedStatement.setObject"
+
+[[spec]]
+name = "concat"
+taint_propagates = [0]
+description = "String.concat"
+
+[[spec]]
+name = "substring"
+taint_propagates = [0]
+description = "String.substring"
+
+[[spec]]
+name = "replace"
+taint_propagates = [0]
+description = "String.replace"
+
+[[spec]]
+name = "replaceAll"
+taint_propagates = [0]
+description = "String.replaceAll"
+
+[[spec]]
+name = "toLowerCase"
+taint_propagates = [0]
+description = "String.toLowerCase"
+
+[[spec]]
+name = "toUpperCase"
+taint_propagates = [0]
+description = "String.toUpperCase"
+
+[[spec]]
+name = "trim"
+taint_propagates = [0]
+description = "String.trim"
+
+[[spec]]
+name = "String.format"
+taint_propagates = [0, 1, 2, 3, 4, 5]
+description = "String.format"
+
+[[spec]]
+name = "MessageFormat.format"
+taint_propagates = [0, 1, 2, 3, 4, 5]
+description = "MessageFormat.format"
+
+[[spec]]
+name = "java.text.MessageFormat.format"
+taint_propagates = [0, 1, 2, 3, 4, 5]
+description = "MessageFormat.format"
+
+[[spec]]
+name = "StringBuilder.append"
+taint_propagates = [0]
+description = "StringBuilder.append"
+
+[[spec]]
+name = "StringBuffer.append"
+taint_propagates = [0]
+description = "StringBuffer.append"
+
+[[spec]]
+name = "toString"
+taint_propagates = [0]
+description = "Object.toString"
+
+[[spec]]
+name = "getBytes"
+taint_propagates = [0]
+description = "String.getBytes"
+
+[[spec]]
+name = "toCharArray"
+taint_propagates = [0]
+description = "String.toCharArray"
+
+[[spec]]
+name = "split"
+taint_propagates = [0]
+description = "String.split"
+
+[[spec]]
+name = "valueOf"
+taint_propagates = [0]
+description = "String.valueOf"
+
+[[spec]]
+name = "Integer.parseInt"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Integer.parseInt (a number)"
+
+[[spec]]
+name = "Integer.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Integer.valueOf (a number)"
+
+[[spec]]
+name = "Integer.parseUnsignedInt"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Integer.parseUnsignedInt (a number)"
+
+[[spec]]
+name = "Long.parseLong"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Long.parseLong (a number)"
+
+[[spec]]
+name = "Long.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Long.valueOf (a number)"
+
+[[spec]]
+name = "Long.parseUnsignedLong"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Long.parseUnsignedLong (a number)"
+
+[[spec]]
+name = "Short.parseShort"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Short.parseShort (a number)"
+
+[[spec]]
+name = "Short.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Short.valueOf (a number)"
+
+[[spec]]
+name = "Byte.parseByte"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Byte.parseByte (a number)"
+
+[[spec]]
+name = "Byte.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Byte.valueOf (a number)"
+
+[[spec]]
+name = "Double.parseDouble"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Double.parseDouble (a number)"
+
+[[spec]]
+name = "Double.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Double.valueOf (a number)"
+
+[[spec]]
+name = "Float.parseFloat"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Float.parseFloat (a number)"
+
+[[spec]]
+name = "Float.valueOf"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
+description = "Float.valueOf (a number)"
+
+[[spec]]
+name = "add"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "List.add"
+
+[[spec]]
+name = "addAll"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "List.addAll"
+
+[[spec]]
+name = "set"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "List.set"
+
+[[spec]]
+name = "put"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "Map.put"
+
+[[spec]]
+name = "putAll"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "Map.putAll"
+
+[[spec]]
+name = "get"
+taint_from_receiver = true
+description = "List.get"
+
+[[spec]]
+name = "getOrDefault"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "Map.getOrDefault"
+
+[[spec]]
+name = "remove"
+taint_from_receiver = true
+description = "List.remove"
+
+[[spec]]
+name = "poll"
+taint_from_receiver = true
+description = "Queue.poll"
+
+[[spec]]
+name = "peek"
+taint_from_receiver = true
+description = "Queue.peek"
+
+[[spec]]
+name = "pop"
+taint_from_receiver = true
+description = "Stack.pop"
+
+[[spec]]
+name = "first"
+taint_from_receiver = true
+description = "List.first"
+
+[[spec]]
+name = "last"
+taint_from_receiver = true
+description = "List.last"
+
+[[spec]]
+name = "iterator"
+taint_from_receiver = true
+description = "Collection.iterator"
+
+[[spec]]
+name = "next"
+taint_from_receiver = true
+description = "Iterator.next"
+
+[[spec]]
+name = "toArray"
+taint_from_receiver = true
+description = "Collection.toArray"
+
+[[spec]]
+name = "stream"
+taint_from_receiver = true
+description = "Collection.stream"
+
+[[spec]]
+name = "StringWriter.write"
+taint_propagates = [0]
+description = "StringWriter.write (in-memory buffer)"
+
+[[spec]]
+name = "StringWriter.append"
+taint_propagates = [0]
+description = "StringWriter.append (in-memory buffer)"
+
+[[spec]]
+name = "StringWriter.print"
+taint_propagates = [0]
+description = "StringWriter.print (in-memory buffer)"
+
+[[spec]]
+name = "StringWriter.println"
+taint_propagates = [0]
+description = "StringWriter.println (in-memory buffer)"
+
+[[spec]]
+name = "CharArrayWriter.write"
+taint_propagates = [0]
+description = "CharArrayWriter.write (in-memory buffer)"
+
+[[spec]]
+name = "CharArrayWriter.append"
+taint_propagates = [0]
+description = "CharArrayWriter.append (in-memory buffer)"
+
+[[spec]]
+name = "CharArrayWriter.print"
+taint_propagates = [0]
+description = "CharArrayWriter.print (in-memory buffer)"
+
+[[spec]]
+name = "CharArrayWriter.println"
+taint_propagates = [0]
+description = "CharArrayWriter.println (in-memory buffer)"
+
+[[spec]]
+name = "ByteArrayOutputStream.write"
+taint_propagates = [0]
+description = "ByteArrayOutputStream.write (in-memory buffer)"
+
+[[spec]]
+name = "ByteArrayOutputStream.append"
+taint_propagates = [0]
+description = "ByteArrayOutputStream.append (in-memory buffer)"
+
+[[spec]]
+name = "ByteArrayOutputStream.print"
+taint_propagates = [0]
+description = "ByteArrayOutputStream.print (in-memory buffer)"
+
+[[spec]]
+name = "ByteArrayOutputStream.println"
+taint_propagates = [0]
+description = "ByteArrayOutputStream.println (in-memory buffer)"
+
+[[spec]]
+name = "URLDecoder.decode"
+taint_propagates = [0]
+description = "URLDecoder.decode"
+
+[[spec]]
+name = "java.net.URLDecoder.decode"
+taint_propagates = [0]
+description = "URLDecoder.decode"
+
+[[spec]]
+name = "URLEncoder.encode"
+taint_propagates = [0]
+description = "URLEncoder.encode"
+
+[[spec]]
+name = "java.net.URLEncoder.encode"
+taint_propagates = [0]
+description = "URLEncoder.encode"
+
+[[spec]]
+name = "decode"
+taint_propagates = [0]
+description = "URL decode"
+
+[[spec]]
+name = "encode"
+taint_propagates = [0]
+description = "URL encode"
+
+[[spec]]
+name = "Base64.getDecoder().decode"
+taint_propagates = [0]
+description = "Base64 decode"
+
+[[spec]]
+name = "Base64.getEncoder().encode"
+taint_propagates = [0]
+description = "Base64 encode"
+
+[[spec]]
+name = "Base64.decode"
+taint_propagates = [0]
+description = "Base64 decode"
+
+[[spec]]
+name = "Base64.encode"
+taint_propagates = [0]
+description = "Base64 encode"
+
+[[spec]]
+name = "decodeBase64"
+taint_propagates = [0]
+description = "Base64 decode"
+
+[[spec]]
+name = "encodeBase64"
+taint_propagates = [0]
+description = "Base64 encode"
+
+[[spec]]
+name = "Hex.decode"
+taint_propagates = [0]
+description = "Hex decode"
+
+[[spec]]
+name = "Hex.encode"
+taint_propagates = [0]
+description = "Hex encode"
+
+[[spec]]
+name = "parseObject"
+taint_propagates = [0]
+description = "JSON parse"
+
+[[spec]]
+name = "toJSONString"
+taint_propagates = [0]
+description = "JSON stringify"
+
+[[spec]]
+name = "readValue"
+taint_propagates = [0]
+description = "Jackson readValue"
+
+[[spec]]
+name = "writeValueAsString"
+taint_propagates = [0]
+description = "Jackson writeValue"
+
+[[spec]]
+name = "exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "getRuntime().exec"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Runtime.exec (command injection)"
+
+[[spec]]
+name = "command"
+is_sink = "command"
+description = "ProcessBuilder.command (command injection)"
+
+[[spec]]
+name = "pb.command"
+is_sink = "command"
+description = "ProcessBuilder.command (command injection)"
+
+[[spec]]
+name = "Jwts.parser"
+is_sink = "auth"
+description = "JWT parser - verify signature (CWE-347)"
+
+[[spec]]
+name = "JWT.decode"
+taint_propagates = [0]
+description = "JWT.decode (propagates token taint)"
+
+[[spec]]
+name = "getHeaderClaim"
+taint_from_receiver = true
+description = "JWT header claim (propagates taint)"
+
+[[spec]]
+name = "getClaim"
+taint_from_receiver = true
+description = "JWT claim (propagates taint)"
+
+[[spec]]
+name = "asString"
+taint_from_receiver = true
+description = "Claim.asString (propagates taint)"
+
+[[spec]]
+name = "asInt"
+taint_from_receiver = true
+description = "Claim.asInt (propagates taint)"
+
+[[spec]]
+name = "asLong"
+taint_from_receiver = true
+description = "Claim.asLong (propagates taint)"
+
+[[spec]]
+name = "asBoolean"
+taint_from_receiver = true
+description = "Claim.asBoolean (propagates taint)"
+
+[[spec]]
+name = "JWTVerifier"
+taint_propagates = [0]
+description = "JWT verifier"
+
+[[spec]]
+name = "HttpSession"
+taint_propagates = [0]
+description = "HTTP session"
+
+[[spec]]
+name = "session.getAttribute"
+description = "Session attribute (server state)"
+
+[[spec]]
+name = "HttpSession.getAttribute"
+description = "Session attribute (server state)"
+
+[[spec]]
+name = "request.getAttribute"
+description = "Request attribute (server state)"
+
+[[spec]]
+name = "request.setAttribute"
+description = "Request attribute (request scope)"
+
+[[spec]]
+name = "ServletRequest.setAttribute"
+description = "Request attribute (request scope)"
+
+[[spec]]
+name = "ServletRequest.getAttribute"
+description = "Request attribute (server state)"
+
+[[spec]]
+name = "session.invalidate"
+taint_propagates = [0]
+description = "Session invalidation"
+
+[[spec]]
+name = "@PreAuthorize"
+taint_propagates = [0]
+description = "Spring PreAuthorize"
+
+[[spec]]
+name = "@Secured"
+taint_propagates = [0]
+description = "Spring Secured"
+
+[[spec]]
+name = "@RolesAllowed"
+taint_propagates = [0]
+description = "Roles allowed"
+
+[[spec]]
+name = "hasRole"
+taint_propagates = [0]
+description = "Role check"
+
+[[spec]]
+name = "hasAuthority"
+taint_propagates = [0]
+description = "Authority check"
+
+[[spec]]
+name = "isAuthenticated"
+taint_propagates = [0]
+description = "Authentication check"
+
+[[spec]]
+name = "@CrossOrigin"
+is_sink = "cors"
+description = "CORS annotation (CWE-942)"
+
+[[spec]]
+name = "CorsConfiguration"
+is_sink = "cors"
+description = "CORS configuration (CWE-942)"
+
+[[spec]]
+name = "addAllowedOrigin"
+is_sink = "cors"
+description = "CORS allowed origin (CWE-942)"
+
+[[spec]]
+name = "printStackTrace"
+is_sink = "info_disclosure"
+description = "Stack trace print (CWE-209)"
+
+[[spec]]
+name = "e.getMessage"
+is_sink = "info_disclosure"
+description = "Exception message (CWE-209)"
+
+[[spec]]
+name = "getStackTrace"
+is_sink = "info_disclosure"
+description = "Get stack trace (CWE-209)"
+
+[[spec]]
+name = "TrustAllCerts"
+is_sink = "ssl"
+description = "Trust all certificates (CWE-295)"
+
+[[spec]]
+name = "ALLOW_ALL_HOSTNAME_VERIFIER"
+is_sink = "ssl"
+description = "Allow all hostnames (CWE-295)"
+
+[[spec]]
+name = "setHostnameVerifier"
+is_sink = "cert_validation"
+permissive_callback_arg = 0
+description = "Hostname verifier accepts every host (CWE-295)"
+
+[[spec]]
+name = "setDefaultHostnameVerifier"
+is_sink = "cert_validation"
+permissive_callback_arg = 0
+description = "Hostname verifier accepts every host (CWE-295)"
+
+[[spec]]
+name = "X509TrustManager"
+is_sink = "ssl"
+description = "Custom trust manager (CWE-295)"
+
+[[spec]]
+name = "password"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "apiKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "secretKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded secret (CWE-798)"
+
+[[spec]]
+name = "privateKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded private key (CWE-798)"
+
+[[spec]]
+name = "0.0.0.0"
+is_sink = "ssrf"
+description = "All interfaces (SSRF)"
+
+[[spec]]
+name = "MessageDigest.getInstance"
+is_sink = "weak_hash"
+sink_args = []
+description = "Hash function (algorithm check required)"
+
+[[spec]]
+name = "java.security.MessageDigest.getInstance"
+is_sink = "weak_hash"
+sink_args = []
+description = "Hash function (algorithm check required)"
+
+[[spec]]
+name = "DigestUtils.md5"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "DigestUtils.md5Hex"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "DigestUtils.sha1"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA-1 hash (CWE-328)"
+
+[[spec]]
+name = "DigestUtils.sha1Hex"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA-1 hash (CWE-328)"
+
+[[spec]]
+name = "Cipher.getInstance"
+is_sink = "weak_crypto"
+sink_args = []
+description = "Cipher (algorithm check required)"
+
+[[spec]]
+name = "javax.crypto.Cipher.getInstance"
+is_sink = "weak_crypto"
+sink_args = []
+description = "Cipher (algorithm check required)"
+
+[[spec]]
+name = "java.util.Random"
+is_sink = "insecure_random"
+sink_args = []
+description = "Insecure random (CWE-330)"
+
+[[spec]]
+name = "Math.random"
+is_sink = "insecure_random"
+sink_args = []
+description = "Math.random (CWE-330)"
+
+[[spec]]
+name = "Random.nextFloat"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextFloat (CWE-330)"
+
+[[spec]]
+name = "Random.nextDouble"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextDouble (CWE-330)"
+
+[[spec]]
+name = "Random.nextInt"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextInt (CWE-330)"
+
+[[spec]]
+name = "Random.nextLong"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextLong (CWE-330)"
+
+[[spec]]
+name = "Random.nextBoolean"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextBoolean (CWE-330)"
+
+[[spec]]
+name = "Random.nextGaussian"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextGaussian (CWE-330)"
+
+[[spec]]
+name = "Random.nextBytes"
+is_sink = "insecure_random"
+sink_args = []
+exact_class = true
+description = "Random.nextBytes (CWE-330)"
+
+[[spec]]
+name = "new java.util.Random"
+is_sink = "insecure_random"
+sink_args = []
+description = "new Random() (CWE-330)"
+
+[[spec]]
+name = "nextFloat"
+is_sink = "insecure_random"
+sink_args = []
+description = "Random.nextFloat (CWE-330)"
+
+[[spec]]
+name = "nextDouble"
+is_sink = "insecure_random"
+sink_args = []
+description = "Random.nextDouble (CWE-330)"
+
+[[spec]]
+name = "nextInt"
+is_sink = "insecure_random"
+sink_args = []
+description = "Random.nextInt (CWE-330)"
+
+[[spec]]
+name = "nextLong"
+is_sink = "insecure_random"
+sink_args = []
+description = "Random.nextLong (CWE-330)"
+
+[[spec]]
+name = "nextGaussian"
+is_sink = "insecure_random"
+sink_args = []
+description = "Random.nextGaussian (CWE-330)"
+
+[[spec]]
+name = "SecureRandom"
+is_sanitizer = ["random"]
+description = "Secure random"
+
+[[spec]]
+name = "java.security.SecureRandom"
+is_sanitizer = ["random"]
+description = "Secure random"
+
+[[spec]]
+name = "BCrypt.hashpw"
+is_sanitizer = ["password"]
+description = "BCrypt password hashing"
+
+[[spec]]
+name = "BCrypt.checkpw"
+taint_propagates = [0, 1]
+description = "BCrypt password check"
+
+[[spec]]
+name = "Argon2PasswordEncoder"
+is_sanitizer = ["password"]
+description = "Argon2 password hashing"
+
+[[spec]]
+name = "SCryptPasswordEncoder"
+is_sanitizer = ["password"]
+description = "SCrypt password hashing"
+
+[[spec]]
+name = "PBKDF2"
+is_sanitizer = ["password"]
+description = "PBKDF2 password hashing"
+
+[[spec]]
+name = "MD5PasswordEncoder"
+is_sink = "weak_password_hash"
+description = "MD5 for passwords (CWE-916)"
+
+[[spec]]
+name = "ShaPasswordEncoder"
+is_sink = "weak_password_hash"
+description = "SHA for passwords (CWE-916)"
+
+[[spec]]
+name = "setMaxInactiveInterval"
+taint_propagates = [0]
+description = "Session timeout"
+
+[[spec]]
+name = "JSESSIONID"
+taint_propagates = [0]
+description = "Session ID"
+
+[[spec]]
+name = "setHttpOnly"
+taint_propagates = [0]
+description = "HttpOnly cookie flag"
+
+[[spec]]
+name = "UsernamePasswordAuthenticationToken"
+taint_propagates = [0, 1]
+description = "Auth token"
+
+[[spec]]
+name = "AuthenticationManager"
+taint_propagates = [0]
+description = "Authentication manager"
+
+[[spec]]
+name = "catch (Exception e)"
+is_sink = "exception"
+description = "Generic exception catch (CWE-396)"
+
+[[spec]]
+name = "catch (Throwable t)"
+is_sink = "exception"
+description = "Throwable catch (CWE-396)"
+
+[[spec]]
+name = "e.printStackTrace()"
+is_sink = "exception"
+description = "printStackTrace only (CWE-390)"
+
+[[spec]]
+name = "finally"
+taint_propagates = [0]
+description = "Finally block (check resource cleanup)"
+
+[[spec]]
+name = "try-with-resources"
+taint_propagates = [0]
+description = "Try-with-resources"
+
+[[spec]]
+name = "System.exit"
+is_sink = "exception"
+description = "System exit (CWE-705)"
+
+[[spec]]
+name = "Runtime.halt"
+is_sink = "exception"
+description = "Runtime halt (CWE-705)"
+
+[[spec]]
+name = "NullPointerException"
+taint_propagates = [0]
+description = "NPE handling"
+
+[[spec]]
+name = "PrintWriter.write"
+taint_propagates = [0]
+description = "Response write"
+
+[[spec]]
+name = "OutputStream.write"
+taint_propagates = [0]
+description = "Output stream write"
+
+[[spec]]
+name = "X-Frame-Options"
+taint_propagates = [0]
+description = "X-Frame-Options header"
+
+[[spec]]
+name = "X-Content-Type-Options"
+taint_propagates = [0]
+description = "X-Content-Type-Options header"
+
+[[spec]]
+name = "Content-Security-Policy"
+taint_propagates = [0]
+description = "CSP header"
+
+[[spec]]
+name = "Strict-Transport-Security"
+taint_propagates = [0]
+description = "HSTS header"
+
+[[spec]]
+name = "setHeader"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Set header (CWE-113)"
+
+[[spec]]
+name = "addHeader"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Add header (CWE-113)"
+
+[[spec]]
+name = "response.setHeader"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Response header (CWE-113)"
+
+[[spec]]
+name = "169.254.169.254"
+is_sink = "ssrf"
+description = "Cloud metadata (SSRF)"
+
+[[spec]]
+name = "metadata.google.internal"
+is_sink = "ssrf"
+description = "GCP metadata (SSRF)"
+
+[[spec]]
+name = "localhost"
+is_sink = "ssrf"
+description = "Localhost (SSRF)"
+
+[[spec]]
+name = "127.0.0.1"
+is_sink = "ssrf"
+description = "Loopback (SSRF)"
+
+[[spec]]
+name = "Pattern.compile"
+is_sink = "redos"
+description = "Pattern compile (potential ReDoS CWE-1333)"
+
+[[spec]]
+name = "Pattern.matches"
+is_sink = "redos"
+description = "Pattern matches (potential ReDoS)"
+
+[[spec]]
+name = ".matches"
+is_sink = "redos"
+description = "String matches (potential ReDoS)"
+
+[[spec]]
+name = ".replaceAll"
+is_sink = "redos"
+description = "String replaceAll (potential ReDoS)"
+
+[[spec]]
+name = ".split"
+is_sink = "redos"
+description = "String split (potential ReDoS)"
+
+[[spec]]
+name = "ByteBuffer.allocate"
+is_sink = "alloc_size"
+description = "ByteBuffer.allocate(capacity)"
+
+[[spec]]
+name = "ByteBuffer.allocateDirect"
+is_sink = "alloc_size"
+description = "ByteBuffer.allocateDirect(capacity)"
+
+[[spec]]
+name = "CharBuffer.allocate"
+is_sink = "alloc_size"
+description = "CharBuffer.allocate(capacity)"
+
+[[spec]]
+name = "IntBuffer.allocate"
+is_sink = "alloc_size"
+description = "IntBuffer.allocate(capacity)"
+
+[[spec]]
+name = "LongBuffer.allocate"
+is_sink = "alloc_size"
+description = "LongBuffer.allocate(capacity)"

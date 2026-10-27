@@ -33,6 +33,7 @@ def add_kb_command(subparsers) -> None:
     bd.add_argument("packs_dir", help="Directory of <language>/<name>.toml packs")
     bd.add_argument("out", help="Output directory (publish it, mirror it, or pull from it)")
     bd.add_argument("--revision", required=True, help="Revision id written to the manifest")
+    bd.add_argument("--specs", metavar="DIR", help="Directory of library spec tables (<table>.toml) to include")
 
 
 def _languages(args) -> list:
@@ -73,7 +74,8 @@ def cmd_kb(args) -> int:
                       f"packs:   {st['packs']}\ncache:   {st['cache']}")
             return 0
         if args.kb_command == "build":
-            manifest = build(Path(args.packs_dir), Path(args.out), args.revision)
+            manifest = build(Path(args.packs_dir), Path(args.out), args.revision,
+                             Path(args.specs) if args.specs else None)
             n = len(json.loads(manifest.read_text())["files"])
             print(f"{manifest}: {n} files, revision {args.revision}")
             return 0

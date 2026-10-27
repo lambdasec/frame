@@ -12,6 +12,6 @@ Files are data only (TOML packs, JSON tables): nothing in a knowledge base execu
 """
 
 from frame.kb.store import (  # noqa: F401
-    DEFAULT_SOURCE, KBError, LOCKFILE, MANIFEST, build, cache_root, kb_pack_dirs, pull, read_lock,
-    status, write_lock,
+    DEFAULT_SOURCE, KBError, LOCKFILE, MANIFEST, build, cache_root, kb_pack_dirs, kb_spec_file,
+    pull, read_lock, status, write_lock,
 )

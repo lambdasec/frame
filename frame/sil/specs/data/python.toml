@@ -1,0 +1,2637 @@
+# Python library specifications: one [[spec]] per call name, in lookup order,
+# with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
+# Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
+
+[[spec]]
+name = "request.args.get"
+is_source = "user"
+description = "Flask query parameter"
+
+[[spec]]
+name = "request.args.getlist"
+is_source = "user"
+description = "Flask query parameter list"
+
+[[spec]]
+name = "request.args.__getitem__"
+is_source = "user"
+description = "Flask query parameter"
+
+[[spec]]
+name = "request.form.get"
+is_source = "user"
+description = "Flask form data"
+
+[[spec]]
+name = "request.form.getlist"
+is_source = "user"
+description = "Flask form data list"
+
+[[spec]]
+name = "request.form.__getitem__"
+is_source = "user"
+description = "Flask form data"
+
+[[spec]]
+name = "request.json"
+is_source = "user"
+description = "Flask JSON body"
+
+[[spec]]
+name = "request.json.get"
+is_source = "user"
+description = "Flask JSON field"
+
+[[spec]]
+name = "request.json.__getitem__"
+is_source = "user"
+description = "Flask JSON field"
+
+[[spec]]
+name = "request.data"
+is_source = "user"
+description = "Flask raw request data"
+
+[[spec]]
+name = "request.values.get"
+is_source = "user"
+description = "Flask combined args/form"
+
+[[spec]]
+name = "request.values.__getitem__"
+is_source = "user"
+description = "Flask combined args/form"
+
+[[spec]]
+name = "request.cookies.get"
+is_source = "principal"
+description = "session cookie (authenticated)"
+
+[[spec]]
+name = "request.headers.get"
+is_source = "user"
+description = "Flask request header"
+
+[[spec]]
+name = "request.headers.getlist"
+is_source = "user"
+description = "Flask request header list"
+
+[[spec]]
+name = "request.headers.__getitem__"
+is_source = "user"
+description = "Flask request header"
+
+[[spec]]
+name = "request.files.get"
+is_source = "file"
+description = "Flask file upload"
+
+[[spec]]
+name = "request.get_data"
+is_source = "user"
+description = "Flask raw data"
+
+[[spec]]
+name = "request.get_json"
+is_source = "user"
+description = "Flask JSON data"
+
+[[spec]]
+name = "request.post"
+is_source = "user"
+description = "aiohttp form data"
+
+[[spec]]
+name = "request.text"
+is_source = "user"
+description = "aiohttp/Starlette request body text"
+
+[[spec]]
+name = "request.read"
+is_source = "user"
+description = "aiohttp request body bytes"
+
+[[spec]]
+name = "request.body"
+is_source = "user"
+description = "Django raw body"
+
+[[spec]]
+name = "request.form"
+is_source = "user"
+description = "Starlette form data"
+
+[[spec]]
+name = "request.query.get"
+is_source = "user"
+description = "aiohttp query parameter"
+
+[[spec]]
+name = "request.query.__getitem__"
+is_source = "user"
+description = "aiohttp query parameter"
+
+[[spec]]
+name = "request.query_params.get"
+is_source = "user"
+description = "Starlette query parameter"
+
+[[spec]]
+name = "request.query_params.__getitem__"
+is_source = "user"
+description = "Starlette query parameter"
+
+[[spec]]
+name = "request.path_params.get"
+is_source = "user"
+description = "Starlette path parameter"
+
+[[spec]]
+name = "request.path_params.__getitem__"
+is_source = "user"
+description = "Starlette path parameter"
+
+[[spec]]
+name = "request.match_info.get"
+is_source = "user"
+description = "aiohttp route parameter"
+
+[[spec]]
+name = "request.match_info.__getitem__"
+is_source = "user"
+description = "aiohttp route parameter"
+
+[[spec]]
+name = "request.rel_url.query.get"
+is_source = "user"
+description = "aiohttp query parameter"
+
+[[spec]]
+name = "request.rel_url.query.__getitem__"
+is_source = "user"
+description = "aiohttp query parameter"
+
+[[spec]]
+name = "render_template_string"
+is_sink = "xss"
+description = "Template string (XSS CWE-79)"
+
+[[spec]]
+name = "Markup"
+is_sink = "xss"
+description = "Markup (XSS if not escaped CWE-79)"
+
+[[spec]]
+name = "redirect"
+is_sink = "redirect"
+description = "Redirect (open redirect CWE-601)"
+
+[[spec]]
+name = "make_response"
+taint_propagates = [0]
+description = "Flask response"
+
+[[spec]]
+name = "request.GET.get"
+is_source = "user"
+description = "Django GET parameter"
+
+[[spec]]
+name = "request.GET.getlist"
+is_source = "user"
+description = "Django GET parameter list"
+
+[[spec]]
+name = "request.GET.__getitem__"
+is_source = "user"
+description = "Django GET parameter"
+
+[[spec]]
+name = "request.POST.get"
+is_source = "user"
+description = "Django POST parameter"
+
+[[spec]]
+name = "request.POST.getlist"
+is_source = "user"
+description = "Django POST parameter list"
+
+[[spec]]
+name = "request.POST.__getitem__"
+is_source = "user"
+description = "Django POST parameter"
+
+[[spec]]
+name = "request.COOKIES.get"
+is_source = "user"
+description = "Django cookie"
+
+[[spec]]
+name = "request.META.get"
+is_source = "user"
+description = "Django request meta"
+
+[[spec]]
+name = "request.FILES.get"
+is_source = "file"
+description = "Django file upload"
+
+[[spec]]
+name = "cursor.execute"
+is_sink = "sql"
+description = "SQL execute (CWE-89)"
+
+[[spec]]
+name = "connection.cursor().execute"
+is_sink = "sql"
+description = "Django raw SQL"
+
+[[spec]]
+name = "RawSQL"
+is_sink = "sql"
+description = "Django RawSQL"
+
+[[spec]]
+name = "raw"
+is_sink = "sql"
+description = "Django Manager.raw()"
+
+[[spec]]
+name = "HttpResponse"
+is_sink = "html"
+description = "Django HttpResponse body (XSS)"
+
+[[spec]]
+name = "mark_safe"
+is_sink = "xss"
+description = "Django mark_safe (XSS CWE-79)"
+
+[[spec]]
+name = "SafeString"
+is_sink = "xss"
+description = "Django SafeString (XSS CWE-79)"
+
+[[spec]]
+name = "HttpResponseRedirect"
+is_sink = "redirect"
+description = "Django HttpResponseRedirect (CWE-601)"
+
+[[spec]]
+name = "escape"
+is_sanitizer = ["xss", "html"]
+description = "HTML escape"
+
+[[spec]]
+name = "conditional_escape"
+is_sanitizer = ["html"]
+description = "Django conditional escape"
+
+[[spec]]
+name = "strip_tags"
+is_sanitizer = ["html"]
+description = "Django strip tags"
+
+[[spec]]
+name = "session.execute"
+is_sink = "sql"
+description = "SQLAlchemy session execute"
+
+[[spec]]
+name = "engine.execute"
+is_sink = "sql"
+description = "SQLAlchemy engine execute"
+
+[[spec]]
+name = "connection.execute"
+is_sink = "sql"
+description = "SQLAlchemy connection execute"
+
+[[spec]]
+name = "db.execute"
+is_sink = "sql"
+description = "Database execute"
+
+[[spec]]
+name = "db.session.execute"
+is_sink = "sql"
+description = "Flask-SQLAlchemy execute"
+
+[[spec]]
+name = "text"
+is_sink = "sql"
+description = "SQLAlchemy text() - raw SQL"
+
+[[spec]]
+name = "literal_column"
+is_sink = "sql"
+description = "SQLAlchemy literal_column"
+
+[[spec]]
+name = "fetchone"
+is_source = "database"
+description = "Database query result"
+
+[[spec]]
+name = "fetchall"
+is_source = "database"
+description = "Database query results"
+
+[[spec]]
+name = "fetchmany"
+is_source = "database"
+description = "Database query results"
+
+[[spec]]
+name = "scalar"
+is_source = "database"
+description = "Database scalar result"
+
+[[spec]]
+name = "first"
+is_source = "database"
+description = "Database first result"
+
+[[spec]]
+name = "one"
+is_source = "database"
+description = "Database single result"
+
+[[spec]]
+name = "get_jwt_identity"
+is_source = "principal"
+description = "JWT authenticated subject"
+
+[[spec]]
+name = "session.get"
+is_source = "principal"
+description = "Flask server-side session identity"
+
+[[spec]]
+name = "session.__getitem__"
+is_source = "principal"
+description = "Flask server-side session identity"
+
+[[spec]]
+name = "request.authorization"
+is_source = "principal"
+description = "parsed HTTP auth credential"
+
+[[spec]]
+name = "request.cookies.__getitem__"
+is_source = "principal"
+description = "session cookie (authenticated)"
+
+[[spec]]
+name = "query.get"
+is_sink = "resource_select"
+description = "SQLAlchemy select by primary key (IDOR)"
+
+[[spec]]
+name = "query.get_or_404"
+is_sink = "resource_select"
+description = "Flask-SQLAlchemy get_or_404 (IDOR)"
+
+[[spec]]
+name = "get_or_404"
+is_sink = "resource_select"
+description = "Flask-SQLAlchemy get_or_404 (IDOR)"
+
+[[spec]]
+name = "query.filter_by"
+is_sink = "resource_select"
+description = "SQLAlchemy filter_by selection (IDOR)"
+
+[[spec]]
+name = "query.filter"
+is_sink = "resource_select"
+description = "SQLAlchemy filter selection (IDOR)"
+
+[[spec]]
+name = "objects.get"
+is_sink = "resource_select"
+description = "Django ORM select by field (IDOR)"
+
+[[spec]]
+name = "objects.filter"
+is_sink = "resource_select"
+description = "Django ORM filter selection (IDOR)"
+
+[[spec]]
+name = "subprocess.run"
+is_sink = "command"
+description = "subprocess.run (CWE-78)"
+
+[[spec]]
+name = "subprocess.call"
+is_sink = "command"
+description = "subprocess.call (CWE-78)"
+
+[[spec]]
+name = "subprocess.check_call"
+is_sink = "command"
+description = "subprocess.check_call (CWE-78)"
+
+[[spec]]
+name = "subprocess.check_output"
+is_sink = "command"
+description = "subprocess.check_output (CWE-78)"
+
+[[spec]]
+name = "subprocess.Popen"
+is_sink = "command"
+description = "subprocess.Popen (CWE-78)"
+
+[[spec]]
+name = "subprocess.getoutput"
+is_sink = "shell"
+description = "subprocess.getoutput"
+
+[[spec]]
+name = "subprocess.getstatusoutput"
+is_sink = "shell"
+description = "subprocess.getstatusoutput"
+
+[[spec]]
+name = "os.system"
+is_sink = "command"
+description = "os.system (CWE-78)"
+
+[[spec]]
+name = "os.popen"
+is_sink = "command"
+description = "os.popen (CWE-78)"
+
+[[spec]]
+name = "os.popen2"
+is_sink = "shell"
+description = "os.popen2"
+
+[[spec]]
+name = "os.popen3"
+is_sink = "shell"
+description = "os.popen3"
+
+[[spec]]
+name = "os.popen4"
+is_sink = "shell"
+description = "os.popen4"
+
+[[spec]]
+name = "os.spawnl"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnl"
+
+[[spec]]
+name = "os.spawnle"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnle"
+
+[[spec]]
+name = "os.spawnlp"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnlp"
+
+[[spec]]
+name = "os.spawnlpe"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnlpe"
+
+[[spec]]
+name = "os.spawnv"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnv"
+
+[[spec]]
+name = "os.spawnve"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnve"
+
+[[spec]]
+name = "os.spawnvp"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnvp"
+
+[[spec]]
+name = "os.spawnvpe"
+is_sink = "shell"
+sink_args = [1]
+description = "os.spawnvpe"
+
+[[spec]]
+name = "os.execl"
+is_sink = "shell"
+description = "os.execl"
+
+[[spec]]
+name = "os.execle"
+is_sink = "shell"
+description = "os.execle"
+
+[[spec]]
+name = "os.execlp"
+is_sink = "shell"
+description = "os.execlp"
+
+[[spec]]
+name = "os.execlpe"
+is_sink = "shell"
+description = "os.execlpe"
+
+[[spec]]
+name = "os.execv"
+is_sink = "shell"
+description = "os.execv"
+
+[[spec]]
+name = "os.execve"
+is_sink = "shell"
+description = "os.execve"
+
+[[spec]]
+name = "os.execvp"
+is_sink = "shell"
+description = "os.execvp"
+
+[[spec]]
+name = "os.execvpe"
+is_sink = "shell"
+description = "os.execvpe"
+
+[[spec]]
+name = "shlex.quote"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "Shell argument quoting"
+
+[[spec]]
+name = "shlex.join"
+is_sanitizer = ["shell", "command", "shell_command"]
+description = "Shell argument joining"
+
+[[spec]]
+name = "open"
+is_sink = "filesystem"
+description = "File open"
+
+[[spec]]
+name = "builtins.open"
+is_sink = "filesystem"
+description = "File open"
+
+[[spec]]
+name = "io.open"
+is_sink = "filesystem"
+description = "File open"
+
+[[spec]]
+name = "codecs.open"
+is_sink = "filesystem"
+description = "codecs.open (path traversal CWE-22)"
+
+[[spec]]
+name = "send_file"
+is_sink = "filesystem"
+description = "Flask send_file (path traversal CWE-22)"
+
+[[spec]]
+name = "flask.send_file"
+is_sink = "filesystem"
+description = "Flask send_file (path traversal CWE-22)"
+
+[[spec]]
+name = "os.path.join"
+taint_propagates = [0, 1]
+description = "Path join"
+
+[[spec]]
+name = "pathlib.Path"
+is_sink = "filesystem"
+description = "Pathlib Path"
+
+[[spec]]
+name = "Path"
+is_sink = "filesystem"
+description = "Pathlib Path"
+
+[[spec]]
+name = "Path.read_text"
+is_sink = "filesystem"
+sink_args = []
+description = "Path read"
+
+[[spec]]
+name = "Path.read_bytes"
+is_sink = "filesystem"
+sink_args = []
+description = "Path read"
+
+[[spec]]
+name = "Path.write_text"
+is_sink = "filesystem"
+description = "Path write"
+
+[[spec]]
+name = "Path.write_bytes"
+is_sink = "filesystem"
+description = "Path write"
+
+[[spec]]
+name = "Path.open"
+is_sink = "filesystem"
+sink_args = []
+description = "Path open"
+
+[[spec]]
+name = "Path.unlink"
+is_sink = "filesystem"
+sink_args = []
+description = "Path delete"
+
+[[spec]]
+name = "Path.rmdir"
+is_sink = "filesystem"
+sink_args = []
+description = "Path rmdir"
+
+[[spec]]
+name = "Path.mkdir"
+is_sink = "filesystem"
+sink_args = []
+description = "Path mkdir"
+
+[[spec]]
+name = "os.remove"
+is_sink = "filesystem"
+description = "os.remove"
+
+[[spec]]
+name = "os.unlink"
+is_sink = "filesystem"
+description = "os.unlink"
+
+[[spec]]
+name = "os.rmdir"
+is_sink = "filesystem"
+description = "os.rmdir"
+
+[[spec]]
+name = "os.mkdir"
+is_sink = "filesystem"
+permission_mode_arg = 1
+description = "os.mkdir"
+
+[[spec]]
+name = "os.makedirs"
+is_sink = "filesystem"
+permission_mode_arg = 1
+description = "os.makedirs"
+
+[[spec]]
+name = "os.rename"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "os.rename"
+
+[[spec]]
+name = "os.replace"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "os.replace"
+
+[[spec]]
+name = "os.link"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "os.link"
+
+[[spec]]
+name = "os.symlink"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "os.symlink"
+
+[[spec]]
+name = "os.readlink"
+is_sink = "filesystem"
+description = "os.readlink"
+
+[[spec]]
+name = "os.listdir"
+is_sink = "filesystem"
+description = "os.listdir"
+
+[[spec]]
+name = "os.scandir"
+is_sink = "filesystem"
+description = "os.scandir"
+
+[[spec]]
+name = "os.walk"
+is_sink = "filesystem"
+description = "os.walk"
+
+[[spec]]
+name = "os.chdir"
+is_sink = "filesystem"
+description = "os.chdir"
+
+[[spec]]
+name = "os.chmod"
+is_sink = "filesystem"
+permission_mode_arg = 1
+description = "os.chmod"
+
+[[spec]]
+name = "os.chown"
+is_sink = "filesystem"
+description = "os.chown"
+
+[[spec]]
+name = "shutil.copy"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "shutil.copy"
+
+[[spec]]
+name = "shutil.copy2"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "shutil.copy2"
+
+[[spec]]
+name = "shutil.copytree"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "shutil.copytree"
+
+[[spec]]
+name = "shutil.move"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "shutil.move"
+
+[[spec]]
+name = "shutil.rmtree"
+is_sink = "filesystem"
+description = "shutil.rmtree"
+
+[[spec]]
+name = "read"
+is_source = "file"
+description = "File read"
+
+[[spec]]
+name = "readline"
+is_source = "file"
+description = "File readline"
+
+[[spec]]
+name = "readlines"
+is_source = "file"
+description = "File readlines"
+
+[[spec]]
+name = "os.path.basename"
+is_sanitizer = ["filesystem"]
+description = "Path basename (partial sanitizer)"
+
+[[spec]]
+name = "os.path.normpath"
+taint_propagates = [0]
+description = "Path normalization (not a sanitizer on its own)"
+
+[[spec]]
+name = "os.path.realpath"
+taint_propagates = [0]
+description = "Path realpath (not a sanitizer on its own)"
+
+[[spec]]
+name = "eval"
+is_sink = "eval"
+description = "eval() - code injection"
+
+[[spec]]
+name = "exec"
+is_sink = "eval"
+description = "exec() - code injection"
+
+[[spec]]
+name = "compile"
+is_sink = "eval"
+description = "compile() - code injection"
+
+[[spec]]
+name = "__import__"
+is_sink = "eval"
+description = "__import__() - code injection"
+
+[[spec]]
+name = "importlib.import_module"
+is_sink = "eval"
+description = "Dynamic import"
+
+[[spec]]
+name = "pickle.loads"
+is_sink = "deserialize"
+description = "Pickle deserialization (CWE-502)"
+
+[[spec]]
+name = "pickle.load"
+is_sink = "deserialize"
+description = "Pickle deserialization (CWE-502)"
+
+[[spec]]
+name = "cPickle.loads"
+is_sink = "deserialize"
+description = "cPickle deserialization"
+
+[[spec]]
+name = "cPickle.load"
+is_sink = "deserialize"
+description = "cPickle deserialization"
+
+[[spec]]
+name = "marshal.loads"
+is_sink = "deserialize"
+description = "Marshal deserialization"
+
+[[spec]]
+name = "marshal.load"
+is_sink = "deserialize"
+description = "Marshal deserialization"
+
+[[spec]]
+name = "yaml.load"
+is_sink = "deserialize"
+description = "YAML deserialization (unsafe)"
+
+[[spec]]
+name = "yaml.unsafe_load"
+is_sink = "deserialize"
+description = "YAML unsafe deserialization"
+
+[[spec]]
+name = "json.loads"
+taint_propagates = [0]
+description = "JSON loads"
+
+[[spec]]
+name = "json.load"
+taint_propagates = [0]
+description = "JSON deserialization (safe)"
+
+[[spec]]
+name = "yaml.safe_load"
+taint_propagates = [0]
+description = "YAML safe deserialization"
+
+[[spec]]
+name = "yaml.full_load"
+is_sink = "deserialize"
+description = "YAML full_load (unsafe in PyYAML < 5.1)"
+
+[[spec]]
+name = "requests.get"
+is_sink = "ssrf"
+description = "requests.get (SSRF)"
+
+[[spec]]
+name = "requests.post"
+is_sink = "ssrf"
+description = "requests.post (SSRF)"
+
+[[spec]]
+name = "requests.put"
+is_sink = "ssrf"
+description = "requests.put (SSRF)"
+
+[[spec]]
+name = "requests.delete"
+is_sink = "ssrf"
+description = "requests.delete (SSRF)"
+
+[[spec]]
+name = "requests.patch"
+is_sink = "ssrf"
+description = "requests.patch (SSRF)"
+
+[[spec]]
+name = "requests.head"
+is_sink = "ssrf"
+description = "requests.head (SSRF)"
+
+[[spec]]
+name = "requests.options"
+is_sink = "ssrf"
+description = "requests.options (SSRF)"
+
+[[spec]]
+name = "requests.request"
+is_sink = "ssrf"
+sink_args = [1]
+description = "requests.request (SSRF)"
+
+[[spec]]
+name = "urllib.request.urlopen"
+is_sink = "ssrf"
+description = "urllib.urlopen (SSRF)"
+
+[[spec]]
+name = "urllib.request.urlretrieve"
+is_sink = "ssrf"
+description = "urllib.urlretrieve (SSRF)"
+
+[[spec]]
+name = "urllib2.urlopen"
+is_sink = "ssrf"
+description = "urllib2.urlopen (SSRF)"
+
+[[spec]]
+name = "httplib.HTTPConnection"
+is_sink = "ssrf"
+description = "HTTPConnection (SSRF)"
+
+[[spec]]
+name = "httplib.HTTPSConnection"
+is_sink = "ssrf"
+description = "HTTPSConnection (SSRF)"
+
+[[spec]]
+name = "http.client.HTTPConnection"
+is_sink = "ssrf"
+description = "HTTPConnection (SSRF)"
+
+[[spec]]
+name = "http.client.HTTPSConnection"
+is_sink = "ssrf"
+description = "HTTPSConnection (SSRF)"
+
+[[spec]]
+name = "aiohttp.ClientSession.get"
+is_sink = "ssrf"
+description = "aiohttp get (SSRF)"
+
+[[spec]]
+name = "aiohttp.ClientSession.post"
+is_sink = "ssrf"
+description = "aiohttp post (SSRF)"
+
+[[spec]]
+name = "httpx.get"
+is_sink = "ssrf"
+description = "httpx get (SSRF)"
+
+[[spec]]
+name = "httpx.post"
+is_sink = "ssrf"
+description = "httpx post (SSRF)"
+
+[[spec]]
+name = "socket.socket.connect"
+is_sink = "ssrf"
+description = "Socket connect (SSRF)"
+
+[[spec]]
+name = "innerHTML"
+is_sink = "html"
+description = "innerHTML (XSS)"
+
+[[spec]]
+name = "jinja2.Template"
+is_sink = "template"
+description = "Jinja2 template injection"
+
+[[spec]]
+name = "jinja2.Environment.from_string"
+is_sink = "template"
+description = "Jinja2 template injection (CWE-1336)"
+
+[[spec]]
+name = "html.escape"
+is_sanitizer = ["xss", "html"]
+description = "HTML escape"
+
+[[spec]]
+name = "cgi.escape"
+is_sanitizer = ["xss", "html"]
+description = "CGI escape (deprecated)"
+
+[[spec]]
+name = "markupsafe.escape"
+is_sanitizer = ["xss", "html"]
+description = "MarkupSafe escape"
+
+[[spec]]
+name = "bleach.clean"
+is_sanitizer = ["xss", "html"]
+description = "Bleach HTML cleaner"
+
+[[spec]]
+name = "logging.debug"
+is_sink = "sensitive_log"
+description = "Debug log (may contain sensitive data CWE-532)"
+
+[[spec]]
+name = "logging.info"
+is_sink = "sensitive_log"
+description = "Info log (may contain sensitive data CWE-532)"
+
+[[spec]]
+name = "logging.warning"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logging.error"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logging.critical"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logging.exception"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logging.log"
+is_sink = "log"
+sink_args = [1]
+description = "Log injection"
+
+[[spec]]
+name = "logger.debug"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logger.info"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logger.warning"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logger.error"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "logger.critical"
+is_sink = "log"
+description = "Log injection"
+
+[[spec]]
+name = "input"
+is_source = "user"
+description = "Console input"
+
+[[spec]]
+name = "raw_input"
+is_source = "user"
+description = "Console input (Python 2)"
+
+[[spec]]
+name = "os.environ.get"
+is_source = "env"
+description = "Environment variable"
+
+[[spec]]
+name = "os.environ.__getitem__"
+is_source = "env"
+description = "Environment variable"
+
+[[spec]]
+name = "os.getenv"
+is_source = "env"
+description = "Environment variable"
+
+[[spec]]
+name = "sys.argv"
+is_source = "user"
+description = "Command line arguments"
+
+[[spec]]
+name = "str.format"
+taint_propagates = [0]
+description = "String format"
+
+[[spec]]
+name = "str.__mod__"
+taint_propagates = [0, 1]
+description = "String % formatting"
+
+[[spec]]
+name = "str.__add__"
+taint_propagates = [0, 1]
+description = "String concatenation"
+
+[[spec]]
+name = "str.join"
+taint_propagates = [0, 1]
+description = "String join"
+
+[[spec]]
+name = "str.replace"
+taint_from_receiver = true
+description = "String replace"
+
+[[spec]]
+name = "str.lower"
+taint_from_receiver = true
+description = "String lower"
+
+[[spec]]
+name = "str.upper"
+taint_from_receiver = true
+description = "String upper"
+
+[[spec]]
+name = "str.strip"
+taint_from_receiver = true
+description = "String strip"
+
+[[spec]]
+name = "str.lstrip"
+taint_from_receiver = true
+description = "String lstrip"
+
+[[spec]]
+name = "str.rstrip"
+taint_from_receiver = true
+description = "String rstrip"
+
+[[spec]]
+name = "str.split"
+taint_from_receiver = true
+description = "String split"
+
+[[spec]]
+name = "str.encode"
+taint_propagates = [0]
+description = "String encode"
+
+[[spec]]
+name = "bytes.decode"
+taint_propagates = [0]
+description = "Bytes decode"
+
+[[spec]]
+name = "split"
+taint_from_receiver = true
+description = "String split method"
+
+[[spec]]
+name = "lower"
+taint_from_receiver = true
+description = "String lower method"
+
+[[spec]]
+name = "upper"
+taint_from_receiver = true
+description = "String upper method"
+
+[[spec]]
+name = "strip"
+taint_from_receiver = true
+description = "String strip method"
+
+[[spec]]
+name = "replace"
+taint_from_receiver = true
+description = "String replace method"
+
+[[spec]]
+name = "list.append"
+taint_propagates = [0]
+description = "List append (taints the list)"
+
+[[spec]]
+name = "list.extend"
+taint_propagates = [0]
+description = "List extend (taints the list)"
+
+[[spec]]
+name = "list.insert"
+taint_propagates = [1]
+description = "List insert (taints the list)"
+
+[[spec]]
+name = "list.__setitem__"
+taint_propagates = [1]
+description = "List item assignment"
+
+[[spec]]
+name = "list.__getitem__"
+taint_propagates = [0]
+description = "List item access"
+
+[[spec]]
+name = "list.pop"
+taint_propagates = [0]
+description = "List pop"
+
+[[spec]]
+name = "append"
+taint_propagates = [0]
+description = "List append"
+
+[[spec]]
+name = "extend"
+taint_propagates = [0]
+description = "List extend"
+
+[[spec]]
+name = "insert"
+taint_propagates = [1]
+description = "List insert"
+
+[[spec]]
+name = "dict.__setitem__"
+taint_propagates = [1]
+description = "Dict item assignment"
+
+[[spec]]
+name = "dict.__getitem__"
+taint_propagates = [0]
+description = "Dict item access"
+
+[[spec]]
+name = "dict.get"
+taint_propagates = [0]
+description = "Dict get"
+
+[[spec]]
+name = "dict.update"
+taint_propagates = [0]
+description = "Dict update"
+
+[[spec]]
+name = "next"
+taint_propagates = [0]
+description = "Iterator next"
+
+[[spec]]
+name = "iter"
+taint_propagates = [0]
+description = "Iterator creation"
+
+[[spec]]
+name = "urllib.parse.unquote"
+taint_propagates = [0]
+description = "URL unquote"
+
+[[spec]]
+name = "urllib.parse.unquote_plus"
+taint_propagates = [0]
+description = "URL unquote_plus"
+
+[[spec]]
+name = "urllib.parse.quote"
+taint_propagates = [0]
+description = "URL quote"
+
+[[spec]]
+name = "urllib.parse.quote_plus"
+taint_propagates = [0]
+description = "URL quote_plus"
+
+[[spec]]
+name = "urllib.parse.urlencode"
+taint_propagates = [0]
+description = "URL encode"
+
+[[spec]]
+name = "urllib.parse.parse_qs"
+taint_propagates = [0]
+description = "Parse query string"
+
+[[spec]]
+name = "urllib.parse.parse_qsl"
+taint_propagates = [0]
+description = "Parse query string list"
+
+[[spec]]
+name = "urllib.parse.urlparse"
+taint_propagates = [0]
+description = "URL parsing"
+
+[[spec]]
+name = "urllib.parse.urlsplit"
+taint_propagates = [0]
+description = "URL split"
+
+[[spec]]
+name = "urllib.parse.urljoin"
+taint_propagates = [0, 1]
+description = "URL join"
+
+[[spec]]
+name = "html.unescape"
+taint_propagates = [0]
+description = "HTML unescape"
+
+[[spec]]
+name = "base64.b64encode"
+taint_propagates = [0]
+description = "Base64 encode"
+
+[[spec]]
+name = "base64.b64decode"
+taint_propagates = [0]
+description = "Base64 decode"
+
+[[spec]]
+name = "base64.urlsafe_b64encode"
+taint_propagates = [0]
+description = "Base64 URL-safe encode"
+
+[[spec]]
+name = "base64.urlsafe_b64decode"
+taint_propagates = [0]
+description = "Base64 URL-safe decode"
+
+[[spec]]
+name = "json.dumps"
+taint_propagates = [0]
+description = "JSON dumps"
+
+[[spec]]
+name = "hashlib.md5"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "hashlib.sha1"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "hashlib.new"
+is_sink = "weak_hash"
+sink_args = []
+description = "hashlib.new - usage-based (CWE-328)"
+
+[[spec]]
+name = "Crypto.Hash.MD5.new"
+is_sink = "weak_hash"
+sink_args = []
+description = "PyCrypto MD5 (CWE-328)"
+
+[[spec]]
+name = "Crypto.Hash.SHA.new"
+is_sink = "weak_hash"
+sink_args = []
+description = "PyCrypto SHA1 (CWE-328)"
+
+[[spec]]
+name = "md5"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "sha1"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "random.random"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.randint"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.choice"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.randrange"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.uniform"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.triangular"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.gauss"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.normalvariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.lognormvariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.expovariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.betavariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.gammavariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.paretovariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.weibullvariate"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.sample"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.shuffle"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.getrandbits"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.randbytes"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "random.choices"
+is_sink = "insecure_random"
+sink_args = []
+description = "Non-cryptographic random (CWE-330)"
+
+[[spec]]
+name = "Crypto.Cipher.AES.new"
+is_sink = "weak_crypto"
+description = "Check AES mode (CWE-327)"
+
+[[spec]]
+name = "Crypto.Cipher.DES.new"
+is_sink = "weak_crypto"
+description = "DES is deprecated (CWE-327)"
+
+[[spec]]
+name = "Crypto.Cipher.DES3.new"
+is_sink = "weak_crypto"
+description = "3DES is deprecated (CWE-327)"
+
+[[spec]]
+name = "cryptography.hazmat.primitives.ciphers.algorithms.TripleDES"
+is_sink = "weak_crypto"
+sink_args = []
+description = "3DES deprecated"
+
+[[spec]]
+name = "jsonpickle.decode"
+is_sink = "deserialize"
+description = "jsonpickle deserialization (CWE-502)"
+
+[[spec]]
+name = "dill.loads"
+is_sink = "deserialize"
+description = "dill deserialization (CWE-502)"
+
+[[spec]]
+name = "shelve.open"
+is_sink = "deserialize"
+description = "shelve deserialization (CWE-502)"
+
+[[spec]]
+name = "xml.etree.ElementTree.parse"
+is_sink = "xml"
+description = "XML parse (potential XXE CWE-611)"
+
+[[spec]]
+name = "xml.etree.ElementTree.fromstring"
+is_sink = "xml"
+description = "XML parse (potential XXE)"
+
+[[spec]]
+name = "lxml.etree.parse"
+is_sink = "xml"
+description = "lxml parse (potential XXE)"
+
+[[spec]]
+name = "lxml.etree.fromstring"
+is_sink = "xml"
+description = "lxml parse (potential XXE)"
+
+[[spec]]
+name = "xml.dom.minidom.parse"
+is_sink = "xml"
+description = "minidom parse (XXE)"
+
+[[spec]]
+name = "xml.dom.minidom.parseString"
+is_sink = "xml"
+description = "minidom parseString (XXE)"
+
+[[spec]]
+name = "xml.sax.parse"
+is_sink = "xml"
+description = "SAX parse (XXE)"
+
+[[spec]]
+name = "defusedxml.parse"
+is_sanitizer = ["xml"]
+description = "defusedxml safe parser"
+
+[[spec]]
+name = "defusedxml.fromstring"
+is_sanitizer = ["xml"]
+description = "defusedxml safe parser"
+
+[[spec]]
+name = "pymongo.collection.Collection.find"
+is_sink = "nosql"
+description = "MongoDB find (NoSQL injection)"
+
+[[spec]]
+name = "pymongo.collection.Collection.find_one"
+is_sink = "nosql"
+description = "MongoDB find_one"
+
+[[spec]]
+name = "pymongo.collection.Collection.aggregate"
+is_sink = "nosql"
+description = "MongoDB aggregate"
+
+[[spec]]
+name = "pymongo.collection.Collection.update"
+is_sink = "nosql"
+sink_args = [0, 1]
+description = "MongoDB update"
+
+[[spec]]
+name = "pymongo.collection.Collection.delete_many"
+is_sink = "nosql"
+description = "MongoDB delete"
+
+[[spec]]
+name = "redis.Redis.execute_command"
+is_sink = "nosql"
+description = "Redis command injection"
+
+[[spec]]
+name = "redis.Redis.eval"
+is_sink = "eval"
+description = "Redis Lua eval"
+
+[[spec]]
+name = "re.match"
+is_sink = "regex"
+description = "Regex match (potential ReDoS CWE-1333)"
+
+[[spec]]
+name = "re.search"
+is_sink = "regex"
+description = "Regex search (potential ReDoS)"
+
+[[spec]]
+name = "re.findall"
+is_sink = "regex"
+description = "Regex findall (potential ReDoS)"
+
+[[spec]]
+name = "re.sub"
+is_sink = "regex"
+description = "Regex sub (potential ReDoS)"
+
+[[spec]]
+name = "re.compile"
+is_sink = "regex"
+description = "Regex compile (potential ReDoS)"
+
+[[spec]]
+name = "mako.template.Template"
+is_sink = "template"
+description = "Mako template injection"
+
+[[spec]]
+name = "string.Template"
+is_sink = "template"
+description = "String template injection"
+
+[[spec]]
+name = "ldap.initialize"
+is_sink = "ldap"
+description = "LDAP connection"
+
+[[spec]]
+name = "ldap.open"
+is_sink = "ldap"
+description = "LDAP connection"
+
+[[spec]]
+name = "ldap.LDAPObject.search_s"
+is_sink = "ldap"
+sink_args = [0, 2]
+description = "LDAP search (injection CWE-90)"
+
+[[spec]]
+name = "ldap.LDAPObject.search"
+is_sink = "ldap"
+sink_args = [0, 2]
+description = "LDAP search"
+
+[[spec]]
+name = "ldap.filter.filter_format"
+is_sanitizer = ["ldap"]
+description = "LDAP filter escaping"
+
+[[spec]]
+name = "conn.search"
+is_sink = "ldap"
+sink_args = [1]
+description = "ldap3 search (filter is arg 1, CWE-90)"
+
+[[spec]]
+name = "connection.search"
+is_sink = "ldap"
+sink_args = [1]
+description = "ldap3 search (CWE-90)"
+
+[[spec]]
+name = "Connection.search"
+is_sink = "ldap"
+sink_args = [1]
+description = "ldap3 Connection.search (CWE-90)"
+
+[[spec]]
+name = "ldap3.Connection.search"
+is_sink = "ldap"
+sink_args = [1]
+description = "ldap3 search (CWE-90)"
+
+[[spec]]
+name = "search"
+is_sink = "ldap"
+sink_args = [1]
+description = "LDAP search (CWE-90)"
+
+[[spec]]
+name = "print"
+is_sink = "sensitive_log"
+description = "Print (may expose sensitive data CWE-532)"
+
+[[spec]]
+name = "jwt.decode"
+is_sink = "auth"
+description = "JWT decode - verify signature (CWE-347)"
+
+[[spec]]
+name = "jwt.encode"
+taint_propagates = [0]
+description = "JWT encode"
+
+[[spec]]
+name = "jose.jwt.decode"
+is_sink = "auth"
+description = "python-jose JWT decode"
+
+[[spec]]
+name = "authlib.jose.jwt.decode"
+is_sink = "auth"
+description = "Authlib JWT decode"
+
+[[spec]]
+name = "session"
+is_sink = "trust_boundary"
+description = "Session storage (CWE-501)"
+
+[[spec]]
+name = "flask.session"
+is_sink = "trust_boundary"
+description = "Flask session storage (CWE-501)"
+
+[[spec]]
+name = "request.session"
+taint_propagates = [0]
+description = "Django session"
+
+[[spec]]
+name = "CORS"
+is_sink = "cors"
+description = "CORS configuration (CWE-942)"
+
+[[spec]]
+name = "Access-Control-Allow-Origin"
+is_sink = "cors"
+description = "CORS header"
+
+[[spec]]
+name = "login_required"
+taint_propagates = [0]
+description = "Login required decorator"
+
+[[spec]]
+name = "permission_required"
+taint_propagates = [0]
+description = "Permission required decorator"
+
+[[spec]]
+name = "requires_auth"
+taint_propagates = [0]
+description = "Auth required decorator"
+
+[[spec]]
+name = "app.debug"
+is_sink = "config"
+description = "Debug mode enabled (CWE-489)"
+
+[[spec]]
+name = "DEBUG"
+is_sink = "config"
+description = "Debug flag (CWE-489)"
+
+[[spec]]
+name = "app.run"
+is_sink = "config"
+description = "Flask app.run - check debug param"
+
+[[spec]]
+name = "SECRET_KEY"
+is_sink = "hardcoded_secret"
+description = "Hardcoded secret key (CWE-798)"
+
+[[spec]]
+name = "app.secret_key"
+is_sink = "hardcoded_secret"
+description = "Flask secret key (CWE-798)"
+
+[[spec]]
+name = "JWT_SECRET_KEY"
+is_sink = "hardcoded_secret"
+description = "JWT secret key (CWE-798)"
+
+[[spec]]
+name = "verify=False"
+is_sink = "ssl"
+description = "SSL verification disabled (CWE-295)"
+
+[[spec]]
+name = "CERT_NONE"
+is_sink = "ssl"
+description = "Certificate verification disabled (CWE-295)"
+
+[[spec]]
+name = "ssl._create_unverified_context"
+is_sink = "ssl"
+description = "Unverified SSL context (CWE-295)"
+
+[[spec]]
+name = "0.0.0.0"
+is_sink = "ssrf"
+description = "All interfaces (SSRF)"
+
+[[spec]]
+name = "PROPAGATE_EXCEPTIONS"
+is_sink = "config"
+description = "Exception propagation enabled"
+
+[[spec]]
+name = "traceback.print_exc"
+is_sink = "info_disclosure"
+description = "Traceback disclosure (CWE-209)"
+
+[[spec]]
+name = "traceback.format_exc"
+is_sink = "info_disclosure"
+description = "Traceback formatting (CWE-209)"
+
+[[spec]]
+name = "password"
+is_sink = "sensitive_exposure"
+description = "Password in response (CWE-200)"
+
+[[spec]]
+name = "passwd"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "api_key"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "apikey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "secret"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded secret (CWE-798)"
+
+[[spec]]
+name = "token"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded token (CWE-798)"
+
+[[spec]]
+name = "private_key"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded private key (CWE-798)"
+
+[[spec]]
+name = "bcrypt.hashpw"
+is_sanitizer = ["password"]
+description = "bcrypt password hashing (safe)"
+
+[[spec]]
+name = "argon2.hash"
+is_sanitizer = ["password"]
+description = "Argon2 password hashing (safe)"
+
+[[spec]]
+name = "pbkdf2_hmac"
+is_sanitizer = ["password"]
+description = "PBKDF2 password hashing (safe)"
+
+[[spec]]
+name = "werkzeug.security.generate_password_hash"
+is_sanitizer = ["password"]
+description = "Werkzeug password hash"
+
+[[spec]]
+name = "django.contrib.auth.hashers.make_password"
+is_sanitizer = ["password"]
+description = "Django password hash"
+
+[[spec]]
+name = "session.permanent"
+is_sink = "session"
+description = "Permanent session (check timeout)"
+
+[[spec]]
+name = "PERMANENT_SESSION_LIFETIME"
+is_sink = "session"
+description = "Session lifetime config"
+
+[[spec]]
+name = "ratelimit"
+taint_propagates = [0]
+description = "Rate limiting decorator"
+
+[[spec]]
+name = "Limiter"
+taint_propagates = [0]
+description = "Flask-Limiter"
+
+[[spec]]
+name = "except:"
+is_sink = "exception"
+description = "Bare except clause (CWE-396)"
+
+[[spec]]
+name = "except Exception:"
+is_sink = "exception"
+description = "Generic exception catch (CWE-396)"
+
+[[spec]]
+name = "except BaseException:"
+is_sink = "exception"
+description = "BaseException catch (CWE-396)"
+
+[[spec]]
+name = "pass"
+is_sink = "exception"
+description = "Potential exception swallowing (CWE-390)"
+
+[[spec]]
+name = "assert"
+is_sink = "assertion"
+description = "Assert statement (disabled with -O) (CWE-617)"
+
+[[spec]]
+name = "str(e)"
+taint_propagates = [0]
+description = "Exception to string (may leak info)"
+
+[[spec]]
+name = "repr(e)"
+taint_propagates = [0]
+description = "Exception repr (may leak info)"
+
+[[spec]]
+name = "MODE_ECB"
+is_sink = "weak_crypto"
+description = "ECB mode is insecure (CWE-327)"
+
+[[spec]]
+name = "AES.MODE_ECB"
+is_sink = "weak_crypto"
+description = "AES ECB mode (CWE-327)"
+
+[[spec]]
+name = "key_size=1024"
+is_sink = "weak_crypto"
+description = "Weak RSA key size (CWE-326)"
+
+[[spec]]
+name = "key_size=512"
+is_sink = "weak_crypto"
+description = "Weak RSA key size (CWE-326)"
+
+[[spec]]
+name = "iv="
+is_sink = "weak_crypto"
+description = "Check for random IV (CWE-329)"
+
+[[spec]]
+name = "nonce="
+is_sink = "weak_crypto"
+description = "Check for random nonce (CWE-329)"
+
+[[spec]]
+name = "SSLv2"
+is_sink = "weak_crypto"
+description = "SSLv2 is insecure (CWE-327)"
+
+[[spec]]
+name = "SSLv3"
+is_sink = "weak_crypto"
+description = "SSLv3 is insecure (CWE-327)"
+
+[[spec]]
+name = "TLSv1"
+is_sink = "weak_crypto"
+description = "TLSv1.0 is deprecated (CWE-327)"
+
+[[spec]]
+name = "TLSv1_1"
+is_sink = "weak_crypto"
+description = "TLSv1.1 is deprecated (CWE-327)"
+
+[[spec]]
+name = "PROTOCOL_SSLv2"
+is_sink = "weak_crypto"
+description = "SSLv2 protocol (CWE-327)"
+
+[[spec]]
+name = "PROTOCOL_SSLv3"
+is_sink = "weak_crypto"
+description = "SSLv3 protocol (CWE-327)"
+
+[[spec]]
+name = "PROTOCOL_TLSv1"
+is_sink = "weak_crypto"
+description = "TLSv1.0 protocol (CWE-327)"
+
+[[spec]]
+name = "secrets.token_bytes"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "secrets.token_hex"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "secrets.token_urlsafe"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "os.urandom"
+is_sanitizer = ["random"]
+description = "Cryptographically secure random"
+
+[[spec]]
+name = "credit_card"
+is_sink = "sensitive_exposure"
+description = "Credit card in response (CWE-200)"
+
+[[spec]]
+name = "ssn"
+is_sink = "sensitive_exposure"
+description = "SSN in response (CWE-200)"
+
+[[spec]]
+name = "social_security"
+is_sink = "sensitive_exposure"
+description = "SSN in response (CWE-200)"
+
+[[spec]]
+name = "email"
+taint_propagates = [0]
+description = "Email data (PII)"
+
+[[spec]]
+name = "phone"
+taint_propagates = [0]
+description = "Phone data (PII)"
+
+[[spec]]
+name = "address"
+taint_propagates = [0]
+description = "Address data (PII)"
+
+[[spec]]
+name = "X-Frame-Options"
+taint_propagates = [0]
+description = "X-Frame-Options header"
+
+[[spec]]
+name = "X-Content-Type-Options"
+taint_propagates = [0]
+description = "X-Content-Type-Options header"
+
+[[spec]]
+name = "X-XSS-Protection"
+taint_propagates = [0]
+description = "X-XSS-Protection header"
+
+[[spec]]
+name = "Content-Security-Policy"
+taint_propagates = [0]
+description = "CSP header"
+
+[[spec]]
+name = "Strict-Transport-Security"
+taint_propagates = [0]
+description = "HSTS header"
+
+[[spec]]
+name = "response.headers"
+is_sink = "header_injection"
+description = "Response header manipulation (CWE-113)"
+
+[[spec]]
+name = "make_response().headers"
+is_sink = "header_injection"
+description = "Response header (CWE-113)"
+
+[[spec]]
+name = "169.254.169.254"
+is_sink = "ssrf"
+description = "Cloud metadata endpoint (SSRF)"
+
+[[spec]]
+name = "metadata.google.internal"
+is_sink = "ssrf"
+description = "GCP metadata (SSRF)"
+
+[[spec]]
+name = "localhost"
+is_sink = "ssrf"
+description = "Localhost access (SSRF)"
+
+[[spec]]
+name = "127.0.0.1"
+is_sink = "ssrf"
+description = "Loopback access (SSRF)"
+
+[[spec]]
+name = "10."
+is_sink = "ssrf"
+description = "Private network (SSRF)"
+
+[[spec]]
+name = "172.16."
+is_sink = "ssrf"
+description = "Private network (SSRF)"
+
+[[spec]]
+name = "192.168."
+is_sink = "ssrf"
+description = "Private network (SSRF)"
+
+[[spec]]
+name = "urlparse"
+taint_propagates = [0]
+description = "URL parsing"
+
+[[spec]]
+name = "lxml.etree.XPath"
+is_sink = "xpath"
+description = "XPath query (CWE-643)"
+
+[[spec]]
+name = "lxml.etree.ETXPath"
+is_sink = "xpath"
+description = "XPath query (CWE-643)"
+
+[[spec]]
+name = "elementpath.select"
+is_sink = "xpath"
+sink_args = [1]
+description = "elementpath XPath select (CWE-643)"
+
+[[spec]]
+name = "elementpath.iter_select"
+is_sink = "xpath"
+sink_args = [1]
+description = "elementpath XPath iter_select (CWE-643)"
+
+[[spec]]
+name = "elementpath.Selector"
+is_sink = "xpath"
+description = "elementpath Selector (CWE-643)"
+
+[[spec]]
+name = "xml.etree.ElementTree.Element.find"
+is_sink = "xpath"
+description = "ElementTree find (CWE-643)"
+
+[[spec]]
+name = "xml.etree.ElementTree.Element.findall"
+is_sink = "xpath"
+description = "ElementTree findall (CWE-643)"
+
+[[spec]]
+name = "xml.etree.ElementTree.Element.iterfind"
+is_sink = "xpath"
+description = "ElementTree iterfind (CWE-643)"
+
+[[spec]]
+name = "xpath"
+is_sink = "xpath"
+description = "XPath query (CWE-643)"
+
+[[spec]]
+name = "find"
+is_sink = "xpath"
+description = "XML find (potential XPath CWE-643)"
+
+[[spec]]
+name = "findall"
+is_sink = "xpath"
+description = "XML findall (potential XPath CWE-643)"
+
+[[spec]]
+name = "flask.session.__setitem__"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "Session storage (CWE-501)"
+
+[[spec]]
+name = "session.__setitem__"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "Session storage (CWE-501)"
+
+[[spec]]
+name = "request.session.__setitem__"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "Django session storage (CWE-501)"
+
+[[spec]]
+name = "g.__setattr__"
+is_sink = "trust_boundary"
+sink_args = [1]
+description = "Flask g storage (CWE-501)"
+
+[[spec]]
+name = "response.set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie setting (check secure flag CWE-614)"
+
+[[spec]]
+name = "Response.set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie setting (CWE-614)"
+
+[[spec]]
+name = "make_response().set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie setting (CWE-614)"
+
+[[spec]]
+name = "set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie setting (CWE-614)"
+
+[[spec]]
+name = "RESPONSE.set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Cookie setting (CWE-614)"
+
+[[spec]]
+name = "HttpResponse.set_cookie"
+is_sink = "insecure_cookie"
+sink_args = []
+description = "Django cookie (CWE-614)"
+
+[[spec]]
+name = "flask.redirect"
+is_sink = "redirect"
+description = "Flask redirect (open redirect CWE-601)"
+
+[[spec]]
+name = "django.shortcuts.redirect"
+is_sink = "redirect"
+description = "Django redirect (CWE-601)"
+
+[[spec]]
+name = "HttpResponsePermanentRedirect"
+is_sink = "redirect"
+description = "Django permanent redirect (CWE-601)"
+
+[[spec]]
+name = "url_for"
+taint_propagates = [0]
+description = "URL generation"
+
+[[spec]]
+name = "cur.execute"
+is_sink = "sql"
+description = "SQL execute (CWE-89)"
+
+[[spec]]
+name = "conn.execute"
+is_sink = "sql"
+description = "SQL execute (CWE-89)"
+
+[[spec]]
+name = "sqlite3.Connection.execute"
+is_sink = "sql"
+description = "SQLite execute (CWE-89)"
+
+[[spec]]
+name = "sqlite3.Cursor.execute"
+is_sink = "sql"
+description = "SQLite cursor execute (CWE-89)"
+
+[[spec]]
+name = "sqlite3.Cursor.executemany"
+is_sink = "sql"
+description = "SQLite executemany (CWE-89)"
+
+[[spec]]
+name = "sqlite3.Cursor.executescript"
+is_sink = "sql"
+description = "SQLite executescript (CWE-89)"
+
+[[spec]]
+name = "psycopg2.cursor.execute"
+is_sink = "sql"
+description = "PostgreSQL execute (CWE-89)"
+
+[[spec]]
+name = "psycopg2.cursor.executemany"
+is_sink = "sql"
+description = "PostgreSQL executemany (CWE-89)"
+
+[[spec]]
+name = "mysql.connector.cursor.execute"
+is_sink = "sql"
+description = "MySQL execute (CWE-89)"
+
+[[spec]]
+name = "cursor.mogrify"
+taint_propagates = [0]
+description = "SQL mogrify (use params)"
+
+[[spec]]
+name = "commands.getoutput"
+is_sink = "command"
+description = "commands.getoutput (CWE-78)"
+
+[[spec]]
+name = "commands.getstatusoutput"
+is_sink = "command"
+description = "commands.getstatusoutput (CWE-78)"
+
+[[spec]]
+name = "Response"
+is_sink = "xss"
+description = "Response body (potential XSS CWE-79)"
+
+[[spec]]
+name = "jinja2.Environment"
+is_sink = "xss"
+description = "Jinja2 Environment (check autoescape CWE-79)"
+
+[[spec]]
+name = "helpers.utils.escape_for_html"
+is_sanitizer = ["xss", "html"]
+description = "Custom HTML escape"
+
+[[spec]]
+name = "escape_for_html"
+is_sanitizer = ["xss", "html"]
+description = "Custom HTML escape"
+
+[[spec]]
+name = "wrapped.get_form_parameter"
+is_source = "user"
+description = "Wrapped form parameter"
+
+[[spec]]
+name = "get_form_parameter"
+is_source = "user"
+description = "Form parameter getter"
+
+[[spec]]
+name = "request_wrapper"
+taint_propagates = [0]
+description = "Request wrapper"
+
+[[spec]]
+name = "helpers.separate_request.request_wrapper"
+taint_propagates = [0]
+description = "OWASP request wrapper"
+
+[[spec]]
+name = "configparser.ConfigParser.set"
+taint_propagates = [2]
+description = "ConfigParser set (taints config)"
+
+[[spec]]
+name = "ConfigParser.set"
+taint_propagates = [2]
+description = "ConfigParser set"
+
+[[spec]]
+name = "configparser.ConfigParser.get"
+taint_from_receiver = true
+description = "ConfigParser get (from config)"
+
+[[spec]]
+name = "ConfigParser.get"
+taint_from_receiver = true
+description = "ConfigParser get"
+
+[[spec]]
+name = "request.form.keys"
+is_source = "user"
+description = "Flask form keys"
+
+[[spec]]
+name = "request.form.values"
+is_source = "user"
+description = "Flask form values"
+
+[[spec]]
+name = "request.form.items"
+is_source = "user"
+description = "Flask form items"
+
+[[spec]]
+name = "request.args.keys"
+is_source = "user"
+description = "Flask query keys"
+
+[[spec]]
+name = "request.args.values"
+is_source = "user"
+description = "Flask query values"
+
+[[spec]]
+name = "thing.doSomething"
+taint_propagates = [0]
+description = "OWASP helper doSomething"
+
+[[spec]]
+name = "doSomething"
+taint_propagates = [0]
+description = "OWASP doSomething"
+
+[[spec]]
+name = "helpers.ThingFactory.createThing"
+taint_propagates = [0]
+description = "OWASP ThingFactory"
+
+[[spec]]
+name = "createThing"
+taint_propagates = [0]
+description = "OWASP createThing"
+
+[[spec]]
+name = "SimpleClass"
+taint_propagates = [0]
+description = "OWASP SimpleClass"
+
+[[spec]]
+name = "simple.doSomething"
+taint_propagates = [0]
+description = "OWASP simple helper"
+
+[[spec]]
+name = "base64.b32encode"
+taint_propagates = [0]
+description = "Base32 encode"
+
+[[spec]]
+name = "base64.b32decode"
+taint_propagates = [0]
+description = "Base32 decode"
+
+[[spec]]
+name = "base64.b16encode"
+taint_propagates = [0]
+description = "Base16 encode"
+
+[[spec]]
+name = "base64.b16decode"
+taint_propagates = [0]
+description = "Base16 decode"
+
+[[spec]]
+name = "encode"
+taint_propagates = [0]
+description = "String encode method"
+
+[[spec]]
+name = "decode"
+taint_propagates = [0]
+description = "Bytes decode method"
+
+[[spec]]
+name = "mmap.mmap"
+is_sink = "alloc_size"
+sink_args = [1]
+description = "mmap.mmap(fileno, length) maps length bytes"
+
+[[spec]]
+name = "numpy.zeros"
+is_sink = "alloc_size"
+description = "numpy.zeros(shape)"
+
+[[spec]]
+name = "numpy.ones"
+is_sink = "alloc_size"
+description = "numpy.ones(shape)"
+
+[[spec]]
+name = "numpy.empty"
+is_sink = "alloc_size"
+description = "numpy.empty(shape)"
+
+[[spec]]
+name = "numpy.full"
+is_sink = "alloc_size"
+description = "numpy.full(shape, value)"
+
+[[spec]]
+name = "np.zeros"
+is_sink = "alloc_size"
+description = "numpy.zeros(shape)"
+
+[[spec]]
+name = "np.ones"
+is_sink = "alloc_size"
+description = "numpy.ones(shape)"
+
+[[spec]]
+name = "np.empty"
+is_sink = "alloc_size"
+description = "numpy.empty(shape)"
+
+[[spec]]
+name = "np.full"
+is_sink = "alloc_size"
+description = "numpy.full(shape, value)"
+
+[[spec]]
+name = "os.fchmod"
+permission_mode_arg = 1
+
+[[spec]]
+name = "os.lchmod"
+permission_mode_arg = 1
+
+[[spec]]
+name = "os.mkfifo"
+permission_mode_arg = 1
+
+[[spec]]
+name = "os.mknod"
+permission_mode_arg = 1
+
+[[spec]]
+name = "os.open"
+permission_mode_arg = 2
+
+[[spec]]
+name = "os.umask"
+permission_mode_arg = 0
+permission_is_umask = true
+
+[[spec]]
+name = "int"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "float"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "bool"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "decimal.Decimal"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "Decimal"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "math.floor"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "math.ceil"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "round"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"
+
+[[spec]]
+name = "abs"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+taint_propagates = [0]
+description = "numeric conversion (not text)"

@@ -1,0 +1,2278 @@
+# C# library specifications: one [[spec]] per call name, in lookup order,
+# with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
+# Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
+
+[[spec]]
+name = "Console.ReadLine"
+is_source = "user"
+description = "Console input (ReadLine)"
+
+[[spec]]
+name = "Console.Read"
+is_source = "user"
+description = "Console input (Read)"
+
+[[spec]]
+name = "Console.ReadKey"
+is_source = "user"
+description = "Console input (ReadKey)"
+
+[[spec]]
+name = "Console.In"
+is_source = "user"
+description = "Console input stream"
+
+[[spec]]
+name = "System.Console.ReadLine"
+is_source = "user"
+description = "Console input (ReadLine)"
+
+[[spec]]
+name = "System.Console.Read"
+is_source = "user"
+description = "Console input (Read)"
+
+[[spec]]
+name = "Console.OpenStandardInput"
+is_source = "user"
+description = "Console standard input"
+
+[[spec]]
+name = "Environment.GetEnvironmentVariable"
+is_source = "env"
+description = "Environment variable"
+
+[[spec]]
+name = "Environment.GetCommandLineArgs"
+is_source = "user"
+description = "Command line arguments"
+
+[[spec]]
+name = "File.ReadAllText"
+is_sink = "filesystem"
+description = "File.ReadAllText (path traversal)"
+
+[[spec]]
+name = "File.ReadAllLines"
+is_sink = "filesystem"
+description = "File.ReadAllLines (path traversal)"
+
+[[spec]]
+name = "File.ReadAllBytes"
+is_sink = "filesystem"
+description = "File.ReadAllBytes (path traversal)"
+
+[[spec]]
+name = "StreamReader.ReadLine"
+is_source = "file"
+description = "Stream reader line"
+
+[[spec]]
+name = "StreamReader.ReadToEnd"
+is_source = "file"
+description = "Stream reader contents"
+
+[[spec]]
+name = "StreamReader.Read"
+is_source = "file"
+description = "Stream reader character"
+
+[[spec]]
+name = "HttpClient.GetStringAsync"
+is_sink = "ssrf"
+description = "HttpClient.GetStringAsync (SSRF)"
+
+[[spec]]
+name = "WebClient.DownloadString"
+is_sink = "ssrf"
+description = "WebClient.DownloadString (SSRF)"
+
+[[spec]]
+name = "Request.Query"
+is_source = "user"
+description = "ASP.NET request query string"
+
+[[spec]]
+name = "Request.Form"
+is_source = "user"
+description = "ASP.NET request form data"
+
+[[spec]]
+name = "Request.Headers"
+is_source = "user"
+description = "Request headers (user-controlled)"
+
+[[spec]]
+name = "Request.Cookies"
+is_source = "user"
+description = "ASP.NET request cookies"
+
+[[spec]]
+name = "Request.Body"
+is_source = "user"
+description = "ASP.NET request body"
+
+[[spec]]
+name = "Request.Path"
+is_source = "user"
+description = "ASP.NET request path"
+
+[[spec]]
+name = "Request.QueryString"
+is_source = "user"
+description = "ASP.NET query string"
+
+[[spec]]
+name = "Request.Params"
+is_source = "user"
+description = "ASP.NET combined query/form/cookie/server-variable collection"
+
+[[spec]]
+name = "Request.ServerVariables"
+is_source = "user"
+description = "ASP.NET server variables (headers, path info)"
+
+[[spec]]
+name = "Request.Item"
+is_source = "user"
+description = "ASP.NET Request.Item indexer"
+
+[[spec]]
+name = "Request.Host"
+is_source = "user"
+description = "ASP.NET Host header (attacker-controlled)"
+
+[[spec]]
+name = "Request.RouteValues"
+is_source = "user"
+description = "ASP.NET route values"
+
+[[spec]]
+name = "RouteData.Values"
+is_source = "user"
+description = "ASP.NET route values"
+
+[[spec]]
+name = "[FromQuery]"
+is_source = "user"
+description = "ASP.NET FromQuery parameter"
+
+[[spec]]
+name = "[FromBody]"
+is_source = "user"
+description = "ASP.NET FromBody parameter"
+
+[[spec]]
+name = "[FromForm]"
+is_source = "user"
+description = "ASP.NET FromForm parameter"
+
+[[spec]]
+name = "[FromHeader]"
+is_source = "user"
+description = "ASP.NET FromHeader parameter"
+
+[[spec]]
+name = "[FromRoute]"
+is_source = "user"
+description = "ASP.NET FromRoute parameter"
+
+[[spec]]
+name = "HttpContext.Request"
+is_source = "user"
+description = "HttpContext request"
+
+[[spec]]
+name = "HttpContext.User"
+is_source = "user"
+description = "HttpContext user claims"
+
+[[spec]]
+name = "ModelState"
+taint_propagates = [0]
+description = "ASP.NET model state"
+
+[[spec]]
+name = "ViewData"
+taint_propagates = [0]
+description = "ASP.NET view data"
+
+[[spec]]
+name = "TempData"
+taint_propagates = [0]
+description = "ASP.NET temp data"
+
+[[spec]]
+name = "Response.WriteAsync"
+is_sink = "html"
+description = "ASP.NET Response.WriteAsync (XSS)"
+
+[[spec]]
+name = "Response.Write"
+is_sink = "html"
+description = "ASP.NET Response.Write (XSS)"
+
+[[spec]]
+name = "Content"
+is_sink = "html"
+description = "ASP.NET Content() response (XSS)"
+
+[[spec]]
+name = "Redirect"
+is_sink = "redirect"
+description = "ASP.NET Redirect (open redirect)"
+
+[[spec]]
+name = "RedirectToAction"
+is_sink = "redirect"
+description = "ASP.NET RedirectToAction"
+
+[[spec]]
+name = "LocalRedirect"
+taint_propagates = [0]
+description = "ASP.NET LocalRedirect (safe)"
+
+[[spec]]
+name = "View"
+taint_propagates = [0]
+description = "ASP.NET View()"
+
+[[spec]]
+name = "PartialView"
+taint_propagates = [0]
+description = "ASP.NET PartialView()"
+
+[[spec]]
+name = "Html.Raw"
+is_sink = "html"
+description = "ASP.NET Html.Raw (XSS)"
+
+[[spec]]
+name = "FromSqlRaw"
+is_sink = "sql"
+description = "EF FromSqlRaw (SQL injection)"
+
+[[spec]]
+name = "ExecuteSqlRaw"
+is_sink = "sql"
+description = "EF ExecuteSqlRaw (SQL injection)"
+
+[[spec]]
+name = "ExecuteSqlRawAsync"
+is_sink = "sql"
+description = "EF ExecuteSqlRawAsync (SQL injection)"
+
+[[spec]]
+name = "ExecuteSqlCommand"
+is_sink = "sql"
+description = "EF ExecuteSqlCommand (SQL injection)"
+
+[[spec]]
+name = "ExecuteSqlCommandAsync"
+is_sink = "sql"
+description = "EF ExecuteSqlCommandAsync (SQL injection)"
+
+[[spec]]
+name = "FromSql"
+is_sink = "sql"
+description = "EF FromSql (SQL injection)"
+
+[[spec]]
+name = "ObjectContext.CreateQuery"
+is_sink = "sql"
+description = "ObjectContext.CreateQuery (SQL injection CWE-89)"
+
+[[spec]]
+name = "CreateQuery"
+is_sink = "sql"
+description = "ObjectContext.CreateQuery (SQL injection CWE-89)"
+
+[[spec]]
+name = "ExecuteStoreCommand"
+is_sink = "sql"
+description = "ExecuteStoreCommand (SQL injection CWE-89)"
+
+[[spec]]
+name = "ExecuteStoreQuery"
+is_sink = "sql"
+description = "ExecuteStoreQuery (SQL injection CWE-89)"
+
+[[spec]]
+name = "FullTextSqlQuery"
+is_sink = "sql"
+description = "FullTextSqlQuery (SQL injection CWE-89)"
+
+[[spec]]
+name = "FromSqlInterpolated"
+taint_propagates = [0]
+description = "EF FromSqlInterpolated (parameterized)"
+
+[[spec]]
+name = "ExecuteSqlInterpolated"
+taint_propagates = [0]
+description = "EF ExecuteSqlInterpolated (parameterized)"
+
+[[spec]]
+name = "Where"
+taint_propagates = [0]
+description = "EF LINQ Where"
+
+[[spec]]
+name = "Select"
+taint_propagates = [0]
+description = "EF LINQ Select"
+
+[[spec]]
+name = "FirstOrDefault"
+taint_propagates = [0]
+description = "EF LINQ FirstOrDefault"
+
+[[spec]]
+name = "SingleOrDefault"
+taint_propagates = [0]
+description = "EF LINQ SingleOrDefault"
+
+[[spec]]
+name = "ToList"
+taint_propagates = [0]
+description = "EF LINQ ToList"
+
+[[spec]]
+name = "ToListAsync"
+taint_propagates = [0]
+description = "EF LINQ ToListAsync"
+
+[[spec]]
+name = "SqlCommand"
+is_sink = "sql"
+description = "SqlCommand (SQL injection)"
+
+[[spec]]
+name = "ExecuteReader"
+is_sink = "sql"
+description = "ExecuteReader (SQL injection)"
+
+[[spec]]
+name = "ExecuteNonQuery"
+is_sink = "sql"
+description = "ExecuteNonQuery (SQL injection)"
+
+[[spec]]
+name = "ExecuteScalar"
+is_sink = "sql"
+description = "ExecuteScalar (SQL injection)"
+
+[[spec]]
+name = "ExecuteReaderAsync"
+is_sink = "sql"
+description = "ExecuteReaderAsync (SQL injection)"
+
+[[spec]]
+name = "ExecuteNonQueryAsync"
+is_sink = "sql"
+description = "ExecuteNonQueryAsync (SQL injection)"
+
+[[spec]]
+name = "CommandText"
+is_sink = "sql"
+description = "CommandText assignment (SQL injection)"
+
+[[spec]]
+name = "Sql"
+is_sink = "sql"
+description = "EF migration Sql() raw statement (SQL injection)"
+
+[[spec]]
+name = "Parameters.Add"
+is_sanitizer = ["sql"]
+description = "SqlParameter.Add (parameterized)"
+
+[[spec]]
+name = "Parameters.AddWithValue"
+is_sanitizer = ["sql"]
+description = "AddWithValue (parameterized)"
+
+[[spec]]
+name = "SqlParameter"
+is_sanitizer = ["sql"]
+description = "SqlParameter (parameterized)"
+
+[[spec]]
+name = "File.ReadAllTextAsync"
+is_sink = "filesystem"
+description = "File.ReadAllTextAsync (path traversal)"
+
+[[spec]]
+name = "File.WriteAllText"
+is_sink = "filesystem"
+description = "File.WriteAllText (path traversal)"
+
+[[spec]]
+name = "File.WriteAllTextAsync"
+is_sink = "filesystem"
+description = "File.WriteAllTextAsync (path traversal)"
+
+[[spec]]
+name = "File.WriteAllBytes"
+is_sink = "filesystem"
+description = "File.WriteAllBytes (path traversal)"
+
+[[spec]]
+name = "File.Delete"
+is_sink = "filesystem"
+description = "File.Delete (path traversal)"
+
+[[spec]]
+name = "File.Copy"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "File.Copy (path traversal)"
+
+[[spec]]
+name = "File.Move"
+is_sink = "filesystem"
+sink_args = [0, 1]
+description = "File.Move (path traversal)"
+
+[[spec]]
+name = "File.Exists"
+is_sink = "filesystem"
+description = "File.Exists (path traversal)"
+
+[[spec]]
+name = "File.Open"
+is_sink = "filesystem"
+description = "File.Open (path traversal)"
+
+[[spec]]
+name = "File.Create"
+is_sink = "filesystem"
+description = "File.Create (path traversal)"
+
+[[spec]]
+name = "FileStream"
+is_sink = "filesystem"
+description = "FileStream (path traversal)"
+
+[[spec]]
+name = "StreamReader"
+is_sink = "filesystem"
+description = "StreamReader (path traversal)"
+
+[[spec]]
+name = "StreamWriter"
+is_sink = "filesystem"
+description = "StreamWriter (path traversal)"
+
+[[spec]]
+name = "Directory.GetFiles"
+is_sink = "filesystem"
+description = "Directory.GetFiles (path traversal)"
+
+[[spec]]
+name = "Directory.GetDirectories"
+is_sink = "filesystem"
+description = "Directory.GetDirectories (path traversal)"
+
+[[spec]]
+name = "Directory.Delete"
+is_sink = "filesystem"
+description = "Directory.Delete (path traversal)"
+
+[[spec]]
+name = "Directory.CreateDirectory"
+is_sink = "filesystem"
+description = "Directory.CreateDirectory (path traversal)"
+
+[[spec]]
+name = "Path.Combine"
+taint_propagates = [0, 1]
+description = "Path.Combine"
+
+[[spec]]
+name = "Path.GetFullPath"
+taint_propagates = [0]
+description = "Path.GetFullPath"
+
+[[spec]]
+name = "Process.Start"
+is_sink = "command"
+sink_args = [0, 1]
+description = "Process.Start (command injection)"
+
+[[spec]]
+name = "ProcessStartInfo"
+is_sink = "command"
+sink_args = [0, 1]
+description = "ProcessStartInfo (command injection: file name or arguments)"
+
+[[spec]]
+name = "ProcessStartInfo.FileName"
+is_sink = "command"
+description = "ProcessStartInfo.FileName (command injection)"
+
+[[spec]]
+name = "ProcessStartInfo.Arguments"
+is_sink = "command"
+description = "ProcessStartInfo.Arguments (command injection)"
+
+[[spec]]
+name = "cmd.exe"
+is_sink = "command"
+description = "cmd.exe execution"
+
+[[spec]]
+name = "/bin/bash"
+is_sink = "command"
+description = "bash execution"
+
+[[spec]]
+name = "HttpClient.GetAsync"
+is_sink = "ssrf"
+description = "HttpClient.GetAsync (SSRF)"
+
+[[spec]]
+name = "HttpClient.PostAsync"
+is_sink = "ssrf"
+description = "HttpClient.PostAsync (SSRF)"
+
+[[spec]]
+name = "HttpClient.PutAsync"
+is_sink = "ssrf"
+description = "HttpClient.PutAsync (SSRF)"
+
+[[spec]]
+name = "HttpClient.DeleteAsync"
+is_sink = "ssrf"
+description = "HttpClient.DeleteAsync (SSRF)"
+
+[[spec]]
+name = "HttpClient.SendAsync"
+is_sink = "ssrf"
+description = "HttpClient.SendAsync (SSRF)"
+
+[[spec]]
+name = "WebClient.DownloadData"
+is_sink = "ssrf"
+description = "WebClient.DownloadData (SSRF)"
+
+[[spec]]
+name = "WebClient.DownloadFile"
+is_sink = "ssrf"
+description = "WebClient.DownloadFile (SSRF)"
+
+[[spec]]
+name = "WebClient.UploadString"
+is_sink = "ssrf"
+description = "WebClient.UploadString (SSRF)"
+
+[[spec]]
+name = "WebRequest.Create"
+is_sink = "ssrf"
+description = "WebRequest.Create (SSRF)"
+
+[[spec]]
+name = "HttpWebRequest"
+is_sink = "ssrf"
+description = "HttpWebRequest (SSRF)"
+
+[[spec]]
+name = "RestClient"
+is_sink = "ssrf"
+description = "RestClient (SSRF)"
+
+[[spec]]
+name = "RestRequest"
+taint_propagates = [0]
+description = "RestRequest"
+
+[[spec]]
+name = "XmlDocument.LoadXml"
+is_sink = "xxe"
+sink_args = []
+description = "XmlDocument.LoadXml (XXE, CWE-611)"
+
+[[spec]]
+name = "XmlDocument.Load"
+is_sink = "xxe"
+sink_args = []
+description = "XmlDocument.Load (XXE, CWE-611)"
+
+[[spec]]
+name = "XmlReader.Create"
+taint_propagates = [0]
+description = "XmlReader.Create"
+
+[[spec]]
+name = "XmlTextReader"
+is_sink = "xxe"
+description = "XmlTextReader (XXE - legacy)"
+
+[[spec]]
+name = "XmlWriter.WriteRaw"
+is_sink = "xml_injection"
+description = "XmlWriter.WriteRaw (XML injection CWE-91)"
+
+[[spec]]
+name = "WriteRaw"
+is_sink = "xml_injection"
+description = "XmlWriter.WriteRaw (XML injection CWE-91)"
+
+[[spec]]
+name = "XslCompiledTransform.Load"
+is_sink = "xxe"
+description = "XslCompiledTransform.Load (XXE)"
+
+[[spec]]
+name = "XslCompiledTransform.Transform"
+is_sink = "xxe"
+sink_args = [0, 1]
+description = "XslCompiledTransform.Transform (XXE)"
+
+[[spec]]
+name = "SelectSingleNode"
+is_sink = "xpath"
+description = "SelectSingleNode (XPath injection)"
+
+[[spec]]
+name = "SelectNodes"
+is_sink = "xpath"
+description = "SelectNodes (XPath injection)"
+
+[[spec]]
+name = "XPathNavigator.Evaluate"
+is_sink = "xpath"
+description = "XPathNavigator.Evaluate (XPath injection)"
+
+[[spec]]
+name = "Compile"
+is_sink = "xpath"
+description = "XPathNavigator.Compile (XPath injection)"
+
+[[spec]]
+name = "BinaryFormatter"
+is_sink = "deserialize"
+sink_args = []
+description = "BinaryFormatter (CWE-502)"
+
+[[spec]]
+name = "BinaryFormatter.Deserialize"
+is_sink = "deserialize"
+sink_args = []
+description = "BinaryFormatter.Deserialize (CWE-502)"
+
+[[spec]]
+name = "BinaryMessageFormatter"
+is_sink = "deserialize"
+sink_args = []
+description = "BinaryMessageFormatter (CWE-502)"
+
+[[spec]]
+name = "MessageQueue.Formatter"
+is_sink = "deserialize"
+sink_args = []
+description = "MessageQueue.Formatter (CWE-502)"
+
+[[spec]]
+name = "SoapFormatter"
+is_sink = "deserialize"
+sink_args = []
+description = "SoapFormatter (CWE-502)"
+
+[[spec]]
+name = "SoapFormatter.Deserialize"
+is_sink = "deserialize"
+sink_args = []
+description = "SoapFormatter.Deserialize (CWE-502)"
+
+[[spec]]
+name = "JavaScriptSerializer.Deserialize"
+is_sink = "deserialize"
+sink_args = []
+description = "JavaScriptSerializer.Deserialize (CWE-502)"
+
+[[spec]]
+name = "NetDataContractSerializer"
+is_sink = "deserialize"
+sink_args = []
+description = "NetDataContractSerializer (CWE-502)"
+
+[[spec]]
+name = "NetDataContractSerializer.ReadObject"
+is_sink = "deserialize"
+sink_args = []
+description = "NetDataContractSerializer.ReadObject (CWE-502)"
+
+[[spec]]
+name = "LosFormatter"
+is_sink = "deserialize"
+sink_args = []
+description = "LosFormatter (CWE-502)"
+
+[[spec]]
+name = "LosFormatter.Deserialize"
+is_sink = "deserialize"
+sink_args = []
+description = "LosFormatter.Deserialize (CWE-502)"
+
+[[spec]]
+name = "ObjectStateFormatter"
+is_sink = "deserialize"
+sink_args = []
+description = "ObjectStateFormatter (CWE-502)"
+
+[[spec]]
+name = "ObjectStateFormatter.Deserialize"
+is_sink = "deserialize"
+sink_args = []
+description = "ObjectStateFormatter.Deserialize (CWE-502)"
+
+[[spec]]
+name = "FsPickler.CreateBinarySerializer"
+is_sink = "deserialize"
+sink_args = []
+description = "FsPickler binary (CWE-502)"
+
+[[spec]]
+name = "JsonConvert.DeserializeObject"
+taint_propagates = [0]
+description = "JsonConvert.DeserializeObject"
+
+[[spec]]
+name = "JsonSerializer.Deserialize"
+taint_propagates = [0]
+description = "JsonSerializer.Deserialize"
+
+[[spec]]
+name = "DirectorySearcher"
+is_sink = "ldap"
+description = "new DirectorySearcher(filter) (LDAP injection)"
+
+[[spec]]
+name = "DirectorySearcher.Filter"
+is_sink = "ldap"
+description = "DirectorySearcher.Filter (LDAP injection)"
+
+[[spec]]
+name = "DirectorySearcher.FindAll"
+is_sink = "ldap"
+description = "DirectorySearcher.FindAll (LDAP injection)"
+
+[[spec]]
+name = "DirectorySearcher.FindOne"
+is_sink = "ldap"
+description = "DirectorySearcher.FindOne (LDAP injection)"
+
+[[spec]]
+name = "Regex"
+is_sink = "regex"
+description = "Regex (potential ReDoS)"
+
+[[spec]]
+name = "Regex.Match"
+is_sink = "regex"
+sink_args = [1]
+description = "Regex.Match (the pattern is attacker-controlled: ReDoS)"
+
+[[spec]]
+name = "Regex.Replace"
+is_sink = "regex"
+sink_args = [1]
+description = "Regex.Replace (the pattern is attacker-controlled: ReDoS)"
+
+[[spec]]
+name = "Regex.IsMatch"
+is_sink = "regex"
+sink_args = [1]
+description = "Regex.IsMatch (the pattern is attacker-controlled: ReDoS)"
+
+[[spec]]
+name = "logger.LogInformation"
+is_sink = "log"
+description = "ILogger.LogInformation (log injection)"
+
+[[spec]]
+name = "logger.LogWarning"
+is_sink = "log"
+description = "ILogger.LogWarning (log injection)"
+
+[[spec]]
+name = "logger.LogError"
+is_sink = "log"
+description = "ILogger.LogError (log injection)"
+
+[[spec]]
+name = "logger.LogDebug"
+is_sink = "log"
+description = "ILogger.LogDebug (log injection)"
+
+[[spec]]
+name = "logger.LogCritical"
+is_sink = "log"
+description = "ILogger.LogCritical (log injection)"
+
+[[spec]]
+name = "Logger.Info"
+is_sink = "log"
+description = "Logger.Info (log injection)"
+
+[[spec]]
+name = "Logger.Warn"
+is_sink = "log"
+description = "Logger.Warn (log injection)"
+
+[[spec]]
+name = "Logger.Error"
+is_sink = "log"
+description = "Logger.Error (log injection)"
+
+[[spec]]
+name = "Log.Information"
+is_sink = "log"
+description = "Serilog Information (log injection)"
+
+[[spec]]
+name = "Log.Warning"
+is_sink = "log"
+description = "Serilog Warning (log injection)"
+
+[[spec]]
+name = "Log.Error"
+is_sink = "log"
+description = "Log.Error (log injection)"
+
+[[spec]]
+name = "MD5.Create"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5.Create - weak hash (CWE-328)"
+
+[[spec]]
+name = "SHA1.Create"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1.Create - weak hash (CWE-328)"
+
+[[spec]]
+name = "DES.Create"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES.Create - weak encryption (CWE-327)"
+
+[[spec]]
+name = "TripleDES.Create"
+is_sink = "weak_crypto"
+sink_args = []
+description = "TripleDES.Create - weak encryption (CWE-327)"
+
+[[spec]]
+name = "SHA256.Create"
+taint_propagates = [0]
+description = "SHA256.Create"
+
+[[spec]]
+name = "SHA512.Create"
+taint_propagates = [0]
+description = "SHA512.Create"
+
+[[spec]]
+name = "Aes.Create"
+taint_propagates = [0]
+description = "Aes.Create"
+
+[[spec]]
+name = "Random"
+is_sink = "insecure_random"
+sink_args = []
+description = "System.Random - not cryptographically secure (CWE-330)"
+
+[[spec]]
+name = "RandomNumberGenerator.Create"
+taint_propagates = [0]
+description = "RandomNumberGenerator (secure)"
+
+[[spec]]
+name = "String.Concat"
+taint_propagates = [0, 1]
+description = "String.Concat"
+
+[[spec]]
+name = "String.Format"
+taint_propagates = [0, 1]
+description = "String.Format"
+
+[[spec]]
+name = "String.Join"
+taint_propagates = [0, 1]
+description = "String.Join"
+
+[[spec]]
+name = "String.Replace"
+taint_propagates = [0]
+description = "String.Replace"
+
+[[spec]]
+name = "String.Substring"
+taint_propagates = [0]
+description = "String.Substring"
+
+[[spec]]
+name = "String.ToLower"
+taint_propagates = [0]
+description = "String.ToLower"
+
+[[spec]]
+name = "String.ToUpper"
+taint_propagates = [0]
+description = "String.ToUpper"
+
+[[spec]]
+name = "String.Trim"
+taint_propagates = [0]
+description = "String.Trim"
+
+[[spec]]
+name = "StringBuilder.Append"
+taint_propagates = [0]
+description = "StringBuilder.Append"
+
+[[spec]]
+name = "StringBuilder.AppendFormat"
+taint_propagates = [0, 1]
+description = "StringBuilder.AppendFormat"
+
+[[spec]]
+name = "StringBuilder.Insert"
+taint_propagates = [1]
+description = "StringBuilder.Insert"
+
+[[spec]]
+name = "StringBuilder.ToString"
+taint_propagates = [0]
+description = "StringBuilder.ToString"
+
+[[spec]]
+name = "$\""
+taint_propagates = [0]
+description = "String interpolation"
+
+[[spec]]
+name = "HtmlEncoder.Encode"
+is_sanitizer = ["html", "xss"]
+description = "HtmlEncoder.Encode"
+
+[[spec]]
+name = "WebUtility.HtmlEncode"
+is_sanitizer = ["html", "xss"]
+description = "WebUtility.HtmlEncode"
+
+[[spec]]
+name = "HttpUtility.HtmlEncode"
+is_sanitizer = ["html", "xss"]
+description = "HttpUtility.HtmlEncode"
+
+[[spec]]
+name = "Server.HtmlEncode"
+is_sanitizer = ["html", "xss"]
+description = "Server.HtmlEncode"
+
+[[spec]]
+name = "AntiXss.HtmlEncode"
+is_sanitizer = ["html", "xss"]
+description = "AntiXSS HtmlEncode"
+
+[[spec]]
+name = "AntiXssEncoder.HtmlEncode"
+is_sanitizer = ["html", "xss"]
+description = "AntiXSS HtmlEncode"
+
+[[spec]]
+name = "WebUtility.UrlEncode"
+is_sanitizer = ["url", "html", "xss", "redirect"]
+description = "WebUtility.UrlEncode"
+
+[[spec]]
+name = "HttpUtility.UrlEncode"
+is_sanitizer = ["url", "html", "xss", "redirect"]
+description = "HttpUtility.UrlEncode"
+
+[[spec]]
+name = "Uri.EscapeDataString"
+is_sanitizer = ["url", "html", "xss", "redirect"]
+description = "Uri.EscapeDataString"
+
+[[spec]]
+name = "Uri.EscapeUriString"
+is_sanitizer = ["url", "html", "xss", "redirect"]
+description = "Uri.EscapeUriString"
+
+[[spec]]
+name = "Server.UrlEncode"
+is_sanitizer = ["url", "html", "xss", "redirect"]
+description = "Server.UrlEncode"
+
+[[spec]]
+name = "JavaScriptEncoder.Encode"
+is_sanitizer = ["html", "xss"]
+description = "JavaScriptEncoder.Encode"
+
+[[spec]]
+name = "Url.IsLocalUrl"
+is_sanitizer = ["redirect"]
+description = "Url.IsLocalUrl (local redirect check)"
+
+[[spec]]
+name = "IsLocalUrl"
+is_sanitizer = ["redirect"]
+description = "IsLocalUrl (local redirect check)"
+
+[[spec]]
+name = "Url.Content"
+is_sanitizer = ["redirect"]
+description = "Url.Content (app-relative URL)"
+
+[[spec]]
+name = "Path.GetFileName"
+is_sanitizer = ["path", "filesystem"]
+description = "Path.GetFileName (extracts filename only)"
+
+[[spec]]
+name = "JwtSecurityTokenHandler"
+is_sink = "auth"
+description = "JWT token handler (CWE-347)"
+
+[[spec]]
+name = "ValidateToken"
+is_sink = "auth"
+description = "Token validation (CWE-347)"
+
+[[spec]]
+name = "SecurityTokenDescriptor"
+taint_propagates = [0]
+description = "Token descriptor"
+
+[[spec]]
+name = "Session"
+taint_propagates = [0]
+description = "Session access"
+
+[[spec]]
+name = "HttpContext.Session"
+taint_propagates = [0]
+description = "HTTP session"
+
+[[spec]]
+name = "ISession"
+taint_propagates = [0]
+description = "Session interface"
+
+[[spec]]
+name = "[Authorize]"
+taint_propagates = [0]
+description = "Authorize attribute"
+
+[[spec]]
+name = "[AllowAnonymous]"
+is_sink = "auth"
+description = "AllowAnonymous (check if intentional)"
+
+[[spec]]
+name = "AuthorizeAttribute"
+taint_propagates = [0]
+description = "Authorization attribute"
+
+[[spec]]
+name = "IAuthorizationService"
+taint_propagates = [0]
+description = "Authorization service"
+
+[[spec]]
+name = "ClaimsPrincipal"
+is_source = "user"
+description = "Claims principal"
+
+[[spec]]
+name = "User.Identity"
+is_source = "user"
+description = "User identity"
+
+[[spec]]
+name = "User.IsInRole"
+taint_propagates = [0]
+description = "Role check"
+
+[[spec]]
+name = "EnableCors"
+is_sink = "cors"
+description = "CORS enabled (CWE-942)"
+
+[[spec]]
+name = "AllowAnyOrigin"
+is_sink = "cors"
+description = "CORS any origin (CWE-942)"
+
+[[spec]]
+name = "WithOrigins"
+is_sink = "cors"
+description = "CORS origins (CWE-942)"
+
+[[spec]]
+name = "CorsPolicy"
+is_sink = "cors"
+description = "CORS policy (CWE-942)"
+
+[[spec]]
+name = "IsDevelopment"
+is_sink = "config"
+description = "Development mode check"
+
+[[spec]]
+name = "UseDeveloperExceptionPage"
+is_sink = "info_disclosure"
+description = "Developer exception page (CWE-209)"
+
+[[spec]]
+name = "DeveloperExceptionPageMiddleware"
+is_sink = "info_disclosure"
+description = "Dev exception middleware (CWE-209)"
+
+[[spec]]
+name = "Exception.ToString"
+is_sink = "info_disclosure"
+description = "Exception to string (CWE-209)"
+
+[[spec]]
+name = "Exception.StackTrace"
+is_sink = "info_disclosure"
+description = "Stack trace (CWE-209)"
+
+[[spec]]
+name = "Exception.Message"
+is_sink = "info_disclosure"
+description = "Exception message (CWE-209)"
+
+[[spec]]
+name = "password"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded password (CWE-798)"
+
+[[spec]]
+name = "apiKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded API key (CWE-798)"
+
+[[spec]]
+name = "secretKey"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded secret (CWE-798)"
+
+[[spec]]
+name = "connectionString"
+is_sink = "hardcoded_cred"
+description = "Potential hardcoded connection string (CWE-798)"
+
+[[spec]]
+name = "ServerCertificateValidationCallback"
+is_sink = "cert_validation"
+sink_args = []
+description = "TLS cert validation disabled (CWE-295)"
+
+[[spec]]
+name = "ServicePointManager.ServerCertificateValidationCallback"
+is_sink = "ssl"
+description = "SSL callback (CWE-295)"
+
+[[spec]]
+name = "SslProtocols.Ssl3"
+is_sink = "weak_crypto"
+description = "SSLv3 (CWE-327)"
+
+[[spec]]
+name = "SslProtocols.Tls"
+is_sink = "weak_crypto"
+description = "TLSv1.0 (CWE-327)"
+
+[[spec]]
+name = "SslProtocols.Tls11"
+is_sink = "weak_crypto"
+description = "TLSv1.1 (CWE-327)"
+
+[[spec]]
+name = "MD5CryptoServiceProvider"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 hash (CWE-328)"
+
+[[spec]]
+name = "SHA1CryptoServiceProvider"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "SHA1Managed"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 hash (CWE-328)"
+
+[[spec]]
+name = "DESCryptoServiceProvider"
+is_sink = "weak_crypto"
+sink_args = []
+description = "DES encryption (CWE-327)"
+
+[[spec]]
+name = "TripleDESCryptoServiceProvider"
+is_sink = "weak_crypto"
+sink_args = []
+description = "3DES encryption (CWE-327)"
+
+[[spec]]
+name = "RC2CryptoServiceProvider"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RC2 encryption (CWE-327)"
+
+[[spec]]
+name = "RijndaelManaged"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RijndaelManaged - non-standard/ECB-prone (CWE-327)"
+
+[[spec]]
+name = "HMACMD5"
+is_sink = "weak_hash"
+sink_args = []
+description = "HMAC-MD5 (CWE-328)"
+
+[[spec]]
+name = "HMACSHA1"
+is_sink = "weak_hash"
+sink_args = []
+description = "HMAC-SHA1 (CWE-328)"
+
+[[spec]]
+name = "MD5Cng"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5Cng (CWE-328)"
+
+[[spec]]
+name = "SHA1Cng"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1Cng (CWE-328)"
+
+[[spec]]
+name = "RC4"
+is_sink = "weak_crypto"
+sink_args = []
+description = "RC4 stream cipher (CWE-327)"
+
+[[spec]]
+name = "ARC4"
+is_sink = "weak_crypto"
+sink_args = []
+description = "ARC4 stream cipher (CWE-327)"
+
+[[spec]]
+name = "CipherMode.ECB"
+is_sink = "weak_crypto"
+sink_args = []
+description = "ECB cipher mode (CWE-327)"
+
+[[spec]]
+name = "KeySize = 1024"
+is_sink = "weak_crypto"
+description = "Weak key size 1024 (CWE-326)"
+
+[[spec]]
+name = "KeySize = 512"
+is_sink = "weak_crypto"
+description = "Weak key size 512 (CWE-326)"
+
+[[spec]]
+name = "RNGCryptoServiceProvider"
+is_sanitizer = ["random"]
+description = "Secure random"
+
+[[spec]]
+name = "RandomNumberGenerator"
+is_sanitizer = ["random"]
+description = "Secure random generator"
+
+[[spec]]
+name = "SHA256"
+taint_propagates = [0]
+description = "SHA256 hash"
+
+[[spec]]
+name = "SHA512"
+taint_propagates = [0]
+description = "SHA512 hash"
+
+[[spec]]
+name = "Aes"
+taint_propagates = [0]
+description = "AES encryption"
+
+[[spec]]
+name = "PasswordHasher"
+is_sanitizer = ["password"]
+description = "ASP.NET password hasher"
+
+[[spec]]
+name = "HashPassword"
+is_sanitizer = ["password"]
+description = "Password hashing"
+
+[[spec]]
+name = "VerifyHashedPassword"
+taint_propagates = [0, 1, 2]
+description = "Password verification"
+
+[[spec]]
+name = "Rfc2898DeriveBytes"
+is_sanitizer = ["password"]
+description = "PBKDF2 key derivation"
+
+[[spec]]
+name = "BCrypt.HashPassword"
+is_sanitizer = ["password"]
+description = "BCrypt hash"
+
+[[spec]]
+name = "Argon2"
+is_sanitizer = ["password"]
+description = "Argon2 hash"
+
+[[spec]]
+name = "FormsAuthentication.HashPasswordForStoringInConfigFile"
+is_sink = "weak_password_hash"
+description = "Weak hash for password (CWE-916)"
+
+[[spec]]
+name = "Cookie"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Cookie value (header manipulation CWE-113)"
+
+[[spec]]
+name = "CookieOptions"
+taint_propagates = [0]
+description = "Cookie options"
+
+[[spec]]
+name = "HttpOnly"
+taint_propagates = [0]
+description = "HttpOnly flag"
+
+[[spec]]
+name = "Secure"
+taint_propagates = [0]
+description = "Secure flag"
+
+[[spec]]
+name = "SameSite"
+taint_propagates = [0]
+description = "SameSite flag"
+
+[[spec]]
+name = "SessionOptions"
+taint_propagates = [0]
+description = "Session options"
+
+[[spec]]
+name = "SignInManager"
+taint_propagates = [0]
+description = "Sign in manager"
+
+[[spec]]
+name = "UserManager"
+taint_propagates = [0]
+description = "User manager"
+
+[[spec]]
+name = "IdentityResult"
+taint_propagates = [0]
+description = "Identity result"
+
+[[spec]]
+name = "catch (Exception)"
+is_sink = "exception"
+description = "Generic exception catch (CWE-396)"
+
+[[spec]]
+name = "catch (Exception ex)"
+is_sink = "exception"
+description = "Generic exception catch (CWE-396)"
+
+[[spec]]
+name = "catch { }"
+is_sink = "exception"
+description = "Empty catch block (CWE-390)"
+
+[[spec]]
+name = "Environment.Exit"
+is_sink = "exception"
+description = "Environment exit (CWE-705)"
+
+[[spec]]
+name = "Environment.FailFast"
+is_sink = "exception"
+description = "Fail fast (CWE-705)"
+
+[[spec]]
+name = "finally"
+taint_propagates = [0]
+description = "Finally block"
+
+[[spec]]
+name = "IDisposable"
+taint_propagates = [0]
+description = "Disposable pattern"
+
+[[spec]]
+name = "using"
+taint_propagates = [0]
+description = "Using statement"
+
+[[spec]]
+name = "Dispose"
+taint_propagates = [0]
+description = "Dispose method"
+
+[[spec]]
+name = "Console.WriteLine"
+is_sink = "sensitive_log"
+description = "Console output (CWE-532)"
+
+[[spec]]
+name = "Console.Write"
+is_sink = "sensitive_log"
+description = "Console output (CWE-532)"
+
+[[spec]]
+name = "Debug.WriteLine"
+is_sink = "sensitive_log"
+description = "Debug output (CWE-532)"
+
+[[spec]]
+name = "Trace.WriteLine"
+is_sink = "sensitive_log"
+description = "Trace output (CWE-532)"
+
+[[spec]]
+name = "JsonResult"
+taint_propagates = [0]
+description = "JSON result"
+
+[[spec]]
+name = "ContentResult"
+taint_propagates = [0]
+description = "Content result"
+
+[[spec]]
+name = "ObjectResult"
+taint_propagates = [0]
+description = "Object result"
+
+[[spec]]
+name = "X-Frame-Options"
+taint_propagates = [0]
+description = "X-Frame-Options header"
+
+[[spec]]
+name = "X-Content-Type-Options"
+taint_propagates = [0]
+description = "X-Content-Type-Options header"
+
+[[spec]]
+name = "Content-Security-Policy"
+taint_propagates = [0]
+description = "CSP header"
+
+[[spec]]
+name = "Strict-Transport-Security"
+taint_propagates = [0]
+description = "HSTS header"
+
+[[spec]]
+name = "Response.Headers.Add"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Add header (CWE-113)"
+
+[[spec]]
+name = "Response.Headers.Append"
+is_sink = "header_injection"
+sink_args = [1]
+description = "Append header (CWE-113)"
+
+[[spec]]
+name = "HttpResponse.Headers"
+is_sink = "header_injection"
+description = "Response headers (CWE-113)"
+
+[[spec]]
+name = "169.254.169.254"
+is_sink = "ssrf"
+description = "Cloud metadata (SSRF)"
+
+[[spec]]
+name = "metadata.google.internal"
+is_sink = "ssrf"
+description = "GCP metadata (SSRF)"
+
+[[spec]]
+name = "localhost"
+is_sink = "ssrf"
+description = "Localhost (SSRF)"
+
+[[spec]]
+name = "127.0.0.1"
+is_sink = "ssrf"
+description = "Loopback (SSRF)"
+
+[[spec]]
+name = "0.0.0.0"
+is_sink = "ssrf"
+description = "All interfaces (SSRF)"
+
+[[spec]]
+name = "Uri"
+taint_propagates = [0]
+description = "URI construction"
+
+[[spec]]
+name = "new Uri"
+taint_propagates = [0]
+description = "URI construction"
+
+[[spec]]
+name = "Type.GetType"
+is_sink = "code"
+description = "Dynamic type loading (CWE-470)"
+
+[[spec]]
+name = "Activator.CreateInstance"
+is_sink = "code"
+description = "Dynamic instantiation (CWE-470)"
+
+[[spec]]
+name = "Assembly.Load"
+is_sink = "code"
+description = "Dynamic assembly loading (CWE-470)"
+
+[[spec]]
+name = "Assembly.LoadFrom"
+is_sink = "code"
+description = "Assembly load from path (CWE-470)"
+
+[[spec]]
+name = "Expression.Compile"
+is_sink = "code"
+description = "Expression compilation"
+
+[[spec]]
+name = "DynamicInvoke"
+is_sink = "code"
+description = "Dynamic invocation"
+
+[[spec]]
+name = "AppDomain.ExecuteAssembly"
+is_sink = "code"
+description = "AppDomain.ExecuteAssembly (CWE-94)"
+
+[[spec]]
+name = "ExecuteAssembly"
+is_sink = "code"
+description = "AppDomain.ExecuteAssembly (CWE-94)"
+
+[[spec]]
+name = "AppDomain.CreateInstance"
+is_sink = "code"
+description = "AppDomain.CreateInstance (CWE-94)"
+
+[[spec]]
+name = "AppDomain.CreateInstanceAndUnwrap"
+is_sink = "code"
+description = "AppDomain.CreateInstanceAndUnwrap (CWE-94)"
+
+[[spec]]
+name = "RazorEngine.Razor.RunCompile"
+is_sink = "code"
+description = "RazorEngine template injection (CWE-94)"
+
+[[spec]]
+name = "Razor.RunCompile"
+is_sink = "code"
+description = "RazorEngine template injection (CWE-94)"
+
+[[spec]]
+name = "Engine.Razor.RunCompile"
+is_sink = "code"
+description = "RazorEngine template injection (CWE-94)"
+
+[[spec]]
+name = "RazorEngineService.RunCompile"
+is_sink = "code"
+description = "RazorEngine template injection (CWE-94)"
+
+[[spec]]
+name = "CSharpScript.RunAsync"
+is_sink = "code"
+description = "CSharpScript execution (CWE-94)"
+
+[[spec]]
+name = "CSharpScript.EvaluateAsync"
+is_sink = "code"
+description = "CSharpScript evaluation (CWE-94)"
+
+[[spec]]
+name = "ScriptEngine.Execute"
+is_sink = "code"
+description = "ScriptEngine execution (CWE-94)"
+
+[[spec]]
+name = "PowerShell.Create"
+is_sink = "code"
+description = "PowerShell execution (CWE-94)"
+
+[[spec]]
+name = "AddScript"
+is_sink = "code"
+description = "PowerShell.AddScript (CWE-94)"
+
+[[spec]]
+name = "SqliteCommand"
+is_sink = "sql"
+description = "new SqliteCommand(query) (SQL injection)"
+
+[[spec]]
+name = "MySqlCommand"
+is_sink = "sql"
+description = "new MySqlCommand(query) (SQL injection)"
+
+[[spec]]
+name = "NpgsqlCommand"
+is_sink = "sql"
+description = "new NpgsqlCommand(query) (SQL injection)"
+
+[[spec]]
+name = "OleDbCommand"
+is_sink = "sql"
+description = "new OleDbCommand(query) (SQL injection)"
+
+[[spec]]
+name = "OdbcCommand"
+is_sink = "sql"
+description = "new OdbcCommand(query) (SQL injection)"
+
+[[spec]]
+name = "SqlDataAdapter"
+is_sink = "sql"
+description = "new SqlDataAdapter(query) (SQL injection)"
+
+[[spec]]
+name = "SqlCeCommand"
+is_sink = "sql"
+description = "new SqlCeCommand(query) (SQL injection)"
+
+[[spec]]
+name = "Server.MapPath"
+is_sink = "filesystem"
+description = "Server.MapPath(path) (path traversal)"
+
+[[spec]]
+name = "File.WriteAllLines"
+is_sink = "filesystem"
+description = "File.WriteAllLines (path traversal)"
+
+[[spec]]
+name = "File.AppendAllText"
+is_sink = "filesystem"
+description = "File.AppendAllText (path traversal)"
+
+[[spec]]
+name = "CSharpCodeProvider.CompileAssemblyFromSource"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom compile (code injection)"
+
+[[spec]]
+name = "VBCodeProvider.CompileAssemblyFromSource"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom compile (code injection)"
+
+[[spec]]
+name = "ICodeCompiler.CompileAssemblyFromSource"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom compile (code injection)"
+
+[[spec]]
+name = "PostedFile.FileName"
+is_source = "user"
+description = "Uploaded file name (user-controlled)"
+
+[[spec]]
+name = "Request.Url"
+is_source = "user"
+description = "Request URL (user-controlled)"
+
+[[spec]]
+name = "Request.Url.Authority"
+is_source = "user"
+description = "Request URL authority (user-controlled)"
+
+[[spec]]
+name = "Request.RawUrl"
+is_source = "user"
+description = "Request raw URL (user-controlled)"
+
+[[spec]]
+name = "Request.UrlReferrer"
+is_source = "user"
+description = "Request referrer (user-controlled)"
+
+[[spec]]
+name = "Request.UserAgent"
+is_source = "user"
+description = "Request user-agent (user-controlled)"
+
+[[spec]]
+name = "HashAlgorithmName.MD5"
+is_sink = "weak_hash"
+sink_args = []
+description = "MD5 (CWE-328)"
+
+[[spec]]
+name = "HashAlgorithmName.SHA1"
+is_sink = "weak_hash"
+sink_args = []
+description = "SHA1 (CWE-328)"
+
+[[spec]]
+name = "TypeNameHandling.All"
+is_sink = "deserialize"
+sink_args = []
+description = "Json.NET TypeNameHandling.All (CWE-502)"
+
+[[spec]]
+name = "TypeNameHandling.Auto"
+is_sink = "deserialize"
+sink_args = []
+description = "Json.NET TypeNameHandling.Auto (CWE-502)"
+
+[[spec]]
+name = "TypeNameHandling.Objects"
+is_sink = "deserialize"
+sink_args = []
+description = "Json.NET TypeNameHandling.Objects (CWE-502)"
+
+[[spec]]
+name = "TypeNameHandling.Arrays"
+is_sink = "deserialize"
+sink_args = []
+description = "Json.NET TypeNameHandling.Arrays (CWE-502)"
+
+[[spec]]
+name = "ContextOptions.SimpleBind"
+is_sink = "insecure_auth"
+sink_args = []
+description = "LDAP SimpleBind (CWE-522)"
+
+[[spec]]
+name = "AuthType.Basic"
+is_sink = "insecure_auth"
+sink_args = []
+description = "LDAP basic auth (CWE-522)"
+
+[[spec]]
+name = "__weak_key_size__"
+is_sink = "weak_key_size"
+sink_args = []
+description = "RSA/DSA key < 2048 bits (CWE-326)"
+
+[[spec]]
+name = "__weak_rsa_padding__"
+is_sink = "weak_rsa_padding"
+sink_args = []
+description = "RSA without OAEP padding (CWE-780)"
+
+[[spec]]
+name = "RemoteCertificateValidationCallback"
+is_sink = "cert_validation"
+sink_args = []
+description = "TLS cert validation callback (CWE-295)"
+
+[[spec]]
+name = "FilePathResult"
+is_sink = "filesystem"
+description = "new FilePathResult(path) (path traversal)"
+
+[[spec]]
+name = "PhysicalFileResult"
+is_sink = "filesystem"
+description = "new PhysicalFileResult(path) (path traversal)"
+
+[[spec]]
+name = "DirectoryEntry"
+is_sink = "ldap"
+description = "new DirectoryEntry(path) (LDAP injection)"
+
+[[spec]]
+name = "HashAlgorithm.Create"
+is_sink = "weak_hash"
+description = "HashAlgorithm.Create(userAlgo)"
+
+[[spec]]
+name = "CryptoConfig.CreateFromName"
+is_sink = "weak_hash"
+description = "CryptoConfig.CreateFromName(userAlgo)"
+
+[[spec]]
+name = "XmlDocument"
+is_sink = "xxe"
+sink_args = []
+description = "new XmlDocument() loaded without secure settings (XXE, CWE-611)"
+
+[[spec]]
+name = "CompileAssemblyFromSource"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom CompileAssemblyFromSource (code injection)"
+
+[[spec]]
+name = "CompileAssemblyFromFile"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom CompileAssemblyFromFile (code injection)"
+
+[[spec]]
+name = "CompileAssemblyFromDom"
+is_sink = "code"
+sink_args = [1]
+description = "CodeDom CompileAssemblyFromDom (code injection)"
+
+[[spec]]
+name = "WriteRawValue"
+is_sink = "code"
+description = "JsonWriter.WriteRawValue(raw) (JSON injection)"
+
+[[spec]]
+name = "JsonTextWriter.WriteRawValue"
+is_sink = "code"
+description = "WriteRawValue (JSON injection)"
+
+[[spec]]
+name = "Response.Redirect"
+is_sink = "redirect"
+description = "Response.Redirect (open redirect)"
+
+[[spec]]
+name = "HttpResponse.Redirect"
+is_sink = "redirect"
+description = "Response.Redirect (open redirect)"
+
+[[spec]]
+name = "log.Info"
+is_sink = "log"
+description = "log.Info (log injection)"
+
+[[spec]]
+name = "log.InfoFormat"
+is_sink = "log"
+description = "log.InfoFormat (log injection)"
+
+[[spec]]
+name = "log.Warn"
+is_sink = "log"
+description = "log.Warn (log injection)"
+
+[[spec]]
+name = "log.WarnFormat"
+is_sink = "log"
+description = "log.WarnFormat (log injection)"
+
+[[spec]]
+name = "log.Error"
+is_sink = "log"
+description = "log.Error (log injection)"
+
+[[spec]]
+name = "log.ErrorFormat"
+is_sink = "log"
+description = "log.ErrorFormat (log injection)"
+
+[[spec]]
+name = "log.Debug"
+is_sink = "log"
+description = "log.Debug (log injection)"
+
+[[spec]]
+name = "log.DebugFormat"
+is_sink = "log"
+description = "log.DebugFormat (log injection)"
+
+[[spec]]
+name = "log.Fatal"
+is_sink = "log"
+description = "log.Fatal (log injection)"
+
+[[spec]]
+name = "log.FatalFormat"
+is_sink = "log"
+description = "log.FatalFormat (log injection)"
+
+[[spec]]
+name = "log.Trace"
+is_sink = "log"
+description = "log.Trace (log injection)"
+
+[[spec]]
+name = "log.Log"
+is_sink = "log"
+description = "log.Log (log injection)"
+
+[[spec]]
+name = "logger.Info"
+is_sink = "log"
+description = "logger.Info (log injection)"
+
+[[spec]]
+name = "logger.InfoFormat"
+is_sink = "log"
+description = "logger.InfoFormat (log injection)"
+
+[[spec]]
+name = "logger.Warn"
+is_sink = "log"
+description = "logger.Warn (log injection)"
+
+[[spec]]
+name = "logger.WarnFormat"
+is_sink = "log"
+description = "logger.WarnFormat (log injection)"
+
+[[spec]]
+name = "logger.Error"
+is_sink = "log"
+description = "logger.Error (log injection)"
+
+[[spec]]
+name = "logger.ErrorFormat"
+is_sink = "log"
+description = "logger.ErrorFormat (log injection)"
+
+[[spec]]
+name = "logger.Debug"
+is_sink = "log"
+description = "logger.Debug (log injection)"
+
+[[spec]]
+name = "logger.DebugFormat"
+is_sink = "log"
+description = "logger.DebugFormat (log injection)"
+
+[[spec]]
+name = "logger.Fatal"
+is_sink = "log"
+description = "logger.Fatal (log injection)"
+
+[[spec]]
+name = "logger.FatalFormat"
+is_sink = "log"
+description = "logger.FatalFormat (log injection)"
+
+[[spec]]
+name = "logger.Trace"
+is_sink = "log"
+description = "logger.Trace (log injection)"
+
+[[spec]]
+name = "logger.Log"
+is_sink = "log"
+description = "logger.Log (log injection)"
+
+[[spec]]
+name = "_log.Info"
+is_sink = "log"
+description = "_log.Info (log injection)"
+
+[[spec]]
+name = "_log.InfoFormat"
+is_sink = "log"
+description = "_log.InfoFormat (log injection)"
+
+[[spec]]
+name = "_log.Warn"
+is_sink = "log"
+description = "_log.Warn (log injection)"
+
+[[spec]]
+name = "_log.WarnFormat"
+is_sink = "log"
+description = "_log.WarnFormat (log injection)"
+
+[[spec]]
+name = "_log.Error"
+is_sink = "log"
+description = "_log.Error (log injection)"
+
+[[spec]]
+name = "_log.ErrorFormat"
+is_sink = "log"
+description = "_log.ErrorFormat (log injection)"
+
+[[spec]]
+name = "_log.Debug"
+is_sink = "log"
+description = "_log.Debug (log injection)"
+
+[[spec]]
+name = "_log.DebugFormat"
+is_sink = "log"
+description = "_log.DebugFormat (log injection)"
+
+[[spec]]
+name = "_log.Fatal"
+is_sink = "log"
+description = "_log.Fatal (log injection)"
+
+[[spec]]
+name = "_log.FatalFormat"
+is_sink = "log"
+description = "_log.FatalFormat (log injection)"
+
+[[spec]]
+name = "_log.Trace"
+is_sink = "log"
+description = "_log.Trace (log injection)"
+
+[[spec]]
+name = "_log.Log"
+is_sink = "log"
+description = "_log.Log (log injection)"
+
+[[spec]]
+name = "_logger.Info"
+is_sink = "log"
+description = "_logger.Info (log injection)"
+
+[[spec]]
+name = "_logger.InfoFormat"
+is_sink = "log"
+description = "_logger.InfoFormat (log injection)"
+
+[[spec]]
+name = "_logger.Warn"
+is_sink = "log"
+description = "_logger.Warn (log injection)"
+
+[[spec]]
+name = "_logger.WarnFormat"
+is_sink = "log"
+description = "_logger.WarnFormat (log injection)"
+
+[[spec]]
+name = "_logger.Error"
+is_sink = "log"
+description = "_logger.Error (log injection)"
+
+[[spec]]
+name = "_logger.ErrorFormat"
+is_sink = "log"
+description = "_logger.ErrorFormat (log injection)"
+
+[[spec]]
+name = "_logger.Debug"
+is_sink = "log"
+description = "_logger.Debug (log injection)"
+
+[[spec]]
+name = "_logger.DebugFormat"
+is_sink = "log"
+description = "_logger.DebugFormat (log injection)"
+
+[[spec]]
+name = "_logger.Fatal"
+is_sink = "log"
+description = "_logger.Fatal (log injection)"
+
+[[spec]]
+name = "_logger.FatalFormat"
+is_sink = "log"
+description = "_logger.FatalFormat (log injection)"
+
+[[spec]]
+name = "_logger.Trace"
+is_sink = "log"
+description = "_logger.Trace (log injection)"
+
+[[spec]]
+name = "_logger.Log"
+is_sink = "log"
+description = "_logger.Log (log injection)"
+
+[[spec]]
+name = "Log.Info"
+is_sink = "log"
+description = "Log.Info (log injection)"
+
+[[spec]]
+name = "Log.InfoFormat"
+is_sink = "log"
+description = "Log.InfoFormat (log injection)"
+
+[[spec]]
+name = "Log.Warn"
+is_sink = "log"
+description = "Log.Warn (log injection)"
+
+[[spec]]
+name = "Log.WarnFormat"
+is_sink = "log"
+description = "Log.WarnFormat (log injection)"
+
+[[spec]]
+name = "Log.ErrorFormat"
+is_sink = "log"
+description = "Log.ErrorFormat (log injection)"
+
+[[spec]]
+name = "Log.Debug"
+is_sink = "log"
+description = "Log.Debug (log injection)"
+
+[[spec]]
+name = "Log.DebugFormat"
+is_sink = "log"
+description = "Log.DebugFormat (log injection)"
+
+[[spec]]
+name = "Log.Fatal"
+is_sink = "log"
+description = "Log.Fatal (log injection)"
+
+[[spec]]
+name = "Log.FatalFormat"
+is_sink = "log"
+description = "Log.FatalFormat (log injection)"
+
+[[spec]]
+name = "Log.Trace"
+is_sink = "log"
+description = "Log.Trace (log injection)"
+
+[[spec]]
+name = "Log.Log"
+is_sink = "log"
+description = "Log.Log (log injection)"
+
+[[spec]]
+name = "Logger.InfoFormat"
+is_sink = "log"
+description = "Logger.InfoFormat (log injection)"
+
+[[spec]]
+name = "Logger.WarnFormat"
+is_sink = "log"
+description = "Logger.WarnFormat (log injection)"
+
+[[spec]]
+name = "Logger.ErrorFormat"
+is_sink = "log"
+description = "Logger.ErrorFormat (log injection)"
+
+[[spec]]
+name = "Logger.Debug"
+is_sink = "log"
+description = "Logger.Debug (log injection)"
+
+[[spec]]
+name = "Logger.DebugFormat"
+is_sink = "log"
+description = "Logger.DebugFormat (log injection)"
+
+[[spec]]
+name = "Logger.Fatal"
+is_sink = "log"
+description = "Logger.Fatal (log injection)"
+
+[[spec]]
+name = "Logger.FatalFormat"
+is_sink = "log"
+description = "Logger.FatalFormat (log injection)"
+
+[[spec]]
+name = "Logger.Trace"
+is_sink = "log"
+description = "Logger.Trace (log injection)"
+
+[[spec]]
+name = "Logger.Log"
+is_sink = "log"
+description = "Logger.Log (log injection)"
+
+[[spec]]
+name = "_logger.Value.Info"
+is_sink = "log"
+description = "_logger.Value.Info (log injection)"
+
+[[spec]]
+name = "_logger.Value.InfoFormat"
+is_sink = "log"
+description = "_logger.Value.InfoFormat (log injection)"
+
+[[spec]]
+name = "_logger.Value.Warn"
+is_sink = "log"
+description = "_logger.Value.Warn (log injection)"
+
+[[spec]]
+name = "_logger.Value.WarnFormat"
+is_sink = "log"
+description = "_logger.Value.WarnFormat (log injection)"
+
+[[spec]]
+name = "_logger.Value.Error"
+is_sink = "log"
+description = "_logger.Value.Error (log injection)"
+
+[[spec]]
+name = "_logger.Value.ErrorFormat"
+is_sink = "log"
+description = "_logger.Value.ErrorFormat (log injection)"
+
+[[spec]]
+name = "_logger.Value.Debug"
+is_sink = "log"
+description = "_logger.Value.Debug (log injection)"
+
+[[spec]]
+name = "_logger.Value.DebugFormat"
+is_sink = "log"
+description = "_logger.Value.DebugFormat (log injection)"
+
+[[spec]]
+name = "_logger.Value.Fatal"
+is_sink = "log"
+description = "_logger.Value.Fatal (log injection)"
+
+[[spec]]
+name = "_logger.Value.FatalFormat"
+is_sink = "log"
+description = "_logger.Value.FatalFormat (log injection)"
+
+[[spec]]
+name = "_logger.Value.Trace"
+is_sink = "log"
+description = "_logger.Value.Trace (log injection)"
+
+[[spec]]
+name = "_logger.Value.Log"
+is_sink = "log"
+description = "_logger.Value.Log (log injection)"

@@ -37,8 +37,8 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 - Done: **unified finding model** (`frame/sil/findings.py`): every finding has a `category` (taint, memory, crypto, secret, access-control, hardening; dependency, iac, container and ai reserved) and an `evidence` level (matched, llm-detected, llm-verified, data-flow, solver-verified, exploit-confirmed), in JSON and SARIF.
 - **Knowledge base (KB)**:
   - Done: the client (`frame/kb`, `frame kb pull | status | build`). A revision is a directory with `manifest.json` (every file's SHA-256, size, language, kind) and data files; `pull` downloads only the project's languages, verifies each file, caches it, and can pin the revision in `.frame/kb.lock`; scans load cached packs (they replace built-in packs of the same name) and never fetch. Sources: `hf:org/dataset`, an HTTPS mirror, or a local directory for air-gapped CI.
-  - Next: create the `lambdasec/frame-kb` dataset and the publishing job (build on merge, upload to HF); sign the manifest once a publishing key exists, and verify the signature in `pull`.
-  - Next: move the language specs (`frame/sil/specs/*_specs.py`) into TOML language packs, with a benchmark-identical sweep, so they can ship through the KB too.
+  - In progress: the `lambdasec/frame-kb` dataset and the private source repo with its publishing job (build on merge, upload to HF, tag the revision). Manifest signing is deferred.
+  - Done: the language specs are data (`frame/sil/specs/data/<table>.toml`, 2,888 entries across six tables), identical in order and fields to the Python tables they replace; the KB can ship them too (`frame kb build --specs`).
 - **Config cleanup**: `.frame.toml` holds project settings only (severities, excludes, pinned knowledge). Packs describe code; rules become pack kinds (pattern, policy, secret, advisory). Only what cannot be data (C memory analysis, the solver) stays in the engine.
 - **Licensing**: packs Apache-2.0, datasets CC-BY-4.0.
 
