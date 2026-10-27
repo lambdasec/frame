@@ -32,10 +32,13 @@ Each vulnerability is also checked against the project's own code (Python, JavaS
 frame kb pull --advisories            # once, and whenever you want fresh advisories
 frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each
 frame deps . --resolve --vulns --exclude tests --fail-on high    # a CI gate (exit 1 on high or critical)
-frame deps --vulns --plan             # the smallest safe upgrade for each, and what it takes
+frame deps --vulns --plan             # the smallest safe upgrade for each, what it takes, and the edits (a diff)
+frame deps --vulns --apply --relock   # write the edits, re-lock with the package manager, report what is left
 ```
 
 `--plan` gives each vulnerable package the lowest version at or above the current one that no known advisory affects (chosen among the versions advisories name as fixed, so it runs offline), flags a jump to a later major version, and says what the change takes, from the ranges the lockfile and manifest declare: re-lock (every range already admits it), raise the project's own requirement, or an override (npm `overrides`, yarn `resolutions`, a pip constraint, Maven `dependencyManagement`...) when a package in between pins a range that excludes it.
+
+`--plan` also shows the edits as a unified diff, and `--apply` writes them: the version in `package.json`, requirements files, `pyproject.toml` (PEP 621 and Poetry dependency tables only), `pom.xml` (the property when the version is `${...}`), `.csproj` or `Directory.Packages.props`, and `go.mod`, or the override (`overrides`, `resolutions`, `pnpm.overrides`, uv `constraint-dependencies`, `dependencyManagement`, a direct reference). Only the version changes, so formatting and comments are kept; an edit Frame cannot make safely (an upper bound that excludes the fix) is listed as manual. `--relock` then regenerates the lockfile with its own package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`), and Frame re-reads the graph and reports what is fixed and what remains.
 
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 

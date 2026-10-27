@@ -7,6 +7,8 @@ it needs no registry, so planning runs offline. What the change takes follows fr
 requirements recorded in the lockfile and manifest (`DependencyFile.requires`):
 
     update-lockfile    every known requirement already admits the target (re-lock)
+                       (a manifest without a lockfile, Maven and go.mod are edited instead: their
+                       versions are the requirements)
     raise-requirement  the project's own range excludes it (edit the manifest)
     override           a package in between pins a range that excludes it (npm `overrides`, yarn
                        `resolutions`, pnpm `overrides`, a pip constraint, Maven
@@ -94,8 +96,17 @@ def plan(findings: List[dict], files: List[DependencyFile], db) -> List[dict]:
                 requirers.append({"by": label, "spec": spec,
                                   "admits_target": satisfies(eco, target, spec) if target else None})
         entry["requirers"] = requirers
+        kind = df.kind if df is not None else ""
         if target is None:
             action = "no-fix"
+        elif eco == "Go":
+            action = "raise-requirement"                  # go.mod is the requirement list, indirect ones too
+        elif eco == "Maven" and kind in ("manifest", "resolved"):
+            # Maven has no lockfile: resolution is the pom, so a direct version is edited there and
+            # a transitive one is managed (re-running Maven would resolve the same versions)
+            action = "raise-requirement" if fs[0]["direct"] else "override"
+        elif kind == "manifest" and fs[0]["direct"]:
+            action = "raise-requirement"                  # the pinned version is the requirement
         elif any(r["admits_target"] is False and r["by"] == "(project)" for r in requirers):
             action = "raise-requirement"
         elif any(r["admits_target"] is False for r in requirers):

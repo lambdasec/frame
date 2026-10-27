@@ -145,14 +145,16 @@ def test_plan_actions_follow_the_recorded_requirements(tmp_path, db):
         ("mkdirp@0.5.5", True), ("old-tool@1.0.0", False)}
 
 
-def test_plan_without_recorded_requirements_says_so(tmp_path, db):
+def test_maven_plans_edit_the_pom(tmp_path, db):
+    """Maven has no lockfile: a direct version is raised in the pom (re-running Maven would
+    resolve the same version), even though the tree records no ranges."""
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "maven_dep_tree.txt").write_text(
         "com.acme:app:jar:1.0\n\\- org.apache.logging.log4j:log4j-core:jar:2.14.1:compile\n")
     report = read_dependencies(proj)
     p = plan(match(report.files, db), report.files, db)[0]
-    assert p["package"] == "org.apache.logging.log4j:log4j-core" and p["action"] == "update-lockfile"
+    assert p["package"] == "org.apache.logging.log4j:log4j-core" and p["action"] == "raise-requirement"
     assert p["known_requirements"] is False and p["target"]
     assert not any(is_affected("Maven", p["target"], a)
                    for a in db.advisories("Maven", "org.apache.logging.log4j:log4j-core"))

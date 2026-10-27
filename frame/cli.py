@@ -87,6 +87,12 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--plan", action="store_true",
                              help="With --vulns: the smallest upgrade that leaves every known advisory for each "
                                   "vulnerable package, and what it takes (re-lock, raise a requirement, override)")
+    deps_parser.add_argument("--apply", action="store_true",
+                             help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
+                                  "then re-read the graph and report what is fixed and what remains")
+    deps_parser.add_argument("--relock", action="store_true",
+                             help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, "
+                                  "cargo, go); runs the package manager")
     deps_parser.add_argument("--no-reachability", action="store_true",
                              help="With --vulns: skip reading the project's source for imports and calls of "
                                   "the vulnerable packages and functions")
@@ -491,24 +497,53 @@ def cmd_deps(args) -> int:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    "run `frame kb pull --advisories`")
         plans = None
-        if args.plan:
+        outcome = None
+        verified = None
+        if args.plan or args.apply:
+            from frame.sca.apply import apply_plan
             from frame.sca.plan import plan
             plans = plan(findings, report.files, db)
+            outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock)
+            if args.apply:
+                after = match(read_dependencies(target, exclude_dirs=excluded).files, db)
+                key = lambda f: (f["path"], f["package"], f["id"])
+                left = {key(f) for f in after}
+                verified = {"fixed": sorted({f"{f['package']}@{f['version']} {f['id']}" for f in findings
+                                             if key(f) not in left}),
+                            "remaining": sorted({f"{f['package']}@{f['version']} {f['id']}" for f in after})}
+                findings = after
     if args.format == "json":
         data = report.to_dict()
         if findings is not None:
             data["vulnerabilities"] = findings
-            if args.plan:
+            if plans is not None:
                 data["plan"] = plans
+                data["edits"] = [{"path": c.path, "reason": c.reason, "diff": c.diff()} for c in outcome.changes]
+                data["manual"] = outcome.manual
+                if verified is not None:
+                    data["applied"] = {**verified, "relocked": outcome.relocked, "warnings": outcome.warnings}
         out = json.dumps(data, indent=2)
     else:
         out = format_text(report)
         if findings is not None:
             from frame.sca.discover import format_vulns
             out += "\n" + format_vulns(findings)
-            if args.plan:
+            if plans is not None:
                 from frame.sca.plan import format_plan
                 out += format_plan(plans)
+                if outcome.changes:
+                    out += ("\n\nEdits written:\n" if args.apply else "\n\nEdits (dry run; --apply writes them):\n")
+                    out += "\n".join(c.diff() for c in outcome.changes)
+                for m in outcome.manual:
+                    out += f"\nmanual: {m}"
+                if verified is not None:
+                    from frame.sca.lockfiles import LOCKFILES
+                    locked = any(Path(p["path"]).name in LOCKFILES for p in plans if p["target"])
+                    out += (f"\n\nAfter applying: {len(verified['fixed'])} fixed, {len(verified['remaining'])} "
+                            "remaining" + (" (a lockfile changes only with --relock)" if locked and not args.relock
+                                           else ""))
+                    for w in outcome.warnings:
+                        out += f"\nwarning: {w}"
     if args.output:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:
