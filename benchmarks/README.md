@@ -449,8 +449,6 @@ python -m benchmarks run --division issueblot
 | shidlia_entl | 181 | 59 | 32.6% |
 | **Total** | **1,298** | **842** | **64.9%** |
 
-Earlier versions of this table reported qf_shid_entl 98%, shid_entl 96% and shidlia_entl 100%. Those were 50-file samples, and on shidlia_entl the November 2025 engine also says "valid" for deliberately invalid variants (a goal list one cell short): bounded unfolding left the antecedent contradictory, so the entailments held vacuously. Later soundness fixes removed that; the numbers above are what the engine proves.
-
 To reproduce (`benchmarks download` fetches only a two-file sample per division):
 
 ```bash
