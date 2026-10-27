@@ -76,6 +76,12 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
                              help="Output format (default: text)")
     deps_parser.add_argument("-o", "--output", help="Write to this file instead of stdout")
+    deps_parser.add_argument("--exclude", action="append", default=[], metavar="DIR",
+                             help="Skip this directory name or relative path (repeatable; added to the defaults)")
+    deps_parser.add_argument("--fail-on", default="none",
+                             choices=["critical", "high", "medium", "low", "any", "none"],
+                             help="With --vulns: exit 1 when a vulnerability at or above this severity is found "
+                                  "(default: none)")
     deps_parser.add_argument("--vulns", action="store_true",
                              help="Match the packages against the cached advisories (frame kb pull --advisories)")
     deps_parser.add_argument("--resolve", action="store_true",
@@ -461,7 +467,12 @@ def cmd_deps(args) -> int:
     if not target.is_dir():
         print(f"Error: not a directory: {args.target}", file=sys.stderr)
         return 2
-    report = read_dependencies(target, resolve=args.resolve)
+    from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+    excluded = set(DEFAULT_EXCLUDED_SCAN_DIRS)
+    for e in args.exclude:
+        parts = tuple(p for p in Path(e).parts if p not in (".", ""))
+        excluded.add(parts[0] if len(parts) == 1 else parts)
+    report = read_dependencies(target, exclude_dirs=excluded, resolve=args.resolve)
     findings = None
     if args.vulns:
         from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
@@ -484,6 +495,10 @@ def cmd_deps(args) -> int:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:
         print(out)
+    if findings and args.fail_on != "none":
+        rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+        if args.fail_on == "any" or any(rank.get(f["severity"] or "", 0) >= rank[args.fail_on] for f in findings):
+            return 1
     return 0
 
 

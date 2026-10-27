@@ -219,3 +219,26 @@ def test_malicious_package_records_are_critical():
                          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}]}]}
     adv = compact([rec], "npm")["packages"]["evil-pkg"][0]
     assert adv["severity"] == "critical" and is_affected("npm", "1.0.0", adv)
+
+
+def test_frame_deps_exclude_and_fail_on(tmp_path):
+    raw = tmp_path / "osv"
+    raw.mkdir()
+    (raw / "all.json").write_text(json.dumps(RECORDS))
+    mirror = tmp_path / "mirror"
+    build_advisories([raw], mirror, "r1", ["npm"])
+    env = {"FRAME_KB_CACHE": str(tmp_path / "cache"), "FRAME_ADVISORIES_SOURCE": str(mirror),
+           "PATH": __import__("os").environ["PATH"]}
+    proj = tmp_path / "proj"
+    (proj / "tests" / "fixtures").mkdir(parents=True)
+    (proj / "package.json").write_text(json.dumps({"dependencies": {"lodash": "4.17.21"}}))
+    (proj / "tests" / "fixtures" / "package.json").write_text(json.dumps({"dependencies": {"minimist": "1.2.5"}}))
+    run = lambda *a: subprocess.run([sys.executable, "-m", "frame.cli", *a], capture_output=True, text=True,
+                                    env=env, cwd=str(Path(__file__).parents[1]))
+    assert run("kb", "pull", "--advisories", "--all", "--source", str(mirror)).returncode == 0
+    everything = json.loads(run("deps", str(proj), "--vulns", "-f", "json").stdout)
+    assert {v["package"] for v in everything["vulnerabilities"]} >= {"minimist"}
+    trimmed = run("deps", str(proj), "--vulns", "-f", "json", "--exclude", "tests/fixtures")
+    assert "minimist" not in {v["package"] for v in json.loads(trimmed.stdout)["vulnerabilities"]}
+    assert run("deps", str(proj), "--vulns", "--fail-on", "any").returncode == 1
+    assert run("deps", str(proj), "--vulns").returncode == 0                     # report only by default

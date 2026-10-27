@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Set, Union
@@ -202,8 +203,21 @@ def _pyproject_specs(text: str) -> List[str]:
         data = tomllib.loads(text)
     except Exception:
         return []
-    deps = (data.get("project") or {}).get("dependencies") or []
-    return [s for s in deps if isinstance(s, str)]
+    project = data.get("project") or {}
+    own = normalize_name(PYPI, str(project.get("name", "")))
+    specs = list(project.get("dependencies") or [])
+    for group in (project.get("optional-dependencies") or {}).values():   # extras users install
+        specs += list(group or [])
+    out: List[str] = []
+    for s in specs:
+        if not isinstance(s, str):
+            continue
+        m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", s)
+        if m and normalize_name(PYPI, m.group(1)) == own:
+            continue                     # `proj[extra]` names the project itself, not a PyPI package
+        if s not in out:
+            out.append(s)
+    return out
 
 
 def _read_one(p: Path, text: str, d: Path, base: Path, rel: Callable[[Path], str],

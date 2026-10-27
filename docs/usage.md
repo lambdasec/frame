@@ -27,6 +27,7 @@ A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive
 ```bash
 frame kb pull --advisories            # once, and whenever you want fresh advisories
 frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each
+frame deps . --resolve --vulns --exclude tests --fail-on high    # a CI gate (exit 1 on high or critical)
 ```
 
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.

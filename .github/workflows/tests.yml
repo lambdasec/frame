@@ -66,6 +66,33 @@ jobs:
         print('Basic functionality test passed')
         "
 
+  self-scan:
+    # Frame's own SCA on this repository: resolve its Python dependencies (pyproject with
+    # extras, requirements files) and fail on a known high or critical vulnerability. Test and
+    # benchmark fixtures hold vulnerable dependencies on purpose and are excluded.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - name: Install
+      run: pip install -e .
+    - name: Advisories
+      run: |
+        if ! frame kb pull --advisories --project . ; then
+          echo "advisory dataset unavailable; building the PyPI table from OSV's export"
+          curl -sSfL -o "$RUNNER_TEMP/PyPI.zip" https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip
+          frame kb build-advisories "$RUNNER_TEMP/PyPI.zip" "$RUNNER_TEMP/advisories" --revision ci --ecosystems PyPI
+          echo "FRAME_ADVISORIES_SOURCE=$RUNNER_TEMP/advisories" >> "$GITHUB_ENV"
+          FRAME_ADVISORIES_SOURCE="$RUNNER_TEMP/advisories" frame kb pull --advisories --project .
+        fi
+    - name: Known vulnerabilities in Frame's dependencies
+      run: frame deps . --exclude tests --exclude benchmarks --resolve --vulns --fail-on high
+
   sca-real:
     # `frame deps` against the real package managers (tests/sca_real/): each tool resolves a
     # fixture project, lists what it resolved, and Frame's reading must match. Runs on pushes to

@@ -248,3 +248,18 @@ def test_resolve_python_uses_pips_report_without_installing(tmp_path, monkeypatc
                          ("MarkupSafe", "2.1.3"): (False, False), ("click", "8.1.7"): (False, False)}
     assert edges(df) == {("Flask@3.0.0", "werkzeug@3.0.1"), ("Flask@3.0.0", "click@8.1.7"),
                          ("werkzeug@3.0.1", "MarkupSafe@2.1.3")}
+
+
+def test_resolving_a_pyproject_includes_extras_but_not_the_project_itself(tmp_path, monkeypatch):
+    from frame.sca import resolve as R
+    seen = {}
+
+    def fake(project_dir, rel, requirements=None, specs=()):
+        seen["specs"] = list(specs)
+        return None, None
+    monkeypatch.setattr(R, "resolve_python", fake)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "my_app"\ndependencies = ["z3-solver>=4.8"]\n'
+        '[project.optional-dependencies]\nscan = ["tree-sitter>=0.21"]\ndev = ["My-App[scan]", "pytest>=7"]\n')
+    read_dependencies(tmp_path, resolve=True)
+    assert seen["specs"] == ["z3-solver>=4.8", "tree-sitter>=0.21", "pytest>=7"]
