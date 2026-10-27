@@ -639,6 +639,9 @@ class Program:
     # Compiled-regex constants of the file (name -> pattern text), for judging guards such
     # as `HOST.fullmatch(x)`; see frame/sil/source_facts.py.
     constant_regexes: Dict[str, str] = field(default_factory=dict)
+    # names bound once to a literal-only collection and never written into (source_facts):
+    # a lookup in one yields one of its constants, whatever the key
+    constant_tables: Set[str] = field(default_factory=set)
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
     # Class (full name) -> its declared instance fields, for languages that write a

@@ -387,8 +387,9 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     """Record source-level facts, then apply the packs for `program.language`.
     Idempotent per call instruction."""
     if source is not None:
-        from ..source_facts import constant_regexes
+        from ..source_facts import constant_regexes, constant_tables
         program.constant_regexes = constant_regexes(source, program.language)
+        program.constant_tables = constant_tables(source, program.language)
     packs = packs if packs is not None else default_packs()
     active = [p for p in packs.for_language(program.language) if _detected(p, program)]
     if not active:

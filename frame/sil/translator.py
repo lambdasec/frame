@@ -13,6 +13,7 @@ Key insight: We generate formulas only at security-relevant points (sinks),
 not for every instruction. This keeps formulas small and verification fast.
 """
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from collections import deque
@@ -4015,6 +4016,10 @@ class SILTranslator:
         """Execute function call"""
         checks = []
         func_name = instr.get_full_name()
+        # `TABLE.get(key[, default])` on a constant table: a constant or the default, never the key
+        head, _, method = func_name.rpartition(".")
+        if method == "get" and instr.args and head in getattr(self.program, "constant_tables", ()):
+            instr = dataclasses.replace(instr, args=[(ExpConst(""), instr.args[0][1])] + list(instr.args[1:]))
 
         # Get specification for this function
         spec = self.program.spec_for_call(instr)
@@ -8520,6 +8525,8 @@ class SILTranslator:
             dotted = self._field_path(exp)
             return names + [dotted] if dotted else names
         if isinstance(exp, ExpIndex):
+            if self._constant_table_index(exp):
+                return self._get_exp_vars(exp.base)        # one of the table's constants, whatever the key
             return self._get_exp_vars(exp.base) + self._get_exp_vars(exp.index)
         if isinstance(exp, ExpStringConcat):
             result = []
@@ -8667,7 +8674,8 @@ class SILTranslator:
 
         elif isinstance(exp, ExpIndex):
             result.extend(self._get_embedded_source_calls(exp.base, sink_kind))
-            result.extend(self._get_embedded_source_calls(exp.index, sink_kind))
+            if not self._constant_table_index(exp):
+                result.extend(self._get_embedded_source_calls(exp.index, sink_kind))
 
         elif isinstance(exp, ExpFieldAccess):
             result.extend(self._get_embedded_source_calls(exp.base, sink_kind))
@@ -8726,8 +8734,15 @@ class SILTranslator:
                 if spec and spec.is_taint_source():
                     result.append((chain, spec.is_source))
             result.extend(self._get_embedded_member_sources(exp.base, _in_call))
-            result.extend(self._get_embedded_member_sources(exp.index, _in_call))
+            if not self._constant_table_index(exp):
+                result.extend(self._get_embedded_member_sources(exp.index, _in_call))
         return result
+
+    def _constant_table_index(self, exp) -> bool:
+        """`TABLE[key]` on a constant table (`Program.constant_tables`): the result is one of
+        the table's literals, so the key's taint does not reach it."""
+        return isinstance(exp, ExpIndex) and isinstance(exp.base, ExpVar) and \
+            self._get_var_name(exp.base.var) in getattr(self.program, "constant_tables", ())
 
     def _get_embedded_sink_calls(self, exp: Exp, state: 'SymbolicState') -> List[Tuple[str, str, List[str]]]:
         """
