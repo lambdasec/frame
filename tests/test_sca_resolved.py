@@ -263,3 +263,15 @@ def test_resolving_a_pyproject_includes_extras_but_not_the_project_itself(tmp_pa
         '[project.optional-dependencies]\nscan = ["tree-sitter>=0.21"]\ndev = ["My-App[scan]", "pytest>=7"]\n')
     read_dependencies(tmp_path, resolve=True)
     assert seen["specs"] == ["z3-solver>=4.8", "tree-sitter>=0.21", "pytest>=7"]
+
+
+def test_a_maven_report_covers_the_poms_of_its_modules(tmp_path):
+    """A multi-module build's dependency:tree at the root resolves every module: the module
+    poms (versions managed by the parent) must not add version-less duplicates."""
+    (tmp_path / "maven_dep_tree.txt").write_text(MAVEN_TREE)
+    (tmp_path / "pom.xml").write_text("<project><modules><module>api</module></modules></project>")
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "pom.xml").write_text("<project><dependencies><dependency><groupId>junit</groupId>"
+                                              "<artifactId>junit</artifactId></dependency></dependencies></project>")
+    r = read_dependencies(tmp_path)
+    assert [f.path for f in r.files] == ["maven_dep_tree.txt"]

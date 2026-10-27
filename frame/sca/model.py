@@ -30,6 +30,7 @@ class Package:
     direct: Optional[bool] = None        # None: the file does not say
     dev: bool = False                    # only needed for development / tests
     spec: str = ""                       # the requested range, when there is no exact version
+    license: str = ""                    # as the lockfile declares it (npm); empty when it does not say
 
     @property
     def key(self) -> str:
@@ -62,6 +63,8 @@ class Package:
              "direct": self.direct, "dev": self.dev, "purl": self.purl}
         if self.spec:
             d["spec"] = self.spec
+        if self.license:
+            d["license"] = self.license
         return d
 
 

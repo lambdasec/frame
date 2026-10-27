@@ -40,6 +40,8 @@ frame deps --vulns --apply --relock   # write the edits, re-lock with the packag
 
 `--plan` also shows the edits as a unified diff, and `--apply` writes them: the version in `package.json`, requirements files, `pyproject.toml` (PEP 621 and Poetry dependency tables only), `pom.xml` (the property when the version is `${...}`), `.csproj` or `Directory.Packages.props`, and `go.mod`, or the override (`overrides`, `resolutions`, `pnpm.overrides`, uv `constraint-dependencies`, `dependencyManagement`, a direct reference). Only the version changes, so formatting and comments are kept; an edit Frame cannot make safely (an upper bound that excludes the fix) is listed as manual. `--relock` then regenerates the lockfile with its own package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`), and Frame re-reads the graph and reports what is fixed and what remains.
 
+`frame deps --sbom cyclonedx` (or `spdx`) prints a software bill of materials from the same graph: CycloneDX 1.6 (components with package URLs, dev-only ones `scope: optional`, the `dependencies` graph) or SPDX 2.3 JSON (`DEPENDS_ON` / `DEV_DEPENDENCY_OF` relationships). Licences are only what a lockfile records (npm's); otherwise CycloneDX omits them and SPDX says `NOASSERTION`, never a guess. `--product` names the root (default `pkg:generic/<directory>`).
+
 `frame deps --vex openvex` (or `cyclonedx`) prints a VEX document for the vulnerable dependencies: OpenVEX 0.2.0, or a CycloneDX 1.6 BOM with `vulnerabilities[].analysis`. Statements follow Frame's evidence: a vulnerable version present is `affected`, with the upgrade from the plan as its action; with `frame scan --sca --vex cyclonedx --vex-out vex.json`, a vulnerable function that attacker data reaches is `exploitable`, with the flow. Frame never states `not_affected` on its own, because reachability cannot prove a package unreachable: record decisions in `.frame/vex.toml` and they are included, unless a verified flow contradicts one (then the statement stays `affected` and the conflict is reported). `--dev-not-shipped` states dev-only dependencies `not_affected` (`component_not_present`).
 
 ```toml
@@ -213,6 +215,7 @@ frame kb pull --source /mnt/kb-2026.10 --lock          # in CI
 | `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each one's status |
 | `frame packs list \| check` | List the packs a scan would load; validate pack files |
 | `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror. `pull --advisories` caches the vulnerability advisories; `build-advisories` lays them out from OSV exports |
+| `frame deps --sbom cyclonedx\|spdx` / `--vex openvex\|cyclonedx` | A bill of materials, or VEX statements from Frame's evidence |
 | `frame deps [dir]` | The dependency graph from lockfiles, build-tool reports and manifests: versions, direct or transitive, dev only, edges. `--resolve` runs Maven, Gradle and pip; `--vulns` matches the cached advisories |
 | `frame inventory [dir]` | Languages, frameworks, dependencies, IaC, containers, LLM SDKs and MCP servers in a repository |
 | `frame exploit --target <url>` | Exploit a live, authorized target, primed with `--guidance` ([ai.md](ai.md)) |

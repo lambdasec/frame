@@ -299,8 +299,10 @@ def parse_package_lock(path: str, text: str) -> DependencyFile:
                 continue
             if not meta.get("version"):
                 continue
+            lic = meta.get("license")
             pkg = df.add(Package(NPM, _npm_name(k), str(meta["version"]),
-                                 dev=bool(meta.get("dev") or meta.get("devOptional"))))
+                                 dev=bool(meta.get("dev") or meta.get("devOptional")),
+                                 license=lic if isinstance(lic, str) else ""))
             keys[k] = pkg.key
 
         def resolve(owner: str, name: str) -> Optional[str]:

@@ -90,7 +90,11 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--vex", choices=["openvex", "cyclonedx"],
                              help="Print a VEX document (OpenVEX 0.2.0, or CycloneDX 1.6 with vulnerability analysis) "
                                   "instead of the report; implies --vulns. Decisions in .frame/vex.toml are included")
-    deps_parser.add_argument("--product", help="With --vex: the product identifier (default: pkg:generic/<directory>)")
+    deps_parser.add_argument("--sbom", choices=["cyclonedx", "spdx"],
+                             help="Print a software bill of materials (CycloneDX 1.6 or SPDX 2.3 JSON) instead of "
+                                  "the report")
+    deps_parser.add_argument("--product", help="With --vex/--sbom: the product identifier "
+                                               "(default: pkg:generic/<directory>)")
     deps_parser.add_argument("--dev-not-shipped", action="store_true",
                              help="With --vex: state dev-only dependencies not_affected (component_not_present)")
     deps_parser.add_argument("--apply", action="store_true",
@@ -501,6 +505,19 @@ def cmd_deps(args) -> int:
         parts = tuple(p for p in Path(e).parts if p not in (".", ""))
         excluded.add(parts[0] if len(parts) == 1 else parts)
     report = read_dependencies(target, exclude_dirs=excluded, resolve=args.resolve)
+    if args.sbom:
+        from frame.sca.sbom import to_cyclonedx as sbom_cdx, to_spdx
+        from frame.sca.vex import product_id
+        for w in report.warnings:
+            print(f"warning: {w}", file=sys.stderr)
+        prod = product_id(target, args.product)
+        doc = sbom_cdx(report, prod) if args.sbom == "cyclonedx" else to_spdx(report, prod)
+        text = json.dumps(doc, indent=2)
+        if args.output:
+            Path(args.output).write_text(text + "\n", encoding="utf-8")
+        else:
+            print(text)
+        return 0
     findings = None
     if args.vex:
         args.vulns = True

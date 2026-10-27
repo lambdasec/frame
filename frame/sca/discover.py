@@ -146,6 +146,10 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
 
     resolved: Dict[Path, DependencyFile] = {}       # manifest path -> its resolved graph
     covered: Set[Path] = set()                      # manifests a resolved graph stands for
+    # a Maven report (dependency:tree of a multi-module build) covers the poms of its modules
+    report_dirs = [d for d, ps in by_dir.items() if any(p.name in REPORTS for p in ps)]
+    covered.update(p for d, ps in by_dir.items() for p in ps if p.name == "pom.xml"
+                   and any(r == d or r in d.parents for r in report_dirs))
     if resolve:
         from frame.sca import resolve as R
         poms = [d for d, ps in by_dir.items() if any(p.name == "pom.xml" for p in ps)
