@@ -301,7 +301,8 @@ def format_vulns(findings: List[dict]) -> str:
     lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]
     for f in findings:
         sev = (f["severity"] or "unknown").upper()
-        fix = f"fixed in {f['fixed'][0]}" if f["fixed"] else "no fixed version"
+        fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
+               "fixed upstream after this tag (see the advisory)" if f.get("repo") else "no fixed version")
         kind = "direct" if f["direct"] else "transitive" if f["direct"] is False else "dependency"
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
