@@ -27,7 +27,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from frame.sca import read_dependencies
 from frame.sca.lockfiles import _swift_name
-from frame.sca.model import CARGO, GO, MAVEN, NPM, NUGET, PYPI, SWIFT, normalize_name
+from frame.sca.model import CARGO, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT, normalize_name
 from frame.sca.resolve import parse_pip_report
 
 HERE = Path(__file__).resolve().parent
@@ -55,6 +55,10 @@ _CACHES = {   # docker image -> named volume for its download cache (keeps rerun
     "gradle": ("frame-sca-gradle", "/home/gradle/.gradle"),
     "golang": ("frame-sca-go", "/go/pkg/mod"),
     "mcr.microsoft.com/dotnet/sdk": ("frame-sca-nuget", "/root/.nuget"),
+    "ruby": ("frame-sca-gems", "/usr/local/bundle"),
+    "composer": ("frame-sca-composer", "/tmp/composer-cache"),
+    "dart": ("frame-sca-pub", "/root/.pub-cache"),
+    "elixir": ("frame-sca-hex", "/root/.hex"),
 }
 
 
@@ -616,6 +620,129 @@ def swift_truth(work: Path) -> Truth:
     return Truth(every, note="Package.resolved does not say which packages are direct")
 
 
+# --- Ruby, PHP, Dart, Elixir -----------------------------------------------------------------
+
+RUBY_IMAGE, COMPOSER_IMAGE, DART_IMAGE, ELIXIR_IMAGE = "ruby:3.3", "composer:2", "dart:stable", "elixir:1.17"
+
+
+def bundler_generate(work: Path) -> None:
+    run(["bundle", "lock", "--add-platform", "x86_64-linux", "ruby"], work, image=RUBY_IMAGE)
+
+
+# Bundler's own reading of the lockfile and the Gemfile: the specs from rubygems sources, the
+# direct dependencies, and what the non-development groups reach through the specs' requirements
+_BUNDLER_TRUTH = r"""
+require "bundler"; require "json"
+lock = Bundler::LockfileParser.new(Bundler.read_file("Gemfile.lock"))
+gems = lock.specs.select { |s| s.source.is_a?(Bundler::Source::Rubygems) }
+all = gems.map { |s| [s.name, s.version.to_s] }.uniq
+dsl = Bundler::Dsl.new; dsl.eval_gemfile("Gemfile")
+direct = dsl.dependencies.map(&:name) & gems.map(&:name)
+dev = [:development, :test]
+stack = dsl.dependencies.reject { |d| (d.groups - dev).empty? }.map(&:name)
+by_name = lock.specs.group_by(&:name); reached = {}
+while (n = stack.pop)
+  next if reached[n]; reached[n] = true
+  (by_name[n] || []).each { |s| s.dependencies.each { |d| stack << d.name } }
+end
+puts JSON.dump({all: all, direct: direct, dev: all.reject { |n, _| reached[n] }})
+"""
+
+
+def bundler_truth(work: Path) -> Truth:
+    data = json.loads(run(["ruby", "-e", _BUNDLER_TRUTH], work, image=RUBY_IMAGE))
+    every = {_nv(RUBYGEMS, n, v) for n, v in data["all"]}
+    return Truth(every, direct={normalize_name(RUBYGEMS, n) for n in data["direct"]},
+                 dev={_nv(RUBYGEMS, n, v) for n, v in data["dev"]},
+                 note="Bundler's LockfileParser and Dsl; dev = not reached from a non-dev group")
+
+
+_COMPOSER_ENV = {"COMPOSER_CACHE_DIR": "/tmp/composer-cache"}
+
+
+def composer_generate(work: Path) -> None:
+    run(["composer", "update", "--no-install", "--no-scripts", "--no-plugins", "--no-interaction"], work,
+        image=COMPOSER_IMAGE, env=_COMPOSER_ENV)
+
+
+def _composer_show(work: Path, *extra: str) -> List[dict]:
+    out = run(["composer", "show", "--locked", "--format=json", "--no-plugins", *extra], work,
+              image=COMPOSER_IMAGE, env=_COMPOSER_ENV)
+    return json.loads(out).get("locked", [])
+
+
+def composer_truth(work: Path) -> Truth:
+    every = {_nv(PACKAGIST, p["name"], p["version"]) for p in _composer_show(work)}
+    prod = {_nv(PACKAGIST, p["name"], p["version"]) for p in _composer_show(work, "--no-dev")}
+    direct = {normalize_name(PACKAGIST, p["name"]) for p in _composer_show(work, "--direct")}
+    return Truth(every, direct=direct, dev=every - prod, note="composer show --locked (--no-dev, --direct)")
+
+
+def pub_generate(work: Path) -> None:
+    run(["dart", "pub", "get"], work, image=DART_IMAGE)
+
+
+def pub_truth(work: Path) -> Truth:
+    data = json.loads(run(["dart", "pub", "deps", "--json"], work, image=DART_IMAGE))
+    pkgs = [p for p in data.get("packages", []) if p.get("kind") != "root" and p.get("source") == "hosted"]
+    every = {_nv(PUB, p["name"], p["version"]) for p in pkgs}
+    return Truth(every, direct={p["name"] for p in pkgs if p.get("kind") in ("direct", "dev")},
+                 dev={_nv(PUB, p["name"], p["version"]) for p in pkgs if p.get("kind") == "dev"},
+                 note="dart pub deps --json; pub labels only direct dev dependencies dev")
+
+
+def mix_generate(work: Path) -> None:
+    run(["sh", "-c", "mix local.hex --force >/dev/null && mix deps.get"], work, image=ELIXIR_IMAGE)
+
+
+# Mix's own reading: Mix.Dep.Lock for packages and their (non-optional) requirements, the project
+# config for the deps list and its `only:` environments
+_MIX_TRUTH = r"""
+lock = Mix.Dep.Lock.read()
+for {app, t} <- lock, elem(t, 0) == :hex do
+  IO.puts("pkg #{app} #{elem(t, 1)} #{elem(t, 2)}")
+  for {dep, _req, opts} <- elem(t, 5), !Keyword.get(opts, :optional, false), do: IO.puts("edge #{app} #{dep}")
+end
+for d <- Mix.Project.config()[:deps] do
+  {app, opts} = case d do
+    {a, _req, o} when is_list(o) -> {a, o}
+    {a, o} when is_list(o) -> {a, o}
+    {a, _req} -> {a, []}
+  end
+  only = opts |> Keyword.get(:only, []) |> List.wrap()
+  IO.puts("direct #{app} #{if only != [] and :prod not in only, do: "dev", else: "prod"}")
+end
+"""
+
+
+def mix_truth(work: Path) -> Truth:
+    (work / "frame_truth.exs").write_text(_MIX_TRUTH)
+    out = run(["sh", "-c", "mix local.hex --force >/dev/null && "
+                           "mix run --no-start --no-compile --no-deps-check frame_truth.exs"], work, image=ELIXIR_IMAGE)
+    pkgs: Dict[str, NV] = {}
+    edges: Dict[str, List[str]] = {}
+    direct: Dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if parts[:1] == ["pkg"]:
+            pkgs[parts[1]] = _nv(HEX, parts[2], parts[3])
+        elif parts[:1] == ["edge"]:
+            edges.setdefault(parts[1], []).append(parts[2])
+        elif parts[:1] == ["direct"]:
+            direct[parts[1]] = parts[2]
+    stack = [a for a, kind in direct.items() if kind == "prod"]
+    reached: Set[str] = set()
+    while stack:
+        a = stack.pop()
+        if a not in reached:
+            reached.add(a)
+            stack.extend(edges.get(a, []))
+    every = set(pkgs.values())
+    return Truth(every, direct={pkgs[a][0] for a in direct if a in pkgs},
+                 dev={nv for a, nv in pkgs.items() if a not in reached},
+                 note="Mix.Dep.Lock.read and the project's deps; optional requirements are not followed")
+
+
 # --- real lockfiles from published packages --------------------------------------------------
 
 def secbench_npm_truth(work: Path) -> Truth:
@@ -676,6 +803,12 @@ CASES: List[Case] = [
     Case("go", GO, "go", ("go",), go_generate, go_truth, ("go.mod",), image=GO_IMAGE),
     Case("cargo", CARGO, "rust", ("cargo",), cargo_generate, cargo_truth, ("Cargo.toml", "Cargo.lock")),
     Case("swift", SWIFT, "swift", ("swift",), swift_generate, swift_truth, ("Package.resolved",)),
+    Case("bundler", RUBYGEMS, "ruby", ("ruby", "bundle"), bundler_generate, bundler_truth,
+         ("Gemfile", "Gemfile.lock"), image=RUBY_IMAGE),
+    Case("composer", PACKAGIST, "php", ("composer",), composer_generate, composer_truth,
+         ("composer.json", "composer.lock"), image=COMPOSER_IMAGE),
+    Case("pub", PUB, "dart", ("dart",), pub_generate, pub_truth, ("pubspec.yaml", "pubspec.lock"), image=DART_IMAGE),
+    Case("mix", HEX, "elixir", ("mix",), mix_generate, mix_truth, ("mix.exs", "mix.lock"), image=ELIXIR_IMAGE),
     # lockfiles real projects published (MIT; package.json and lockfile only, from the SecBench.js
     # packages): Frame reads them as shipped, the tool installs from them as shipped
     Case("real-npm-v1-fast-json-patch", NPM, "real-npm-v1-fast-json-patch", ("npm",), lambda w: None,

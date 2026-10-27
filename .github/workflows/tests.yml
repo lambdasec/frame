@@ -153,12 +153,28 @@ jobs:
       if: steps.scope.outputs.run == 'true'
       with:
         swift-version: '6.0'
+    - uses: ruby/setup-ruby@v1
+      if: steps.scope.outputs.run == 'true'
+      with:
+        ruby-version: '3.3'
+    - uses: shivammathur/setup-php@v2
+      if: steps.scope.outputs.run == 'true'
+      with:
+        php-version: '8.2'
+        tools: composer
+    - uses: dart-lang/setup-dart@v1
+      if: steps.scope.outputs.run == 'true'
+    - uses: erlef/setup-beam@v1
+      if: steps.scope.outputs.run == 'true'
+      with:
+        otp-version: '27'
+        elixir-version: '1.17'
     - name: Install
       if: steps.scope.outputs.run == 'true'
       run: |
         corepack enable
         pip install -e ".[dev]"
-        for t in npm corepack uvx mvn gradle dotnet go cargo swift; do printf '%-9s' "$t"; command -v "$t"; done
+        for t in npm corepack uvx mvn gradle dotnet go cargo swift ruby bundle composer dart mix; do printf '%-9s' "$t"; command -v "$t"; done
     - name: Frame against the package managers
       if: steps.scope.outputs.run == 'true'
       env:
