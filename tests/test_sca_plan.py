@@ -56,12 +56,33 @@ PEP440_SPECS = [">=1.0,<2", "~=1.4", "~=1.4.2", "==1.2.*", "!=1.4", ">1.0", "<2.
                 ">=1.0,!=1.4,<2.0", "==2.*", ">1.0.post1", "<2.0rc2", ">=2.0rc1", "", ">1.1", "!=2.*"]
 
 
-def test_pep440_specifiers_match_packaging():
+def _is_pre(v):
+    return any(t in v for t in ("a", "b", "rc", "dev"))
+
+
+def test_pep440_specifiers_match_packaging_on_releases():
+    """Final and post releases: `packaging` is stable there across versions. (Its default
+    pre-release handling changed between releases of the library, so pre-releases are pinned
+    to the PEP 440 text below instead.)"""
     specifiers = pytest.importorskip("pip._vendor.packaging.specifiers")
     version = pytest.importorskip("pip._vendor.packaging.version")
-    bad = [(v, s) for v in PEP440_VERSIONS for s in PEP440_SPECS
+    bad = [(v, s) for v in PEP440_VERSIONS if not _is_pre(v) for s in PEP440_SPECS
            if satisfies("PyPI", v, s) != specifiers.SpecifierSet(s).contains(version.Version(v))]
     assert bad == []
+
+
+@pytest.mark.parametrize("version,spec,want", [
+    ("1.0a1", "!=1.4", False),          # pre-releases are excluded unless the specifier names one
+    ("1.0a1", "", False),
+    ("1.0a1", ">=1.0a1", True),          # ... and admitted when it does
+    ("2.0rc1", "<2.0rc2", True),
+    ("2.0rc1", "<2.0", False),           # `<V` excludes pre-releases of V itself
+    ("1.0.dev1", ">=1.0.dev0", True),
+    ("1.0.post1", ">1.0", False),        # `>V` excludes post-releases of V
+    ("1.1.post3", ">1.0", True),
+])
+def test_pep440_prerelease_and_postrelease_rules(version, spec, want):
+    assert satisfies("PyPI", version, spec) is want
 
 
 def test_poetry_caret_and_tilde():
