@@ -120,6 +120,7 @@ class CFrontend:
         self._current_node: Optional[Node] = None
         self._node_counter = 0
         self._ident_counter = 0
+        self._return_tmp_counter = 0
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C source code to SIL Program."""
@@ -128,6 +129,7 @@ class CFrontend:
         self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
+        self._return_tmp_counter = 0
 
         self._jump_targets: List[Tuple[str, Optional[Node], Optional[Node]]] = []
         self._lambda_names: Dict[int, str] = {}
@@ -1013,10 +1015,31 @@ class CFrontend:
 
         for child in node.children:
             if child.type not in ("return", ";"):
-                value_exp = self._translate_expression(child)
+                inner = child
+                while inner.type == "parenthesized_expression" and inner.named_child_count == 1:
+                    inner = inner.named_children[0]
+                if inner.type == "call_expression" and not self._is_value_call(inner):
+                    # `return system(cmd);` is `tmp = system(cmd); return tmp;`: the call must be a
+                    # Call instruction of its own or no spec (sink, source, sanitizer) ever sees it.
+                    self._return_tmp_counter += 1
+                    tmp = f"$ret{self._return_tmp_counter}"
+                    self._add_instrs(self._translate_call_assignment(tmp, inner, loc))
+                    value_exp = ExpVar(PVar(tmp))
+                else:
+                    value_exp = self._translate_expression(child)
                 break
 
         self._add_instr(Return(loc=loc, value=value_exp))
+
+    def _delivers_into_arguments(self, call_node: TSNode) -> bool:
+        """Does this call fill one of its arguments with input (`read`, `recv`, `fgets`, `fread`)?"""
+        spec = self.specs.get(self._get_call_name(call_node))
+        return bool(spec is not None and getattr(spec, "taint_out_args", None))
+
+    def _is_value_call(self, call_node: TSNode) -> bool:
+        """A call the expression translator already lowers to a value (`sizeof`-like or a
+        content accessor): left alone."""
+        return self._content_accessor_receiver(call_node) is not None
 
     def _translate_if(self, node: TSNode) -> None:
         """Translate if statement"""
@@ -1396,6 +1419,21 @@ class CFrontend:
                 return cached
             member = self._get_text(node.child_by_field_name("function").child_by_field_name("field"))
             tmp = f"{member}_result{self._ident_counter}"
+            self._ident_counter += 1
+            exp = ExpVar(PVar(tmp))
+            self._hoisted_calls[node.id] = exp
+            self._add_instrs(self._translate_call_assignment(tmp, node, self._get_location(node)))
+            return exp
+
+        elif (node.type == "call_expression" and self._current_node is not None
+              and self._delivers_into_arguments(node)):
+            # `if (read(fd, &n, 4) != 4)`, `while ((n = recv(s, buf, cap, 0)) > 0)`, `if (!fgets(b, n, in))`:
+            # a call that fills a buffer is its own Call instruction, or the buffer it fills is never
+            # tainted (an expression-level call only carries its return value).
+            cached = self._hoisted_calls.get(node.id)
+            if cached is not None:
+                return cached
+            tmp = f"{self._get_call_name(node).replace('::', '_')}_result{self._ident_counter}"
             self._ident_counter += 1
             exp = ExpVar(PVar(tmp))
             self._hoisted_calls[node.id] = exp

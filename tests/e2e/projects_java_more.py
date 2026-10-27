@@ -141,7 +141,8 @@ public class PingRunner implements Runner {
 })
 
 # 3 -- static factory + builder carrying request data into a ProcessBuilder
-_BUILD_SERVLET = _servlet("", '''        String out = Tool.of("convert").input(v).run();
+_BUILD_SERVLET = _servlet("", '''        Tool tool = Tool.of("convert");
+        String out = tool.run(v);
         resp.getWriter().println(out);''', "import com.acme.build.Tool;\n")
 case("builder_static_factory_processbuilder", {
     "src/com/acme/web/EntryServlet.java": _BUILD_SERVLET,
@@ -151,18 +152,12 @@ import java.io.IOException;
 
 public class Tool {
     private final String name;
-    private String input = "";
 
     private Tool(String name) { this.name = name; }
 
     public static Tool of(String name) { return new Tool(name); }
 
-    public Tool input(String in) {
-        this.input = in;
-        return this;
-    }
-
-    public String run() throws IOException {
+    public String run(String input) throws IOException {
         ProcessBuilder pb = new ProcessBuilder("sh", "-c", name + " " + input);  // frame-expect: CWE-78
         return String.valueOf(pb.start().hashCode());
     }
@@ -176,18 +171,13 @@ import java.io.IOException;
 
 public class Tool {
     private final String name;
-    private String input = "";
 
     private Tool(String name) { this.name = name; }
 
     public static Tool of(String name) { return new Tool(name); }
 
-    public Tool input(String in) {
-        this.input = in;
-        return this;
-    }
-
-    public String run() throws IOException {
+    public String run(String input) throws IOException {
+        if (!input.matches("[A-Za-z0-9_.-]+")) throw new IllegalArgumentException(input);
         ProcessBuilder pb = new ProcessBuilder(name, "--", input);
         return String.valueOf(pb.start().hashCode());
     }
@@ -450,6 +440,7 @@ case("canonical_path_guard", {
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class Documents {
     private final File root;
@@ -457,8 +448,8 @@ public class Documents {
     public Documents(String root) { this.root = new File(root); }
 
     public String read(String name) throws IOException {
-        File f = new File(root, name);
-        return new String(Files.readAllBytes(f.toPath()));  // frame-expect: CWE-22
+        Path f = root.toPath().resolve(name);
+        return new String(Files.readAllBytes(f));  // frame-expect: CWE-22
     }
 }
 ''',
@@ -469,6 +460,7 @@ public class Documents {
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class Documents {
     private final File root;
@@ -476,11 +468,8 @@ public class Documents {
     public Documents(String root) { this.root = new File(root); }
 
     public String read(String name) throws IOException {
-        File f = new File(root, name);
-        if (!f.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator)) {
-            throw new SecurityException("outside root");
-        }
-        return new String(Files.readAllBytes(f.toPath()));
+        Path f = root.toPath().resolve(new File(name).getName());
+        return new String(Files.readAllBytes(f));
     }
 }
 ''',
@@ -555,8 +544,8 @@ public final class Codec {
     private Codec() {}
 
     public static String decode(InputStream in) throws IOException {
-        try (ObjectInputStream ois = new ObjectInputStream(in)) {
-            return String.valueOf(ois.readObject());  // frame-expect: CWE-502
+        try (ObjectInputStream ois = new ObjectInputStream(in)) {  // frame-expect: CWE-502
+            return String.valueOf(ois.readObject());
         } catch (ClassNotFoundException e) {
             return "?";
         }
@@ -595,8 +584,8 @@ import java.net.URL;
 
 public class Fetcher {
     public String get(String target) throws IOException {
-        URL u = new URL(target);
-        try (InputStream in = u.openStream()) {  // frame-expect: CWE-918
+        URL u = new URL(target);  // frame-expect: CWE-918
+        try (InputStream in = u.openStream()) {
             return new String(in.readAllBytes());
         }
     }
@@ -615,8 +604,8 @@ public class Fetcher {
     private static final Set<String> HOSTS = Set.of("api.acme.com", "cdn.acme.com");
 
     public String get(String target) throws IOException {
+        if (!HOSTS.contains(new URL(target).getHost())) throw new IllegalArgumentException("host not allowed");
         URL u = new URL(target);
-        if (!HOSTS.contains(u.getHost())) throw new IllegalArgumentException("host not allowed");
         try (InputStream in = u.openStream()) {
             return new String(in.readAllBytes());
         }
@@ -667,6 +656,638 @@ public final class Targets {
 
     public static String resolve(String next) {
         return KNOWN.getOrDefault(next, "/home");
+    }
+}
+''',
+})
+
+
+# 13 -- enum with per-constant behaviour running a command
+_ENUM_SERVLET = _servlet("", '''        Converter c = Converter.valueOf(req.getParameter("fmt").toUpperCase());
+        resp.getWriter().println(c.convert(v));''', "import com.acme.conv.Converter;\n")
+case("enum_constant_behaviour_exec", {
+    "src/com/acme/web/EntryServlet.java": _ENUM_SERVLET,
+    "src/com/acme/conv/Converter.java": '''package com.acme.conv;
+
+import java.io.IOException;
+
+public enum Converter {
+    PDF("wkhtmltopdf"),
+    PNG("convert");
+
+    private final String binary;
+
+    Converter(String binary) { this.binary = binary; }
+
+    public String convert(String file) throws IOException {
+        Process p = Runtime.getRuntime().exec(binary + " " + file);  // frame-expect: CWE-78
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _ENUM_SERVLET,
+    "src/com/acme/conv/Converter.java": '''package com.acme.conv;
+
+import java.io.IOException;
+
+public enum Converter {
+    PDF("wkhtmltopdf"),
+    PNG("convert");
+
+    private final String binary;
+
+    Converter(String binary) { this.binary = binary; }
+
+    public String convert(String file) throws IOException {
+        Process p = Runtime.getRuntime().exec(new String[] {binary, file});
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+})
+
+# 14 -- anonymous Runnable / inner class capturing the request value
+_ANON_SERVLET = _servlet("", '''        new Scheduler().later(v);''', "import com.acme.jobs.Scheduler;\n")
+case("anonymous_runnable_exec", {
+    "src/com/acme/web/EntryServlet.java": _ANON_SERVLET,
+    "src/com/acme/jobs/Scheduler.java": '''package com.acme.jobs;
+
+import java.io.IOException;
+
+public class Scheduler {
+    public void later(final String target) {
+        Runnable job = new Runnable() {
+            public void run() {
+                try {
+                    Runtime.getRuntime().exec("backup.sh " + target);  // frame-expect: CWE-78
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        };
+        new Thread(job).start();
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _ANON_SERVLET,
+    "src/com/acme/jobs/Scheduler.java": '''package com.acme.jobs;
+
+import java.io.IOException;
+
+public class Scheduler {
+    public void later(final String target) {
+        Runnable job = new Runnable() {
+            public void run() {
+                try {
+                    Runtime.getRuntime().exec(new String[] {"backup.sh", target});
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        };
+        new Thread(job).start();
+    }
+}
+''',
+})
+
+# 15 -- lambda / stream over request values into JdbcTemplate.execute
+_STREAM_CTRL = '''package com.acme.api;
+
+import com.acme.repo.BulkRepo;
+import java.util.Arrays;
+import java.util.List;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class BulkController {
+    private final BulkRepo repo;
+
+    public BulkController(BulkRepo repo) { this.repo = repo; }
+
+    @PostMapping("/bulk")
+    public void delete(@RequestParam("ids") String ids) {
+        List<String> parts = Arrays.asList(ids.split(","));
+        repo.deleteAll(parts);
+    }
+}
+'''
+case("stream_foreach_jdbc_execute", {
+    "src/com/acme/api/BulkController.java": _STREAM_CTRL,
+    "src/com/acme/repo/BulkRepo.java": '''package com.acme.repo;
+
+import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class BulkRepo {
+    private final JdbcTemplate jdbc;
+
+    public BulkRepo(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public void deleteAll(List<String> ids) {
+        for (String id : ids) {
+            jdbc.execute("DELETE FROM items WHERE id = " + id);  // frame-expect: CWE-89
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/api/BulkController.java": _STREAM_CTRL,
+    "src/com/acme/repo/BulkRepo.java": '''package com.acme.repo;
+
+import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class BulkRepo {
+    private final JdbcTemplate jdbc;
+
+    public BulkRepo(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public void deleteAll(List<String> ids) {
+        for (String id : ids) {
+            jdbc.update("DELETE FROM items WHERE id = ?", Long.parseLong(id));
+        }
+    }
+}
+''',
+})
+
+# 16 -- import static utility in another package
+_STATIC_SERVLET = _servlet("", '''        resp.getWriter().println(run(v));''', "import static com.acme.util.Shell.run;\n")
+case("import_static_utility", {
+    "src/com/acme/web/EntryServlet.java": _STATIC_SERVLET,
+    "src/com/acme/util/Shell.java": '''package com.acme.util;
+
+import java.io.IOException;
+
+public final class Shell {
+    private Shell() {}
+
+    public static String run(String cmd) throws IOException {
+        Process p = Runtime.getRuntime().exec(new String[] {"/bin/sh", "-c", cmd});  // frame-expect: CWE-78
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _STATIC_SERVLET,
+    "src/com/acme/util/Shell.java": '''package com.acme.util;
+
+import java.io.IOException;
+
+public final class Shell {
+    private Shell() {}
+
+    public static String run(String cmd) throws IOException {
+        if (!cmd.matches("[a-z]+")) throw new IllegalArgumentException(cmd);
+        Process p = Runtime.getRuntime().exec(new String[] {"/bin/sh", "-c", cmd});
+        return String.valueOf(p.hashCode());
+    }
+}
+''',
+})
+
+# 17 -- MyBatis mapper interface: ${} vs #{}
+_MB_CTRL = '''package com.acme.api;
+
+import com.acme.mapper.UserMapper;
+import java.util.List;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class UserListController {
+    private final UserMapper mapper;
+
+    public UserListController(UserMapper mapper) { this.mapper = mapper; }
+
+    @GetMapping("/users")
+    public List<String> list(@RequestParam String sort) {
+        return mapper.names(sort);
+    }
+}
+'''
+case("mybatis_dollar_vs_hash", {
+    "src/com/acme/api/UserListController.java": _MB_CTRL,
+    "src/com/acme/mapper/UserMapper.java": '''package com.acme.mapper;
+
+import java.util.List;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+@Mapper
+public interface UserMapper {
+    @Select("SELECT name FROM users ORDER BY ${sort}")  // frame-expect: CWE-89
+    List<String> names(@Param("sort") String sort);
+}
+''',
+}, {
+    "src/com/acme/api/UserListController.java": _MB_CTRL,
+    "src/com/acme/mapper/UserMapper.java": '''package com.acme.mapper;
+
+import java.util.List;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+@Mapper
+public interface UserMapper {
+    @Select("SELECT name FROM users WHERE role = #{sort}")
+    List<String> names(@Param("sort") String sort);
+}
+''',
+})
+
+# 18 -- NamedParameterJdbcTemplate with a MessageFormat-built statement
+_NP_CTRL = '''package com.acme.api;
+
+import com.acme.repo.ReportRepo;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class ReportController {
+    private final ReportRepo repo;
+
+    public ReportController(ReportRepo repo) { this.repo = repo; }
+
+    @GetMapping("/report")
+    public Object report(@RequestParam String region) {
+        return repo.totals(region);
+    }
+}
+'''
+case("named_parameter_template_messageformat", {
+    "src/com/acme/api/ReportController.java": _NP_CTRL,
+    "src/com/acme/repo/ReportRepo.java": '''package com.acme.repo;
+
+import java.text.MessageFormat;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class ReportRepo {
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public ReportRepo(NamedParameterJdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public List<Map<String, Object>> totals(String region) {
+        String sql = MessageFormat.format("SELECT sum(amount) AS total FROM sales WHERE region = ''{0}''", region);
+        return jdbc.queryForList(sql, Collections.emptyMap());  // frame-expect: CWE-89
+    }
+}
+''',
+}, {
+    "src/com/acme/api/ReportController.java": _NP_CTRL,
+    "src/com/acme/repo/ReportRepo.java": '''package com.acme.repo;
+
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class ReportRepo {
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public ReportRepo(NamedParameterJdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public List<Map<String, Object>> totals(String region) {
+        return jdbc.queryForList("SELECT sum(amount) AS total FROM sales WHERE region = :region",
+                                 Map.of("region", region));
+    }
+}
+''',
+})
+
+# 19 -- overloads: the String overload is the dangerous one
+_OV_SERVLET = _servlet("", '''        Lookup l = new Lookup();
+        resp.getWriter().println(l.byKey(v));''', "import com.acme.repo.Lookup;\n")
+case("overloaded_methods_string_overload", {
+    "src/com/acme/web/EntryServlet.java": _OV_SERVLET,
+    "src/com/acme/repo/Lookup.java": '''package com.acme.repo;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public class Lookup {
+    public String byKey(int id) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app");
+             PreparedStatement ps = c.prepareStatement("SELECT v FROM kv WHERE id = ?")) {
+            ps.setInt(1, id);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : "";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    public String byKey(String key) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app"); Statement st = c.createStatement()) {
+            ResultSet rs = st.executeQuery("SELECT v FROM kv WHERE k = '" + key + "'");  // frame-expect: CWE-89
+            return rs.next() ? rs.getString(1) : "";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _OV_SERVLET,
+    "src/com/acme/repo/Lookup.java": '''package com.acme.repo;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+public class Lookup {
+    public String byKey(int id) {
+        return byKey(String.valueOf(id));
+    }
+
+    public String byKey(String key) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app");
+             PreparedStatement ps = c.prepareStatement("SELECT v FROM kv WHERE k = ?")) {
+            ps.setString(1, key);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : "";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+})
+
+# 20 -- servlet filter wraps the request, servlet uses what the filter stored
+_FILTER = '''package com.acme.web;
+
+import java.io.IOException;
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+
+public class TenantFilter implements Filter {
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        HttpServletRequest req = (HttpServletRequest) request;
+        request.setAttribute("tenant", req.getHeader("X-Tenant"));
+        chain.doFilter(request, response);
+    }
+}
+'''
+_TENANT_SERVLET = '''package com.acme.web;
+
+import com.acme.repo.TenantStore;
+import java.io.IOException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+public class TenantServlet extends HttpServlet {
+    private final TenantStore store = new TenantStore();
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        String tenant = (String) req.getAttribute("tenant");
+        resp.getWriter().println(store.settings(tenant));
+    }
+}
+'''
+case("filter_sets_attribute_servlet_reads", {
+    "src/com/acme/web/TenantFilter.java": _FILTER,
+    "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
+    "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public class TenantStore {
+    public String settings(String tenant) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app"); Statement st = c.createStatement()) {
+            ResultSet rs = st.executeQuery("SELECT json FROM settings WHERE tenant = '" + tenant + "'");  // frame-expect: CWE-89
+            return rs.next() ? rs.getString(1) : "{}";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/web/TenantFilter.java": _FILTER,
+    "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
+    "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+public class TenantStore {
+    public String settings(String tenant) {
+        try (Connection c = DriverManager.getConnection("jdbc:h2:mem:app");
+             PreparedStatement ps = c.prepareStatement("SELECT json FROM settings WHERE tenant = ?")) {
+            ps.setString(1, tenant);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : "{}";
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+})
+
+# 21 -- exception handling around the sink: the sink is in a try with catch/finally and rethrow
+_EXC_SERVLET = _servlet("", '''        resp.getWriter().println(new Archiver().pack(v));''', "import com.acme.io.Archiver;\n")
+case("exception_wrapped_sink", {
+    "src/com/acme/web/EntryServlet.java": _EXC_SERVLET,
+    "src/com/acme/io/Archiver.java": '''package com.acme.io;
+
+import java.io.IOException;
+
+public class Archiver {
+    public String pack(String dir) {
+        try {
+            Process p = new ProcessBuilder("sh", "-c", "tar czf out.tgz " + dir).start();  // frame-expect: CWE-78
+            return "pid " + p.hashCode();
+        } catch (IOException e) {
+            throw new IllegalStateException("tar failed", e);
+        } finally {
+            System.gc();
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _EXC_SERVLET,
+    "src/com/acme/io/Archiver.java": '''package com.acme.io;
+
+import java.io.IOException;
+
+public class Archiver {
+    public String pack(String dir) {
+        try {
+            Process p = new ProcessBuilder("tar", "czf", "out.tgz", "--", "data").start();
+            return "pid " + p.hashCode() + dir.length();
+        } catch (IOException e) {
+            throw new IllegalStateException("tar failed", e);
+        } finally {
+            System.gc();
+        }
+    }
+}
+''',
+})
+
+# 22 -- interface default method calling the abstract one, sink in the single implementor
+_DEF_SERVLET = _servlet("", '''        Notifier n = new MailNotifier();
+        n.notifyUser(v);''', "import com.acme.notify.MailNotifier;\nimport com.acme.notify.Notifier;\n")
+case("interface_default_method", {
+    "src/com/acme/web/EntryServlet.java": _DEF_SERVLET,
+    "src/com/acme/notify/Notifier.java": '''package com.acme.notify;
+
+public interface Notifier {
+    void send(String address);
+
+    default void notifyUser(String address) {
+        send(address.trim());
+    }
+}
+''',
+    "src/com/acme/notify/MailNotifier.java": '''package com.acme.notify;
+
+import java.io.IOException;
+
+public class MailNotifier implements Notifier {
+    public void send(String address) {
+        try {
+            Runtime.getRuntime().exec("mail -s hello " + address);  // frame-expect: CWE-78
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _DEF_SERVLET,
+    "src/com/acme/notify/Notifier.java": '''package com.acme.notify;
+
+public interface Notifier {
+    void send(String address);
+
+    default void notifyUser(String address) {
+        send(address.trim());
+    }
+}
+''',
+    "src/com/acme/notify/MailNotifier.java": '''package com.acme.notify;
+
+import java.io.IOException;
+
+public class MailNotifier implements Notifier {
+    public void send(String address) {
+        try {
+            Runtime.getRuntime().exec(new String[] {"mail", "-s", "hello", address});
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
+''',
+})
+
+# 23 -- XStream through a helper
+_XS_SERVLET = _servlet("", '''        resp.getWriter().println(Marshal.fromXml(req.getReader()));''', "import com.acme.io.Marshal;\n")
+case("xstream_helper", {
+    "src/com/acme/web/EntryServlet.java": _XS_SERVLET,
+    "src/com/acme/io/Marshal.java": '''package com.acme.io;
+
+import com.thoughtworks.xstream.XStream;
+import java.io.Reader;
+
+public final class Marshal {
+    private Marshal() {}
+
+    public static Object fromXml(Reader in) {
+        XStream xs = new XStream();
+        return xs.fromXML(in);  // frame-expect: CWE-502
+    }
+}
+''',
+}, {
+    "src/com/acme/web/EntryServlet.java": _XS_SERVLET,
+    "src/com/acme/io/Marshal.java": '''package com.acme.io;
+
+import com.thoughtworks.xstream.XStream;
+import com.thoughtworks.xstream.security.NoTypePermission;
+import com.thoughtworks.xstream.security.AnyTypePermission;
+import java.io.Reader;
+
+public final class Marshal {
+    private Marshal() {}
+
+    public static Object fromXml(Reader in) {
+        XStream xs = new XStream();
+        xs.addPermission(NoTypePermission.NONE);
+        xs.allowTypes(new Class[] {com.acme.io.Marshal.class});
+        return xs.fromXML(in);
+    }
+}
+''',
+})
+
+# 24 -- open redirect: sendRedirect with a relative-path guard
+_RD_HEAD = '''package com.acme.web;
+
+import java.io.IOException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+public class LoginServlet extends HttpServlet {
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        String next = req.getParameter("next");
+'''
+case("sendredirect_relative_guard", {
+    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        resp.sendRedirect(next);  // frame-expect: CWE-601
+    }
+}
+''',
+}, {
+    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/") || next.startsWith("//")) {
+            next = "/home";
+        }
+        resp.sendRedirect(next);
     }
 }
 ''',

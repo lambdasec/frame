@@ -12,171 +12,160 @@
 
 ---
 
-Frame is a neuro-symbolic security agent. A sound static-analysis core (taint analysis plus separation-logic verification with Z3) is fused with an LLM layer in one loop: the model proposes, the sound core disposes.
+Frame finds vulnerabilities by **following attacker data through your code**, across functions, files and layers, and proves each finding with a solver instead of guessing. A sound static core (taint analysis plus separation-logic verification with Z3) does the finding; an optional LLM layer adds recall, then exploits and fixes what was found. Symbolic findings are proven, LLM findings are tiered separately, and the two are never confused.
 
-It runs the whole loop end to end. Detect vulnerabilities across 5 languages. Exploit them with a working proof-of-concept against a live target. Fix the code, then re-scan to confirm the bug is gone. Symbolic findings are proven, not guessed; LLM findings are tiered separately so the two are never confused. On independent real-world benchmarks Frame is competitive with commercial AI-SAST vendors, and it scores 80%+ on the synthetic OWASP suites. The LLM layer runs on any OpenAI-compatible endpoint, on-device if you want.
+- **Five languages**: Python, JavaScript/TypeScript, Java, C# and C/C++, each lowered to one intermediate language.
+- **Cross-file**: a request that enters a controller and reaches a query three files away is one finding, reported where the query is.
+- **Framework-aware**: 70+ built-in packs (Flask to Spring to ASP.NET to Express) say where requests enter and which calls are dangerous. Add your own in a TOML file.
+- **Built for guardrails**: scan only what changed, accept today's findings as a baseline, and check that a fix really removed the bug. This is the loop CI and coding agents need.
 
-## Highlights
+## See it work
 
-**Real-world security benchmarks.** Frame is competitive with commercial AI-SAST vendors, validated on five independent datasets with published ground truth, spanning detection, exploitation, and remediation on real applications. Every Frame number uses open models (local Qwen via mlx-optiq, or hosted GLM-5.2):
+A three-file Flask app. The request enters in `app.py`; the queries are in `services/orders.py`:
 
-| Benchmark | What it measures | Frame | Comparison |
-|-----------|------------------|------|-----------|
-| [XBOW / ZeroPath](benchmarks/xbow_zeropath/REPORT.md) | AI-SAST on 39 web-vuln apps | detect **78.8%**, FP **26.3%** (technical) | ties ZeroPath (80% / 25%); beats Semgrep, Snyk, Bearer |
-| [CVE-Bench](benchmarks/cve_bench/README.md) | Full loop, 10 live web CVEs | detect **5/10**, exploit **4/10**, fix **4/10** | each stage verified on a live target |
-| [Endor Labs corpus](benchmarks/endor_corpus/README.md) | 193 vulns, 5 production apps | recall **0.67**, precision **0.51** | Semgrep recall 0.52, precision 0.40 |
-| [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization, 4 real apps | **6/8** detected, precision **1.00** | 0 false positives on safe controls |
-| [SusVibes](benchmarks/susvibes/README.md) | 181 real-CVE Python pairs | recall **0.14**, precision **0.56** | Semgrep recall 0.06, precision 0.55 |
+```python
+# shop/app.py
+@app.route("/orders")
+def list_orders():
+    customer = request.args.get("customer", "")
+    return jsonify(orders.for_customer(customer))
 
-<sub>Each cell names its own metric. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's report for methods and caveats.</sub>
+# shop/services/orders.py
+def for_customer(name):
+    cur.execute("SELECT * FROM orders WHERE customer = '" + name.strip() + "'")
+```
 
-**OWASP score, synthetic suites** (True Positive Rate minus False Positive Rate):
+```console
+$ frame scan benchmarks/exemplars/quickstart --root benchmarks/exemplars/quickstart
+...
+1. [CRITICAL] 🔴 sql_injection
+   Location: benchmarks/exemplars/quickstart/shop/services/orders.py:8:4
+   Function: for_customer
+   Description: Tainted data from 'customer' flows to sql sink
+   CWE: CWE-89
+   Data flow: shop/app.py:11 -> shop/services/orders.py::for_customer(name)
+2. [CRITICAL] 🔴 command_injection
+   Location: benchmarks/exemplars/quickstart/shop/services/orders.py:13:4
+   ...
+Scanned 4 files: 2 findings (2 critical)
+```
 
-| Benchmark | Frame | Semgrep | Difference |
-|-----------|:---:|:---:|:---:|
-| **Python** (OWASP) | 80.9% | 4.5% | +76.4 pts |
-| **Java** (OWASP) | 81.5% | 15.7% | +65.8 pts |
-| **JavaScript** (SecBench.js) | 43.0% | 10.0% | +33 pts |
-| **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
-| **C#** (IssueBlot.NET) | 80.3% | 14.2% | +66.1 pts |
+The finding is reported in the file that holds the sink, and `Data flow` names the call site that supplied the data. Fix the query with a placeholder, or wrap the value in `int()`, and the finding goes away: Frame understands what makes data safe (parameterised queries, `shlex.quote`, `basename`, allow-lists, `isdigit()` and anchored-regex checks, numeric conversion), per branch, so `if x in ALLOWED: pass` followed by a sink is still flagged.
 
-<sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methods and results.</sub>
-
-## Installation
+## Install
 
 ```bash
 git clone https://github.com/lambdasec/frame.git
 cd frame
-pip install -e ".[scan]"      # scanner + all five language grammars
+pip install -e ".[scan]"      # scanner + all language grammars
 # pip install -e ".[dev]"    # contributors: tests, ruff, mypy, benchmarks
 ```
 
-## Quick Start
+## Quick start
 
 ```bash
-# Scan for vulnerabilities
-frame scan app.py
-
-# Scan a directory: every Python, JS/TS, Java, C/C++ and C# file, each in its own language
-frame scan src/
-
-# Only one language, or a custom glob
-frame scan src/ -l java
-frame scan src/ --pattern "app/**/*.py"
-
-# AI-assisted scan: LLM detection + triage (needs an LLM endpoint, see below)
-frame scan src/ --ai
-
-# CI/CD integration (SARIF output)
-frame scan src/ --format sarif -o results.sarif --fail-on high
-
-# Cross-file: request data passed to a helper in another file is one flow
-# (Python and JS/TS directory scans do this by default; --no-cross-file to opt out)
-
-# Guardrail loop: accept today's findings, then check only what changed
-frame scan . --write-baseline .frame-baseline.json --fail-on none
-frame scan . --changed --baseline .frame-baseline.json -f json -o findings.json
-frame verify findings.json      # after fixing: fixed / present / suppressed / uncertain
+frame scan app.py                       # one file
+frame scan src/                         # a project: every supported language, each in its own
+frame scan src/ -l java                 # only one language (or -p "app/**/*.py" for a glob)
+frame scan src/ -f sarif -o out.sarif --fail-on high      # CI: SARIF, non-zero exit on high+
+frame scan src/ --ai                    # add LLM detection and triage (see below)
+frame packs list                        # the framework packs a scan would load
 ```
 
-<details>
-<summary><strong>More examples</strong></summary>
+Directory output lists only the files with findings and ends with a summary line; `-f json` and `-f sarif` carry the same findings plus stable paths and fingerprints. Exit status: 0 clean, 1 findings at or above `--fail-on`, 2 the scan could not run.
 
-```bash
-# Exploit a finding against a live, authorized target (primed by a scan)
-frame exploit --target http://localhost:8080 --guidance findings.json
+## What Frame understands
 
-# Generate a fix, then re-scan to confirm the vulnerability is gone
-frame fix app.py --guidance findings.json --diff
+### Data flow across functions, files and layers
 
-# Separation-logic solver
-frame solve "x |-> 5 * y |-> 3 |- x |-> 5"   # check an entailment
-frame check formulas.txt                       # batch-check a file
-frame repl                                      # interactive REPL
-```
+Directory scans follow taint across imports and calls by default. What is resolved is deliberately narrow and never guessed:
 
-</details>
+| | Same file | Across files |
+|---|---|---|
+| **Python** | functions, methods (`self.m`, `R().m`, `r = R(); r.m`), returns, callbacks | imports, re-exports, star imports, aliases, factories, constructor-injected objects |
+| **JavaScript / TypeScript** | functions, closures, classes, callback parameters | `require`/`import`, barrels, default exports, tsconfig `paths`, class instances |
+| **Java** | helpers (String parameters are treated as untrusted) | packages, imports, interfaces with one implementation, supertypes, overloads |
+| **C#** | calls by declared type, DI-style fields | namespaces, `using`, interfaces, base classes |
+| **C / C++** | helper sinks, returned data, buffers filled by a helper | scanned per file |
 
-## Cross-file comparison
+A helper that sanitises its argument clears the flow; a helper that only *looks* like validation (`return x.strip()`) does not. `frame scan --changed` widens to the files that import what you changed, because editing a helper can make an untouched caller vulnerable.
 
-[`benchmarks/exemplars/`](benchmarks/exemplars/README.md) compares Frame with Semgrep, OpenGrep, Bandit and CodeQL on vulnerabilities whose source and sink are in different files (controlled cases with safe twins, plus four vulnerable open-source apps at pinned commits), including where Frame loses. It is kept up to date as new use cases are added.
+### Frameworks, out of the box
 
-## Commands
+Each pack tells Frame where attacker data enters (route handlers, bound parameters, request objects) and which framework calls are dangerous or safe. Every pack is proven by a realistic vulnerable app and its safe twin, scanned through the real CLI in the test suite.
 
-Frame is one CLI covering the whole workflow (detect, triage, exploit, fix) plus the separation-logic solver. Run `frame <command> --help` for all flags.
+| Language | Frameworks and libraries |
+|---|---|
+| **Python** | Flask, Django, DRF, FastAPI, Starlette, Tornado, aiohttp, Sanic, Bottle, Falcon, Pyramid, CherryPy, Jinja2/Mako, SQLAlchemy, peewee, pymongo, requests/httpx |
+| **JavaScript / TypeScript** | Express, Koa, Fastify, Hapi, Restify, NestJS, Next.js, Sails, Apollo, Socket.IO, AWS Lambda, Electron, React, Angular, Mongoose, Prisma, Knex, TypeORM |
+| **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ |
+| **C#** | ASP.NET Core MVC and Web API, Minimal APIs, Razor Pages, Blazor, SignalR, Azure Functions, WebForms, WCF/gRPC, EF Core/EF6, Dapper, NHibernate |
+| **C / C++** | CGI/FastCGI, POSIX sockets, libmicrohttpd, civetweb/Mongoose, cpp-httplib, Crow, Qt, Boost.Beast, gRPC, libcurl, OpenSSL, libxml2, libarchive, SQLite/libpq/MySQL |
 
-| Command | What it does |
-|---------|--------------|
-| `frame scan <path>` | Scan source for vulnerabilities (sound symbolic engine; add `--ai` for LLM detection + triage). `-f json\|sarif`, `-o <file>`, `--fail-on <sev>`. A directory scan walks every supported source file (`-l <lang>` or `-p <glob>` to narrow it) and its JSON is always `{"files": [...], "summary": ...}`. Findings are reported per function: the same CWE in two handlers is two findings. Directory scans skip agent/tool and dependency directories by default (`.git`, `.claude/worktrees`, `.cursor/worktrees`, `.worktrees`, `.idea`, `.vscode`, `node_modules`, `.venv`, `venv` only if it looks like a virtualenv, `.tox`, `__pycache__`, `.mypy_cache`, `.pytest_cache`); `--no-default-excludes` to scan them anyway. |
-| `frame scan --changed [REF]` / `--files <paths>` | Scan only files changed since REF (default `HEAD`, plus untracked) or the given files, widened (for Python and JS/TS) to the files that import them and everything those import, because a change to a caller can make an untouched helper vulnerable. Nothing changed is a clean scan. |
-| `frame scan --no-cross-file` / `--cross-file-limit N` | Directory scans follow taint across imports in Python and JS/TS (a handler passing request data to a helper in another file; a helper returning it). `--no-cross-file` analyses each file alone; over `N` files (default 2000) a full scan falls back to that with a warning. |
-| `frame scan --baseline <file>` / `--write-baseline <file>` | Report only findings the baseline does not record (known ones are counted as `baselined`; vanished ones listed as fixed); write or update a baseline. Every finding carries a stable `fingerprint` (also in SARIF `partialFingerprints`). Exit status: 0 clean, 1 findings at or above `--fail-on`, 2 the scan could not run. |
-| `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each as `fixed`, `file_removed`, `present`, `suppressed` (silenced, not fixed), `uncertain` or `unverifiable`. `--id <fingerprint>` for one finding. Exits 0 only when all are fixed or removed. |
-| `frame exploit --target <url>` | Drive an LLM agent to exploit a live, authorized target. Prime it with `--guidance <findings.json\|->` from a scan so it attacks the localized flaw. `--goal`, `--success-check`, `--max-steps`. |
-| `frame fix <path>` | Generate a fix for each scan finding, then re-scan the patched code to confirm the vulnerability is gone. `--guidance <findings.json\|->`, `--in-place` or `--diff`. |
-| `frame solve "<P> \|- <Q>"` | Check a single separation-logic entailment. |
-| `frame check <file>` | Batch-check entailments (one per line). |
-| `frame parse "<formula>"` | Parse and display a formula's AST. |
-| `frame repl` | Interactive separation-logic REPL. |
+The apps behind this table are in [`benchmarks/exemplars/frameworks/`](benchmarks/exemplars/frameworks): 80+ small applications with 400+ labelled flaws, each with a safe twin that must stay silent.
 
-The analysis stages compose over a shared findings JSON, so the shell is the pipeline:
+### Teach it your framework
 
-```bash
-# scan (symbolic + LLM) produces findings; the exploit agent attacks the localized bug
-frame scan ./repo --ai -f json | \
-  frame exploit --target http://app:8080 --guidance - --goal 'read the admin secret'
-```
-
-## Suppressions & Configuration
-
-Triage once, stay triaged. Silence a reviewed finding inline, with an optional rule list:
-
-```python
-cursor.execute(query)  # frame: ignore[CWE-89] query is a static string
-```
-
-```js
-// frame: ignore
-eval(trustedExpression);
-```
-
-A marker applies to its own line or the comment-only line directly above the finding. `frame: ignore` alone silences every finding there; `frame: ignore[CWE-89, 79]` silences only those CWEs (or finding types such as `sql_injection`). Suppressed findings are counted in the output (`summary.suppressed`), never silently lost, and `--no-suppress` reports everything.
-
-Project defaults live in `.frame.toml` (or a `[tool.frame]` table in `pyproject.toml`), found by walking up from the scan target:
+An in-house web stack needs one TOML file, not a fork:
 
 ```toml
-min_severity = "medium"
-fail_on = "high"
-disable = ["CWE-798", "weak_hash"]   # CWE ids or finding types
-exclude = ["vendor", "third_party"]  # extra directories, added to the defaults
+# .frame/packs/acme.toml  (picked up automatically; or --pack PATH, or packs = [...] in .frame.toml)
+[pack]
+name = "acme"
+language = "python"
+detect = { imports = ["acme"] }          # applies only to files that use it
+
+[[entrypoint]]                           # who receives attacker data
+decorator = ["acme.web.route"]
+params = "all"
+
+[[source]]
+call = ["acme.web.param"]
+
+[[sink]]
+call = ["acme.store.query_sql"]
+kind = "sql"
+
+[[sink]]                                 # only when shell=True
+call = ["acme.proc.launch"]
+kind = "command"
+when_kwarg = { name = "shell", value = "True" }
+
+[[sanitizer]]
+call = ["acme.text.sql_clean"]
+kinds = ["sql"]
 ```
 
-Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--config PATH`, `--no-config`).
+`frame packs check acme.toml` validates it (unknown keys and kinds are errors that name the file and field). A pack refines the built-in knowledge of the same call instead of replacing it.
 
-## Supported Languages
+### The guardrail loop
 
-The symbolic engine has sound frontends for five languages:
+Built for CI gates and for coding agents that edit code and need to know what they broke:
 
-| Language | Frameworks & Libraries |
-|----------|----------------------|
-| **Python** | Flask, Django, FastAPI, SQLAlchemy, subprocess |
-| **Java** | Spring, JDBC, Hibernate, JNDI |
-| **JavaScript/TypeScript** | Express, Node.js, DOM APIs |
-| **C/C++** | POSIX, Windows API, memory operations |
-| **C#** | ASP.NET, Entity Framework, ADO.NET |
+```bash
+frame scan . --write-baseline .frame-baseline.json --fail-on none      # accept today's state
+frame scan . --changed --baseline .frame-baseline.json -f json -o findings.json   # only what's new
+frame verify findings.json      # after the fix: fixed / present / suppressed / uncertain / unverifiable
+```
 
-The LLM layer (`--ai`) runs on any language, including ones with no symbolic frontend (PHP, Ruby, Go, and more). Those findings stay in the LLM tier, never mixed with the sound symbolic results.
+Every finding has a stable fingerprint with no line number in it, so inserting code above a finding does not change its identity. `verify` never mistakes silencing (`# frame: ignore`) or moving a finding for fixing it.
 
-## What Frame Detects
+### Hardening, resilience, reporting
 
-Frame recognizes 80+ vulnerability classes across the families below. The symbolic core proves the ones reachable by taint or memory reasoning; the LLM layer adds context-dependent, authorization, and business-logic flaws.
+- Explicit protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`.
+- SARIF carries CWE tags and a `security-severity`, so GitHub code scanning ranks the alerts.
+- Broken, empty, binary and minified files produce a warning, not a crash; the rest of the project is still scanned.
+
+## What Frame detects
+
+80+ vulnerability classes. The symbolic core proves the ones reachable by taint or memory reasoning; the LLM layer adds context-dependent, authorization and business-logic flaws.
 
 <table>
 <tr>
 <td width="50%">
 
 **Injection**
-- SQL / NoSQL / ORM Injection (CWE-89)
+- SQL / NoSQL / ORM Injection (CWE-89, 943)
 - Cross-Site Scripting (CWE-79)
 - Command & Code Injection (CWE-78/94)
 - Template Injection (SSTI)
@@ -221,94 +210,129 @@ Frame recognizes 80+ vulnerability classes across the families below. The symbol
 </tr>
 </table>
 
-## How It Works
+## Examples and benchmarks
 
-Frame runs one investigation at rising commitment (detect, triage, exploit, fix), with a sound symbolic core grounding every stage so the LLM can't hallucinate:
+[`benchmarks/exemplars/`](benchmarks/exemplars/README.md) is the living showcase, kept in step with the code:
 
-<p align="center">
-  <img src="assets/how-it-works.svg" alt="Frame pipeline: source code flows through DETECT, TRIAGE, EXPLOIT, and FIX" width="620">
-</p>
+- **[`quickstart/`](benchmarks/exemplars/quickstart)**: the three-file app above. Run it first.
+- **[`frameworks/`](benchmarks/exemplars/frameworks)**: a vulnerable app and a safe twin per framework, with every flaw labelled in the source (`frame-expect: CWE-89`).
+- **[Cross-file comparison](benchmarks/exemplars/README.md)**: Frame against Semgrep, OpenGrep, Bandit and CodeQL on controlled cases with safe twins, a blind hold-out and four pinned open-source apps, including where Frame loses.
 
-- **Detect:** the sound core proves reachable bugs with zero false positives; the LLM layer adds recall, tracing flows across files. Symbolic and LLM findings are never conflated.
-- **Triage:** the LLM drops confident false positives, keeping a finding unless it *finds* the mitigating control.
-- **Exploit:** an LLM agent develops and executes a working proof-of-concept against a live, authorized target.
-- **Fix:** Frame generates a patch, re-scans, and confirms the vulnerability is gone with no regressions.
+**Real-world security benchmarks.** Frame is competitive with commercial AI-SAST vendors, validated on five independent datasets with published ground truth, spanning detection, exploitation and remediation on real applications. Every Frame number uses open models (local Qwen via mlx-optiq, or hosted GLM-5.2):
 
-**Inside detect:** a per-language frontend lowers source into SIL (a separation intermediate language); taint tracking follows untrusted data from sources to sinks, symbolic execution explores paths, and Z3 discharges the reachability proof. A bug is reported only when it is provably reachable.
+| Benchmark | What it measures | Frame | Comparison |
+|-----------|------------------|------|-----------|
+| [XBOW / ZeroPath](benchmarks/xbow_zeropath/REPORT.md) | AI-SAST on 39 web-vuln apps | detect **78.8%**, FP **26.3%** (technical) | ties ZeroPath (80% / 25%); beats Semgrep, Snyk, Bearer |
+| [CVE-Bench](benchmarks/cve_bench/README.md) | Full loop, 10 live web CVEs | detect **5/10**, exploit **4/10**, fix **4/10** | each stage verified on a live target |
+| [Endor Labs corpus](benchmarks/endor_corpus/README.md) | 193 vulns, 5 production apps | recall **0.67**, precision **0.51** | Semgrep recall 0.52, precision 0.40 |
+| [RealVuln IDOR/BOLA](benchmarks/realvuln_authz/REPORT.md) | Broken authorization, 4 real apps | **6/8** detected, precision **1.00** | 0 false positives on safe controls |
+| [SusVibes](benchmarks/susvibes/README.md) | 181 real-CVE Python pairs | recall **0.14**, precision **0.56** | Semgrep recall 0.06, precision 0.55 |
 
-## AI-Assisted Detection & Triage
+<sub>Each cell names its own metric. SusVibes is hard for every tool (independent, execution-verified ground truth). See each benchmark's report for methods and caveats.</sub>
 
-Frame's symbolic core is sound and precise. But structural analysis can't reach everything: context-dependent flows, unknown frameworks, business logic. Frame adds a layer driven by an LLM.
+**OWASP score, synthetic suites** (True Positive Rate minus False Positive Rate):
 
-- **Detect** (recall): find vulnerabilities the symbolic engine misses. It can explore across files, calling `read_file`/`grep` tools over your repo to trace a flow from one file into another.
-- **Triage** (precision): drop confident false positives from the findings.
-- **Verify**: each LLM finding is checked against Frame's own sink model. A finding grounded in a recognized sink, cross-file included, moves up to a higher-confidence tier (`llm_verified`). Symbolic results and LLM results are never conflated.
+| Benchmark | Frame | Semgrep | Difference |
+|-----------|:---:|:---:|:---:|
+| **Python** (OWASP) | 80.9% | 4.5% | +76.4 pts |
+| **Java** (OWASP) | 81.5% | 15.7% | +65.8 pts |
+| **JavaScript** (SecBench.js) | 43.0% | 10.0% | +33 pts |
+| **C/C++** (NIST Juliet) | 54.4% | -14.9% | +69.3 pts |
+| **C#** (IssueBlot.NET) | 80.3% | 14.2% | +66.1 pts |
 
-On the [Endor Labs public AI-SAST corpus](benchmarks/endor_corpus/README.md) (5 real-world apps), Frame's full mode (detection + triage) reaches 0.67 recall at 0.51 precision, or 0.71 recall with detection alone. Semgrep gets 0.52 recall at 0.40 precision. The LLM layer recovers around 65 real vulnerabilities across Java, JS/TS, and C# that both Frame's symbolic engine and Semgrep miss. See the [benchmark README](benchmarks/endor_corpus/README.md) for the full scoreboard and the honest caveats.
+<sub>Higher is better. See [benchmarks/](benchmarks/) for detailed methods and results.</sub>
 
-The layer works with any OpenAI-compatible endpoint, local or hosted, so Frame stays open and ungated end to end. For privacy and cost you can run it fully on-device with [mlx-optiq](https://mlx-optiq.com) serving [`mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit) on Apple Silicon; our benchmarks use both this local setup and a hosted open-source model, GLM-5.2 (`z-ai/glm-5.2`).
+## Suppressions & configuration
+
+Triage once, stay triaged. Silence a reviewed finding inline, with an optional rule list:
+
+```python
+cursor.execute(query)  # frame: ignore[CWE-89] query is a static string
+```
+
+A marker applies to its own line or the comment-only line directly above. `frame: ignore` alone silences every finding there; `frame: ignore[CWE-89, 79]` only those CWEs (or finding types such as `sql_injection`). Suppressed findings are counted (`summary.suppressed`) and kept in the JSON, never silently lost; `--no-suppress` reports everything.
+
+Project defaults live in `.frame.toml` (or `[tool.frame]` in `pyproject.toml`), found by walking up from the scan target:
+
+```toml
+min_severity = "medium"
+fail_on = "high"
+disable = ["CWE-798", "weak_hash"]   # CWE ids or finding types
+exclude = ["vendor", "third_party"]  # extra directories, added to the defaults
+packs = ["security/acme.toml"]       # extra framework packs
+```
+
+Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--config PATH`, `--no-config`). Directory scans skip dependency and tool directories (`.git`, `node_modules`, `.venv`, `__pycache__`, ...); `--no-default-excludes` scans them anyway.
+
+## AI-assisted detection, exploitation and fixing
+
+The symbolic core is sound and precise, but structural analysis cannot reach everything: unknown frameworks, context-dependent flows, business logic. `--ai` adds an LLM layer, and the sound core grounds it at every stage:
+
+```
+DETECT  ->  TRIAGE  ->  EXPLOIT  ->  FIX
+```
+
+- **Detect** (recall): the model explores your repo with `read_file`/`grep` tools and traces flows across files. Each LLM finding is checked against Frame's own sink model; one grounded in a recognised sink moves up to `llm_verified`. LLM findings never mix with symbolic ones, and the layer also covers languages with no symbolic frontend (PHP, Ruby, Go, ...).
+- **Triage** (precision): drops confident false positives, keeping a finding unless it *finds* the mitigating control.
+- **Exploit**: an agent develops and runs a working proof-of-concept against a live, authorized target, and stops only when success is observably verified (`--success-check '<cmd>'` for an external oracle).
+- **Fix**: generates a patch, re-scans, and confirms the vulnerability is gone with no regressions.
 
 ```bash
-# our local setup (Apple Silicon): serve the model, then point Frame at it
+export FRAME_LLM_BASE_URL=http://localhost:47317/v1     # any OpenAI-compatible endpoint
+export FRAME_LLM_API_KEY=                                # empty for local servers
+export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+export FRAME_LLM_REPO_ROOT=/path/to/repo                 # enables agentic cross-file tools
+
+frame scan src/ --ai                                     # symbolic + LLM detection + triage
+frame scan ./repo --ai -f json | \
+  frame exploit --target http://app:8080 --guidance - --goal 'read /etc/secret'
+frame fix app.py --guidance findings.json --diff         # patch, re-scan, confirm
+```
+
+On the [Endor Labs corpus](benchmarks/endor_corpus/README.md) the full mode reaches 0.67 recall at 0.51 precision (Semgrep: 0.52 / 0.40); the LLM layer recovers ~65 vulnerabilities in Java, JS/TS and C# that both the symbolic engine and Semgrep miss. It runs fully on-device with [mlx-optiq](https://mlx-optiq.com) serving [`mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit) on Apple Silicon, or on a hosted open model (our benchmarks use both, and GLM-5.2).
+
+<details>
+<summary>Serving the local model</summary>
+
+```bash
 pip install mlx-optiq
 optiq kv-cache mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit --target-bits 5.0 -o ./kv
 optiq serve --model mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit \
   --kv-config ./kv/kv_config.json --port 47317 --mtp    # --mtp: ~1.4x faster decode
-
-export FRAME_LLM_BASE_URL=http://localhost:47317/v1
-export FRAME_LLM_API_KEY=                                  # empty for local servers
-export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
-export FRAME_LLM_REPO_ROOT=/path/to/repo                   # enables agentic cross-file tools
 ```
 
-The symbolic core runs on its own; add the LLM layer with one flag:
+</details>
 
-```bash
-frame scan src/ --ai          # symbolic + LLM detection + triage
-```
-
-Or from the Python API:
-
-```python
-from frame.sil import FrameScanner
-# symbolic + LLM detection + triage (reads the FRAME_LLM_* env above)
-scanner = FrameScanner(language="java", llm_detect=True, llm_triage=True)
-result = scanner.scan_file("Controller.java")
-```
-
-## Exploitation
-
-Detection tells you a bug *might* be there; exploitation proves it. `frame exploit` closes that gap. It drives an LLM through a tool loop against a live target and stops only when success is observably verified, never on the model's unchecked say-so.
-
-- **Frame-guided.** Pipe a scan's findings in with `--guidance`. Frame's symbolic taint path hands the agent the exact endpoint, parameter, and sink, so it attacks the right surface instead of probing blind. The guidance header is honest about provenance: a symbolic finding is presented as a sound, verified-reachable lead; an LLM-detected finding as a heuristic lead to verify while exploiting.
-- **Verified success.** Pass `--success-check '<cmd>'` (exit 0 ⇒ solved) to use an external oracle, or let the agent self-terminate once it verifies a real state change (a returned secret, a written file, an executed command). Unverified "done" is treated as failure.
-- **Runs anywhere.** Commands execute from wherever you invoke `frame`, so point it at any reachable target; use any OpenAI-compatible model (an open, ungated model is the right base for offensive tasks).
-
-```bash
-# guided end-to-end: scan localizes the bug, the agent exploits it
-frame scan ./repo --ai -f json | \
-  frame exploit --target http://app:8080 --guidance - \
-    --goal 'read /etc/secret' --success-check 'curl -sf http://app:8080/pwned'
-
-# unguided attempt (no scan findings)
-frame exploit --target http://app:8080 --goal 'achieve RCE' --max-steps 40
-```
-
-## CI/CD Integration
+## CI/CD
 
 ```yaml
 # GitHub Actions
 - name: Install Frame
   run: pip install -e ".[scan]"
-
-- name: Security Scan
+- name: Security scan
   run: frame scan src/ --format sarif -o results.sarif --fail-on high
-
-- name: Upload Results
+- name: Upload results
   uses: github/codeql-action/upload-sarif@v2
   with:
     sarif_file: results.sarif
 ```
+
+For pull requests, scan only what the change can affect and fail only on new findings: `frame scan . --changed origin/main --baseline .frame-baseline.json`.
+
+## Commands
+
+Run `frame <command> --help` for all flags.
+
+| Command | What it does |
+|---------|--------------|
+| `frame scan <path>` | Scan source for vulnerabilities. `-f text\|json\|sarif`, `-o`, `-l`, `-p`, `--fail-on`, `--min-severity`, `--ai`, `--pack`, `--no-packs`, `--no-cross-file`, `--root`. |
+| `frame scan --changed [REF]` / `--files <paths>` | Scan only what changed, widened to the files that import it and everything those import. Nothing changed is a clean scan. |
+| `frame scan --baseline F` / `--write-baseline F` | Report only findings the baseline does not record; write or update a baseline. |
+| `frame verify <findings.json>` | Re-scan the files behind earlier findings: `fixed`, `file_removed`, `present`, `suppressed`, `uncertain`, `unverifiable`. `--id <fingerprint>` for one finding. |
+| `frame packs list \| check` | List the packs a scan would load; validate pack files. |
+| `frame exploit --target <url>` | Drive an LLM agent to exploit a live, authorized target, primed with `--guidance <findings.json\|->`. |
+| `frame fix <path>` | Generate a fix per finding, then re-scan to confirm. `--in-place` or `--diff`. |
+| `frame solve "<P> \|- <Q>"`, `check`, `parse`, `repl` | The separation-logic solver. |
 
 ## Python API
 
@@ -316,25 +340,29 @@ frame exploit --target http://app:8080 --goal 'achieve RCE' --max-steps 40
 from frame import EntailmentChecker
 from frame.sil import FrameScanner
 
-# Security scanning
-scanner = FrameScanner()
+scanner = FrameScanner(language="python")
 result = scanner.scan_file("app.py")
 for vuln in result.vulnerabilities:
     print(f"{vuln.cwe_id}: {vuln.description}")
 
-# Separation logic verification
-checker = EntailmentChecker()
-result = checker.check_entailment("x |-> 5 * y |-> 3 |- x |-> 5")
-print(result.valid)  # True
+# directory scan, cross-file, with an extra pack
+results = FrameScanner(packs=["security/acme.toml"]).scan_directory("src/", pattern=None)
+
+# separation-logic verification
+print(EntailmentChecker().check_entailment("x |-> 5 * y |-> 3 |- x |-> 5").valid)   # True
 ```
 
-## The Symbolic Core: Separation Logic + Z3
+## How it works
 
-Frame's soundness rests on a mathematical foundation. It models heaps in separation
-logic and discharges the resulting proof obligations with the Z3 SMT solver, so the
-symbolic engine can prove a vulnerability is reachable (reporting it with no false
-positives) or prove it cannot happen. That same engine is exposed directly for
-verifying heap properties:
+A per-language frontend lowers source into SIL, a separation intermediate language. Taint tracking follows untrusted data from sources to sinks through calls, returns and branches; symbolic execution explores paths; Z3 discharges the reachability proof. A bug is reported only when it is provably reachable. Framework packs and the built-in specs feed the same analysis, so a new framework is data, not code.
+
+<p align="center">
+  <img src="assets/how-it-works.svg" alt="Frame pipeline: source code flows through DETECT, TRIAGE, EXPLOIT, and FIX" width="620">
+</p>
+
+### The symbolic core: separation logic + Z3
+
+Frame models heaps in separation logic and discharges the proof obligations with Z3, so it can prove a vulnerability reachable or prove it cannot happen. The same engine is exposed directly for verifying heap properties:
 
 | Syntax | Meaning |
 |--------|---------|
@@ -344,13 +372,20 @@ verifying heap properties:
 | `P -* Q` | Magic wand |
 | `P \|- Q` | P entails Q |
 
-**Built-in predicates:** `ls(x,y)`, `list(x)`, `tree(x)`, `dll(x,p,y,n)`
+Built-in predicates: `ls(x,y)`, `list(x)`, `tree(x)`, `dll(x,p,y,n)`.
 
 ```bash
-frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"  # list-segment transitivity
+frame solve "ls(x, y) * ls(y, z) |- ls(x, z)"     # list-segment transitivity
 ```
 
-The core is validated on the standard logic suites: SL-COMP (separation logic) at
-79.9% and SMT-LIB QF_S (string theory) at 99.3%. Run the full suite with
-`python -m benchmarks run --curated`; [benchmarks/README.md](benchmarks/README.md) has
-every division, the real-world corpora, per-tool comparisons, and methods.
+The core is validated on the standard logic suites: SL-COMP (separation logic) at 79.9% and SMT-LIB QF_S (string theory) at 99.3%. [benchmarks/README.md](benchmarks/README.md) has every division, the real-world corpora, per-tool comparisons and methods.
+
+## Contributing
+
+```bash
+pip install -e ".[dev]"
+python -m pytest tests/ -n auto        # ~3,000 tests; tests/e2e scans realistic projects through the real CLI
+ruff check frame tests benchmarks
+```
+
+`CLAUDE.md` is the engineering map of the scanner (frontends, cross-file resolution, packs, guards). To add a framework, write a pack under `frame/sil/packs/data/<language>/` and a vulnerable/safe app pair under `benchmarks/exemplars/frameworks/`; the fixture test checks both.

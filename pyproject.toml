@@ -87,6 +87,10 @@ Issues = "https://github.com/lambdasec/frame/issues"
 where = ["."]
 include = ["frame*"]
 
+[tool.setuptools.package-data]
+# the built-in framework packs are data files; without them an installed Frame has no packs
+frame = ["sil/packs/data/**/*.toml"]
+
 [tool.setuptools.dynamic]
 version = {attr = "frame.__version__"}
 

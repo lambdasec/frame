@@ -590,6 +590,8 @@ COLLECTION_SPECS = {
 
     # List.get - taint flows from receiver (list) to return value
     "get": _propagator_from_receiver("List.get"),
+    # Map.getOrDefault(key, dflt): the result is a stored value or the default, never the key
+    "getOrDefault": ProcSpec(taint_propagates=[1], taint_from_receiver=True, description="Map.getOrDefault"),
     "remove": _propagator_from_receiver("List.remove"),
     "poll": _propagator_from_receiver("Queue.poll"),
     "peek": _propagator_from_receiver("Queue.peek"),

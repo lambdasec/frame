@@ -152,8 +152,8 @@ STRING_SPECS = {
     "strtok_r": _propagator([0], "strtok_r() - reentrant tokenize"),
 
     # Memory functions (buffer sinks)
-    "memcpy": _sink("buffer", [1], "memcpy() - memory copy (buffer overflow risk)"),
-    "memmove": _sink("buffer", [1], "memmove() - memory move"),
+    "memcpy": _sink("buffer", [2], "memcpy() - memory copy (buffer overflow risk)"),
+    "memmove": _sink("buffer", [2], "memmove() - memory move"),
     "memset": _propagator([0], "memset() - memory set"),
     "memcmp": _propagator([0, 1], "memcmp() - memory compare"),
     "bcopy": _sink("buffer", [0], "bcopy() - BSD memory copy (buffer overflow)"),
@@ -819,6 +819,15 @@ for _specs in (C_SPECS, CPP_SPECS):
         _merge_spec_fields(_specs, _name, stack_allocation_size_arg=_arg)
     for _name, _args in _TAINT_OUT_ARGS.items():
         _merge_spec_fields(_specs, _name, taint_out_args=list(_args))
+
+# read/recv/fread return a BYTE COUNT bounded by the buffer size the caller passed; the data
+# they deliver is in the buffer (taint_out_args). A count is not attacker-chosen text, and
+# tainting it made the idiom `n = read(fd, buf, sizeof(buf) - 1); buf[n] = 0;` an
+# "attacker-controlled index" finding.
+for _specs in (C_SPECS, CPP_SPECS):
+    for _name in ("read", "pread", "recv", "recvfrom", "fread"):
+        if _name in _specs:
+            _merge_spec_fields(_specs, _name, is_source=None)
 
 # Formatted writes into a buffer: the destination (argument 0) carries whatever the
 # format or its arguments carried, so `snprintf(sql, n, "... '%s'", name)` makes

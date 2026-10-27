@@ -286,3 +286,23 @@ def test_helper_change_is_caught_in_the_files_that_depend_on_it(tmp_path):
         'import os\n\n\ndef archive(name):\n    os.system("tar cf o.tar " + name)\n')
     got = scan(tmp_path, "--changed")
     assert [(f["path"], f["cwe_id"]) for f in got.findings] == [("helper.py", "CWE-78")]
+
+
+# ---- readable output for a directory scan ---------------------------------------------------
+
+def test_directory_text_output_lists_only_files_with_findings_and_a_summary(tmp_path):
+    write_tree(tmp_path, {"app.py": FLASK_SQLI, "util.py": CLEAN, "more/helpers.py": CLEAN})
+    out = scan_subprocess(tmp_path, "--fail-on", "none").stdout
+    assert "app.py" in out and "util.py" not in out and "helpers.py" not in out
+    assert "Scanned 3 files: 1 finding (1 critical)" in out
+
+
+def test_verbose_directory_output_lists_every_file(tmp_path):
+    write_tree(tmp_path, {"app.py": FLASK_SQLI, "util.py": CLEAN})
+    out = scan_subprocess(tmp_path, "--fail-on", "none", "--verbose").stdout
+    assert "util.py" in out and "No vulnerabilities found" in out
+
+
+def test_clean_directory_says_so(tmp_path):
+    write_tree(tmp_path, {"util.py": CLEAN})
+    assert "Scanned 1 file: 0 findings (none)" in scan_subprocess(tmp_path).stdout

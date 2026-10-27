@@ -29,6 +29,7 @@ configuration, baseline, git ref, or an unreachable LLM endpoint).
 import argparse
 import sys
 import json
+from collections import Counter
 from pathlib import Path
 from typing import List
 
@@ -590,7 +591,23 @@ def cmd_scan(args) -> int:
     min_severity = parse_severity(args.min_severity)
 
     if args.format == "text":
-        chunks = [format_text_result(result, min_severity) for result in results]
+        shown = results
+        if target.is_dir() and not getattr(args, "verbose", False):
+            # a directory scan lists the files with something to say; the summary line counts the rest
+            shown = [r for r in results
+                     if r.errors or r.warnings
+                     or any(severity_value(v.severity) >= severity_value(min_severity)
+                            for v in r.vulnerabilities)]
+        chunks = [format_text_result(result, min_severity) for result in shown]
+        if target.is_dir() and results:
+            total = sum(1 for r in results for v in r.vulnerabilities
+                        if severity_value(v.severity) >= severity_value(min_severity))
+            by_sev = Counter(v.severity.value for r in results for v in r.vulnerabilities
+                             if severity_value(v.severity) >= severity_value(min_severity))
+            detail = ", ".join(f"{n} {s}" for s, n in sorted(
+                by_sev.items(), key=lambda kv: -severity_value(parse_severity(kv[0])))) or "none"
+            files = f"{len(results)} file{'s' if len(results) != 1 else ''}"
+            chunks.append(f"\nScanned {files}: {total} finding{'s' if total != 1 else ''} ({detail})\n")
         if not results:
             chunks.append("No source files in the selection to scan.\n")
         sc = extra.get("scope")

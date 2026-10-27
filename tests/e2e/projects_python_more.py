@@ -118,7 +118,8 @@ def k():
 })
 
 case("staticmethod_classmethod_chain", {
-    "util/shell.py": '''import subprocess
+    "util/shell.py": '''import shlex
+import subprocess
 
 
 class Shell:
@@ -130,7 +131,7 @@ class Shell:
 
     @classmethod
     def say(cls, text):
-        return cls.raw(<<cls.prefix + " " + text||cls.prefix + " " + __import__("shlex").quote(text)>>)
+        return cls.raw(<<cls.prefix + " " + text||cls.prefix + " " + shlex.quote(text)>>)
 ''',
     "util/web.py": '''from flask import Flask, request
 from util.shell import Shell
@@ -295,11 +296,12 @@ def lookup(body: Lookup):
 
 case("fastapi_depends_service", {
     "app/deps.py": '''import os
+import shlex
 
 
 class Archiver:
     def pack(self, folder):
-        os.system(<<"tar czf out.tgz " + folder||"tar czf out.tgz " + __import__("shlex").quote(folder)>>)  # frame-expect: CWE-78
+        os.system(<<"tar czf out.tgz " + folder||"tar czf out.tgz " + shlex.quote(folder)>>)  # frame-expect: CWE-78
 
 
 def get_archiver():
@@ -537,7 +539,7 @@ case("eval_of_request_via_helper", {
 
 
 def compute(expr):
-    return <<eval(expr)||ast.literal_eval(expr)>>  # frame-expect: CWE-95
+    return <<eval(expr)||ast.literal_eval(expr)>>  # frame-expect: CWE-94
 ''',
     "calc/web.py": '''from flask import Flask, request
 from calc.engine import compute
@@ -692,11 +694,12 @@ def notify():
 
 case("class_attr_service_injected", {
     "mail/sender.py": '''import os
+import shlex
 
 
 class Sender:
     def send(self, to, subject):
-        os.system(<<"mail -s '" + subject + "' " + to||"mail -s '" + subject.replace("'", "") + "' " + __import__("shlex").quote(to)>>)  # frame-expect: CWE-78
+        os.system(<<"mail -s '" + subject + "' " + to||"mail -s '" + subject.replace("'", "") + "' " + shlex.quote(to)>>)  # frame-expect: CWE-78
 ''',
     "mail/controller.py": '''from flask import Flask, request
 from mail.sender import Sender

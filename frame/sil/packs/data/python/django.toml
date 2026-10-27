@@ -8,8 +8,22 @@ detect = { imports = ["django"] }
 [[sink]]
 name = ["objects.extra", "queryset.extra", "qs.extra"]
 kind = "sql"
-args = [0, 1, 2, 3]
+args = [0]                       # positional `select`; the strings passed by keyword are `arg_names`
 arg_names = ["where", "select", "order_by", "tables", "select_params"]
+description = "QuerySet.extra() is raw SQL"
+
+# A custom Manager/QuerySet method calling the inherited raw()/extra() on itself.
+[[sink]]
+name = ["self.raw", "self.get_queryset().raw", "self.model.objects.raw"]
+kind = "sql"
+args = [0]
+description = "Manager.raw() runs the SQL string it is given"
+
+[[sink]]
+name = ["self.extra", "self.get_queryset().extra"]
+kind = "sql"
+args = [0]
+arg_names = ["where", "select", "order_by", "tables"]
 description = "QuerySet.extra() is raw SQL"
 
 [[sink]]

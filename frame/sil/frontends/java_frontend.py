@@ -122,6 +122,8 @@ class JavaFrontend:
         self._program: Optional[Program] = None
         self._in_call_args = False
         self._imports = ImportTable()
+        self._static_members: Dict[str, str] = {}
+        self._static_star: List[str] = []
         self._package = ""
         self._local_types: Dict[str, str] = {}
         # Overload resolution: static types (primitives and arrays included),
@@ -153,6 +155,7 @@ class JavaFrontend:
         self._program = program
 
         self._imports, self._package, self._local_types = self._collect_declarations(tree.root_node)
+        self._static_members, self._static_star = self._collect_static_imports(tree.root_node)
         # simple names the file also spells with a package (`java.sql.Statement st`): library types
         self._qualified_names = set(re.findall(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\.([A-Z]\w*)", source_code))
         program.imports = self._imports.as_dict()
@@ -174,6 +177,26 @@ class JavaFrontend:
         finish_program(program, self.packs, source_code)
         self._apply_neutral_specs(program)
         return program
+
+    def _collect_static_imports(self, root: TSNode):
+        """({member -> qualified class} of `import static a.B.m;`, [qualified classes] of
+        `import static a.B.*;`)."""
+        members: Dict[str, str] = {}
+        star: List[str] = []
+        for child in root.children:
+            if child.type != "import_declaration" or not any(c.type == "static" or self._get_text(c) == "static"
+                                                             for c in child.children):
+                continue
+            ident = next((c for c in child.named_children if c.type in ("scoped_identifier", "identifier")), None)
+            if ident is None:
+                continue
+            name = self._get_text(ident)
+            if any(c.type == "asterisk" for c in child.children):
+                star.append(name)
+            elif "." in name:
+                cls, member = name.rsplit(".", 1)
+                members[member] = cls
+        return members, star
 
     def _collect_declarations(self, root: TSNode):
         """(import table, package, {declared type -> qualified name}) for the file."""
@@ -1507,6 +1530,14 @@ class JavaFrontend:
         if call_node is None:
             return None
         obj = call_node.child_by_field_name("object")
+        if obj is None:
+            # `run(x)` with `import static a.B.run`: the method belongs to B unless this class declares one
+            name = self._get_text(call_node.child_by_field_name("name"))
+            if name not in self._class_methods:
+                if name in self._static_members:
+                    return self._static_members[name]
+                if len(self._static_star) == 1:
+                    return self._static_star[0]
         if obj is None or obj.type == "this":
             return self._current_class
         if obj.type == "identifier":
@@ -2794,6 +2825,28 @@ class JavaFrontend:
         (the exception object is not what the method returns)."""
         self._add_instr(Return(loc=self._get_location(node), value=None))
 
+    def _starts_with_test(self, node: TSNode, args: List[Exp]) -> Optional[Exp]:
+        """`next.startsWith("/")` written as a method on the variable (`next.startsWith(...)`),
+        the shape the translator's same-origin redirect guard reads from the condition text."""
+        name, obj = node.child_by_field_name("name"), node.child_by_field_name("object")
+        if (name is None or obj is None or obj.type != "identifier" or self._get_text(name) != "startsWith"
+                or len(args) != 1 or not isinstance(args[0], ExpConst) or not isinstance(args[0].value, str)):
+            return None
+        return ExpCall(ExpFieldAccess(ExpVar(PVar(self._get_text(obj))), "startsWith"), args)
+
+    def _url_host_access(self, node: TSNode) -> Optional[Exp]:
+        """`new URL(u).getHost()` / `new URI(u).getHost()` as the field read `new URL(u).host`: the
+        shape the translator's allow-list guard (`HOSTS.contains(new URL(u).getHost())`) reads."""
+        name = node.child_by_field_name("name")
+        obj = node.child_by_field_name("object")
+        if (name is None or obj is None or self._get_text(name) != "getHost"
+                or obj.type != "object_creation_expression"
+                or self._get_text(obj.child_by_field_name("type")) not in ("URL", "URI", "java.net.URL", "java.net.URI")):
+            return None
+        if node.child_by_field_name("arguments") is not None and node.child_by_field_name("arguments").named_child_count:
+            return None
+        return ExpFieldAccess(self._translate_expression(obj), "host")
+
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression"""
         if node is None:
@@ -2869,8 +2922,14 @@ class JavaFrontend:
             hoisted = self._hoist_nested_call(node)
             if hoisted is not None:
                 return hoisted
+            host = self._url_host_access(node)
+            if host is not None:
+                return host
             method_name = self._get_method_name(node)
             args = [self._translate_expression(a) for a in self._get_method_args(node)]
+            starts = self._starts_with_test(node, args)
+            if starts is not None:
+                return starts
             return ExpCall(ExpConst.string(method_name), args)
 
         elif node.type == "object_creation_expression":

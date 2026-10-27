@@ -118,6 +118,7 @@ class PythonFrontend:
             for m in self._DOCUMENT_DB_MODULES)
 
         # Walk top-level definitions
+        self._const_tables = self._collect_const_tables(tree.root_node)
         self._translate_module(tree.root_node, program)
 
         infer_canonicals(tree.root_node, program, self._imports, self._get_text)
@@ -149,6 +150,54 @@ class PythonFrontend:
                     spec = program.library_specs.get(instr.canonical)
                     if spec is not None:
                         program.library_specs[func] = spec
+
+    _const_tables: frozenset = frozenset()
+    _saw_yield = False
+
+    def _collect_const_tables(self, root: TSNode) -> frozenset:
+        """Module-level names bound exactly once to a dict literal whose values are all literals
+        (`HOOKS = {"slack": "https://..."}`): looking one up with an attacker-chosen key yields one
+        of the table's own constants, never the key (`HOOKS[name]`, `HOOKS.get(name, default)`)."""
+        seen: Dict[str, int] = {}
+        tables = set()
+        for stmt in root.children:
+            if stmt.type != "expression_statement" or not stmt.named_children:
+                continue
+            node = stmt.named_children[0]
+            if node.type != "assignment":
+                continue
+            left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+            if left is None or left.type != "identifier":
+                continue
+            name = self._get_text(left)
+            seen[name] = seen.get(name, 0) + 1
+            if right is not None and right.type == "dictionary" and all(
+                    pair.type != "pair" or (pair.child_by_field_name("value") is not None
+                                            and pair.child_by_field_name("value").type
+                                            in ("string", "integer", "float", "true", "false", "none"))
+                    for pair in right.named_children) and all(
+                    pair.type == "pair" for pair in right.named_children):
+                tables.add(name)
+        # Any other write to the name (augmented, global rebinding in a function) is not tracked,
+        # so only never-reassigned module-level bindings count.
+        return frozenset(n for n in tables if seen.get(n) == 1 and not self._reassigned_elsewhere(root, n))
+
+    def _reassigned_elsewhere(self, root: TSNode, name: str) -> bool:
+        needle = f"global {name}"
+        return needle in self._source.decode() if isinstance(self._source, bytes) else needle in self._source
+
+    def _is_const_table_lookup(self, node: TSNode) -> bool:
+        """`TABLE[key]` or `TABLE.get(key[, default])` on a constant table."""
+        if node.type == "subscript":
+            base = node.child_by_field_name("value")
+            return base is not None and base.type == "identifier" and self._get_text(base) in self._const_tables
+        if node.type == "call":
+            func = node.child_by_field_name("function")
+            if func is not None and func.type == "attribute":
+                obj, attr = func.child_by_field_name("object"), func.child_by_field_name("attribute")
+                return (obj is not None and obj.type == "identifier" and attr is not None
+                        and self._get_text(obj) in self._const_tables and self._get_text(attr) == "get")
+        return False
 
     _DOCUMENT_DB_MODULES = ("pymongo", "motor", "mongoengine", "bson")
     _dicts_are_queries = False
@@ -427,7 +476,7 @@ class PythonFrontend:
             bool(route_params)
             or any(t in decs for t in (".route(", ".get(", ".post(", ".put(", ".delete(", ".patch("))
             or func_name.startswith("resolve_") or func_name == "mutate"
-            or "request." in body_text
+            or self._REQUEST_OBJECT_USE.search(body_text) is not None
             or self._is_django_view_signature(params)
         )
         source_params = set(route_params)
@@ -445,8 +494,12 @@ class PythonFrontend:
                         description="web handler parameter (attacker-controlled)"))
 
         # Translate body (pass program for nested functions)
+        outer_yield, self._saw_yield = self._saw_yield, False
         if body_node:
             self._translate_block(body_node, program=program)
+        if self._saw_yield:                       # a generator returns what it yielded
+            self._add_instr(Return(loc=self._get_location(node), value=ExpVar(PVar("__yield"))))
+        self._saw_yield = outer_yield
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -459,6 +512,11 @@ class PythonFrontend:
 
         self._current_proc = None
         return proc
+
+    # The framework request object (`request.args`, `self.request.GET`, `flask.request.form`), not
+    # a module that merely has a `request` attribute (`urllib.request.urlopen`).
+    _REQUEST_OBJECT_USE = re.compile(
+        r"(?<![\w.])(?:(?:self|flask|bottle|cherrypy|quart|sanic|starlette|falcon)\.)?request\.")
 
     def _is_django_view_signature(self, params) -> bool:
         """`def view(request, pk)` / `def get(self, request, slug)` in a file that imports
@@ -734,7 +792,11 @@ class PythonFrontend:
 
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a single statement"""
-        if node.type == "expression_statement":
+        if node.type == "expression_statement" and node.named_children \
+                and node.named_children[0].type == "yield":
+            self._translate_yield(node.named_children[0])
+
+        elif node.type == "expression_statement":
             self._translate_expression_statement(node)
 
         elif node.type == "assignment":
@@ -857,7 +919,10 @@ class PythonFrontend:
         target_name = self._get_text(left)
 
         # Handle different RHS types
-        if right.type == "call":
+        if right.type == "call" and self._is_const_table_lookup(right):
+            self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=ExpConst.null()))
+
+        elif right.type == "call":
             # x = func(...)
             instrs = self._translate_call_assignment(target_name, right, loc)
             self._add_instrs(instrs)
@@ -1325,6 +1390,23 @@ class PythonFrontend:
         if bin_op == "+":
             self._check_concat_taint(target_name, right, loc)
 
+    def _translate_yield(self, node: TSNode) -> None:
+        """`yield v` / `yield from it`: a generator hands its caller everything it yields, so the
+        values accumulate in `__yield` and the function's end returns it (a caller iterating the
+        generator, or `next(gen())`, sees the yielded data). Unlike `return`, it ends no path."""
+        loc = self._get_location(node)
+        value_node = next((c for c in node.named_children), None)
+        if value_node is None:
+            return
+        value_node = self._unwrap_await(value_node)
+        nested = self._extract_all_calls_from_node(value_node, loc)
+        self._add_instrs(nested)
+        parts = self._aggregate_parts(value_node)
+        value_exp = ExpStringConcat(parts) if parts else self._translate_expression(value_node)
+        self._add_instr(Assign(loc=loc, id=PVar("__yield"),
+                               exp=ExpStringConcat([ExpVar(PVar("__yield")), value_exp])))
+        self._saw_yield = True
+
     def _translate_return(self, node: TSNode) -> None:
         """Translate return statement"""
         loc = self._get_location(node)
@@ -1563,6 +1645,13 @@ class PythonFrontend:
         # Get iterable
         right = node.child_by_field_name("right")
         iterable_exp = self._translate_expression(right) if right else ExpConst.null()
+        if right is not None and self._current_node is not None:
+            right = self._unwrap_await(right)
+            if right.type == "call" and not self._is_const_table_lookup(right):
+                # `for h in request.args.get("hosts").split(","):` -- lower the iterable like
+                # `__iter = <call>` so a source call or method chain taints the loop variable.
+                self._add_instrs(self._translate_call_assignment("__for_iter", right, loc))
+                iterable_exp = ExpVar(PVar("__for_iter"))
 
         before_node = self._current_node
 
@@ -1576,11 +1665,15 @@ class PythonFrontend:
 
         # Loop body (includes assignment to loop var)
         body_node = proc.new_node(NodeKind.NORMAL)
-        body_node.add_instr(Assign(
-            loc=loc,
-            id=PVar(loop_var),
-            exp=ExpCall(ExpConst.string("next"), [iterable_exp])
-        ))
+        targets = [loop_var]
+        if left is not None and left.type in ("pattern_list", "tuple_pattern", "list_pattern"):
+            targets = [self._get_text(c) for c in left.named_children if c.type == "identifier"] or [loop_var]
+        for target in targets:                    # `for i, h in enumerate(xs)` binds both names
+            body_node.add_instr(Assign(
+                loc=loc,
+                id=PVar(target),
+                exp=ExpCall(ExpConst.string("next"), [iterable_exp])
+            ))
         proc.add_node(body_node)
 
         # After loop
@@ -1919,6 +2012,9 @@ class PythonFrontend:
             attr_name = self._get_text(attr) if attr else ""
 
             return ExpFieldAccess(obj_exp, attr_name)
+
+        elif node.type in ("subscript", "call") and self._is_const_table_lookup(node):
+            return ExpConst.null()
 
         elif node.type == "subscript":
             value = node.child_by_field_name("value")
