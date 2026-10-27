@@ -52,9 +52,17 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 - Advisories: a separate dataset, `lambdasec/frame-advisories`, published by the same machinery as `frame-kb` but rebuilt daily from OSV (packs change with Frame and are pinned per project; advisories should be current by default, with an optional pin for reproducible audits). Compact per-ecosystem files (`advisories/<ecosystem>.json`: package, affected ranges, fixed versions, ids, severity), so `pull` fetches only what a project uses; each source keeps its licence.
 - Vulnerable functions per advisory, in the same dataset (`functions/<ecosystem>.json`, CC-BY-4.0, keyed by advisory id, rebuilt on its own schedule and joined at load time): Frame canonical call ids with provenance, `osv` (Go's `ecosystem_specific.imports[].symbols`), `fix-commit` (the public functions a fix commit changed, found with Frame's frontends) or `curated`. Reachability evidence carries the provenance.
 - Done: reachability levels installed, imported, called (`frame/sca/reachability.py`): imports and calls from Frame's frontends (`Program.imports`, `Call.canonical`; C# `using` plus `Type.Method` only when it equals the advisory's own id), PyPI module names from the project's virtualenv, else a table. Positive evidence only. Vulnerable-function data ships as `functions/<Ecosystem>.json.gz` in the advisory dataset (`frame kb build-advisories --functions`), merged by advisory id or alias.
-- Next: attacker data reaches the vulnerable function (taint, inside `frame scan`, with `category: "dependency"`); the weekly fix-commit mining and the curated function files in the dataset's source repo.
+- Done: the tainted level (`frame scan --sca`, `frame/sca/scan.py`): vulnerable functions become sinks of a generated pack (`only_if_not_sink`), and a finding counts for an advisory only when its sink call (`Vulnerability.sink_call`) is that function at that call site. Curated function files ship in the dataset (daily).
+- Next: the fix-commit mining job (vulnerable functions for advisories that name none), and SBOM output (CycloneDX, SPDX) from the same graph.
 - Z3 remediation planning: the smallest set of upgrades that removes every vulnerable version while satisfying every package's constraints; whether an unpinned manifest admits a vulnerable version.
 - SBOM (CycloneDX, SPDX) and license data from the same graph.
+- Remediation (`frame fix` for dependencies), deterministic first, the LLM only where judgement is needed, every fix verified by Frame:
+  1. Upgrade: the minimum fixed version that satisfies every constraint (the Z3 planner), applied through the package manager; verified by `frame deps --vulns`, the build and the tests.
+  2. Breaking-change adaptation when an upgrade crosses a major version (LLM, from the changelog and the API difference); verified by the build, the tests and a clean re-scan.
+  3. Code mitigation for `called` and `tainted` findings (LLM): change how the application uses the vulnerable function, version unchanged; verified by the taint engine (the path must be gone, solver-checked).
+  4. Configuration mitigation from curated per-advisory data (e.g. Log4Shell's `formatMsgNoLookups`).
+  5. Backported patches (upstream fix commit applied to the pinned version, `patch-package`, vendoring) when no upgrade is possible.
+  6. VEX (OpenVEX, CycloneDX) per finding. "Not affected" only from a verified mitigation or an explicit, recorded justification: reachability is positive evidence only and never proves a package unreachable.
 
 ## Source languages
 

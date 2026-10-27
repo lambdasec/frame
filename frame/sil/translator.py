@@ -76,6 +76,7 @@ class VulnType(Enum):
     HARDCODED_SECRET = "hardcoded_secret"       # CWE-798
     INSECURE_RANDOM = "insecure_random"         # CWE-330
     PREDICTABLE_VALUE = "predictable_value"     # CWE-338 (weak PRNG output where unpredictability matters)
+    VULNERABLE_DEPENDENCY = "vulnerable_dependency"  # CWE-1395 (attacker data reaches a vulnerable library function)
     WEAK_HASH = "weak_hash"                     # CWE-328
     IMPROPER_CERT_VALIDATION = "improper_cert_validation"  # CWE-295
     INSUFFICIENT_KEY_SIZE = "insufficient_key_size"  # CWE-326
@@ -232,6 +233,7 @@ class VulnType(Enum):
             SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
             SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
             SinkKind.UNPREDICTABLE: cls.PREDICTABLE_VALUE,
+            SinkKind.VULNERABLE_DEPENDENCY: cls.VULNERABLE_DEPENDENCY,
             SinkKind.WEAK_HASH: cls.WEAK_HASH,
             SinkKind.CERT_VALIDATION: cls.IMPROPER_CERT_VALIDATION,
             SinkKind.WEAK_KEY_SIZE: cls.INSUFFICIENT_KEY_SIZE,
@@ -311,6 +313,7 @@ class VulnerabilityCheck:
 
     # Data flow path (list of variables/expressions)
     data_flow_path: List[str] = field(default_factory=list)
+    sink_call: str = ""     # the sink call (canonical id, else its text): links SCA advisories to flows
 
     # Per-edge branch conditions assumed on the path to this sink (pure formulas).
     # If their conjunction is unsatisfiable the sink is on an infeasible path and
@@ -949,6 +952,20 @@ class ProcedureSummary:
 # SIL Translator
 # =============================================================================
 
+def _note_sink_call(checks: List["VulnerabilityCheck"], instr: Instr) -> None:
+    """Record the call each check's sink is (for frame/sca: an advisory is reached only through
+    its own function), where the code that made the check did not already say."""
+    if isinstance(instr, Call):
+        name = instr.canonical or str(getattr(instr.func, "value", instr.func)).strip('"')
+    elif isinstance(instr, TaintSink):
+        name = instr.call.strip('"')
+    else:
+        return
+    for c in checks:
+        if not c.sink_call:
+            c.sink_call = name
+
+
 class SILTranslator:
     """
     Translates SIL programs to Frame formulas for vulnerability verification.
@@ -1553,6 +1570,8 @@ class SILTranslator:
                 node_checks, current_state = self._execute_instr(
                     instr, current_state, proc.name
                 )
+                if node_checks:
+                    _note_sink_call(node_checks, instr)
                 # Record the path's feasibility constraints on each new finding, so
                 # a finding on a provably-infeasible path can be dropped later. This
                 # is post-hoc bookkeeping; it never prunes execution.
@@ -3670,6 +3689,7 @@ class SILTranslator:
                     instr, state, proc_name,
                     tainted_var, sink_enum
                 )
+                check.sink_call = str(func_name).strip('"')
                 checks.append(check)
 
         # Check for property assignment sinks
@@ -4037,9 +4057,11 @@ class SILTranslator:
         for arg_exp, _ in instr.args:
             for _f, inner_kind, tainted_args in self._get_embedded_sink_calls(arg_exp, state):
                 for tainted_var in tainted_args:
-                    checks.append(self._create_taint_check(
+                    inner = self._create_taint_check(
                         instr, state, proc_name, tainted_var,
-                        resolve_sink_kind(inner_kind, default=SinkKind.EVAL)))
+                        resolve_sink_kind(inner_kind, default=SinkKind.EVAL))
+                    inner.sink_call = str(_f).strip('"')
+                    checks.append(inner)
 
         # C/C++: a taint-source call nested inside an argument -- the `getenv(...)`
         # in `atoi(getenv("X"))` -- never reaches the IR as its own instruction, so
@@ -5763,6 +5785,8 @@ class SILTranslator:
         weak = taint_info is not None and taint_info.source_kind == TaintKind.WEAK_RANDOM
         if weak != (sink_kind == SinkKind.UNPREDICTABLE):
             check.kind_mismatch = True
+        if isinstance(instr, Call):
+            check.sink_call = instr.canonical or str(getattr(instr.func, "value", instr.func)).strip('"')
         return check
 
     # Matches an unbounded conversion in a scanf format string: %s / %[ / %ls
@@ -8742,6 +8766,16 @@ class SILTranslator:
                                         if spec.is_sink == 'eval' and arg_var in state.validated_for_eval:
                                             continue  # Skip - variable passed validation
                                         tainted_args.append(arg_var)
+                        # a source written inline in the argument (`f(g(req.query.n))`): the
+                        # same member-access sources the TaintSink path reads
+                        for chain, src_kind in self._get_embedded_member_sources(arg):
+                            if chain not in tainted_args:
+                                if not state.is_tainted(chain):
+                                    state.add_taint(chain, TaintInfo(
+                                        source_kind=TaintKind(src_kind) if src_kind in TaintKind._value2member_map_
+                                        else TaintKind.USER_INPUT,
+                                        source_var=chain, source_location=Location.unknown()))
+                                tainted_args.append(chain)
                 if tainted_args:
                     result.append((func_name, spec.is_sink, tainted_args))
 

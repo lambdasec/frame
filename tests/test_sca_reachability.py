@@ -71,7 +71,7 @@ def test_called_imported_and_installed_in_python(tmp_path, db):
     found = findings_for(proj, db)
     assert level(found, "pyyaml") == {"called"}
     call = next(f for f in found if f["package"] == "pyyaml")["reachability"]["calls"][0]
-    assert call == {"function": "yaml.load", "location": "app.py:5", "source": "curated"}
+    assert call == {"function": "yaml.load", "location": "app.py:5", "source": "curated", "call": "yaml.load"}
     assert level(found, "django") == {"imported"}
     assert next(f for f in found if f["package"] == "django")["reachability"]["imported_in"] == ["app.py"]
 

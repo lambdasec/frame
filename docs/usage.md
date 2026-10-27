@@ -26,6 +26,8 @@ A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive
 
 Each vulnerability is also checked against the project's own code (Python, JavaScript/TypeScript, Java, C#), through the files under the manifest that declared the package: `imported` when the code imports the package, `called` when it calls a function the advisory names as vulnerable (with the file and line). The evidence is positive only: a package your code never imports can still be reached through another library (Log4Shell reached applications that log through SLF4J), so an unused package stays `installed`, never "unreachable". `--no-reachability` skips reading the source.
 
+`frame scan DIR --sca` puts dependencies into the source scan. Every function an advisory names as vulnerable in a resolved dependency becomes a taint sink for that scan, so attacker data reaching it is a finding at the call site (`vulnerable_dependency`, CWE-1395, category `dependency`, at the advisory's severity, naming the advisory and the fix), with the scan's usual data-flow or solver-verified evidence. A function that is already a sink keeps its own finding (`yaml.load` stays CWE-502) and that finding raises the advisory to `tainted`. The JSON gains a top-level `dependencies` object with every matched advisory and its reachability (installed, imported, called, tainted), SARIF gains one result per advisory at its manifest, and `--fail-on` counts them.
+
 ```bash
 frame kb pull --advisories            # once, and whenever you want fresh advisories
 frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each

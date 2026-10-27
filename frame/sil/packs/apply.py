@@ -194,6 +194,8 @@ def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
                 spec.taint_out_args = sorted(set(spec.taint_out_args) | set(rule.out_args))
             changed = True
         elif rule.role == "sink":
+            if rule.only_if_not_sink and spec.is_sink:
+                continue
             args = _resolve_sink_args(rule, call)
             if args is None:
                 continue

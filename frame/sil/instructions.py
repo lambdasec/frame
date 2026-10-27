@@ -124,6 +124,9 @@ class SinkKind(Enum):
     # A value that must be unpredictable: a cryptographic key, IV, salt or seed, a
     # session / auth token set as a cookie. Reached by WEAK_RANDOM data only (CWE-338).
     UNPREDICTABLE = "unpredictable"
+    # A06: Vulnerable and Outdated Components -- a function an advisory names as vulnerable in
+    # the resolved version of a dependency (frame/sca), reached by attacker data (CWE-1395).
+    VULNERABLE_DEPENDENCY = "vulnerable_dependency"
     WEAK_HASH = "weak_hash"     # Weak hashing (CWE-328)
     INSECURE_TEMP_FILE = "insecure_temp_file"  # Insecure temp file / race (CWE-377)
     CERT_VALIDATION = "cert_validation"  # Improper certificate validation (CWE-295)

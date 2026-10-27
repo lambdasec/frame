@@ -253,6 +253,7 @@ class Vulnerability:
     category: str = ""
     # How strongly the finding is proven (frame.sil.findings.EVIDENCE_LEVELS).
     evidence: str = "matched"
+    sink_call: str = ""          # internal: the sink call, for frame/sca (not in the JSON)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
@@ -742,6 +743,7 @@ class FrameScanner:
         VulnType.HARDCODED_SECRET: Severity.CRITICAL,
         VulnType.INSECURE_RANDOM: Severity.MEDIUM,
         VulnType.PREDICTABLE_VALUE: Severity.HIGH,
+        VulnType.VULNERABLE_DEPENDENCY: Severity.HIGH,      # replaced by the advisory's own rating
         VulnType.INSECURE_COOKIE: Severity.MEDIUM,
         VulnType.INSECURE_COOKIE_HTTPONLY: Severity.MEDIUM,
         VulnType.CSRF: Severity.MEDIUM,
@@ -866,6 +868,7 @@ class FrameScanner:
         VulnType.HARDCODED_SECRET: "CWE-798",
         VulnType.INSECURE_RANDOM: "CWE-330",
         VulnType.PREDICTABLE_VALUE: "CWE-338",
+        VulnType.VULNERABLE_DEPENDENCY: "CWE-1395",
         VulnType.WEAK_HASH: "CWE-328",
         VulnType.IMPROPER_CERT_VALIDATION: "CWE-295",
         VulnType.INSUFFICIENT_KEY_SIZE: "CWE-326",
@@ -1008,6 +1011,7 @@ class FrameScanner:
         from frame.sil.packs import PackSet
         self._pack_paths = list(packs or [])
         self._use_builtin_packs = use_builtin_packs
+        self._extra_packs: List[Any] = []                # generated at run time (frame/sca)
         self.pack_set = PackSet.build(self._pack_paths, builtin=use_builtin_packs)
         self.respect_suppressions = respect_suppressions
         self.disabled_rules = list(disabled_rules or [])
@@ -1052,6 +1056,18 @@ class FrameScanner:
         self._project_pack_dirs = found
         self.pack_set = PackSet.build(self._pack_paths, builtin=self._use_builtin_packs,
                                       project_start=Path(start))
+        if self._extra_packs:
+            self.pack_set = PackSet(self.pack_set.packs + self._extra_packs)
+        if self.frontend is not None:
+            self.frontend.packs = self.pack_set
+
+    def add_packs(self, packs) -> None:
+        """Packs built at run time (the vulnerable functions of a project's dependencies,
+        `frame scan --sca`); kept when the project's own packs are loaded later."""
+        from frame.sil.packs import PackSet
+        self._extra_packs = list(self._extra_packs) + list(packs)
+        self.pack_set = PackSet(self.pack_set.packs + list(packs))
+        self._project_pack_dirs = None
         if self.frontend is not None:
             self.frontend.packs = self.pack_set
 
@@ -1831,6 +1847,7 @@ class FrameScanner:
             confidence=confidence,
             cwe_id=cwe_id,
             evidence=evidence_of_check(verified, bool(check.source_var and check.sink_type)),
+            sink_call=getattr(check, "sink_call", ""),
         )
 
     def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:

@@ -108,6 +108,11 @@ def add_pack_args(scan_parser) -> None:
     scan_parser.add_argument(
         "--no-packs", action="store_true",
         help="Do not load the built-in framework packs (project and --pack packs still load).")
+    scan_parser.add_argument(
+        "--sca", action="store_true",
+        help="Also report vulnerable dependencies (directory targets): match the lockfiles against the "
+             "cached advisories (`frame kb pull --advisories`), and make each vulnerable function a taint "
+             "sink, so attacker data reaching it is a finding at the call site.")
 
 
 def add_language_and_pattern_args(scan_parser) -> None:
@@ -530,6 +535,17 @@ def cmd_scan(args) -> int:
         print("Install tree-sitter: pip install tree-sitter tree-sitter-python", file=sys.stderr)
         return 2
 
+    sca_run = None
+    if getattr(args, "sca", False):
+        if target.is_dir():
+            from frame.sca.scan import prepare, sink_packs
+            from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+            sca_excluded = set(DEFAULT_EXCLUDED_SCAN_DIRS) | set(config.exclude or [])
+            sca_run = prepare(target, sca_excluded)
+            scanner.add_packs(sink_packs(sca_run))
+        else:
+            print("Warning: --sca needs a directory target; dependencies were not checked", file=sys.stderr)
+
     # Perform scan. An unreachable LLM endpoint (with --ai) surfaces as a hard
     # error, never a misleading "no vulnerabilities found".
     results = []
@@ -561,9 +577,16 @@ def cmd_scan(args) -> int:
         print("No files found to scan.", file=sys.stderr)
         return 2
 
+    if sca_run is not None:
+        from frame.sca.scan import link
+        link(sca_run, results, target)
+
     # Stable identities for every finding, then the baseline comparison.
     assign_fingerprints(results, root)
     extra = {"root": str(root)}
+    if sca_run is not None:
+        extra["dependencies"] = {"advisories": sca_run.revision, "findings": sca_run.findings,
+                                 "warnings": sca_run.warnings}
     if scanner.pack_set:
         extra["packs"] = scanner.pack_set.names()
     scope = getattr(scanner, "last_project_scope", None)
@@ -627,6 +650,9 @@ def cmd_scan(args) -> int:
             b = extra["baseline"]
             chunks.append(f"Baseline {b['file']}: {b['new']} new, {b['baselined']} known, "
                           f"{len(b['fixed'])} fixed since it was written\n")
+        if sca_run is not None:
+            from frame.sca.scan import format_text as sca_text
+            chunks.append(sca_text(sca_run))
         for output in chunks:
             if args.output:
                 with open(args.output, 'a') as f:
@@ -645,6 +671,11 @@ def cmd_scan(args) -> int:
 
     elif args.format == "sarif":
         output = format_sarif_result(_at_least(results, min_severity))
+        if sca_run is not None and sca_run.findings:
+            from frame.sca.scan import sarif_results
+            doc = json.loads(output)
+            doc["runs"][0].setdefault("results", []).extend(sarif_results(sca_run))
+            output = json.dumps(doc, indent=2)
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)
@@ -654,6 +685,10 @@ def cmd_scan(args) -> int:
     # Determine exit code
     if should_fail(results, args.fail_on):
         return 1
+    if sca_run is not None and sca_run.findings and args.fail_on != "none":
+        from frame.sca.scan import worst_severity          # 4 critical .. 1 low, as severity_value - 1
+        if args.fail_on == "any" or worst_severity(sca_run) >= severity_value(parse_severity(args.fail_on)) - 1:
+            return 1
 
     return 0
 

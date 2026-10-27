@@ -94,6 +94,9 @@ class Rule:
     propagate_to: str = "return"
     receiver: bool = False
     description: str = ""
+    # a sink only where nothing else already makes the call one (generated rules, frame/sca):
+    # never replaces a built-in or pack sink kind
+    only_if_not_sink: bool = False
 
 
 @dataclass

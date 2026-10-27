@@ -44,6 +44,7 @@ _GROUPS = {
         "broken_authentication", "credential_stuffing", "business_logic_flaw", "race_condition",
         "privilege_management", "incorrect_permissions", "trust_boundary_violation",
         "cors_misconfiguration"},
+    "dependency": {"vulnerable_dependency"},
     "hardening": {
         "debug_enabled", "security_misconfiguration", "error_disclosure", "ci_cd_vulnerability",
         "code_integrity", "insufficient_logging", "unhandled_exception", "improper_error_handling",

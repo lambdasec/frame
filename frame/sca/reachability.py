@@ -147,13 +147,43 @@ class Usage:
             fu = FileUsage(path.relative_to(self.root).as_posix(), lang)
             fu.imports = {str(v) for v in (getattr(program, "imports", {}) or {}).values()}
             fu.wildcards = {str(w).rstrip(".*") for w in (getattr(program, "import_wildcards", ()) or ())}
+            imports = {str(k): str(v) for k, v in (getattr(program, "imports", {}) or {}).items()}
             for proc in program.procedures.values():
                 for ins in proc.get_all_instrs():
                     if isinstance(ins, Call):
-                        text_name = str(getattr(ins.func, "value", ins.func))
-                        fu.calls.append((ins.canonical, text_name, ins.loc.line if ins.loc else 0))
+                        text_name = str(getattr(ins.func, "value", ins.func)).strip('"')
+                        line = ins.loc.line if ins.loc else 0
+                        fu.calls.append((ins.canonical, text_name, line))
+                        for arg in ins.args:                  # calls nested in arguments: `f(g(x))`
+                            for name in _nested_calls(arg[0] if isinstance(arg, tuple) else arg):
+                                fu.calls.append((_qualify(name, imports), name, line))
             out.append(fu)
         return out
+
+
+def _nested_calls(exp, depth: int = 0) -> List[str]:
+    """Textual names of the calls inside an expression (they have no Call instruction)."""
+    from frame.sil.types import ExpCall
+    out: List[str] = []
+    if depth > 20 or exp is None:
+        return out
+    if isinstance(exp, ExpCall):
+        out.append(str(getattr(exp.func, "value", exp.func)))
+    for child in vars(exp).values() if hasattr(exp, "__dict__") else ():
+        items = child if isinstance(child, (list, tuple)) else [child]
+        for it in items:
+            if hasattr(it, "__dict__") and type(it).__module__ == "frame.sil.types":
+                out.extend(_nested_calls(it, depth + 1))
+    return out
+
+
+def _qualify(name: str, imports: Dict[str, str]) -> Optional[str]:
+    """`_.toNumber` -> `lodash.toNumber` through the file's imports (the rule canonical ids
+    follow); None when the head is not an imported name."""
+    head, _, rest = name.strip('"').partition(".")
+    if head not in imports:
+        return None
+    return f"{imports[head]}.{rest}" if rest else imports[head]
 
 
 def _home_of(manifest_rel: str) -> str:
@@ -167,18 +197,19 @@ def _under(rel: str, home: str) -> bool:
     return not home or rel == home or rel.startswith(home + "/")
 
 
-def _function_matches(fu: FileUsage, ids: Set[str]) -> List[Tuple[str, int]]:
+def _function_matches(fu: FileUsage, ids: Set[str]) -> List[Tuple[str, int, str]]:
+    """(function id, line, the call as written) for each call of a listed function."""
     hits = []
     for canonical, text, line in fu.calls:
         if canonical and canonical in ids:
-            hits.append((canonical, line))
+            hits.append((canonical, line, text))
             continue
         if fu.language in ("csharp", "java") and fu.wildcards and "." in text:
             # `using Ns;` + `Type.Method(...)`: the advisory's own id decides, nothing is guessed
             for w in fu.wildcards:
                 cand = f"{w}.{text}"
                 if cand in ids:
-                    hits.append((cand, line))
+                    hits.append((cand, line, text))
                     break
     return hits
 
@@ -199,8 +230,8 @@ def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
             modules = {re.sub(r"\.[^.]+\.[^.]+$", "", i) for i in fn_ids if i.count(".") >= 2}
         imported_in = sorted({fu.rel for fu in files for m in modules
                               if any(_imports_module(eco, v, m) for v in fu.imports | fu.wildcards)})
-        calls = [{"function": fid, "location": f"{fu.rel}:{line}", "source": source_of.get(fid, "")}
-                 for fu in files for fid, line in _function_matches(fu, fn_ids)]
+        calls = [{"function": fid, "location": f"{fu.rel}:{line}", "source": source_of.get(fid, ""), "call": text}
+                 for fu in files for fid, line, text in _function_matches(fu, fn_ids)]
         level = "called" if calls else "imported" if imported_in else "installed"
         f["reachability"] = {"level": level, "imported_in": imported_in[:20], "calls": calls[:50],
                              "analysed": bool(files)}
