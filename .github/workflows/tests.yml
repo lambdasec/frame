@@ -97,8 +97,9 @@ jobs:
     # `frame deps` against the real package managers (tests/sca_real/): each tool resolves a
     # fixture project, lists what it resolved, and Frame's reading must match. Runs on pushes to
     # main, nightly and on dispatch; on pull requests only when the SCA code or its tests change.
-    # A missing tool fails the job (FRAME_SCA_REAL=1 never skips).
-    runs-on: ubuntu-latest
+    # A missing tool fails the job (FRAME_SCA_REAL=1 never skips). Pinned to 24.04: the Swift
+    # setup action does not support newer Ubuntu images yet.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
     - uses: actions/checkout@v4

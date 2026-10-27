@@ -217,3 +217,7 @@ failure_analysis_results.json
 **/comprehensive_results.json
 benchmarks/cache/
 /.benchmark_cache
+
+# SCA fixtures: Gradle subprojects are commonly named lib/
+!tests/sca_real/**/lib/
+!tests/fixtures/sca/**/lib/
