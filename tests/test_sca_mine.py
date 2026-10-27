@@ -112,3 +112,32 @@ def test_an_export_outside_the_package_entry_is_not_the_packages_api():
     _, [m] = mine([rec], ["npm"], _Fake())
     assert m.entries == [] and m.needs_curation
     assert m.internal_only == ["lib/utils.js:merge (not the package entry)"]
+
+
+class _Throttled:
+    """A source whose quota runs out after the first commit."""
+    def __init__(self):
+        self.calls = 0
+
+    def commit(self, owner, repo, sha):
+        from frame.sca.mine import RateLimited
+        self.calls += 1
+        if self.calls > 1:
+            raise RateLimited("GitHub API rate limit")
+        return {"sha": sha, "parents": ["p"], "files": []}
+
+    def file(self, *a):
+        return None
+
+
+def test_a_rate_limited_run_stops_and_resumes_exactly_where_it_left_off():
+    from frame.sca.mine import Progress
+    recs = [{"id": f"GHSA-{i}", "modified": f"2026-01-0{i}T00:00:00Z",
+             "references": [{"url": f"https://github.com/o/r/commit/{i:07d}"}],
+             "affected": [{"package": {"ecosystem": "PyPI", "name": "x"}}]} for i in (3, 1, 2)]
+    prog = Progress()
+    _, report = mine(recs, ["PyPI"], _Throttled(), since="2026-01-00", progress=prog)
+    assert [m.advisory for m in report] == ["GHSA-1"]                       # oldest first; stopped at the 2nd
+    assert prog.rate_limited and prog.processed == 1 and prog.resume_after == "2026-01-01T00:00:00Z"
+    _, report = mine(recs, ["PyPI"], RecordedSource(COMMITS), since=prog.resume_after, progress=Progress())
+    assert [m.advisory for m in report] == ["GHSA-2", "GHSA-3"]             # the next run picks up there

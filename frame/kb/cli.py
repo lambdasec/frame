@@ -50,6 +50,8 @@ def add_kb_command(subparsers) -> None:
     mf.add_argument("--limit", type=int, help="Mine at most this many advisories")
     mf.add_argument("--cache", metavar="DIR", help="Commit cache (default: ~/.cache/frame/mine)")
     mf.add_argument("--recorded", metavar="DIR", help="Read commits recorded on disk instead of GitHub")
+    mf.add_argument("--since", metavar="TIMESTAMP",
+                    help="Only advisories modified after this (oldest first); use the last run's resume_after")
     ba.add_argument("--functions", metavar="DIR",
                     help="Directory of <Ecosystem>.json vulnerable-function files (advisory id -> [{id, source}])")
 
@@ -111,7 +113,7 @@ def cmd_kb(args) -> int:
             return 0
         if args.kb_command == "mine-functions":
             from frame.sca.advisories import _records
-            from frame.sca.mine import GitHubSource, RecordedSource, mine
+            from frame.sca.mine import GitHubSource, Progress, RecordedSource, mine
             ecos = [e.strip() for e in args.ecosystems.split(",") if e.strip()]
             existing = {}
             if args.existing:
@@ -121,7 +123,9 @@ def cmd_kb(args) -> int:
                         existing[e] = json.loads(f.read_text())
             source = RecordedSource(Path(args.recorded)) if args.recorded else GitHubSource(
                 Path(args.cache) if args.cache else Path.home() / ".cache" / "frame" / "mine")
-            tables, report = mine(_records([Path(i) for i in args.inputs]), ecos, source, args.limit, existing)
+            progress = Progress()
+            tables, report = mine(_records([Path(i) for i in args.inputs]), ecos, source, args.limit, existing,
+                                  since=args.since, progress=progress)
             out = Path(args.out)
             out.mkdir(parents=True, exist_ok=True)
             for e, table in tables.items():
@@ -130,9 +134,14 @@ def cmd_kb(args) -> int:
             curate = [{"advisory": m.advisory, "internal_only": m.internal_only,
                        "outside_functions": m.outside_functions} for m in report if m.needs_curation]
             (out / "needs-curation.json").write_text(json.dumps(curate, indent=1) + "\n")
+            (out / "progress.json").write_text(json.dumps({
+                "processed": progress.processed, "rate_limited": progress.rate_limited,
+                "resume_after": progress.resume_after or args.since or ""}, indent=1) + "\n")
             mined = sum(1 for m in report if m.entries)
             print(f"{len(report)} advisories with fix commits: {mined} mined, {len(curate)} need curation, "
-                  f"{sum(1 for m in report if m.skipped and not m.entries)} unavailable")
+                  f"{sum(1 for m in report if m.skipped and not m.entries)} unavailable"
+                  + (f"; stopped: {progress.rate_limited} -- resume with --since {progress.resume_after or args.since}"
+                     if progress.rate_limited else ""))
             return 0
         if args.kb_command == "build-advisories":
             from frame.sca.advisories import build_advisories

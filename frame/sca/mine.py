@@ -42,6 +42,10 @@ class MineError(Exception):
     pass
 
 
+class RateLimited(MineError):
+    """GitHub's API quota is spent: stop, and resume from the last advisory fully processed."""
+
+
 def commit_links(record: dict) -> List[Tuple[str, str, str]]:
     out = []
     for ref in record.get("references") or []:
@@ -71,6 +75,9 @@ class GitHubSource:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.read()
         except urllib.error.HTTPError as e:
+            remaining = e.headers.get("X-RateLimit-Remaining") if e.headers else None
+            if e.code == 429 or (e.code == 403 and remaining == "0"):
+                raise RateLimited(f"GitHub API rate limit (resets at {e.headers.get('X-RateLimit-Reset', '?')})") from e
             raise MineError(f"{url}: HTTP {e.code}") from e
         except (urllib.error.URLError, OSError) as e:
             raise MineError(f"{url}: {e}") from e
@@ -96,6 +103,8 @@ class GitHubSource:
         try:
             data = self._cached(f"{owner}__{repo}__{ref[:12]}/files/{path}.gz", lambda: self._get(
                 f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}", raw=True))
+        except RateLimited:
+            raise
         except MineError:
             return None
         return data.decode("utf-8", "replace")
@@ -389,6 +398,7 @@ def _lift(fns: List[Fn], changed: List[Fn], depth: int = 3) -> Dict[str, str]:
 @dataclass
 class Mined:
     advisory: str
+    modified: str = ""                                          # the OSV record's `modified`
     entries: List[dict] = field(default_factory=list)
     internal_only: List[str] = field(default_factory=list)    # changed functions nothing public reaches
     outside_functions: List[str] = field(default_factory=list)  # files changed outside any function
@@ -400,7 +410,7 @@ class Mined:
 
 
 def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
-    res = Mined(record["id"])
+    res = Mined(record["id"], str(record.get("modified") or ""))
     lang = _ECO_LANG.get(ecosystem)
     if lang is None:
         return res
@@ -408,6 +418,8 @@ def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
     for owner, repo, sha in commit_links(record):
         try:
             commit = source.commit(owner, repo, sha)
+        except RateLimited:
+            raise
         except MineError as e:
             res.skipped.append(str(e))
             continue
@@ -454,12 +466,26 @@ def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
     return res
 
 
+@dataclass
+class Progress:
+    processed: int = 0
+    rate_limited: str = ""                     # why the run stopped early, if it did
+    resume_after: str = ""                     # `modified` of the last advisory fully processed
+
+
 def mine(records: Iterable[dict], ecosystems: Iterable[str], source, limit: Optional[int] = None,
-         existing: Optional[Dict[str, Dict[str, List[dict]]]] = None) -> Tuple[Dict[str, Dict[str, List[dict]]], List[Mined]]:
+         existing: Optional[Dict[str, Dict[str, List[dict]]]] = None, since: Optional[str] = None,
+         progress: Optional[Progress] = None) -> Tuple[Dict[str, Dict[str, List[dict]]], List[Mined]]:
     """{ecosystem: {advisory id: entries}}, merged over `existing` (curated entries win: an
-    advisory that already has functions keeps them and gains only new ids)."""
+    advisory that already has functions keeps them and gains only new ids). With `since`, only
+    records modified after it, oldest first; `progress` says how far the run got, so a run cut
+    short by GitHub's rate limit resumes exactly there (`resume_after` as the next `since`)."""
     out: Dict[str, Dict[str, List[dict]]] = {e: dict((existing or {}).get(e, {})) for e in ecosystems}
     report: List[Mined] = []
+    prog = progress if progress is not None else Progress()
+    if since is not None:
+        records = sorted((r for r in records if isinstance(r, dict) and str(r.get("modified") or "") > since),
+                         key=lambda r: (str(r.get("modified") or ""), r.get("id", "")))
     n = 0
     for rec in records:
         if not isinstance(rec, dict) or rec.get("withdrawn") or not commit_links(rec):
@@ -472,8 +498,14 @@ def mine(records: Iterable[dict], ecosystems: Iterable[str], source, limit: Opti
             if limit is not None and n >= limit:
                 return out, report
             n += 1
-            m = mine_record(rec, eco, normalize_name(eco, name) if eco == NPM else name, source)
+            try:
+                m = mine_record(rec, eco, normalize_name(eco, name) if eco == NPM else name, source)
+            except RateLimited as e:
+                prog.rate_limited = str(e)                    # this advisory is not done: resume at it
+                return out, report
             report.append(m)
+            prog.processed += 1
+            prog.resume_after = max(prog.resume_after, m.modified)
             if m.entries:
                 have = out[eco].setdefault(rec["id"], [])
                 ids = {x["id"] for x in have}
