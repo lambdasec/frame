@@ -87,6 +87,12 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--plan", action="store_true",
                              help="With --vulns: the smallest upgrade that leaves every known advisory for each "
                                   "vulnerable package, and what it takes (re-lock, raise a requirement, override)")
+    deps_parser.add_argument("--vex", choices=["openvex", "cyclonedx"],
+                             help="Print a VEX document (OpenVEX 0.2.0, or CycloneDX 1.6 with vulnerability analysis) "
+                                  "instead of the report; implies --vulns. Decisions in .frame/vex.toml are included")
+    deps_parser.add_argument("--product", help="With --vex: the product identifier (default: pkg:generic/<directory>)")
+    deps_parser.add_argument("--dev-not-shipped", action="store_true",
+                             help="With --vex: state dev-only dependencies not_affected (component_not_present)")
     deps_parser.add_argument("--apply", action="store_true",
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
@@ -496,6 +502,8 @@ def cmd_deps(args) -> int:
         excluded.add(parts[0] if len(parts) == 1 else parts)
     report = read_dependencies(target, exclude_dirs=excluded, resolve=args.resolve)
     findings = None
+    if args.vex:
+        args.vulns = True
     if args.vulns:
         from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
         db = AdvisoryDB.cached(ecosystems_of(report.files))
@@ -509,6 +517,27 @@ def cmd_deps(args) -> int:
         plans = None
         outcome = None
         verified = None
+        if args.vex:
+            from frame.sca.plan import plan
+            from frame.sca.vex import (VexError, build_statements, load_decisions, product_id, to_cyclonedx,
+                                       to_openvex)
+            try:
+                decisions = load_decisions(target)
+            except VexError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
+            stmts, vex_warnings = build_statements(findings, plan(findings, report.files, db), decisions,
+                                                   args.dev_not_shipped)
+            for w in report.warnings + vex_warnings:
+                print(f"warning: {w}", file=sys.stderr)
+            prod = product_id(target, args.product)
+            doc = to_openvex(stmts, prod) if args.vex == "openvex" else to_cyclonedx(stmts, prod)
+            text = json.dumps(doc, indent=2)
+            if args.output:
+                Path(args.output).write_text(text + "\n", encoding="utf-8")
+            else:
+                print(text)
+            return 1 if any(s.conflict for s in stmts) else 0
         if args.plan or args.apply:
             from frame.sca.apply import apply_plan
             from frame.sca.plan import plan

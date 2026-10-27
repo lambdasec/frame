@@ -62,7 +62,7 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
   3. Done: code mitigation (`frame fix DIR --deps`, `frame/sca/mitigate.py`): the LLM proposes, the taint engine decides by re-running the whole analysis on a patched copy (removed / untainted, nothing new); exact-value guards (constant allowlists, equality) cut a flow to a vulnerable function, character classes do not.
   4. Configuration mitigation from curated per-advisory data (e.g. Log4Shell's `formatMsgNoLookups`).
   5. Backported patches (upstream fix commit applied to the pinned version, `patch-package`, vendoring) when no upgrade is possible.
-  6. VEX (OpenVEX, CycloneDX) per finding. "Not affected" only from a verified mitigation or an explicit, recorded justification: reachability is positive evidence only and never proves a package unreachable.
+  6. Done: VEX (`frame deps --vex`, `frame scan --sca --vex`, `frame/sca/vex.py`): OpenVEX 0.2.0 and CycloneDX 1.6, validated in tests against the official schemas; `affected` with the plan's upgrade, `exploitable` for a verified flow, `not_affected` only from a decision recorded in `.frame/vex.toml` (and never against a verified flow) or opt-in for dev-only dependencies.
 
 ## Source languages
 

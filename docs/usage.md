@@ -40,6 +40,19 @@ frame deps --vulns --apply --relock   # write the edits, re-lock with the packag
 
 `--plan` also shows the edits as a unified diff, and `--apply` writes them: the version in `package.json`, requirements files, `pyproject.toml` (PEP 621 and Poetry dependency tables only), `pom.xml` (the property when the version is `${...}`), `.csproj` or `Directory.Packages.props`, and `go.mod`, or the override (`overrides`, `resolutions`, `pnpm.overrides`, uv `constraint-dependencies`, `dependencyManagement`, a direct reference). Only the version changes, so formatting and comments are kept; an edit Frame cannot make safely (an upper bound that excludes the fix) is listed as manual. `--relock` then regenerates the lockfile with its own package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`), and Frame re-reads the graph and reports what is fixed and what remains.
 
+`frame deps --vex openvex` (or `cyclonedx`) prints a VEX document for the vulnerable dependencies: OpenVEX 0.2.0, or a CycloneDX 1.6 BOM with `vulnerabilities[].analysis`. Statements follow Frame's evidence: a vulnerable version present is `affected`, with the upgrade from the plan as its action; with `frame scan --sca --vex cyclonedx --vex-out vex.json`, a vulnerable function that attacker data reaches is `exploitable`, with the flow. Frame never states `not_affected` on its own, because reachability cannot prove a package unreachable: record decisions in `.frame/vex.toml` and they are included, unless a verified flow contradicts one (then the statement stays `affected` and the conflict is reported). `--dev-not-shipped` states dev-only dependencies `not_affected` (`component_not_present`).
+
+```toml
+# .frame/vex.toml
+[[statement]]
+vulnerability = "CVE-2021-23337"            # any id or alias
+package = "lodash"                          # optional
+status = "not_affected"
+justification = "vulnerable_code_cannot_be_controlled_by_adversary"
+impact_statement = "Templates come from a fixed map."
+author = "appsec@example.com"
+```
+
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 
 ## Guardrails for CI and coding agents

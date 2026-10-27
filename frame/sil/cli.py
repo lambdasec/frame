@@ -109,6 +109,11 @@ def add_pack_args(scan_parser) -> None:
         "--no-packs", action="store_true",
         help="Do not load the built-in framework packs (project and --pack packs still load).")
     scan_parser.add_argument(
+        "--vex", choices=["openvex", "cyclonedx"],
+        help="With --sca: also write a VEX document for the dependency findings to --vex-out (attacker data "
+             "reaching a vulnerable function is stated exploitable)")
+    scan_parser.add_argument("--vex-out", metavar="FILE", help="Where --vex writes the VEX document")
+    scan_parser.add_argument(
         "--sca", action="store_true",
         help="Also report vulnerable dependencies (directory targets): match the lockfiles against the "
              "cached advisories (`frame kb pull --advisories`), and make each vulnerable function a taint "
@@ -580,6 +585,25 @@ def cmd_scan(args) -> int:
     if sca_run is not None:
         from frame.sca.scan import link
         link(sca_run, results, target)
+        if getattr(args, "vex", None):
+            if not getattr(args, "vex_out", None):
+                print("Error: --vex needs --vex-out FILE", file=sys.stderr)
+                return 2
+            from frame.sca.vex import VexError, build_statements, load_decisions, product_id, to_cyclonedx, to_openvex
+            from frame.sca.advisories import AdvisoryDB
+            from frame.sca.plan import plan as sca_plan
+            from frame.sca import read_dependencies
+            try:
+                decisions = load_decisions(target)
+            except VexError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
+            files = read_dependencies(target).files
+            db = AdvisoryDB.cached(sorted({f["ecosystem"] for f in sca_run.findings}))
+            stmts, vex_warnings = build_statements(sca_run.findings, sca_plan(sca_run.findings, files, db), decisions)
+            sca_run.warnings.extend(vex_warnings)
+            doc = to_openvex(stmts, product_id(target)) if args.vex == "openvex" else to_cyclonedx(stmts, product_id(target))
+            Path(args.vex_out).write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
     # Stable identities for every finding, then the baseline comparison.
     assign_fingerprints(results, root)
