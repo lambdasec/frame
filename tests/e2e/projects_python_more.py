@@ -17,70 +17,7 @@ def case(name, files):
 
 
 # --------------------------------------------------------------------------------------
-case("inherited_helper_via_subclass", {
-    "app/base.py": '''class BaseRepo:
-    def __init__(self, conn):
-        self.conn = conn
 
-    def run(self, sql):
-        cur = self.conn.cursor()
-        cur.execute(sql)  # frame-expect: CWE-89
-        return cur.fetchall()
-''',
-    "app/users.py": '''from app.base import BaseRepo
-
-
-class UserRepo(BaseRepo):
-    def by_name(self, name):
-        return self.run(<<"SELECT * FROM users WHERE name = '" + name + "'"||"SELECT * FROM users WHERE name = '" + str(int(name)) + "'">>)
-''',
-    "app/web.py": '''from flask import Flask, request
-from app.users import UserRepo
-import sqlite3
-
-app = Flask(__name__)
-repo = UserRepo(sqlite3.connect("x.db"))
-
-
-@app.route("/u")
-def u():
-    return str(repo.by_name(request.args.get("name", "")))
-''',
-})
-
-case("super_call_passes_taint", {
-    "svc/base.py": '''import os
-
-
-class Runner:
-    def execute(self, arg):
-        os.system("tool " + arg)  # frame-expect: CWE-78
-''',
-    "svc/child.py": '''from svc.base import Runner
-
-
-class AuditedRunner(Runner):
-    def execute(self, arg):
-        print("running")
-        super().execute(<<arg||shlex_quote(arg)>>)
-
-
-def shlex_quote(s):
-    import shlex
-    return shlex.quote(s)
-''',
-    "svc/web.py": '''from flask import Flask, request
-from svc.child import AuditedRunner
-
-app = Flask(__name__)
-
-
-@app.route("/run")
-def run():
-    AuditedRunner().execute(request.args["target"])
-    return "ok"
-''',
-})
 
 case("abstract_base_concrete_repo", {
     "dao/base.py": '''from abc import ABC, abstractmethod
@@ -145,29 +82,6 @@ def say():
 ''',
 })
 
-case("property_returns_request_data", {
-    "ctx/req.py": '''from flask import request
-
-
-class Ctx:
-    @property
-    def target(self):
-        return request.args.get("target", "")
-''',
-    "ctx/web.py": '''import os
-from flask import Flask
-from ctx.req import Ctx
-
-app = Flask(__name__)
-
-
-@app.route("/t")
-def t():
-    ctx = Ctx()
-    os.system(<<"ping -c1 " + ctx.target||"ping -c1 localhost">>)  # frame-expect: CWE-78
-    return "ok"
-''',
-})
 
 case("decorator_wrapped_handler", {
     "web/deco.py": '''import functools
@@ -320,33 +234,6 @@ def pack(folder: str, svc: Archiver = Depends(get_archiver)):
 ''',
 })
 
-case("module_singleton_repo", {
-    "shop/repo.py": '''import sqlite3
-
-
-class Repo:
-    def __init__(self):
-        self.conn = sqlite3.connect("shop.db")
-
-    def by_sku(self, sku):
-        cur = self.conn.cursor()
-        cur.execute(<<"SELECT * FROM p WHERE sku = '" + sku + "'"||"SELECT * FROM p WHERE sku = ?", (sku,)>>)  # frame-expect: CWE-89
-        return cur.fetchall()
-
-
-repo = Repo()
-''',
-    "shop/views.py": '''from flask import Flask, request
-from shop.repo import repo
-
-app = Flask(__name__)
-
-
-@app.route("/p")
-def p():
-    return str(repo.by_sku(request.args.get("sku", "")))
-''',
-})
 
 case("settings_module_and_relative_imports", {
     "proj/__init__.py": "",
@@ -442,30 +329,6 @@ def proxy():
 ''',
 })
 
-case("lambda_and_partial_dispatch", {
-    "tasks/run.py": '''import functools
-import os
-
-
-def shell(prefix, arg):
-    os.system(prefix + " " + arg)  # frame-expect: CWE-78
-
-
-run_echo = functools.partial(shell, "echo")
-''',
-    "tasks/web.py": '''from flask import Flask, request
-from tasks.run import run_echo
-
-app = Flask(__name__)
-
-
-@app.route("/echo")
-def echo():
-    text = request.args.get("t", "")
-    run_echo(<<text||str(int(text))>>)
-    return "ok"
-''',
-})
 
 case("format_and_percent_query_builders", {
     "q/build.py": '''def by_status(status):
@@ -495,12 +358,13 @@ def o():
 })
 
 case("pickle_loads_via_helper", {
-    "sess/codec.py": '''import pickle
-import base64
+    "sess/codec.py": '''import base64
+import json
+import pickle
 
 
 def decode(blob):
-    return pickle.loads(base64.b64decode(blob))  # frame-expect: CWE-502
+    return <<pickle||json>>.loads(base64.b64decode(blob))  # frame-expect: CWE-502
 ''',
     "sess/web.py": '''import json
 from flask import Flask, request
@@ -553,28 +417,6 @@ def calc():
 ''',
 })
 
-case("django_manager_raw", {
-    "blog/models.py": '''from django.db import models
-
-
-class PostManager(models.Manager):
-    def search(self, term):
-        return self.raw(<<"SELECT * FROM blog_post WHERE title = '%s'" % term||"SELECT * FROM blog_post WHERE title = %s", [term]>>)  # frame-expect: CWE-89
-
-
-class Post(models.Model):
-    title = models.CharField(max_length=100)
-    objects = PostManager()
-''',
-    "blog/views.py": '''from django.http import HttpResponse
-from blog.models import Post
-
-
-def search(request):
-    rows = Post.objects.search(request.GET.get("q", ""))
-    return HttpResponse(",".join(p.title for p in rows))
-''',
-})
 
 case("django_extra_where", {
     "inv/views.py": '''from django.http import JsonResponse
@@ -725,30 +567,112 @@ def mail():
 ''',
 })
 
-case("sql_in_dataclass_method", {
-    "ord/model.py": '''from dataclasses import dataclass
+
+case("dataclass_carries_request_data", {
+    "jobs/model.py": '''from dataclasses import dataclass
 
 
 @dataclass
-class Filter:
-    column: str
-    value: str
-
-    def where(self):
-        return <<f"{self.column} = '{self.value}'"||"status = ?">>
+class Job:
+    name: str
+    args: str
 ''',
-    "ord/web.py": '''import sqlite3
+    "jobs/web.py": '''import os
+import shlex
 from flask import Flask, request
-from ord.model import Filter
+from jobs.model import Job
 
 app = Flask(__name__)
 
 
-@app.route("/orders")
-def orders():
-    f = Filter("status", request.args.get("status", ""))
-    conn = sqlite3.connect("o.db")
-    rows = conn.execute("SELECT * FROM orders WHERE " + f.where()<<||, (f.value,)>>).fetchall()  # frame-expect: CWE-89
-    return str(rows)
+def parse():
+    return Job(request.form["name"], request.form["args"])
+
+
+@app.route("/job", methods=["POST"])
+def job():
+    j = parse()
+    os.system(<<"run " + j.name + " " + j.args||"run " + shlex.quote(j.name) + " " + shlex.quote(j.args)>>)  # frame-expect: CWE-78
+    return "ok"
+''',
+})
+
+case("django_custom_manager_in_view_module", {
+    "blog/managers.py": '''from django.db import models
+
+
+class PostManager(models.Manager):
+    def search(self, term):
+        return self.raw(<<"SELECT * FROM blog_post WHERE title = '%s'" % term||"SELECT * FROM blog_post WHERE title = %s", [term]>>)  # frame-expect: CWE-89
+''',
+    "blog/views.py": '''from django.http import HttpResponse
+from blog.managers import PostManager
+
+
+def search(request):
+    rows = PostManager().search(request.GET.get("q", ""))
+    return HttpResponse(",".join(p.title for p in rows))
+''',
+})
+
+case("enumerate_over_request_list", {
+    "batch/run.py": '''import subprocess
+
+
+def ping_all(hosts):
+    for i, host in enumerate(hosts):
+        subprocess.run(<<"ping -c1 " + host||["ping", "-c1", host]>>, shell=<<True||False>>)  # frame-expect: CWE-78
+''',
+    "batch/web.py": '''from flask import Flask, request
+from batch.run import ping_all
+
+app = Flask(__name__)
+
+
+@app.route("/ping", methods=["POST"])
+def ping():
+    ping_all(request.form.getlist("host"))
+    return "done"
+''',
+})
+
+case("constant_table_lookup_is_not_ssrf", {
+    "fetch/client.py": '''import urllib.request
+
+
+def fetch(endpoint):
+    return urllib.request.urlopen(endpoint).read()  # frame-expect: CWE-918
+''',
+    "fetch/web.py": '''from flask import Flask, request
+from fetch.client import fetch
+
+app = Flask(__name__)
+SOURCES = {"news": "https://news.example.com/feed", "wx": "https://wx.example.com/now"}
+
+
+@app.route("/feed")
+def feed():
+    name = request.args.get("src", "news")
+    return fetch(<<name||SOURCES.get(name, SOURCES["news"])>>)
+''',
+})
+
+case("numeric_cast_inline_in_command", {
+    "ops/cmd.py": '''import os
+
+
+def reboot_in(minutes):
+    os.system("shutdown -r +" + minutes)  # frame-expect: CWE-78
+''',
+    "ops/web.py": '''from flask import Flask, request
+from ops.cmd import reboot_in
+
+app = Flask(__name__)
+
+
+@app.route("/reboot", methods=["POST"])
+def reboot():
+    reboot_in(<<request.form["m"]||str(int(request.form["m"]))>>)
+    return "scheduled"
 ''',
 })

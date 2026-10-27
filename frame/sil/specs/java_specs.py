@@ -565,7 +565,10 @@ STRING_SPECS = {
     "toLowerCase": _propagator([0], "String.toLowerCase"),
     "toUpperCase": _propagator([0], "String.toUpperCase"),
     "trim": _propagator([0], "String.trim"),
-    "String.format": _propagator([0, 1], "String.format"),
+    "String.format": _propagator([0, 1, 2, 3, 4, 5], "String.format"),
+    # a static formatter, not PrintWriter.format (the bare `format` spec is an XSS sink)
+    "MessageFormat.format": _propagator([0, 1, 2, 3, 4, 5], "MessageFormat.format"),
+    "java.text.MessageFormat.format": _propagator([0, 1, 2, 3, 4, 5], "MessageFormat.format"),
     "StringBuilder.append": _propagator([0], "StringBuilder.append"),
     "StringBuffer.append": _propagator([0], "StringBuffer.append"),
     "toString": _propagator([0], "Object.toString"),
