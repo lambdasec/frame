@@ -211,3 +211,11 @@ def test_a_tampered_advisory_table_is_refused(tmp_path):
     (mirror / "advisories" / "npm.json.gz").write_bytes(gzip.compress(b'{"schema":1,"packages":{}}'))
     with pytest.raises(KBError, match="sha256"):
         pull(None, source=str(mirror))
+
+
+def test_malicious_package_records_are_critical():
+    rec = {"id": "MAL-2025-1", "summary": "Malicious code in evil-pkg (npm)",
+           "affected": [{"package": {"ecosystem": "npm", "name": "evil-pkg"},
+                         "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}]}]}
+    adv = compact([rec], "npm")["packages"]["evil-pkg"][0]
+    assert adv["severity"] == "critical" and is_affected("npm", "1.0.0", adv)

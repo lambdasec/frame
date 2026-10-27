@@ -110,29 +110,45 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
+def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:
+    """(ecosystem, normalised package name, advisory entry) for each `affected` package of a
+    record in `ecosystems`. Malicious-package records (OpenSSF, `MAL-` ids) carry no rating;
+    installing one runs attacker code, so they are critical."""
+    if not isinstance(rec, dict) or rec.get("withdrawn") or not rec.get("id"):
+        return
+    wanted = set(ecosystems)
+    for aff in rec.get("affected") or []:
+        pkg = aff.get("package") or {}
+        eco = pkg.get("ecosystem", "").split(":", 1)[0]
+        if eco not in wanted or not pkg.get("name"):
+            continue
+        ranges = [{"type": r["type"], "events": [e for e in r.get("events") or [] if isinstance(e, dict)]}
+                  for r in aff.get("ranges") or [] if isinstance(r, dict) and r.get("type")]
+        sev, score, vector = _severity(rec, aff)
+        if sev is None and rec["id"].startswith("MAL-"):
+            sev = "critical"
+        yield eco, normalize_name(eco, pkg["name"]), {
+            "id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
+            "summary": (rec.get("summary") or rec.get("details") or "")[:300].strip(),
+            "severity": sev, "score": score, "cvss": vector,
+            "published": rec.get("published"), "modified": rec.get("modified"),
+            "ranges": ranges, "versions": [str(v) for v in aff.get("versions") or []],
+            "functions": _functions(aff)}
+
+
+def table(ecosystem: str, by_pkg: Dict[str, List[dict]]) -> dict:
+    packages = {name: _merge_aliases(advs) for name, advs in sorted(by_pkg.items())}
+    return {"schema": SCHEMA, "ecosystem": ecosystem, "packages": packages}
+
+
 def compact(records: Iterable[dict], ecosystem: str) -> dict:
     """The table for `ecosystem` from OSV records (any ecosystem's records may be passed;
     only `affected` entries of this ecosystem are kept)."""
     by_pkg: Dict[str, List[dict]] = {}
     for rec in records:
-        if not isinstance(rec, dict) or rec.get("withdrawn") or not rec.get("id"):
-            continue
-        for aff in rec.get("affected") or []:
-            pkg = aff.get("package") or {}
-            if pkg.get("ecosystem", "").split(":", 1)[0] != ecosystem or not pkg.get("name"):
-                continue
-            ranges = [{"type": r["type"], "events": [e for e in r.get("events") or [] if isinstance(e, dict)]}
-                      for r in aff.get("ranges") or [] if isinstance(r, dict) and r.get("type")]
-            sev, score, vector = _severity(rec, aff)
-            by_pkg.setdefault(normalize_name(ecosystem, pkg["name"]), []).append({
-                "id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
-                "summary": (rec.get("summary") or rec.get("details") or "")[:300].strip(),
-                "severity": sev, "score": score, "cvss": vector,
-                "published": rec.get("published"), "modified": rec.get("modified"),
-                "ranges": ranges, "versions": [str(v) for v in aff.get("versions") or []],
-                "functions": _functions(aff)})
-    packages = {name: _merge_aliases(advs) for name, advs in sorted(by_pkg.items())}
-    return {"schema": SCHEMA, "ecosystem": ecosystem, "packages": packages}
+        for _, name, entry in entries(rec, (ecosystem,)):
+            by_pkg.setdefault(name, []).append(entry)
+    return table(ecosystem, by_pkg)
 
 
 _ID_RANK = (("GHSA-", 0), ("CVE-", 1))

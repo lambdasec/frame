@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 from frame.sca.model import CARGO, GO, MAVEN, NPM, NUGET, PYPI, SWIFT, DependencyFile, normalize_name
-from frame.sca.osv import SCHEMA, compact, fixed_versions, is_affected
+from frame.sca.osv import SCHEMA, entries, fixed_versions, is_affected, table
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
 ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT)
@@ -74,15 +74,18 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
     if not re.fullmatch(r"[A-Za-z0-9._-]+", revision):
         raise KBError(f"invalid revision id {revision!r}")
     wanted = list(ecosystems) if ecosystems else list(ECOSYSTEMS)
-    records = list(_records(inputs))
+    by_eco: Dict[str, Dict[str, List[dict]]] = {e: {} for e in wanted}
+    for rec in _records(inputs):                              # one pass; raw records are not kept
+        for eco, name, entry in entries(rec, wanted):
+            by_eco[eco].setdefault(name, []).append(entry)
     out = Path(out)
     files: Dict[str, dict] = {}
     for eco in wanted:
-        table = compact(records, eco)
-        if not table["packages"]:
+        tbl = table(eco, by_eco.pop(eco))
+        if not tbl["packages"]:
             continue
-        table["revision"] = revision
-        raw = json.dumps(table, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        tbl["revision"] = revision
+        raw = json.dumps(tbl, separators=(",", ":"), sort_keys=True).encode("utf-8")
         data = gzip.compress(raw, compresslevel=9, mtime=0)       # reproducible bytes
         rel = table_path(eco)
         target = out / rel
@@ -90,7 +93,7 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         target.write_bytes(data)
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                       "kind": "advisories", "name": eco,
-                      "advisories": sum(len(v) for v in table["packages"].values())}
+                      "advisories": sum(len(v) for v in tbl["packages"].values())}
     manifest = {"schema": KB_SCHEMA, "revision": revision, "files": files}
     out.mkdir(parents=True, exist_ok=True)
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
