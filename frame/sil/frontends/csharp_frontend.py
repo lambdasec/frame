@@ -37,6 +37,7 @@ from frame.sil.instructions import (
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
     ClassInfo, ImportTable, canonical_call, parse_annotation,
@@ -136,6 +137,7 @@ class CSharpFrontend:
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="csharp")
         program.source_files.append(filename)
+        program.syntax_error_line = first_syntax_error_line(tree.root_node)
 
         self._imports, self._local_types = self._collect_declarations(tree.root_node)
         program.imports = self._imports.as_dict()

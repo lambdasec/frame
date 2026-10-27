@@ -45,6 +45,7 @@ from frame.sil.instructions import (
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program, typed_spec_lookup
+from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
@@ -153,6 +154,7 @@ class JavaFrontend:
         program = Program(library_specs=self.specs.copy(), language="java",
                           type_spec_receivers=type_spec_receivers)
         program.source_files.append(filename)
+        program.syntax_error_line = first_syntax_error_line(tree.root_node)
         self._program = program
 
         self._imports, self._package, self._local_types = self._collect_declarations(tree.root_node)

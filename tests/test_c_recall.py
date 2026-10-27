@@ -152,6 +152,16 @@ def test_literal_upper_bound_makes_the_product_safe():
     assert "CWE-190" in cwes(*unguarded)
 
 
+def test_constant_shift_is_not_an_overflow_but_a_shifted_input_is():
+    # `1u << 20` is a compile-time constant; `n << 20` shifts a value read from input.
+    constant = fn("unsigned n;", "char in[16];", "fgets(in, 16, stdin);", "n = atoi(in);",
+                  "if (n == 0 || n > (1u << 20)) {", "return;", "}", 'printf("%u", n);')
+    shifted = fn("unsigned n;", "char in[16];", "fgets(in, 16, stdin);", "n = atoi(in);",
+                 "unsigned size = n << 20;", 'printf("%u", size);')
+    assert "CWE-190" not in cwes(*constant)
+    assert "CWE-190" in cwes(*shifted)
+
+
 def test_literal_bound_too_loose_for_the_multiplier_is_still_flagged():
     loose = fn("int d;", "char in[16];", "fgets(in, 16, stdin);", "d = atoi(in);",
                "if (d < 2000000000) {", "int r = d * 2;", 'printf("%d", r);', "}")

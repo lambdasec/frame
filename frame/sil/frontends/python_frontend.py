@@ -36,6 +36,7 @@ from frame.sil.instructions import (
 )
 from frame.sil.frontends._python_types import infer_canonicals
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
@@ -110,6 +111,7 @@ class PythonFrontend:
         # Create program with library specs
         program = Program(library_specs=self.specs.copy(), language="python")
         program.source_files.append(filename)
+        program.syntax_error_line = first_syntax_error_line(tree.root_node)
 
         self._imports = self._collect_imports(tree.root_node)
         program.imports = self._imports.as_dict()

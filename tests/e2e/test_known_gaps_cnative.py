@@ -209,22 +209,7 @@ int read_msg(int fd, struct msg *out)
     return 0;
 }
 '''),
-    ("shift_constant_flagged_as_overflow", "fp", "CWE-190", "t.c", '''#include <stdint.h>
-#include <unistd.h>
 
-int read_count(int fd, uint32_t *out)
-{
-    uint32_t count;
-    if (read(fd, &count, sizeof(count)) != sizeof(count)) {
-        return -1;
-    }
-    if (count == 0 || count > (1u << 20)) {
-        return -1;
-    }
-    *out = count;
-    return 0;
-}
-'''),
     ("tainted_index_into_global_table", "miss", "CWE-787", "t.c", '''#include <stdint.h>
 #include <sys/socket.h>
 

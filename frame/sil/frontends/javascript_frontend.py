@@ -43,6 +43,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
+from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.procedure import (
     Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS, DB_HANDLE,
     RECEIVER_UNKNOWN, db_method_applies)
@@ -216,6 +217,7 @@ class JavaScriptFrontend:
         # Create program with library specs
         program = Program(library_specs=self.specs.copy(), language=self.language)
         program.source_files.append(filename)
+        program.syntax_error_line = first_syntax_error_line(tree.root_node)
 
         self._imports = ImportTable()
         for local, module in self._module_aliases.items():
@@ -401,6 +403,7 @@ class JavaScriptFrontend:
     # Every function-like node becomes its own procedure -- including callbacks
     # and route handlers like `app.post(path, (req,res) => {...})`, which are
     # the dominant entry points in real Node.js/Express code.
+    _PROTOTYPE_METHOD = re.compile(r"([A-Za-z_$][\w$]*)\.prototype\.([A-Za-z_$][\w$]*)$")
     _FUNC_NODE_TYPES = (
         "function_declaration", "function_expression", "function",
         "arrow_function", "generator_function", "generator_function_declaration",
@@ -531,7 +534,12 @@ class JavaScriptFrontend:
                         name = f"{name}_L{row + 1}"
                         if program.has_procedure(name):
                             name = f"{name}C{col + 1}"
-                    proc = self._translate_function(cur, name=name)
+                    # `C.prototype.m = function () {...}` is method m of the
+                    # constructor function C, like `class C { m() {} }`.
+                    proto = self._PROTOTYPE_METHOD.match(name)
+                    proc = self._translate_function(cur, name=name, is_method=bool(proto))
+                    if proc and proto:
+                        proc.class_name = proto.group(1)
                 if proc:
                     program.add_procedure(proc)
             stack.extend(cur.children)

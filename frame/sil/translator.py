@@ -38,6 +38,9 @@ from .instructions import (
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 
+# A plain local variable name: no field, element or call in it.
+_PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
+
 
 # =============================================================================
 # Vulnerability Types
@@ -2017,6 +2020,57 @@ class SILTranslator:
         r"^(?:[\w.]+\.)?(?:Set|List|Arrays|ImmutableSet|ImmutableList)\.(?:of|asList|copyOf)"
         r"\((\s*\"[^\"]*\"\s*(?:,\s*\"[^\"]*\"\s*)*)\)\.contains$")
 
+    # Path containment: `x.startsWith(BASE)` confines x to BASE only when x is normalised
+    # (no `..` left). `_call_guard` marks the prefix test; `_apply_branch_guards` turns
+    # it into a filesystem sanitisation when x came from one of these calls.
+    _CONTAINED = "@contained"
+    _PATH_SEPARATORS = frozenset({"path.sep", "os.sep", "os.path.sep", "File.separator",
+                                  "Path.DirectorySeparatorChar"})
+    _PATH_NORMALIZERS = frozenset({
+        "path.resolve", "path.normalize", "fs.realpathSync", "realpathSync", "os.path.realpath",
+        "os.path.abspath", "os.path.normpath", "getCanonicalPath", "getCanonicalFile",
+        "toRealPath", "Path.GetFullPath", "System.IO.Path.GetFullPath"})
+
+    @classmethod
+    def _constant_prefix(cls, exp) -> bool:
+        """Is `exp` a directory prefix built from constants (`BASE`, `BASE + path.sep`,
+        `"/srv/data/"`), not just a separator (every absolute path starts with "/")?"""
+        parts = []
+
+        def flatten(e):
+            if isinstance(e, ExpBinOp) and e.op in ("+", "++"):
+                flatten(e.left)
+                flatten(e.right)
+            elif isinstance(e, ExpStringConcat):
+                for p in e.parts:
+                    flatten(p)
+            else:
+                parts.append(e)
+        flatten(exp)
+        named = False
+        for p in parts:
+            if isinstance(p, ExpConst) and isinstance(p.value, str):
+                named = named or bool(p.value.strip("/\\"))
+            elif isinstance(p, ExpVar) and cls._CONST_NAME.match(str(p.var)):
+                named = True
+            elif cls._flatten(p) not in cls._PATH_SEPARATORS:
+                return False
+        return named
+
+    def _is_normalized_path(self, var: str, state: "SymbolicState") -> bool:
+        """Was `var` (through plain copies) produced by a path-normalising call?"""
+        for _ in range(8):
+            value = state.heap.get(var)
+            if not isinstance(value, str):
+                return False
+            if value.startswith("call_"):
+                func = value[len("call_"):]
+                return func in self._PATH_NORMALIZERS or func.rsplit(".", 1)[-1] in self._PATH_NORMALIZERS
+            if not _PLAIN_LOCAL.match(value):
+                return False
+            var = value
+        return False
+
     # one atom of a safe-charset regex: a class of letters / digits / underscore / hyphen
     # (or \d, \w) with an optional quantifier. Anything else -- `.`, alternation, a
     # negated class, an escaped metacharacter -- makes the pattern unprovable.
@@ -2190,6 +2244,11 @@ class SILTranslator:
             pat = cls._regex_text(args[0], language)
             kinds = cls._regex_proves(pat, "full") if pat is not None else None
             return {recv: kinds} if kinds else {}
+        # `full.startsWith(BASE + path.sep)`: a prefix built from constants. It confines
+        # only a normalised path ("/srv/a/../etc" passes too); the caller checks that.
+        if recv and meth in ("startsWith", "startswith", "StartsWith") and len(args) == 1 \
+                and cls._constant_prefix(args[0]):
+            return {recv: frozenset({cls._CONTAINED})}
         # membership: ALLOWED.includes(x) / .contains(x), Object.values(ALLOWED).includes(x),
         # Set.of("a", "b").contains(x)
         if len(args) == 1:
@@ -2656,6 +2715,11 @@ class SILTranslator:
         elif (exp_str.startswith('"') and exp_str.endswith('"')) or \
              (exp_str.startswith("'") and exp_str.endswith("'")):
             state.set_constant(target, exp_str[1:-1])
+        # A literal replaces a plain local's value outright, so whatever taint it
+        # held is gone (`if (bad(next)) next = "/home";`). Fields and elements
+        # are left alone: the name may stand for more than one location.
+        if isinstance(instr.exp, ExpConst) and _PLAIN_LOCAL.match(target):
+            state.tainted.pop(target, None)
 
         # Propagate secure parser status: parser = $parser_7
         for src_var in source_vars:
@@ -4346,7 +4410,13 @@ class SILTranslator:
                 condition, getattr(self.program, "constant_regexes", None),
                 getattr(self.program, "language", "")):
             if holds_when == is_true_branch:
-                state.add_sanitization(var, list(kinds))
+                kinds = set(kinds)
+                if self._CONTAINED in kinds:
+                    kinds.discard(self._CONTAINED)
+                    if self._is_normalized_path(var, state):
+                        kinds.update(("filesystem", "path"))   # specs use both names
+                if kinds:
+                    state.add_sanitization(var, list(kinds))
 
         # Code injection validation: startswith/endswith checks
         # Pattern: if not bar.startswith('\'') or not bar.endswith('\''):
@@ -7873,6 +7943,13 @@ class SILTranslator:
             common = list(set(s1.sanitized[var]) & set(s2.sanitized[var]))
             if common:
                 merged.sanitized[var] = common
+        # A variable tainted on one path only gets its merged taint from that path,
+        # so that path's sanitization holds: `if (bad(x)) x = "/home";` leaves the
+        # validated x on one side and a constant on the other.
+        for one, other in ((s1, s2), (s2, s1)):
+            for var in one.sanitized.keys() - other.sanitized.keys():
+                if var in one.tainted and var not in other.tainted:
+                    merged.sanitized[var] = list(one.sanitized[var])
 
         # Freed: union (freed in either path)
         merged.freed = s1.freed | s2.freed
@@ -7902,11 +7979,15 @@ class SILTranslator:
         # intersection of the dual initialized sets. CWE-457.
         merged.uninitialized = s1.uninitialized | s2.uninitialized
 
-        # Asserted safe: intersection
+        # Asserted safe: intersection (or one path's, as for `sanitized` above)
         for var in set(s1.asserted_safe.keys()) & set(s2.asserted_safe.keys()):
             merged.asserted_safe[var] = list(
                 set(s1.asserted_safe[var]) & set(s2.asserted_safe[var])
             )
+        for one, other in ((s1, s2), (s2, s1)):
+            for var in one.asserted_safe.keys() - other.asserted_safe.keys():
+                if var in one.tainted and var not in other.tainted:
+                    merged.asserted_safe[var] = list(one.asserted_safe[var])
 
         # List elements: conservative union (tainted in either path)
         for list_var in set(s1.list_elements.keys()) | set(s2.list_elements.keys()):

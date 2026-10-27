@@ -80,7 +80,6 @@ def test_vulnerability_before_a_syntax_error_in_the_same_file_is_still_reported(
     assert {c for _, _, c in reported(doc)} == {"CWE-78"}
 
 
-@pytest.mark.xfail(strict=True, reason="a file that does not parse is scanned as if it were clean, with no warning")
 def test_syntax_error_file_produces_a_warning(tmp_path):
     write_tree(tmp_path, {"broken.py": "def f(:\n    if\n", "app.py": VULN_PY})
     _, doc = scan_json(tmp_path)
@@ -286,7 +285,6 @@ def test_file_without_an_extension_is_scanned_when_named_directly(tmp_path):
     assert [c for _, _, c in reported(doc)] == ["CWE-78"]
 
 
-@pytest.mark.xfail(strict=True, reason="a directory scan ignores extensionless files, shebang scripts included")
 def test_extensionless_python_script_is_scanned_in_a_directory_scan(tmp_path):
     write_tree(tmp_path, {"deploy-tool": "#!/usr/bin/env python3\n" + VULN_PY, "README": "docs\n"})
     done, doc = scan_json(tmp_path)

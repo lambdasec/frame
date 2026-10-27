@@ -653,3 +653,49 @@ app.get("/ping", (req, res) => {
 });
 ''',
 })
+
+# Containment: `path.resolve(BASE, x)` then `if (!full.startsWith(BASE + path.sep)) throw` (a normalised path under a constant base).
+case("path_startswith_guard", {
+    "src/static.js": '''const fs = require("fs");
+const path = require("path");
+
+const BASE = path.resolve("/srv/assets");
+
+function readAsset(name) {
+  const full = path.resolve(BASE, name);
+<<  // no containment check||  if (!full.startsWith(BASE + path.sep)) {
+    throw new Error("outside base");
+  }>>
+  return fs.readFileSync(full); // frame-expect: CWE-22
+}
+
+module.exports = { readAsset };
+''',
+    "src/app.js": '''const express = require("express");
+const { readAsset } = require("./static");
+
+const app = express();
+
+app.get("/asset", (req, res) => {
+  res.send(readAsset(req.query.name));
+});
+''',
+})
+
+# A constructor function's prototype method (`Exporter.prototype.run = function`) resolves like a class method.
+case("prototype_constructor_method_in_file", {
+    "app.js": '''const express = require("express");
+const { execSync } = require("child_process");
+const app = express();
+
+function Exporter() {}
+Exporter.prototype.run = function (name) {
+  return execSync("export --name " + name).toString(); // frame-expect: CWE-78
+};
+
+app.get("/e", (req, res) => {
+  const e = new Exporter();
+  res.send(e.run(<<req.query.name||String(parseInt(req.query.name, 10))>>));
+});
+''',
+})

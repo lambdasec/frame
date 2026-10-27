@@ -22,6 +22,9 @@ from frame.sil.types import Location
 from frame.sil.translator import VulnType
 from frame.sil.analyzers.sl_memory_analyzer import SLMemoryAnalyzer, MemoryVuln as SLMemoryVuln
 
+# A C integer literal with its suffixes: 20, 1u, 0x1UL.
+_C_INT_LITERAL = re.compile(r'(?:0[xX][0-9a-fA-F]+|\d+)[uUlL]*$')
+
 
 class HeapEffect(Enum):
     """Effect a function has on heap state"""
@@ -2430,7 +2433,9 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         if shift_left_match:
             var = shift_left_match.group(1)
             shift_amt = shift_left_match.group(2)
-            if var not in overflow_guarded_vars:
+            # `1u << 20` is a constant expression: nothing at run time can make it overflow.
+            constant = _C_INT_LITERAL.match(var) and _C_INT_LITERAL.match(shift_amt)
+            if var not in overflow_guarded_vars and not constant:
                 try:
                     shift_val = int(shift_amt)
                     if shift_val >= 16:

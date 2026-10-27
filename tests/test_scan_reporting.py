@@ -100,6 +100,33 @@ def test_h_header_is_cpp_only_when_it_uses_cpp():
     assert language_for_file("a.h", "#include <string>\nstd::string name();\n") == "cpp"
 
 
+def test_extensionless_script_by_shebang():
+    assert language_for_file("bin/deploy", "#!/usr/bin/env python3\nimport os\n") == "python"
+    assert language_for_file("bin/deploy", "#!/usr/bin/python3.11 -u\n") == "python"
+    assert language_for_file("bin/serve", "#!/usr/bin/env -S node --no-warnings\n") == "javascript"
+    assert language_for_file("bin/run", "#!/bin/bash\necho hi\n") is None
+    assert language_for_file("README", "docs\n") is None
+    # An extension still decides: a shebang never overrides it.
+    assert language_for_file("tool.py", "#!/usr/bin/env node\n") == "python"
+
+
+def test_directory_scan_picks_up_scripts_of_the_scanned_languages(tmp_path):
+    (tmp_path / "deploy").write_text("#!/usr/bin/env python3\nimport os\n")
+    (tmp_path / "serve").write_text("#!/usr/bin/env node\nconsole.log(1)\n")
+    (tmp_path / "build").write_text("#!/bin/sh\nmake\n")
+    (tmp_path / "LICENSE").write_text("Apache\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "hook").write_text("#!/usr/bin/env python3\n")
+    names = lambda files: sorted(p.name for p in files)
+    scanner = FrameScanner()
+    walk = lambda exts: scanner._candidate_files(tmp_path, None, exts, frozenset({".git"}))
+    assert names(walk(None)) == ["deploy", "serve"]
+    assert names(walk(language_extensions("python"))) == ["deploy"]
+    assert names(walk(language_extensions("java"))) == []
+    picked = FrameScanner._selected_files(tmp_path, [tmp_path / "deploy", tmp_path / "build"], None, None)
+    assert names(picked) == ["deploy"]
+
+
 def test_language_extensions():
     assert ".py" in language_extensions(None) and ".java" in language_extensions(None)
     assert language_extensions("java") == [".java"]

@@ -635,6 +635,8 @@ class Program:
     constant_regexes: Dict[str, str] = field(default_factory=dict)
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
+    # First line the parser could not read (None: the file parsed cleanly).
+    syntax_error_line: Optional[int] = None
 
     def __str__(self) -> str:
         lines = [f"Program with {len(self.procedures)} procedures:"]

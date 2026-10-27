@@ -181,34 +181,6 @@ app.get("/items", (req, res) => {
 ''',
 })
 
-# translator guards: `path.resolve(BASE, x)` followed by `if (!full.startsWith(BASE + path.sep)) throw/return` is not recognised as containment.
-case("path_startswith_guard", {
-    "src/static.js": '''const fs = require("fs");
-const path = require("path");
-
-const BASE = path.resolve("/srv/assets");
-
-function readAsset(name) {
-  const full = path.resolve(BASE, name);
-<<  // no containment check||  if (!full.startsWith(BASE + path.sep)) {
-    throw new Error("outside base");
-  }>>
-  return fs.readFileSync(full); // frame-expect: CWE-22
-}
-
-module.exports = { readAsset };
-''',
-    "src/app.js": '''const express = require("express");
-const { readAsset } = require("./static");
-
-const app = express();
-
-app.get("/asset", (req, res) => {
-  res.send(readAsset(req.query.name));
-});
-''',
-})
-
 # project.py: `container.reporter.render(...)` -- an instance held in an exported object literal is not a known receiver type.
 case("inversify_style_di_container", {
     "src/container.ts": '''import { Reporter } from "./reporter";

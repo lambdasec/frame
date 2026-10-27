@@ -84,6 +84,7 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 | [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
+| [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | Where Frame is going: SAST gaps, the knowledge base, SCA, secrets and IaC, AI app security, autonomous pentesting |
 | [Examples](https://github.com/lambdasec/frame/blob/main/benchmarks/exemplars/README.md) | The quickstart app, a vulnerable and safe app per framework, and the cross-file comparison |
 
 ## Contributing

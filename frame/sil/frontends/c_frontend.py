@@ -42,6 +42,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
 from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
@@ -191,6 +192,7 @@ class CFrontend:
         program = Program(library_specs=self.specs.copy(), language=self.LANGUAGE)
         self._program = program
         program.source_files.append(filename)
+        program.syntax_error_line = first_syntax_error_line(tree.root_node)
         program.function_macros = self._function_macro_names(tree.root_node)
         self._int_macros = self._integer_macros(tree.root_node)
 

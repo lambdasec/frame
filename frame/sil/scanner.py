@@ -638,11 +638,46 @@ _CPP_HEADER_RE = re.compile(
     re.MULTILINE)
 
 
+# An extensionless script (`bin/deploy`) names its interpreter on the `#!` line.
+_SHEBANG_INTERPRETERS = {'python': 'python', 'node': 'javascript', 'nodejs': 'javascript'}
+
+
+def shebang_language(source: str) -> Optional[str]:
+    """The language a `#!` first line runs (`#!/usr/bin/python3`,
+    `#!/usr/bin/env -S node --flag`), else None."""
+    if not source.startswith('#!'):
+        return None
+    words = source[2:].split('\n', 1)[0].split()
+    if not words:
+        return None
+    prog = words[0].rsplit('/', 1)[-1]
+    if prog == 'env':
+        rest = [w for w in words[1:] if not w.startswith('-') and '=' not in w]
+        if not rest:
+            return None
+        prog = rest[0].rsplit('/', 1)[-1]
+    return _SHEBANG_INTERPRETERS.get(re.sub(r'[\d.]+$', '', prog))
+
+
+def _script_language(path: Path) -> Optional[str]:
+    """`shebang_language` of an extensionless file, reading only its first line."""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(256)
+    except OSError:
+        return None
+    return shebang_language(head.decode('utf-8', errors='replace'))
+
+
 def language_for_file(path: Union[str, Path], source: Optional[str] = None,
                       default: Optional[str] = None) -> Optional[str]:
     """The frontend language for `path` by extension (a `.h` whose `source`
-    uses C++ syntax is `cpp`), else `default`."""
-    lang = EXTENSION_LANGUAGES.get(Path(path).suffix.lower(), default)
+    uses C++ syntax is `cpp`; an extensionless script by its `#!` line),
+    else `default`."""
+    suffix = Path(path).suffix.lower()
+    lang = EXTENSION_LANGUAGES.get(suffix)
+    if lang is None:
+        lang = (shebang_language(source) if not suffix and source else None) or default
     if lang == 'c' and Path(path).suffix.lower() == '.h' and source \
             and _CPP_HEADER_RE.search(source):
         return 'cpp'
@@ -1106,6 +1141,10 @@ class FrameScanner:
                 program = self.frontend.translate(source_code, filename)
             result.procedures_analyzed = len(program.procedures)
             result.packs = list(program.packs_applied)
+            if program.syntax_error_line is not None:
+                result.warnings.append(
+                    f"Syntax error near line {program.syntax_error_line}: the file was "
+                    f"parsed partially, so findings may be missing")
 
             if self.verbose:
                 print(f"[Scanner] Found {len(program.procedures)} procedures")
@@ -1508,11 +1547,18 @@ class FrameScanner:
             raw: Iterable[Path] = self._selected_files(dir_path, only_files, pattern, extensions)
         elif pattern is None:
             exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
-            raw = sorted(p for p in dir_path.rglob("*") if p.suffix.lower() in exts)
+            raw = sorted(p for p in dir_path.rglob("*") if p.suffix.lower() in exts or not p.suffix)
         else:
             raw = dir_path.glob(pattern)
         return [p for p in raw
-                if p.is_file() and not self._is_excluded_dir_member(p, dir_path, excluded_dirs)]
+                if p.is_file() and not self._is_excluded_dir_member(p, dir_path, excluded_dirs)
+                and (p.suffix or pattern is not None or self._is_script(p, extensions))]
+
+    @staticmethod
+    def _is_script(path: Path, extensions: Optional[Iterable[str]]) -> bool:
+        """Is extensionless `path` a script in a language the scan covers?"""
+        langs = {EXTENSION_LANGUAGES.get(e.lower()) for e in (extensions or EXTENSION_LANGUAGES)}
+        return _script_language(path) in langs - {None}
 
     def _start_project(self, dir_path: Path, pattern: Optional[str],
                        extensions: Optional[Iterable[str]],
@@ -1625,7 +1671,8 @@ class FrameScanner:
                 continue
             if globbed is not None and p not in globbed:
                 continue
-            if globbed is None and p.suffix.lower() not in exts:
+            if globbed is None and p.suffix.lower() not in exts and not (
+                    not p.suffix and p.is_file() and FrameScanner._is_script(p, extensions)):
                 continue
             out.append(dir_path / p.relative_to(root))
         return sorted(set(out))

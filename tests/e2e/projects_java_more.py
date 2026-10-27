@@ -1207,6 +1207,25 @@ case("sendredirect_relative_guard", {
 ''',
 })
 
+# The same guard, but the bad branch replaces the target with a constant instead of returning.
+case("sendredirect_reassigned_on_bad_branch", {
+    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/")) {
+            next = "/home";
+        }
+        resp.sendRedirect(next);  // frame-expect: CWE-601
+    }
+}
+''',
+}, {
+    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/") || next.startsWith("//")) {
+            next = "/home";
+        }
+        resp.sendRedirect(next);
+    }
+}
+''',
+})
+
 
 # 25 -- Spring: controller depends on an interface, one @Service implements it (@Autowired constructor)
 _SVC_CTRL = '''package com.acme.api;
@@ -1477,16 +1496,6 @@ public class TenantStore {
         } catch (SQLException e) {
             throw new IllegalStateException(e);
         }
-    }
-}
-''',
-}
-
-KNOWN_GAPS["redirect_reassigned_to_constant_on_bad_branch"] = {
-    "src/com/acme/web/LoginServlet.java": _RD_HEAD + '''        if (next == null || !next.startsWith("/") || next.startsWith("//")) {
-            next = "/home";
-        }
-        resp.sendRedirect(next);
     }
 }
 ''',
