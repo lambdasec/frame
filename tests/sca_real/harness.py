@@ -621,7 +621,10 @@ def swift_truth(work: Path) -> Truth:
 def secbench_npm_truth(work: Path) -> Truth:
     """A lockfileVersion 1 file: `npm ls --package-lock-only` rebuilds only its top level from
     it, so the truth is what `npm ci` actually installs from the lockfile, listed from disk."""
-    run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], work)
+    # --force: an old lockfile can pin a platform-only package (fsevents, macOS) as required,
+    # and npm ci refuses it elsewhere; the lockfile still lists it, and so does Frame.
+    # --ignore-scripts keeps it from being built.
+    run(["npm", "ci", "--force", "--ignore-scripts", "--no-audit", "--no-fund"], work)
     every: Set[NV] = set()
     prod: Set[NV] = set()
     _npm_tree(json.loads(run(["npm", "ls", "--all", "--json"], work)), every)
