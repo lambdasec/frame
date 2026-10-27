@@ -84,6 +84,9 @@ def create_parser() -> argparse.ArgumentParser:
                                   "(default: none)")
     deps_parser.add_argument("--vulns", action="store_true",
                              help="Match the packages against the cached advisories (frame kb pull --advisories)")
+    deps_parser.add_argument("--no-reachability", action="store_true",
+                             help="With --vulns: skip reading the project's source for imports and calls of "
+                                  "the vulnerable packages and functions")
     deps_parser.add_argument("--resolve", action="store_true",
                              help="Run Maven, Gradle and pip to resolve projects without a lockfile "
                                   "(runs the project's build configuration; downloads packages)")
@@ -478,6 +481,9 @@ def cmd_deps(args) -> int:
         from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
         db = AdvisoryDB.cached(ecosystems_of(report.files))
         findings = match(report.files, db)
+        if findings and not args.no_reachability:
+            from frame.sca.reachability import Usage, annotate
+            annotate(findings, Usage(target.resolve(), excluded), target.resolve())
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    "run `frame kb pull --advisories`")

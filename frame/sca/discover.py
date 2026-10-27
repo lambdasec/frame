@@ -277,8 +277,12 @@ def format_vulns(findings: List[dict]) -> str:
         sev = (f["severity"] or "unknown").upper()
         fix = f"fixed in {f['fixed'][0]}" if f["fixed"] else "no fixed version"
         kind = "direct" if f["direct"] else "transitive" if f["direct"] is False else "dependency"
-        lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}) "
+        reach = f.get("reachability") or {}
+        level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
+        lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{level}) "
                      f"{f['id']}: {f['summary'][:80]}; {fix}  [{f['path']}]")
         if len(f["via"]) > 1:
             lines.append(f"           via {' -> '.join(f['via'])}")
+        for c in reach.get("calls", [])[:3]:
+            lines.append(f"           calls {c['function']} at {c['location']}")
     return "\n".join(lines)

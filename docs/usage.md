@@ -24,6 +24,8 @@ A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive
 
 `frame deps --vulns` matches every resolved version against known vulnerabilities from OSV, shipped as a dataset (`lambdasec/frame-advisories`, rebuilt daily) that `frame kb pull --advisories` caches for the ecosystems the project uses. Each finding names the advisory (merged across GHSA, PYSEC, CVE and other ids), its severity (the CVSS v3 base score, else the database's rating), the lowest fixed version, whether the package is direct or dev only, and the chain of packages that pulls it in. Matching runs offline.
 
+Each vulnerability is also checked against the project's own code (Python, JavaScript/TypeScript, Java, C#), through the files under the manifest that declared the package: `imported` when the code imports the package, `called` when it calls a function the advisory names as vulnerable (with the file and line). The evidence is positive only: a package your code never imports can still be reached through another library (Log4Shell reached applications that log through SLF4J), so an unused package stays `installed`, never "unreachable". `--no-reachability` skips reading the source.
+
 ```bash
 frame kb pull --advisories            # once, and whenever you want fresh advisories
 frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each

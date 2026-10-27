@@ -34,6 +34,15 @@ def table_path(ecosystem: str) -> str:
     return f"advisories/{ecosystem}.json.gz"
 
 
+def functions_path(ecosystem: str) -> str:
+    return f"functions/{ecosystem}.json.gz"
+
+
+def _gz_json(obj) -> bytes:
+    raw = json.dumps(obj, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return gzip.compress(raw, compresslevel=9, mtime=0)                 # reproducible bytes
+
+
 # ---------------------------------------------------------------------------------------------
 # building
 
@@ -65,9 +74,11 @@ def _load_json(data: bytes, origin: str) -> Iterator[dict]:
 
 
 def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
-                     ecosystems: Optional[Iterable[str]] = None) -> Path:
+                     ecosystems: Optional[Iterable[str]] = None, functions_dir: Optional[Path] = None) -> Path:
     """Lay out an advisories revision: `advisories/<ecosystem>.json.gz` per ecosystem plus
-    `manifest.json` (same format as `frame kb build`)."""
+    `manifest.json` (same format as `frame kb build`). With `functions_dir`, Frame's own
+    vulnerable-function data (`<Ecosystem>.json`: advisory id -> [{"id", "source"}], curated or
+    derived from fix commits) is shipped beside it as `functions/<ecosystem>.json.gz`."""
     import re
     from frame.kb.store import KBError, MANIFEST, _sha256
     from frame.kb.store import SCHEMA as KB_SCHEMA
@@ -85,8 +96,7 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         if not tbl["packages"]:
             continue
         tbl["revision"] = revision
-        raw = json.dumps(tbl, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        data = gzip.compress(raw, compresslevel=9, mtime=0)       # reproducible bytes
+        data = _gz_json(tbl)
         rel = table_path(eco)
         target = out / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -94,10 +104,36 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                       "kind": "advisories", "name": eco,
                       "advisories": sum(len(v) for v in tbl["packages"].values())}
+    for f in sorted(Path(functions_dir).glob("*.json")) if functions_dir is not None else []:
+        eco = f.stem
+        if eco not in ECOSYSTEMS:
+            raise KBError(f"{f}: not an ecosystem ({', '.join(ECOSYSTEMS)})")
+        fns = _check_functions(json.loads(f.read_text(encoding="utf-8")), str(f))
+        data = _gz_json({"schema": SCHEMA, "ecosystem": eco, "revision": revision, "functions": fns})
+        rel = functions_path(eco)
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+        files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
+                      "kind": "functions", "name": eco, "advisories": len(fns)}
     manifest = {"schema": KB_SCHEMA, "revision": revision, "files": files}
     out.mkdir(parents=True, exist_ok=True)
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return out / MANIFEST
+
+
+_SOURCES = ("osv", "fix-commit", "curated")
+
+
+def _check_functions(data: dict, origin: str) -> Dict[str, List[dict]]:
+    from frame.kb.store import KBError
+    if not isinstance(data, dict):
+        raise KBError(f"{origin}: expected {{advisory id: [{{id, source}}]}}")
+    for adv, entries_ in data.items():
+        if not isinstance(entries_, list) or not all(
+                isinstance(e, dict) and isinstance(e.get("id"), str) and e.get("source") in _SOURCES
+                for e in entries_):
+            raise KBError(f"{origin}: {adv}: each function needs an id and a source in {_SOURCES}")
+    return data
 
 
 # ---------------------------------------------------------------------------------------------
@@ -129,6 +165,17 @@ class AdvisoryDB:
                 db.missing.append(eco)
                 continue
             db.tables[eco] = table.get("packages", {})
+            fn_file = d / functions_path(eco) if d is not None else None
+            if fn_file is not None and fn_file.is_file():
+                extra = json.loads(gzip.decompress(fn_file.read_bytes())).get("functions", {})
+                for advs in db.tables[eco].values():
+                    for adv in advs:
+                        have = {x["id"] for x in adv.get("functions", [])}
+                        for ident in [adv["id"], *adv.get("aliases", [])]:
+                            for fn in extra.get(ident, []):
+                                if fn["id"] not in have:
+                                    have.add(fn["id"])
+                                    adv.setdefault("functions", []).append(fn)
         return db
 
     @classmethod

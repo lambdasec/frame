@@ -42,6 +42,8 @@ def add_kb_command(subparsers) -> None:
     ba.add_argument("out", help="Output directory")
     ba.add_argument("--revision", required=True, help="Revision id written to the manifest")
     ba.add_argument("--ecosystems", help="Comma-separated OSV ecosystems (default: every one Frame reads)")
+    ba.add_argument("--functions", metavar="DIR",
+                    help="Directory of <Ecosystem>.json vulnerable-function files (advisory id -> [{id, source}])")
 
 
 def _languages(args) -> list:
@@ -98,7 +100,8 @@ def cmd_kb(args) -> int:
         if args.kb_command == "build-advisories":
             from frame.sca.advisories import build_advisories
             ecos = [e.strip() for e in args.ecosystems.split(",")] if args.ecosystems else None
-            manifest = build_advisories([Path(i) for i in args.inputs], Path(args.out), args.revision, ecos)
+            manifest = build_advisories([Path(i) for i in args.inputs], Path(args.out), args.revision, ecos,
+                                        Path(args.functions) if args.functions else None)
             files = json.loads(manifest.read_text())["files"]
             for rel, meta in sorted(files.items()):
                 print(f"{rel}: {meta['advisories']} advisories, {meta['size']} bytes")
