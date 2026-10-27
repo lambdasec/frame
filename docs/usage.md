@@ -16,6 +16,12 @@ Every finding has a `category` (`taint`, `memory`, `crypto`, `secret`, `access-c
 
 `frame inventory [dir]` reports what a repository contains without analysing it: languages, the frameworks Frame has packs for, dependency manifests and lockfiles, infrastructure-as-code, Dockerfiles, LLM SDKs and MCP servers (`-f json` for every path).
 
+`frame deps [dir]` reads the dependency graph: every lockfile (`poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` classic and berry, `pnpm-lock.yaml`, `gradle.lockfile`, NuGet `packages.lock.json`, Go `go.mod`, Rust `Cargo.lock`, Swift `Package.resolved`) and each manifest without one (`requirements*.txt`, `pyproject.toml`, `package.json`, `pom.xml`, `*.csproj`, `packages.config`). For each package it reports the exact version, whether it is direct (from the manifest beside the lockfile; left unknown rather than guessed when there is none), whether only development needs it, and its package URL; `-f json` adds the edges between packages. No package manager runs and nothing is fetched.
+
+A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive transitively, so Frame reads the resolved graph the build tool reports when it finds one: `maven_dep_tree.txt` or `.json` (`mvn dependency:tree -DoutputFile=maven_dep_tree.txt`) and `gradle-dependencies.txt` (`gradle dependencies > gradle-dependencies.txt`). For .NET it reads the restore output (`obj/project.assets.json`) and fills `.csproj` versions from `Directory.Packages.props`.
+
+`frame deps --resolve` produces those graphs itself: it runs `mvn dependency:tree` (or `./mvnw`) once per Maven build, `gradle dependencies` (or `./gradlew`) for every Gradle project, and pip's resolver (`pip install --dry-run --report`, wheels only, nothing installed) for each `requirements*.txt` and lockfile-less `pyproject.toml`. It is opt-in because it runs the project's build configuration and downloads packages; a missing or failing tool is a warning and the manifest is read as before.
+
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 
 ## Guardrails for CI and coding agents
@@ -176,6 +182,7 @@ frame kb pull --source /mnt/kb-2026.10 --lock          # in CI
 | `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each one's status |
 | `frame packs list \| check` | List the packs a scan would load; validate pack files |
 | `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror |
+| `frame deps [dir]` | The dependency graph from lockfiles, build-tool reports and manifests: versions, direct or transitive, dev only, edges. `--resolve` runs Maven, Gradle and pip |
 | `frame inventory [dir]` | Languages, frameworks, dependencies, IaC, containers, LLM SDKs and MCP servers in a repository |
 | `frame exploit --target <url>` | Exploit a live, authorized target, primed with `--guidance` ([ai.md](ai.md)) |
 | `frame fix <path>` | Fix each finding, then re-scan to confirm (`--in-place` or `--diff`) |

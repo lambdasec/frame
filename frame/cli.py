@@ -64,6 +64,22 @@ def create_parser() -> argparse.ArgumentParser:
     inv_parser.add_argument("--file-limit", type=int, default=5000,
                             help="Most source files read for frameworks and AI imports (default: 5000)")
 
+    # === DEPS command ===
+    deps_parser = subparsers.add_parser(
+        "deps",
+        help="Read the dependency graph from manifests and lockfiles",
+        description="Read every lockfile (and each manifest without one) under a directory: packages, "
+                    "exact versions, direct or transitive, dev only, and the edges between them. "
+                    "No package manager runs and nothing is fetched."
+    )
+    deps_parser.add_argument("target", nargs="?", default=".", help="Directory (default: .)")
+    deps_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
+                             help="Output format (default: text)")
+    deps_parser.add_argument("-o", "--output", help="Write to this file instead of stdout")
+    deps_parser.add_argument("--resolve", action="store_true",
+                             help="Run Maven, Gradle and pip to resolve projects without a lockfile "
+                                  "(runs the project's build configuration; downloads packages)")
+
     # === SCAN command ===
     scan_parser = subparsers.add_parser(
         "scan",
@@ -433,6 +449,22 @@ def cmd_inventory(args) -> int:
         return 2
     inv = build_inventory(target, read_sources=not args.no_sources, file_limit=args.file_limit)
     print(to_json(inv) if args.format == "json" else format_text(inv))
+    return 0
+
+
+def cmd_deps(args) -> int:
+    """Execute deps command."""
+    from frame.sca import format_text, read_dependencies
+    target = Path(args.target)
+    if not target.is_dir():
+        print(f"Error: not a directory: {args.target}", file=sys.stderr)
+        return 2
+    report = read_dependencies(target, resolve=args.resolve)
+    out = json.dumps(report.to_dict(), indent=2) if args.format == "json" else format_text(report)
+    if args.output:
+        Path(args.output).write_text(out + "\n", encoding="utf-8")
+    else:
+        print(out)
     return 0
 
 
@@ -1318,6 +1350,7 @@ def main(argv: List[str] = None) -> int:
     commands = {
         "scan": cmd_scan,
         "inventory": cmd_inventory,
+        "deps": cmd_deps,
         "exploit": cmd_exploit,
         "fix": cmd_fix,
         "verify": cmd_verify,

@@ -44,11 +44,19 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 
 ## Phase 2: SCA
 
-- Dependency graph (direct and transitive) from lockfiles: Python (`requirements.txt`, `poetry.lock`, `Pipfile.lock`, `uv.lock`), JS (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), Java (`pom.xml`, Gradle lockfiles), C# (`packages.lock.json`).
-- Advisories from OSV, enriched by a Frame dataset of vulnerable functions per advisory, built by mapping each fix commit's changed functions to canonical call ids with Frame's own frontends.
+- Done: the dependency graph (`frame deps`, `frame/sca/`) from lockfiles and manifests: Python (`requirements*.txt` with `-r` includes, `pyproject.toml`, `poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile.lock`), JS (`package.json`, `package-lock.json` v1-v3, `yarn.lock` classic and berry, `pnpm-lock.yaml` v5-v9), Java (`pom.xml` with properties and dependency management, `gradle.lockfile`), C# (`packages.lock.json`, `*.csproj`, `packages.config`), and, for dependencies only, Go (`go.mod`), Rust (`Cargo.lock` with `Cargo.toml` for dev) and Swift (`Package.resolved`). Exact versions, edges, direct (from the manifest beside a lockfile, else unknown), dev only (the lockfile's flag, else unreachable from a production dependency), package URLs. Not read: Gradle build scripts and Maven transitive resolution (both need the build tool).
+- Done: resolved graphs for Java and .NET (Maven `dependency:tree` text and JSON, Gradle `dependencies` reports, `obj/project.assets.json`, `Directory.Packages.props`), and `frame deps --resolve`, which runs Maven, Gradle and pip (dry run, wheels only) for projects without a lockfile.
+- Next for the graph: `build.gradle` direct dependencies without running Gradle; C/C++ (Conan, vcpkg, git submodules, CMake fetches, matched by version or upstream commit); Ruby, PHP, Dart and Elixir lockfiles.
+- Go reachability comes from `govulncheck -json` when a report is present (it uses the compiler's call graph); Frame imports it rather than re-deriving it.
+- Advisories: a separate dataset, `lambdasec/frame-advisories`, published by the same machinery as `frame-kb` but rebuilt daily from OSV (packs change with Frame and are pinned per project; advisories should be current by default, with an optional pin for reproducible audits). Compact per-ecosystem files (`advisories/<ecosystem>.json`: package, affected ranges, fixed versions, ids, severity), so `pull` fetches only what a project uses; each source keeps its licence.
+- Vulnerable functions per advisory, in the same dataset (`functions/<ecosystem>.json`, CC-BY-4.0, keyed by advisory id, rebuilt on its own schedule and joined at load time): Frame canonical call ids with provenance, `osv` (Go's `ecosystem_specific.imports[].symbols`), `fix-commit` (the public functions a fix commit changed, found with Frame's frontends) or `curated`. Reachability evidence carries the provenance.
 - Reachability levels: installed, imported, vulnerable function called, attacker data reaches it (taint).
 - Z3 remediation planning: the smallest set of upgrades that removes every vulnerable version while satisfying every package's constraints; whether an unpinned manifest admits a vulnerable version.
 - SBOM (CycloneDX, SPDX) and license data from the same graph.
+
+## Source languages
+
+SAST covers Python, JavaScript/TypeScript, Java, C# and C/C++: the most used languages, each with a public benchmark, and C/C++ where the separation logic engine decides memory safety. Dependencies are read for more ecosystems than that (Go, Rust, Swift), because an inventory or SBOM that omits part of a repository is wrong. Next SAST languages, on demand: PHP (a large share of web CVEs, injection-heavy), then Go (strong existing tools: `govulncheck`, `gosec`), then Swift and Kotlin with mobile-specific checks. Rust: only `unsafe` code can hold the memory errors the engine proves, a research item.
 
 ## Phase 3: secrets, infrastructure, containers
 
