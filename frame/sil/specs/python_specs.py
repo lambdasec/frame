@@ -1173,6 +1173,17 @@ _umask_spec.permission_mode_arg = 0
 _umask_spec.permission_is_umask = True
 
 
+# A string-to-number conversion is not text any more: it cannot carry a SQL / shell / path / URL
+# payload (it either raises or yields digits), exactly as JS parseInt. Applied inline too, so
+# `"seq " + str(int(n))` and `"... %d" % int(n)` are clean without an intermediate variable.
+_NUMERIC_SAFE = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path",
+                 "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf",
+                 "template", "xml", "log"]
+for _name in ("int", "float", "bool", "decimal.Decimal", "Decimal", "math.floor", "math.ceil", "round", "abs"):
+    PYTHON_SPECS.setdefault(_name, ProcSpec(is_sanitizer=list(_NUMERIC_SAFE), taint_propagates=[0],
+                                            description="numeric conversion (not text)"))
+
+
 def get_python_specs() -> Dict[str, ProcSpec]:
     """Get all Python library specifications"""
     return PYTHON_SPECS.copy()
