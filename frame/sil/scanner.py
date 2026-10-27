@@ -1323,7 +1323,7 @@ class FrameScanner:
             return result
 
         # Use utf-8-sig to automatically strip BOM (common in C# files)
-        source_code = path.read_text(encoding='utf-8-sig')
+        source_code = path.read_text(encoding='utf-8-sig', errors='replace')
 
         # Auto-detect language from extension if not already set correctly
         detected_lang = language_for_file(path, source_code, self.language)
@@ -1548,7 +1548,7 @@ class FrameScanner:
             if language_family(p) is None:
                 continue
             try:
-                if is_generated_source(p.read_text(encoding="utf-8-sig")):
+                if is_generated_source(p.read_text(encoding="utf-8-sig", errors="replace")):
                     continue
             except (OSError, UnicodeError):
                 continue

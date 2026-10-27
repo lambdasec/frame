@@ -30,10 +30,6 @@ def x():
 VULN_LINE = 9           # the os.system line of VULN_PY
 CLEAN_PY = "def add(a, b):\n    return a + b\n"
 
-# Frame bugs these scenarios expose (see the report); each xfail below names one.
-CRASH_ON_BAD_ENCODING = pytest.mark.xfail(
-    strict=True, reason="scan_file reads files with strict utf-8: one undecodable file aborts the whole scan")
-
 
 def frame(*args, cwd=None, timeout=180):
     return subprocess.run([sys.executable, "-m", "frame.cli", *args], capture_output=True, text=True,
@@ -118,7 +114,6 @@ def test_nul_bytes_in_a_source_file_do_not_hide_its_finding(tmp_path):
 
 # ---- encodings and line endings ---------------------------------------------------------
 
-@CRASH_ON_BAD_ENCODING
 def test_binary_file_named_py_does_not_abort_a_directory_scan(tmp_path):
     write_tree(tmp_path, {"app.py": VULN_PY})
     (tmp_path / "blob.py").write_bytes(bytes(range(256)) * 20)
@@ -126,13 +121,11 @@ def test_binary_file_named_py_does_not_abort_a_directory_scan(tmp_path):
     assert [c for _, _, c in reported(doc)] == ["CWE-78"]
 
 
-@CRASH_ON_BAD_ENCODING
 def test_binary_file_scanned_alone_is_not_a_traceback(tmp_path):
     (tmp_path / "blob.py").write_bytes(bytes(range(256)) * 20)
     assert "Traceback" not in frame("scan", str(tmp_path / "blob.py")).stderr
 
 
-@CRASH_ON_BAD_ENCODING
 def test_latin1_file_with_a_finding_is_scanned(tmp_path):
     (tmp_path / "app.py").write_bytes(VULN_PY.replace('"ok"', '"caf\xe9"').encode("latin-1"))
     _, doc = scan_json(tmp_path)

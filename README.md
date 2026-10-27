@@ -154,7 +154,7 @@ Every finding has a stable fingerprint with no line number in it, so inserting c
 
 - Explicit protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`.
 - SARIF carries CWE tags and a `security-severity`, so GitHub code scanning ranks the alerts.
-- Broken, empty, binary and minified files produce a warning, not a crash; the rest of the project is still scanned.
+- Empty, binary, non-UTF-8 and minified files never abort a scan (undecodable bytes are replaced, minified files are skipped with a warning); a file that does not parse is analysed best-effort without a warning.
 
 ## What Frame detects
 

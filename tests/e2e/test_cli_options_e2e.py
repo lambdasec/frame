@@ -135,12 +135,10 @@ def test_min_severity_hides_lower_findings_in_text_output(project):
     assert "CWE-78" in out and "CWE-328" not in out
 
 
-@pytest.mark.xfail(strict=True, reason="--min-severity is applied to text output only; json and sarif ignore it")
 def test_min_severity_applies_to_json_output_too(project):
     assert ("weak.py", "CWE-328") not in found(docs(run_scan(project, "--min-severity", "critical")))
 
 
-@pytest.mark.xfail(strict=True, reason="--min-severity is applied to text output only; json and sarif ignore it")
 def test_min_severity_applies_to_sarif_output_too(project):
     done = frame("scan", str(project), "-f", "sarif", "--fail-on", "none", "--min-severity", "critical")
     assert "frame/weak_hash" not in {r["ruleId"] for r in json.loads(done.stdout)["runs"][0]["results"]}

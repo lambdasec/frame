@@ -394,6 +394,15 @@ def format_sarif_result(results: List[ScanResult]) -> str:
         return json.dumps(combined, indent=2)
 
 
+def _at_least(results: List[ScanResult], min_severity: Severity) -> List[ScanResult]:
+    """Copies of `results` holding only the findings at or above `min_severity` (the exit
+    status is decided on the unfiltered results, as for text output)."""
+    import dataclasses
+    return [dataclasses.replace(r, vulnerabilities=[v for v in r.vulnerabilities
+                                                    if severity_value(v.severity) >= severity_value(min_severity)])
+            for r in results]
+
+
 def should_fail(results: List[ScanResult], fail_on: str) -> bool:
     """Determine if scan should fail based on findings"""
     if fail_on == "none":
@@ -626,6 +635,7 @@ def cmd_scan(args) -> int:
                 print(output)
 
     elif args.format == "json":
+        results = _at_least(results, min_severity)
         output = format_json_result(results, directory=target.is_dir(), extra=extra)
         if args.output:
             with open(args.output, 'w') as f:
@@ -634,7 +644,7 @@ def cmd_scan(args) -> int:
             print(output)
 
     elif args.format == "sarif":
-        output = format_sarif_result(results)
+        output = format_sarif_result(_at_least(results, min_severity))
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)
