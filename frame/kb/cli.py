@@ -42,6 +42,14 @@ def add_kb_command(subparsers) -> None:
     ba.add_argument("out", help="Output directory")
     ba.add_argument("--revision", required=True, help="Revision id written to the manifest")
     ba.add_argument("--ecosystems", help="Comma-separated OSV ecosystems (default: every one Frame reads)")
+    mf = sub.add_parser("mine-functions", help="Vulnerable functions from advisories' fix commits")
+    mf.add_argument("inputs", nargs="+", help="OSV all.zip exports, directories of OSV JSON, or JSON files")
+    mf.add_argument("--out", required=True, metavar="DIR", help="Where <Ecosystem>.json files are written")
+    mf.add_argument("--existing", metavar="DIR", help="Curated <Ecosystem>.json files to keep (they win)")
+    mf.add_argument("--ecosystems", default="PyPI,npm,Maven,NuGet", help="Comma-separated (default: %(default)s)")
+    mf.add_argument("--limit", type=int, help="Mine at most this many advisories")
+    mf.add_argument("--cache", metavar="DIR", help="Commit cache (default: ~/.cache/frame/mine)")
+    mf.add_argument("--recorded", metavar="DIR", help="Read commits recorded on disk instead of GitHub")
     ba.add_argument("--functions", metavar="DIR",
                     help="Directory of <Ecosystem>.json vulnerable-function files (advisory id -> [{id, source}])")
 
@@ -97,6 +105,31 @@ def cmd_kb(args) -> int:
                       f"cached:  {st['cached'] or '- (scans use the built-in packs)'}\n"
                       f"packs:   {st['packs']}\ncache:   {st['cache']}")
             return 0
+        if args.kb_command == "mine-functions":
+            from frame.sca.advisories import _records
+            from frame.sca.mine import GitHubSource, RecordedSource, mine
+            ecos = [e.strip() for e in args.ecosystems.split(",") if e.strip()]
+            existing = {}
+            if args.existing:
+                for e in ecos:
+                    f = Path(args.existing) / f"{e}.json"
+                    if f.is_file():
+                        existing[e] = json.loads(f.read_text())
+            source = RecordedSource(Path(args.recorded)) if args.recorded else GitHubSource(
+                Path(args.cache) if args.cache else Path.home() / ".cache" / "frame" / "mine")
+            tables, report = mine(_records([Path(i) for i in args.inputs]), ecos, source, args.limit, existing)
+            out = Path(args.out)
+            out.mkdir(parents=True, exist_ok=True)
+            for e, table in tables.items():
+                if table:
+                    (out / f"{e}.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n")
+            curate = [{"advisory": m.advisory, "internal_only": m.internal_only,
+                       "outside_functions": m.outside_functions} for m in report if m.needs_curation]
+            (out / "needs-curation.json").write_text(json.dumps(curate, indent=1) + "\n")
+            mined = sum(1 for m in report if m.entries)
+            print(f"{len(report)} advisories with fix commits: {mined} mined, {len(curate)} need curation, "
+                  f"{sum(1 for m in report if m.skipped and not m.entries)} unavailable")
+            return 0
         if args.kb_command == "build-advisories":
             from frame.sca.advisories import build_advisories
             ecos = [e.strip() for e in args.ecosystems.split(",")] if args.ecosystems else None
@@ -115,5 +148,5 @@ def cmd_kb(args) -> int:
     except KBError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-    print("usage: frame kb {pull,status,build,build-advisories}", file=sys.stderr)
+    print("usage: frame kb {pull,status,build,build-advisories,mine-functions}", file=sys.stderr)
     return 2

@@ -1,0 +1,18 @@
+{
+ "sha": "3469357cff396a26c363f8c1b5a91dde28ba4b1c",
+ "parents": [
+  "ded9bc66583ed0b4e3b7dc906206d40757b4a90a"
+ ],
+ "files": [
+  {
+   "filename": "lodash.js",
+   "status": "modified",
+   "patch": "@@ -19,7 +19,8 @@\n \n   /** Error message constants. */\n   var CORE_ERROR_TEXT = 'Unsupported core-js use. Try https://npms.io/search?q=ponyfill.',\n-      FUNC_ERROR_TEXT = 'Expected a function';\n+      FUNC_ERROR_TEXT = 'Expected a function',\n+      INVALID_TEMPL_VAR_ERROR_TEXT = 'Invalid `variable` option passed into `_.template`';\n \n   /** Used to stand-in for `undefined` hash values. */\n   var HASH_UNDEFINED = '__lodash_hash_undefined__';\n@@ -165,6 +166,18 @@\n   /** Used to match words composed of alphanumeric characters. */\n   var reAsciiWord = /[^\\x00-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7f]+/g;\n \n+  /**\n+   * Used to validate the `validate` option in `_.template` variable.\n+   *\n+   * Forbids characters which could potentially change the meaning of the function argument definition:\n+   * - \"(),\" (modification of function parameters)\n+   * - \"=\" (default value)\n+   * - \"[]{}\" (destructuring of function parameters)\n+   * - \"/\" (beginning of a comment)\n+   * - whitespace\n+   */\n+  var reForbiddenIdentifierChars = /[()=,{}\\[\\]\\/\\s]/;\n+\n   /** Used to match backslashes in property paths. */\n   var reEscapeChar = /\\\\(\\\\)?/g;\n \n@@ -14866,6 +14879,12 @@\n       if (!variable) {\n         source = 'with (obj) {\\n' + source + '\\n}\\n';\n       }\n+      // Throw an error if a forbidden character was found in `variable`, to prevent\n+      // potential command injection attacks.\n+      else if (reForbiddenIdentifierChars.test(variable)) {\n+        throw new Error(INVALID_TEMPL_VAR_ERROR_TEXT);\n+      }\n+\n       // Cleanup code by stripping empty strings.\n       source = (isEvaluating ? source.replace(reEmptyStringLeading, '') : source)\n         .replace(reEmptyStringMiddle, '$1')"
+  },
+  {
+   "filename": "test/test.js",
+   "status": "modified",
+   "patch": "@@ -22296,6 +22296,14 @@\n       }\n     });\n \n+    QUnit.test('should forbid code injection through the \"variable\" options', function(assert) {\n+      assert.expect(1);\n+\n+      assert.raises(function () {\n+        _.template('', { 'variable': '){console.log(process.env)}; with(obj' });\n+      });\n+    });\n+\n     QUnit.test('should support custom delimiters', function(assert) {\n       assert.expect(2);\n "
+  }
+ ]
+}

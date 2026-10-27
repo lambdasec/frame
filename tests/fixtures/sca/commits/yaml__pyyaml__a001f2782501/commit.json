@@ -1,0 +1,28 @@
+{
+ "sha": "a001f2782501ad2d24986959f0239a354675f9dc",
+ "parents": [
+  "fe150624146ee631bb0f95e45731e8b01281fed6"
+ ],
+ "files": [
+  {
+   "filename": "lib/yaml/constructor.py",
+   "status": "modified",
+   "patch": "@@ -722,18 +722,6 @@ def construct_python_object_new(self, suffix, node):\n     u'tag:yaml.org,2002:python/name:',\n     FullConstructor.construct_python_name)\n \n-FullConstructor.add_multi_constructor(\n-    u'tag:yaml.org,2002:python/module:',\n-    FullConstructor.construct_python_module)\n-\n-FullConstructor.add_multi_constructor(\n-    u'tag:yaml.org,2002:python/object:',\n-    FullConstructor.construct_python_object)\n-\n-FullConstructor.add_multi_constructor(\n-    u'tag:yaml.org,2002:python/object/new:',\n-    FullConstructor.construct_python_object_new)\n-\n class UnsafeConstructor(FullConstructor):\n \n     def find_python_module(self, name, mark):\n@@ -750,6 +738,18 @@ def set_python_instance_state(self, instance, state):\n         return super(UnsafeConstructor, self).set_python_instance_state(\n             instance, state, unsafe=True)\n \n+UnsafeConstructor.add_multi_constructor(\n+    u'tag:yaml.org,2002:python/module:',\n+    UnsafeConstructor.construct_python_module)\n+\n+UnsafeConstructor.add_multi_constructor(\n+    u'tag:yaml.org,2002:python/object:',\n+    UnsafeConstructor.construct_python_object)\n+\n+UnsafeConstructor.add_multi_constructor(\n+    u'tag:yaml.org,2002:python/object/new:',\n+    UnsafeConstructor.construct_python_object_new)\n+\n UnsafeConstructor.add_multi_constructor(\n     u'tag:yaml.org,2002:python/object/apply:',\n     UnsafeConstructor.construct_python_object_apply)"
+  },
+  {
+   "filename": "lib3/yaml/constructor.py",
+   "status": "modified",
+   "patch": "@@ -710,18 +710,6 @@ def construct_python_object_new(self, suffix, node):\n     'tag:yaml.org,2002:python/name:',\n     FullConstructor.construct_python_name)\n \n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/module:',\n-    FullConstructor.construct_python_module)\n-\n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/object:',\n-    FullConstructor.construct_python_object)\n-\n-FullConstructor.add_multi_constructor(\n-    'tag:yaml.org,2002:python/object/new:',\n-    FullConstructor.construct_python_object_new)\n-\n class UnsafeConstructor(FullConstructor):\n \n     def find_python_module(self, name, mark):\n@@ -738,6 +726,18 @@ def set_python_instance_state(self, instance, state):\n         return super(UnsafeConstructor, self).set_python_instance_state(\n             instance, state, unsafe=True)\n \n+UnsafeConstructor.add_multi_constructor(\n+    'tag:yaml.org,2002:python/module:',\n+    UnsafeConstructor.construct_python_module)\n+\n+UnsafeConstructor.add_multi_constructor(\n+    'tag:yaml.org,2002:python/object:',\n+    UnsafeConstructor.construct_python_object)\n+\n+UnsafeConstructor.add_multi_constructor(\n+    'tag:yaml.org,2002:python/object/new:',\n+    UnsafeConstructor.construct_python_object_new)\n+\n UnsafeConstructor.add_multi_constructor(\n     'tag:yaml.org,2002:python/object/apply:',\n     UnsafeConstructor.construct_python_object_apply)"
+  },
+  {
+   "filename": "tests/lib/test_recursive.py",
+   "status": "modified",
+   "patch": "@@ -30,7 +30,7 @@ def test_recursive(recursive_filename, verbose=False):\n     output2 = None\n     try:\n         output1 = yaml.dump(value1)\n-        value2 = yaml.load(output1, yaml.FullLoader)\n+        value2 = yaml.load(output1, yaml.UnsafeLoader)\n         output2 = yaml.dump(value2)\n         assert output1 == output2, (output1, output2)\n     finally:"
+  },
+  {
+   "filename": "tests/lib3/test_recursive.py",
+   "status": "modified",
+   "patch": "@@ -31,7 +31,7 @@ def test_recursive(recursive_filename, verbose=False):\n     output2 = None\n     try:\n         output1 = yaml.dump(value1)\n-        value2 = yaml.full_load(output1)\n+        value2 = yaml.unsafe_load(output1)\n         output2 = yaml.dump(value2)\n         assert output1 == output2, (output1, output2)\n     finally:"
+  }
+ ]
+}
