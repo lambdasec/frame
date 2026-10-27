@@ -22,6 +22,7 @@ Frame finds vulnerabilities by **following attacker data through your code**, ac
 - **Cross-file by default**: a request that enters a controller and reaches a query three files away is one finding.
 - **70+ framework packs**: Flask to Spring to ASP.NET to Express, plus your own stack in one TOML file.
 - **Built for guardrails**: scan only what changed, baseline what you accept, verify that a fix removed the bug.
+- **Wherever you work**: a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
 - **Its own separation logic engine** on Z3: entailment, frame inference, bi-abduction and countermodels.
 - **Runs on open models**, local or hosted, for detection, triage, exploitation and fixing.
 
@@ -80,7 +81,7 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 
 | | |
 |---|---|
-| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action and pre-commit hook, baselines and `verify`, suppressions, configuration, commands, Python API |
+| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, suppressions, configuration, commands, Python API |
 | [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |

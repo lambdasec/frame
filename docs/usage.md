@@ -79,13 +79,45 @@ frame scan src/ -f sarif -o frame.sarif --fail-on high
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/lambdasec/frame
-    rev: main                     # or a commit SHA
+    rev: v1.0.0
     hooks:
       - id: frame
         # args: [--baseline, .frame-baseline.json]
 ```
 
-The hook scans the staged Python, JavaScript/TypeScript, Java, C# and C/C++ files, widened to the files that import them, and blocks the commit on findings at or above `high` (or `fail_on` from `.frame.toml`). Coding agents get the same check by running `frame scan . --files <edited files>` after each edit.
+The hook scans the staged Python, JavaScript/TypeScript, Java, C# and C/C++ files, widened to the files that import them, and blocks the commit on findings at or above `high` (or `fail_on` from `.frame.toml`).
+
+## Coding agents (MCP)
+
+[frame-mcp](https://github.com/lambdasec/frame-mcp) gives Claude Code, Codex, Cursor, VS Code, Windsurf, Gemini CLI, Zed and any other MCP client the whole of Frame as tools, so the agent can scan what it just wrote, fix it and confirm the fix:
+
+```bash
+claude mcp add frame -- uvx frame-mcp          # Claude Code
+```
+
+```toml
+# Codex: ~/.codex/config.toml
+[mcp_servers.frame]
+command = "uvx"
+args = ["frame-mcp"]
+```
+
+```json
+// Cursor: .cursor/mcp.json  (VS Code: .vscode/mcp.json, under "servers" with "type": "stdio")
+{"mcpServers": {"frame": {"command": "uvx", "args": ["frame-mcp"]}}}
+```
+
+| Tool | What it does |
+|---|---|
+| `scan` | Scan a path, symbolic or with `ai`, optionally only changed files or against a baseline |
+| `write_baseline` | Accept the current findings |
+| `verify` | Re-check earlier findings: fixed, present, suppressed, uncertain |
+| `fix` | Patch findings and re-scan to confirm (needs `FRAME_LLM_*`) |
+| `exploit` | Attack a live target you are authorized to test |
+| `packs_list`, `packs_check` | List and validate framework packs |
+| `solve` | Check a separation logic entailment |
+
+A `security-review` prompt runs scan, verify and fix in one go. The `FRAME_LLM_*` variables set for the server reach the AI tools ([ai.md](ai.md)). Without MCP, an agent gets the same check by running `frame scan . --files <edited files>` after each edit.
 
 ## Suppressions
 

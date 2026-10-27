@@ -89,5 +89,5 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 
 ## Distribution (done)
 
-- PyPI `frame-security`, GitHub Action on the Marketplace (`lambdasec/frame-action@v1`, which follows Frame's `v1` tag), pre-commit hook (`id: frame`), MCP server (`frame-mcp`, in progress).
+- PyPI `frame-security`, GitHub Action on the Marketplace (`lambdasec/frame-action@v1`, which follows Frame's `v1` tag), pre-commit hook (`id: frame`), MCP server (`frame-mcp` on PyPI and the official MCP Registry).
 - On each 1.x release, move the `v1` tag to it: `git tag -f v1 vX.Y.Z && git push -f origin v1`.
