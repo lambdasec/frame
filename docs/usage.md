@@ -69,7 +69,7 @@ For pull requests, scan only what the change can affect and fail only on new fin
 Any other CI runs the same thing from the command line:
 
 ```bash
-pip install "frame[scan] @ git+https://github.com/lambdasec/frame.git"
+pip install "frame-security[scan]"
 frame scan src/ -f sarif -o frame.sarif --fail-on high
 ```
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "frame"
+name = "frame-security"
 dynamic = ["version"]
-description = "Frame - Separation Logic Verification Tool with Security Scanning"
+description = "Sound static analysis and LLM reasoning, in one security agent"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
@@ -22,7 +22,7 @@ keywords = [
     "z3"
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -63,7 +63,7 @@ benchmarks = [
     "pyyaml>=6.0",
 ]
 dev = [
-    "frame[scan,benchmarks]",
+    "frame-security[scan,benchmarks]",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",
@@ -71,7 +71,7 @@ dev = [
     "mypy>=1.5.0",
 ]
 all = [
-    "frame[scan,benchmarks,dev]",
+    "frame-security[scan,benchmarks,dev]",
 ]
 
 [project.scripts]
@@ -79,7 +79,8 @@ frame = "frame.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/lambdasec/frame"
-Documentation = "https://github.com/lambdasec/frame#readme"
+Documentation = "https://github.com/lambdasec/frame/blob/main/docs/usage.md"
+Changelog = "https://github.com/lambdasec/frame/releases"
 Repository = "https://github.com/lambdasec/frame"
 Issues = "https://github.com/lambdasec/frame/issues"
 
