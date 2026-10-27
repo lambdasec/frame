@@ -6,6 +6,11 @@ with the nearest correct form.
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:                 # Python < 3.11
+    import tomli as tomllib                 # type: ignore[no-redef]
+
 from frame.sil.scanner import FrameScanner
 
 
@@ -76,3 +81,39 @@ def test_inline_ignore_marker_silences_it():
     code = FLASK + "app.run(debug=True)  # frame: ignore\n"
     r = FrameScanner(language="python").scan(code, "a.py")
     assert not [v for v in r.vulnerabilities if v.category]
+
+
+def test_a_project_pack_adds_a_setting(tmp_path):
+    pack = tmp_path / "acme.toml"
+    pack.write_text('''[pack]
+name = "acme-settings"
+language = "python"
+detect = { imports = ["acme"] }
+
+[[setting]]
+kind = "debug"
+at = "kwarg"
+call = ["acme.serve"]
+keys = ["trace"]
+value = true
+description = "Tracing server enabled"
+''')
+    code = "import acme\nacme.serve(trace=True)\nacme.serve(trace=False)\n"
+    r = FrameScanner(language="python", packs=[str(pack)]).scan(code, "a.py")
+    found = [(v.cwe_id, v.line, v.description) for v in r.vulnerabilities if v.category == "hardening"]
+    assert found == [("CWE-215", 2, "Tracing server enabled: acme.serve(trace=True)")]
+    assert hardening(code) == []                                     # without the pack: nothing
+
+
+@pytest.mark.parametrize("entry,message", [
+    ('kind = "verbose"\nat = "kwarg"\ncall = ["x"]\nkeys = ["a"]\nvalue = true', "kind"),
+    ('kind = "debug"\nat = "env"\nkeys = ["a"]\nvalue = true', "at"),
+    ('kind = "debug"\nat = "kwarg"\nkeys = ["a"]\nvalue = true', "needs call"),
+    ('kind = "debug"\nat = "subscript"\nkeys = ["a"]\nvalue = true', "needs receiver"),
+    ('kind = "debug"\nat = "assignment"\nkeys = ["a"]\nvalue = "yes"', "value"),
+])
+def test_malformed_settings_are_rejected(entry, message):
+    from frame.sil.packs.schema import PackError, parse_pack
+    doc = tomllib.loads(f'[pack]\nname = "p"\nlanguage = "python"\n\n[[setting]]\n{entry}\n')
+    with pytest.raises(PackError, match=message):
+        parse_pack(doc, "t.toml")

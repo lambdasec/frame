@@ -1,0 +1,14 @@
+[pack]
+name = "django-settings"
+language = "python"
+description = "Django settings modules: DEBUG left on"
+# a settings module is named like one or assigns the settings only Django reads
+detect = { files = ["settings*.py"], module_names = ["INSTALLED_APPS", "ALLOWED_HOSTS", "MIDDLEWARE", "MIDDLEWARE_CLASSES"] }
+
+[[setting]]
+id = "settings-debug"
+kind = "debug"
+at = "assignment"
+keys = ["DEBUG"]
+value = true
+description = "Debug mode enabled in settings"

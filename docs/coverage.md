@@ -58,6 +58,14 @@ when_kwarg = { name = "shell", value = "True" }
 [[sanitizer]]
 call = ["acme.text.sql_clean"]
 kinds = ["sql"]
+
+[[setting]]                              # configuration that switches a protection off
+kind = "debug"                           # debug | cookie_secure | cookie_httponly
+at = "kwarg"                             # kwarg | assignment | attribute | subscript | property
+call = ["acme.web.serve"]
+keys = ["trace"]
+value = true                             # acme.web.serve(trace=True) is reported
+description = "Tracing server enabled"
 ```
 
 `frame packs check acme.toml` validates it, naming the file and field of any unknown key or kind. A pack refines the built-in knowledge of a call instead of replacing it. `frame packs list` shows the packs a scan would load.
@@ -75,6 +83,6 @@ kinds = ["sql"]
 | LDAP / XPath / XML | Session fixation | Secrets, unsafe deserialization | Integer overflow |
 | Header and log | CSRF (CWE-352) | Weak crypto, hashing, random | Format string |
 
-Protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`.
+Protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`. They are `[[setting]]` entries in packs, so a pack can add its own; only an explicit off switch is reported, never a missing option.
 
 C and C++ memory safety (use-after-free, double free, leaks, null dereference, uninitialised reads, out-of-bounds indexing) is decided structurally by the [separation logic engine](engine.md): ownership and heap state are tracked in separation logic, and the solver decides whether the bad state is reachable.

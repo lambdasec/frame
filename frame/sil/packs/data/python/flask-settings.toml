@@ -1,0 +1,40 @@
+[pack]
+name = "flask-settings"
+language = "python"
+description = "Flask and Quart configuration that switches a protection off"
+detect = { imports = ["flask", "quart"] }
+
+[[setting]]
+id = "run-debug"
+kind = "debug"
+at = "kwarg"
+call = ["**.run"]
+keys = ["debug"]
+value = true
+description = "Debug mode enabled (interactive debugger)"
+
+[[setting]]
+id = "app-debug"
+kind = "debug"
+at = "attribute"
+keys = ["debug"]
+value = true
+description = "Debug mode enabled"
+
+[[setting]]
+id = "config-update-secure"
+kind = "cookie_secure"
+at = "kwarg"
+call = ["**config.update"]
+keys = ["SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "LANGUAGE_COOKIE_SECURE"]
+value = false
+description = "Session cookie not marked Secure"
+
+[[setting]]
+id = "config-update-httponly"
+kind = "cookie_httponly"
+at = "kwarg"
+call = ["**config.update"]
+keys = ["SESSION_COOKIE_HTTPONLY", "CSRF_COOKIE_HTTPONLY"]
+value = false
+description = "Session cookie not marked HttpOnly"

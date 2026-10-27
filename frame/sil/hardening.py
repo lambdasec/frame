@@ -4,16 +4,21 @@ These are not data flows. A debug server, a session cookie declared `secure: fal
 source says so outright, which is why they are read from the syntax tree and reported in their
 own `category = "hardening"` so they never mix with taint findings in precision numbers.
 
-Only an explicit off switch counts. A cookie option that is merely absent is not reported: the
-defaults differ per library and "missing" is a policy question, not a vulnerability.
+What counts is data: a pack's `[[setting]]` entries (`frame/sil/packs/data/*/`) name the keys,
+the literal that switches the protection off, and where the key is written (a keyword
+argument, a module-level or attribute assignment, a subscript, an object-literal property).
+This module only matches them against the tree. Only an explicit off switch counts: an
+option that is merely absent is not reported (defaults differ per library).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, List
+from functools import lru_cache
+from typing import Any, Iterable, List
+
+from frame.sil.packs.schema import Setting
 
 CATEGORY = "hardening"
 
@@ -38,91 +43,93 @@ def _walk(root: Any):
         stack.extend(reversed(n.children))
 
 
-_PY_SECURE = re.compile(r"^(?:SESSION|CSRF|LANGUAGE)_COOKIE_SECURE$")
-_PY_HTTPONLY = re.compile(r"^(?:SESSION|CSRF)_COOKIE_HTTPONLY$")
+@lru_cache(maxsize=None)
+def _pattern(glob: str) -> "re.Pattern[str]":
+    from frame.sil.packs.apply import _glob_to_regex      # `*` inside one dotted segment, `**` across
+    return re.compile(_glob_to_regex(glob))
 
 
-def _py_is_false(n: Any) -> bool:
-    return n is not None and n.type == "false"
+def _matches(globs: Iterable[str], text: str) -> bool:
+    return any(_pattern(g).fullmatch(text) for g in globs)
 
 
-def _py_is_true(n: Any) -> bool:
-    return n is not None and n.type == "true"
+def _is(value: Any, want: bool) -> bool:
+    return value is not None and value.type == ("true" if want else "false")
 
 
-def scan_python(source: str, root: Any, filename: str = "") -> List[HardeningFinding]:
+def _module_level(n: Any) -> bool:
+    return n.parent is not None and n.parent.parent is not None and n.parent.parent.type == "module"
+
+
+def _describe(s: Setting, what: str) -> str:
+    return f"{s.description}: {what}" if s.description else what
+
+
+def scan_python(root: Any, settings: List[Setting]) -> List[HardeningFinding]:
     out: List[HardeningFinding] = []
-    flaskish = bool(re.search(r"\bflask\b|\bFlask\s*\(|\bQuart\s*\(", source, re.I))
-    base = Path(filename).name.lower()
-    settingsish = (base.startswith("settings") or "INSTALLED_APPS" in source or "ALLOWED_HOSTS" in source
-                   or "MIDDLEWARE" in source)
+    by_place = {p: [s for s in settings if s.at == p] for p in ("kwarg", "assignment", "attribute", "subscript")}
 
-    def add(kind: str, node: Any, description: str) -> None:
-        out.append(HardeningFinding(kind, node.start_point[0] + 1, node.start_point[1], description))
+    def add(s: Setting, node: Any, what: str) -> None:
+        out.append(HardeningFinding(s.kind, node.start_point[0] + 1, node.start_point[1], _describe(s, what)))
 
     for n in _walk(root):
-        if n.type == "call" and flaskish:
+        if n.type == "call" and by_place["kwarg"]:
             fn = _text(n.child_by_field_name("function"))
             args = n.child_by_field_name("arguments")
-            if args is not None:
-                kw = {_text(a.child_by_field_name("name")): a.child_by_field_name("value")
-                      for a in args.named_children if a.type == "keyword_argument"}
-                if fn.endswith(".run") and _py_is_true(kw.get("debug")):
-                    add("debug", n, f"Debug mode enabled: {fn}(debug=True) exposes an interactive debugger")
-                if fn.endswith("config.update"):
-                    for key, value in kw.items():
-                        if _PY_SECURE.match(key) and _py_is_false(value):
-                            add("cookie_secure", n, f"Session cookie not marked Secure: {key}=False")
-                        elif _PY_HTTPONLY.match(key) and _py_is_false(value):
-                            add("cookie_httponly", n, f"Session cookie not marked HttpOnly: {key}=False")
+            if args is None:
+                continue
+            for a in args.named_children:
+                if a.type != "keyword_argument":
+                    continue
+                key, value = _text(a.child_by_field_name("name")), a.child_by_field_name("value")
+                for s in by_place["kwarg"]:
+                    if key in s.keys and _is(value, s.value) and _matches(s.call, fn):
+                        add(s, n, f"{fn}({key}={_text(value)})")
         elif n.type == "assignment":
             left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+            if left is None:
+                continue
             lt = _text(left)
-            if left is not None and left.type == "subscript":          # app.config['SESSION_COOKIE_SECURE'] = False
+            if left.type == "subscript":                      # app.config['SESSION_COOKIE_SECURE'] = False
                 key = _text(left.child_by_field_name("subscript")).strip("'\"")
-                if "config" in _text(left.child_by_field_name("value")):
-                    if _PY_SECURE.match(key) and _py_is_false(right):
-                        add("cookie_secure", n, f"Session cookie not marked Secure: config['{key}'] = False")
-                    elif _PY_HTTPONLY.match(key) and _py_is_false(right):
-                        add("cookie_httponly", n, f"Session cookie not marked HttpOnly: config['{key}'] = False")
-                    elif key == "DEBUG" and _py_is_true(right):
-                        add("debug", n, "Debug mode enabled: config['DEBUG'] = True")
-            elif lt == "DEBUG" and _py_is_true(right) and settingsish and n.parent is not None \
-                    and n.parent.parent is not None and n.parent.parent.type == "module":
-                add("debug", n, "Debug mode enabled: DEBUG = True in settings")
-            elif lt.endswith(".debug") and _py_is_true(right) and flaskish:
-                add("debug", n, f"Debug mode enabled: {lt} = True")
-            elif n.parent is not None and n.parent.parent is not None and n.parent.parent.type == "module":
-                if _PY_SECURE.match(lt) and _py_is_false(right):
-                    add("cookie_secure", n, f"Session cookie not marked Secure: {lt} = False")
-                elif _PY_HTTPONLY.match(lt) and _py_is_false(right):
-                    add("cookie_httponly", n, f"Session cookie not marked HttpOnly: {lt} = False")
+                obj = _text(left.child_by_field_name("value"))
+                for s in by_place["subscript"]:
+                    if key in s.keys and _is(right, s.value) and _matches(s.receiver, obj):
+                        add(s, n, f"{lt} = {_text(right)}")
+            elif left.type == "attribute":                    # app.debug = True
+                key = _text(left.child_by_field_name("attribute"))
+                obj = _text(left.child_by_field_name("object"))
+                for s in by_place["attribute"]:
+                    if key in s.keys and _is(right, s.value) and (not s.receiver or _matches(s.receiver, obj)):
+                        add(s, n, f"{lt} = {_text(right)}")
+            elif left.type == "identifier" and _module_level(n):     # DEBUG = True in a settings module
+                for s in by_place["assignment"]:
+                    if lt in s.keys and _is(right, s.value):
+                        add(s, n, f"{lt} = {_text(right)}")
     return out
 
 
-_JS_COOKIE_CALLEE = re.compile(r"(?:^|\.)(?:session|cookieSession|cookie|setCookie|createSession|fastifySession)$")
-_JS_FALSE_KEYS = {"secure": "cookie_secure", "httpOnly": "cookie_httponly", "httponly": "cookie_httponly"}
-
-
-def scan_javascript(source: str, root: Any, filename: str = "") -> List[HardeningFinding]:
+def scan_javascript(root: Any, settings: List[Setting]) -> List[HardeningFinding]:
     out: List[HardeningFinding] = []
+    props = [s for s in settings if s.at == "property"]
+    if not props:
+        return out
     for n in _walk(root):
         if n.type != "pair":
             continue
         key = _text(n.child_by_field_name("key")).strip("'\"")
         value = n.child_by_field_name("value")
-        kind = _JS_FALSE_KEYS.get(key)
-        if kind is None or value is None or value.type != "false":
+        cands = [s for s in props if key in s.keys and _is(value, s.value)]
+        if not cands:
             continue
-        cur, hops = n.parent, 0
+        cur, hops = n.parent, 0                               # the call the options are passed to
         while cur is not None and hops < 6:
             if cur.type == "call_expression":
                 callee = _text(cur.child_by_field_name("function"))
-                if _JS_COOKIE_CALLEE.search(callee):
-                    flag = "Secure" if kind == "cookie_secure" else "HttpOnly"
-                    out.append(HardeningFinding(
-                        kind, n.start_point[0] + 1, n.start_point[1],
-                        f"Cookie not marked {flag}: {key}: false in {callee}(...)"))
+                for s in cands:
+                    if _matches(s.call, callee):
+                        out.append(HardeningFinding(s.kind, n.start_point[0] + 1, n.start_point[1],
+                                                    _describe(s, f"{key}: {_text(value)} in {callee}(...)")))
                 break
             cur, hops = cur.parent, hops + 1
     return out

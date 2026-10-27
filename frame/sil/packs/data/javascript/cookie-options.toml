@@ -1,0 +1,24 @@
+[pack]
+name = "cookie-options"
+language = "javascript"
+description = "Session and cookie options that switch a protection off (express-session, cookie-session, res.cookie, fastify)"
+
+[[setting]]
+id = "cookie-secure"
+kind = "cookie_secure"
+at = "property"
+call = ["session", "**.session", "cookieSession", "**.cookieSession", "cookie", "**.cookie",
+        "setCookie", "**.setCookie", "createSession", "**.createSession", "fastifySession", "**.fastifySession"]
+keys = ["secure"]
+value = false
+description = "Cookie not marked Secure"
+
+[[setting]]
+id = "cookie-httponly"
+kind = "cookie_httponly"
+at = "property"
+call = ["session", "**.session", "cookieSession", "**.cookieSession", "cookie", "**.cookie",
+        "setCookie", "**.setCookie", "createSession", "**.createSession", "fastifySession", "**.fastifySession"]
+keys = ["httpOnly", "httponly"]
+value = false
+description = "Cookie not marked HttpOnly"

@@ -1184,7 +1184,7 @@ class FrameScanner:
                 print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
 
             # Step 3c: hardening -- explicit off switches (debug mode, insecure cookie flags).
-            hardening_vulns = self._scan_hardening(source_code, filename)
+            hardening_vulns = self._scan_hardening(source_code, filename, program)
             result.vulnerabilities.extend(hardening_vulns)
 
             # (Regex pattern layer removed -- the SL taint engine, Tier-2
@@ -2257,9 +2257,9 @@ class FrameScanner:
         return (any(x in grams for x in vals)
                 and all(x in grams or x in cls._STRUCTURAL_WORDS for x in vals))
 
-    def _scan_hardening(self, source_code: str, filename: str) -> List[Vulnerability]:
-        """Debug mode and explicit insecure cookie flags, read from the syntax tree
-        (`hardening.py`); Python and JS/TS."""
+    def _scan_hardening(self, source_code: str, filename: str, program: Program) -> List[Vulnerability]:
+        """Explicit off switches (debug mode, insecure cookie flags): the `[[setting]]` entries
+        of the packs that apply to this file, matched on the syntax tree (`hardening.py`)."""
         from frame.sil import hardening
         if self.language == "python":
             scan, lang = hardening.scan_python, "python"
@@ -2267,10 +2267,15 @@ class FrameScanner:
             scan, lang = hardening.scan_javascript, self.language
         else:
             return []
+        applied = set(program.packs_applied)
+        settings = [st for p in self.pack_set.for_language(lang) if f"{p.language}/{p.name}" in applied
+                    for st in p.settings]
+        if not settings:
+            return []
         try:
             parser = self._get_frontend(lang).parser
             root = parser.parse(source_code.encode("utf-8")).root_node
-            found = scan(source_code, root, filename)
+            found = scan(root, settings)
         except Exception:
             return []
         types = {"debug": VulnType.DEBUG_ENABLED, "cookie_secure": VulnType.INSECURE_COOKIE,

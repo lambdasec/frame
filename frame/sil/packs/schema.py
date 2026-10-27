@@ -40,7 +40,7 @@ _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
 _PACK_KEYS = {"name", "language", "description", "detect", "version", "references"}
-_DETECT_KEYS = {"imports", "annotations", "extends"}
+_DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "kind", "description"}
@@ -48,7 +48,11 @@ _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
-_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator"}
+_SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
+_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting"}
+# What a [[setting]] reports, and where the setting can be written.
+SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
+SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property")
 
 
 class PackError(ValueError):
@@ -93,6 +97,21 @@ class Rule:
 
 
 @dataclass
+class Setting:
+    """A configuration value that switches a protection off (`category = "hardening"`):
+    `keys` set to the literal `value` at one place. Only an explicit off switch is a finding;
+    a missing option never is (defaults differ per library)."""
+    id: str
+    kind: str                            # one of SETTING_KINDS
+    keys: List[str]
+    value: bool
+    at: str                              # one of SETTING_PLACES
+    call: List[str] = field(default_factory=list)       # kwarg / property: the call it is passed to
+    receiver: List[str] = field(default_factory=list)   # subscript / attribute: the object written
+    description: str = ""
+
+
+@dataclass
 class Pack:
     name: str
     language: str
@@ -100,13 +119,17 @@ class Pack:
     detect_imports: List[str] = field(default_factory=list)
     detect_annotations: List[str] = field(default_factory=list)
     detect_extends: List[str] = field(default_factory=list)
+    detect_files: List[str] = field(default_factory=list)          # file name globs
+    detect_module_names: List[str] = field(default_factory=list)   # names assigned at module level
     entrypoints: List[Entrypoint] = field(default_factory=list)
     rules: List[Rule] = field(default_factory=list)
+    settings: List[Setting] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
     @property
     def has_detect(self) -> bool:
-        return bool(self.detect_imports or self.detect_annotations or self.detect_extends)
+        return bool(self.detect_imports or self.detect_annotations or self.detect_extends
+                    or self.detect_files or self.detect_module_names)
 
     def applies_to_language(self, language: str) -> bool:
         if self.language == language:
@@ -188,6 +211,8 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     pack.detect_imports = _strings(origin, "detect.imports", detect.get("imports", []))
     pack.detect_annotations = _strings(origin, "detect.annotations", detect.get("annotations", []))
     pack.detect_extends = _strings(origin, "detect.extends", detect.get("extends", []))
+    pack.detect_files = _strings(origin, "detect.files", detect.get("files", []))
+    pack.detect_module_names = _strings(origin, "detect.module_names", detect.get("module_names", []))
 
     for i, t in enumerate(data.get("entrypoint", [])):
         where = f"[[entrypoint]] #{i + 1}"
@@ -259,4 +284,24 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     rules("sink", _SINK_KEYS)
     rules("sanitizer", _SANITIZER_KEYS)
     rules("propagator", _PROPAGATOR_KEYS)
+
+    for i, t in enumerate(data.get("setting", [])):
+        where = f"[[setting]] #{i + 1}"
+        _check_keys(origin, where, t, _SETTING_KEYS)
+        if t.get("kind") not in SETTING_KINDS:
+            raise _fail(origin, f"{where}.kind", f"must be one of {list(SETTING_KINDS)}")
+        if t.get("at") not in SETTING_PLACES:
+            raise _fail(origin, f"{where}.at", f"must be one of {list(SETTING_PLACES)}")
+        if not isinstance(t.get("value"), bool):
+            raise _fail(origin, f"{where}.value", "must be true or false (the value that switches it off)")
+        st = Setting(id=str(t.get("id", f"{name}-setting-{i + 1}")), kind=t["kind"], at=t["at"],
+                     keys=_strings(origin, f"{where}.keys", t.get("keys", []), allow_empty=False),
+                     value=t["value"], description=str(t.get("description", "")),
+                     call=_strings(origin, f"{where}.call", t.get("call", [])),
+                     receiver=_strings(origin, f"{where}.receiver", t.get("receiver", [])))
+        if st.at in ("kwarg", "property") and not st.call:
+            raise _fail(origin, where, f'at = "{st.at}" needs call')
+        if st.at == "subscript" and not st.receiver:
+            raise _fail(origin, where, 'at = "subscript" needs receiver')
+        pack.settings.append(st)
     return pack

@@ -15,9 +15,10 @@ import copy
 import re
 from dataclasses import replace
 from fnmatch import fnmatchcase
+from pathlib import PurePath
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..instructions import Call, TaintKind, TaintSource
+from ..instructions import Assign, Call, TaintKind, TaintSource
 from ..metadata import ImportTable, qualify_type
 from ..procedure import Procedure, ProcSpec, Program
 from ..types import PVar
@@ -77,6 +78,16 @@ def _detected(pack: Pack, program: Program) -> bool:
         for info in program.class_info.values():
             if _glob(pack.detect_extends, *info.bases, *info.canonical_bases):
                 return True
+    if pack.detect_files:
+        names = [PurePath(f).name.lower() for f in getattr(program, "source_files", ())]
+        if any(fnmatchcase(n, p.lower()) for p in pack.detect_files for n in names):
+            return True
+    if pack.detect_module_names:
+        module = getattr(program, "procedures", {}).get("<module>")
+        assigned = {str(i.id.name if isinstance(i.id, PVar) else i.id)
+                    for i in (module.get_all_instrs() if module is not None else ()) if isinstance(i, Assign)}
+        if assigned & set(pack.detect_module_names):
+            return True
     return False
 
 

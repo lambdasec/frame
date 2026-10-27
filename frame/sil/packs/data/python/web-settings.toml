@@ -1,0 +1,47 @@
+[pack]
+name = "web-settings"
+language = "python"
+description = "Web framework configuration keys (Flask, Django and compatible) that switch a protection off"
+
+[[setting]]
+id = "module-cookie-secure"
+kind = "cookie_secure"
+at = "assignment"
+keys = ["SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "LANGUAGE_COOKIE_SECURE"]
+value = false
+description = "Session cookie not marked Secure"
+
+[[setting]]
+id = "module-cookie-httponly"
+kind = "cookie_httponly"
+at = "assignment"
+keys = ["SESSION_COOKIE_HTTPONLY", "CSRF_COOKIE_HTTPONLY"]
+value = false
+description = "Session cookie not marked HttpOnly"
+
+[[setting]]
+id = "config-cookie-secure"
+kind = "cookie_secure"
+at = "subscript"
+receiver = ["**config**"]
+keys = ["SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "LANGUAGE_COOKIE_SECURE"]
+value = false
+description = "Session cookie not marked Secure"
+
+[[setting]]
+id = "config-cookie-httponly"
+kind = "cookie_httponly"
+at = "subscript"
+receiver = ["**config**"]
+keys = ["SESSION_COOKIE_HTTPONLY", "CSRF_COOKIE_HTTPONLY"]
+value = false
+description = "Session cookie not marked HttpOnly"
+
+[[setting]]
+id = "config-debug"
+kind = "debug"
+at = "subscript"
+receiver = ["**config**"]
+keys = ["DEBUG"]
+value = true
+description = "Debug mode enabled"
