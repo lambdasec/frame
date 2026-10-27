@@ -1,7 +1,11 @@
 """The built-in framework packs must ship with an installed Frame."""
 
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:                 # Python < 3.11
+    import tomli as tomllib                 # type: ignore[no-redef]
 
 from frame.sil.packs import builtin_packs
 from frame.sil.packs.loader import BUILTIN_DIR

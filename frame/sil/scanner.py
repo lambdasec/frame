@@ -1323,7 +1323,14 @@ class FrameScanner:
             return result
 
         # Use utf-8-sig to automatically strip BOM (common in C# files)
-        source_code = path.read_text(encoding='utf-8-sig', errors='replace')
+        try:
+            source_code = path.read_text(encoding='utf-8-sig', errors='replace')
+        except OSError as e:
+            # An unreadable file (permissions, vanished mid-scan) must not stop
+            # a directory scan: report it as this file's error and move on.
+            result = ScanResult(filename=str(path))
+            result.errors.append(f"Could not read {filepath}: {e.strerror or e}")
+            return result
 
         # Auto-detect language from extension if not already set correctly
         detected_lang = language_for_file(path, source_code, self.language)
