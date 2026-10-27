@@ -126,6 +126,7 @@ class ScanConfig:
     disable: List[str] = field(default_factory=list)
     exclude: List[str] = field(default_factory=list)
     packs: List[str] = field(default_factory=list)   # extra framework packs (paths relative to the config)
+    licenses: Optional[dict] = None                  # the [licenses] table (frame deps --licenses)
     source: Optional[str] = None
 
 
@@ -134,7 +135,7 @@ class ConfigError(ValueError):
 
 
 def _from_table(table: dict, source: str) -> ScanConfig:
-    known = {"min_severity", "fail_on", "disable", "exclude", "packs"}
+    known = {"min_severity", "fail_on", "disable", "exclude", "packs", "licenses"}
     unknown = set(table) - known
     if unknown:
         raise ConfigError(
@@ -155,6 +156,20 @@ def _from_table(table: dict, source: str) -> ScanConfig:
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
             raise ConfigError(f"{source}: {key} must be a list of strings")
         setattr(cfg, key, list(val))
+    lic = table.get("licenses")
+    if lic is not None:
+        lknown = {"deny", "allow", "unknown", "include_dev"}
+        if not isinstance(lic, dict) or set(lic) - lknown:
+            raise ConfigError(f"{source}: [licenses] takes only {sorted(lknown)}")
+        for key in ("deny", "allow"):
+            val = lic.get(key, [])
+            if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+                raise ConfigError(f"{source}: licenses.{key} must be a list of strings")
+        if lic.get("unknown", "report") not in ("report", "fail"):
+            raise ConfigError(f"{source}: licenses.unknown must be \"report\" or \"fail\"")
+        if not isinstance(lic.get("include_dev", False), bool):
+            raise ConfigError(f"{source}: licenses.include_dev must be true or false")
+        cfg.licenses = dict(lic)
     return cfg
 
 

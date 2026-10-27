@@ -45,7 +45,18 @@ Ruby (`Gemfile.lock`, with `Gemfile` groups for development-only gems), PHP (`co
 
 C and C++ dependencies are read from Conan (`conan.lock`, `conanfile.txt`, `conanfile.py`), vcpkg (`vcpkg.json` with overrides, and `vcpkg_installed/vcpkg/status` when present), git submodules (the pinned commit and the tag it carries) and CMake (`FetchContent_Declare`, `ExternalProject_Add`, `CPMAddPackage`). Each resolves to its upstream repository and release tag, and is matched against OSV's GIT advisories, which list the affected tags of a repository; `frame kb pull --advisories` fetches only the advisory shards of the repositories a project uses. A Conan or vcpkg package's tag comes from the recipe's own source URL or from a tag pattern two sources agree on; a bare commit or a version Frame cannot map to a tag is listed but not matched.
 
-`frame deps --sbom cyclonedx` (or `spdx`) prints a software bill of materials from the same graph: CycloneDX 1.6 (components with package URLs, dev-only ones `scope: optional`, the `dependencies` graph) or SPDX 2.3 JSON (`DEPENDS_ON` / `DEV_DEPENDENCY_OF` relationships). Licences are only what a lockfile records (npm's); otherwise CycloneDX omits them and SPDX says `NOASSERTION`, never a guess. `--product` names the root (default `pkg:generic/<directory>`).
+`frame deps --sbom cyclonedx` (or `spdx`) prints a software bill of materials from the same graph: CycloneDX 1.6 (components with package URLs, dev-only ones `scope: optional`, the `dependencies` graph) or SPDX 2.3 JSON (`DEPENDS_ON` / `DEV_DEPENDENCY_OF` relationships). Licences are what a lockfile records (npm, Composer) or the installed metadata of the same version says (`node_modules`, a project `.venv`); otherwise CycloneDX omits them and SPDX says `NOASSERTION`, never a guess.
+
+`frame deps --licenses` checks them against a policy in `.frame.toml` (or `[tool.frame.licenses]` in `pyproject.toml`) and exits 1 on a violation:
+
+```toml
+[licenses]
+deny = ["GPL-*", "AGPL-*"]        # SPDX ids or globs; or allow = [...] to accept only those
+unknown = "report"                # "fail" to fail on packages with no licence evidence
+include_dev = false               # dev-only dependencies are skipped by default
+```
+
+An SPDX expression is judged as written: `MIT OR GPL-3.0-only` passes when MIT is acceptable, `MIT AND GPL-3.0-only` needs both, and `X WITH exception` matches a deny entry for `X` or for the exact `X WITH exception`. A licence that is not an SPDX id is reported as unknown, never matched by guesswork. `--product` names the root (default `pkg:generic/<directory>`).
 
 `frame deps --vex openvex` (or `cyclonedx`) prints a VEX document for the vulnerable dependencies: OpenVEX 0.2.0, or a CycloneDX 1.6 BOM with `vulnerabilities[].analysis`. Statements follow Frame's evidence: a vulnerable version present is `affected`, with the upgrade from the plan as its action; with `frame scan --sca --vex cyclonedx --vex-out vex.json`, a vulnerable function that attacker data reaches is `exploitable`, with the flow. Frame never states `not_affected` on its own, because reachability cannot prove a package unreachable: record decisions in `.frame/vex.toml` and they are included, unless a verified flow contradicts one (then the statement stays `affected` and the conflict is reported). `--dev-not-shipped` states dev-only dependencies `not_affected` (`component_not_present`).
 

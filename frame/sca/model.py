@@ -33,7 +33,8 @@ class Package:
     direct: Optional[bool] = None        # None: the file does not say
     dev: bool = False                    # only needed for development / tests
     spec: str = ""                       # the requested range, when there is no exact version
-    license: str = ""                    # as the lockfile declares it (npm); empty when it does not say
+    license: str = ""                    # as the lockfile (npm, Composer) or installed metadata declares it
+    license_source: str = ""             # "" (the file itself) | "installed"
     repo: str = ""                       # C/C++: the upstream repository, host/owner/name
     tags: List[str] = field(default_factory=list)   # C/C++: the release tag(s) this version is
 
@@ -86,6 +87,8 @@ class Package:
             d["spec"] = self.spec
         if self.license:
             d["license"] = self.license
+            if self.license_source:
+                d["license_source"] = self.license_source
         if self.repo:
             d["repo"] = self.repo
             d["tags"] = list(self.tags)

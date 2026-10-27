@@ -146,7 +146,9 @@ def parse_composer_lock(path: str, text: str) -> DependencyFile:
     for section, dev in (("packages", False), ("packages-dev", True)):
         for p in data.get(section) or []:
             if isinstance(p, dict) and p.get("name") and p.get("version"):
-                keys[p["name"].lower()] = df.add(Package(PACKAGIST, p["name"], str(p["version"]), dev=dev)).key
+                from frame.sca.licenses import composer_license
+                keys[p["name"].lower()] = df.add(Package(PACKAGIST, p["name"], str(p["version"]), dev=dev,
+                                                         license=composer_license(p.get("license")))).key
     for section in ("packages", "packages-dev"):
         for p in data.get(section) or []:
             parent = keys.get(str(p.get("name", "")).lower())

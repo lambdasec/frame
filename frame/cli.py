@@ -87,6 +87,8 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--plan", action="store_true",
                              help="With --vulns: the smallest upgrade that leaves every known advisory for each "
                                   "vulnerable package, and what it takes (re-lock, raise a requirement, override)")
+    deps_parser.add_argument("--licenses", action="store_true",
+                             help="Check licences against the [licenses] policy in .frame.toml (exit 1 on a violation)")
     deps_parser.add_argument("--vex", choices=["openvex", "cyclonedx"],
                              help="Print a VEX document (OpenVEX 0.2.0, or CycloneDX 1.6 with vulnerability analysis) "
                                   "instead of the report; implies --vulns. Decisions in .frame/vex.toml are included")
@@ -508,6 +510,33 @@ def cmd_deps(args) -> int:
         parts = tuple(p for p in Path(e).parts if p not in (".", ""))
         excluded.add(parts[0] if len(parts) == 1 else parts)
     report = read_dependencies(target, exclude_dirs=excluded, resolve=args.resolve)
+    if args.licenses or args.sbom:
+        from frame.sca.licenses import enrich
+        enrich(report.files, target)
+    if args.licenses:
+        from frame.sca.licenses import Policy, check, failing, format_text as lic_text
+        from frame.sil.suppressions import ConfigError, find_config
+        try:
+            cfg = find_config(target)
+        except ConfigError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        table = (cfg.licenses if cfg else None) or {}
+        policy = Policy(deny=table.get("deny", []), allow=table.get("allow", []),
+                        unknown=table.get("unknown", "report"), include_dev=table.get("include_dev", False),
+                        source=cfg.source if cfg and cfg.licenses else "")
+        lic = check(report.files, policy)
+        if args.format == "json":
+            text = json.dumps({"policy": {"deny": policy.deny, "allow": policy.allow, "unknown": policy.unknown,
+                                          "include_dev": policy.include_dev, "source": policy.source},
+                               "licenses": [f.to_dict() for f in lic], "warnings": report.warnings}, indent=2)
+        else:
+            text = lic_text(lic, policy) + "".join(f"\nwarning: {w}" for w in report.warnings)
+        if args.output:
+            Path(args.output).write_text(text + "\n", encoding="utf-8")
+        else:
+            print(text)
+        return 1 if failing(lic, policy) else 0
     if args.sbom:
         from frame.sca.sbom import to_cyclonedx as sbom_cdx, to_spdx
         from frame.sca.vex import product_id
