@@ -73,6 +73,9 @@ class DependencyFile:
     kind: str                            # "lockfile" | "manifest"
     packages: Dict[str, Package] = field(default_factory=dict)      # key -> package
     edges: Dict[str, Set[str]] = field(default_factory=dict)        # key -> keys it depends on
+    # declared requirements: requiring package key ("" for the project itself) -> normalised
+    # dependency name -> the range it declares (what an upgrade must satisfy)
+    requires: Dict[str, Dict[str, str]] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     def add(self, pkg: Package) -> Package:
@@ -91,6 +94,12 @@ class DependencyFile:
     def edge(self, parent: str, child: str) -> None:
         if parent != child:
             self.edges.setdefault(parent, set()).add(child)
+
+    def require(self, parent: str, name: str, spec) -> None:
+        if isinstance(spec, dict):                      # poetry: {version = "...", markers = ...}
+            spec = spec.get("version", "")
+        if isinstance(spec, str) and spec.strip():
+            self.requires.setdefault(parent, {})[normalize_name(self.ecosystem, name)] = spec.strip()
 
     def mark_direct(self, names: Dict[str, bool]) -> None:
         """Set `direct` (and `dev`, from the manifest's dev section) by normalised name."""

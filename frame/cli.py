@@ -84,6 +84,9 @@ def create_parser() -> argparse.ArgumentParser:
                                   "(default: none)")
     deps_parser.add_argument("--vulns", action="store_true",
                              help="Match the packages against the cached advisories (frame kb pull --advisories)")
+    deps_parser.add_argument("--plan", action="store_true",
+                             help="With --vulns: the smallest upgrade that leaves every known advisory for each "
+                                  "vulnerable package, and what it takes (re-lock, raise a requirement, override)")
     deps_parser.add_argument("--no-reachability", action="store_true",
                              help="With --vulns: skip reading the project's source for imports and calls of "
                                   "the vulnerable packages and functions")
@@ -487,16 +490,25 @@ def cmd_deps(args) -> int:
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    "run `frame kb pull --advisories`")
+        plans = None
+        if args.plan:
+            from frame.sca.plan import plan
+            plans = plan(findings, report.files, db)
     if args.format == "json":
         data = report.to_dict()
         if findings is not None:
             data["vulnerabilities"] = findings
+            if args.plan:
+                data["plan"] = plans
         out = json.dumps(data, indent=2)
     else:
         out = format_text(report)
         if findings is not None:
             from frame.sca.discover import format_vulns
             out += "\n" + format_vulns(findings)
+            if args.plan:
+                from frame.sca.plan import format_plan
+                out += format_plan(plans)
     if args.output:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:

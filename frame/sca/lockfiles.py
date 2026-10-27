@@ -162,10 +162,11 @@ def parse_poetry_lock(path: str, text: str) -> DependencyFile:
         by_name[normalize_name(PYPI, p["name"])] = pkg.key
     for p in data.get("package", []):
         parent = by_name[normalize_name(PYPI, p["name"])]
-        for dep in (p.get("dependencies") or {}):
+        for dep, spec in (p.get("dependencies") or {}).items():
             child = by_name.get(normalize_name(PYPI, dep))
             if child:
                 df.edge(parent, child)
+                df.require(parent, dep, spec)
     return df
 
 
@@ -219,6 +220,7 @@ def parse_pdm_lock(path: str, text: str) -> DependencyFile:
             child = by_name.get(normalize_name(PYPI, r[0])) if r else None
             if child:
                 df.edge(by_name[normalize_name(PYPI, p["name"])], child)
+                df.require(by_name[normalize_name(PYPI, p["name"])], r[0], r[2])
     return df
 
 
@@ -323,14 +325,18 @@ def parse_package_lock(path: str, text: str) -> DependencyFile:
                     direct[n] = False
                 for n in (meta.get("devDependencies") or {}):
                     direct.setdefault(n, True)
+                if k == "":
+                    for n, spec in {**(meta.get("devDependencies") or {}), **deps}.items():
+                        df.require("", n, spec)
                 continue
             parent = keys.get(k)
             if parent is None:
                 continue
-            for n in deps:
+            for n, spec in deps.items():
                 child = resolve(k, n)
                 if child:
                     df.edge(parent, child)
+                    df.require(parent, n, spec)
         if direct:
             for k, key in keys.items():                   # direct = installed at a workspace's top
                 pkg = df.packages[key]
@@ -350,6 +356,8 @@ def parse_package_lock(path: str, text: str) -> DependencyFile:
             pkg = df.add(Package(NPM, name, str(meta["version"]), dev=bool(meta.get("dev"))))
             if parent:
                 df.edge(parent, pkg.key)
+            for n, spec in (meta.get("requires") or {}).items():
+                df.require(pkg.key, n, spec)
             walk(meta.get("dependencies") or {}, pkg.key)
     walk(data.get("dependencies") or {}, None)
     return df
@@ -420,6 +428,7 @@ def parse_yarn_lock(path: str, text: str) -> DependencyFile:
             child = by_spec.get(f"{name}@{rng}") or by_spec.get(f"{name}@npm:{rng}")
             if child:
                 df.edge(parent, child)
+                df.require(parent, name, rng[4:] if rng.startswith("npm:") else rng)
     return df
 
 
@@ -480,6 +489,8 @@ def parse_pnpm_lock(path: str, text: str) -> DependencyFile:
                 ver = version_of(v)
                 if ver and (n, ver) in keys:
                     direct[n] = direct.get(n, True) and dev
+                if isinstance(v, dict) and v.get("specifier"):
+                    df.require("", n, v["specifier"])
     if direct:
         df.mark_direct(direct)
     return df
@@ -572,14 +583,17 @@ def parse_nuget_lock(path: str, text: str) -> DependencyFile:
                 continue
             keys[name.lower()] = df.add(Package(NUGET, name, str(meta["resolved"]),
                                                 direct=meta.get("type") == "Direct")).key
+            if meta.get("type") == "Direct" and meta.get("requested"):
+                df.require("", name, meta["requested"])
         for name, meta in framework.items():
             parent = keys.get(name.lower())
             if parent is None:
                 continue
-            for dep in (meta.get("dependencies") or {}):
+            for dep, spec in (meta.get("dependencies") or {}).items():
                 child = keys.get(dep.lower())
                 if child:
                     df.edge(parent, child)
+                    df.require(parent, dep, spec)
     return df
 
 

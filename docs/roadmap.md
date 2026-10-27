@@ -57,7 +57,7 @@ Done (October 2026): extensionless shebang scripts, a warning for files that do 
 - Z3 remediation planning: the smallest set of upgrades that removes every vulnerable version while satisfying every package's constraints; whether an unpinned manifest admits a vulnerable version.
 - SBOM (CycloneDX, SPDX) and license data from the same graph.
 - Remediation (`frame fix` for dependencies), deterministic first, the LLM only where judgement is needed, every fix verified by Frame:
-  1. Upgrade: the minimum fixed version that satisfies every constraint (the Z3 planner), applied through the package manager; verified by `frame deps --vulns`, the build and the tests.
+  1. Upgrade. Done: the plan (`frame deps --vulns --plan`, `frame/sca/plan.py`, `ranges.py`): the minimum version clear of every advisory, and re-lock / raise-requirement / override from the declared ranges (npm ranges checked against node-semver, PEP 440 against `packaging`). Next: applying it through the package manager (verified by `frame deps --vulns`, the build and the tests), and upgrading the packages in between from registry metadata, where solving every package's constraints together is a job for Z3.
   2. Breaking-change adaptation when an upgrade crosses a major version (LLM, from the changelog and the API difference); verified by the build, the tests and a clean re-scan.
   3. Code mitigation for `called` and `tainted` findings (LLM): change how the application uses the vulnerable function, version unchanged; verified by the taint engine (the path must be gone, solver-checked).
   4. Configuration mitigation from curated per-advisory data (e.g. Log4Shell's `formatMsgNoLookups`).

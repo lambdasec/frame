@@ -32,7 +32,10 @@ Each vulnerability is also checked against the project's own code (Python, JavaS
 frame kb pull --advisories            # once, and whenever you want fresh advisories
 frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each
 frame deps . --resolve --vulns --exclude tests --fail-on high    # a CI gate (exit 1 on high or critical)
+frame deps --vulns --plan             # the smallest safe upgrade for each, and what it takes
 ```
+
+`--plan` gives each vulnerable package the lowest version at or above the current one that no known advisory affects (chosen among the versions advisories name as fixed, so it runs offline), flags a jump to a later major version, and says what the change takes, from the ranges the lockfile and manifest declare: re-lock (every range already admits it), raise the project's own requirement, or an override (npm `overrides`, yarn `resolutions`, a pip constraint, Maven `dependencyManagement`...) when a package in between pins a range that excludes it.
 
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 

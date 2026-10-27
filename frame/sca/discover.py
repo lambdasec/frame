@@ -77,6 +77,14 @@ def _apply_manifest(df: DependencyFile, manifest: Path, names_of: Callable[[str]
     mtext = _read(manifest) if manifest.is_file() else None
     if mtext is None:
         return
+    parse = manifest_parser(manifest.name)
+    if parse is not None and "" not in df.requires:          # the project's own declared ranges
+        try:
+            declared = parse(manifest.name, mtext)
+        except (LockfileError, ValueError, TypeError, KeyError):
+            declared = None
+        for pk in (declared.packages.values() if declared is not None else ()):
+            df.require("", pk.name, pk.spec or pk.version or "")
     names = {normalize_name(df.ecosystem, n): dev for n, dev in names_of(mtext).items()}
     if names and all(pk.direct is None for pk in df.packages.values()):
         df.mark_direct(names)
