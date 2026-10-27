@@ -78,7 +78,7 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 
 | | |
 |---|---|
-| [Usage](docs/usage.md) | Scanning, CI and SARIF, baselines and `verify`, suppressions, configuration, commands, Python API |
+| [Usage](docs/usage.md) | Scanning, GitHub Action and pre-commit hook, baselines and `verify`, suppressions, configuration, commands, Python API |
 | [Coverage](docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
 | [AI layer](docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |

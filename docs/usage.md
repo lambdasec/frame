@@ -27,14 +27,65 @@ frame verify new.json          # after a fix: fixed / present / suppressed / unc
 ## GitHub Actions
 
 ```yaml
-- run: pip install -e ".[scan]"
-- run: frame scan src/ -f sarif -o results.sarif --fail-on high
-- uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: results.sarif
+# .github/workflows/frame.yml
+name: frame
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write        # upload SARIF to code scanning
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lambdasec/frame@main
+        with:
+          path: src
+          fail-on: high
 ```
 
-SARIF carries CWE tags and `security-severity`, so GitHub code scanning ranks the alerts. For pull requests, scan only what the change can affect and fail only on new findings: `frame scan . --changed origin/main --baseline .frame-baseline.json`.
+The action installs Frame, scans, uploads the SARIF report to code scanning and fails the job on findings at or above `fail-on`. SARIF carries CWE tags and `security-severity`, so GitHub ranks the alerts.
+
+| Input | Default | |
+|---|---|---|
+| `path` | `.` | Directory or file to scan |
+| `fail-on` | `high` | `critical`, `high`, `medium`, `low`, `any` or `none` |
+| `args` | | Extra `frame scan` flags |
+| `sarif-file` | `frame.sarif` | Where the report is written (also an output, with `exit-code`) |
+| `upload-sarif` | `true` | Set `false` when the repo has no code scanning |
+| `python-version` | `3.12` | Python that runs Frame |
+
+For pull requests, scan only what the change can affect and fail only on new findings:
+
+```yaml
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0             # --changed diffs against the base branch
+      - uses: lambdasec/frame@main
+        with:
+          args: --changed origin/${{ github.base_ref }} --baseline .frame-baseline.json
+```
+
+Any other CI runs the same thing from the command line:
+
+```bash
+pip install "frame[scan] @ git+https://github.com/lambdasec/frame.git"
+frame scan src/ -f sarif -o frame.sarif --fail-on high
+```
+
+## pre-commit
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/lambdasec/frame
+    rev: main                     # or a commit SHA
+    hooks:
+      - id: frame
+        # args: [--baseline, .frame-baseline.json]
+```
+
+The hook scans the staged Python, JavaScript/TypeScript, Java, C# and C/C++ files, widened to the files that import them, and blocks the commit on findings at or above `high` (or `fail_on` from `.frame.toml`). Coding agents get the same check by running `frame scan . --files <edited files>` after each edit.
 
 ## Suppressions
 

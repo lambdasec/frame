@@ -1,0 +1,20 @@
+# Scans the staged files, plus the files that import them (an edited helper
+# can make an untouched caller vulnerable). Fails on findings at or above
+# `high` unless .frame.toml sets fail_on; add a baseline through `args`.
+- id: frame
+  name: frame security scan
+  description: Find vulnerabilities by following attacker data across files.
+  entry: frame scan . --files
+  language: python
+  # Keep in step with the `scan` extra in pyproject.toml (tests/test_packaging.py).
+  additional_dependencies:
+    - tree-sitter>=0.21.0
+    - tree-sitter-python>=0.21.0
+    - tree-sitter-c>=0.21.0
+    - tree-sitter-cpp>=0.22.0
+    - tree-sitter-java>=0.21.0
+    - tree-sitter-javascript>=0.21.0
+    - tree-sitter-typescript>=0.21.0
+    - tree-sitter-c-sharp>=0.21.0
+  types_or: [python, javascript, jsx, ts, tsx, java, c, c++, c#]
+  require_serial: true

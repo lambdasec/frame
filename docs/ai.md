@@ -25,7 +25,28 @@ frame fix app.py --guidance findings.json --diff         # patch, re-scan, confi
 
 On the [Endor Labs corpus](../benchmarks/endor_corpus/README.md) the full mode reaches 0.67 recall at 0.51 precision (Semgrep: 0.52 / 0.40); the LLM layer recovers about 65 vulnerabilities in Java, JS/TS and C# that both the symbolic engine and Semgrep miss.
 
-## Serving a local model on Apple Silicon
+## Choosing a model
+
+Any OpenAI-compatible endpoint works, so the same commands run on a laptop or against a hosted frontier model.
+
+### Frontier open models, hosted
+
+Open frontier models such as GLM are strong at security work: reading unfamiliar code, tracing flows and writing working exploits. Our benchmarks run on GLM. With [mlx-optiq cloud](https://cloud.mlx-optiq.com), create an API key and point Frame at it:
+
+```bash
+export FRAME_LLM_BASE_URL=https://cloud.mlx-optiq.com/api/v1
+export FRAME_LLM_API_KEY=sk-optiq-cloud-...              # from the dashboard's API keys page
+export FRAME_LLM_MODEL=glm-5.3-flash                     # or glm-5.3 for the hardest repos
+
+frame scan src/ --ai
+frame fix app.py --guidance findings.json --diff
+```
+
+`curl https://cloud.mlx-optiq.com/api/v1/models` lists the available models (also `deepseek-v4.1-flash` and `minimax-m3.1-flash`), each with a context window of about 1M tokens, enough for a whole service.
+
+### Local, on Apple Silicon
+
+To keep code on the machine, serve a quantized model with mlx-optiq:
 
 ```bash
 pip install mlx-optiq
@@ -34,4 +55,4 @@ optiq serve --model mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit \
   --kv-config ./kv/kv_config.json --port 47317 --mtp    # --mtp: ~1.4x faster decode
 ```
 
-Hosted open models (our benchmarks also use GLM-5.2) work through the same variables.
+Then use the local endpoint from the example above (`http://localhost:47317/v1`, empty key).

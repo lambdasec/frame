@@ -300,7 +300,8 @@ Magic wand (`P -* Q`) is NOT commutative unlike other binary connectives. Handle
 
 ### CI (`.github/workflows/tests.yml`)
 - `lint`: ruff (enforced) + mypy (informational).
-- `test`: Python 3.10-3.13 matrix, `pip install -e ".[dev]"`, parallel pytest, plus a clean-venv `pip install .[scan]` import check of every frontend.
+- `test`: Frame supports Python 3.10 and later; CI tests only the oldest and newest versions (3.10 and 3.13) to keep runs fast, with `pip install -e ".[dev]"`, parallel pytest, plus a clean-venv `pip install .[scan]` import check of every frontend.
+- `action.yml` (the `lambdasec/frame` GitHub Action) and `.pre-commit-hooks.yaml` (the `frame` hook) install the `scan` extra themselves; `tests/test_packaging.py` keeps the hook's grammar list equal to it.
 - `benchmarks`: the full 4,742-case curated sweep; runs on pushes to main, nightly and on manual dispatch, not on PRs.
 
 ### Z3 Timeout

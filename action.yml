@@ -1,0 +1,78 @@
+name: Frame Security Scan
+description: Find vulnerabilities by following attacker data across files, with solver-checked paths. Uploads SARIF to code scanning.
+author: lambdasec
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: Directory or file to scan.
+    default: .
+  fail-on:
+    description: Fail the job on findings at or above this severity (critical, high, medium, low, any, none).
+    default: high
+  args:
+    description: Extra arguments for `frame scan`, e.g. `--changed origin/main --baseline .frame-baseline.json`.
+    default: ""
+  sarif-file:
+    description: Where to write the SARIF report.
+    default: frame.sarif
+  upload-sarif:
+    description: Upload the SARIF report to GitHub code scanning (needs `security-events write`).
+    default: "true"
+  python-version:
+    description: Python used to run Frame (3.10 or later).
+    default: "3.12"
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ inputs.sarif-file }}
+  exit-code:
+    description: 0 clean, 1 findings at or above fail-on, 2 the scan could not run.
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Frame
+      shell: bash
+      run: python -m pip install --quiet "${GITHUB_ACTION_PATH}[scan]"
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        FRAME_PATH: ${{ inputs.path }}
+        FRAME_FAIL_ON: ${{ inputs.fail-on }}
+        FRAME_ARGS: ${{ inputs.args }}
+        FRAME_SARIF: ${{ inputs.sarif-file }}
+      run: |
+        set +e
+        # FRAME_ARGS is split on purpose: it holds several flags.
+        frame scan "$FRAME_PATH" -f sarif -o "$FRAME_SARIF" --fail-on "$FRAME_FAIL_ON" $FRAME_ARGS
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "$FRAME_SARIF" ]; then echo "sarif=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Upload SARIF
+      if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: frame
+
+    - name: Result
+      if: steps.scan.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        if [ "$CODE" = "1" ]; then echo "::error::Frame found vulnerabilities at or above the fail-on severity"; fi
+        if [ "$CODE" = "2" ]; then echo "::error::Frame could not run the scan"; fi
+        exit "$CODE"
