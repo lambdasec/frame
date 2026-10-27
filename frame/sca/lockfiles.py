@@ -896,6 +896,9 @@ def manifest_parser(name: str) -> Optional[Callable[..., DependencyFile]]:
         return getattr(cppdeps, _CPP_MANIFESTS[name])
     if name in _MORE_MANIFESTS:
         return getattr(_more(), _MORE_MANIFESTS[name])
+    if name in ("build.gradle", "build.gradle.kts"):
+        from frame.sca.gradle import parse_gradle
+        return parse_gradle
     if _REQUIREMENTS.fullmatch(name):
         return parse_requirements
     if name.endswith(".csproj"):
@@ -914,7 +917,7 @@ def manifest_ecosystem(name: str) -> Optional[str]:
         return NUGET
     return {"conanfile.txt": "ConanCenter", "conanfile.py": "ConanCenter", "vcpkg.json": "vcpkg",
             ".gitmodules": "GIT", "CMakeLists.txt": "GIT", "Gemfile": "RubyGems", "composer.json": "Packagist",
-            "pubspec.yaml": "Pub", "mix.exs": "Hex"}.get(name)
+            "pubspec.yaml": "Pub", "mix.exs": "Hex", "build.gradle": MAVEN, "build.gradle.kts": MAVEN}.get(name)
 
 
 __all__: List[str] = ["LockfileError", "LOCKFILES", "MANIFESTS", "lockfile_ecosystem",

@@ -333,6 +333,54 @@ def _go_edit(files: _Files, rel: str, p: dict) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------------------------
+# Gradle
+
+def _gradle_edit(files: _Files, root: Path, rel: str, p: dict) -> Optional[str]:
+    """A literal `g:a:OLD` written once in the build script, else the version catalog: the one
+    edit after which re-reading the catalog gives this library the target and leaves every other
+    library as it was (a `version.ref` shared with other libraries is not edited)."""
+    from frame.sca.gradle import find_catalog, read_catalog
+    pkg, cur, target = p["package"], p["current"], p["target"]
+    manual = f"{pkg}: its version in {rel} is not one Frame can edit safely (add a constraint by hand)"
+    text = files.get(rel)
+    if text is None:
+        return f"{pkg}: {rel} not found"
+    lit = re.compile(r"""(["'])""" + re.escape(f"{pkg}:{cur}") + r"""(["':@])""")
+    hits = len(lit.findall(text))
+    if hits == 1:
+        files.set(rel, lit.sub(lambda m: f"{m.group(1)}{pkg}:{target}{m.group(2)}", text), f"{pkg}: {target}")
+        return None
+    if hits > 1:
+        return manual
+    cat = find_catalog((root / rel).parent, root)
+    if cat is None:
+        return manual
+    crel = cat.relative_to(root).as_posix()
+    ctext = files.get(crel)
+    try:
+        before, _ = read_catalog(ctext)
+    except ValueError:
+        return manual
+    if not any(m == pkg and v == cur for m, v in before.values()):
+        return manual
+    want = {a: ((m, target) if m == pkg else (m, v)) for a, (m, v) in before.items()}
+    passing = []
+    for old, new in ((f'"{cur}"', f'"{target}"'), (f'"{pkg}:{cur}"', f'"{pkg}:{target}"')):
+        for m in re.finditer(re.escape(old), ctext):
+            cand = ctext[:m.start()] + new + ctext[m.end():]
+            try:
+                after, _ = read_catalog(cand)
+            except ValueError:
+                continue
+            if after == want and cand not in passing:
+                passing.append(cand)
+    if len(passing) != 1:
+        return manual
+    files.set(crel, passing[0], f"{pkg}: {target}")
+    return None
+
+
+# ---------------------------------------------------------------------------------------------
 
 def _home(path: str) -> str:
     parts = Path(path).parent.parts
@@ -365,8 +413,11 @@ def edits(plans: List[dict], root: Path) -> Tuple[_Files, List[str]]:
                 problem = f"{p['package']}: no manifest Frame can edit beside {p['path']}"
         elif eco == MAVEN:
             pom = rel_in("pom.xml")
+            build = next((rel_in(n) for n in ("build.gradle.kts", "build.gradle") if (root / rel_in(n)).is_file()), None)
+            if name in ("build.gradle", "build.gradle.kts"):
+                build = p["path"]
             problem = _pom_edit(files, pom, p) if (root / pom).is_file() else \
-                f"{p['package']}: no pom.xml beside {p['path']} (Gradle builds: add a constraint by hand)"
+                _gradle_edit(files, root, build, p) if build else f"{p['package']}: no pom.xml or Gradle build beside {p['path']}"
         elif eco == NUGET:
             problem = _nuget_edit(files, Path(home), root, p)
         elif eco == GO:

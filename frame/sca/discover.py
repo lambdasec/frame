@@ -158,9 +158,9 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
 
     resolved: Dict[Path, DependencyFile] = {}       # manifest path -> its resolved graph
     covered: Set[Path] = set()                      # manifests a resolved graph stands for
-    # a Maven report (dependency:tree of a multi-module build) covers the poms of its modules
+    # a Maven / Gradle report (of a multi-module build) covers the build files of its modules
     report_dirs = [d for d, ps in by_dir.items() if any(p.name in REPORTS for p in ps)]
-    covered.update(p for d, ps in by_dir.items() for p in ps if p.name == "pom.xml"
+    covered.update(p for d, ps in by_dir.items() for p in ps if p.name in ("pom.xml", "build.gradle", "build.gradle.kts")
                    and any(r == d or r in d.parents for r in report_dirs))
     if resolve:
         from frame.sca import resolve as R
@@ -181,6 +181,8 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
                 report.warnings.append(warn)
             if df is not None:
                 report.files.append(df)
+                covered.update(p for dd, ps in by_dir.items() if dd == d or d in dd.parents
+                               for p in ps if p.name in ("build.gradle", "build.gradle.kts"))
         for d, ps in by_dir.items():
             if PYPI in locked_in.get(d, set()):
                 continue
@@ -267,6 +269,10 @@ def _read_one(p: Path, text: str, d: Path, base: Path, rel: Callable[[Path], str
         df = parse_csproj(rel(p), text, _central_versions(d, base))
     elif p.name == ".gitmodules":
         df = parse(rel(p), text, base)
+    elif p.name in ("build.gradle", "build.gradle.kts"):
+        from frame.sca.gradle import find_catalog, gradle_properties
+        catalog = find_catalog(d, base)
+        df = parse(rel(p), text, gradle_properties(d, base), _read(catalog) if catalog else None)
     else:
         df = parse(rel(p), text)
     return df if df.packages else None
