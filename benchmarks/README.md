@@ -44,7 +44,7 @@ python -m benchmarks run --division secbench              # JavaScript (SecBench
 python -m benchmarks run --division juliet_curated        # C/C++ (1000 tests)
 
 # Logic solver benchmarks
-python -m benchmarks run --division slcomp_curated        # Separation logic (692 tests)
+python -m benchmarks run --division qf_shls_entl          # Separation logic, one SL-COMP division
 python -m benchmarks run --division qf_s_curated          # String theory (3,300 tests)
 python -m benchmarks run --division qf_ax_curated         # Array theory (500 tests)
 python -m benchmarks run --division qf_bv_curated         # Bitvector theory (250 tests)
@@ -146,13 +146,14 @@ Recall 0.75 at zero false positives, majority vote over 3 runs. Full study:
 
 ### Logic Solver Benchmarks
 
-| Theory | Benchmark | Tests | Accuracy | Avg Time |
-|--------|-----------|-------|----------|----------|
-| Separation Logic | SL-COMP | 692 | 79.9% | ~1s |
-| String | QF_S | 3,300 | 99.3% | ~15ms |
-| Array | QF_AX | 500 | 100% | 48ms |
-| Bitvector | QF_BV | 250 | 89.2% | 25ms |
-| **Total Curated** | | **4,742** | **96.0%** | 970ms |
+| Theory | Benchmark | Tests | Accuracy | Solved by |
+|--------|-----------|-------|----------|-----------|
+| Separation Logic | SL-COMP 2018, all 12 divisions | 1,298 | 64.9% (842) | Frame's engine |
+| String | QF_S | 3,300 | 99.3% | `z3` binary |
+| Array | QF_AX | 500 | 100% | `z3` binary |
+| Bitvector | QF_BV | 250 | 89.2% | `z3` binary |
+
+The QF_S, QF_AX and QF_BV runners pass each file to the `z3` binary (`benchmarks/core/base_runner.run_smt2_with_z3`); they check the harness and the files, not Frame's engine.
 
 ---
 
@@ -430,38 +431,32 @@ python -m benchmarks run --division issueblot
 
 ### Separation Logic (SL-COMP)
 
-**Dataset:** 692 curated tests from SL-COMP 2024 (861 total)
+**Dataset:** every division of [SL-COMP 2018](https://github.com/sl-comp/SL-COMP18) (1,298 tests the parser accepts), measured October 2026.
 
-| Division | Tests | Accuracy |
-|----------|:-----:|:--------:|
-| qf_shls_entl | 296 | 82.8% |
-| qf_shid_entl | 312 | 98.0% |
-| shidlia_entl | 181 | 100% |
-| qf_shls_sat | 110 | 100% |
-| qf_shid_sat | 99 | 88.9% |
-| qf_bsl_sat | 46 | 93.5% |
-| **Total** | **692** | **79.9%** |
+| Division | Tests | Correct | Accuracy |
+|----------|:-----:|:-------:|:--------:|
+| qf_shls_sat | 110 | 110 | 100% |
+| bsl_sat | 3 | 3 | 100% |
+| qf_bsl_sat | 46 | 43 | 93.5% |
+| qf_shid_sat | 99 | 88 | 88.9% |
+| qf_shls_entl | 296 | 255 | 86.1% |
+| qf_shidlia_entl | 61 | 47 | 77.0% |
+| qf_bsllia_sat | 24 | 17 | 70.8% |
+| qf_shidlia_sat | 33 | 19 | 57.6% |
+| qf_shlid_entl | 60 | 32 | 53.3% |
+| shid_entl | 73 | 38 | 52.1% |
+| qf_shid_entl | 312 | 131 | 42.0% |
+| shidlia_entl | 181 | 59 | 32.6% |
+| **Total** | **1,298** | **842** | **64.9%** |
 
-<details>
-<summary><strong>Full Division Results</strong></summary>
+Earlier versions of this table reported qf_shid_entl 98%, shid_entl 96% and shidlia_entl 100%. Those were 50-file samples, and on shidlia_entl the November 2025 engine also says "valid" for deliberately invalid variants (a goal list one cell short): bounded unfolding left the antecedent contradictory, so the entailments held vacuously. Later soundness fixes removed that; the numbers above are what the engine proves.
 
-**Entailment Divisions:**
-- qf_shid_entl: 98.0% (49/50)
-- qf_shls_entl: 82.8% (245/296)
-- shidlia_entl: 100% (50/50)
-- shid_entl: 96.0% (48/50)
-- qf_shidlia_entl: 54.0% (27/50)
-- qf_shlid_entl: 54.0% (27/50)
+To reproduce (`benchmarks download` fetches only a two-file sample per division):
 
-**Satisfiability Divisions:**
-- qf_shls_sat: 100% (110/110)
-- qf_shid_sat: 88.9% (88/99)
-- qf_bsl_sat: 93.5% (43/46)
-- qf_shidlia_sat: 57.6% (19/33)
-- qf_bsllia_sat: 70.8% (17/24)
-- bsl_sat: 100% (3/3)
-
-</details>
+```bash
+git clone --depth 1 https://github.com/sl-comp/SL-COMP18
+python -m benchmarks run --division qf_shls_entl --cache-dir SL-COMP18/bench
+```
 
 ```bash
 python -m benchmarks run --division slcomp_curated
