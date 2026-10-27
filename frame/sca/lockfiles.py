@@ -809,7 +809,7 @@ def _propagate_dev(df: DependencyFile) -> None:
     """A package is a dev dependency only if every direct dependency that reaches it is."""
     if not any(p.direct for p in df.packages.values()):
         return
-    prod = [k for k, p in df.packages.items() if p.direct and not p.dev]
+    prod = [k for k, p in df.packages.items() if p.direct and not p.dev] + sorted(df.prod_roots)
     reach = set(prod)
     stack = list(prod)
     while stack:
@@ -839,12 +839,24 @@ LOCKFILES: Dict[str, Tuple[Callable[[str, str], DependencyFile], Optional[Tuple[
     "Package.resolved": (parse_package_resolved, None),
     "conan.lock": (lambda path, text: __import__("frame.sca.cppdeps", fromlist=["x"]).parse_conan_lock(path, text), None),
     "vcpkg-status": (lambda path, text: __import__("frame.sca.cppdeps", fromlist=["x"]).parse_vcpkg_status(path, text), None),
+    "Gemfile.lock": (lambda path, text: _more().parse_gemfile_lock(path, text),
+                     ("Gemfile", lambda text: _more().gemfile_groups(text))),
+    "composer.lock": (lambda path, text: _more().parse_composer_lock(path, text),
+                      ("composer.json", lambda text: _more().composer_json_direct(text))),
+    "pubspec.lock": (lambda path, text: _more().parse_pubspec_lock(path, text), None),
+    "mix.lock": (lambda path, text: _more().parse_mix_lock(path, text),
+                 ("mix.exs", lambda text: _more().mix_exs_direct(text))),
 }
+
+
+def _more():
+    from frame.sca import morelocks
+    return morelocks
 # lockfiles that mark dev-only packages themselves; for the others it follows from the edges
 # (go.mod and Package.resolved record no edges, and Go and SwiftPM have no dev-only dependencies)
 DEV_FLAGGED = frozenset({"package-lock.json", "npm-shrinkwrap.json", "Pipfile.lock", "gradle.lockfile",
                          "packages.lock.json", "project.assets.json", "go.mod", "Package.resolved",
-                         "conan.lock", "vcpkg-status"})
+                         "conan.lock", "vcpkg-status", "composer.lock", "pubspec.lock"})
 # manifests read only when no lockfile of the same ecosystem sits beside them
 MANIFESTS: Dict[str, Callable[[str, str], DependencyFile]] = {
     "pyproject.toml": parse_pyproject,
@@ -865,9 +877,12 @@ def lockfile_ecosystem(name: str) -> Optional[str]:
     if name in ("packages.lock.json", "project.assets.json"):
         return NUGET
     return {"go.mod": GO, "Cargo.lock": CARGO, "Package.resolved": SWIFT, "conan.lock": "ConanCenter",
-            "vcpkg-status": "vcpkg"}.get(name)
+            "vcpkg-status": "vcpkg", "Gemfile.lock": "RubyGems", "composer.lock": "Packagist",
+            "pubspec.lock": "Pub", "mix.lock": "Hex"}.get(name)
 
 
+_MORE_MANIFESTS = {"Gemfile": "parse_gemfile", "composer.json": "parse_composer_json",
+                   "pubspec.yaml": "parse_pubspec_yaml", "mix.exs": "parse_mix_exs"}
 _CPP_MANIFESTS = {"conanfile.txt": "parse_conanfile_txt", "conanfile.py": "parse_conanfile_py",
                   "vcpkg.json": "parse_vcpkg_json", ".gitmodules": "parse_gitmodules",
                   "CMakeLists.txt": "parse_cmake"}
@@ -879,6 +894,8 @@ def manifest_parser(name: str) -> Optional[Callable[..., DependencyFile]]:
     if name in _CPP_MANIFESTS:
         from frame.sca import cppdeps
         return getattr(cppdeps, _CPP_MANIFESTS[name])
+    if name in _MORE_MANIFESTS:
+        return getattr(_more(), _MORE_MANIFESTS[name])
     if _REQUIREMENTS.fullmatch(name):
         return parse_requirements
     if name.endswith(".csproj"):
@@ -896,7 +913,8 @@ def manifest_ecosystem(name: str) -> Optional[str]:
     if name == "packages.config" or name.endswith(".csproj"):
         return NUGET
     return {"conanfile.txt": "ConanCenter", "conanfile.py": "ConanCenter", "vcpkg.json": "vcpkg",
-            ".gitmodules": "GIT", "CMakeLists.txt": "GIT"}.get(name)
+            ".gitmodules": "GIT", "CMakeLists.txt": "GIT", "Gemfile": "RubyGems", "composer.json": "Packagist",
+            "pubspec.yaml": "Pub", "mix.exs": "Hex"}.get(name)
 
 
 __all__: List[str] = ["LockfileError", "LOCKFILES", "MANIFESTS", "lockfile_ecosystem",

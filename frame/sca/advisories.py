@@ -21,11 +21,12 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 import hashlib
 
-from frame.sca.model import CARGO, CONAN, GIT, GO, MAVEN, NPM, NUGET, PYPI, SWIFT, VCPKG, DependencyFile, normalize_name
+from frame.sca.model import (CARGO, CONAN, GIT, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT, VCPKG,
+                             DependencyFile, normalize_name)
 from frame.sca.osv import SCHEMA, entries, fixed_versions, git_entries, is_affected, table
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
-ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT)
+ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT, RUBYGEMS, PACKAGIST, PUB, HEX)
 # C/C++ packages are matched against GIT advisories (by repository), sharded so a project
 # pulls only the repositories it depends on
 CPP_ECOSYSTEMS = (CONAN, VCPKG, GIT)

@@ -13,14 +13,15 @@ PYPI, NPM, MAVEN, NUGET = "PyPI", "npm", "Maven", "NuGet"
 GO, CARGO, SWIFT = "Go", "crates.io", "SwiftURL"
 # C / C++: no OSV package ecosystem; matched by upstream repository and release tag (OSV GIT)
 CONAN, VCPKG, GIT = "ConanCenter", "vcpkg", "GIT"
+RUBYGEMS, PACKAGIST, PUB, HEX = "RubyGems", "Packagist", "Pub", "Hex"
 
 
 def normalize_name(ecosystem: str, name: str) -> str:
     """The name a registry (and OSV) compares by: PEP 503 for PyPI, case-insensitive NuGet."""
     if ecosystem == PYPI:
         return re.sub(r"[-_.]+", "-", name).lower()
-    if ecosystem == NUGET:
-        return name.lower()
+    if ecosystem in (NUGET, PACKAGIST):
+        return name.lower()                     # both registries compare names case-insensitively
     return name
 
 
@@ -60,6 +61,15 @@ class Package:
             return f"pkg:cargo/{quote(self.name, safe='')}@{v}"
         if self.ecosystem == SWIFT:
             return f"pkg:swift/{quote(self.name, safe='/')}@{v}"
+        if self.ecosystem == RUBYGEMS:
+            return f"pkg:gem/{quote(self.name, safe='')}@{v}"
+        if self.ecosystem == PACKAGIST and "/" in self.name:
+            vendor, name = self.name.split("/", 1)
+            return f"pkg:composer/{quote(vendor, safe='')}/{quote(name, safe='')}@{v}"
+        if self.ecosystem == PUB:
+            return f"pkg:pub/{quote(self.name, safe='')}@{v}"
+        if self.ecosystem == HEX:
+            return f"pkg:hex/{quote(self.name, safe='')}@{v}"
         if self.ecosystem == CONAN:
             return f"pkg:conan/{quote(self.name, safe='')}@{v}"
         if self.ecosystem in (VCPKG, GIT) and self.repo.startswith(("github.com/", "gitlab.com/", "bitbucket.org/")):
@@ -93,6 +103,9 @@ class DependencyFile:
     # declared requirements: requiring package key ("" for the project itself) -> normalised
     # dependency name -> the range it declares (what an upgrade must satisfy)
     requires: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # packages production code reaches through something that is not itself a package (a git
+    # or path gem): roots for working out what is development only, besides the direct ones
+    prod_roots: Set[str] = field(default_factory=set)
     warnings: List[str] = field(default_factory=list)
 
     def add(self, pkg: Package) -> Package:

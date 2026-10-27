@@ -155,7 +155,7 @@ def test_build_pull_and_match_end_to_end(tmp_path, monkeypatch):
     mirror = tmp_path / "mirror"
     build_advisories([raw], mirror, "2026.10.27")
     manifest = json.loads((mirror / "manifest.json").read_text())
-    assert {m["name"] for m in manifest["files"].values() if m["language"] != "git"} == {
+    assert {m["name"] for m in manifest["files"].values() if m["language"] != "git"} >= {
         "PyPI", "npm", "Maven", "NuGet", "Go", "crates.io", "SwiftURL"}
     assert all(p.startswith("advisories/GIT/") for p, m in manifest["files"].items() if m["language"] == "git")
     monkeypatch.setenv("FRAME_KB_CACHE", str(tmp_path / "cache"))

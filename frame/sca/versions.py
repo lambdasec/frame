@@ -13,7 +13,7 @@ import re
 from functools import cmp_to_key, lru_cache
 from typing import Any, List, Optional, Tuple
 
-from frame.sca.model import CARGO, GO, MAVEN, NPM, NUGET, PYPI, SWIFT
+from frame.sca.model import CARGO, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT
 
 
 class _Inf:
@@ -298,13 +298,81 @@ def _maven(v: str) -> Optional[_MavenKey]:
 
 # ---------------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------------------------
+# RubyGems: Gem::Version. Segments are runs of digits or letters; a letter segment makes a
+# prerelease and sorts before any number; trailing zeros do not count (1.0 == 1).
+
+class _GemKey:
+    __slots__ = ("segs",)
+
+    def __init__(self, segs):
+        self.segs = segs
+
+    def _c(self, other) -> int:
+        a, b = self.segs, other.segs
+        for i in range(max(len(a), len(b))):
+            x = a[i] if i < len(a) else 0
+            y = b[i] if i < len(b) else 0
+            if x == y:
+                continue
+            if isinstance(x, str) and not isinstance(y, str):
+                return -1
+            if isinstance(y, str) and not isinstance(x, str):
+                return 1
+            return -1 if x < y else 1
+        return 0
+
+    def __lt__(self, o): return self._c(o) < 0
+    def __gt__(self, o): return self._c(o) > 0
+    def __le__(self, o): return self._c(o) <= 0
+    def __ge__(self, o): return self._c(o) >= 0
+    def __eq__(self, o): return isinstance(o, _GemKey) and self._c(o) == 0
+    def __hash__(self): return hash(tuple(self.segs))
+
+
+def _rubygems(v: str) -> Optional[_GemKey]:
+    v = v.strip().replace("-", ".pre.")                 # Gem::Version reads `-` as `.pre.`
+    if not re.fullmatch(r"[0-9]+(?:[.-]?[0-9A-Za-z]+)*", v):
+        return None
+    segs: List = [int(s) if s.isdigit() else s for s in re.findall(r"[0-9]+|[A-Za-z]+", v)]
+    # canonical segments: trailing zeros go, and so do zeros right before the prerelease part
+    first_str = next((i for i, s in enumerate(segs) if isinstance(s, str)), len(segs))
+    release, pre = segs[:first_str], segs[first_str:]
+    while release and release[-1] == 0:
+        release.pop()
+    while pre and pre[-1] == 0:
+        pre.pop()
+    return _GemKey(release + pre)
+
+
+# ---------------------------------------------------------------------------------------------
+# Packagist: Composer's VersionParser. Up to four numbers, then a stability: dev < alpha <
+# beta < RC < stable < patch (`-p1`, `-pl1`); a leading `v` is ignored; `dev-<branch>` is not a
+# version.
+
+_COMPOSER_STABILITY = {"dev": 0, "alpha": 1, "a": 1, "beta": 2, "b": 2, "rc": 3, "": 4, "stable": 4,
+                       "patch": 5, "pl": 5, "p": 5}
+_COMPOSER = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?"
+                       r"(?:[._-]?(stable|beta|b|rc|alpha|a|patch|pl|p|dev)(?:[.-]?(\d+))?)?$", re.I)
+
+
+def _packagist(v: str) -> Optional[Tuple]:
+    m = _COMPOSER.match(v.strip())
+    if not m:
+        return None
+    nums = tuple(int(g or 0) for g in m.groups()[:4])
+    stability = _COMPOSER_STABILITY[(m.group(5) or "").lower()]
+    return (*nums, stability, int(m.group(6) or 0))
+
+
 def _go(v: str) -> Optional[Tuple]:
     v = v.strip()
     v = v[:-len("+incompatible")] if v.endswith("+incompatible") else v
     return _semver(v if v.startswith("v") else "v" + v)
 
 
-_PARSERS = {PYPI: _pep440, NPM: _semver, CARGO: _semver, SWIFT: _semver, NUGET: _nuget, MAVEN: _maven, GO: _go}
+_PARSERS = {PYPI: _pep440, NPM: _semver, CARGO: _semver, SWIFT: _semver, NUGET: _nuget, MAVEN: _maven, GO: _go,
+            RUBYGEMS: _rubygems, PACKAGIST: _packagist, PUB: _semver, HEX: _semver}
 
 
 @lru_cache(maxsize=65536)

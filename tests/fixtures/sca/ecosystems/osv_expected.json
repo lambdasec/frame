@@ -1,0 +1,263 @@
+{
+ "source": "https://api.osv.dev/v1/querybatch",
+ "fetched": "2026-10-28",
+ "vulnerable": [
+  {
+   "project": "elixir-phoenix",
+   "ecosystem": "Hex",
+   "name": "bandit",
+   "version": "1.12.4",
+   "ids": [
+    "EEF-CVE-2026-105659",
+    "EEF-CVE-2026-105660",
+    "EEF-CVE-2026-108525",
+    "EEF-CVE-2026-108529",
+    "EEF-CVE-2026-109584",
+    "EEF-CVE-2026-110314",
+    "EEF-CVE-2026-110499",
+    "EEF-CVE-2026-111101",
+    "EEF-CVE-2026-111103",
+    "EEF-CVE-2026-113436",
+    "EEF-CVE-2026-114213",
+    "EEF-CVE-2026-114216",
+    "EEF-CVE-2026-115269",
+    "EEF-CVE-2026-74836",
+    "EEF-CVE-2026-75484"
+   ]
+  },
+  {
+   "project": "elixir-phoenix",
+   "ecosystem": "Hex",
+   "name": "cowlib",
+   "version": "2.19.0",
+   "ids": [
+    "EEF-CVE-2026-43966",
+    "EEF-CVE-2026-43969",
+    "EEF-CVE-2026-43971"
+   ]
+  },
+  {
+   "project": "elixir-phoenix",
+   "ecosystem": "Hex",
+   "name": "decimal",
+   "version": "3.1.1",
+   "ids": [
+    "EEF-CVE-2026-97853"
+   ]
+  },
+  {
+   "project": "elixir-phoenix",
+   "ecosystem": "Hex",
+   "name": "mint",
+   "version": "1.9.3",
+   "ids": [
+    "EEF-CVE-2026-82672",
+    "EEF-CVE-2026-82728",
+    "EEF-CVE-2026-82729",
+    "EEF-CVE-2026-91043",
+    "EEF-CVE-2026-92103",
+    "EEF-CVE-2026-94194"
+   ]
+  },
+  {
+   "project": "elixir-phoenix",
+   "ecosystem": "Hex",
+   "name": "plug_crypto",
+   "version": "2.2.0",
+   "ids": [
+    "EEF-CVE-2026-105963"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "activestorage",
+   "version": "8.1.3",
+   "ids": [
+    "GHSA-xr9x-r78c-5hrm"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "concurrent-ruby",
+   "version": "1.3.6",
+   "ids": [
+    "GHSA-6wx8-w4f5-wwcr",
+    "GHSA-h8w8-99g7-qmvj",
+    "GHSA-wv3x-4vxv-whpp"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "crass",
+   "version": "1.0.6",
+   "ids": [
+    "GHSA-6wmf-3r64-vcwv"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "erb",
+   "version": "6.0.2",
+   "ids": [
+    "GHSA-q339-8rmv-2mhv"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "faraday",
+   "version": "2.14.1",
+   "ids": [
+    "GHSA-5rv5-xj5j-3484",
+    "GHSA-98m9-hrrm-r99r"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "json",
+   "version": "2.19.3",
+   "ids": [
+    "GHSA-x2f5-4prf-w687"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "jwt",
+   "version": "3.1.2",
+   "ids": [
+    "GHSA-c32j-vqhx-rx3x"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "loofah",
+   "version": "2.25.1",
+   "ids": [
+    "GHSA-5qhf-9phg-95m2",
+    "GHSA-8whx-365g-h9vv",
+    "GHSA-9wjq-cp2p-hrgf"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "mail",
+   "version": "2.9.0",
+   "ids": [
+    "GHSA-mvxr-6m87-mv2q"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "net-imap",
+   "version": "0.6.3",
+   "ids": [
+    "GHSA-46q3-7gv7-qmgg",
+    "GHSA-75xq-5h9v-w6px",
+    "GHSA-87pf-fpwv-p7m7",
+    "GHSA-8p34-64r3-mwg8",
+    "GHSA-c4fp-cxrr-mj66",
+    "GHSA-hm49-wcqc-g2xg",
+    "GHSA-q2mw-fvj9-vvcw",
+    "GHSA-vcgp-9326-pqcp"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "nokogiri",
+   "version": "1.19.2",
+   "ids": [
+    "GHSA-5prr-v3j2-97mh",
+    "GHSA-5v8h-3h3q-446p",
+    "GHSA-8678-w3jw-xfc2",
+    "GHSA-9cv2-cfxc-v4v2",
+    "GHSA-c4rq-3m3g-8wgx",
+    "GHSA-p67v-3w7g-wjg7",
+    "GHSA-phwj-rprq-35pp",
+    "GHSA-v2fc-qm4h-8hqv",
+    "GHSA-wfpw-mmfh-qq69",
+    "GHSA-wjv4-x9w8-wm3h"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "oauth2",
+   "version": "2.0.18",
+   "ids": [
+    "GHSA-pp92-crg2-gfv9"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "rack",
+   "version": "3.2.5",
+   "ids": [
+    "GHSA-7mqq-6cf9-v2qp",
+    "GHSA-8vqr-qjwx-82mw",
+    "GHSA-g2pf-xv49-m2h5",
+    "GHSA-h2jq-g4cq-5ppq",
+    "GHSA-q2ww-5357-x388",
+    "GHSA-q4qf-9j86-f5mh",
+    "GHSA-qfgr-crr9-7r49",
+    "GHSA-qv7j-4883-hwh7",
+    "GHSA-rx22-g9mx-qrhv",
+    "GHSA-v569-hp3g-36wr",
+    "GHSA-v6x5-cg8r-vv6x",
+    "GHSA-vgpv-f759-9wx3",
+    "GHSA-x8cg-fq8g-mxfx"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "rack-session",
+   "version": "2.1.1",
+   "ids": [
+    "GHSA-33qg-7wpp-89cq"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "rails-html-sanitizer",
+   "version": "1.7.0",
+   "ids": [
+    "GHSA-cj75-f6xr-r4g7"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "sqlite3",
+   "version": "2.9.2",
+   "ids": [
+    "GHSA-28hh-pr2h-2w89",
+    "GHSA-j7fr-3v8c-3qc3",
+    "GHSA-mwm8-39rw-8826"
+   ]
+  },
+  {
+   "project": "ruby-devise",
+   "ecosystem": "RubyGems",
+   "name": "websocket-driver",
+   "version": "0.8.0",
+   "ids": [
+    "GHSA-2x63-gw47-w4mm",
+    "GHSA-33ph-fccm-39pj",
+    "GHSA-8j3g-f24p-4mpw",
+    "GHSA-ghhp-3qvg-889p"
+   ]
+  }
+ ]
+}
