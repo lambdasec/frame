@@ -304,6 +304,39 @@ def _js_exports(text: str) -> Set[str]:
     return {x for x in names if x}
 
 
+def npm_entry_files(package_json: Optional[str]) -> Set[str]:
+    """The files a package's own `package.json` makes its public entry (`main`, `module`, the
+    `.` export, `browser` when a string); `index.js` when it names none. Only their exports are
+    the package's API: `require('qs').merge` does not exist even though `lib/utils.js` exports
+    `merge`."""
+    entries: List[str] = []
+    try:
+        data = json.loads(package_json) if package_json else {}
+    except ValueError:
+        data = {}
+    for key in ("main", "module", "browser"):
+        if isinstance(data.get(key), str):
+            entries.append(data[key])
+    exp = data.get("exports")
+    dot = exp.get(".", exp) if isinstance(exp, dict) else exp
+    stack = [dot]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, str):
+            entries.append(x)
+        elif isinstance(x, dict):
+            stack.extend(x.values())
+    if not entries:
+        entries.append("index.js")
+    out = set()
+    for e in entries:
+        e = e[2:] if e.startswith("./") else e.lstrip("/")
+        if not Path(e).suffix:
+            out.update({e + ".js", e + "/index.js"})
+        out.add(e)
+    return out
+
+
 def _python_module(path: str, import_names: Iterable[str]) -> Optional[str]:
     parts = Path(path).with_suffix("").parts
     for top in sorted({n.split(".")[0] for n in import_names}, key=len, reverse=True):
@@ -382,6 +415,7 @@ def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
             continue
         parent = commit["parents"][0]
         url = f"https://github.com/{owner}/{repo}/commit/{commit['sha']}"
+        entry = npm_entry_files(source.file(owner, repo, parent, "package.json")) if ecosystem == NPM else None
         for f in commit["files"]:
             path = f["filename"]
             if _LANG.get(Path(path).suffix) != lang or _TEST_PATH.search(path) or f.get("status") == "added":
@@ -401,6 +435,10 @@ def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
             lifted = _lift(fns, changed)
             names = [(fn, None) for fn in changed if fn.public] + \
                     [(next(g for g in fns if g.name == pub), origin) for pub, origin in lifted.items()]
+            if entry is not None and path not in entry:
+                # exported from an internal module, not the package's entry: not its API
+                res.internal_only.extend(f"{path}:{fn.name} (not the package entry)" for fn, _ in names)
+                continue
             for fn, origin in names:
                 cid = canonical(ecosystem, package, path, fn, text)
                 if cid and cid not in seen:

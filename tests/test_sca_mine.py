@@ -93,3 +93,22 @@ def test_frame_kb_mine_functions_cli(tmp_path):
     assert [e["id"] for e in npm["GHSA-35jh-r3h4-6jhm"]] == ["lodash.template"]
     curate = json.loads((tmp_path / "out" / "needs-curation.json").read_text())
     assert [c["advisory"] for c in curate] == ["GHSA-8q59-q68h-6hv4"]
+
+
+class _Fake:
+    """A one-commit source: qs's prototype-pollution fix shape (merge in lib/utils.js)."""
+    def commit(self, owner, repo, sha):
+        return {"sha": sha, "parents": ["p0"], "files": [
+            {"filename": "lib/utils.js", "status": "modified", "patch": "@@ -2,3 +2,3 @@\n function merge(a, b) {\n-  return a;\n+  return b;\n }\n"}]}
+
+    def file(self, owner, repo, ref, path):
+        return {"package.json": '{"name": "qs", "main": "lib/index.js"}',
+                "lib/utils.js": "function merge(a, b) {\n  return a;\n}\nexports.merge = merge;\n"}.get(path)
+
+
+def test_an_export_outside_the_package_entry_is_not_the_packages_api():
+    rec = {"id": "GHSA-qs", "references": [{"url": "https://github.com/ljharb/qs/commit/abcdef1"}],
+           "affected": [{"package": {"ecosystem": "npm", "name": "qs"}}]}
+    _, [m] = mine([rec], ["npm"], _Fake())
+    assert m.entries == [] and m.needs_curation
+    assert m.internal_only == ["lib/utils.js:merge (not the package entry)"]
