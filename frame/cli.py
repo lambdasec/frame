@@ -522,8 +522,8 @@ def cmd_deps(args) -> int:
     if args.vex:
         args.vulns = True
     if args.vulns:
-        from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
-        db = AdvisoryDB.cached(ecosystems_of(report.files))
+        from frame.sca.advisories import AdvisoryDB, ecosystems_of, match, repos_of
+        db = AdvisoryDB.cached(ecosystems_of(report.files), repos_of(report.files))
         findings = match(report.files, db)
         if findings and not args.no_reachability:
             from frame.sca.reachability import Usage, annotate

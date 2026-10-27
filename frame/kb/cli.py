@@ -71,18 +71,22 @@ def _languages(args) -> list:
 def cmd_kb(args) -> int:
     try:
         if args.kb_command == "pull" and args.advisories:
-            from frame.sca.advisories import ECOSYSTEMS, ecosystems_of, source
+            from frame.sca.advisories import CPP_ECOSYSTEMS, ECOSYSTEMS, ecosystems_of, git_shard, repos_of, source
+            shards: list = []
             if args.all:
-                ecos = list(ECOSYSTEMS)
+                ecos = list(ECOSYSTEMS) + ["git"]
             else:
                 from frame.sca import read_dependencies
-                ecos = ecosystems_of(read_dependencies(Path(args.project)).files)
-            if not ecos:
+                files = read_dependencies(Path(args.project)).files
+                ecos = [e for e in ecosystems_of(files) if e not in CPP_ECOSYSTEMS]
+                shards = sorted({git_shard(r) for r in repos_of(files)})
+            if not ecos and not shards:
                 print("no dependencies found; nothing to pull (use --all for every ecosystem)")
                 return 0
-            got = pull([e.lower() for e in ecos], revision=args.revision or "main", source=args.source or source())
+            got = pull([e.lower() for e in ecos], revision=args.revision or "main", source=args.source or source(),
+                       also=shards)
             print(f"{got.source}@{got.revision}: {len(got.files)} files ({got.fetched} downloaded) "
-                  f"for {', '.join(ecos)}")
+                  f"for {', '.join(ecos + ([f'{len(shards)} C/C++ repository shard(s)'] if shards else []))}")
             return 0
         if args.kb_command == "pull":
             lock = read_lock(Path(args.project))

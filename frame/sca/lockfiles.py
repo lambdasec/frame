@@ -837,11 +837,14 @@ LOCKFILES: Dict[str, Tuple[Callable[[str, str], DependencyFile], Optional[Tuple[
     "go.mod": (parse_go_mod, None),
     "Cargo.lock": (parse_cargo_lock, ("Cargo.toml", _cargo_toml_dev)),
     "Package.resolved": (parse_package_resolved, None),
+    "conan.lock": (lambda path, text: __import__("frame.sca.cppdeps", fromlist=["x"]).parse_conan_lock(path, text), None),
+    "vcpkg-status": (lambda path, text: __import__("frame.sca.cppdeps", fromlist=["x"]).parse_vcpkg_status(path, text), None),
 }
 # lockfiles that mark dev-only packages themselves; for the others it follows from the edges
 # (go.mod and Package.resolved record no edges, and Go and SwiftPM have no dev-only dependencies)
 DEV_FLAGGED = frozenset({"package-lock.json", "npm-shrinkwrap.json", "Pipfile.lock", "gradle.lockfile",
-                         "packages.lock.json", "project.assets.json", "go.mod", "Package.resolved"})
+                         "packages.lock.json", "project.assets.json", "go.mod", "Package.resolved",
+                         "conan.lock", "vcpkg-status"})
 # manifests read only when no lockfile of the same ecosystem sits beside them
 MANIFESTS: Dict[str, Callable[[str, str], DependencyFile]] = {
     "pyproject.toml": parse_pyproject,
@@ -861,12 +864,21 @@ def lockfile_ecosystem(name: str) -> Optional[str]:
         return MAVEN
     if name in ("packages.lock.json", "project.assets.json"):
         return NUGET
-    return {"go.mod": GO, "Cargo.lock": CARGO, "Package.resolved": SWIFT}.get(name)
+    return {"go.mod": GO, "Cargo.lock": CARGO, "Package.resolved": SWIFT, "conan.lock": "ConanCenter",
+            "vcpkg-status": "vcpkg"}.get(name)
+
+
+_CPP_MANIFESTS = {"conanfile.txt": "parse_conanfile_txt", "conanfile.py": "parse_conanfile_py",
+                  "vcpkg.json": "parse_vcpkg_json", ".gitmodules": "parse_gitmodules",
+                  "CMakeLists.txt": "parse_cmake"}
 
 
 def manifest_parser(name: str) -> Optional[Callable[..., DependencyFile]]:
     if name in MANIFESTS:
         return MANIFESTS[name]
+    if name in _CPP_MANIFESTS:
+        from frame.sca import cppdeps
+        return getattr(cppdeps, _CPP_MANIFESTS[name])
     if _REQUIREMENTS.fullmatch(name):
         return parse_requirements
     if name.endswith(".csproj"):
@@ -883,7 +895,8 @@ def manifest_ecosystem(name: str) -> Optional[str]:
         return MAVEN
     if name == "packages.config" or name.endswith(".csproj"):
         return NUGET
-    return None
+    return {"conanfile.txt": "ConanCenter", "conanfile.py": "ConanCenter", "vcpkg.json": "vcpkg",
+            ".gitmodules": "GIT", "CMakeLists.txt": "GIT"}.get(name)
 
 
 __all__: List[str] = ["LockfileError", "LOCKFILES", "MANIFESTS", "lockfile_ecosystem",

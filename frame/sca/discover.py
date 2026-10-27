@@ -61,10 +61,22 @@ def _read(path: Path) -> Optional[str]:
 
 
 def _home(path: Path) -> Path:
-    """The project directory a file describes (`obj/project.assets.json` -> the project)."""
+    """The project directory a file describes (`obj/project.assets.json` -> the project,
+    `vcpkg_installed/vcpkg/status` -> the project)."""
     if path.name == "project.assets.json" and path.parent.name == "obj":
         return path.parent.parent
+    if _is_vcpkg_status(path):
+        return path.parent.parent.parent
     return path.parent
+
+
+def _is_vcpkg_status(path: Path) -> bool:
+    return path.name == "status" and path.parent.name == "vcpkg" and path.parent.parent.name == "vcpkg_installed"
+
+
+def _kind(path: Path) -> str:
+    """The name a file is handled under (vcpkg's generically named status file)."""
+    return "vcpkg-status" if _is_vcpkg_status(path) else path.name
 
 
 def _ecosystem_of(name: str) -> Optional[str]:
@@ -132,7 +144,7 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
         name = path.name
         if name in _GRADLE_BUILD:
             gradle_dirs.append(path.parent)
-        if name in LOCKFILES or name in REPORTS or manifest_parser(name) is not None:
+        if _kind(path) in LOCKFILES or name in REPORTS or manifest_parser(name) is not None:
             if name == "project.assets.json" and path.parent.name != "obj":
                 continue
             by_dir.setdefault(_home(path), []).append(path)
@@ -141,7 +153,7 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
         return p.relative_to(base).as_posix()
 
     locked_in: Dict[Path, Set[Optional[str]]] = {
-        d: {_ecosystem_of(p.name) for p in ps if p.name in LOCKFILES or p.name in REPORTS}
+        d: {_ecosystem_of(_kind(p)) for p in ps if _kind(p) in LOCKFILES or p.name in REPORTS}
         for d, ps in by_dir.items()}
 
     resolved: Dict[Path, DependencyFile] = {}       # manifest path -> its resolved graph
@@ -236,14 +248,14 @@ def _read_one(p: Path, text: str, d: Path, base: Path, rel: Callable[[Path], str
               locked: Set[Optional[str]], names_here: Set[str]) -> Optional[DependencyFile]:
     if p.name in REPORTS:
         return REPORTS[p.name](rel(p), text)
-    if p.name in LOCKFILES:
+    if _kind(p) in LOCKFILES:
         if p.name == "project.assets.json" and "packages.lock.json" in names_here:
             return None                                 # the committed lockfile wins over restore output
-        parse, beside = LOCKFILES[p.name]
+        parse, beside = LOCKFILES[_kind(p)]
         df = parse(rel(p), text)
         if beside is not None:
             _apply_manifest(df, d / beside[0], beside[1])
-        if p.name not in DEV_FLAGGED:
+        if _kind(p) not in DEV_FLAGGED:
             _propagate_dev(df)                          # dev only = no production dependency reaches it
         return df
     if manifest_ecosystem(p.name) in locked:
@@ -253,6 +265,8 @@ def _read_one(p: Path, text: str, d: Path, base: Path, rel: Callable[[Path], str
         df = parse_requirements(rel(p), text, lambda r: _read(base / r))
     elif parse is parse_csproj:
         df = parse_csproj(rel(p), text, _central_versions(d, base))
+    elif p.name == ".gitmodules":
+        df = parse(rel(p), text, base)
     else:
         df = parse(rel(p), text)
     return df if df.packages else None

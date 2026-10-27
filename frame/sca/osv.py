@@ -136,6 +136,30 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
             "functions": _functions(aff)}
 
 
+def git_entries(rec: dict) -> Iterable[Tuple[str, dict]]:
+    """(repository, advisory entry) for each upstream repository a record's GIT ranges name,
+    with the affected release tags OSV lists. Repositories outside the hosts Frame knows
+    (`cpp.normalize_repo`: GitHub, GitLab, ...) are not C/C++ library dependencies Frame reads
+    -- the Linux kernel's git.kernel.org is left to the operating-system work."""
+    from frame.sca.cpp import normalize_repo
+    if not isinstance(rec, dict) or rec.get("withdrawn") or not rec.get("id"):
+        return
+    for aff in rec.get("affected") or []:
+        repos = {normalize_repo(r.get("repo", "")) for r in aff.get("ranges") or []
+                 if isinstance(r, dict) and r.get("type") == "GIT"}
+        repos.discard(None)
+        versions = sorted({str(v) for v in aff.get("versions") or []})
+        if not repos or not versions:
+            continue                                  # no tags: only a commit graph could decide
+        sev, score, vector = _severity(rec, aff)
+        for repo in sorted(repos):
+            yield repo, {"id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
+                         "summary": (rec.get("summary") or rec.get("details") or "")[:300].strip(),
+                         "severity": sev, "score": score, "cvss": vector,
+                         "published": rec.get("published"), "modified": rec.get("modified"),
+                         "ranges": [], "versions": versions, "functions": _functions(aff)}
+
+
 def table(ecosystem: str, by_pkg: Dict[str, List[dict]]) -> dict:
     packages = {name: _merge_aliases(advs) for name, advs in sorted(by_pkg.items())}
     return {"schema": SCHEMA, "ecosystem": ecosystem, "packages": packages}

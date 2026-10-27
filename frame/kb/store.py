@@ -106,7 +106,8 @@ def _read_manifest(data: bytes) -> dict:
 
 
 def pull(languages: Optional[Iterable[str]] = None, revision: str = "main",
-         source: Optional[str] = None, expect_manifest_sha256: Optional[str] = None) -> Pulled:
+         source: Optional[str] = None, expect_manifest_sha256: Optional[str] = None,
+         also: Optional[Iterable[str]] = None) -> Pulled:
     """Download `revision` of the knowledge base (only `languages`' files, plus files for every
     language), verify each file against the manifest, and cache it. With
     `expect_manifest_sha256` (a lockfile pin) a manifest that differs is refused."""
@@ -121,11 +122,12 @@ def pull(languages: Optional[Iterable[str]] = None, revision: str = "main",
     if not re.fullmatch(r"[A-Za-z0-9._-]+", rev_id):
         raise KBError(f"invalid revision id {rev_id!r}")
     dest = cache_root() / _slug(src) / rev_id
-    wanted = {lang.lower() for lang in languages} if languages else None
+    wanted = {lang.lower() for lang in languages} if languages is not None else None   # [] = only `also`
+    extra = set(also or ())                     # specific files (the GIT advisory shards a project needs)
     pulled = Pulled(source=src, revision=rev_id, manifest_sha256=digest, path=dest)
     for path, meta in sorted(manifest["files"].items()):
         lang = str(meta.get("language", "")).lower()
-        if wanted is not None and lang and lang not in wanted:
+        if wanted is not None and lang and lang not in wanted and path not in extra:
             continue
         target = dest / path
         if target.is_file() and _sha256(target.read_bytes()) == meta["sha256"]:

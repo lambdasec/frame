@@ -115,5 +115,6 @@ def test_the_licence_list_ships_as_package_data():
     except ModuleNotFoundError:                 # Python < 3.11
         import tomli as tomllib                 # type: ignore[no-redef]
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert "sca/data/*.txt" in data["tool"]["setuptools"]["package-data"]["frame"]
+    assert {"sca/data/*.txt", "sca/data/*.json"} <= set(data["tool"]["setuptools"]["package-data"]["frame"])
+    assert (ROOT / "frame" / "sca" / "data" / "cpp-repos.json").is_file()
     assert (ROOT / "frame" / "sca" / "data" / "spdx-license-ids.txt").is_file()

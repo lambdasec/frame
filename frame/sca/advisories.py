@@ -19,11 +19,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
-from frame.sca.model import CARGO, GO, MAVEN, NPM, NUGET, PYPI, SWIFT, DependencyFile, normalize_name
-from frame.sca.osv import SCHEMA, entries, fixed_versions, is_affected, table
+import hashlib
+
+from frame.sca.model import CARGO, CONAN, GIT, GO, MAVEN, NPM, NUGET, PYPI, SWIFT, VCPKG, DependencyFile, normalize_name
+from frame.sca.osv import SCHEMA, entries, fixed_versions, git_entries, is_affected, table
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
 ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT)
+# C/C++ packages are matched against GIT advisories (by repository), sharded so a project
+# pulls only the repositories it depends on
+CPP_ECOSYSTEMS = (CONAN, VCPKG, GIT)
+GIT_SHARDS = 256
+
+
+def git_shard(repo: str) -> str:
+    return f"advisories/GIT/{hashlib.sha256(repo.encode()).hexdigest()[:2]}.json.gz"
 
 
 def source() -> str:
@@ -84,11 +94,17 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
     from frame.kb.store import SCHEMA as KB_SCHEMA
     if not re.fullmatch(r"[A-Za-z0-9._-]+", revision):
         raise KBError(f"invalid revision id {revision!r}")
-    wanted = list(ecosystems) if ecosystems else list(ECOSYSTEMS)
+    wanted = list(ecosystems) if ecosystems else list(ECOSYSTEMS) + [GIT]
+    with_git = GIT in wanted
+    wanted = [e for e in wanted if e != GIT]
     by_eco: Dict[str, Dict[str, List[dict]]] = {e: {} for e in wanted}
+    by_repo: Dict[str, List[dict]] = {}
     for rec in _records(inputs):                              # one pass; raw records are not kept
         for eco, name, entry in entries(rec, wanted):
             by_eco[eco].setdefault(name, []).append(entry)
+        if with_git:
+            for repo, entry in git_entries(rec):
+                by_repo.setdefault(repo, []).append(entry)
     out = Path(out)
     files: Dict[str, dict] = {}
     for eco in wanted:
@@ -115,6 +131,15 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         (out / rel).write_bytes(data)
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                       "kind": "functions", "name": eco, "advisories": len(fns)}
+    shards: Dict[str, Dict[str, List[dict]]] = {}
+    for repo in sorted(by_repo):
+        shards.setdefault(git_shard(repo), {})[repo] = table(GIT, {repo: by_repo.pop(repo)})["packages"][repo]
+    for rel, repos in sorted(shards.items()):
+        data = _gz_json({"schema": SCHEMA, "ecosystem": GIT, "revision": revision, "packages": repos})
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+        files[rel] = {"sha256": _sha256(data), "size": len(data), "language": "git", "kind": "advisories",
+                      "name": rel.rsplit("/", 1)[1].split(".")[0], "advisories": sum(len(v) for v in repos.values())}
     manifest = {"schema": KB_SCHEMA, "revision": revision, "files": files}
     out.mkdir(parents=True, exist_ok=True)
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -179,11 +204,28 @@ class AdvisoryDB:
         return db
 
     @classmethod
-    def cached(cls, ecosystems: Iterable[str]) -> "AdvisoryDB":
-        return cls.from_dir(cached_revision_dir(), ecosystems)
+    def cached(cls, ecosystems: Iterable[str], repos: Iterable[str] = ()) -> "AdvisoryDB":
+        db = cls.from_dir(cached_revision_dir(), [e for e in ecosystems if e not in CPP_ECOSYSTEMS])
+        db.load_git(cached_revision_dir(), repos)
+        return db
+
+    def load_git(self, d: Optional[Path], repos: Iterable[str]) -> None:
+        """The GIT advisories of these repositories (their shards)."""
+        table_: Dict[str, List[dict]] = self.tables.setdefault(GIT, {})
+        for rel in sorted({git_shard(r) for r in repos}):
+            f = d / rel if d is not None else None
+            if f is None or not f.is_file():
+                if GIT not in self.missing:
+                    self.missing.append(GIT)
+                continue
+            shard = json.loads(gzip.decompress(f.read_bytes()))
+            table_.update({r: advs for r, advs in shard.get("packages", {}).items() if r in set(repos)})
 
     def advisories(self, ecosystem: str, name: str) -> List[dict]:
         return self.tables.get(ecosystem, {}).get(normalize_name(ecosystem, name), [])
+
+    def repo_advisories(self, repo: str) -> List[dict]:
+        return self.tables.get(GIT, {}).get(repo, [])
 
 
 # ---------------------------------------------------------------------------------------------
@@ -218,10 +260,16 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
     out: List[dict] = []
     for df in files:
         for key, pkg in sorted(df.packages.items()):
-            if not pkg.version:
+            if not pkg.version and not pkg.tags:
                 continue
-            for adv in db.advisories(pkg.ecosystem, pkg.name):
-                if not is_affected(pkg.ecosystem, pkg.version, adv):
+            if pkg.repo:                                  # C/C++: OSV's affected tags of the repository
+                candidates = [(adv, any(t in adv.get("versions", ()) for t in pkg.tags))
+                              for adv in db.repo_advisories(pkg.repo)]
+            else:
+                candidates = [(adv, is_affected(pkg.ecosystem, pkg.version, adv))
+                              for adv in db.advisories(pkg.ecosystem, pkg.name)]
+            for adv, affected in candidates:
+                if not affected:
                     continue
                 chain = _paths_to_direct(df, key)
                 out.append({
@@ -229,7 +277,9 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     "severity": adv.get("severity"), "score": adv.get("score"), "cvss": adv.get("cvss"),
                     "ecosystem": pkg.ecosystem, "package": pkg.name, "version": pkg.version,
                     "purl": pkg.purl, "path": df.path, "direct": pkg.direct, "dev": pkg.dev,
-                    "fixed": fixed_versions(pkg.ecosystem, pkg.version, adv),
+                    "fixed": [] if pkg.repo else fixed_versions(pkg.ecosystem, pkg.version, adv),
+                    **({"repo": pkg.repo, "tag": next(t for t in pkg.tags if t in adv.get("versions", ()))}
+                       if pkg.repo else {}),
                     "via": [f"{df.packages[k].name}@{df.packages[k].version}" for k in chain],
                     "functions": adv.get("functions", []),
                     "category": "dependency", "evidence": "matched"})
@@ -240,4 +290,9 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
 
 def ecosystems_of(files: Iterable[DependencyFile]) -> List[str]:
     return sorted({p.ecosystem for f in files for p in f.packages.values()})
+
+
+def repos_of(files: Iterable[DependencyFile]) -> List[str]:
+    """Upstream repositories of the C/C++ dependencies (their GIT advisory shards)."""
+    return sorted({p.repo for f in files for p in f.packages.values() if p.repo})
 

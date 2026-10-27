@@ -32,7 +32,7 @@ def prepare(target: Path, excluded: Iterable) -> ScaRun:
     """Read the dependency graph under `target`, match it against the cached advisories and
     annotate imports and calls. Never fetches: with nothing cached it says how to pull."""
     from frame.sca import read_dependencies
-    from frame.sca.advisories import AdvisoryDB, ecosystems_of, match
+    from frame.sca.advisories import AdvisoryDB, ecosystems_of, match, repos_of
     from frame.sca.reachability import Usage, annotate
     target = Path(target).resolve()
     report = read_dependencies(target, exclude_dirs=excluded)
@@ -40,7 +40,7 @@ def prepare(target: Path, excluded: Iterable) -> ScaRun:
     ecos = ecosystems_of(report.files)
     if not ecos:
         return run
-    db = AdvisoryDB.cached(ecos)
+    db = AdvisoryDB.cached(ecos, repos_of(report.files))
     run.revision = db.revision
     if db.missing:
         run.warnings.append(f"no advisories cached for {', '.join(db.missing)}: run `frame kb pull --advisories`")

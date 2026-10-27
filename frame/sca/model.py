@@ -11,6 +11,8 @@ from urllib.parse import quote
 # OSV ecosystem names
 PYPI, NPM, MAVEN, NUGET = "PyPI", "npm", "Maven", "NuGet"
 GO, CARGO, SWIFT = "Go", "crates.io", "SwiftURL"
+# C / C++: no OSV package ecosystem; matched by upstream repository and release tag (OSV GIT)
+CONAN, VCPKG, GIT = "ConanCenter", "vcpkg", "GIT"
 
 
 def normalize_name(ecosystem: str, name: str) -> str:
@@ -31,6 +33,8 @@ class Package:
     dev: bool = False                    # only needed for development / tests
     spec: str = ""                       # the requested range, when there is no exact version
     license: str = ""                    # as the lockfile declares it (npm); empty when it does not say
+    repo: str = ""                       # C/C++: the upstream repository, host/owner/name
+    tags: List[str] = field(default_factory=list)   # C/C++: the release tag(s) this version is
 
     @property
     def key(self) -> str:
@@ -56,6 +60,13 @@ class Package:
             return f"pkg:cargo/{quote(self.name, safe='')}@{v}"
         if self.ecosystem == SWIFT:
             return f"pkg:swift/{quote(self.name, safe='/')}@{v}"
+        if self.ecosystem == CONAN:
+            return f"pkg:conan/{quote(self.name, safe='')}@{v}"
+        if self.ecosystem in (VCPKG, GIT) and self.repo.startswith(("github.com/", "gitlab.com/", "bitbucket.org/")):
+            host, owner, name = self.repo.split("/", 2)
+            return f"pkg:{host.split('.')[0]}/{quote(owner, safe='')}/{quote(name, safe='')}@{v}"
+        if self.ecosystem == VCPKG:
+            return f"pkg:generic/{quote(self.name, safe='')}@{v}"
         return None
 
     def to_dict(self) -> dict:
@@ -65,6 +76,9 @@ class Package:
             d["spec"] = self.spec
         if self.license:
             d["license"] = self.license
+        if self.repo:
+            d["repo"] = self.repo
+            d["tags"] = list(self.tags)
         return d
 
 
