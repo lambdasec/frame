@@ -260,3 +260,83 @@ app.get("/e", (req, res) => {
 });
 ''',
 })
+
+
+# ---- the request object and callbacks travel through helpers -------------------------------
+case("py_request_object_passed_to_helper", {
+    "app.py": _PY_HEAD + '''def run_report(req):
+    os.system("report --title " + req.args.get("title", ""))  # frame-expect: CWE-78
+
+
+@app.route("/r")
+def r():
+    run_report(request)
+    return "ok"
+''',
+}, {
+    "app.py": _PY_HEAD + '''def run_report(req):
+    os.system("report --title " + shlex.quote(req.args.get("title", "")))
+
+
+@app.route("/r")
+def r():
+    run_report(request)
+    return "ok"
+''',
+})
+
+case("js_callback_parameter_receives_request_data", {
+    "app.js": _JS_HEAD + '''function withName(req, cb) {
+  cb(req.query.name);
+}
+
+app.get("/a", (req, res) => {
+  withName(req, (name) => {
+    execSync("echo " + name);  // frame-expect: CWE-78
+    res.send("ok");
+  });
+});
+''',
+}, {
+    "app.js": _JS_HEAD.replace("execSync }", "execFileSync }") + '''function withName(req, cb) {
+  cb(req.query.name);
+}
+
+app.get("/a", (req, res) => {
+  withName(req, (name) => {
+    execFileSync("echo", [name]);
+    res.send("ok");
+  });
+});
+''',
+})
+
+case("js_named_callback_passed_to_helper", {
+    "app.js": _JS_HEAD + '''function forEachParam(req, visit) {
+  Object.keys(req.query).forEach((k) => visit(req.query[k]));
+}
+
+function run(value) {
+  execSync("echo " + value);  // frame-expect: CWE-78
+}
+
+app.get("/a", (req, res) => {
+  forEachParam(req, run);
+  res.send("ok");
+});
+''',
+}, {
+    "app.js": _JS_HEAD.replace("execSync }", "execFileSync }") + '''function forEachParam(req, visit) {
+  Object.keys(req.query).forEach((k) => visit(req.query[k]));
+}
+
+function run(value) {
+  execFileSync("echo", [value]);
+}
+
+app.get("/a", (req, res) => {
+  forEachParam(req, run);
+  res.send("ok");
+});
+''',
+})

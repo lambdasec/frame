@@ -1708,6 +1708,10 @@ class SILTranslator:
         caller = self._cur_proc
         if "." not in func_name:
             proc = procs.get(func_name)
+            if proc is None and caller is not None:
+                passed = self._callback_argument(func_name, caller)
+                if passed is not None:
+                    return passed
             if proc is None and caller is not None and caller.class_name \
                     and (getattr(self.program, "language", "") or "").lower() == "csharp":
                 own = [p for p in procs.values() if p.is_method and p.class_name == caller.class_name
@@ -1727,6 +1731,42 @@ class SILTranslator:
                 if p.is_method and p.class_name and p.class_name.rsplit(".", 1)[-1] == owner
                 and p.simple_name == method]
         return hits[0] if len(hits) == 1 else None
+
+    def _imported_request_objects(self) -> Set[str]:
+        """Names this file imports that are a web request object: the head of a source spec
+        (`request.args.get`) bound by an import (`from flask import request`)."""
+        cache = self.__dict__.get("_request_object_cache")
+        if cache is None:
+            heads = {k.split(".", 1)[0] for k, sp in self.program.library_specs.items()
+                     if "." in k and sp.is_source and k.split(".", 1)[0].isidentifier()}
+            cache = {name for name, qualified in self.program.imports.items()
+                     if name in heads and qualified.rsplit(".", 1)[-1] == name
+                     and name in ("request", "req")}
+            self.__dict__["_request_object_cache"] = cache
+        return cache
+
+    def _is_imported_request_object(self, var: str) -> bool:
+        if var not in self._imported_request_objects():
+            return False
+        proc = self._cur_proc          # a parameter or local of the same name is a different object
+        return proc is None or (var not in {p.name for p, _ in proc.params}
+                                and var not in proc.locals)
+
+    def _callback_argument(self, name: str, caller: Procedure) -> Optional[Procedure]:
+        """`cb(x)` inside `withName(req, cb)`: the one function of this file that is passed as
+        that argument to `withName`. Resolved only when a single function is ever passed there."""
+        scope, seen = caller, set()
+        while scope is not None and id(scope) not in seen:       # a nested callback sees its parents' parameters
+            seen.add(id(scope))
+            params = [p.name for p, _ in scope.params]
+            if name in params:
+                index, owner = params.index(name), scope.simple_name
+                hits = [p for p in self.program.procedures.values() if (owner, index) in p.passed_as]
+                return hits[0] if len(hits) == 1 else None
+            if name not in scope.captures:
+                return None
+            scope = self.program.procedures.get(scope.parent) if scope.parent else None
+        return None
 
     _CTOR_RECEIVER = re.compile(r"^(?:new\s+)?([A-Za-z_]\w*)\(.*\)$")
 
@@ -1897,6 +1937,11 @@ class SILTranslator:
             if state.is_tainted(var):
                 out.append((state.get_taint_info(var),
                             set(wrap) | set(state.sanitized.get(var, []))))
+            elif self._is_imported_request_object(var):
+                # `render(request)`: the framework's request object handed to a helper is
+                # attacker data there, whatever the helper calls its parameter
+                out.append((TaintInfo(source_kind=TaintKind.USER_INPUT, source_var=var,
+                                      source_location=loc), set(wrap)))
             return out
         if isinstance(exp, (ExpFieldAccess, ExpIndex)):
             if isinstance(exp, ExpFieldAccess) and self._is_request_server_state(exp):

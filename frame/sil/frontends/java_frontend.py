@@ -316,6 +316,10 @@ class JavaFrontend:
         if body:
             for child in body.children:
                 if child.type == "method_declaration":
+                    if child.child_by_field_name("body") is None:
+                        # `abstract`/`native`: no body, so no procedure. An empty one would be
+                        # what a call resolves to (hiding the subclass that implements it).
+                        continue
                     proc = self._translate_method(child)
                     if proc:
                         proc.class_name = class_name

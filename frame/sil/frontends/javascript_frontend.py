@@ -311,7 +311,7 @@ class JavaScriptFrontend:
                 if callee is None or args is None:
                     continue
                 callee_text = self._get_text(callee)
-                for a in args.named_children:
+                for arg_index, a in enumerate(args.named_children):
                     target = None
                     if a.type in self._FUNC_LIKE:
                         target = by_span.get((a.start_byte, a.end_byte))
@@ -319,6 +319,8 @@ class JavaScriptFrontend:
                         target = program.procedures.get(self._get_text(a))
                     if target is not None and callee_text not in target.registered_via:
                         target.registered_via.append(callee_text)
+                    if target is not None and (callee_text, arg_index) not in target.passed_as:
+                        target.passed_as.append((callee_text, arg_index))
                     elif a.type == "object":
                         # `server.route({ handler: (request, h) => ... })`, `fastify.route({ handler() {} })`:
                         # the function is registered as `<callee>.<property>`.

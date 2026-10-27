@@ -6,18 +6,18 @@ helper/repository file is reported with the marked CWE, and the safe twin (same
 layout, the flaw fixed) reports none of those CWEs.
 """
 
+import importlib
+import pathlib
+
 import pytest
 
 from e2e_helpers import expectations, scan, write_tree
-import projects_csharp
-import projects_interproc
-import projects_java
-import projects_js
-import projects_python
 
 ALL_CASES = {}
-for _mod in (projects_python, projects_js, projects_java, projects_csharp, projects_interproc):
-    ALL_CASES.update(_mod.CASES)
+for _path in sorted(pathlib.Path(__file__).parent.glob("projects_*.py")):
+    _mod = importlib.import_module(_path.stem)       # every projects_*.py module contributes its CASES
+    for _name, _case in _mod.CASES.items():
+        ALL_CASES[f"{_path.stem[len('projects_'):]}/{_name}"] = _case      # one id space per module
 
 
 @pytest.mark.parametrize("name", sorted(ALL_CASES))

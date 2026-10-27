@@ -416,6 +416,9 @@ class Procedure:
     # Callees this function is passed to as an argument (`app.get('/x', handler)`
     # -> ["app.get"]), by their textual names; set by the JS frontend.
     registered_via: List[str] = field(default_factory=list)
+    # The same, with the argument position: ("withName", 1) for `withName(req, (name) => ...)`.
+    # Lets a call to a callback PARAMETER inside `withName` resolve to the function passed in.
+    passed_as: List[Tuple[str, int]] = field(default_factory=list)
     parent: Optional[str] = None
     span: Optional[Tuple[int, int]] = None
 
