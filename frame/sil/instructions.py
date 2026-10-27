@@ -61,6 +61,10 @@ class TaintKind(Enum):
     # credential -- so a resource selected by a PRINCIPAL-derived value is self-
     # scoped, not a cross-user (IDOR) access. Propagates through custom validators.
     PRINCIPAL = "principal"
+    # Output of a non-cryptographic PRNG (rand(), random()): not attacker data, but
+    # predictable. It matters only where a value must be unpredictable
+    # (SinkKind.UNPREDICTABLE), and only there.
+    WEAK_RANDOM = "weak_random"
 
     def __str__(self) -> str:
         return self.value
@@ -117,6 +121,9 @@ class SinkKind(Enum):
     WEAK_CRYPTO = "weak_crypto" # Weak cryptography (CWE-327)
     HARDCODED_SECRET = "hardcoded_secret"  # Hardcoded credentials (CWE-798)
     INSECURE_RANDOM = "insecure_random"    # Insecure randomness (CWE-330)
+    # A value that must be unpredictable: a cryptographic key, IV, salt or seed, a
+    # session / auth token set as a cookie. Reached by WEAK_RANDOM data only (CWE-338).
+    UNPREDICTABLE = "unpredictable"
     WEAK_HASH = "weak_hash"     # Weak hashing (CWE-328)
     INSECURE_TEMP_FILE = "insecure_temp_file"  # Insecure temp file / race (CWE-377)
     CERT_VALIDATION = "cert_validation"  # Improper certificate validation (CWE-295)
@@ -608,9 +615,9 @@ class Sanitize(Instr):
         return f"sanitize({self.var}, [{kinds}])"
 
     def get_written_vars(self) -> set:
-        if isinstance(self.var, PVar):
-            return {self.var.name}
-        return {str(self.var)}
+        # An annotation, not a write: the value (and what the path knows about it)
+        # is unchanged; only what it is safe for is recorded.
+        return set()
 
 
 @dataclass

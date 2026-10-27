@@ -349,6 +349,7 @@ class CSharpFrontend:
                 if member.type == "field_declaration":
                     fields.update(self._declared_types(member))
             self._class_fields_of[full_class_name] = fields
+            program.declared_fields[full_class_name] = set(fields)
             self._declared_methods[full_class_name] = {
                 self._get_text(c.child_by_field_name("name")) for c in body.children
                 if c.type == "method_declaration" and c.child_by_field_name("name") is not None}
@@ -512,6 +513,11 @@ class CSharpFrontend:
         )
         proc.has_varargs = self._has_params_array(node)
         proc.annotations = [parse_annotation(a, self._imports) for a in attributes]
+        # `static string Run(this string arg)`: an extension method, called as `arg.Run()`.
+        first = next((c for c in (node.child_by_field_name("parameters") or node).children
+                      if c.type == "parameter"), None)
+        proc.is_extension = first is not None and any(
+            c.type == "modifier" and self._get_text(c) == "this" for c in first.children)
         self._proc_types[id(proc)] = self._declared_types(node)
         self._xml_flags = self._collect_xml_flags(node)
         pl = node.child_by_field_name("parameters")
@@ -1506,7 +1512,8 @@ class CSharpFrontend:
             if n.type in self._LAMBDA_TYPES:
                 continue
             if n.type == "invocation_expression" and (n.start_byte, n.end_byte) not in self._hoisted \
-                    and (self._sanitizer_spec(self._get_method_name(n)) or self._own_method_call(n)):
+                    and (self._sanitizer_spec(self._get_method_name(n)) or self._own_method_call(n)
+                         or self._created_receiver(n) is not None):
                 found.append(n)
             stack.extend(n.children)
         instrs: List[Instr] = []
@@ -1515,8 +1522,43 @@ class CSharpFrontend:
                 continue
             tmp = f"$san{len(self._hoisted)}"
             instrs.extend(self._hoist_sanitizers(n))
-            instrs.extend(self._translate_call_assignment(tmp, n, self._get_location(n)))
+            created = self._created_receiver(n)
+            if created is not None:
+                instrs.extend(self._translate_created_receiver_call(tmp, n, *created))
+            else:
+                instrs.extend(self._translate_call_assignment(tmp, n, self._get_location(n)))
             self._hoisted[(n.start_byte, n.end_byte)] = tmp
+        return instrs
+
+    def _created_receiver(self, call: TSNode) -> Optional[Tuple[TSNode, str, str]]:
+        """`new Job(q).Go()` on a type no spec describes: (the creation, its type, the
+        method). Library types keep their own handling (`new Regex(p).IsMatch(s)`)."""
+        func = call.child_by_field_name("function")
+        if func is None or func.type != "member_access_expression":
+            return None
+        obj, name = func.child_by_field_name("expression"), func.child_by_field_name("name")
+        if obj is None or name is None or obj.type != "object_creation_expression":
+            return None
+        type_node = obj.child_by_field_name("type")
+        type_name = self._get_text(type_node) if type_node else ""
+        if not type_name or self.specs.get(type_name) is not None:
+            return None
+        return obj, type_name, self._get_text(name)
+
+    def _translate_created_receiver_call(self, target: str, call: TSNode, creation: TSNode,
+                                         type_name: str, method: str) -> List[Instr]:
+        """`tmp = new Job(q).Go()` as `$newN = new Job(q); tmp = $newN.Go()`, so the
+        project resolves both the constructor and the method."""
+        loc = self._get_location(call)
+        obj = f"$new{self._ident_counter}"
+        self._ident_counter += 1
+        instrs = self._translate_object_creation(creation, obj, loc)
+        ret = self._new_ident(target)
+        instrs.append(Call(loc=loc, ret=(ret, Typ.unknown_type()), func=ExpConst.string(f"{obj}.{method}"),
+                           args=[(self._translate_expression(a), Typ.unknown_type())
+                                 for a in self._get_method_args(call)],
+                           callee_class=type_name.split("<", 1)[0]))
+        instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret)))
         return instrs
 
     def _translate_call_assignment(
@@ -1611,10 +1653,18 @@ class CSharpFrontend:
         # path (empty sink_args) can fire on the constructor.
         instrs.append(Call(loc=loc, ret=None,
                            func=ExpConst.string(type_name), args=args_exp))
-        if target is not None:
+        spec = self.specs.get(type_name)
+        if target is not None and spec is None:
+            # A type no spec describes (the project's own `new Job(q)`): the variable is
+            # bound to the constructor call, so the project can resolve the constructor
+            # and follow what it stores in the new object's fields.
+            ret = self._new_ident(target)
+            instrs.append(Call(loc=loc, ret=(ret, Typ.unknown_type()),
+                               func=ExpConst.string(f"new {type_name}"), args=args_exp))
+            instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret)))
+        elif target is not None:
             instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpConst.null()))
 
-        spec = self.specs.get(type_name)
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:

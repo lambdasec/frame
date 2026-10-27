@@ -40,6 +40,8 @@ from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 
 # A plain local variable name: no field, element or call in it.
 _PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
+# A C/C++ brace initialiser holding only string / number literals.
+_LITERAL_BRACE_LIST = re.compile(r'\{(?:\s|[{},]|"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?)*\}$')
 
 
 # =============================================================================
@@ -73,6 +75,7 @@ class VulnType(Enum):
     WEAK_CRYPTOGRAPHY = "weak_crypto"     # CWE-327 (OWASP expects "weak_crypto")
     HARDCODED_SECRET = "hardcoded_secret"       # CWE-798
     INSECURE_RANDOM = "insecure_random"         # CWE-330
+    PREDICTABLE_VALUE = "predictable_value"     # CWE-338 (weak PRNG output where unpredictability matters)
     WEAK_HASH = "weak_hash"                     # CWE-328
     IMPROPER_CERT_VALIDATION = "improper_cert_validation"  # CWE-295
     INSUFFICIENT_KEY_SIZE = "insufficient_key_size"  # CWE-326
@@ -228,6 +231,7 @@ class VulnType(Enum):
             SinkKind.WEAK_CRYPTO: cls.WEAK_CRYPTOGRAPHY,
             SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
             SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
+            SinkKind.UNPREDICTABLE: cls.PREDICTABLE_VALUE,
             SinkKind.WEAK_HASH: cls.WEAK_HASH,
             SinkKind.CERT_VALIDATION: cls.IMPROPER_CERT_VALIDATION,
             SinkKind.WEAK_KEY_SIZE: cls.INSUFFICIENT_KEY_SIZE,
@@ -406,6 +410,9 @@ class SymbolicState:
     # Constant tracking for constant folding
     # constants: var -> numeric or string value
     constants: Dict[str, any] = field(default_factory=dict)
+    # Variables assigned a non-literal value on some path: not a constant after a join,
+    # even if another path assigned them one (`i = 0` ... `i = i + 1`).
+    nonconst: Set[str] = field(default_factory=set)
 
     # Secure parser tracking (for XXE mitigation)
     # secure_parsers: set of variable names that hold secure XML parsers
@@ -454,6 +461,7 @@ class SymbolicState:
             asserted_safe={k: list(v) for k, v in self.asserted_safe.items()},
             list_elements={k: list(v) for k, v in self.list_elements.items()},
             constants=dict(self.constants),
+            nonconst=set(self.nonconst),
             secure_parsers=set(self.secure_parsers),
             safe_for_xml_sink=set(self.safe_for_xml_sink),
             validated_for_eval=set(self.validated_for_eval),
@@ -675,13 +683,21 @@ class SymbolicState:
         return self.tainted.get(var)
 
     def is_sanitized_for(self, var: str, sink_type: str) -> bool:
-        """Check if variable is sanitized for given sink type"""
-        return sink_type in self.sanitized.get(var, [])
+        """Check if variable is sanitized for given sink type (aliases such as
+        `path`/`filesystem` name the same kind)."""
+        have = self.sanitized.get(var, [])
+        if sink_type in have:
+            return True
+        kind = _SINK_KIND_ALIASES.get(sink_type, sink_type)
+        return any(_SINK_KIND_ALIASES.get(k, k) == kind for k in have)
 
     def is_asserted_safe_for(self, var: str, sink_type: str) -> bool:
         """Check if variable is asserted safe for given sink type"""
         safe_for = self.asserted_safe.get(var, [])
-        return sink_type in safe_for or len(safe_for) == 0 and var in self.asserted_safe
+        if len(safe_for) == 0 and var in self.asserted_safe:
+            return True
+        kind = _SINK_KIND_ALIASES.get(sink_type, sink_type)
+        return any(_SINK_KIND_ALIASES.get(k, k) == kind for k in safe_for)
 
     def is_freed(self, var: str) -> bool:
         """Check if pointer has been freed"""
@@ -767,11 +783,21 @@ class ReturnSummary:
     source: Optional[TaintInfo] = None
     source_sanitized: Optional[Set[str]] = None
     params: Dict[str, Set[str]] = field(default_factory=dict)
+    # Fields of the receiver each parameter is stored into (`this.target = target`
+    # in a constructor or setter): field -> param -> kinds every path sanitized.
+    stores: Dict[str, Dict[str, Set[str]]] = field(default_factory=dict)
+    # Fields of a parameter holding attacker data when the procedure returns
+    # (middleware: `req.filter = req.query.filter`): param -> field -> taint.
+    param_fields: Dict[str, Dict[str, Tuple[TaintInfo, Set[str]]]] = field(default_factory=dict)
 
     def key(self):
         return (self.source.source_var if self.source else None,
                 frozenset(self.source_sanitized or ()),
-                tuple(sorted((p, frozenset(k)) for p, k in self.params.items())))
+                tuple(sorted((p, frozenset(k)) for p, k in self.params.items())),
+                tuple(sorted((f, p, frozenset(k)) for f, ps in self.stores.items()
+                             for p, k in ps.items())),
+                tuple(sorted((p, f, frozenset(k)) for p, fs in self.param_fields.items()
+                             for f, (_, k) in fs.items())))
 
 
 @dataclass
@@ -793,6 +819,13 @@ class IPAState:
     callers: Dict[ProcRef, Set[ProcRef]] = field(default_factory=dict)
     dirty: Set[ProcRef] = field(default_factory=set)
     entry_markers: Dict[str, Tuple[ProcRef, str]] = field(default_factory=dict)
+    # (file, app object) -> request field -> taint: what middleware registered with
+    # `app.use(mw)` stores on the request every handler of that app receives.
+    middleware_fields: Dict[Tuple[str, str], Dict[str, Tuple[TaintInfo, Set[str]]]] = field(default_factory=dict)
+    # Request attribute name -> taint a servlet Filter stores under it, and the
+    # procedures that read request attributes (re-analysed when it changes).
+    request_attributes: Dict[str, Tuple[TaintInfo, Set[str]]] = field(default_factory=dict)
+    attribute_readers: Set[ProcRef] = field(default_factory=set)
     # Set when the fixpoint ran out of its visit budget: the summaries may be
     # missing flows (reported by the scan as an incomplete analysis).
     incomplete: bool = False
@@ -970,6 +1003,8 @@ class SILTranslator:
         self._prepared = False
         self._sorted_procs: List[Tuple[str, Procedure]] = []
         self._return_acc: Optional["ReturnSummary"] = None
+        self._value_class: Dict[str, Tuple[str, str]] = {}
+        self._literal_tables: Set[str] = set()
         # Inter-procedural analysis: procedure summaries
         self._proc_summaries: Dict[str, ProcedureSummary] = {}
         # Track which parameters are freed at each call site
@@ -1426,10 +1461,10 @@ class SILTranslator:
         """Translate a procedure, recording what reaches its return value when
         inter-procedural taint is on (`ReturnSummary`)."""
         if not self._ipa_on:
-            return self._translate_procedure(proc)
+            return self._kind_matched(self._translate_procedure(proc))
         outer, self._return_acc = self._return_acc, ReturnSummary()
         try:
-            checks = self._translate_procedure(proc)
+            checks = self._kind_matched(self._translate_procedure(proc))
             # Summaries change only while they are being computed; the reporting
             # pass reads them, so results never depend on the order files are
             # reported in.
@@ -1443,6 +1478,11 @@ class SILTranslator:
         finally:
             self._return_acc = outer
 
+    @staticmethod
+    def _kind_matched(checks: List[VulnerabilityCheck]) -> List[VulnerabilityCheck]:
+        """Drop taint checks whose source kind does not fit the sink (_create_taint_check)."""
+        return [c for c in checks if not getattr(c, "kind_mismatch", False)]
+
     def _translate_procedure(self, proc: Procedure) -> List[VulnerabilityCheck]:
         """
         Translate a single procedure to vulnerability checks.
@@ -1452,6 +1492,11 @@ class SILTranslator:
         """
         checks = []
         self._cur_proc = proc
+        # Temporaries holding the result of a project method with a declared class
+        # return type (`Tool.of(...)` -> Tool), for `Tool.of(..).run(v)` chains.
+        self._value_class: Dict[str, Tuple[str, str]] = {}
+        # C/C++ locals initialised with a brace list of literals only (`= {{"home", "/home"}}`).
+        self._literal_tables: Set[str] = set()
         self._null_candidates = []
         self._uninit_candidates = []
         self._branch_node_clean = False
@@ -1463,6 +1508,7 @@ class SILTranslator:
         # Use worklist algorithm for path-sensitive analysis
         worklist: List[Tuple[int, SymbolicState]] = [(proc.entry_node, initial_state)]
         visited: Dict[int, SymbolicState] = {}
+        fact_reopens: Dict[int, int] = {}
         max_iterations = 10000  # Safety limit to prevent infinite loops
 
         iterations = 0
@@ -1482,6 +1528,14 @@ class SILTranslator:
                 merged_state = self._merge_states(old_state, state)
                 # Check if we've reached a fixpoint (no change in taint info)
                 state_changed = not self._states_equal(old_state, merged_state)
+                # A change in what the path knows also reopens the node, a few times: the
+                # back edge of `for (i = 0; i < 3; i++)` weakens `i == 0`, and only then is
+                # the loop's exit feasible. Without it nothing after such a loop was analysed.
+                if not state_changed and fact_reopens.get(node_id, 0) < 3 and \
+                        {str(c) for c in old_state.feasibility_constraints} != \
+                        {str(c) for c in merged_state.feasibility_constraints}:
+                    fact_reopens[node_id] = fact_reopens.get(node_id, 0) + 1
+                    state_changed = True
                 state = merged_state
 
             visited[node_id] = state
@@ -1593,6 +1647,8 @@ class SILTranslator:
             # pointer goes out of scope unreleased, a CWE-401 leak. Runs on the
             # merged state at this node, so an allocation freed on some other
             # incoming path is already gone. C/C++ only.
+            if self._ipa_summarising and not added_succ:
+                self._accumulate_param_fields(current_state)
             if self._is_c_lang and not added_succ:
                 checks.extend(self._finalize_leaks(current_state, proc.name))
 
@@ -1640,14 +1696,14 @@ class SILTranslator:
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
-    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript", "csharp"})
+    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript", "csharp", "c", "cpp"})
     _ALL_SINK_KINDS = frozenset(k.value for k in SinkKind) | frozenset(_SINK_KIND_ALIASES)
     _SEED_PREFIX = "@param:"
 
     def _ipa_applies(self) -> bool:
-        """Inter-procedural taint runs for Python, JS/TS and C# files in which some
-        procedure calls another of the file's procedures. (Java taints every
-        String parameter already; C/C++ have their own passes.)"""
+        """Inter-procedural taint runs for Python, JS/TS, C# and C/C++ files in which
+        some procedure calls another of the file's procedures. (Java taints every
+        String parameter already.)"""
         lang = (getattr(self.program, "language", "") or "").lower()
         if lang not in self._ENTRY_TAINT_LANGUAGES:
             return False
@@ -1687,6 +1743,8 @@ class SILTranslator:
                 for node in proc.nodes.values():
                     for instr in node.instrs:
                         for name in calls_in(instr):
+                            if self._is_c_lang and f"{name}#2" in self.program.procedures:
+                                return True              # a C++ overload set (_record_overload_entry_taints)
                             callee = self._resolve_callee(name)
                             if callee is not None and callee.ref != (self._file_key, proc.name):
                                 return True
@@ -1844,15 +1902,164 @@ class SILTranslator:
         says the call names (`Call.callee_class`), found through imports, packages, supertypes and
         the single implementation of an interface (`ProjectContext.resolve_java_call`)."""
         callee = self._resolve_callee(func_name)
+        if callee is None:
+            callee = self._resolve_constructor(func_name)
         if callee is not None or self._project is None:
             return callee
-        owner = getattr(instr, "callee_class", None)
-        if not owner or (getattr(self.program, "language", "") or "").lower() not in ("java", "csharp"):
+        target = self._java_call_target(instr, func_name)
+        if target is None:
             return None
-        ref = self._project.resolve_java_call(self._file_key, owner, func_name.rsplit(".", 1)[-1],
+        key, owner, method = target
+        ref = self._project.resolve_java_call(key, owner, method,
                                               getattr(instr, "arg_types", None))
         proc = self._project.procedure(ref) if ref is not None else None
         if proc is None or not self._plain_callee(proc):
+            return None
+        return Callee(ref, proc)
+
+    def _java_call_target(self, instr: Call, func_name: str) -> Optional[Tuple[str, str, str]]:
+        """(file the class name is resolved from, class, method) a Java/C# call names."""
+        lang = (getattr(self.program, "language", "") or "").lower()
+        if lang not in ("java", "csharp"):
+            return None
+        owner = getattr(instr, "callee_class", None)
+        method = func_name.rsplit(".", 1)[-1]
+        if func_name.startswith("new "):             # `new Job(v)`: the class's constructor
+            owner = func_name[len("new "):].split("<", 1)[0].strip().rsplit(".", 1)[-1]
+            method = "ctor" if lang == "csharp" else "<init>"
+        key = self._file_key
+        if not owner and lang == "csharp" and func_name.isidentifier() \
+                and self._cur_proc is not None and self._cur_proc.class_name:
+            # `Query(x)` inside a class: its own method, perhaps declared in another
+            # file of a partial class.
+            owner = self._cur_proc.class_name.rsplit(".", 1)[-1]
+        if not owner:
+            # `Tool.of(..).run(v)`: the receiver is the result of a project method whose
+            # declared return type names the class (resolved in that method's file).
+            held = getattr(self, "_value_class", {}).get(func_name.rpartition(".")[0])
+            if held is not None:
+                key, owner = held
+        return (key, owner, method) if owner else None
+
+    def _record_overload_entry_taints(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """C++ `f(buf)` with several overloads of f in this file: the call may run any
+        one taking that many arguments, so each receives the arguments' taint (one
+        whose parameter cannot hold the payload simply has no sink to reach)."""
+        if not self._ipa_summarising or not self._is_c_lang or "." in func_name \
+                or f"{func_name}#2" not in self.program.procedures:
+            return
+        for proc in list(self.program.procedures.values()):
+            n = len(proc.params)
+            fits = n == len(instr.args) or (proc.has_varargs and len(instr.args) >= n - 1)
+            if proc.simple_name == func_name and not proc.is_method and fits and self._plain_callee(proc):
+                callee = Callee((self._file_key, proc.name), proc)
+                self._record_entry_taints(callee, instr, func_name, state)
+
+    def _record_dispatch_entry_taints(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """A call through an interface several project classes implement may run any of
+        them: each implementation's parameters receive the arguments' taint."""
+        if not self._ipa_summarising or self._project is None:
+            return
+        target = self._java_call_target(instr, func_name)
+        if target is None or target[2] in ("<init>", "ctor"):
+            return
+        refs = self._project.java_dispatch_targets(*target, getattr(instr, "arg_types", None))
+        if len(refs) < 2:
+            return
+        for ref in refs:
+            proc = self._project.procedure(ref)
+            if proc is not None and self._plain_callee(proc):
+                callee = Callee(ref, proc)
+                self._record_entry_taints(callee, instr, func_name, state)
+                self._record_field_entry_taints(callee, instr, func_name, state)
+
+    def _extension_call(self, instr: Call, func_name: str) -> Optional[Tuple[Callee, Call]]:
+        """`arg.RunAsCommand()` (C#) calling an extension method of the project: the
+        callee, and the call with the receiver passed as the first argument."""
+        if self._project is None or (getattr(self.program, "language", "") or "").lower() != "csharp":
+            return None
+        head, _, method = func_name.rpartition(".")
+        if not head or not _PLAIN_LOCAL.match(head):
+            return None
+        ref = self._project.resolve_extension(self._file_key, method, len(instr.args))
+        proc = self._project.procedure(ref) if ref is not None else None
+        if proc is None or not self._plain_callee(proc):
+            return None
+        call = Call(loc=instr.loc, ret=instr.ret, func=instr.func,
+                    args=[(ExpVar(PVar(head)), Typ.unknown_type())] + list(instr.args))
+        return Callee(ref, proc), call
+
+    def _partial_call(self, instr: Call, func_name: str) -> Optional[Tuple[Callee, Call]]:
+        """`run_echo(text)` where `run_echo = functools.partial(shell, "echo")`: the wrapped
+        function, called with the bound arguments first (constants as far as this call
+        can tell, so untainted placeholders)."""
+        if self._project is None or (getattr(self.program, "language", "") or "").lower() != "python":
+            return None
+        found = self._project.resolve_partial(self._file_key, func_name)
+        proc = self._project.procedure(found[0]) if found is not None else None
+        if proc is None or not self._plain_callee(proc):
+            return None
+        bound = [(ExpConst.string(""), Typ.unknown_type())] * found[1]
+        return Callee(found[0], proc), Call(loc=instr.loc, ret=instr.ret, func=instr.func,
+                                            args=bound + list(instr.args))
+
+    # Lookups that return an element of the container (or its end), never the key.
+    _TABLE_LOOKUPS = frozenset({"find", "at", "count", "contains", "lower_bound", "upper_bound",
+                                "equal_range"})
+
+    def _literal_table_lookup(self, func_name: str) -> bool:
+        head, _, method = func_name.rpartition(".")
+        return self._is_c_lang and method in self._TABLE_LOOKUPS and head in self._literal_tables
+
+    def _member_alloc_kind(self, name: str) -> Optional[str]:
+        """The allocator kind the current class's constructors store into member `name`
+        (`: data_(new unsigned char[n])` -> array new), for a release in another method
+        (`~FrameBuffer() { delete data_; }`). None when unknown or not one kind."""
+        proc = self._cur_proc
+        if proc is None or not proc.class_name:
+            return None
+        table = self.__dict__.get("_member_alloc_table")
+        if table is None:
+            table = self._member_alloc_table = {}
+            for p in self.program.procedures.values():
+                cls = (p.class_name or "").rsplit("::", 1)[-1]
+                if not cls or p.name.rsplit("::", 1)[-1] != cls:
+                    continue                      # constructors only
+                params = {v.name for v, _ in p.params}
+                pending: Dict[str, str] = {}
+                for node in p.nodes.values():
+                    for ins in node.instrs:
+                        if isinstance(ins, Assign) and isinstance(ins.exp, ExpCall):
+                            k = self._alloc_kind_of_call(self._call_exp_name(ins.exp))
+                            if k is not None:
+                                pending[str(ins.id)] = k
+                        elif isinstance(ins, Assign) and isinstance(ins.exp, ExpVar) \
+                                and str(ins.exp.var) in pending and str(ins.id) not in params:
+                            key = (p.class_name, str(ins.id).replace("this->", ""))
+                            k = pending[str(ins.exp.var)]
+                            table[key] = k if table.get(key, k) == k else None
+        return table.get((proc.class_name, name.replace("this->", "")))
+
+    def _resolve_constructor(self, func_name: str) -> Optional[Callee]:
+        """`Job(v)` (Python) / `new Job(v)` (JS): the class's constructor, resolved the way
+        `Job.__init__(...)` / `Job.constructor(...)` would be."""
+        lang = (getattr(self.program, "language", "") or "").lower()
+        ctor = {"python": "__init__", "javascript": "constructor", "typescript": "constructor"}.get(lang)
+        if ctor is None:
+            return None
+        cls = func_name[len("new "):] if func_name.startswith("new ") else func_name
+        if not cls or cls.endswith(ctor) or not all(_PLAIN_LOCAL.match(p) for p in cls.split(".")):
+            return None
+        local = self.program.procedures.get(f"{cls}.{ctor}")
+        if local is not None and local.class_name == cls:
+            return Callee((self._file_key, local.name), local) if self._plain_callee(local) else None
+        if self._project is None or cls in self.program.procedures:
+            return None                              # a function of this file, not a class
+        index = self._project.index
+        owner = index.resolve_class(self._file_key, cls)
+        ref = index._find_method(owner, ctor) if owner is not None else None
+        proc = self._project.procedure(ref) if ref is not None else None
+        if proc is None or proc.simple_name != ctor or not self._plain_callee(proc):
             return None
         return Callee(ref, proc)
 
@@ -2143,7 +2350,7 @@ class SILTranslator:
         return None
 
     @classmethod
-    def _guard_facts(cls, cond, regexes=None, language: str = ""):
+    def _guard_facts(cls, cond, regexes=None, language: str = "", strings=None):
         """[(variable, sanitized kinds, truth value of the condition under which they hold)]
         for the guards that prove a value harmless -- a character class (`x.isdigit()`, an
         anchored safe-charset regex, literal or compiled), membership in a constant collection
@@ -2151,19 +2358,19 @@ class SILTranslator:
         a URL host in an allowlist -- combined with and / or / not."""
         out = []
         for truth in (True, False):
-            for var, kinds in sorted(cls._guard_vars(cond, truth, regexes or {}, language).items()):
+            for var, kinds in sorted(cls._guard_vars(cond, truth, regexes or {}, language, strings or {}).items()):
                 out.append((var, sorted(kinds), truth))
         return out
 
     @classmethod
-    def _guard_vars(cls, exp, truth: bool, regexes: dict, language: str) -> dict:
+    def _guard_vars(cls, exp, truth: bool, regexes: dict, language: str, strings: Optional[dict] = None) -> dict:
         """{variable: kinds it is harmless for} when `exp` evaluates to `truth`."""
         everything = frozenset(cls._ALLOWLIST_KINDS)
         if isinstance(exp, ExpUnOp) and exp.op == "!":
-            return cls._guard_vars(exp.operand, not truth, regexes, language)
+            return cls._guard_vars(exp.operand, not truth, regexes, language, strings)
         if isinstance(exp, ExpBinOp) and exp.op in ("&&", "||", "and", "or"):
-            facts = [cls._guard_vars(exp.left, truth, regexes, language),
-                     cls._guard_vars(exp.right, truth, regexes, language)]
+            facts = [cls._guard_vars(exp.left, truth, regexes, language, strings),
+                     cls._guard_vars(exp.right, truth, regexes, language, strings)]
             if (exp.op in ("&&", "and")) == truth:        # `a && b` true / `a || b` false: both hold
                 merged: dict = {}
                 for f in facts:
@@ -2176,9 +2383,67 @@ class SILTranslator:
             if truth != (exp.op == "in"):
                 return {}
             return cls._member_fact(exp.left, exp.right)
+        if isinstance(exp, ExpBinOp) and exp.op in ("==", "!="):
+            return cls._c_equality_fact(exp.left, exp.right, truth == (exp.op == "=="), strings)
+        if isinstance(exp, ExpCall) and not truth and cls._call_base_name(exp) in cls._C_STRCMP | {"strncmp"}:
+            return cls._c_equality_fact(exp, ExpConst(0), True, strings)      # `!strcmp(x, "a")`
         if not truth or not isinstance(exp, ExpCall):
             return {}
         return cls._call_guard(exp, regexes, language)
+
+    # C string comparisons: zero means equal.
+    _C_STRCMP = frozenset({"strcmp", "strcasecmp", "wcscmp", "_stricmp", "stricmp"})
+    _C_SAFE_CHARSET = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+    @classmethod
+    def _call_base_name(cls, call) -> str:
+        return (cls._flatten(call.func) or "").rsplit("::", 1)[-1] if isinstance(call, ExpCall) else ""
+
+    @classmethod
+    def _c_prefix_fact(cls, args, strings: dict) -> dict:
+        """`strncmp(x, P, strlen(P)) == 0`: x starts with P. A prefix that names a scheme
+        and a host (`https://api.example/`) fixes where x points: not an SSRF or open
+        redirect, whatever follows it."""
+        x, prefix, n = args
+        text = prefix.value if isinstance(prefix, ExpConst) and isinstance(prefix.value, str) \
+            else strings.get(str(prefix.var)) if isinstance(prefix, ExpVar) else None
+        if not isinstance(x, ExpVar) or text is None:
+            return {}
+        covers = (cls._call_base_name(n) == "strlen" and len(n.args) == 1 and str(n.args[0]) == str(prefix)) \
+            or (isinstance(n, ExpConst) and isinstance(n.value, int) and n.value >= len(text))
+        if covers and re.match(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#@\s]+/", text):
+            return {str(x.var): cls._HOST_KINDS}
+        return {}
+
+    @classmethod
+    def _c_equality_fact(cls, left, right, equal: bool, strings: Optional[dict] = None) -> dict:
+        """What `left == right` proves when it holds (`equal`) about a C string:
+        `strcmp(x, "lit") == 0` makes x that constant; `strspn(x, "set") == strlen(x)`
+        limits x to the characters of the set."""
+        if not equal:
+            return {}
+        for call, other in ((left, right), (right, left)):
+            name = cls._call_base_name(call)
+            if name in cls._C_STRCMP and isinstance(other, ExpConst) and other.value == 0 \
+                    and len(call.args) == 2:
+                a, b = call.args
+                var, lit = (a, b) if isinstance(b, ExpConst) else (b, a)
+                if isinstance(var, ExpVar) and isinstance(lit, ExpConst) and isinstance(lit.value, str):
+                    return {str(var.var): frozenset(cls._ALLOWLIST_KINDS)}
+            if name == "strncmp" and isinstance(other, ExpConst) and other.value == 0 and len(call.args) == 3:
+                fact = cls._c_prefix_fact(call.args, strings or {})
+                if fact:
+                    return fact
+            if name == "strspn" and len(call.args) == 2 and cls._call_base_name(other) == "strlen" \
+                    and len(other.args) == 1 and str(other.args[0]) == str(call.args[0]) \
+                    and isinstance(call.args[0], ExpVar) and isinstance(call.args[1], ExpConst) \
+                    and isinstance(call.args[1].value, str):
+                chars = set(call.args[1].value)
+                if chars <= cls._C_SAFE_CHARSET:
+                    return {str(call.args[0].var): frozenset(cls._ALLOWLIST_KINDS)}
+                if chars <= cls._C_SAFE_CHARSET | {"."}:
+                    return {str(call.args[0].var): frozenset(cls._ALLOWLIST_KINDS) - cls._DOT_UNSAFE_KINDS}
+        return {}
 
     @classmethod
     def _member_fact(cls, subject, collection) -> dict:
@@ -2431,12 +2696,16 @@ class SILTranslator:
             e = stack.pop()
             if isinstance(e, ExpCall):
                 name = self._call_exp_name(e)
-                callee = self._resolve_callee(name)
+                callee = self._resolve_callee(name) or self._resolve_constructor(name)
+                call = Call(loc=instr.loc, ret=None, func=e.func,
+                            args=[(a, Typ.unknown_type()) for a in e.args])
+                if callee is None:
+                    ext = self._extension_call(call, name) or self._partial_call(call, name)
+                    if ext is not None:
+                        callee, call = ext
                 if callee is not None:
-                    self._record_entry_taints(
-                        callee, Call(loc=instr.loc, ret=None, func=e.func,
-                                     args=[(a, Typ.unknown_type()) for a in e.args]),
-                        name, state)
+                    self._record_entry_taints(callee, call, name, state)
+                    self._record_field_entry_taints(callee, call, name, state)
                 stack.extend(e.args)
             elif isinstance(e, ExpBinOp):
                 stack.extend([e.left, e.right])
@@ -2468,6 +2737,341 @@ class SILTranslator:
                     acc.source = info
                 acc.source_sanitized = set(kinds) if acc.source_sanitized is None \
                     else acc.source_sanitized & kinds
+
+    # `this.f`, `self.f`, `this->f`: a field of the receiver.
+    _RECEIVER_FIELD = re.compile(r"(?:this|self)(?:\.|->)([A-Za-z_$][\w$]*)$")
+    _CONSTRUCTOR_NAMES = frozenset({"<init>", "__init__", "constructor", "ctor"})
+
+    def _fold_condition(self, exp: Exp, state: SymbolicState):
+        """The value of a condition over the constants the path knows (`(7*42) - num > 200`
+        with `num = 106`), or None when any part is unknown."""
+        if isinstance(exp, ExpConst):
+            return exp.value
+        if isinstance(exp, ExpVar):
+            return state.get_constant(self._get_var_name(exp.var))
+        if isinstance(exp, ExpStringConcat):         # Python lowers every `+` as this
+            parts = [self._fold_condition(p, state) for p in exp.parts]
+            if parts and all(isinstance(p, (int, float)) and not isinstance(p, bool) for p in parts):
+                return sum(parts)
+            if parts and all(isinstance(p, str) for p in parts):
+                return "".join(parts)
+            return None
+        if isinstance(exp, ExpUnOp):
+            v = self._fold_condition(exp.operand, state)
+            if v is None:
+                return None
+            return (not v) if exp.op in ("!", "not") else (-v if exp.op == "-" and isinstance(v, (int, float)) else None)
+        if isinstance(exp, ExpBinOp):
+            a, b = self._fold_condition(exp.left, state), self._fold_condition(exp.right, state)
+            op = exp.op
+            if op in ("and", "&&"):
+                return False if a is False or b is False else (True if a is True and b is True else None)
+            if op in ("or", "||"):
+                return True if a is True or b is True else (False if a is False and b is False else None)
+            if a is None or b is None:
+                return None
+            try:
+                if op in ("in", "not in") and isinstance(a, str) and isinstance(b, str):
+                    return (a in b) if op == "in" else (a not in b)
+                if isinstance(a, bool) or isinstance(b, bool) or not isinstance(a, (int, float)) \
+                        or not isinstance(b, (int, float)):
+                    return (a == b) if op == "==" else (a != b) if op == "!=" else None
+                return {"+": lambda: a + b, "-": lambda: a - b, "*": lambda: a * b,
+                        "/": lambda: a / b, "//": lambda: a // b, "%": lambda: a % b,
+                        "<": lambda: a < b, ">": lambda: a > b, "<=": lambda: a <= b,
+                        ">=": lambda: a >= b, "==": lambda: a == b, "!=": lambda: a != b}[op]()
+            except (KeyError, ZeroDivisionError, TypeError):
+                return None
+        return None
+
+    def _accumulate_store(self, target: str, value: Exp, state: SymbolicState) -> None:
+        """Record which parameters this method stores into a field of its receiver."""
+        if self._return_acc is None:
+            return
+        m = self._RECEIVER_FIELD.match(target)
+        fld = m.group(1) if m else self._bare_field(target)
+        if fld is None:
+            return
+        stores = self._return_acc.stores
+        for info, kinds in self._arg_taint_leaves(value, state):
+            origin = self._ipa.entry_markers.get(info.propagation_path[0]) \
+                if info.propagation_path else None
+            if origin is None or origin[0] != self._cur_ref:
+                continue
+            fields = stores.setdefault(fld, {})
+            param = origin[1]
+            fields[param] = set(kinds) if param not in fields else fields[param] & kinds
+
+    def _bare_field(self, name: str) -> Optional[str]:
+        """`_target = target` in Java/C#/C++: a write to a declared field of the
+        method's class by its bare name (not shadowed by a parameter)."""
+        proc = self._cur_proc
+        if proc is None or not proc.is_method or not proc.class_name \
+                or (getattr(self.program, "language", "") or "").lower() not in ("java", "csharp", "cpp"):
+            return None
+        fields = self.program.declared_fields.get(proc.class_name) \
+            or self.program.declared_fields.get(proc.class_name.rsplit(".", 1)[-1], set())
+        if name not in fields or name in {p.name for p, _ in proc.params}:
+            return None
+        return name
+
+    def _call_receiver(self, callee: Callee, instr: Call, func_name: str) -> Optional[str]:
+        """The local variable a call acts on: the new object for a constructor, else
+        `x` in `x.m(...)`."""
+        if callee.proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
+            return str(instr.ret[0]) if instr.ret else None
+        head = func_name.rpartition(".")[0]
+        return head if head and _PLAIN_LOCAL.match(head) else None
+
+    def _apply_field_stores(self, callee: Callee, summary: ReturnSummary, instr: Call,
+                            func_name: str, state: SymbolicState) -> None:
+        """`new Job(v)` / `job.setTarget(v)` with attacker data in v: the receiver's
+        field the callee stores v into (`job.target`) now carries v's taint."""
+        if not summary.stores:
+            return
+        recv = self._call_receiver(callee, instr, func_name)
+        if recv is None:
+            return
+        args = dict(zip(self._call_params(callee.proc, func_name), (a for a, _ in instr.args)))
+        for fld, params in summary.stores.items():
+            leaves = [(info, kinds | params[p]) for p in params if p in args
+                      for info, kinds in self._arg_taint_leaves(args[p], state)]
+            if not leaves:
+                continue
+            key = f"{recv}.{fld}"
+            info = leaves[0][0]
+            state.add_taint(key, TaintInfo(
+                source_kind=info.source_kind, source_var=info.source_var,
+                source_location=info.source_location,
+                propagation_path=list(info.propagation_path) + [key]))
+            sanitized = set.intersection(*(k for _, k in leaves))
+            if sanitized:
+                state.add_sanitization(key, sorted(sanitized))
+            else:
+                state.sanitized.pop(key, None)
+
+    def _accumulate_param_fields(self, state: SymbolicState) -> None:
+        """At the end of a path: fields of a parameter that now hold attacker data
+        (`req.filter = req.query.filter` in middleware)."""
+        if self._return_acc is None or self._cur_proc is None:
+            return
+        params = {p.name for p, _ in self._cur_proc.params} - {"self", "this", "cls"}
+        for key, info in state.tainted.items():
+            head, _, fld = key.partition(".")
+            # C/C++: the parameter itself is a buffer the function filled (`out[i] = ...`),
+            # recorded under the empty field name.
+            buffer = self._is_c_lang and key in params and not fld
+            if head not in params or not (buffer or _PLAIN_LOCAL.match(fld)) \
+                    or info.source_var.startswith(self._SEED_PREFIX):
+                continue
+            if info.propagation_path and info.propagation_path[0] in self._ipa.entry_markers:
+                continue                             # came in with the argument, not set here
+            kinds = set(state.sanitized.get(key, []))
+            fields = self._return_acc.param_fields.setdefault(head, {})
+            # Sanitized for a kind only if every path that sets the field sanitized it.
+            fields[fld] = (info, kinds) if fld not in fields else (fields[fld][0], fields[fld][1] & kinds)
+
+    # Registering middleware on an app or router object (Express, Connect, Koa).
+    _MIDDLEWARE_REGISTRATION = frozenset({"use"})
+
+    def _record_middleware(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """`app.use(mw)`: the request fields mw sets reach every handler of `app`."""
+        head, _, method = func_name.rpartition(".")
+        if not self._ipa_summarising or method not in self._MIDDLEWARE_REGISTRATION \
+                or not _PLAIN_LOCAL.match(head or "-"):
+            return
+        for arg, _ in instr.args:
+            if not isinstance(arg, ExpVar):
+                continue
+            callee = self._resolve_callee(str(arg.var))
+            if callee is None or not callee.proc.params:
+                continue
+            self._ipa.callers.setdefault(callee.ref, set()).add(self._cur_ref)
+            summary = self._ipa.return_summaries.get(callee.ref)
+            fields = summary.param_fields.get(callee.proc.params[0][0].name) if summary else None
+            if not fields:
+                continue
+            known = self._ipa.middleware_fields.setdefault((self._file_key, head), {})
+            changed = False
+            for f, (info, kinds) in fields.items():
+                if f not in known:
+                    known[f] = (info, set(kinds))
+                    changed = True
+                elif not known[f][1] <= kinds:
+                    known[f] = (known[f][0], known[f][1] & kinds)
+                    changed = True
+            if not changed:
+                continue
+            for proc in self.program.procedures.values():
+                if any(c.rpartition(".")[0] == head for c, _ in proc.passed_as):
+                    self._ipa.dirty.add((self._file_key, proc.name))
+
+    # Servlet filters run before the servlet; what they store on the request is read there.
+    _FILTER_TYPES = frozenset({"javax.servlet.Filter", "jakarta.servlet.Filter"})
+    _REQUEST_TYPES = frozenset({"ServletRequest", "HttpServletRequest"})
+
+    def _request_receiver(self, func_name: str, receiver_type: Optional[str]) -> bool:
+        """Is `x.m(...)` called on a servlet request (declared type, or a parameter
+        declared as one)?"""
+        head = func_name.rpartition(".")[0]
+        if (receiver_type or "").rsplit(".", 1)[-1] in self._REQUEST_TYPES:
+            return True
+        proc = self._cur_proc
+        if proc is None or not _PLAIN_LOCAL.match(head or "-"):
+            return False
+        names = [p.name for p, _ in proc.params]
+        types = getattr(proc, "param_type_names", None) or []
+        return head in names and names.index(head) < len(types) \
+            and (types[names.index(head)] or "").rsplit(".", 1)[-1] in self._REQUEST_TYPES
+
+    def _record_request_attribute(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """`request.setAttribute("tenant", value)` in a servlet Filter with attacker
+        data in value: what every `getAttribute("tenant")` in the project reads."""
+        if not self._ipa_summarising or not func_name.endswith(".setAttribute") or len(instr.args) != 2:
+            return
+        key = instr.args[0][0]
+        cls = self.program.class_info.get((self._cur_proc.class_name or "").rsplit(".", 1)[-1]) \
+            if self._cur_proc is not None else None
+        if not (isinstance(key, ExpConst) and isinstance(key.value, str)) or cls is None \
+                or not self._FILTER_TYPES & set(cls.canonical_bases) \
+                or not self._request_receiver(func_name, getattr(instr, "receiver_type", None)):
+            return
+        leaves = [(i, k) for i, k in self._arg_taint_leaves(instr.args[1][0], state)
+                  if not i.source_var.startswith(self._SEED_PREFIX)]
+        if not leaves:
+            return
+        kinds = set.intersection(*(k for _, k in leaves))
+        attrs = self._ipa.request_attributes
+        known = attrs.get(key.value)
+        if known is None:
+            attrs[key.value] = (leaves[0][0], kinds)
+        elif not known[1] <= kinds:
+            attrs[key.value] = (known[0], known[1] & kinds)
+        else:
+            return
+        self._ipa.dirty.update(self._ipa.attribute_readers)
+
+    def _read_request_attribute(self, exp: Exp, target: str, state: SymbolicState,
+                                receiver_type: Optional[str] = None) -> None:
+        """`x = request.getAttribute("tenant")`: x carries what a filter stored there."""
+        if not isinstance(exp, ExpCall) or len(exp.args) != 1:
+            return
+        name = self._call_exp_name(exp)
+        key = exp.args[0]
+        if not name.endswith(".getAttribute") or not (isinstance(key, ExpConst) and isinstance(key.value, str)) \
+                or not self._request_receiver(name, receiver_type):
+            return
+        if self._ipa_summarising:
+            self._ipa.attribute_readers.add(self._cur_ref)
+        known = self._ipa.request_attributes.get(key.value)
+        if known is None:
+            return
+        info, kinds = known
+        state.add_taint(target, TaintInfo(
+            source_kind=info.source_kind, source_var=info.source_var,
+            source_location=info.source_location,
+            propagation_path=list(info.propagation_path) + [f"request attribute \"{key.value}\""]))
+        if kinds:
+            state.add_sanitization(target, sorted(kinds))
+
+    def _class_properties(self, class_name: str) -> List[Tuple[ProcRef, Procedure]]:
+        """The `@property` methods of the Python class `class_name` names here
+        (this file's, or one the imports resolve to)."""
+        if not all(_PLAIN_LOCAL.match(p) for p in class_name.split(".")):
+            return []
+        is_prop = lambda p: any(a.name == "property" for a in p.annotations)
+        if class_name in self.program.class_info:
+            return [((self._file_key, p.name), p) for p in self.program.procedures.values()
+                    if p.class_name == class_name and is_prop(p)]
+        if self._project is None or class_name in self.program.procedures:
+            return []
+        owner = self._project.index.resolve_class(self._file_key, class_name)
+        if owner is None:
+            return []
+        mod = self._project.index.modules.get(owner[0])
+        out = []
+        for name in (mod.classes.get(owner[1], {}) if mod else {}).values():
+            proc = self._project.procedure((owner[0], name))
+            if proc is not None and is_prop(proc):
+                out.append(((owner[0], name), proc))
+        return out
+
+    def _apply_property_sources(self, class_name: str, recv: str, state: SymbolicState) -> None:
+        """`ctx = Ctx()` where Ctx has a `@property` returning attacker data: reading
+        `ctx.<property>` is a call with no parentheses, so `ctx.<property>` carries it."""
+        if (getattr(self.program, "language", "") or "").lower() != "python":
+            return
+        for ref, proc in self._class_properties(class_name):
+            if self._ipa_summarising:
+                self._ipa.callers.setdefault(ref, set()).add(self._cur_ref)
+            summary = self._ipa.return_summaries.get(ref)
+            if summary is None or summary.source is None:
+                continue
+            key = f"{recv}.{proc.simple_name}"
+            info = summary.source
+            state.add_taint(key, TaintInfo(
+                source_kind=info.source_kind, source_var=info.source_var,
+                source_location=info.source_location,
+                propagation_path=list(info.propagation_path) + [key]))
+            if summary.source_sanitized:
+                state.add_sanitization(key, sorted(summary.source_sanitized))
+
+    def _apply_filled_buffers(self, callee: Callee, summary: ReturnSummary, instr: Call,
+                              func_name: str, state: SymbolicState) -> None:
+        """C/C++: a helper that leaves data in a buffer it was passed (`fill(out, n)` writing
+        `out[i]`) leaves it in the caller's buffer too."""
+        if not self._is_c_lang or not summary.param_fields:
+            return
+        for (arg, _), param in zip(instr.args, self._call_params(callee.proc, func_name)):
+            filled = summary.param_fields.get(param, {}).get("")
+            var = self._sole_var(self._cast_strip(arg)) if filled is not None else None
+            if var is None:
+                continue
+            info, kinds = filled
+            state.add_taint(var, TaintInfo(
+                source_kind=info.source_kind, source_var=info.source_var,
+                source_location=info.source_location,
+                propagation_path=list(info.propagation_path) + [f"{callee.ref[1]}({param})"]))
+            if kinds:
+                state.add_sanitization(var, sorted(kinds))
+
+    def _record_field_entry_taints(self, callee: Callee, instr: Call, func_name: str,
+                                   state: SymbolicState) -> None:
+        """A method called on an object whose fields carry attacker data starts with
+        those fields tainted (`job.go()` after `new Job(v)`). Only while summarising."""
+        if not self._ipa_summarising or not callee.proc.is_method:
+            return
+        if callee.proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
+            return
+        recv = self._call_receiver(callee, instr, func_name)
+        if recv is None:
+            return
+        prefix = recv + "."
+        for key in [k for k in state.tainted if k.startswith(prefix)]:
+            fld = key[len(prefix):]
+            if not _PLAIN_LOCAL.match(fld):
+                continue
+            leaves = [(i, k) for i, k in self._arg_taint_leaves(ExpVar(PVar(key)), state)
+                      if not i.source_var.startswith(self._SEED_PREFIX)]
+            if not leaves:
+                continue
+            sanitized = set.intersection(*(k for _, k in leaves))
+            entry = self._ipa.entry_taints.setdefault(callee.ref, {})
+            name = f"this.{fld}"
+            known = entry.get(name)
+            if known is None:
+                where = getattr(instr.loc, "line", None)
+                caller = f"{self._file_key}:{where} -> " if self._file_key and where else ""
+                marker = f"{caller}{callee.ref[0]}::{callee.ref[1]}({name})".lstrip(":")
+                self._ipa.entry_markers[marker] = (callee.ref, name)
+                info = leaves[0][0]
+                entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                                         source_location=info.source_location,
+                                         propagation_path=[marker]), sanitized)
+                self._ipa.dirty.add(callee.ref)
+            elif not known[1] <= sanitized:
+                entry[name] = (known[0], known[1] & sanitized)
+                self._ipa.dirty.add(callee.ref)
 
     def _apply_return_summary(self, callee: Callee, summary: ReturnSummary,
                               instr: Call, func_name: str, state: SymbolicState) -> None:
@@ -2553,10 +3157,29 @@ class SILTranslator:
 
         # Parameters a same-file call passes attacker data (`_record_entry_taints`).
         entry = self._ipa.entry_taints.get((self._file_key, proc.name), {})
+        params = {p.name for p, _ in proc.params}
         for param_name, (info, sanitized) in entry.items():
-            state.add_taint(param_name, info)
-            if sanitized:
-                state.add_sanitization(param_name, sorted(sanitized))
+            names = [param_name]
+            if param_name.startswith("this."):        # a receiver field (_record_field_entry_taints)
+                fld = param_name[len("this."):]
+                names += [f"self.{fld}", f"this->{fld}"]
+                # Java, C# and C++ read a field by its bare name (unless a parameter shadows it).
+                if fld not in params and self.program.language in ("java", "csharp", "cpp"):
+                    names.append(fld)
+            for name in names:
+                state.add_taint(name, info)
+                if sanitized:
+                    state.add_sanitization(name, sorted(sanitized))
+        # A handler registered on an app (`app.get(path, handler)`) receives the request
+        # fields that app's middleware set (`_record_middleware`).
+        if proc.params and proc.passed_as:
+            req = proc.params[0][0].name
+            for callee, _ in proc.passed_as:
+                head = callee.rpartition(".")[0]
+                for fld, (info, kinds) in self._ipa.middleware_fields.get((self._file_key, head), {}).items():
+                    state.add_taint(f"{req}.{fld}", info)
+                    if kinds:
+                        state.add_sanitization(f"{req}.{fld}", sorted(kinds))
         # While summarising, every other parameter carries a seed taint, so the
         # return summary learns which parameters reach the return whether or
         # not a caller has passed attacker data yet. Seeds are never reported
@@ -2631,6 +3254,8 @@ class SILTranslator:
         # classic out-of-bounds write/read. Reads the pre-instruction taint and
         # path condition, like the divide check above.
         numeric_checks += self._tainted_index_checks(instr, state, proc_name)
+        numeric_checks += self._tainted_format_overflow_checks(instr, state, proc_name)
+        numeric_checks += self._cookie_header_checks(instr, state, proc_name)
         # A copy/fill of a compile-time-constant size into a buffer whose capacity
         # is also a compile-time constant: provably out of bounds, taint-free.
         numeric_checks += self._constant_copy_overflow_checks(instr, proc_name)
@@ -2690,6 +3315,52 @@ class SILTranslator:
         target = self._get_var_name(instr.id)
         source_vars = self._get_exp_vars(instr.exp)
 
+        if self._is_c_lang and _PLAIN_LOCAL.match(target):
+            if _LITERAL_BRACE_LIST.match(str(instr.exp).strip()):
+                self._literal_tables.add(target)
+            else:
+                self._literal_tables.discard(target)
+        # A strong update: assigning a plain local replaces its value, so what it held
+        # before (taint, sanitization, asserted safety) is gone unless the new value
+        # reads it (`x = x + y`). `if (bad(next)) next = "/home";` leaves next clean.
+        # Fields and elements are left alone: the name may stand for more than one
+        # location.
+        if _PLAIN_LOCAL.match(target) and target not in source_vars:
+            state.tainted.pop(target, None)
+            state.sanitized.pop(target, None)
+            state.asserted_safe.pop(target, None)
+        # Whatever constant it held is stale now (`i = i + 1`); a literal sets a new one below.
+        state.constants.pop(target, None)
+        state.nonconst.add(target)
+        if self._ipa_on:
+            self._accumulate_store(target, instr.exp, state)
+        if isinstance(instr.exp, ExpVar) and str(instr.exp.var) in getattr(self, "_value_class", {}):
+            self._value_class[target] = self._value_class[str(instr.exp.var)]
+        # A copy of an object carries the taint of its fields (`job = $job_1`), and
+        # only those: whatever fields the target held before are replaced.
+        if isinstance(instr.exp, ExpVar) and _PLAIN_LOCAL.match(target):
+            prefix = str(instr.exp.var) + "."
+            for key in [k for k in state.tainted if k.startswith(target + ".")]:
+                del state.tainted[key]
+                state.sanitized.pop(key, None)
+            for key in [k for k in state.tainted if k.startswith(prefix)]:
+                copy = target + key[len(prefix) - 1:]
+                state.tainted[copy] = state.tainted[key]
+                if key in state.sanitized:
+                    state.sanitized[copy] = list(state.sanitized[key])
+        # `job = new Job(v)` written as one assignment (JS): the fields the
+        # constructor stores v into.
+        if self._ipa_on and isinstance(instr.exp, ExpCall) and _PLAIN_LOCAL.match(target):
+            name = self._call_exp_name(instr.exp)
+            callee = self._resolve_callee(name) or self._resolve_constructor(name)
+            summary = self._ipa.return_summaries.get(callee.ref) if callee is not None else None
+            if summary is not None and summary.stores:
+                self._apply_field_stores(
+                    callee, summary,
+                    Call(loc=instr.loc, ret=(PVar(target), Typ.unknown_type()), func=instr.exp.func,
+                         args=[(a, Typ.unknown_type()) for a in instr.exp.args]),
+                    name, state)
+
         # Store symbolic value
         state.heap[target] = str(instr.exp)
 
@@ -2711,15 +3382,12 @@ class SILTranslator:
         # Detect numeric constants: num = 86
         if re.match(r'^-?\d+$', exp_str):
             state.set_constant(target, int(exp_str))
+            state.nonconst.discard(target)
         # Detect string constants: bar = "safe string"
         elif (exp_str.startswith('"') and exp_str.endswith('"')) or \
              (exp_str.startswith("'") and exp_str.endswith("'")):
             state.set_constant(target, exp_str[1:-1])
-        # A literal replaces a plain local's value outright, so whatever taint it
-        # held is gone (`if (bad(next)) next = "/home";`). Fields and elements
-        # are left alone: the name may stand for more than one location.
-        if isinstance(instr.exp, ExpConst) and _PLAIN_LOCAL.match(target):
-            state.tainted.pop(target, None)
+            state.nonconst.discard(target)
 
         # Propagate secure parser status: parser = $parser_7
         for src_var in source_vars:
@@ -2735,49 +3403,21 @@ class SILTranslator:
         if exp_str == '{}' or exp_str == 'dict()':
             state.init_dict(target)
 
-        # Detect ternary expressions: bar = "safe" if cond else tainted_var
-        # Pattern: (?: consequence alternative) - our internal representation
-        # Format is (?: consequence alternative) where consequence is what's returned if true
-        ternary_match = re.match(r'^\(\?:\s+(.+?)\s+([a-zA-Z_][a-zA-Z0-9_]*)\)$', exp_str)
-        if ternary_match:
-            # Extract consequence and alternative
-            consequence_str = ternary_match.group(1).strip()
-            alternative_str = ternary_match.group(2).strip()
-
-            # Check if alternative variable is tainted
-            alt_is_tainted = state.is_tainted(alternative_str)
-
-            # Check if consequence is a constant string
-            cons_is_const = (
-                (consequence_str.startswith('"') and consequence_str.endswith('"')) or
-                (consequence_str.startswith("'") and consequence_str.endswith("'"))
-            )
-
-            if cons_is_const:
-                const_val = consequence_str[1:-1].lower()
-                # Heuristic: Detect OWASP benchmark patterns
-                # "always" in consequence → condition is True → consequence is used (safe)
-                # "never" in consequence → condition is False → alternative is used (tainted)
-                if 'always' in const_val:
-                    # Condition is True, consequence is taken
-                    state.set_constant(target, consequence_str[1:-1])
-                    return checks, state
-                elif 'never' in const_val and alt_is_tainted:
-                    # Condition is False, alternative is taken (tainted)
-                    state.propagate_taint(alternative_str, target)
-                    return checks, state
-
-            # If the alternative is tainted and we couldn't determine the branch,
-            # be conservative and propagate taint
-            if alt_is_tainted:
-                state.propagate_taint(alternative_str, target)
-                return checks, state
-
-            # If consequence is constant and alternative is NOT tainted, the result is safe
-            if cons_is_const:
-                const_val = consequence_str[1:-1]
-                state.set_constant(target, const_val)
-                return checks, state
+        # A conditional value: the branch the condition takes when it folds over the
+        # constants this path knows, else either branch (never the condition itself).
+        if isinstance(instr.exp, ExpTernary):
+            taken = self._fold_condition(instr.exp.condition, state)
+            branches = [instr.exp.true_exp] if taken is True else [instr.exp.false_exp] if taken is False \
+                else [instr.exp.true_exp, instr.exp.false_exp]
+            if len(branches) == 1:
+                return self._exec_assign(Assign(loc=instr.loc, id=instr.id, exp=branches[0]), state, proc_name)
+            leaves = [v for b in branches for v in self._get_exp_vars(b) if state.is_tainted(v)]
+            if leaves:
+                state.propagate_taint(leaves[0], target)
+                common = set.intersection(*(set(state.sanitized.get(v, [])) for v in leaves))
+                if common:
+                    state.sanitized[target] = sorted(common)
+            return checks, state
 
         # Detect dictionary subscript access with string key: bar = d['key'] or bar = d["key"]
         # Pattern: "container['key']" or 'container["key"]'
@@ -2905,6 +3545,10 @@ class SILTranslator:
                 if state.is_tainted(src_var):
                     state.propagate_taint(src_var, target)
                     break  # Only need one taint source
+
+        # After the receiver's own taint: a request attribute a Filter stored.
+        if self._ipa_on and isinstance(instr.exp, ExpCall):
+            self._read_request_attribute(instr.exp, target, state)
 
         # Also propagate sanitization even if source isn't tainted
         # This handles cases like: bar = sanitize(param)
@@ -3132,7 +3776,78 @@ class SILTranslator:
                 state.propagate_taint(v, addr)
                 break
 
+        # C/C++: `buf[i] = v` / `*(buf + i) = v` puts v's bytes in the buffer, so the buffer
+        # carries v's taint (a weak update: what it held before stays). A source call inside
+        # the stored value counts too (`tok[i] = charset[rand() % 16]`).
+        if self._is_c_lang:
+            base = self._store_buffer(instr.addr)
+            if base is not None:
+                info = next((state.get_taint_info(v) for v in value_vars if state.is_tainted(v)), None)
+                if info is None:
+                    found = self._get_embedded_source_calls(instr.value)
+                    if found:
+                        func, kind = found[0]
+                        info = TaintInfo(
+                            source_kind=TaintKind(kind) if kind in {t.value for t in TaintKind} else TaintKind.USER_INPUT,
+                            source_var=func, source_location=instr.loc or Location.unknown())
+                held = state.get_taint_info(base) if state.is_tainted(base) else None
+                if info is not None and (held is None or held.source_var.startswith(self._SEED_PREFIX)):
+                    state.add_taint(base, info)
+
         return checks, state
+
+    def _field_chains(self, exp: Exp) -> List[str]:
+        """Every dotted path `v.a.b` (and its prefixes `v.a`) written in `exp`."""
+        out: List[str] = []
+
+        def chain(e) -> Optional[str]:
+            if isinstance(e, ExpVar):
+                return str(e.var)
+            if isinstance(e, ExpFieldAccess):
+                base = chain(e.base)
+                return f"{base}.{e.field_name}" if base else None
+            return None
+
+        def walk(e):
+            if isinstance(e, ExpFieldAccess):
+                c = chain(e)
+                if c and "." in c:
+                    parts = c.split(".")
+                    out.extend(".".join(parts[:i]) for i in range(2, len(parts) + 1))
+                walk(e.base)
+            elif isinstance(e, ExpCall):
+                walk(e.func)
+                for a in e.args:
+                    walk(a)
+            elif isinstance(e, ExpBinOp):
+                walk(e.left)
+                walk(e.right)
+            elif isinstance(e, ExpUnOp):
+                walk(e.operand)
+            elif isinstance(e, ExpStringConcat):
+                for part in e.parts:
+                    walk(part)
+            elif isinstance(e, ExpIndex):
+                walk(e.base)
+                walk(e.index)
+            elif isinstance(e, ExpTernary):
+                walk(e.true_exp)
+                walk(e.false_exp)
+            elif isinstance(e, ExpCast):
+                walk(e.exp)
+        walk(exp)
+        return list(dict.fromkeys(out))
+
+    def _store_buffer(self, addr: Exp) -> Optional[str]:
+        """The buffer variable a C store writes into: `buf` for `*(buf + i)`, `buf[i]`, `*buf`."""
+        e = self._cast_strip(addr)
+        if isinstance(e, ExpUnOp) and e.op == "*":
+            e = self._cast_strip(e.operand)
+        if isinstance(e, ExpIndex):
+            e = self._cast_strip(e.base)
+        if isinstance(e, ExpBinOp) and e.op in ("+", "-"):
+            e = self._cast_strip(e.left)
+        return str(e.var) if isinstance(e, ExpVar) and _PLAIN_LOCAL.match(str(e.var)) else None
 
     def _exec_alloc(self, instr: Alloc, state: SymbolicState) -> SymbolicState:
         """Execute allocation: id = alloc(size)"""
@@ -3283,14 +3998,33 @@ class SILTranslator:
         # take the result's taint from the callee's return summary (or, before
         # the callee has one, by default argument->result propagation).
         callee = self._resolve_call_instr(instr, func_name) if self._ipa_on else None
+        ipa_instr = instr
+        if callee is None and self._ipa_on:
+            ext = self._extension_call(instr, func_name) or self._partial_call(instr, func_name)
+            if ext is not None:
+                callee, ipa_instr = ext
         if callee is not None:
-            self._record_entry_taints(callee, instr, func_name, state)
+            self._record_entry_taints(callee, ipa_instr, func_name, state)
+            self._record_field_entry_taints(callee, ipa_instr, func_name, state)
+            returned = (getattr(callee.proc, "ret_type_name", None) or "").split("<", 1)[0]
+            if instr.ret and returned[:1].isupper():
+                self._value_class[str(instr.ret[0])] = (callee.ref[0], returned)
             summary = self._ipa.return_summaries.get(callee.ref)
             if summary is not None:
-                self._apply_return_summary(callee, summary, instr, func_name, state)
+                self._apply_return_summary(callee, summary, ipa_instr, func_name, state)
+                self._apply_field_stores(callee, summary, ipa_instr, func_name, state)
+                self._apply_filled_buffers(callee, summary, ipa_instr, func_name, state)
                 spec = ProcSpec()
             else:
                 spec = None
+        elif self._ipa_on:
+            self._record_dispatch_entry_taints(instr, func_name, state)
+            self._record_overload_entry_taints(instr, func_name, state)
+        if self._ipa_on and instr.ret:
+            self._apply_property_sources(func_name, str(instr.ret[0]), state)
+        if self._ipa_summarising:
+            self._record_middleware(instr, func_name, state)
+            self._record_request_attribute(instr, func_name, state)
 
         # Sanitization of the tainted inputs as they stand BEFORE this call runs
         # (the result may overwrite one of them, e.g. q = join(q, basename(p))).
@@ -3611,6 +4345,9 @@ class SILTranslator:
                                                 if spec.is_sink == 'alloc_size' and \
                                                         self._alloc_size_is_bounded(arg_var, state):
                                                     continue
+                                                if self._copy_size_sink(func_name, spec.is_sink) and \
+                                                        self._alloc_size_is_bounded(arg_var, state):
+                                                    continue
                                                 check = self._create_taint_check(
                                                     instr, state, proc_name,
                                                     arg_var, sink_kind
@@ -3726,16 +4463,37 @@ class SILTranslator:
                     base_var = dest_str.split('+')[0].strip()
                     dest_vars.append(base_var)
 
+                was_tainted = {d for d in dest_vars if state.is_tainted(d)}
+                tainted_srcs = []
+                wrapped: Dict[str, Set[str]] = {}       # `atoi(req)`: what the wrapper sanitizes
                 for src_idx in spec.taint_to_dest:
                     if src_idx < len(instr.args):
                         src_exp, _ = instr.args[src_idx]
                         src_vars = self._get_exp_vars(src_exp)
+                        wrapper = self.program.get_spec(self._call_exp_name(src_exp)) \
+                            if isinstance(src_exp, ExpCall) else None
                         for src_var in src_vars:
                             if state.is_tainted(src_var):
+                                tainted_srcs.append(src_var)
+                                if wrapper is not None and wrapper.is_taint_sanitizer():
+                                    wrapped[src_var] = wrapped.get(src_var, set()) | set(wrapper.is_sanitizer)
                                 for dest_var in dest_vars:
                                     state.propagate_taint(src_var, dest_var)
                                     if self.verbose:
                                         print(f"[Translator] Dest taint: {src_var} -> {dest_var}")
+                # The buffer is sanitized for what every tainted source was (`snprintf(cmd,
+                # .., term)` after a check that term is a constant), and for what it already
+                # was when it held tainted data before (`strcat`).
+                if tainted_srcs:
+                    common = set.intersection(*(set(state.sanitized.get(v, [])) | wrapped.get(v, set())
+                                                for v in tainted_srcs))
+                    for dest_var in dest_vars:
+                        kinds = common & set(state.sanitized.get(dest_var, [])) \
+                            if dest_var in was_tainted else set(common)
+                        if kinds:
+                            state.sanitized[dest_var] = sorted(kinds)
+                        else:
+                            state.sanitized.pop(dest_var, None)
 
         else:
             # No spec found - apply default taint propagation for unknown functions
@@ -3748,6 +4506,10 @@ class SILTranslator:
                 # Procedure always returns a constant, so taint is NOT propagated
                 if self.verbose:
                     print(f"[Translator] Skipping taint propagation for constant-returning proc: {func_name}")
+            elif instr.ret and self._literal_table_lookup(func_name):
+                # `kTargets.find(key)` in a table of literals: the result is one of its
+                # entries (or the end), never the key, so the key's taint stops here.
+                pass
             elif instr.ret:
                 ret_var = str(instr.ret[0])
                 for arg_exp, _ in instr.args:
@@ -4110,7 +4872,7 @@ class SILTranslator:
                 # fires when the pointer's allocator kind is known and the routine
                 # is a recognised deallocator whose expected partner differs.
                 if self._is_c_lang:
-                    kind = state.alloc_kind.get(freed_var)
+                    kind = state.alloc_kind.get(freed_var) or self._member_alloc_kind(freed_var)
                     routine = self._free_routine_of_call(func_name)
                     if kind is not None and routine is not None \
                             and self._EXPECTED_FREE[kind] != routine:
@@ -4229,6 +4991,11 @@ class SILTranslator:
             ret_var = str(instr.ret[0])
             state.heap[ret_var] = f"call_{func_name}"
             state.allocated[ret_var] = True
+            # Last, so the receiver's own taint does not overwrite it: a request
+            # attribute a servlet Filter stored.
+            if self._ipa_on:
+                self._read_request_attribute(ExpCall(instr.func, [a for a, _ in instr.args]),
+                                             ret_var, state, getattr(instr, "receiver_type", None))
 
         return checks, state
 
@@ -4408,13 +5175,13 @@ class SILTranslator:
         # (UPPER_CASE names or literals), never an arbitrary array.
         for var, kinds, holds_when in self._guard_facts(
                 condition, getattr(self.program, "constant_regexes", None),
-                getattr(self.program, "language", "")):
+                getattr(self.program, "language", ""), getattr(self.program, "string_macros", None)):
             if holds_when == is_true_branch:
                 kinds = set(kinds)
                 if self._CONTAINED in kinds:
                     kinds.discard(self._CONTAINED)
                     if self._is_normalized_path(var, state):
-                        kinds.update(("filesystem", "path"))   # specs use both names
+                        kinds.add("filesystem")
                 if kinds:
                     state.add_sanitization(var, list(kinds))
 
@@ -4492,6 +5259,9 @@ class SILTranslator:
             if callee is not None and (callee.ref[0] != self._file_key or callee.proc.is_method):
                 return checks, state          # the project's own method, analysed on its own
         sink_vars = self._get_exp_vars(instr.exp)
+        # A field path the sink reads (`self.options.additional.join(..)`) that carries
+        # taint of its own (field stores, constructor-filled fields).
+        sink_vars += [c for c in self._field_chains(instr.exp) if c in state.tainted and c not in sink_vars]
         exp_str = str(instr.exp)
 
         # Usage-based sinks (weak_hash, weak_crypto) don't need taint flow
@@ -4614,6 +5384,10 @@ class SILTranslator:
                 # so only a size reaching the allocator unchecked is reported.
                 if instr.kind == SinkKind.ALLOC_SIZE and \
                         self._alloc_size_is_bounded(var, state):
+                    continue
+                # A copy length checked on the path (`if (len > MAX) return;`), likewise.
+                if self._copy_size_sink(instr.call or "", instr.kind.value) \
+                        and self._alloc_size_is_bounded(var, state):
                     continue
                 if not state.is_sanitized_for(var, instr.kind.value):
                     if not state.is_asserted_safe_for(var, instr.kind.value):
@@ -4805,6 +5579,8 @@ class SILTranslator:
         self._record_secure_parser_return(instr, state, proc_name)
         if self._return_acc is not None and instr.value is not None:
             self._accumulate_return(instr.value, state, proc_name)
+        if self._ipa_summarising:
+            self._accumulate_param_fields(state)
         if self._is_c_lang:
             # CWE-562: returning the address of a local hands back a dangling
             # pointer. Checked before the escape below so the returned pointer's
@@ -4968,7 +5744,7 @@ class SILTranslator:
         # Get vulnerability type
         vuln_type = VulnType.from_sink_kind(sink_kind)
 
-        return VulnerabilityCheck(
+        check = VulnerabilityCheck(
             formula=formula,
             vuln_type=vuln_type,
             location=instr.loc,
@@ -4981,6 +5757,13 @@ class SILTranslator:
             procedure_name=proc_name,
             data_flow_path=taint_info.propagation_path if taint_info else [],
         )
+        # Predictable (weak PRNG) data matters only where a value must be unpredictable,
+        # and such a sink only for predictable data: any other pairing is no finding
+        # (dropped by translate_procedure).
+        weak = taint_info is not None and taint_info.source_kind == TaintKind.WEAK_RANDOM
+        if weak != (sink_kind == SinkKind.UNPREDICTABLE):
+            check.kind_mismatch = True
+        return check
 
     # Matches an unbounded conversion in a scanf format string: %s / %[ / %ls
     # with no field width (e.g. "%s", "%[^\n]"), but NOT a bounded "%9s".
@@ -4992,6 +5775,12 @@ class SILTranslator:
         if isinstance(arg_exp, ExpConst) and isinstance(arg_exp.value, str):
             return bool(self._UNBOUNDED_SCANF.search(arg_exp.value))
         return False
+
+    _COPY_SIZE_SINKS = frozenset({"memcpy", "memmove", "bcopy"})
+
+    def _copy_size_sink(self, func_name: str, kind: str) -> bool:
+        """The sink is the length argument of a memory copy (memcpy/memmove/bcopy)."""
+        return kind in ("buffer", "buffer_overflow") and func_name.rsplit("::", 1)[-1] in self._COPY_SIZE_SINKS
 
     def _alloc_size_is_bounded(self, var: str, state: SymbolicState) -> bool:
         """Is the allocation size `var` constrained on the path to the allocator?
@@ -5937,9 +6726,27 @@ class SILTranslator:
         fact = self._assignment_fact(instr)
         if fact is not None:
             pc = list(pc) + [fact]
+        pc = list(pc) + self._length_bound_facts(instr)
         if ghosts:
             pc = self._advance_definedness(pc, instr)
         return pc
+
+    def _length_bound_facts(self, instr: Instr) -> List[Formula]:
+        """`n = strlen(buf)` with buf a fixed local array of N elements: the string ends
+        inside its storage, so `0 <= n <= N - 1`."""
+        if not isinstance(instr, Call) or not instr.ret or len(instr.args) != 1:
+            return []
+        func = instr.func
+        name = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"').rsplit("::", 1)[-1]
+        if name not in ("strlen", "wcslen", "strnlen"):
+            return []
+        proc = self._cur_proc
+        buf = self._sole_var(self._cast_strip(instr.args[0][0]))
+        bound = (proc.fixed_array_bounds or {}).get(buf) if proc is not None and buf else None
+        if bound is None or bound <= 0:
+            return []
+        n = Var(str(instr.ret[0]))
+        return [Ge(n, Const(0)), Le(n, Const(bound - 1))]
 
     # Suffix of the ghost variable that records "this local has no value yet".
     _UNINIT_GHOST = "#uninit"
@@ -6820,7 +7627,12 @@ class SILTranslator:
         base = self._cast_strip(base)
         if not isinstance(base, ExpVar):
             return None
-        bound = (proc.fixed_array_bounds or {}).get(str(base.var))
+        name = str(base.var)
+        bound = (proc.fixed_array_bounds or {}).get(name)
+        if bound is None and name not in proc.array_locals \
+                and name not in {p.name for p, _ in proc.params}:
+            # A file-scope array (`static int per_op[NUM_OPS];`) no local shadows.
+            bound = getattr(self.program, "global_array_bounds", {}).get(name)
         # -1 marks a name declared twice with disagreeing bounds.
         if bound is None or bound < 0:
             return None
@@ -6850,7 +7662,7 @@ class SILTranslator:
         if not self._is_c_lang or self._cur_proc_unreliable():
             return checks
         proc = self._cur_proc
-        if proc is None or not proc.fixed_array_bounds:
+        if proc is None or not (proc.fixed_array_bounds or getattr(self.program, "global_array_bounds", None)):
             return checks
 
         seen = set()
@@ -7038,6 +7850,108 @@ class SILTranslator:
             location=instr.loc,
             description=f"Buffer overflow: {what} into '{dest_name}', which holds "
                         f"only {cap} bytes",
+            tainted_var=dest_name,
+            procedure_name=proc_name,
+        )]
+
+    # Calls that write HTTP response headers in C/C++ CGI, FastCGI and embedded servers.
+    _HEADER_WRITERS = frozenset({"printf", "fprintf", "dprintf", "FCGX_FPrintF", "FCGI_printf",
+                                 "MHD_add_response_header", "mg_printf", "mg_send_http_ok",
+                                 "evhttp_add_header", "snprintf", "sprintf"})
+
+    def _cookie_header_checks(self, instr: Instr, state: SymbolicState,
+                              proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-338: a value written into a `Set-Cookie` header (a session or auth token)
+        that comes from a non-cryptographic PRNG. The header is recognised by its name in
+        a literal argument (`printf("Set-Cookie: sid=%s", t)`,
+        `MHD_add_response_header(r, "Set-Cookie", t)`); every other argument is a value
+        that must be unpredictable."""
+        if not self._is_c_lang or not isinstance(instr, Call):
+            return []
+        func = instr.func
+        fname = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"').rsplit("::", 1)[-1]
+        if fname not in self._HEADER_WRITERS:
+            return []
+        args = [a for a, _ in instr.args]
+        literal = [a for a in args if isinstance(a, ExpConst) and isinstance(a.value, str)]
+        if not any("set-cookie" in a.value.lower() for a in literal):
+            return []
+        checks = []
+        for arg in args:
+            if isinstance(arg, ExpConst):
+                continue
+            for var in self._get_exp_vars(arg):
+                info = state.get_taint_info(var) if state.is_tainted(var) else None
+                if info is not None and info.source_kind == TaintKind.WEAK_RANDOM:
+                    checks.append(self._create_taint_check(instr, state, proc_name, var, SinkKind.UNPREDICTABLE))
+                    break
+        return checks
+
+    # Widest output of a numeric conversion (sign included), by conversion letter.
+    _NUMERIC_WIDTH = {"d": 11, "i": 11, "u": 10, "x": 8, "X": 8, "o": 11, "c": 1, "p": 18}
+    _LONG_NUMERIC_WIDTH = {"d": 20, "i": 20, "u": 20, "x": 16, "X": 16, "o": 22}
+    _FORMAT_SPEC = re.compile(r"%(?:%|([-+ #0]*)(\d*)(?:\.(\d+))?(hh|h|ll|l|z|j|t)?([diouxXcsp]))")
+
+    def _tainted_format_overflow_checks(self, instr: Instr, state: SymbolicState,
+                                        proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-120: `sprintf(dest, fmt, ...)` where a `%s` argument holds attacker data
+        and the longest output the format can produce does not fit `dest`. The longest
+        output is the literal text, each `%s` argument's own capacity (or precision),
+        and the widest numeric conversions; only certain bounds are used, so an
+        unknown buffer, an unknown conversion or an untainted `%s` is never flagged."""
+        if not self._is_c_lang or not isinstance(instr, Call):
+            return []
+        func = instr.func
+        fname = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"')
+        args = [a for a, _ in instr.args]
+        if fname not in ("sprintf", "vsprintf") or len(args) < 2:
+            return []
+        fmt = self._cast_strip(args[1])
+        if not (isinstance(fmt, ExpConst) and isinstance(fmt.value, str)):
+            return []
+        cap = self._buffer_capacity(args[0])
+        if cap is None:
+            return []
+        need, pos, tainted, last = 1, 2, False, 0
+        text = fmt.value
+        for m in self._FORMAT_SPEC.finditer(text):
+            need += m.start() - last
+            last = m.end()
+            if m.group(0) == "%%":
+                need += 1
+                continue
+            width = int(m.group(2)) if m.group(2) else 0
+            conv = m.group(5)
+            if pos >= len(args):
+                return []
+            arg = args[pos]
+            pos += 1
+            if conv == "s":
+                var = self._sole_var(self._cast_strip(arg))
+                src_cap = self._buffer_capacity(arg) if var is not None else None
+                if m.group(3) is not None:
+                    longest = int(m.group(3))
+                elif src_cap is not None:
+                    longest = src_cap - 1
+                else:
+                    return []                      # no bound on this argument's length
+                tainted = tainted or (var is not None and state.is_tainted(var))
+            else:
+                table = self._LONG_NUMERIC_WIDTH if m.group(4) in ("l", "ll", "z", "j", "t") else self._NUMERIC_WIDTH
+                if conv not in table:
+                    return []
+                longest = table[conv]
+            need += max(width, longest)
+        need += len(text) - last
+        if not tainted or need <= cap:
+            return []
+        dest_name = self._exp_to_str(self._cast_strip(args[0]))
+        return [VulnerabilityCheck(
+            formula=True_(),
+            vuln_type=VulnType.BUFFER_OVERFLOW,
+            location=instr.loc,
+            description=f"Buffer overflow: sprintf() of up to {need} bytes of attacker-controlled "
+                        f"text into '{dest_name}', which holds only {cap} bytes",
             tainted_var=dest_name,
             procedure_name=proc_name,
         )]
@@ -8019,13 +8933,18 @@ class SILTranslator:
         for var in set(s1.constants.keys()) & set(s2.constants.keys()):
             if s1.constants[var] == s2.constants[var]:
                 merged.constants[var] = s1.constants[var]
-        # Also keep constants that only exist in one state (the variable was assigned in that path)
+        # Also keep constants that only exist in one state (the variable was assigned in that
+        # path) -- unless the other path assigned it something that is not that constant.
+        merged.nonconst = s1.nonconst | s2.nonconst
         for var in s1.constants:
-            if var not in s2.constants:
+            if var not in s2.constants and var not in s2.nonconst:
                 merged.constants[var] = s1.constants[var]
         for var in s2.constants:
-            if var not in s1.constants:
+            if var not in s1.constants and var not in s1.nonconst:
                 merged.constants[var] = s2.constants[var]
+        for var in list(merged.constants):
+            if var in s1.nonconst and var not in s1.constants or var in s2.nonconst and var not in s2.constants:
+                merged.constants.pop(var, None)
 
         # Secure parsers: union
         # "Hardened" must hold on every incoming path.

@@ -24,6 +24,8 @@ Key CWE Types Detected:
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple, Any
 from enum import Enum
+import copy
+
 import tree_sitter_c as tsc
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Parser
@@ -435,7 +437,11 @@ class SLSemanticAnalyzer:
         return False
 
     def _analyze_branch(self, node: Any, source: str, filename: str):
-        """Analyze a branch (compound statement or single statement)."""
+        """Analyze a branch (compound statement or single statement). A branch that
+        always leaves (`{ free(p); return -1; }`) does not reach the code after the
+        `if`, so the heap it leaves behind is dropped: that code runs only on the
+        paths that skipped the branch."""
+        before = copy.deepcopy(self.heap)
         if node.type == 'compound_statement':
             self._analyze_compound(node, source, filename)
         elif node.type == 'if_statement':
@@ -443,6 +449,36 @@ class SLSemanticAnalyzer:
             self._analyze_if_statement(node, source, filename, loc)
         else:
             self._analyze_statement(node, source, filename)
+        if node.type != 'if_statement' and self._branch_always_exits(node):
+            self.heap = before
+
+    _EXIT_CALLS = frozenset({"exit", "_exit", "abort", "longjmp", "std::exit", "std::abort"})
+
+    def _branch_always_exits(self, node: Any) -> bool:
+        """Does every path through this statement leave the function: its last statement is
+        a return / goto / throw / exit-like call, or an if/else whose arms both leave?
+        (Unlike `_branch_has_early_exit`, an exit nested in an inner `if` does not count.)"""
+        if node is None:
+            return False
+        if node.type == 'compound_statement':
+            stmts = [c for c in node.named_children if c.type != 'comment']
+            return bool(stmts) and self._branch_always_exits(stmts[-1])
+        if node.type in ('return_statement', 'goto_statement', 'throw_statement'):
+            return True
+        if node.type == 'expression_statement' and node.named_children:
+            e = node.named_children[0]
+            if e.type == 'throw_expression':
+                return True
+            fn = e.child_by_field_name('function') if e.type == 'call_expression' else None
+            return fn is not None and fn.text.decode('utf8') in self._EXIT_CALLS
+        if node.type == 'if_statement':
+            alt = node.child_by_field_name('alternative')
+            if alt is None:
+                return False
+            body = alt.named_children[-1] if alt.type == 'else_clause' and alt.named_children else alt
+            return self._branch_always_exits(node.child_by_field_name('consequence')) \
+                and self._branch_always_exits(body)
+        return False
 
     def _check_deref_in_expr(self, node: Any, loc: Location):
         """Check for pointer dereference of NULL or freed pointers."""

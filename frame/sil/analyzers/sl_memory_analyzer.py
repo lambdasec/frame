@@ -24,10 +24,14 @@ Frame's entailment checker is used to verify:
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple
 from enum import Enum
+import copy
 import re
 
 from frame.sil.types import Location
 from frame.sil.translator import VulnType
+
+# A statement after which the current block's path does not go on to the next one.
+_PATH_EXIT = re.compile(r'(?:return\b|goto\b|break\s*;|continue\s*;|(?:_?exit|abort)\s*\()')
 
 # Import Frame's SL solver
 try:
@@ -190,6 +194,7 @@ class SLMemoryAnalyzer:
         lines = source.split('\n')
         in_function = False
         brace_depth = 0
+        blocks: List[Tuple[Dict, bool]] = []      # (heap before the block, block ends the path)
 
         for line_num, line in enumerate(lines, start=1):
             stripped = line.strip()
@@ -212,6 +217,7 @@ class SLMemoryAnalyzer:
                 brace_depth = stripped.count('{') - stripped.count('}')
                 # Reset per-function state
                 self.heap = {}
+                blocks = []
                 continue
 
             if in_function:
@@ -224,8 +230,25 @@ class SLMemoryAnalyzer:
                     self.heap = {}
                     continue
 
+                # A block that ends the path (`{ free(p); return -1; }`) leaves the
+                # code after it running only on the paths that skipped it: its heap
+                # effects are dropped when it closes.
+                first_open = stripped.find('{')
+                leading_closes = stripped[:first_open].count('}') if first_open >= 0 else stripped.count('}')
+                for _ in range(min(leading_closes, len(blocks))):
+                    snapshot, exits = blocks.pop()
+                    if exits:
+                        self.heap = snapshot
+
                 # Analyze the line
                 self._analyze_line(stripped, loc, lines, line_num)
+
+                if blocks and _PATH_EXIT.match(stripped):
+                    blocks[-1] = (blocks[-1][0], True)
+                if first_open >= 0:
+                    tail = stripped[first_open:]
+                    for _ in range(max(tail.count('{') - tail.count('}'), 0)):
+                        blocks.append((copy.deepcopy(self.heap), False))
 
         return self.vulnerabilities
 

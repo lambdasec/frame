@@ -486,7 +486,7 @@ namespace App.Web
     }
 }
 '''
-gap("extension_method_runs_process", {
+case("extension_method_runs_process", {
     "Web/ToolsController.cs": _EXT_CTRL,
     "Util/ProcessExtensions.cs": '''using System.Diagnostics;
 
@@ -496,7 +496,7 @@ namespace App.Util
     {
         public static string RunAsCommand(this string arg)
         {
-            var p = Process.Start("/bin/sh", "-c \"tool " + arg + "\"");  // frame-expect: CWE-78
+            var p = Process.Start("/bin/sh", "-c \\"tool " + arg + "\\"");  // frame-expect: CWE-78
             return p.Id.ToString();
         }
     }
@@ -836,7 +836,7 @@ case("redirect_url_islocalurl", {
 
 # 15 -- partial class split over two files, the sink in the second part
 _PARTIAL_CTRL = _api("Audit", "using App.Services;\n", "AuditService", "_svc.Search(q)")
-gap("partial_class_second_file", {
+case("partial_class_second_file", {
     "Web/AuditController.cs": _PARTIAL_CTRL,
     "Services/AuditService.cs": '''namespace App.Services
 {
@@ -1773,7 +1773,8 @@ namespace App.Text
 })
 
 # Known gaps -------------------------------------------------------------------------
-gap("two_implementations_behind_interface", {
+# An interface two services implement: a call through it may reach either; the one with a sink reports.
+_TWO_IMPLS = {
     "Web/TagsController.cs": _DI_CTRL,
     "Startup.cs": _DI_STARTUP,
     "Core/ITagService.cs": _DI_IFACE,
@@ -1807,9 +1808,14 @@ namespace App.Core
     }
 }
 ''',
-}, None)
+}
+case("two_implementations_behind_interface", _TWO_IMPLS, {
+    path: text.replace("_tags.Remove(name);", '_tags.Remove("archived");').replace("  // frame-expect: CWE-89", "")
+    for path, text in _TWO_IMPLS.items()
+})
 
-gap("constructor_stores_request_value_in_field", {
+# A constructor stores request data in a field (written by its bare name); another method runs it.
+_CTOR_FIELD = {
     "Web/RunController.cs": _api("Run", "using App.Jobs;\n", "Job", "new Job(q).Go()", attrs="[HttpGet]").replace(
         "private readonly Job _svc;\n\n        public RunController(Job svc)\n        {\n            _svc = svc;\n        }\n", ""),
     "Jobs/Job.cs": '''using System.Diagnostics;
@@ -1833,4 +1839,8 @@ namespace App.Jobs
     }
 }
 ''',
-}, None)
+}
+case("constructor_stores_request_value_in_field", _CTOR_FIELD, {
+    path: text.replace("new Job(q).Go()", 'new Job("nightly").Go()').replace("  // frame-expect: CWE-78", "")
+    for path, text in _CTOR_FIELD.items()
+})

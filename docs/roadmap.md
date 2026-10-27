@@ -11,39 +11,25 @@ The phases are ordered so that each one builds on the last. Pick work from the e
 - **Every finding carries its evidence.** One finding model across all domains, with an evidence level: matched, reachable, path proven feasible by the solver, LLM-triaged, exploit-confirmed. Fingerprints, baselines, `verify`, SARIF, the GitHub Action, the pre-commit hook and MCP work the same for every category.
 - **No benchmark-specific behaviour.** Every change is checked against the full benchmark sweep (identical results unless the change intends otherwise), and solver changes against every SL-COMP division.
 
-## Phase 0: close the SAST known gaps (in progress)
+## Phase 0: close the SAST known gaps (done, October 2026)
 
-Each gap is a strict xfail in `tests/e2e/test_known_gaps_*.py`. Fixing one turns it into a regular vulnerable/safe case. 31 remain.
+All 37 gaps that were strict xfails in `tests/e2e/test_known_gaps_*.py` are now regular vulnerable/safe cases; a newly found gap goes there first.
 
 Done (October 2026): extensionless shebang scripts, a warning for files that do not parse, C constant shifts (`1u << 20`), a Java redirect target reassigned to a constant on the bad branch, JS path containment (`path.resolve` + `startsWith(BASE)`), JS prototype methods.
 
-**A. Taint stored in object state** (the largest design change)
-- Java: `constructor_stores_request_data_in_field`, `builder_field_setter_carries_request_data`, `filter_sets_attribute_servlet_reads`
-- C#: `constructor_stores_request_value_in_field`
-- JS: `middleware_chain_sets_req_field`
-- Python: `property_returns_request_data`
+**A. Taint stored in object state**: done. A constructor or setter storing attacker data in a field reaches a sink in another method of the object (Java, C#, Python, JS); a Python `@property` returning request data; Express middleware setting `req.x` for the handlers of the same app; a servlet Filter's request attribute read by a servlet.
 
-**B. Call resolution**
-- Interfaces: `two_implementations_behind_interface` (C#), `two_implementations_behind_interface_with_qualifier` (Java)
-- C#: `extension_method_runs_process`, `partial_class_second_file`
-- Java: `static_factory_chained_call_in_other_file`
-- JS: `cjs_spread_require_barrel`, `inversify_style_di_container`, `module_exports_singleton_instance`, `module_singleton_repo`
-- Python: `functools_partial_dispatch`, `django_manager_raw` (class-attribute types across files, and `self.raw()` in a `Manager` subclass as a sink)
+**B. Call resolution**: done. Interfaces with several implementations (taint reaches each, Java and C#), C# extension methods and partial classes, Java static-factory chains, instances a module exports or builds at its top level (Python `repo = Repo()`, JS `module.exports = new Mailer()`, an object-literal DI container), CommonJS barrels (`module.exports = { ...require("./q") }`), `functools.partial`, and Django managers held as class attributes.
 
-**C. C/C++ validation idioms** (reuse the guard machinery the other languages have)
-- `strcmp_allowlist_before_system`, `strspn_charset_before_popen`, `isalnum_loop_before_system`, `map_allowlist_before_std_system`, `prefix_allowlist_before_curl`, `memcpy_length_checked_against_capacity`, `nested_atoi_in_snprintf_argument`
+**C. C/C++ validation idioms**: done. `strcmp` allowlists, `strspn` charset checks, a loop rejecting the first character that fails `isalnum` (or another character-class test), `strncmp` against a fixed `scheme://host/` prefix, a lookup in a table of literals (`std::map::find`), numeric conversion inside `snprintf` (`atoi`), and a `memcpy` length checked on the path (the length, not the copied bytes, is the sink).
 
-**D. C/C++ interprocedural and memory** (part of replacing the line-based C detectors with structural analysis)
-- `helper_gets_tainted_sql`, `helper_gets_tainted_path`, `sprintf_untrusted_into_small_buffer`, `tainted_index_into_global_table`, `free_in_branch_then_free_on_other_path`, `member_array_new_scalar_delete`
+**D. C/C++ interprocedural and memory**: done. Attacker data passed into a helper function reaches its sinks (the interprocedural fixpoint runs for C/C++, including C++ overload sets); `sprintf` of attacker text that can exceed the destination; an attacker index into a file-scope array; a branch that frees and returns no longer makes the later free a double free; `new[]` stored in a member (also from a constructor's initializer list, now lowered) released with `delete`. The line-based `system()`/`popen()` rule, which flagged every call whether tainted or not, is gone.
 
-**E. Needs a design first**
-- `rand_for_session_token_without_crypto_include`: reporting every `rand()` floods Juliet with false positives and guessing from names is brittle. Follow the random value into what it is used for.
+**E. Weak randomness by flow**: done. `rand()`/`random()`/`drand48()` output is `weak_random` taint, reported as CWE-338 only where a value must be unpredictable (a `Set-Cookie` header, an `EVP_*Init` key or IV, an HMAC key, a PBKDF2 salt, a CSPRNG seed), also through a helper that fills a buffer; it never counts as an injection payload. Python, JS and Java still report every non-cryptographic random call (OWASP Benchmark scores weak randomness that way); moving them to the flow rule is a separate, measured change.
 
-**Engine debts found along the way**
-- `is_sanitized_for` compares sink-kind names literally (`path` vs `filesystem`); resolve aliases on both sides.
-- An assignment kills taint only for a literal into a plain local; generalise to a strong update for any plain-local assignment.
-- Python treats `os.path.realpath` alone as a path-traversal sanitizer; only a containment check after normalisation confines a path.
-- `_exec_assign` has a heuristic keyed on the words "always" and "never" in string constants (OWASP Benchmark shaped); replace it with real constant folding of the condition.
+**Engine fixes found along the way**: an assignment that is not a literal forgets the variable's constant (`nonconst`), so code after `for (i = 0; i < N; i++)` is analysed (it was unreachable, hidden by the removed `system()` line rule); a C store taints the buffer it writes into; `n = strlen(buf)` is bounded by buf's capacity.
+
+**Engine debts found along the way**: done. Sanitization checks resolve sink-kind aliases (`path` is `filesystem`); assigning a plain local is a strong update (its old taint goes unless the new value reads it); Python `os.path.realpath`/`normpath` are no longer sanitizers on their own (a `startswith(BASE)` check on the normalised path is); Java numeric parsing (`Integer.parseInt`, ...) sanitizes text-payload sinks; a ternary takes the branch its condition folds to over known constants, replacing a heuristic keyed on the words "always"/"never".
 
 ## Phase 1: foundations
 

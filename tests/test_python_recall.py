@@ -246,3 +246,25 @@ def test_python_membership_in_a_constant_set_clears_path_traversal():
         return [v for v in r.vulnerabilities if v.cwe_id == "CWE-22"]
     assert not paths("    if n not in ALLOWED:\n        return 'no'")
     assert paths("    pass")
+
+
+_REALPATH = '''import os
+from flask import Flask, request
+app = Flask(__name__)
+BASE = os.path.realpath("/srv/files")
+
+@app.route("/f")
+def f():
+    full = os.path.realpath(os.path.join(BASE, request.args.get("n", "")))
+{guard}    return open(full).read()
+'''
+
+
+def test_realpath_alone_does_not_confine_a_path():
+    # realpath("/srv/files/../../etc/passwd") is "/etc/passwd": normalising is not a check.
+    assert "CWE-22" in cwes(_REALPATH.format(guard=""))
+
+
+def test_realpath_then_startswith_base_confines_the_path():
+    guard = "    if not full.startswith(BASE + os.sep):\n        return 'no', 400\n"
+    assert "CWE-22" not in cwes(_REALPATH.format(guard=guard))

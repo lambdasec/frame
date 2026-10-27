@@ -257,8 +257,10 @@ FILESYSTEM_SPECS = {
 
     # Sanitizers
     "os.path.basename": _sanitizer(["filesystem"], "Path basename (partial sanitizer)"),
-    "os.path.normpath": _sanitizer(["filesystem"], "Path normalization"),
-    "os.path.realpath": _sanitizer(["filesystem"], "Path realpath"),
+    # Normalising does not confine a path ("/srv/f/../../etc/passwd" -> "/etc/passwd"); a
+    # `startswith(BASE)` check on the normalised result does (SILTranslator._PATH_NORMALIZERS).
+    "os.path.normpath": _propagator([0], "Path normalization (not a sanitizer on its own)"),
+    "os.path.realpath": _propagator([0], "Path realpath (not a sanitizer on its own)"),
 }
 
 # =============================================================================

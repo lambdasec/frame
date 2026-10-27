@@ -26,7 +26,7 @@ except ImportError:
 from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall,
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary,
     var, const
 )
 from frame.sil.instructions import (
@@ -2146,21 +2146,10 @@ class PythonFrontend:
                 except:
                     pass
 
-            # Fallback: if constant folding didn't work, use heuristics
-            if cons_is_const and not alt_is_const:
-                # Safe consequence, potentially tainted alternative - include both
-                # so translator can do constant folding at runtime
-                if consequence and alternative:
-                    return ExpBinOp(consequence, "?:", alternative)
-                return alternative
-            elif not cons_is_const and alt_is_const:
-                # Potentially tainted consequence, safe alternative - include both
-                if consequence and alternative:
-                    return ExpBinOp(consequence, "?:", alternative)
-                return consequence
-            elif consequence and alternative:
-                # Both are variables or both are constants - include both
-                return ExpBinOp(consequence, "?:", alternative)
+            # The condition is left to the translator, which folds it over the
+            # constants the path knows (`num = 106` before `... - num > 200`).
+            if consequence and alternative and condition is not None:
+                return ExpTernary(self._translate_expression(condition), consequence, alternative)
             elif alternative:
                 return alternative
             elif consequence:

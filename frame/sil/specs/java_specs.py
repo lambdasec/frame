@@ -31,6 +31,12 @@ def _sink(kind: str, args: list = None, desc: str = "") -> ProcSpec:
     return ProcSpec(is_sink=kind, sink_args=args, description=desc)
 
 
+# Sink kinds a number is harmless for: every text-payload injection.
+_NUMERIC_SAFE = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap",
+                 "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml",
+                 "log", "trust_boundary"]
+
+
 def _sanitizer(kinds: list, desc: str = "") -> ProcSpec:
     """Create a sanitizer spec"""
     return ProcSpec(is_sanitizer=kinds, description=desc)
@@ -576,6 +582,13 @@ STRING_SPECS = {
     "toCharArray": _propagator([0], "String.toCharArray"),
     "split": _propagator([0], "String.split"),
     "valueOf": _propagator([0], "String.valueOf"),
+    # A parsed number cannot carry an injection payload (as JS's _NUMERIC_SAFE, C's atoi).
+    **{f"{box}.{fn}": _sanitizer(_NUMERIC_SAFE, f"{box}.{fn} (a number)")
+       for box, fns in (("Integer", ("parseInt", "valueOf", "parseUnsignedInt")),
+                        ("Long", ("parseLong", "valueOf", "parseUnsignedLong")),
+                        ("Short", ("parseShort", "valueOf")), ("Byte", ("parseByte", "valueOf")),
+                        ("Double", ("parseDouble", "valueOf")), ("Float", ("parseFloat", "valueOf")))
+       for fn in fns},
 }
 
 # =============================================================================

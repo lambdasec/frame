@@ -395,6 +395,7 @@ class Procedure:
     is_method: bool = False           # Is this a method (has self/this)?
     class_name: Optional[str] = None  # Class name if method
     is_static: bool = False           # Is this a static method?
+    is_extension: bool = False        # C# extension method: `x.M()` passes x as the first argument
     is_constructor: bool = False      # Is this a constructor?
 
     # Nested functions: the enclosing function's variables this body reads
@@ -615,6 +616,11 @@ class Program:
     # call to one may write its bare-variable arguments (see the translator's
     # `_arg_may_define`).
     function_macros: Set[str] = field(default_factory=set)
+    # C/C++: object-like macros that are one string literal (`#define ALLOWED "https://..."`).
+    string_macros: Dict[str, str] = field(default_factory=dict)
+    # C/C++: file-scope arrays with a known element count (`static int per_op[NUM_OPS];`);
+    # -1 marks a name declared twice with different bounds.
+    global_array_bounds: Dict[str, int] = field(default_factory=dict)
 
     # Language-specific map from a receiver's declared type to the receiver
     # names its specs are keyed under (Java: java_specs.type_spec_receivers);
@@ -635,6 +641,10 @@ class Program:
     constant_regexes: Dict[str, str] = field(default_factory=dict)
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
+    # Class (full name) -> its declared instance fields, for languages that write a
+    # field by its bare name (Java, C#). Not `ClassInfo.fields`, which C# keeps for
+    # model-bound members only.
+    declared_fields: Dict[str, Set[str]] = field(default_factory=dict)
     # First line the parser could not read (None: the file parsed cleanly).
     syntax_error_line: Optional[int] = None
 

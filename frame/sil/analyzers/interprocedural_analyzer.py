@@ -2693,35 +2693,12 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # Detects when user-controlled input flows into command execution
         # =====================================================================
 
-        # Pattern 1: system() with variable argument
-        system_match = re.search(r'\bsystem\s*\(\s*(\w+)\s*\)', stripped)
-        if system_match:
-            cmd_var = system_match.group(1)
-            confidence = 0.9 if cmd_var in tainted_vars or cmd_var == 'data' else 0.7
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.COMMAND_INJECTION,
-                cwe_id="CWE-78",
-                location=loc,
-                var_name=cmd_var,
-                description="OS command injection - user-controlled input in system()",
-                confidence=confidence,
-            ))
+        # system() / popen() are not matched here: they are command sinks of the
+        # structural taint analysis (c_specs), which knows where the argument came
+        # from and which checks it passed (`strcmp(x, "a") == 0`, a charset test).
+        # A line regex flagged every `system(var)`, tainted or not.
 
-        # Pattern 2: popen() with variable command
-        popen_match = re.search(r'\b_?popen\s*\(\s*(\w+)\s*,', stripped)
-        if popen_match:
-            cmd_var = popen_match.group(1)
-            confidence = 0.9 if cmd_var in tainted_vars or cmd_var == 'data' else 0.7
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.COMMAND_INJECTION,
-                cwe_id="CWE-78",
-                location=loc,
-                var_name=cmd_var,
-                description="OS command injection - user-controlled input in popen()",
-                confidence=confidence,
-            ))
-
-        # Pattern 3: exec family functions with tainted arguments
+        # Exec family functions with tainted arguments
         exec_match = re.search(r'\b(execl|execlp|execle|execv|execvp|execve|execvpe)\s*\(', stripped)
         if exec_match:
             func = exec_match.group(1)

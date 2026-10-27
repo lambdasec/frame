@@ -417,3 +417,28 @@ def test_membership_in_a_constant_allowlist_clears_path_traversal(guard):
 ])
 def test_no_or_unrecognised_allowlist_is_still_reported(guard):
     assert any(c == "CWE-22" for _, c in _scan_js(FILE_ROUTE.format(guard=guard)))
+
+
+_LIB_CTOR = '''const shell = require("shelljs");
+
+function PdfInfo(filename) {
+  this.options = { additional: [{arg}] };
+}
+
+PdfInfo.prototype.run = function () {
+  var self = this;
+  return shell.exec("pdfinfo " + self.options.additional.join(" "));
+};
+
+module.exports = PdfInfo;
+'''
+
+
+def test_library_mode_constructor_field_reaches_a_method_sink():
+    # In library mode a constructor's parameters are untrusted, and so are the fields it
+    # fills from them, in every method of the class (read through `var self = this`).
+    from frame.sil.scanner import FrameScanner
+    scan = lambda code: {v.cwe_id for v in FrameScanner(language="javascript", verify=False,
+                                                         library_mode=True).scan(code, "lib.js").vulnerabilities}
+    assert "CWE-78" in scan(_LIB_CTOR.replace("{arg}", "'\"' + filename + '\"'"))
+    assert "CWE-78" not in scan(_LIB_CTOR.replace("{arg}", "'\"report.pdf\"'"))

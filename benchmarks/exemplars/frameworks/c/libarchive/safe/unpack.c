@@ -53,9 +53,10 @@ int unpack(const char *archive_path, const char *workspace) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s archive workspace\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "usage: %s archive\n", argv[0]);
         return 2;
     }
-    return unpack(argv[1], argv[2]);
+    /* The workspace is the service's own directory; the archive is the upload. */
+    return unpack(argv[1], "/srv/workspaces/current");
 }

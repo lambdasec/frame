@@ -152,11 +152,13 @@ STRING_SPECS = {
     "strtok_r": _propagator([0], "strtok_r() - reentrant tokenize"),
 
     # Memory functions (buffer sinks)
-    "memcpy": _sink("buffer", [1], "memcpy() - memory copy (buffer overflow risk)"),
-    "memmove": _sink("buffer", [1], "memmove() - memory move"),
+    # The overflow is in the LENGTH: copying attacker bytes is harmless, copying an
+    # attacker-chosen number of them is not (see SILTranslator._copy_size_sink).
+    "memcpy": _sink("buffer", [2], "memcpy() - attacker-controlled length (buffer overflow)"),
+    "memmove": _sink("buffer", [2], "memmove() - attacker-controlled length (buffer overflow)"),
     "memset": _propagator([0], "memset() - memory set"),
     "memcmp": _propagator([0, 1], "memcmp() - memory compare"),
-    "bcopy": _sink("buffer", [0], "bcopy() - BSD memory copy (buffer overflow)"),
+    "bcopy": _sink("buffer", [2], "bcopy() - attacker-controlled length (buffer overflow)"),
 }
 
 # =============================================================================
@@ -401,9 +403,22 @@ CRYPTO_SPECS = {
     "DES_set_key": _usage_sink("weak_crypto", "DES_set_key - weak encryption (CWE-327), use AES"),
 
     # Random (weak randomness)
-    "rand": _propagator([0], "rand() - weak random (not cryptographically secure)"),
+    "rand": _source("weak_random", "rand() - predictable PRNG output"),
     "srand": _propagator([0], "srand() - seed weak random"),
-    "random": _propagator([0], "random() - weak random"),
+    "random": _source("weak_random", "random() - predictable PRNG output"),
+    **{f: _source("weak_random", f"{f}() - predictable PRNG output")
+       for f in ("rand_r", "drand48", "erand48", "lrand48", "nrand48", "mrand48", "jrand48")},
+    # Positions where a value must be unpredictable (SinkKind.UNPREDICTABLE, CWE-338).
+    "EVP_EncryptInit_ex": _sink("unpredictable", [3, 4], "EVP_EncryptInit_ex key / IV"),
+    "EVP_DecryptInit_ex": _sink("unpredictable", [3, 4], "EVP_DecryptInit_ex key / IV"),
+    "EVP_CipherInit_ex": _sink("unpredictable", [3, 4], "EVP_CipherInit_ex key / IV"),
+    "EVP_EncryptInit": _sink("unpredictable", [2, 3], "EVP_EncryptInit key / IV"),
+    "AES_set_encrypt_key": _sink("unpredictable", [0], "AES key"),
+    "AES_set_decrypt_key": _sink("unpredictable", [0], "AES key"),
+    "HMAC": _sink("unpredictable", [1], "HMAC key"),
+    "PKCS5_PBKDF2_HMAC": _sink("unpredictable", [2], "PBKDF2 salt"),
+    "RAND_seed": _sink("unpredictable", [0], "CSPRNG seed"),
+    "RAND_add": _sink("unpredictable", [0], "CSPRNG seed"),
     "srandom": _propagator([0], "srandom() - seed random"),
 }
 

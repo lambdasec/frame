@@ -14,7 +14,7 @@ using tree-sitter for parsing. It handles:
 
 import re
 from collections import Counter
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass, field
 
 try:
@@ -211,6 +211,7 @@ class JavaScriptFrontend:
         self._module_aliases, self._imported_names = self._module_bindings(tree.root_node)
         self._declared_names = self._file_declared_names(tree.root_node)
         self._const_tables = self._collect_const_tables(tree.root_node)
+        self._ctor_fields = self._constructor_field_paths(tree.root_node) if self.taint_function_params else {}
         self._const_sets = self._collect_const_sets(tree.root_node)
         self._binding_cache = {}
 
@@ -800,6 +801,15 @@ class JavaScriptFrontend:
                     loc=proc.loc, var=param,
                     kind=TaintKind.USER_INPUT,
                     description="function parameter (untrusted input)"))
+            # A method of a class whose constructor fills fields from its (untrusted)
+            # parameters starts with those fields untrusted: an outside caller built the
+            # object (`this.options.additional = ['"' + filename + '"']`).
+            proto = self._PROTOTYPE_METHOD.match(proc.name or "")
+            cls = proto.group(1) if proto else (getattr(self, "_current_class", None) if proc.is_method else None)
+            for path in sorted(getattr(self, "_ctor_fields", {}).get(cls, ())):
+                self._add_instr(TaintSource(
+                    loc=proc.loc, var=PVar(f"this.{path}"), kind=TaintKind.USER_INPUT,
+                    description="field set from a constructor parameter (untrusted input)"))
 
             # Closure capture: a nested function (callback, Promise executor,
             # ...) sees its enclosing functions' parameters AND locals as free
@@ -3068,6 +3078,9 @@ class JavaScriptFrontend:
             fluent = self._fluent_call_name(node)
             if fluent is not None:
                 func_exp = ExpVar(PVar(fluent))        # `$('<li>').text(v)` -> `$.text`
+            inline = self._inline_require_member(func) if func is not None else None
+            if inline is not None:
+                func_exp = ExpVar(PVar(inline))        # `require("m").f` -> `m.f`
             args = []
             args_node = node.child_by_field_name("arguments")
             if args_node:
@@ -3457,6 +3470,9 @@ class JavaScriptFrontend:
         func = call_node.child_by_field_name("function")
         if not func:
             return ""
+        inline = self._inline_require_member(func)
+        if inline is not None:
+            return inline
         name = self._get_text(func)
         root, dot, rest = name.partition(".")
         if dot and root in getattr(self, "_module_aliases", {}):
@@ -3466,6 +3482,65 @@ class JavaScriptFrontend:
         if self._safe_yaml_load(name, call_node):
             return name.rsplit(".", 1)[0] + ".safeLoad"     # load(text, { schema: JSON_SCHEMA }) is safeLoad
         return name
+
+    def _constructor_field_paths(self, root: TSNode) -> Dict[str, Set[str]]:
+        """Class -> the `this.` field paths its constructor assigns from an expression that
+        reads one of its parameters (nested functions excluded). A constructor is a function
+        `C` with `C.prototype.m = ...` methods in the file, or an ES class's `constructor`."""
+        ctors: Dict[str, TSNode] = {}
+        protos: Set[str] = set()
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type == "function_declaration" and n.child_by_field_name("name") is not None:
+                ctors.setdefault(self._get_text(n.child_by_field_name("name")), n)
+            elif n.type == "assignment_expression":
+                m = self._PROTOTYPE_METHOD.match(self._get_text(n.child_by_field_name("left") or n))
+                if m:
+                    protos.add(m.group(1))
+            elif n.type in ("class_declaration", "class"):
+                name, body = n.child_by_field_name("name"), n.child_by_field_name("body")
+                for meth in (body.named_children if body is not None else ()):
+                    if meth.type == "method_definition" and name is not None \
+                            and self._get_text(meth.child_by_field_name("name")) == "constructor":
+                        ctors[self._get_text(name)] = meth
+                        protos.add(self._get_text(name))
+            stack.extend(n.children)
+        out: Dict[str, Set[str]] = {}
+        for cls in protos & set(ctors):
+            fn = ctors[cls]
+            params = {self._get_text(p) for p in (fn.child_by_field_name("parameters") or fn).named_children
+                      if p.type == "identifier"}
+            body = fn.child_by_field_name("body")
+            todo = list(body.named_children) if body is not None else []
+            while todo:
+                n = todo.pop()
+                if n.type in self._FUNC_NODE_TYPES:
+                    continue                         # a nested function is not the constructor's code
+                if n.type == "assignment_expression":
+                    left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                    text = self._get_text(left) if left is not None else ""
+                    if text.startswith("this.") and right is not None \
+                            and params & self._referenced_identifiers(right):
+                        out.setdefault(cls, set()).add(text[len("this."):])
+                todo.extend(n.named_children)
+        return out
+
+    def _inline_require_member(self, func: TSNode) -> Optional[str]:
+        """`require("shell-quote").quote`: named after the module, as a call through
+        `const sq = require("shell-quote")` would be (`shell-quote.quote`)."""
+        if func.type != "member_expression":
+            return None
+        obj, prop = func.child_by_field_name("object"), func.child_by_field_name("property")
+        if obj is None or prop is None or obj.type != "call_expression":
+            return None
+        fn, args = obj.child_by_field_name("function"), obj.child_by_field_name("arguments")
+        if fn is None or self._get_text(fn) != "require" or args is None \
+                or len(args.named_children) != 1 or args.named_children[0].type != "string":
+            return None
+        module = self._get_text(args.named_children[0])[1:-1]
+        module = module[5:] if module.startswith("node:") else module
+        return f"{module}.{self._get_text(prop)}" if module else None
 
     def _module_bindings(self, root: TSNode):
         """(alias -> module, local name -> module.function) for the file's

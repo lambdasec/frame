@@ -743,3 +743,133 @@ def run():
     return "ok"
 ''',
 })
+
+# A constructor stores request data in a field; another method of the object reaches a sink with it.
+case("constructor_stores_request_data_in_field", {
+    "app/job.py": '''import subprocess
+
+
+class Job:
+    def __init__(self, target):
+        self.target = target
+
+    def go(self):
+        return subprocess.check_output("backup " + self.target, shell=True)  # frame-expect: CWE-78
+''',
+    "app/views.py": '''from flask import Flask, request
+
+from app.job import Job
+
+app = Flask(__name__)
+
+
+@app.route("/backup")
+def backup():
+    job = Job(<<request.args.get("target", "")||"nightly">>)
+    return job.go()
+''',
+})
+
+# A @property returning request data, read as an attribute (`ctx.target`) of an object of that class.
+case("property_returns_request_data", {
+    "ctx/req.py": '''from flask import request
+
+
+class Ctx:
+    @property
+    def target(self):
+        return request.args.get("target", "")
+''',
+    "ctx/web.py": '''import os
+from flask import Flask
+from ctx.req import Ctx
+
+app = Flask(__name__)
+
+
+@app.route("/t")
+def t():
+    ctx = Ctx()
+    os.system(<<"ping -c1 " + ctx.target||"ping -c1 localhost">>)  # frame-expect: CWE-78
+    return "ok"
+''',
+})
+
+# An instance built at the top level of another module (`repo = Repo()`) and imported by name.
+case("module_singleton_repo", {
+    "shop/repo.py": '''import sqlite3
+
+
+class Repo:
+    def __init__(self):
+        self.conn = sqlite3.connect("shop.db")
+
+    def by_sku(self, sku):
+        cur = self.conn.cursor()
+        cur.execute(<<"SELECT * FROM p WHERE sku = '" + sku + "'"||"SELECT * FROM p WHERE sku = ?", (sku,)>>)  # frame-expect: CWE-89
+        return cur.fetchall()
+
+
+repo = Repo()
+''',
+    "shop/views.py": '''from flask import Flask, request
+from shop.repo import repo
+
+app = Flask(__name__)
+
+
+@app.route("/p")
+def p():
+    return str(repo.by_sku(request.args.get("sku", "")))
+''',
+})
+
+# `run_echo = functools.partial(shell, 'echo')` imported and called: the wrapped function, arguments shifted.
+case("functools_partial_dispatch", {
+    "tasks/run.py": '''import functools
+import os
+
+
+def shell(prefix, arg):
+    os.system(prefix + " " + arg)  # frame-expect: CWE-78
+
+
+run_echo = functools.partial(shell, "echo")
+''',
+    "tasks/web.py": '''from flask import Flask, request
+from tasks.run import run_echo
+
+app = Flask(__name__)
+
+
+@app.route("/echo")
+def echo():
+    text = request.args.get("t", "")
+    run_echo(<<text||str(int(text))>>)
+    return "ok"
+''',
+})
+
+# A Django manager held as a class attribute (`objects = PostManager()`), its method calling `self.raw`.
+case("django_manager_raw", {
+    "blog/models.py": '''from django.db import models
+
+
+class PostManager(models.Manager):
+    def search(self, term):
+        return self.raw(<<"SELECT * FROM blog_post WHERE title = '%s'" % term||"SELECT * FROM blog_post WHERE title = %s", [term]>>)  # frame-expect: CWE-89
+
+
+class Post(models.Model):
+    title = models.CharField(max_length=100)
+    objects = PostManager()
+''',
+    "blog/views.py": '''from django.http import HttpResponse
+from blog.models import Post
+
+
+def search(request):
+    rows = Post.objects.search(request.GET.get("q", ""))
+    return HttpResponse(",".join(p.title for p in rows))
+''',
+})

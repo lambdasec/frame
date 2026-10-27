@@ -195,6 +195,8 @@ class CFrontend:
         program.syntax_error_line = first_syntax_error_line(tree.root_node)
         program.function_macros = self._function_macro_names(tree.root_node)
         self._int_macros = self._integer_macros(tree.root_node)
+        program.string_macros = dict(self._string_macro_values)
+        program.global_array_bounds = self._global_array_bounds(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
 
@@ -257,7 +259,32 @@ class CFrontend:
                 value = eval_macro_integer(bodies[0], known)
                 if value is not None:
                     known[name] = value
+        # `#define ALLOWED "https://api.partner.example/"`: the same rules, for one string literal.
+        self._string_macro_values = {
+            name: bodies[0].strip()[1:-1] for name, bodies in defs.items()
+            if name not in undef and len(bodies) == 1 and bodies[0] is not None
+            and re.fullmatch(r'"[^"\\]*"', bodies[0].strip())}
         return known
+
+    def _global_array_bounds(self, root: TSNode) -> Dict[str, int]:
+        """File-scope arrays whose element count is an integer literal or integer macro."""
+        bounds: Dict[str, int] = {}
+        for decl in root.children:
+            if decl.type != "declaration":
+                continue
+            for d in decl.children_by_field_name("declarator"):
+                arr = d.child_by_field_name("declarator") if d.type == "init_declarator" else d
+                if arr is None or arr.type != "array_declarator":
+                    continue
+                name, size = self._extract_identifier(arr), arr.child_by_field_name("size")
+                if not name or size is None:
+                    continue
+                bound = parse_c_integer(self._get_text(size)) if size.type == "number_literal" \
+                    else eval_macro_integer(self._get_text(size), self._int_macros)
+                if bound is None or bound <= 0:
+                    continue
+                bounds[name] = bound if bounds.get(name, bound) == bound else -1
+        return bounds
 
     def _function_macro_names(self, root: TSNode) -> Set[str]:
         """Names of the function-like macros `#define`d in this file. A macro
@@ -378,6 +405,18 @@ class CFrontend:
                         kind=TaintKind.USER_INPUT,
                         description="Command line argument"
                     ))
+
+        # C++ member initializers (`: data_(new unsigned char[n]), size_(n)`) run before the
+        # body: each is `data_ = new unsigned char[n]`.
+        for init_list in (c for c in node.children if c.type == "field_initializer_list"):
+            for init in (c for c in init_list.named_children if c.type == "field_initializer"):
+                name = next((c for c in init.named_children if c.type == "field_identifier"), None)
+                args = next((c for c in init.named_children
+                             if c.type in ("argument_list", "initializer_list")), None)
+                values = [a for a in args.named_children if a.type != "comment"] if args is not None else []
+                if name is not None and len(values) == 1:
+                    self._assign_to_identifier(self._get_text(name), values[0], "=",
+                                               self._get_location(init))
 
         # Translate body
         body = node.child_by_field_name("body")
@@ -812,6 +851,29 @@ class CFrontend:
             self._add_instr(Assign(loc=loc, id=PVar(var_name),
                                    exp=ExpConst.null(), is_uninit_decl=True))
 
+    def _assign_to_identifier(self, target: str, right: TSNode, op: str, loc: Location) -> None:
+        """`target op right` for a plain name (a local, a global, or a member written by its
+        bare name or in a constructor's initializer list)."""
+        if op != "=":
+            # Compound assignment `x += e` is `x = x + e`; lowering it as
+            # `x = e` dropped the old value (and made `x == e` a false fact).
+            exp = ExpBinOp(op[:-1], ExpVar(PVar(target)), self._translate_expression(right))
+            self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+        elif right.type == "call_expression":
+            instrs = self._translate_call_assignment(target, right, loc)
+            self._add_instrs(instrs)
+        else:
+            exp = self._translate_expression(right)
+            if isinstance(exp, ExpCall) and not self._is_local_name(target):
+                # `data_ = new T[n]` / `g_buf = (char *)malloc(n)` where `data_` is a member or a
+                # global: the allocation is handed to something that outlives the function. Bind it to
+                # a temporary first, as for `p = malloc(n)`, so the ownership analysis sees the hand-off.
+                self._return_tmp_counter += 1
+                tmp = f"$own{self._return_tmp_counter}"
+                self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=exp))
+                exp = ExpVar(PVar(tmp))
+            self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+
     def _translate_assignment(self, node: TSNode) -> None:
         """Translate assignment expression"""
         left = node.child_by_field_name("left")
@@ -827,26 +889,7 @@ class CFrontend:
 
         # Get target variable/field
         if left.type == "identifier":
-            target = self._get_text(left)
-            if op != "=":
-                # Compound assignment `x += e` is `x = x + e`; lowering it as
-                # `x = e` dropped the old value (and made `x == e` a false fact).
-                exp = ExpBinOp(op[:-1], ExpVar(PVar(target)), self._translate_expression(right))
-                self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
-            elif right.type == "call_expression":
-                instrs = self._translate_call_assignment(target, right, loc)
-                self._add_instrs(instrs)
-            else:
-                exp = self._translate_expression(right)
-                if isinstance(exp, ExpCall) and not self._is_local_name(target):
-                    # `data_ = new T[n]` / `g_buf = (char *)malloc(n)` where `data_` is a member or a
-                    # global: the allocation is handed to something that outlives the function. Bind it to
-                    # a temporary first, as for `p = malloc(n)`, so the ownership analysis sees the hand-off.
-                    self._return_tmp_counter += 1
-                    tmp = f"$own{self._return_tmp_counter}"
-                    self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=exp))
-                    exp = ExpVar(PVar(tmp))
-                self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+            self._assign_to_identifier(self._get_text(left), right, op, loc)
         elif left.type == "pointer_expression":
             # *ptr = value (store)
             inner = left.child_by_field_name("argument")
@@ -944,7 +987,8 @@ class CFrontend:
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
-                    instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
+                    instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,
+                                            arg_index=arg_idx, call=func_name))
 
         return instrs
 
@@ -1006,7 +1050,8 @@ class CFrontend:
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
-                    instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description, arg_index=arg_idx))
+                    instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,
+                                            arg_index=arg_idx, call=func_name))
 
         return instrs
 
@@ -1344,6 +1389,116 @@ class CFrontend:
             proc.connect(self._current_node.id, loop_head.id)
 
         self._current_node = after_node
+        # `for (p = s; *p; p++) if (!isalnum(*p)) return -1;`: when the loop finishes, every
+        # character of s passed the test, so s holds only those characters.
+        validated = self._validation_loop_var(node)
+        if validated is not None:
+            self._add_instr(Sanitize(loc=loc, var=PVar(validated[0]), sanitizes=list(SinkKind),
+                                     description=f"every character passed {validated[1]}()"))
+
+    # Character-class tests whose characters (letters, digits) are inert for every sink.
+    _CHARSET_TESTS = frozenset({"isalnum", "isalpha", "isdigit", "isxdigit", "isupper", "islower"})
+
+    def _validation_loop_var(self, node: TSNode) -> Optional[Tuple[str, str]]:
+        """(s, test) for a loop that visits every character of string s and leaves the path
+        (return / exit / abort / goto) at the first one failing a character-class test, with
+        nothing else in its body. Pointer form `for (p = s; *p; p++)`, index form
+        `for (i = 0; s[i]; i++)` / `i < strlen(s)`."""
+        init, cond = node.child_by_field_name("initializer"), node.child_by_field_name("condition")
+        update, body = node.child_by_field_name("update"), node.child_by_field_name("body")
+        if None in (init, cond, update, body):
+            return None
+        strip = self._strip_parens_casts
+        # the cursor and, for the pointer form, the string it starts at
+        cursor, start = None, None
+        if init.type == "declaration":
+            d = next((c for c in init.named_children if c.type == "init_declarator"), None)
+            if d is not None:
+                cursor = self._extract_identifier(d.child_by_field_name("declarator"))
+                start = d.child_by_field_name("value")
+        elif init.type == "assignment_expression":
+            cursor, start = self._get_text(init.child_by_field_name("left")), init.child_by_field_name("right")
+        if not cursor or start is None:
+            return None
+        start = strip(start)
+        step = strip(update)
+        if not (step.type == "update_expression" and self._get_text(step.child_by_field_name("argument")) == cursor
+                and "++" in self._get_text(step)):
+            return None
+
+        def element(e):           # the string a `*p` / `p[0]` / `s[i]` reads, else None
+            e = strip(e)
+            if e.type == "pointer_expression" and self._get_text(e).startswith("*") \
+                    and self._get_text(e.child_by_field_name("argument")) == cursor and start.type == "identifier":
+                return self._get_text(start)
+            if e.type == "subscript_expression":
+                base, idx = e.child_by_field_name("argument"), self._subscript_index(e)
+                if base is None or idx is None:
+                    return None
+                if self._get_text(base) == cursor and self._get_text(idx) == "0" and start.type == "identifier":
+                    return self._get_text(start)
+                if self._get_text(idx) == cursor and base.type == "identifier" and self._get_text(start) == "0":
+                    return self._get_text(base)
+            return None
+
+        c = strip(cond)
+        if c.type == "binary_expression" and self._get_text(c.child_by_field_name("operator")) == "!=" \
+                and self._get_text(c.child_by_field_name("right")) in ("'\\0'", "0"):
+            target = element(c.child_by_field_name("left"))
+        elif c.type == "binary_expression" and self._get_text(c.child_by_field_name("operator")) == "<" \
+                and self._get_text(c.child_by_field_name("left")) == cursor and self._get_text(start) == "0":
+            limit = strip(c.child_by_field_name("right"))
+            fn = limit.child_by_field_name("function") if limit.type == "call_expression" else None
+            args = limit.child_by_field_name("arguments") if fn is not None else None
+            target = self._get_text(args.named_children[0]) if fn is not None and self._get_text(fn) == "strlen" \
+                and args is not None and len(args.named_children) == 1 else None
+        else:
+            target = element(c)
+        if not target:
+            return None
+        # the body: exactly `if (!test(<element>)) <leave the path>;`
+        stmts = [x for x in body.named_children if x.type != "comment"] if body.type == "compound_statement" else [body]
+        if len(stmts) != 1 or stmts[0].type != "if_statement" or stmts[0].child_by_field_name("alternative") is not None:
+            return None
+        test = strip(stmts[0].child_by_field_name("condition"))
+        if test.type != "unary_expression" or self._get_text(test.child_by_field_name("operator")) != "!":
+            return None
+        call = strip(test.child_by_field_name("argument"))
+        fn = call.child_by_field_name("function") if call.type == "call_expression" else None
+        args = call.child_by_field_name("arguments") if fn is not None else None
+        name = self._get_text(fn) if fn is not None else ""
+        if name not in self._CHARSET_TESTS or args is None or len(args.named_children) != 1:
+            return None
+        arg = args.named_children[0]
+        if element(arg) != target and not (strip(arg).type == "subscript_expression" and element(arg) == target):
+            return None
+        then = stmts[0].child_by_field_name("consequence")
+        last = [x for x in then.named_children if x.type != "comment"][-1:] if then.type == "compound_statement" else [then]
+        if not last or not self._leaves_path(last[0]):
+            return None
+        return target, name
+
+    def _leaves_path(self, stmt: TSNode) -> bool:
+        """`return ...;`, `goto x;`, or a call to exit/abort/_exit."""
+        if stmt.type in ("return_statement", "goto_statement"):
+            return True
+        if stmt.type == "expression_statement" and stmt.named_children:
+            e = stmt.named_children[0]
+            fn = e.child_by_field_name("function") if e.type == "call_expression" else None
+            return fn is not None and self._get_text(fn) in ("exit", "abort", "_exit", "std::exit", "std::abort")
+        return False
+
+    @staticmethod
+    def _strip_parens_casts(node: TSNode) -> TSNode:
+        while node is not None and node.type in ("parenthesized_expression", "cast_expression"):
+            inner = node.child_by_field_name("value") if node.type == "cast_expression" else None
+            if inner is None:
+                named = [c for c in node.named_children if c.type != "comment"]
+                inner = named[-1] if named else None
+            if inner is None:
+                break
+            node = inner
+        return node
 
     def _translate_do_while(self, node: TSNode) -> None:
         """Translate do-while loop"""

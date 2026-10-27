@@ -321,11 +321,13 @@ class JavaFrontend:
         self._type_vars = set(self._class_type_vars)
         self._field_types = {}
         self._field_static_types = {}
+        declared = program.declared_fields.setdefault(class_name, set())
         for f in members:
             if f.type == "field_declaration":
                 for d in f.named_children:
                     if d.type == "variable_declarator":
                         fname = self._get_text(d.child_by_field_name("name"))
+                        declared.add(fname)
                         t = self._type_name(f.child_by_field_name("type"),
                                             d.child_by_field_name("value"))
                         if t:

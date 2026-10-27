@@ -1368,7 +1368,8 @@ public final class Inventory {
 # {name: files}; `frame-expect` markers say where the finding should be.
 KNOWN_GAPS = {}
 
-KNOWN_GAPS["builder_field_setter_carries_request_data"] = {
+# Taint stored in a field by a setter reaches a sink in another method of the object.
+_BUILDER_FIELD_SETTER_CARRIES_REQUEST_DATA = {
     "src/com/acme/web/EntryServlet.java": _servlet("", '''        Tool tool = Tool.of("convert");
         tool.input(v);
         resp.getWriter().println(tool.run());''', "import com.acme.build.Tool;\n"),
@@ -1396,8 +1397,13 @@ public class Tool {
 }
 ''',
 }
+case("builder_field_setter_carries_request_data", _BUILDER_FIELD_SETTER_CARRIES_REQUEST_DATA, {
+    path: text.replace('tool.input(v);', 'tool.input("report.pdf");').replace("  // frame-expect: CWE-78", "")
+    for path, text in _BUILDER_FIELD_SETTER_CARRIES_REQUEST_DATA.items()
+})
 
-KNOWN_GAPS["constructor_stores_request_data_in_field"] = {
+# Taint stored in a field by a constructor reaches a sink in another method of the object.
+_CONSTRUCTOR_STORES_REQUEST_DATA_IN_FIELD = {
     "src/com/acme/web/EntryServlet.java": _servlet("", '''        Job job = new Job(v);
         resp.getWriter().println(job.go());''', "import com.acme.build.Job;\n"),
     "src/com/acme/build/Job.java": '''package com.acme.build;
@@ -1416,8 +1422,13 @@ public class Job {
 }
 ''',
 }
+case("constructor_stores_request_data_in_field", _CONSTRUCTOR_STORES_REQUEST_DATA_IN_FIELD, {
+    path: text.replace('Job job = new Job(v);', 'Job job = new Job("nightly");').replace("  // frame-expect: CWE-78", "")
+    for path, text in _CONSTRUCTOR_STORES_REQUEST_DATA_IN_FIELD.items()
+})
 
-KNOWN_GAPS["static_factory_chained_call_in_other_file"] = {
+# A static factory returns the project class; a method is called on the result in one chain.
+_STATIC_FACTORY_CHAIN = {
     "src/com/acme/web/EntryServlet.java": _servlet("", '''        resp.getWriter().println(Tool.of("convert").run(v));''', "import com.acme.build.Tool;\n"),
     "src/com/acme/build/Tool.java": '''package com.acme.build;
 
@@ -1437,6 +1448,10 @@ public class Tool {
 }
 ''',
 }
+case("static_factory_chained_call_in_other_file", _STATIC_FACTORY_CHAIN, {
+    path: text.replace('Tool.of("convert").run(v)', 'Tool.of("convert").run("report.pdf")').replace("  // frame-expect: CWE-78", "")
+    for path, text in _STATIC_FACTORY_CHAIN.items()
+})
 
 # 20 -- servlet filter wraps the request, servlet uses what the filter stored
 _FILTER = '''package com.acme.web;
@@ -1477,7 +1492,8 @@ public class TenantServlet extends HttpServlet {
     }
 }
 '''
-KNOWN_GAPS["filter_sets_attribute_servlet_reads"] = {
+# A servlet Filter stores a request header as a request attribute; the servlet reads it.
+_FILTER_SETS_ATTRIBUTE = {
     "src/com/acme/web/TenantFilter.java": _FILTER,
     "src/com/acme/web/TenantServlet.java": _TENANT_SERVLET,
     "src/com/acme/repo/TenantStore.java": '''package com.acme.repo;
@@ -1500,8 +1516,14 @@ public class TenantStore {
 }
 ''',
 }
+case("filter_sets_attribute_servlet_reads", _FILTER_SETS_ATTRIBUTE, {
+    path: text.replace('request.setAttribute("tenant", req.getHeader("X-Tenant"));',
+                       'request.setAttribute("tenant", "default");').replace("  // frame-expect: CWE-89", "")
+    for path, text in _FILTER_SETS_ATTRIBUTE.items()
+})
 
-KNOWN_GAPS["two_implementations_behind_interface_with_qualifier"] = {
+# Two implementations behind a Spring interface (`@Qualifier`): a call through it may reach either.
+_TWO_IMPLS_QUALIFIER = {
     "src/com/acme/api/DirectoryController.java": _SVC_CTRL.replace("private final LookupService lookup;", "private final LookupService lookup;").replace(
         "public DirectoryController(LookupService lookup)", "public DirectoryController(@Qualifier(\"ldap\") LookupService lookup)").replace(
         "import org.springframework.beans.factory.annotation.Autowired;", "import org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.beans.factory.annotation.Qualifier;"),
@@ -1538,3 +1560,7 @@ public class LdapLookupService implements LookupService {
 }
 ''',
 }
+case("two_implementations_behind_interface_with_qualifier", _TWO_IMPLS_QUALIFIER, {
+    path: text.replace("return lookup.find(uid);", 'return lookup.find("staff");').replace("  // frame-expect: CWE-90", "")
+    for path, text in _TWO_IMPLS_QUALIFIER.items()
+})

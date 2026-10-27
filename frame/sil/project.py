@@ -124,6 +124,9 @@ class FileModule:
     java_abstract: Set[str] = field(default_factory=set)
     java_mentions: Set[str] = field(default_factory=set)
     java_methods: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)   # type -> method -> procedures
+    cs_extensions: Dict[str, List[str]] = field(default_factory=dict)   # C# extension method name -> procedures
+    # Python `run = functools.partial(shell, "echo")`: name -> (function text, positional args bound)
+    partials: Dict[str, Tuple[str, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -321,19 +324,25 @@ class ProjectIndex:
         files of the project types it mentions; record the implementers of each type."""
         self.java_types: Dict[str, Tuple[str, str]] = {}
         self.java_by_package: Dict[str, Dict[str, Tuple[str, str]]] = {}
-        ambiguous: Set[Tuple[str, str]] = set()
-        for mod in self.modules.values():
+        # A C# type declared in several files is one `partial` class: (first file, name)
+        # -> every part, so a method declared in any part is found.
+        self.java_partials: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+        parts: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+        for mod in sorted(self.modules.values(), key=lambda m: m.key):
             if mod.family != "java":
                 continue
             for name in mod.java_kinds:
-                fqn = f"{mod.package}.{name}" if mod.package else name
-                self.java_types[fqn] = (mod.key, name)
-                pkg = self.java_by_package.setdefault(mod.package, {})
-                if name in pkg and pkg[name] != (mod.key, name):
-                    ambiguous.add((mod.package, name))
-                pkg[name] = (mod.key, name)
-        for pkg, name in ambiguous:                          # two files declare it: unresolvable by name
-            self.java_by_package[pkg].pop(name, None)
+                parts.setdefault((mod.package, name), []).append((mod.key, name))
+        for (package, name), decls in parts.items():
+            fqn = f"{package}.{name}" if package else name
+            pkg = self.java_by_package.setdefault(package, {})
+            if len(decls) > 1 and not (package or "").startswith(self._CS):
+                self.java_types[fqn] = decls[-1]             # two Java files declare it:
+                continue                                     # unresolvable by name
+            self.java_types[fqn] = pkg[name] = decls[0]
+            if len(decls) > 1:
+                for d in decls:
+                    self.java_partials[d] = decls
         self.java_implementers: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
         for mod in self.modules.values():
             if mod.family != "java":
@@ -467,7 +476,23 @@ class ProjectIndex:
             return True
         return module_root.parent == self.root and module_root.name in _PY_SOURCE_DIRS
 
+    @staticmethod
+    def _python_partial(node: Any, partial_names: Set[str]) -> Optional[Tuple[str, int]]:
+        """(function, positional arguments bound) for `functools.partial(f, a, b)`; None for
+        anything else, or when a keyword argument makes the parameter mapping unclear."""
+        if node is None or node.type != "call" or _text(node.child_by_field_name("function")) not in partial_names:
+            return None
+        args = [a for a in (node.child_by_field_name("arguments") or node).named_children]
+        if not args or any(a.type in ("keyword_argument", "list_splat", "dictionary_splat") for a in args) \
+                or args[0].type not in ("identifier", "attribute"):
+            return None
+        return _text(args[0]), len(args) - 1
+
     def _read_python(self, mod: FileModule, root: Any) -> None:
+        partial_names = {"functools.partial"} | (
+            {"partial"} if any(st.type == "import_from_statement" and _text(st.child_by_field_name("module_name")) == "functools"
+                               and "partial" in {_text(n) for n in st.children_by_field_name("name")}
+                               for st in root.children) else set())
         for st in root.children:                      # what `from m import *` would bring in
             inner = st.named_children[-1] if st.type == "decorated_definition" and st.named_children else st
             if inner.type in ("function_definition", "class_definition"):
@@ -482,6 +507,9 @@ class ProjectIndex:
                                          if x.type == "string"]
                     elif left.isidentifier():
                         mod.defined.add(left)
+                        bound = self._python_partial(right, partial_names)
+                        if bound is not None:
+                            mod.partials[left] = bound
         stack = [root]
         while stack:
             node = stack.pop()
@@ -594,6 +622,13 @@ class ProjectIndex:
                         if owner is not None and "." not in receiver:
                             for prefix in ("self", "cls"):
                                 self._evidence(mod, owner, f"{prefix}.{receiver}",
+                                               self._dotted(value.child_by_field_name("function")))
+                            # In the class body itself (`objects = PostManager()`), it is
+                            # also `Post.objects` to any code that names the class.
+                            body = node.parent.parent if node.parent is not None else None
+                            if body is not None and body.type == "block" and body.parent is not None \
+                                    and body.parent.type == "class_definition":
+                                self._evidence(mod, None, f"{owner}.{receiver}",
                                                self._dotted(value.child_by_field_name("function")))
             elif t in ("typed_parameter", "typed_default_parameter"):
                 nm = node.child_by_field_name("name") or (node.children[0] if node.children else None)
@@ -832,6 +867,12 @@ class ProjectIndex:
                         ctor = receiver
                     self._evidence(mod, owner, receiver, self._js_ctor_name(val))
                     self._evidence(mod, owner, receiver, self._ts_type(node.child_by_field_name("type")))
+                    if val is not None and val.type == "object":   # `{ reporter: new Reporter() }`
+                        for p in val.named_children:
+                            key = p.child_by_field_name("key") if p.type == "pair" else None
+                            if key is not None and key.type in ("property_identifier", "string"):
+                                self._evidence(mod, owner, f"{receiver}.{_text(key).strip(chr(39) + chr(34))}",
+                                               self._js_ctor_name(p.child_by_field_name("value")))
             elif t == "assignment_expression":
                 left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
                 receiver = self._dotted(left)
@@ -907,6 +948,16 @@ class ProjectIndex:
             elif c.type == "identifier" and is_default:
                 mod.exports[DEFAULT] = _text(c)
 
+    def _required_module(self, mod: FileModule, node: Any) -> Optional[str]:
+        """The project file `require("<relative spec>")` loads, if `node` is that call."""
+        if node is None or node.type != "call_expression":
+            return None
+        fn, args = node.child_by_field_name("function"), node.child_by_field_name("arguments")
+        if fn is None or _text(fn) != "require" or args is None or len(args.named_children) != 1 \
+                or args.named_children[0].type != "string":
+            return None
+        return self._resolve_js(mod, _text(args.named_children[0])[1:-1])
+
     def _js_assignment_export(self, mod: FileModule, st: Any) -> None:
         for assign in st.children:
             if assign.type != "assignment_expression":
@@ -916,9 +967,18 @@ class ProjectIndex:
                 continue
             target = _text(left)
             if target == "module.exports":
+                required = self._required_module(mod, right)
+                if required is not None:              # `module.exports = require("./query")`
+                    mod.star_reexports.append(required)
+                    mod.imports.add(required)
                 if right.type == "object":
                     for p in right.children:
-                        if p.type == "shorthand_property_identifier":
+                        spread = self._required_module(mod, p.named_children[0]) \
+                            if p.type == "spread_element" and p.named_children else None
+                        if spread is not None:        # `{ ...require("./query") }`
+                            mod.star_reexports.append(spread)
+                            mod.imports.add(spread)
+                        elif p.type == "shorthand_property_identifier":
                             mod.exports[_text(p)] = _text(p)
                         elif p.type == "pair":
                             key, val = p.child_by_field_name("key"), p.child_by_field_name("value")
@@ -955,8 +1015,10 @@ class ProjectIndex:
             mod.java_methods = {}
             for name, p in procedures.items():
                 cls, simple = getattr(p, "class_name", None), getattr(p, "simple_name", name)
-                if cls and not simple.startswith("<"):
+                if cls and (simple == "<init>" or not simple.startswith("<")):
                     mod.java_methods.setdefault(cls.rsplit(".", 1)[-1], {}).setdefault(simple, []).append(name)
+                if getattr(p, "is_extension", False):
+                    mod.cs_extensions.setdefault(simple, []).append(name)
             return
         if mod.family == "python":
             mod.procs = {name for name, p in procedures.items()
@@ -1062,6 +1124,12 @@ class ProjectIndex:
                     if found is None:                 # `import C from './c'; C.m()`: the default class
                         cls = self.lookup_class(mod.specs[spec], DEFAULT)
                         found = self._find_method(cls, member) if cls else None
+                    if found is None:                 # `module.exports = new Mailer()`: its instance
+                        target = self.modules.get(mod.specs[spec])
+                        texts = target.receiver_types.get((None, "module.exports")) if target else None
+                        classes = {self.resolve_class(target.key, t) for t in texts or ()}
+                        if len(classes) == 1 and None not in classes:
+                            found = self._find_method(next(iter(classes)), member)
                     if found is not None:
                         return found
         b = mod.bindings.get(name)
@@ -1211,8 +1279,28 @@ class ProjectIndex:
             if found is not None and found[1] in self.modules[found[0]].static_procs:
                 return found
             return None
-        cls = self._receiver_class(mod, receiver, caller_class)
+        cls = self._receiver_class(mod, receiver, caller_class) \
+            or self._imported_instance_class(mod, receiver)
         return self._find_method(cls, method) if cls else None
+
+    def _imported_instance_class(self, mod: FileModule, receiver: str) -> Optional[Tuple[str, str]]:
+        """The class of an instance another module builds at its top level and this
+        one imports: Python `repo = Repo()` then `from shop.repo import repo`; JS
+        `module.exports = new Mailer()` then `const mailer = require("./mailer")`."""
+        head, _, rest = receiver.partition(".")       # `container.reporter`: a property of it
+        b = mod.bindings.get(head)
+        target = self.modules.get(b.file) if b is not None else None
+        if target is None:
+            return None
+        name = b.symbol if b.symbol is not None else (
+            "module.exports" if target.family == "javascript" else None)
+        if name and rest:
+            name = f"{name}.{rest}"
+        texts = target.receiver_types.get((None, name)) if name else None
+        if not texts:
+            return None
+        classes = {self.resolve_class(target.key, t) for t in texts}
+        return next(iter(classes)) if len(classes) == 1 and None not in classes else None
 
     def _module_of(self, b: Binding) -> Optional[str]:
         """The file a binding stands for when used as `name.member`: the module
@@ -1384,6 +1472,12 @@ class ProjectContext:
         if cls in seen:
             return None
         seen.add(cls)
+        # A C# partial class: the part that declares the method.
+        for part in self.index.java_partials.get(cls, ()):
+            part_mod = self.index.modules.get(part[0])
+            if part_mod is not None and part_mod.java_methods.get(part[1], {}).get(method):
+                cls = part
+                break
         file, name = cls
         mod, program = self.index.modules.get(file), self.programs.get(file)
         if mod is None or program is None:
@@ -1400,6 +1494,8 @@ class ProjectContext:
                 return None                         # several overloads and nothing to choose by
             proc = program.resolve_java_call(name, method, arg_types, assume_closed=True)
             return (file, proc.name) if proc is not None else None
+        if method in ("<init>", "ctor"):            # constructors are not inherited
+            return None
         for sup in self.index.java_supertypes(cls):
             found = self._java_method(sup, method, arg_types, seen)
             if found is not None:
@@ -1409,6 +1505,59 @@ class ProjectContext:
             if len(impls) == 1:
                 return impls[0]
         return None
+
+    def resolve_partial(self, key: str, name: str) -> Optional[Tuple[ProcRef, int]]:
+        """`run_echo(x)` where `run_echo = functools.partial(shell, "echo")` (in this
+        file or imported): the wrapped function and how many arguments it binds."""
+        mod = self.index.modules.get(key)
+        if mod is None or mod.family != "python" or "." in name:
+            return None
+        home, symbol = (key, name) if name in mod.partials else (None, None)
+        if home is None:
+            b = mod.bindings.get(name)
+            if b is None or b.symbol is None:
+                return None
+            home, symbol = b.file, b.symbol
+        target = self.index.modules.get(home)
+        if target is None or symbol not in target.partials:
+            return None
+        func, n = target.partials[symbol]
+        ref = (home, func) if func in target.procs else self.index.lookup_symbol(home, func)
+        program = self.programs.get(ref[0]) if ref is not None else None
+        return (ref, n) if program is not None and ref[1] in program.procedures else None
+
+    def resolve_extension(self, key: str, method: str, nargs: int) -> Optional[ProcRef]:
+        """The C# extension method `x.method(...)` calls from file `key`: one declared in
+        a namespace that file can see (its own, enclosing, or a `using`), taking the
+        receiver plus `nargs` arguments. None unless exactly one fits."""
+        mod = self.index.modules.get(key)
+        if mod is None or not (mod.package or "").startswith(self.index._CS):
+            return None
+        visible = {mod.package, *mod.java_wildcards}
+        found = []
+        for other in self.index.modules.values():
+            if other.package not in visible:
+                continue
+            program = self.programs.get(other.key)
+            for name in other.cs_extensions.get(method, []):
+                if program is not None and name in program.procedures \
+                        and _arity_fits(program.procedures[name], nargs + 1):
+                    found.append((other.key, name))
+        return found[0] if len(found) == 1 else None
+
+    def java_dispatch_targets(self, key: str, class_name: str, method: str,
+                              arg_types: Optional[List[Optional[str]]] = None) -> List[ProcRef]:
+        """Every project method a call through `class_name` may run: the one
+        `resolve_java_call` settles on, else -- for an interface or abstract type that
+        several project classes implement -- each implementation (virtual dispatch)."""
+        one = self.resolve_java_call(key, class_name, method, arg_types)
+        if one is not None:
+            return [one]
+        cls = self.index.resolve_java_type(key, class_name)
+        mod = self.index.modules.get(cls[0]) if cls is not None else None
+        if mod is None or not (mod.java_kinds.get(cls[1]) == "interface" or cls[1] in mod.java_abstract):
+            return []
+        return self._java_implementations(cls, method, arg_types)
 
     def _java_implementations(self, cls: Tuple[str, str], method: str,
                               arg_types: Optional[List[Optional[str]]]) -> List[ProcRef]:

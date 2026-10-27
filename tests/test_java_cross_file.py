@@ -115,12 +115,15 @@ def test_interface_with_one_implementation(tmp_path):
     assert ("JdbcRepo.java", "CWE-89") in found(tmp_path)
 
 
-def test_interface_with_two_implementations_is_not_guessed(tmp_path):
+def test_interface_with_two_implementations_dispatches_to_each(tmp_path):
+    # A call through the interface may run either implementation: the argument's taint
+    # reaches both, and only the one with a sink reports. The call's result is not
+    # taken from either (default argument->result propagation).
     write(tmp_path, {"repo/Repo.java": IFACE, "repo/JdbcRepo.java": IMPL.format(name="JdbcRepo"),
                      "repo/MemRepo.java": IMPL.format(name="MemRepo").replace("executeUpdate", "toString"),
                      "web/Web.java": web(imports="import com.app.repo.Repo;", fields="    private Repo dao;",
                                          call="dao.delete(v);")})
-    assert not found(tmp_path)
+    assert found(tmp_path) == {("JdbcRepo.java", "CWE-89")}
 
 
 def test_method_inherited_from_a_project_base_class(tmp_path):

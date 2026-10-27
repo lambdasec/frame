@@ -699,3 +699,132 @@ app.get("/e", (req, res) => {
 });
 ''',
 })
+
+# A constructor stores request data in a field; another method of the object reaches a sink with it.
+case("constructor_stores_request_data_in_field", {
+    "src/job.js": '''const { execSync } = require("child_process");
+
+class Job {
+  constructor(target) {
+    this.target = target;
+  }
+
+  go() {
+    return execSync("backup " + this.target).toString(); // frame-expect: CWE-78
+  }
+}
+
+module.exports = Job;
+''',
+    "src/app.js": '''const express = require("express");
+const Job = require("./job");
+
+const app = express();
+
+app.get("/backup", (req, res) => {
+  const job = new Job(<<req.query.target||"nightly">>);
+  res.send(job.go());
+});
+''',
+})
+
+# Middleware registered with `app.use` sets `req.filter` from the query; a handler of the same app reads it.
+case("middleware_chain_sets_req_field", {
+    "src/middleware.js": '''function parseFilter(req, res, next) {
+  req.filter = req.query.filter;
+  next();
+}
+
+module.exports = { parseFilter };
+''',
+    "src/app.js": '''const express = require("express");
+const mysql = require("mysql");
+const { parseFilter } = require("./middleware");
+
+const app = express();
+const db = mysql.createConnection({ host: "localhost" });
+
+app.use(parseFilter);
+
+app.get("/items", (req, res) => {
+  db.query(<<"SELECT * FROM items WHERE tag = '" + req.filter + "'"||"SELECT * FROM items WHERE tag = ?", [req.filter]>>, (err, rows) => { // frame-expect: CWE-89
+    res.json(rows);
+  });
+});
+''',
+})
+
+# A module that exports an instance of its class (`module.exports = new Mailer()`).
+case("module_exports_singleton_instance", {
+    "src/mailer.js": '''const { exec } = require("child_process");
+
+class Mailer {
+  send(to, subject) {
+    exec(<<`mail -s "${subject}" ${to}`||`mail -s "${subject}" ` + require("shell-quote").quote([to])>>); // frame-expect: CWE-78
+  }
+}
+
+module.exports = new Mailer();
+''',
+    "src/app.js": '''const express = require("express");
+const mailer = require("./mailer");
+
+const app = express();
+
+app.post("/mail", (req, res) => {
+  mailer.send(req.body.to, "hello");
+  res.send("sent");
+});
+''',
+})
+
+# A CommonJS barrel: `module.exports = { ...require('./query') }` re-exports everything query exports.
+case("cjs_spread_require_barrel", {
+    "src/db/query.js": '''function findUser(db, name) {
+  return db.query(<<"SELECT * FROM users WHERE name = '" + name + "'"||"SELECT * FROM users WHERE name = ?", [name]>>); // frame-expect: CWE-89
+}
+
+module.exports = { findUser };
+''',
+    "src/db/index.js": '''module.exports = { ...require("./query") };
+''',
+    "src/app.js": '''const express = require("express");
+const mysql = require("mysql");
+const { findUser } = require("./db");
+
+const app = express();
+const conn = mysql.createConnection({ host: "localhost" });
+
+app.get("/user", (req, res) => {
+  findUser(conn, req.query.name);
+  res.send("ok");
+});
+''',
+})
+
+# An instance held in an exported object literal (`container.reporter`), a hand-rolled DI container.
+case("inversify_style_di_container", {
+    "src/container.ts": '''import { Reporter } from "./reporter";
+
+export const container = {
+  reporter: new Reporter(),
+};
+''',
+    "src/reporter.ts": '''import { execSync } from "child_process";
+
+export class Reporter {
+  render(title: string): string {
+    return execSync(<<`report --title ${title}`||["report", "--title", title].map((p) => JSON.stringify(p)).join(" ")>>).toString(); // frame-expect: CWE-78
+  }
+}
+''',
+    "src/app.ts": '''import express from "express";
+import { container } from "./container";
+
+const app = express();
+
+app.get("/report", (req, res) => {
+  res.send(container.reporter.render(req.query.title as string));
+});
+''',
+})

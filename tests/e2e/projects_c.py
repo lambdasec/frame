@@ -1040,3 +1040,403 @@ int main(int argc, char **argv)
 }
 ''',
 })
+
+
+# A constant allowlist checked with strcmp before the value reaches the shell.
+case("strcmp_allowlist_before_system", {
+    "cgi/level.c": r'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void)
+{
+    const char *term = getenv("QUERY_STRING");
+    char cmd[256];
+@@<<
+    if (term == NULL) {
+        return 1;
+    }
+@@==
+    if (term == NULL || (strcmp(term, "error") != 0 && strcmp(term, "warn") != 0)) {
+        return 1;
+    }
+@@>>
+    snprintf(cmd, sizeof(cmd), "grep -c %s /var/log/app.log", term);
+    return system(cmd);  // frame-expect: CWE-78
+}
+''',
+})
+
+# A character-set check (strspn over letters, digits, dot, hyphen) before popen.
+case("strspn_charset_before_popen", {
+    "cgi/ping.c": r'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void)
+{
+    const char *host = getenv("TARGET_HOST");
+    char cmd[256];
+@@<<
+    if (host == NULL) {
+        return 1;
+    }
+@@==
+    if (host == NULL || strspn(host, "abcdefghijklmnopqrstuvwxyz0123456789.-") != strlen(host)) {
+        return 1;
+    }
+@@>>
+    snprintf(cmd, sizeof(cmd), "ping -c 1 %s", host);
+    FILE *fp = popen(cmd, "r");  // frame-expect: CWE-78
+    if (fp != NULL) {
+        pclose(fp);
+    }
+    return 0;
+}
+''',
+})
+
+# A key looked up in a table of literals: the command uses the table's value, never the key.
+case("map_allowlist_before_std_system", {
+    "src/backup.cpp": r'''#include <cstdlib>
+#include <map>
+#include <string>
+
+int run_backup()
+{
+    const char *target = std::getenv("BACKUP_TARGET");
+    if (target == nullptr) {
+        return 1;
+    }
+    static const std::map<std::string, std::string> kTargets = {{"home", "/home"}, {"etc", "/etc"}};
+    auto it = kTargets.find(target);
+    if (it == kTargets.end()) {
+        return 2;
+    }
+@@<<
+    std::string cmd = std::string("tar czf /backups/out.tgz ") + target;
+@@==
+    std::string cmd = "tar czf /backups/out.tgz " + it->second;
+@@>>
+    return std::system(cmd.c_str());  // frame-expect: CWE-78
+}
+''',
+})
+
+# A URL that must start with a fixed scheme://host/ prefix (strncmp) before curl fetches it.
+case("prefix_allowlist_before_curl", {
+    "src/relay.c": r'''#include <curl/curl.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define ALLOWED "https://api.partner.example/"
+
+void relay(int client)
+{
+    char url[512];
+    ssize_t n = recv(client, url, sizeof(url) - 1, 0);
+    if (n <= 0) {
+        return;
+    }
+    url[n] = '\0';
+@@<<
+@@==
+    if (strncmp(url, ALLOWED, strlen(ALLOWED)) != 0) {
+        return;
+    }
+@@>>
+    CURL *curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, url);  // frame-expect: CWE-918
+    curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+}
+''',
+})
+
+# A number parsed with atoi before it is formatted into the URL.
+case("nested_atoi_in_snprintf_argument", {
+    "src/items.c": r'''#include <curl/curl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+
+void relay(int client)
+{
+    char req[512];
+    ssize_t n = recv(client, req, sizeof(req) - 1, 0);
+    if (n <= 0) {
+        return;
+    }
+    req[n] = '\0';
+    char url[600];
+@@<<
+    snprintf(url, sizeof(url), "%s", req);
+@@==
+    snprintf(url, sizeof(url), "https://api.partner.example/items/%d", atoi(req));
+@@>>
+    CURL *curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, url);  // frame-expect: CWE-918
+    curl_easy_perform(curl);
+}
+''',
+})
+
+# A length read from the wire, checked against the destination's capacity before memcpy.
+case("memcpy_length_checked_against_capacity", {
+    "src/msg.c": r'''#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+
+#define MAX_BODY 256
+
+struct msg {
+    uint8_t body[MAX_BODY];
+    uint16_t len;
+};
+
+int read_msg(int fd, struct msg *out)
+{
+    uint8_t hdr[2];
+    uint8_t payload[4096];
+    if (read(fd, hdr, 2) != 2) {
+        return -1;
+    }
+    uint16_t len = (uint16_t)((hdr[0] << 8) | hdr[1]);
+    if (read(fd, payload, sizeof(payload)) < 0) {
+        return -1;
+    }
+@@<<
+@@==
+    if (len > MAX_BODY) {
+        return -1;
+    }
+@@>>
+    memcpy(out->body, payload, len);  // frame-expect: CWE-120
+    out->len = len;
+    return 0;
+}
+''',
+})
+
+# Attacker data passed into a helper function that builds and runs the SQL (C interprocedural taint).
+case("helper_gets_tainted_sql", {
+    "cgi/notes.c": r'''#include <sqlite3.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static int find_notes(sqlite3 *db, const char *owner)
+{
+    char sql[512];
+    snprintf(sql, sizeof(sql), "SELECT body FROM notes WHERE owner = '%s'", owner);
+    return sqlite3_exec(db, sql, NULL, NULL, NULL);  // frame-expect: CWE-89
+}
+
+int main(void)
+{
+    sqlite3 *db;
+    if (sqlite3_open("notes.db", &db) != SQLITE_OK) {
+        return 1;
+    }
+@@<<
+    const char *owner = getenv("REMOTE_USER");
+@@==
+    const char *owner = "anonymous";
+@@>>
+    return find_notes(db, owner);
+}
+''',
+})
+
+# Attacker data passed into a helper that opens a file under a fixed directory.
+case("helper_gets_tainted_path", {
+    "cgi/files.c": r'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <libgen.h>
+
+static int serve(const char *name)
+{
+    char full[512];
+    snprintf(full, sizeof(full), "/srv/files/%s", name);
+    FILE *fp = fopen(full, "r");  // frame-expect: CWE-22
+    if (fp == NULL) {
+        return 404;
+    }
+    fclose(fp);
+    return 200;
+}
+
+int main(void)
+{
+@@<<
+    const char *p = getenv("PATH_INFO");
+@@==
+    const char *p = "index.html";
+@@>>
+    return serve(p);
+}
+''',
+})
+
+# Attacker text formatted with an unbounded %s into a smaller stack buffer.
+case("sprintf_untrusted_into_small_buffer", {
+    "src/banner.c": r'''#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+void send_banner(int fd)
+{
+    char banner[64];
+    char name[256];
+    ssize_t n = read(fd, name, sizeof(name) - 1);
+    if (n <= 0) {
+        return;
+    }
+    name[n] = '\0';
+@@<<
+    sprintf(banner, "hello %s\n", name);  // frame-expect: CWE-120
+@@==
+    snprintf(banner, sizeof(banner), "hello %s\n", name);
+@@>>
+    write(fd, banner, strlen(banner));
+}
+''',
+})
+
+# A byte from the network indexes a file-scope table.
+case("tainted_index_into_global_table", {
+    "src/tally.c": r'''#include <stdint.h>
+#include <sys/socket.h>
+
+#define NUM_OPS 8
+
+static int per_op[NUM_OPS];
+
+int tally(int fd)
+{
+    uint8_t msg[16];
+    if (recv(fd, msg, sizeof(msg), 0) < 1) {
+        return -1;
+    }
+    int op = msg[0];
+@@<<
+@@==
+    if (op < 0 || op >= NUM_OPS) {
+        return -1;
+    }
+@@>>
+    per_op[op] += 1;  // frame-expect: CWE-787
+    return per_op[0];
+}
+''',
+})
+
+# A buffer freed on an error branch that returns, and freed again only on the other path.
+case("free_in_branch_then_free_on_other_path", {
+    "src/header.c": r'''#include <stdlib.h>
+#include <string.h>
+
+int parse_header(const char *line)
+{
+    char *copy = strdup(line);
+    if (copy == NULL) {
+        return -1;
+    }
+    char *colon = strchr(copy, ':');
+    if (colon == NULL) {
+        free(copy);
+@@<<
+@@==
+        return -1;
+@@>>
+    }
+    *colon = '\0';
+    free(copy);  // frame-expect: CWE-415
+    return 0;
+}
+''',
+})
+
+# A member allocated with new[] in the constructor's initializer list and released by the destructor.
+case("member_array_new_scalar_delete", {
+    "src/framebuffer.cpp": r'''#include <cstddef>
+
+class FrameBuffer {
+public:
+    explicit FrameBuffer(std::size_t n) : data_(new unsigned char[n]), size_(n) {}
+@@<<
+    ~FrameBuffer() { delete data_; }  // frame-expect: CWE-762
+@@==
+    ~FrameBuffer() { delete[] data_; }
+@@>>
+    std::size_t size() const { return size_; }
+
+private:
+    unsigned char *data_;
+    std::size_t size_;
+};
+''',
+})
+
+# A loop that rejects the value at the first character that is not alphanumeric.
+case("isalnum_loop_before_system", {
+    "src/job.c": r'''#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int run(void)
+{
+    const char *job = getenv("JOB_NAME");
+    char cmd[256];
+    if (job == NULL) {
+        return -1;
+    }
+@@<<
+@@==
+    for (const char *p = job; *p; p++) {
+        if (!isalnum((unsigned char)*p)) {
+            return -1;
+        }
+    }
+@@>>
+    snprintf(cmd, sizeof(cmd), "run-job %s", job);
+    return system(cmd);  // frame-expect: CWE-78
+}
+''',
+})
+
+# A session token built from rand() in a helper and set as a cookie by the caller (CWE-338).
+case("rand_for_session_token", {
+    "cgi/session.c": r'''#include <stdio.h>
+#include <stdlib.h>
+#include <sys/random.h>
+#include <time.h>
+
+static void new_session_token(char *out, size_t len)
+{
+@@<<
+    srand((unsigned)time(NULL));
+    for (size_t i = 0; i + 1 < len; i++) {
+        out[i] = "0123456789abcdef"[rand() % 16];
+    }
+@@==
+    unsigned char bytes[64];
+    getrandom(bytes, len, 0);
+    for (size_t i = 0; i + 1 < len; i++) {
+        out[i] = "0123456789abcdef"[bytes[i] % 16];
+    }
+@@>>
+    out[len - 1] = '\0';
+}
+
+int main(void)
+{
+    char sid[33];
+    new_session_token(sid, sizeof(sid));
+    printf("Set-Cookie: session=%s; HttpOnly\r\n", sid);  // frame-expect: CWE-338
+    printf("Content-Type: text/plain\r\n\r\nok\n");
+    return 0;
+}
+''',
+})
