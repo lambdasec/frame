@@ -1,0 +1,39 @@
+{
+ "case": "go",
+ "ecosystem": "Go",
+ "pip_report": false,
+ "packages": [
+  [
+   "github.com/davecgh/go-spew",
+   "1.1.1"
+  ],
+  [
+   "github.com/google/uuid",
+   "1.4.0"
+  ],
+  [
+   "github.com/pmezard/go-difflib",
+   "1.0.0"
+  ],
+  [
+   "github.com/stretchr/testify",
+   "1.8.4"
+  ],
+  [
+   "golang.org/x/text",
+   "0.14.0"
+  ],
+  [
+   "gopkg.in/yaml.v3",
+   "3.0.1"
+  ]
+ ],
+ "direct": [
+  "github.com/google/uuid",
+  "github.com/stretchr/testify",
+  "golang.org/x/text"
+ ],
+ "dev": null,
+ "relation": "equal",
+ "note": "go.mod (Go 1.17+) lists every module the build needs; checked against `go list -deps -test`"
+}

@@ -1,0 +1,45 @@
+{
+ "case": "dotnet-lock",
+ "ecosystem": "NuGet",
+ "pip_report": false,
+ "packages": [
+  [
+   "dapper",
+   "2.1.24"
+  ],
+  [
+   "microsoft.build.tasks.git",
+   "8.0.0"
+  ],
+  [
+   "microsoft.sourcelink.common",
+   "8.0.0"
+  ],
+  [
+   "microsoft.sourcelink.github",
+   "8.0.0"
+  ],
+  [
+   "newtonsoft.json",
+   "13.0.1"
+  ],
+  [
+   "serilog",
+   "3.1.1"
+  ],
+  [
+   "serilog.sinks.file",
+   "5.0.0"
+  ]
+ ],
+ "direct": [
+  "dapper",
+  "microsoft.sourcelink.github",
+  "newtonsoft.json",
+  "serilog",
+  "serilog.sinks.file"
+ ],
+ "dev": null,
+ "relation": "equal",
+ "note": "dotnet list does not say which packages are dev only"
+}

@@ -1,0 +1,106 @@
+{
+ "case": "cargo",
+ "ecosystem": "crates.io",
+ "pip_report": false,
+ "packages": [
+  [
+   "aho-corasick",
+   "1.1.5"
+  ],
+  [
+   "diff",
+   "0.1.13"
+  ],
+  [
+   "itoa",
+   "0.4.8"
+  ],
+  [
+   "itoa",
+   "1.0.18"
+  ],
+  [
+   "memchr",
+   "2.8.3"
+  ],
+  [
+   "pretty_assertions",
+   "1.4.1"
+  ],
+  [
+   "proc-macro2",
+   "1.0.107"
+  ],
+  [
+   "quote",
+   "1.0.47"
+  ],
+  [
+   "regex",
+   "1.13.1"
+  ],
+  [
+   "regex-automata",
+   "0.4.18"
+  ],
+  [
+   "regex-syntax",
+   "0.8.11"
+  ],
+  [
+   "serde",
+   "1.0.229"
+  ],
+  [
+   "serde_core",
+   "1.0.229"
+  ],
+  [
+   "serde_derive",
+   "1.0.229"
+  ],
+  [
+   "serde_json",
+   "1.0.154"
+  ],
+  [
+   "syn",
+   "3.0.9"
+  ],
+  [
+   "unicode-ident",
+   "1.0.27"
+  ],
+  [
+   "yansi",
+   "1.0.1"
+  ],
+  [
+   "zmij",
+   "1.0.23"
+  ]
+ ],
+ "direct": [
+  "itoa",
+  "pretty_assertions",
+  "regex",
+  "serde",
+  "serde_json"
+ ],
+ "dev": [
+  [
+   "diff",
+   "0.1.13"
+  ],
+  [
+   "pretty_assertions",
+   "1.4.1"
+  ],
+  [
+   "yansi",
+   "1.0.1"
+  ]
+ ],
+ "relation": "equal",
+ "note": ""
+}

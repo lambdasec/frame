@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- the central version is 13.0.3; this project overrides it -->
+    <PackageReference Include="Newtonsoft.Json" VersionOverride="13.0.1" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+</Project>

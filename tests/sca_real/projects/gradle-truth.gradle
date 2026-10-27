@@ -1,0 +1,31 @@
+// Init script: Gradle's own answer for the harness, independent of the `dependencies` report
+// text. For every resolvable configuration of every project, print the resolved external
+// modules (`FRAME <test|main> group:name:version`) and the first-level ones (`FRAMEDIRECT`).
+// Project components (`project :lib`) are not modules and are not printed.
+allprojects {
+    tasks.register('frameTruth') {
+        doLast {
+            project.configurations.findAll { it.canBeResolved }.each { c ->
+                def scope = c.name.toLowerCase().contains('test') ? 'test' : 'main'
+                def lenient = c.resolvedConfiguration.lenientConfiguration
+                lenient.allModuleDependencies.each { d ->
+                    if (d.moduleVersion != 'unspecified') {
+                        println "FRAME ${scope} ${d.moduleGroup}:${d.moduleName}:${d.moduleVersion}"
+                    }
+                }
+                lenient.firstLevelModuleDependencies.each { d ->
+                    if (d.moduleVersion != 'unspecified') {
+                        println "FRAMEDIRECT ${d.moduleGroup}:${d.moduleName}:${d.moduleVersion}"
+                    } else {
+                        // a project dependency: its own first-level modules are direct for it
+                        d.children.each { k ->
+                            if (k.moduleVersion != 'unspecified') {
+                                println "FRAMEDIRECT ${k.moduleGroup}:${k.moduleName}:${k.moduleVersion}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

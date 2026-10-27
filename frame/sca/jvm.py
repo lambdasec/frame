@@ -73,14 +73,22 @@ def parse_maven_tree(path: str, text: str) -> DependencyFile:
 
 
 def parse_maven_tree_json(path: str, text: str) -> DependencyFile:
-    """`mvn dependency:tree -DoutputType=json` (maven-dependency-plugin 3.7+)."""
+    """`mvn dependency:tree -DoutputType=json` (maven-dependency-plugin 3.7+). A multi-module
+    build with `-DappendOutput=true` writes one JSON document per module, back to back."""
     df = DependencyFile(path, MAVEN, "resolved")
-    try:
-        data = json.loads(text)
-    except ValueError as e:
-        from frame.sca.lockfiles import LockfileError
-        raise LockfileError(f"{path}: {e}") from e
-    roots = data if isinstance(data, list) else [data]
+    roots: list = []
+    decoder, i = json.JSONDecoder(), 0
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            break
+        try:
+            data, i = decoder.raw_decode(text, i)
+        except ValueError as e:
+            from frame.sca.lockfiles import LockfileError
+            raise LockfileError(f"{path}: {e}") from e
+        roots.extend(data if isinstance(data, list) else [data])
 
     def walk(node: dict, parent: Optional[str], depth: int) -> None:
         for child in node.get("children") or []:

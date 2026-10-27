@@ -66,6 +66,79 @@ jobs:
         print('Basic functionality test passed')
         "
 
+  sca-real:
+    # `frame deps` against the real package managers (tests/sca_real/): each tool resolves a
+    # fixture project, lists what it resolved, and Frame's reading must match. Runs on pushes to
+    # main, nightly and on dispatch; on pull requests only when the SCA code or its tests change.
+    # A missing tool fails the job (FRAME_SCA_REAL=1 never skips).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Decide whether this pull request touches SCA
+      id: scope
+      run: |
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        elif git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+            | grep -qE '^(frame/sca/|tests/sca_real/|tests/fixtures/sca/|tests/test_sca_)'; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "No SCA changes in this pull request; skipping the package-manager tests."
+        fi
+    - uses: actions/setup-python@v5
+      if: steps.scope.outputs.run == 'true'
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - uses: actions/setup-java@v4
+      if: steps.scope.outputs.run == 'true'
+      with:
+        distribution: temurin
+        java-version: '21'
+        cache: maven
+        cache-dependency-path: tests/sca_real/projects/maven/**/pom.xml
+    - uses: gradle/actions/setup-gradle@v4
+      if: steps.scope.outputs.run == 'true'
+      with:
+        gradle-version: '8.10.2'
+    - uses: actions/setup-node@v4
+      if: steps.scope.outputs.run == 'true'
+      with:
+        node-version: '20'
+    - uses: actions/setup-dotnet@v4
+      if: steps.scope.outputs.run == 'true'
+      with:
+        dotnet-version: '8.0.x'
+    - uses: actions/setup-go@v5
+      if: steps.scope.outputs.run == 'true'
+      with:
+        go-version: '1.22'
+        cache: false
+    - uses: astral-sh/setup-uv@v5
+      if: steps.scope.outputs.run == 'true'
+    - uses: swift-actions/setup-swift@v2
+      if: steps.scope.outputs.run == 'true'
+      with:
+        swift-version: '6.0'
+    - name: Install
+      if: steps.scope.outputs.run == 'true'
+      run: |
+        corepack enable
+        pip install -e ".[dev]"
+        for t in npm corepack uvx mvn gradle dotnet go cargo swift; do printf '%-9s' "$t"; command -v "$t"; done
+    - name: Frame against the package managers
+      if: steps.scope.outputs.run == 'true'
+      env:
+        FRAME_SCA_REAL: '1'
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      run: python -m pytest tests/test_sca_real_tools.py -v --tb=short
+
   benchmarks:
     # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).
     # Runs nightly and on manual dispatch, plus on pushes to main.

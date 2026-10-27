@@ -1,0 +1,19 @@
+{
+ "case": "swift",
+ "ecosystem": "SwiftURL",
+ "pip_report": false,
+ "packages": [
+  [
+   "github.com/apple/swift-argument-parser",
+   "1.8.2"
+  ],
+  [
+   "github.com/apple/swift-collections",
+   "1.0.6"
+  ]
+ ],
+ "direct": null,
+ "dev": null,
+ "relation": "equal",
+ "note": "Package.resolved does not say which packages are direct"
+}

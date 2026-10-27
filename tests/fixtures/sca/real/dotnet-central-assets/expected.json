@@ -1,0 +1,27 @@
+{
+ "case": "dotnet-central-assets",
+ "ecosystem": "NuGet",
+ "pip_report": false,
+ "packages": [
+  [
+   "newtonsoft.json",
+   "13.0.1"
+  ],
+  [
+   "serilog",
+   "3.1.1"
+  ],
+  [
+   "serilog.sinks.console",
+   "5.0.1"
+  ]
+ ],
+ "direct": [
+  "newtonsoft.json",
+  "serilog",
+  "serilog.sinks.console"
+ ],
+ "dev": null,
+ "relation": "equal",
+ "note": "dotnet list does not say which packages are dev only"
+}

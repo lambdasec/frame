@@ -1,0 +1,254 @@
+{
+  "groupId": "com.example.frame",
+  "artifactId": "parent",
+  "version": "1.0.0",
+  "type": "pom",
+  "scope": "",
+  "classifier": "",
+  "optional": "false"
+}
+{
+  "groupId": "com.example.frame",
+  "artifactId": "api",
+  "version": "1.0.0",
+  "type": "jar",
+  "scope": "",
+  "classifier": "",
+  "optional": "false",
+  "children": [
+    {
+      "groupId": "org.apache.logging.log4j",
+      "artifactId": "log4j-core",
+      "version": "2.14.1",
+      "type": "jar",
+      "scope": "compile",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "org.apache.logging.log4j",
+          "artifactId": "log4j-api",
+          "version": "2.14.1",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    },
+    {
+      "groupId": "org.apache.commons",
+      "artifactId": "commons-text",
+      "version": "1.9",
+      "type": "jar",
+      "scope": "compile",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "org.apache.commons",
+          "artifactId": "commons-lang3",
+          "version": "3.11",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    },
+    {
+      "groupId": "junit",
+      "artifactId": "junit",
+      "version": "4.13.2",
+      "type": "jar",
+      "scope": "test",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "org.hamcrest",
+          "artifactId": "hamcrest-core",
+          "version": "1.3",
+          "type": "jar",
+          "scope": "test",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    }
+    ]
+}
+{
+  "groupId": "com.example.frame",
+  "artifactId": "web",
+  "version": "1.0.0",
+  "type": "jar",
+  "scope": "",
+  "classifier": "",
+  "optional": "false",
+  "children": [
+    {
+      "groupId": "org.springframework",
+      "artifactId": "spring-webmvc",
+      "version": "5.3.30",
+      "type": "jar",
+      "scope": "compile",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-aop",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-beans",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-context",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-core",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false",
+          "children": [
+            {
+              "groupId": "org.springframework",
+              "artifactId": "spring-jcl",
+              "version": "5.3.30",
+              "type": "jar",
+              "scope": "compile",
+              "classifier": "",
+              "optional": "false"
+            }
+            ]
+        },
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-expression",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "org.springframework",
+          "artifactId": "spring-web",
+          "version": "5.3.30",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    },
+    {
+      "groupId": "com.fasterxml.jackson.dataformat",
+      "artifactId": "jackson-dataformat-yaml",
+      "version": "2.13.0",
+      "type": "jar",
+      "scope": "compile",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "org.yaml",
+          "artifactId": "snakeyaml",
+          "version": "1.28",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "com.fasterxml.jackson.core",
+          "artifactId": "jackson-core",
+          "version": "2.13.0",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    },
+    {
+      "groupId": "com.fasterxml.jackson.core",
+      "artifactId": "jackson-databind",
+      "version": "2.15.2",
+      "type": "jar",
+      "scope": "compile",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "com.fasterxml.jackson.core",
+          "artifactId": "jackson-annotations",
+          "version": "2.15.2",
+          "type": "jar",
+          "scope": "compile",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    },
+    {
+      "groupId": "org.mockito",
+      "artifactId": "mockito-core",
+      "version": "5.5.0",
+      "type": "jar",
+      "scope": "test",
+      "classifier": "",
+      "optional": "false",
+      "children": [
+        {
+          "groupId": "net.bytebuddy",
+          "artifactId": "byte-buddy",
+          "version": "1.14.6",
+          "type": "jar",
+          "scope": "test",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "net.bytebuddy",
+          "artifactId": "byte-buddy-agent",
+          "version": "1.14.6",
+          "type": "jar",
+          "scope": "test",
+          "classifier": "",
+          "optional": "false"
+        },
+        {
+          "groupId": "org.objenesis",
+          "artifactId": "objenesis",
+          "version": "3.3",
+          "type": "jar",
+          "scope": "test",
+          "classifier": "",
+          "optional": "false"
+        }
+        ]
+    }
+    ]
+}

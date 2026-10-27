@@ -1,0 +1,27 @@
+{
+  "name": "sahmat",
+  "version": "1.0.0",
+  "description": "simple getter and setter for deep objects",
+  "main": "index.js",
+  "scripts": {
+    "test": "ava"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indatawetrust/sahmat.git"
+  },
+  "keywords": [
+    "object",
+    "getter",
+    "setter"
+  ],
+  "author": "indatawetrust",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/indatawetrust/sahmat/issues"
+  },
+  "homepage": "https://github.com/indatawetrust/sahmat#readme",
+  "devDependencies": {
+    "ava": "^1.4.1"
+  }
+}

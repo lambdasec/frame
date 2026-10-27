@@ -60,6 +60,16 @@ def test_maven_tree_json():
                          ("org.hamcrest:hamcrest-core", "1.3"): (False, True)}
 
 
+def test_maven_tree_json_of_a_multi_module_build_is_one_document_per_module():
+    # `-DappendOutput=true` writes the modules' JSON documents back to back
+    api = {"groupId": "com.acme", "artifactId": "api", "version": "1", "children": [
+        {"groupId": "org.yaml", "artifactId": "snakeyaml", "version": "1.33", "scope": "compile"}]}
+    web = {"groupId": "com.acme", "artifactId": "web", "version": "1", "children": [
+        {"groupId": "junit", "artifactId": "junit", "version": "4.13.2", "scope": "test"}]}
+    df = parse_maven_tree_json("maven_dep_tree.json", json.dumps(api, indent=2) + "\n" + json.dumps(web, indent=2))
+    assert table(df) == {("org.yaml:snakeyaml", "1.33"): (True, False), ("junit:junit", "4.13.2"): (True, True)}
+
+
 GRADLE = """\
 
 ------------------------------------------------------------
