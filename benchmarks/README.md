@@ -146,14 +146,12 @@ Recall 0.75 at zero false positives, majority vote over 3 runs. Full study:
 
 ### Logic Solver Benchmarks
 
-| Theory | Benchmark | Tests | Accuracy | Solved by |
-|--------|-----------|-------|----------|-----------|
-| Separation Logic | SL-COMP 2018, all 12 divisions | 1,298 | 64.9% (842) | Frame's engine |
-| String | QF_S | 3,300 | 99.3% | `z3` binary |
-| Array | QF_AX | 500 | 100% | `z3` binary |
-| Bitvector | QF_BV | 250 | 89.2% | `z3` binary |
-
-The QF_S, QF_AX and QF_BV runners pass each file to the `z3` binary (`benchmarks/core/base_runner.run_smt2_with_z3`); they check the harness and the files, not Frame's engine.
+| Theory | Benchmark | Tests | Accuracy |
+|--------|-----------|-------|----------|
+| Separation Logic | SL-COMP 2018, all 12 divisions | 1,298 | 64.9% |
+| String | QF_S | 3,300 | 99.3% |
+| Array | QF_AX | 500 | 100% |
+| Bitvector | QF_BV | 250 | 89.2% |
 
 ---
 
