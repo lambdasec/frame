@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="356" viewBox="0 0 660 356" role="img" aria-label="Separation logic engine on SL-COMP">
+<title>Separation logic engine on SL-COMP</title>
+<style>
+  .t{font:600 15px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .s{font:12px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e}
+  .l{font:13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .lb{font:600 13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .v{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#59636e}
+  .vb{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#0b5cad}
+  .g{font:600 11px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e;letter-spacing:.06em}
+  .frame{fill:#0b6bcb}.other{fill:#c3c9d1}.track{fill:#eef1f4}.axis{stroke:#8c959f;stroke-width:1}
+  @media (prefers-color-scheme: dark){
+    .t,.l,.lb{fill:#e6edf3}.s,.v,.g{fill:#9198a1}.vb{fill:#6cb6ff}
+    .frame{fill:#4493f8}.other{fill:#4d5560}.track{fill:#1c2128}.axis{stroke:#6e7681}
+  }
+</style>
+<text class="t" x="20" y="30">Separation logic engine on SL-COMP</text><text class="s" x="20" y="50">Every division of the SL-COMP 2018 suite: correct answers against the expected status.</text>
+<text class="lb" x="20" y="87">qf_shls_sat</text>
+<rect class="track" x="170" y="75" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="75" width="400.0" height="16" rx="3"/>
+<text class="vb" x="578" y="87">110/110</text>
+<text class="lb" x="20" y="109">bsl_sat</text>
+<rect class="track" x="170" y="97" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="97" width="400.0" height="16" rx="3"/>
+<text class="vb" x="578" y="109">3/3</text>
+<text class="lb" x="20" y="131">qf_bsl_sat</text>
+<rect class="track" x="170" y="119" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="119" width="373.9" height="16" rx="3"/>
+<text class="vb" x="578" y="131">43/46</text>
+<text class="lb" x="20" y="153">qf_shid_sat</text>
+<rect class="track" x="170" y="141" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="141" width="355.6" height="16" rx="3"/>
+<text class="vb" x="578" y="153">88/99</text>
+<text class="lb" x="20" y="175">qf_shls_entl</text>
+<rect class="track" x="170" y="163" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="163" width="344.6" height="16" rx="3"/>
+<text class="vb" x="578" y="175">255/296</text>
+<text class="lb" x="20" y="197">qf_shidlia_entl</text>
+<rect class="track" x="170" y="185" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="185" width="308.2" height="16" rx="3"/>
+<text class="vb" x="578" y="197">47/61</text>
+<text class="lb" x="20" y="219">qf_bsllia_sat</text>
+<rect class="track" x="170" y="207" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="207" width="283.3" height="16" rx="3"/>
+<text class="vb" x="578" y="219">17/24</text>
+<text class="lb" x="20" y="241">qf_shidlia_sat</text>
+<rect class="track" x="170" y="229" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="229" width="230.3" height="16" rx="3"/>
+<text class="vb" x="578" y="241">19/33</text>
+<text class="lb" x="20" y="263">qf_shlid_entl</text>
+<rect class="track" x="170" y="251" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="251" width="213.3" height="16" rx="3"/>
+<text class="vb" x="578" y="263">32/60</text>
+<text class="lb" x="20" y="285">shid_entl</text>
+<rect class="track" x="170" y="273" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="273" width="208.2" height="16" rx="3"/>
+<text class="vb" x="578" y="285">38/73</text>
+<text class="lb" x="20" y="307">qf_shid_entl</text>
+<rect class="track" x="170" y="295" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="295" width="167.9" height="16" rx="3"/>
+<text class="vb" x="578" y="307">131/312</text>
+<text class="lb" x="20" y="329">shidlia_entl</text>
+<rect class="track" x="170" y="317" width="400" height="16" rx="3"/>
+<rect class="frame" x="170.0" y="317" width="130.4" height="16" rx="3"/>
+<text class="vb" x="578" y="329">59/181</text>
+</svg>

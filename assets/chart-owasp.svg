@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="352" viewBox="0 0 720 352" role="img" aria-label="Accuracy on labelled suites, five languages">
+<title>Accuracy on labelled suites, five languages</title>
+<style>
+  .t{font:600 15px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .s{font:12px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e}
+  .l{font:13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .lb{font:600 13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .v{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#59636e}
+  .vb{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#0b5cad}
+  .g{font:600 11px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e;letter-spacing:.06em}
+  .frame{fill:#0b6bcb}.other{fill:#c3c9d1}.track{fill:#eef1f4}.axis{stroke:#8c959f;stroke-width:1}
+  @media (prefers-color-scheme: dark){
+    .t,.l,.lb{fill:#e6edf3}.s,.v,.g{fill:#9198a1}.vb{fill:#6cb6ff}
+    .frame{fill:#4493f8}.other{fill:#4d5560}.track{fill:#1c2128}.axis{stroke:#6e7681}
+  }
+</style>
+<text class="t" x="20" y="30">Accuracy on labelled suites, five languages</text><text class="s" x="20" y="50">OWASP score = true-positive rate minus false-positive rate. Higher is better.</text>
+<text class="lb" x="20" y="87">Python  ·  OWASP</text>
+<text class="s" x="262" y="87" text-anchor="end">Frame</text>
+<rect class="track" x="270" y="75" width="360" height="16" rx="3"/>
+<rect class="frame" x="330.0" y="75" width="242.7" height="16" rx="3"/>
+<text class="vb" x="638" y="87">+80.9</text>
+<text class="s" x="262" y="109" text-anchor="end">Semgrep</text>
+<rect class="track" x="270" y="97" width="360" height="16" rx="3"/>
+<rect class="other" x="330.0" y="97" width="13.5" height="16" rx="3"/>
+<text class="v" x="638" y="109">+4.5</text>
+<text class="lb" x="20" y="141">Java  ·  OWASP</text>
+<text class="s" x="262" y="141" text-anchor="end">Frame</text>
+<rect class="track" x="270" y="129" width="360" height="16" rx="3"/>
+<rect class="frame" x="330.0" y="129" width="244.5" height="16" rx="3"/>
+<text class="vb" x="638" y="141">+81.5</text>
+<text class="s" x="262" y="163" text-anchor="end">Semgrep</text>
+<rect class="track" x="270" y="151" width="360" height="16" rx="3"/>
+<rect class="other" x="330.0" y="151" width="47.1" height="16" rx="3"/>
+<text class="v" x="638" y="163">+15.7</text>
+<text class="lb" x="20" y="195">C#  ·  IssueBlot.NET</text>
+<text class="s" x="262" y="195" text-anchor="end">Frame</text>
+<rect class="track" x="270" y="183" width="360" height="16" rx="3"/>
+<rect class="frame" x="330.0" y="183" width="240.9" height="16" rx="3"/>
+<text class="vb" x="638" y="195">+80.3</text>
+<text class="s" x="262" y="217" text-anchor="end">Semgrep</text>
+<rect class="track" x="270" y="205" width="360" height="16" rx="3"/>
+<rect class="other" x="330.0" y="205" width="42.6" height="16" rx="3"/>
+<text class="v" x="638" y="217">+14.2</text>
+<text class="lb" x="20" y="249">C / C++  ·  NIST Juliet</text>
+<text class="s" x="262" y="249" text-anchor="end">Frame</text>
+<rect class="track" x="270" y="237" width="360" height="16" rx="3"/>
+<rect class="frame" x="330.0" y="237" width="163.2" height="16" rx="3"/>
+<text class="vb" x="638" y="249">+54.4</text>
+<text class="s" x="262" y="271" text-anchor="end">Semgrep</text>
+<rect class="track" x="270" y="259" width="360" height="16" rx="3"/>
+<rect class="other" x="285.3" y="259" width="44.7" height="16" rx="3"/>
+<text class="v" x="638" y="271">-14.9</text>
+<text class="lb" x="20" y="303">JavaScript  ·  SecBench.js</text>
+<text class="s" x="262" y="303" text-anchor="end">Frame</text>
+<rect class="track" x="270" y="291" width="360" height="16" rx="3"/>
+<rect class="frame" x="330.0" y="291" width="129.0" height="16" rx="3"/>
+<text class="vb" x="638" y="303">+43.0</text>
+<text class="s" x="262" y="325" text-anchor="end">Semgrep</text>
+<rect class="track" x="270" y="313" width="360" height="16" rx="3"/>
+<rect class="other" x="330.0" y="313" width="30.0" height="16" rx="3"/>
+<text class="v" x="638" y="325">+10.0</text>
+<line class="axis" x1="330.0" x2="330.0" y1="72" y2="332"/>
+</svg>

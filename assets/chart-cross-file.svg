@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="944" height="238" viewBox="0 0 944 238" role="img" aria-label="Cross-file flows: source in one file, sink in another">
+<title>Cross-file flows: source in one file, sink in another</title>
+<style>
+  .t{font:600 15px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .s{font:12px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e}
+  .l{font:13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .lb{font:600 13px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1f2328}
+  .v{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#59636e}
+  .vb{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#0b5cad}
+  .g{font:600 11px system-ui,-apple-system,'Segoe UI',sans-serif;fill:#59636e;letter-spacing:.06em}
+  .frame{fill:#0b6bcb}.other{fill:#c3c9d1}.track{fill:#eef1f4}.axis{stroke:#8c959f;stroke-width:1}
+  @media (prefers-color-scheme: dark){
+    .t,.l,.lb{fill:#e6edf3}.s,.v,.g{fill:#9198a1}.vb{fill:#6cb6ff}
+    .frame{fill:#4493f8}.other{fill:#4d5560}.track{fill:#1c2128}.axis{stroke:#6e7681}
+  }
+</style>
+<text class="t" x="20" y="30">Cross-file flows: source in one file, sink in another</text><text class="s" x="20" y="50">Four pinned open-source apps, and 33 cases that each have a safe twin.</text>
+<text class="g" x="20" y="72">FOUND IN REAL APPS (OF 10)</text>
+<text class="lb" x="20" y="101">Frame</text>
+<rect class="track" x="190" y="89" width="200" height="16" rx="3"/>
+<rect class="frame" x="190.0" y="89" width="200.0" height="16" rx="3"/>
+<text class="vb" x="398" y="101">10/10</text>
+<text class="l" x="20" y="123">CodeQL</text>
+<rect class="track" x="190" y="111" width="200" height="16" rx="3"/>
+<rect class="other" x="190.0" y="111" width="140.0" height="16" rx="3"/>
+<text class="v" x="398" y="123">7/10</text>
+<text class="l" x="20" y="145">Semgrep (stock packs)</text>
+<rect class="track" x="190" y="133" width="200" height="16" rx="3"/>
+<rect class="other" x="190.0" y="133" width="140.0" height="16" rx="3"/>
+<text class="v" x="398" y="145">7/10</text>
+<text class="l" x="20" y="167">OpenGrep (interfile)</text>
+<rect class="track" x="190" y="155" width="200" height="16" rx="3"/>
+<rect class="other" x="190.0" y="155" width="60.0" height="16" rx="3"/>
+<text class="v" x="398" y="167">3/10</text>
+<text class="l" x="20" y="189">Bandit</text>
+<rect class="track" x="190" y="177" width="200" height="16" rx="3"/>
+<rect class="other" x="190.0" y="177" width="60.0" height="16" rx="3"/>
+<text class="v" x="398" y="189">3/10</text>
+<text class="l" x="20" y="211">Semgrep (taint rules)</text>
+<rect class="track" x="190" y="199" width="200" height="16" rx="3"/>
+<rect class="other" x="190.0" y="199" width="1.5" height="16" rx="3"/>
+<text class="v" x="398" y="211">0/10</text>
+<text class="g" x="484" y="72">FALSE ALARMS ON SAFE TWINS (OF 33, LOWER IS BETTER)</text>
+<text class="lb" x="484" y="101">Frame</text>
+<rect class="track" x="654" y="89" width="200" height="16" rx="3"/>
+<rect class="frame" x="654.0" y="89" width="1.5" height="16" rx="3"/>
+<text class="vb" x="862" y="101">0</text>
+<text class="l" x="484" y="123">CodeQL</text>
+<rect class="track" x="654" y="111" width="200" height="16" rx="3"/>
+<rect class="other" x="654.0" y="111" width="30.3" height="16" rx="3"/>
+<text class="v" x="862" y="123">5</text>
+<text class="l" x="484" y="145">Semgrep (stock packs)</text>
+<rect class="track" x="654" y="133" width="200" height="16" rx="3"/>
+<rect class="other" x="654.0" y="133" width="127.3" height="16" rx="3"/>
+<text class="v" x="862" y="145">21</text>
+<text class="l" x="484" y="167">OpenGrep (interfile)</text>
+<rect class="track" x="654" y="155" width="200" height="16" rx="3"/>
+<rect class="other" x="654.0" y="155" width="24.2" height="16" rx="3"/>
+<text class="v" x="862" y="167">4</text>
+<text class="l" x="484" y="189">Semgrep (taint rules)</text>
+<rect class="track" x="654" y="177" width="200" height="16" rx="3"/>
+<rect class="other" x="654.0" y="177" width="18.2" height="16" rx="3"/>
+<text class="v" x="862" y="189">3</text>
+</svg>
