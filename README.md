@@ -5,9 +5,9 @@
   </p>
   <p align="center">
     <a href="https://github.com/lambdasec/frame/actions/workflows/tests.yml"><img src="https://github.com/lambdasec/frame/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
-    <a href="https://pypi.org/project/frame-security/"><img src="https://img.shields.io/pypi/v/frame-security" alt="PyPI"></a>
-    <a href="https://pepy.tech/project/frame-security"><img src="https://static.pepy.tech/badge/frame-security/month" alt="Downloads"></a>
-    <a href="https://pypi.org/project/frame-security/"><img src="https://img.shields.io/pypi/pyversions/frame-security" alt="Python"></a>
+    <a href="https://pypi.org/project/frame-security/"><img src="https://img.shields.io/pypi/v/frame-security" alt="PyPI version"></a>
+    <a href="https://pepy.tech/projects/frame-security"><img src="https://static.pepy.tech/personalized-badge/frame-security?period=monthly&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=GREEN&left_text=downloads%2Fmonth" alt="PyPI Downloads"></a>
+    <a href="https://github.com/marketplace/actions/frame-security-scan"><img src="https://img.shields.io/badge/Marketplace-Frame%20Security%20Scan-blue?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/lambdasec/frame/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   </p>
 </p>

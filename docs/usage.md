@@ -38,13 +38,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: lambdasec/frame@main
+      - uses: lambdasec/frame-action@v1
         with:
           path: src
           fail-on: high
 ```
 
-The action installs Frame, scans, uploads the SARIF report to code scanning and fails the job on findings at or above `fail-on`. SARIF carries CWE tags and `security-severity`, so GitHub ranks the alerts.
+The [action](https://github.com/marketplace/actions/frame-security-scan) installs Frame, scans, uploads the SARIF report to code scanning and fails the job on findings at or above `fail-on`. SARIF carries CWE tags and `security-severity`, so GitHub ranks the alerts.
 
 | Input | Default | |
 |---|---|---|
@@ -61,7 +61,7 @@ For pull requests, scan only what the change can affect and fail only on new fin
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0             # --changed diffs against the base branch
-      - uses: lambdasec/frame@main
+      - uses: lambdasec/frame-action@v1
         with:
           args: --changed origin/${{ github.base_ref }} --baseline .frame-baseline.json
 ```
