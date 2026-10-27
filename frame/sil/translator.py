@@ -5064,9 +5064,18 @@ class SILTranslator:
             return False
 
         stripped = self._strip_self_receiver(called)
+        js = language in ("javascript", "typescript")
         if stripped != called:
+            # JS: `this.f()` calls the procedure itself only from a method of a class; in an
+            # arrow function or a callback `this` is the enclosing object, not the function.
+            if js and not proc.class_name:
+                return False
             return stripped == simple_name
         if called != simple_name:
+            return False
+        # JS: a call the frontend marked as made on some other object (`a.b().f()` is lowered
+        # as `f`) is not an unqualified call of this function.
+        if js and getattr(instr, "receiver_type", None) is not None:
             return False
         if proc.name == simple_name:
             return True
