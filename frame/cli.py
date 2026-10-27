@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Frame CLI - Separation Logic Verification Tool.
+Frame CLI: a security agent (SAST, SCA, AI layer) on a separation logic engine.
 
 A unified command-line interface for Frame's capabilities:
 - scan: Scan source code for security vulnerabilities
@@ -31,7 +31,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser"""
     parser = argparse.ArgumentParser(
         prog="frame",
-        description="Frame - Separation Logic Verification Tool",
+        description="Frame: find, prove, exploit and fix vulnerabilities in code and dependencies",
         epilog="Use 'frame <command> --help' for more information on a specific command.",
     )
 
@@ -551,6 +551,7 @@ def cmd_deps(args) -> int:
             print(text)
         return 0
     findings = None
+    not_checked: list = []
     if args.vex:
         args.vulns = True
     if args.vulns:
@@ -560,6 +561,7 @@ def cmd_deps(args) -> int:
         if findings and not args.no_reachability:
             from frame.sca.reachability import Usage, annotate
             annotate(findings, Usage(target.resolve(), excluded), target.resolve())
+        not_checked = list(db.missing)
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    "run `frame kb pull --advisories`")
@@ -604,6 +606,7 @@ def cmd_deps(args) -> int:
         data = report.to_dict()
         if findings is not None:
             data["vulnerabilities"] = findings
+            data["not_checked"] = not_checked
             if plans is not None:
                 data["plan"] = plans
                 data["edits"] = [{"path": c.path, "reason": c.reason, "diff": c.diff()} for c in outcome.changes]
@@ -616,7 +619,7 @@ def cmd_deps(args) -> int:
         out = format_text(report)
         if findings is not None:
             from frame.sca.discover import format_vulns
-            out += "\n" + format_vulns(findings)
+            out += "\n" + format_vulns(findings, not_checked)
             if plans is not None:
                 from frame.sca.plan import format_plan
                 out += format_plan(plans)
@@ -643,6 +646,10 @@ def cmd_deps(args) -> int:
         Path(args.output).write_text(out + "\n", encoding="utf-8")
     else:
         print(out)
+    if findings is not None and not_checked and args.fail_on != "none":
+        print(f"Error: --fail-on cannot be judged: no advisories cached for {', '.join(not_checked)} "
+              "(run `frame kb pull --advisories`)", file=sys.stderr)
+        return 2
     if findings and args.fail_on != "none":
         rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
         if args.fail_on == "any" or any(rank.get(f["severity"] or "", 0) >= rank[args.fail_on] for f in findings):

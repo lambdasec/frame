@@ -11,10 +11,11 @@ from frame.kb.store import KBError, build, pull, read_lock, status, write_lock
 
 def add_kb_command(subparsers) -> None:
     p = subparsers.add_parser(
-        "kb", help="Download, pin and inspect Frame's knowledge base (framework packs)",
-        description="The knowledge base delivers framework packs as versioned data. `pull` downloads "
-                    "the files for the languages a project uses and verifies each against the "
-                    "manifest; scans use the cached copy and never go to the network.")
+        "kb", help="Download, pin and inspect Frame's knowledge base (framework packs, vulnerability advisories)",
+        description="The knowledge base delivers framework packs and vulnerability advisories as versioned "
+                    "data. `pull` downloads the files a project needs (its languages' packs, or with "
+                    "--advisories its ecosystems' advisories) and verifies each against the manifest; "
+                    "scans use the cached copy and never go to the network.")
     sub = p.add_subparsers(dest="kb_command")
     pl = sub.add_parser("pull", help="Download (or update) the knowledge base into the cache")
     pl.add_argument("--project", default=".", metavar="DIR",
@@ -87,6 +88,8 @@ def cmd_kb(args) -> int:
                 return 0
             got = pull([e.lower() for e in ecos], revision=args.revision or "main", source=args.source or source(),
                        also=shards)
+            from frame.sca.advisories import remember_source
+            remember_source(args.source or source())
             print(f"{got.source}@{got.revision}: {len(got.files)} files ({got.fetched} downloaded) "
                   f"for {', '.join(ecos + ([f'{len(shards)} C/C++ repository shard(s)'] if shards else []))}")
             return 0

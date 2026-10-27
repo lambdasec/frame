@@ -37,8 +37,28 @@ def git_shard(repo: str) -> str:
     return f"advisories/GIT/{hashlib.sha256(repo.encode()).hexdigest()[:2]}.json.gz"
 
 
+SOURCE_POINTER = "advisories-source"
+
+
 def source() -> str:
-    return os.environ.get("FRAME_ADVISORIES_SOURCE") or DEFAULT_SOURCE
+    """FRAME_ADVISORIES_SOURCE, else the source the last `frame kb pull --advisories` used (so
+    a pull from a mirror or a directory is what later reads use), else the public dataset."""
+    env = os.environ.get("FRAME_ADVISORIES_SOURCE")
+    if env:
+        return env
+    from frame.kb.store import cache_root
+    try:
+        last = (cache_root() / SOURCE_POINTER).read_text().strip()
+    except OSError:
+        last = ""
+    return last or DEFAULT_SOURCE
+
+
+def remember_source(src: str) -> None:
+    from frame.kb.store import cache_root
+    p = cache_root() / SOURCE_POINTER
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(src + "\n")
 
 
 def table_path(ecosystem: str) -> str:

@@ -21,6 +21,7 @@ Frame finds vulnerabilities by **following attacker data through your code**, ac
 - **Five languages**: Python, JavaScript/TypeScript, Java, C# and C/C++.
 - **Cross-file by default**: a request that enters a controller and reaches a query three files away is one finding.
 - **70+ framework packs**: Flask to Spring to ASP.NET to Express, plus your own stack in one TOML file.
+- **Dependencies too**: lockfiles of 11 ecosystems plus C/C++, matched against OSV offline, ranked by whether attacker data reaches the vulnerable function, with upgrades it plans, applies and verifies against your tests, licence policy, SBOM and VEX.
 - **Built for guardrails**: scan only what changed, baseline what you accept, verify that a fix removed the bug.
 - **Wherever you work**: a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
 - **Its own separation logic engine** on Z3: entailment, frame inference, bi-abduction and countermodels.
@@ -60,6 +61,15 @@ Scanned 4 files: 2 findings (2 critical)
 
 Use a placeholder query, or wrap the value in `int()`, and the finding goes away.
 
+For dependencies:
+
+```bash
+frame kb pull --advisories            # cache the advisories once (then everything runs offline)
+frame deps --vulns                    # vulnerable dependencies, and whether your code calls the vulnerable function
+frame deps --vulns --apply --relock   # upgrade, re-lock, report what is left
+frame scan . --sca                    # attacker data reaching a vulnerable function, at the call site
+```
+
 ## Benchmarks
 
 <p align="center"><img src="https://raw.githubusercontent.com/lambdasec/frame/main/assets/chart-owasp.svg" alt="OWASP score by language: Frame 80.9 Python, 81.5 Java, 80.3 C#, 54.4 C/C++, 43.0 JavaScript; Semgrep 4.5, 15.7, 14.2, -14.9, 10.0" width="760"></p>
@@ -81,7 +91,8 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 
 | | |
 |---|---|
-| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, suppressions, configuration, commands, Python API |
+| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, suppressions, configuration, every command and flag, environment variables, Python API |
+| [Dependencies](https://github.com/lambdasec/frame/blob/main/docs/dependencies.md) | Supported ecosystems, advisories, reachability, upgrade plans, code mitigation, licences, SBOM, VEX, CI |
 | [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |

@@ -36,7 +36,12 @@ $ frame parse "x |-> 5 * ls(y, nil)" --format tree   # formula structure (tree, 
 $ frame repl                                          # interactive prover
 ```
 
-`frame solve` also takes `--unfold-depth`, `--timeout` and `--format json`; `frame check` takes `--stop-on-failure` and `--format json|csv`.
+| Command | Flags |
+|---|---|
+| `frame solve [ENTAILMENT]` | `-f`, `--file FILE` (read it from a file), `--model` (countermodel when invalid), `--unfold-depth N` (default 3), `--timeout MS` (default 5000), `-v`, `--verbose` (solving steps), `--format text\|json` |
+| `frame check FILE` | one entailment per line: `--format text\|json\|csv`, `-o`, `--output FILE`, `--stop-on-failure`, `--unfold-depth N`, `--timeout MS` (per entailment), `-v`, `--verbose` |
+| `frame parse [FORMULA]` | `-f`, `--file FILE`, `--format tree\|json\|sexp` |
+| `frame repl` | `--timeout MS` |
 
 ## From Python
 

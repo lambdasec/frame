@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Union
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from frame.sca.jvm import (GRADLE_REPORT_FILES, MAVEN_TREE_FILES, MAVEN_TREE_JSON_FILES, parse_gradle_report,
                            parse_maven_tree, parse_maven_tree_json)
@@ -301,9 +301,13 @@ def format_text(report: DependencyReport) -> str:
 __all__: List[str] = ["DependencyReport", "read_dependencies", "format_text", "REPORTS"]
 
 
-def format_vulns(findings: List[dict]) -> str:
+def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
+    """`missing`: ecosystems with no advisories cached. Their packages were not checked, so
+    "no known vulnerabilities" is never said about them."""
+    gap = (f"NOT CHECKED: no advisories cached for {', '.join(missing)} "
+           "(run `frame kb pull --advisories`)") if missing else ""
     if not findings:
-        return "No known vulnerabilities in the resolved versions."
+        return gap or "No known vulnerabilities in the resolved versions."
     lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]
     for f in findings:
         sev = (f["severity"] or "unknown").upper()
@@ -318,4 +322,6 @@ def format_vulns(findings: List[dict]) -> str:
             lines.append(f"           via {' -> '.join(f['via'])}")
         for c in reach.get("calls", [])[:3]:
             lines.append(f"           calls {c['function']} at {c['location']}")
+    if gap:
+        lines.append(gap)
     return "\n".join(lines)

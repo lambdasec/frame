@@ -243,3 +243,38 @@ def test_frame_deps_exclude_and_fail_on(tmp_path):
     assert "minimist" not in {v["package"] for v in json.loads(trimmed.stdout)["vulnerabilities"]}
     assert run("deps", str(proj), "--vulns", "--fail-on", "any").returncode == 1
     assert run("deps", str(proj), "--vulns").returncode == 0                     # report only by default
+
+
+def test_nothing_cached_is_never_reported_clean(tmp_path):
+    """With no advisories cached, the packages were not checked: the report says so, and a
+    --fail-on gate cannot pass on no data (exit 2)."""
+    env = {"FRAME_KB_CACHE": str(tmp_path / "cache"), "PATH": __import__("os").environ["PATH"]}
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"dependencies": {"lodash": "4.17.20"}}))
+    run = lambda *a: subprocess.run([sys.executable, "-m", "frame.cli", *a], capture_output=True, text=True,
+                                    env=env, cwd=str(Path(__file__).parents[1]))
+    text = run("deps", str(proj), "--vulns")
+    assert text.returncode == 0 and "NOT CHECKED" in text.stdout and "No known vulnerabilities" not in text.stdout
+    assert json.loads(run("deps", str(proj), "--vulns", "-f", "json").stdout)["not_checked"] == ["npm"]
+    gate = run("deps", str(proj), "--vulns", "--fail-on", "high")
+    assert gate.returncode == 2 and "cannot be judged" in gate.stderr
+
+
+def test_a_pull_from_a_mirror_is_what_later_reads_use(tmp_path):
+    """Air-gapped: `kb pull --advisories --source DIR`, then plain `frame deps --vulns`."""
+    raw = tmp_path / "osv"
+    raw.mkdir()
+    (raw / "all.json").write_text(json.dumps(RECORDS))
+    mirror = tmp_path / "mirror"
+    build_advisories([raw], mirror, "r1", ["npm"])
+    env = {"FRAME_KB_CACHE": str(tmp_path / "cache"), "PATH": __import__("os").environ["PATH"]}
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"dependencies": {"lodash": "4.17.20"}}))
+    run = lambda *a: subprocess.run([sys.executable, "-m", "frame.cli", *a], capture_output=True, text=True,
+                                    env=env, cwd=str(Path(__file__).parents[1]))
+    assert run("kb", "pull", "--advisories", "--project", str(proj), "--source", str(mirror)).returncode == 0
+    out = run("deps", str(proj), "--vulns", "--fail-on", "critical", "-f", "json")
+    data = json.loads(out.stdout)
+    assert data["not_checked"] == [] and any(v["package"] == "lodash" for v in data["vulnerabilities"])

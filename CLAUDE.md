@@ -17,6 +17,10 @@ The solver supports:
 - Inductive predicates: lists, trees, custom data structures
 - Frame reasoning with automatic inference
 
+## Documentation
+
+User docs: `README.md`, `docs/usage.md` (every command, flag, config file and environment variable), `docs/dependencies.md` (SCA walkthrough), `docs/ai.md`, `docs/engine.md`, `docs/coverage.md`. Update them in the same commit as the feature, with examples taken from real runs. `tests/test_docs.py` fails when a CLI flag (usage.md; solver commands in engine.md) or a `FRAME_*` variable read in `frame/` is undocumented, or a relative link or `#anchor` is broken.
+
 ## Commands
 
 ### Setup

@@ -16,60 +16,7 @@ Every finding has a `category` (`taint`, `memory`, `crypto`, `secret`, `access-c
 
 `frame inventory [dir]` reports what a repository contains without analysing it: languages, the frameworks Frame has packs for, dependency manifests and lockfiles, infrastructure-as-code, Dockerfiles, LLM SDKs and MCP servers (`-f json` for every path).
 
-`frame deps [dir]` reads the dependency graph: every lockfile (`poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` classic and berry, `pnpm-lock.yaml`, `gradle.lockfile`, NuGet `packages.lock.json`, Go `go.mod`, Rust `Cargo.lock`, Swift `Package.resolved`) and each manifest without one (`requirements*.txt`, `pyproject.toml`, `package.json`, `pom.xml`, `build.gradle` / `build.gradle.kts` with the version catalog `gradle/libs.versions.toml`, `*.csproj`, `packages.config`). For each package it reports the exact version, whether it is direct (from the manifest beside the lockfile; left unknown rather than guessed when there is none), whether only development needs it, and its package URL; `-f json` adds the edges between packages. No package manager runs and nothing is fetched.
-
-A `pom.xml` names only direct dependencies, and most Java vulnerabilities arrive transitively, so Frame reads the resolved graph the build tool reports when it finds one: `maven_dep_tree.txt` or `.json` (`mvn dependency:tree -DoutputFile=maven_dep_tree.txt`) and `gradle-dependencies.txt` (`gradle dependencies > gradle-dependencies.txt`). For .NET it reads the restore output (`obj/project.assets.json`) and fills `.csproj` versions from `Directory.Packages.props`.
-
-`frame deps --resolve` produces those graphs itself: it runs `mvn dependency:tree` (or `./mvnw`) once per Maven build, `gradle dependencies` (or `./gradlew`) for every Gradle project, and pip's resolver (`pip install --dry-run --report`, wheels only, nothing installed) for each `requirements*.txt` and lockfile-less `pyproject.toml`. It is opt-in because it runs the project's build configuration and downloads packages; a missing or failing tool is a warning and the manifest is read as before.
-
-`frame deps --vulns` matches every resolved version against known vulnerabilities from OSV, shipped as a dataset (`lambdasec/frame-advisories`, rebuilt daily) that `frame kb pull --advisories` caches for the ecosystems the project uses. Each finding names the advisory (merged across GHSA, PYSEC, CVE and other ids), its severity (the CVSS v3 base score, else the database's rating), the lowest fixed version, whether the package is direct or dev only, and the chain of packages that pulls it in. Matching runs offline.
-
-Each vulnerability is also checked against the project's own code (Python, JavaScript/TypeScript, Java, C#), through the files under the manifest that declared the package: `imported` when the code imports the package, `called` when it calls a function the advisory names as vulnerable (with the file and line). The evidence is positive only: a package your code never imports can still be reached through another library (Log4Shell reached applications that log through SLF4J), so an unused package stays `installed`, never "unreachable". `--no-reachability` skips reading the source.
-
-`frame scan DIR --sca` puts dependencies into the source scan. Every function an advisory names as vulnerable in a resolved dependency becomes a taint sink for that scan, so attacker data reaching it is a finding at the call site (`vulnerable_dependency`, CWE-1395, category `dependency`, at the advisory's severity, naming the advisory and the fix), with the scan's usual data-flow or solver-verified evidence. A function that is already a sink keeps its own finding (`yaml.load` stays CWE-502) and that finding raises the advisory to `tainted`. The JSON gains a top-level `dependencies` object with every matched advisory and its reachability (installed, imported, called, tainted), SARIF gains one result per advisory at its manifest, and `--fail-on` counts them.
-
-```bash
-frame kb pull --advisories            # once, and whenever you want fresh advisories
-frame deps --vulns                    # vulnerable dependencies, with the upgrade that fixes each
-frame deps . --resolve --vulns --exclude tests --fail-on high    # a CI gate (exit 1 on high or critical)
-frame deps --vulns --plan             # the smallest safe upgrade for each, what it takes, and the edits (a diff)
-frame deps --vulns --apply --relock   # write the edits, re-lock with the package manager, report what is left
-frame deps --vulns --apply --relock --verify "npm ci && npm test"   # roll back an upgrade that breaks the tests
-```
-
-`--plan` gives each vulnerable package the lowest version at or above the current one that no known advisory affects (chosen among the versions advisories name as fixed, so it runs offline), flags a jump to a later major version, and says what the change takes, from the ranges the lockfile and manifest declare: re-lock (every range already admits it), raise the project's own requirement, or an override (npm `overrides`, yarn `resolutions`, a pip constraint, Maven `dependencyManagement`...) when a package in between pins a range that excludes it.
-
-`--plan` also shows the edits as a unified diff, and `--apply` writes them: the version in `package.json`, requirements files, `pyproject.toml` (PEP 621 and Poetry dependency tables only), `pom.xml` (the property when the version is `${...}`), `.csproj` or `Directory.Packages.props`, and `go.mod`, or the override (`overrides`, `resolutions`, `pnpm.overrides`, uv `constraint-dependencies`, `dependencyManagement`, a direct reference). Only the version changes, so formatting and comments are kept; an edit Frame cannot make safely (an upper bound that excludes the fix) is listed as manual. `--relock` then regenerates the lockfile with its own package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`), and Frame re-reads the graph and reports what is fixed and what remains. `--verify COMMAND` runs the project's own build or test command before and after: an upgrade that turns a passing command into a failing one is rolled back (every edited manifest and re-locked file restored); if the command already failed before, the edits are kept and the result says it proves nothing.
-
-Ruby (`Gemfile.lock`, with `Gemfile` groups for development-only gems), PHP (`composer.lock`, `composer.json`), Dart (`pubspec.lock`, `pubspec.yaml`) and Elixir (`mix.lock`, `mix.exs`) are read for dependencies too, with each registry's own version order and requirement syntax (RubyGems checked against Ruby's `Gem::Version` and `Gem::Requirement`).
-
-C and C++ dependencies are read from Conan (`conan.lock`, `conanfile.txt`, `conanfile.py`), vcpkg (`vcpkg.json` with overrides, and `vcpkg_installed/vcpkg/status` when present), git submodules (the pinned commit and the tag it carries) and CMake (`FetchContent_Declare`, `ExternalProject_Add`, `CPMAddPackage`). Each resolves to its upstream repository and release tag, and is matched against OSV's GIT advisories, which list the affected tags of a repository; `frame kb pull --advisories` fetches only the advisory shards of the repositories a project uses. A Conan or vcpkg package's tag comes from the recipe's own source URL or from a tag pattern two sources agree on; a bare commit or a version Frame cannot map to a tag is listed but not matched.
-
-`frame deps --sbom cyclonedx` (or `spdx`) prints a software bill of materials from the same graph: CycloneDX 1.6 (components with package URLs, dev-only ones `scope: optional`, the `dependencies` graph) or SPDX 2.3 JSON (`DEPENDS_ON` / `DEV_DEPENDENCY_OF` relationships). Licences are what a lockfile records (npm, Composer) or the installed metadata of the same version says (`node_modules`, a project `.venv`); otherwise CycloneDX omits them and SPDX says `NOASSERTION`, never a guess.
-
-`frame deps --licenses` checks them against a policy in `.frame.toml` (or `[tool.frame.licenses]` in `pyproject.toml`) and exits 1 on a violation:
-
-```toml
-[licenses]
-deny = ["GPL-*", "AGPL-*"]        # SPDX ids or globs; or allow = [...] to accept only those
-unknown = "report"                # "fail" to fail on packages with no licence evidence
-include_dev = false               # dev-only dependencies are skipped by default
-```
-
-An SPDX expression is judged as written: `MIT OR GPL-3.0-only` passes when MIT is acceptable, `MIT AND GPL-3.0-only` needs both, and `X WITH exception` matches a deny entry for `X` or for the exact `X WITH exception`. A licence that is not an SPDX id is reported as unknown, never matched by guesswork. `--product` names the root (default `pkg:generic/<directory>`).
-
-`frame deps --vex openvex` (or `cyclonedx`) prints a VEX document for the vulnerable dependencies: OpenVEX 0.2.0, or a CycloneDX 1.6 BOM with `vulnerabilities[].analysis`. Statements follow Frame's evidence: a vulnerable version present is `affected`, with the upgrade from the plan as its action; with `frame scan --sca --vex cyclonedx --vex-out vex.json`, a vulnerable function that attacker data reaches is `exploitable`, with the flow. Frame never states `not_affected` on its own, because reachability cannot prove a package unreachable: record decisions in `.frame/vex.toml` and they are included, unless a verified flow contradicts one (then the statement stays `affected` and the conflict is reported). `--dev-not-shipped` states dev-only dependencies `not_affected` (`component_not_present`).
-
-```toml
-# .frame/vex.toml
-[[statement]]
-vulnerability = "CVE-2021-23337"            # any id or alias
-package = "lodash"                          # optional
-status = "not_affected"
-justification = "vulnerable_code_cannot_be_controlled_by_adversary"
-impact_statement = "Templates come from a fixed map."
-author = "appsec@example.com"
-```
+`frame deps` covers dependencies: the graph from every lockfile and manifest, known vulnerabilities and whether your code reaches them, upgrade plans that it can apply and verify, licence policy, SBOM and VEX. `frame scan . --sca` adds vulnerable dependencies to the source scan, with attacker data reaching a vulnerable function reported at the call site. Both are covered step by step in [dependencies.md](dependencies.md).
 
 Empty, binary, non-UTF-8 and minified files never abort a scan, and neither does a file that cannot be read.
 
@@ -198,47 +145,183 @@ fail_on = "high"
 disable = ["CWE-798", "weak_hash"]   # CWE ids or finding types
 exclude = ["vendor", "third_party"]  # added to the default excludes
 packs = ["security/acme.toml"]       # extra framework packs
+
+[licenses]                           # frame deps --licenses (see dependencies.md)
+deny = ["GPL-*", "AGPL-*"]
+unknown = "report"
+include_dev = false
 ```
 
-Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--config PATH`, `--no-config`). Directory scans skip `.git`, `node_modules`, `.venv`, `__pycache__` and similar; `--no-default-excludes` scans them.
+Unknown keys are an error naming the file, so a typo never silently disables a setting. Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--config PATH`, `--no-config`). Directory scans skip `.git`, `node_modules`, `.venv`, `__pycache__` and similar; `--no-default-excludes` scans them.
+
+Every file Frame reads from a project:
+
+| File | What it holds |
+|---|---|
+| `.frame.toml` / `[tool.frame]` in `pyproject.toml` | the settings above |
+| `.frame/packs/*.toml` | the project's own framework packs ([coverage.md](coverage.md)) |
+| `.frame/kb.lock` | the pinned knowledge-base revision (`frame kb pull --lock`) |
+| `.frame/vex.toml` | recorded VEX decisions ([dependencies.md](dependencies.md#vex)) |
+| `.frame-baseline.json` (any name) | accepted findings (`--baseline`, `--write-baseline`) |
+| `# frame: ignore[...]` comments | inline suppressions |
 
 ## Knowledge base
 
-Framework packs also arrive as data, between Frame releases. `frame kb pull` downloads the packs for the languages a project uses, checks every file against the manifest's SHA-256, and caches them; scans read the cache and never go to the network (with nothing cached they use the packs built into Frame).
+Framework packs and vulnerability advisories arrive as data, between Frame releases. `frame kb pull` downloads the packs for the languages a project uses, and `frame kb pull --advisories` the advisories for the ecosystems its dependencies use. Every file is checked against the manifest's SHA-256 and cached (`~/.cache/frame/kb`, or `FRAME_KB_CACHE`); scans read the cache and never go to the network (with no packs cached they use the ones built into Frame).
 
 ```bash
-frame kb pull --lock          # this project's languages; pin the revision in .frame/kb.lock
-frame kb status               # which revision a scan here would use
-FRAME_KB=off frame scan .     # built-in packs only
+frame kb pull --lock              # this project's languages; pin the revision in .frame/kb.lock
+frame kb pull --advisories        # vulnerability advisories (lambdasec/frame-advisories, rebuilt daily)
+frame kb status                   # which revisions a scan here would use
+FRAME_KB=off frame scan .         # built-in packs only, no advisories
 ```
 
 For air-gapped CI, lay out a revision on a connected machine and pull from the directory (or an internal HTTPS mirror):
 
 ```bash
-frame kb build packs/ kb-2026.10/ --revision 2026.10   # on the connected side
-frame kb pull --source /mnt/kb-2026.10 --lock          # in CI
+frame kb build packs/ kb-2026.10/ --revision 2026.10    # packs, on the connected side
+frame kb pull --source /mnt/kb-2026.10 --lock           # in CI
+frame kb pull --advisories --source /mnt/advisories     # advisories: a copy of a pulled revision directory
 ```
 
-`--source` (or `FRAME_KB_SOURCE`) takes `hf:org/dataset`, an `https://` mirror, or a directory. A knowledge base holds data files only (TOML and JSON); nothing in it runs.
+`--source` (or `FRAME_KB_SOURCE` for packs, `FRAME_ADVISORIES_SOURCE` for advisories) takes `hf:org/dataset`, an `https://` mirror, or a directory. The source of the last advisories pull is remembered, so later scans read that cache. A knowledge base holds data files only (TOML and JSON); nothing in it runs.
 
-## Commands
+## Command reference
 
-| Command | What it does |
-|---------|--------------|
-| `frame scan <path>` | Scan for vulnerabilities. `-f text\|json\|sarif`, `-o`, `-l`, `-p`, `--fail-on`, `--min-severity`, `--ai`, `--pack`, `--no-cross-file`, `--root` |
-| `frame scan --changed [REF]` / `--files` | Scan only what changed, plus the files that import it |
-| `frame scan --baseline F` / `--write-baseline F` | Report only findings not in the baseline; write or update one |
-| `frame verify <findings.json>` | Re-scan the files behind earlier findings and report each one's status |
-| `frame packs list \| check` | List the packs a scan would load; validate pack files |
-| `frame kb pull \| status \| build` | Download, pin and inspect the knowledge base; lay out a revision for a mirror. `pull --advisories` caches the vulnerability advisories; `build-advisories` lays them out from OSV exports |
-| `frame deps --sbom cyclonedx\|spdx` / `--vex openvex\|cyclonedx` | A bill of materials, or VEX statements from Frame's evidence |
-| `frame deps [dir]` | The dependency graph from lockfiles, build-tool reports and manifests: versions, direct or transitive, dev only, edges. `--resolve` runs Maven, Gradle and pip; `--vulns` matches the cached advisories |
-| `frame inventory [dir]` | Languages, frameworks, dependencies, IaC, containers, LLM SDKs and MCP servers in a repository |
-| `frame exploit --target <url>` | Exploit a live, authorized target, primed with `--guidance` ([ai.md](ai.md)) |
-| `frame fix <path>` | Fix each finding, then re-scan to confirm (`--in-place` or `--diff`) |
-| `frame solve`, `check`, `parse`, `repl` | The separation logic engine ([engine.md](engine.md)) |
+Exit status, for every command that checks something: 0 clean, 1 findings (or violations) at or above the threshold, 2 the command could not run or could not judge.
 
-Run `frame <command> --help` for every flag.
+### `frame scan [target]`
+
+| Flag | |
+|---|---|
+| `-f`, `--format text\|json\|sarif` | output format |
+| `-o`, `--output FILE` | write to a file instead of stdout |
+| `-l`, `--language LANG` | which files a directory scan walks (default: every supported one), and the language of files with an unknown extension |
+| `-p`, `--pattern GLOB` | only files matching the glob |
+| `--fail-on critical\|high\|medium\|low\|any\|none` | exit 1 at or above this severity (default: config, else high) |
+| `--min-severity critical\|high\|medium\|low\|info` | report only at or above this (default: config, else low) |
+| `--disable RULE` | drop a CWE id or finding type (repeatable) |
+| `--config FILE` / `--no-config` | use this config file / ignore config files |
+| `--no-suppress` | ignore `frame: ignore` comments |
+| `--no-default-excludes` | also scan `.git`, `node_modules`, `.venv` and similar |
+| `--changed [REF]` | only files that differ from REF (default HEAD), widened to the files that import them |
+| `--files PATH...` | only these files (combines with `--changed`) |
+| `--baseline FILE` / `--write-baseline FILE` | report only findings not in the baseline / record this run's findings |
+| `--root DIR` | the root that finding paths and fingerprints are relative to |
+| `--no-cross-file` | analyse each file alone |
+| `--cross-file-limit N` | most files one cross-file analysis spans (default 2000) |
+| `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
+| `--sca` | add vulnerable dependencies ([dependencies.md](dependencies.md)) |
+| `--vex openvex\|cyclonedx`, `--vex-out FILE` | with `--sca`: also write a VEX document |
+| `--no-verify` | skip solver verification (faster, more false positives) |
+| `--timeout MS` | solver timeout per check (default 5000) |
+| `-v`, `--verbose` | more detail |
+| `--ai` | LLM detection and triage ([ai.md](ai.md)) |
+| `--llm-detect` / `--llm-triage` | only one of the two |
+| `--model MODEL` | override `FRAME_LLM_MODEL` |
+| `--repo-scale` | one LLM session for the whole repository (with `--ai` or `--llm-detect`) |
+
+### `frame verify <findings.json>`
+
+Re-scans the files behind earlier findings: `fixed`, `file_removed`, `present`, `suppressed`, `uncertain` or `unverifiable`. Exit 0 only when every finding is fixed or its file removed.
+
+| Flag | |
+|---|---|
+| `--id FINGERPRINT` | only this finding (repeatable) |
+| `-f`, `--format text\|json` | output format |
+| `--timeout MS` | solver timeout |
+
+### `frame deps [dir]`
+
+The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkthrough is in [dependencies.md](dependencies.md).
+
+| Flag | |
+|---|---|
+| `-f`, `--format text\|json` | output format |
+| `-o`, `--output FILE` | write to a file instead of stdout |
+| `--exclude DIR` | skip a directory name or relative path (repeatable) |
+| `--resolve` | run Maven, Gradle and pip to resolve projects without a lockfile (runs the build configuration) |
+| `--vulns` | match against the cached advisories |
+| `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
+| `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |
+| `--plan` | with `--vulns`: the smallest safe upgrades and the edits, as a diff |
+| `--apply` | write the edits, then re-read and report what is fixed and what remains |
+| `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |
+| `--verify COMMAND` | with `--apply`: run your build or tests before and after; roll back an upgrade that breaks them |
+| `--licenses` | check licences against `[licenses]` (exit 1 on a violation) |
+| `--sbom cyclonedx\|spdx` | print a CycloneDX 1.6 or SPDX 2.3 SBOM |
+| `--vex openvex\|cyclonedx` | print VEX statements (implies `--vulns`; exit 1 on a conflict with `.frame/vex.toml`) |
+| `--product ID` | with `--sbom`/`--vex`: the product identifier (default `pkg:generic/<directory>`) |
+| `--dev-not-shipped` | with `--vex`: state dev-only dependencies `not_affected` |
+
+### `frame fix <source>`
+
+Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.md)).
+
+| Flag | |
+|---|---|
+| `--guidance FILE` | findings JSON to fix (`-` for stdin), from `frame scan -f json` |
+| `--deps` | mitigate vulnerable dependencies in code, the version unchanged ([dependencies.md](dependencies.md#fixing-in-code-when-you-cannot-upgrade)) |
+| `--include-called` | with `--deps`: also call sites with no attacker data flow |
+| `--diff` / `--in-place` | print a diff (the default) / write the patches |
+| `--no-verify` | do not re-scan the patched code |
+| `--model MODEL` | override `FRAME_LLM_MODEL` |
+| `--format text\|json` | output format |
+
+### `frame exploit --target URL`
+
+Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default 40), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
+
+### `frame inventory [dir]`
+
+Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).
+
+### `frame packs list | check`
+
+`list` shows the packs a scan would load (`--language LANG`, `--project DIR`); `check PATH...` validates pack files.
+
+### `frame kb`
+
+| Subcommand | |
+|---|---|
+| `pull` | download into the cache: `--project DIR`, `--languages a,b`, `--all`, `--revision R`, `--source S`, `--lock` (write `.frame/kb.lock`), `--advisories` (advisories instead of packs) |
+| `status` | which revisions a scan of the project uses: `--project DIR`, `-f text|json` |
+| `build PACKS_DIR OUT` | lay out a packs revision for a mirror: `--revision R`, `--specs DIR` (spec tables to include) |
+| `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` |
+| `mine-functions INPUTS...` | for dataset maintainers: vulnerable functions from advisories' fix commits: `--out DIR`, `--existing DIR` (curated entries, which win), `--ecosystems a,b`, `--limit N`, `--cache DIR`, `--recorded DIR` (commits on disk instead of GitHub), `--since TIMESTAMP` (resume after the last run's `resume_after`); uses `GITHUB_TOKEN` when set |
+
+### `frame solve`, `check`, `parse`, `repl`
+
+The separation logic engine; flags in [engine.md](engine.md).
+
+`frame <command> --help` prints the same flags.
+
+## Environment variables
+
+| Variable | Default | |
+|---|---|---|
+| `FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL`, `FRAME_LLM_API_KEY`, `FRAME_LLM_REPO_ROOT` | | the model for `--ai`, `fix`, `exploit` ([ai.md](ai.md)) |
+| `FRAME_LLM_TEMPERATURE` | 0.0 | sampling temperature |
+| `FRAME_LLM_MAX_TOKENS` | 4096 | completion budget per call |
+| `FRAME_LLM_TIMEOUT` | 60 | seconds per request |
+| `FRAME_LLM_TOTAL_TIMEOUT` | 0 (derived from the request timeout) | seconds for a whole LLM session |
+| `FRAME_LLM_JSON_MODE` | `json_schema` | `json_schema`, `json_object` or `off`, for servers without structured output |
+| `FRAME_LLM_CONTEXT_LINES` | 12 | lines of code around a finding sent to the model |
+| `FRAME_LLM_MAX_CONTEXT_CHARS` | 6000 | cap on one code snippet |
+| `FRAME_LLM_DROP_THRESHOLD` | 0.75 | triage drops a finding only as a false positive at or above this confidence |
+| `FRAME_LLM_TRIAGE_AGENTIC` | off | let triage use tools to read more of the repository |
+| `FRAME_LLM_MAX_TOOL_STEPS` | 30 | tool calls per agentic session |
+| `FRAME_LLM_AGENT_MAX_TOKENS` | 16000 | completion budget per agent turn |
+| `FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS` | 80000 | context an agent session may accumulate |
+| `FRAME_LLM_AGENT_RETRIES` | 2 | retries for a failed agent turn |
+| `FRAME_LLM_EXPLOIT_MAX_STEPS` | 250 | hard cap on `exploit` steps |
+| `FRAME_LLM_CACHE` | | a JSON file that keeps LLM verdicts across runs |
+| `FRAME_KB` | on | `off` uses built-in packs only and no advisories |
+| `FRAME_KB_CACHE` | `~/.cache/frame/kb` | where packs and advisories are cached |
+| `FRAME_KB_SOURCE` | `hf:lambdasec/frame-kb` | where `kb pull` gets packs |
+| `FRAME_ADVISORIES_SOURCE` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
+| `FRAME_GENERATED_LINE_THRESHOLD` | 2000 | a file with lines this long is treated as minified or generated |
+| `FRAME_AGGRESSIVE_DETECTORS` | off | Java context-dependent detectors (CSRF disabled, field-initializer secrets); use only with LLM triage |
 
 ## Python API
 

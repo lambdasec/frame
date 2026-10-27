@@ -26,6 +26,7 @@ class ScaRun:
     findings: List[dict] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     revision: Optional[str] = None
+    missing: List[str] = field(default_factory=list)     # ecosystems not checked: no advisories cached
 
 
 def prepare(target: Path, excluded: Iterable) -> ScaRun:
@@ -42,6 +43,7 @@ def prepare(target: Path, excluded: Iterable) -> ScaRun:
         return run
     db = AdvisoryDB.cached(ecos, repos_of(report.files))
     run.revision = db.revision
+    run.missing = list(db.missing)
     if db.missing:
         run.warnings.append(f"no advisories cached for {', '.join(db.missing)}: run `frame kb pull --advisories`")
     run.findings = match(report.files, db)
@@ -131,7 +133,7 @@ def worst_severity(run: ScaRun) -> int:
 def format_text(run: ScaRun) -> str:
     from frame.sca.discover import format_vulns
     head = "\nDependencies" + (f" (advisories {run.revision})" if run.revision else "") + ":\n"
-    body = format_vulns(run.findings)
+    body = format_vulns(run.findings, run.missing)
     tainted = [f for f in run.findings if f.get("reachability", {}).get("level") == "tainted"]
     for f in tainted:
         for flow in f["reachability"].get("flows", [])[:3]:
