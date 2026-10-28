@@ -665,7 +665,10 @@ def cmd_deps(args) -> int:
                     return 2
                 from frame.sca.adapt import adapt
                 upgrades = [p for p in plans if p.get("target")]
-                adapt_fn = lambda output: adapt(target, upgrades, args.verify, output, config, excluded)  # noqa: E731
+                from frame.sca.notes import release_notes
+                adapt_fn = lambda output: adapt(target, upgrades, args.verify, output, config, excluded,  # noqa: E731
+                                                notes=lambda u: release_notes(u["ecosystem"], u["package"],
+                                                                              u["current"], u["target"]))
             outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock, verify=args.verify,
                                  adapt_fn=adapt_fn)
             if args.apply:

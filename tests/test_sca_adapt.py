@@ -118,7 +118,10 @@ def test_apply_keeps_an_adapted_upgrade_and_rolls_back_a_failed_one(tmp_path):
 @pytest.mark.skipif(not (os.environ.get("FRAME_SCA_REAL") == "1" and os.environ.get("FRAME_LLM_BASE_URL")),
                     reason="live: FRAME_SCA_REAL=1 and a model (FRAME_LLM_*); installs Werkzeug from PyPI")
 def test_live_a_real_model_adapts_to_werkzeug_3(tmp_path):
+    from frame.sca.notes import release_notes
     from frame.sil.llm_client import LLMConfig
+    notes = lambda u: release_notes(u["ecosystem"], u["package"], u["current"], u["target"])  # noqa: E731
+    assert "werkzeug.urls" in notes(UPGRADE[0])                       # the notes name what was removed
     root = project(tmp_path)
     (root / "test_app.py").write_text("from app import host_of\n\n\ndef test_host():\n"
                                       "    assert host_of('https://example.com:8443/a') == 'example.com'\n")
@@ -129,7 +132,7 @@ def test_live_a_real_model_adapts_to_werkzeug_3(tmp_path):
     if shutil.which("bash") is None:
         pytest.skip("needs a POSIX shell")
     out = apply_plan(_plan(), root, write=True, verify=check,
-                     adapt_fn=lambda o: adapt(root, UPGRADE, check, o, LLMConfig.from_env()))
+                     adapt_fn=lambda o: adapt(root, UPGRADE, check, o, LLMConfig.from_env(), notes=notes))
     assert out.verify == "adapted", (out.verify, getattr(out.adaptation, "status", None), out.verify_output[-500:])
     assert "url_parse" not in (root / "app.py").read_text()
 
@@ -149,3 +152,29 @@ def test_a_rescan_that_fails_restores_the_edits(tmp_path, monkeypatch):
     monkeypatch.setattr(S.FrameScanner, "scan_file", flaky)
     res = adapt(root, UPGRADE, "check", "ImportError", proposer=lambda u, o, s: FIX, run=passes_when(None))
     assert res.status == "introduces-findings" and (root / "app.py").read_text() == APP
+
+
+def test_release_notes_reach_the_model(tmp_path):
+    root = project(tmp_path)
+    seen = {}
+
+    def proposer(upgrades, output, sources):
+        from frame.sca.adapt import prompt
+        seen["prompt"] = prompt(upgrades, output, sources)
+        return FIX
+    adapt(root, UPGRADE, "check", "ImportError", proposer=proposer, run=passes_when(None),
+          notes=lambda u: "Version 2.3.0\n- Deprecate the werkzeug.urls module")
+    assert "Release notes of werkzeug after 2.2.3, up to 3.1.9" in seen["prompt"]
+    assert "Deprecate the werkzeug.urls module" in seen["prompt"]
+
+
+def test_changelog_sections_between_two_versions_feature_releases_first():
+    from frame.sca.notes import slice_changelog
+    text = ("Version 3.1.0\n-------------\n\n- New thing.\n\nVersion 3.0.1\n-------------\n\n- Fix.\n\n"
+            "Version 3.0.0\n-------------\n\n- Remove previously deprecated code.\n\n"
+            "Version 2.3.0\n-------------\n\n- Deprecate the ``werkzeug.urls`` module.\n\n"
+            "Version 2.2.3\n-------------\n\n- Old.\n")
+    got = slice_changelog(text, "PyPI", "2.2.3", "3.0.1")
+    assert list(got) == ["3.0.1", "3.0.0", "2.3.0"] and "werkzeug.urls" in got["2.3.0"]
+    md = "# Changelog\n\n## [5.0.0] - 2024\n### Breaking\n- Drop x()\n\n## [4.2.1]\n- fix\n\n## 4.2.0\n- y\n"
+    assert set(slice_changelog(md, "npm", "4.2.0", "5.0.0")) == {"5.0.0", "4.2.1"}

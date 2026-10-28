@@ -194,7 +194,7 @@ For Python, `uv.lock` records no ranges between packages, so they come from PyPI
 ### When an upgrade breaks your code (`--adapt`)
 
 A fix in a new major version often changes the API your code uses. With `--adapt`, an upgrade that turns your `--verify` command from passing to failing goes to a model before it is rolled back:
-1. The model gets the upgrades, the failing output, and the files that import the upgraded packages, and proposes minimal edits to your source.
+1. The model gets the upgrades, the failing output, the files that import the upgraded packages, and the release notes between the two versions, and proposes minimal edits to your source. The notes are the project's own changelog sections at the target version's tag (feature releases first), else its GitHub release bodies, found through the repository the registry names. For Werkzeug 2.2.3 to 3.1.9 they include 2.3.0's "Deprecate the `werkzeug.urls` module" and 3.0.0's "Remove previously deprecated code".
 2. Frame applies them and runs your command again, for up to three rounds, each seeing the latest output. It never touches a manifest or lockfile, since that would undo the upgrade.
 3. The result is kept only if your command passes **and** a Frame scan of every edited file finds nothing it did not find before. Otherwise every edit is restored and the upgrade is rolled back.
 

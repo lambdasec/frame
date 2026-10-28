@@ -2,8 +2,10 @@
 (`frame deps --apply --verify COMMAND --adapt`), a model adapts the code that uses the upgraded
 packages, and the project decides.
 
-    1. the code that imports an upgraded package (Frame's reachability reader) and the failing
-       command's output go to the model, which answers with minimal search / replace edits;
+    1. the code that imports an upgraded package (Frame's reachability reader), the failing
+       command's output and the release notes between the two versions (`notes.py`: the
+       project's changelog sections, else its GitHub releases) go to the model, which answers
+       with minimal search / replace edits;
     2. the edits are applied (application source only: never a manifest or lockfile, which
        would undo the upgrade) and the command runs again; up to `rounds` times, each round
        seeing the new output;
@@ -70,7 +72,9 @@ def prompt(upgrades: List[dict], output: str, sources: Dict[str, str]) -> str:
     ups = "\n".join(f"- {u['package']} {u['current']} -> {u['target']}" + (" (new major version)" if u.get("major") else "")
                     for u in upgrades)
     files = "\n\n".join(f"=== {rel} ===\n{text[:FILE_CHARS]}" for rel, text in sorted(sources.items()))
-    return (f"Upgrades:\n{ups}\n\nThe project's command now fails:\n{_tail(output)}\n\n"
+    notes = "".join(f"\n\nRelease notes of {u['package']} after {u['current']}, up to {u['target']} "
+                    f"(feature releases first):\n{u['notes']}" for u in upgrades if u.get("notes"))
+    return (f"Upgrades:\n{ups}{notes}\n\nThe project's command now fails:\n{_tail(output)}\n\n"
             f"Files that use the upgraded packages:\n{files}\n\n"
             "Reason briefly about what changed in the new versions, then output the JSON object.")
 
@@ -111,7 +115,8 @@ def _editable(root: Path, rel: str) -> bool:
 
 def adapt(root: Path, upgrades: List[dict], verify: str, failing_output: str, config=None, excluded: Iterable = (),
           rounds: int = 3, proposer: Optional[Callable[[List[dict], str, Dict[str, str]], dict]] = None,
-          run: Optional[Callable[[str, Path], Tuple[bool, str]]] = None) -> Adaptation:
+          run: Optional[Callable[[str, Path], Tuple[bool, str]]] = None,
+          notes: Optional[Callable[[dict], str]] = None) -> Adaptation:
     from frame.sca.apply import Change, _run_verify
     from frame.sil.llm_fix import apply_fix
     root = Path(root).resolve()
@@ -120,6 +125,8 @@ def adapt(root: Path, upgrades: List[dict], verify: str, failing_output: str, co
     files = usage_files(root, upgrades, excluded)
     if not files:
         return Adaptation("no-usage", output=failing_output)
+    if notes is not None:                             # what changed, from the project's own notes
+        upgrades = [{**u, "notes": notes(u)} for u in upgrades]
     original: Dict[str, str] = {}
     current = {rel: (root / rel).read_text(encoding="utf-8") for rel in files}
     before = _finding_types(root, files)
