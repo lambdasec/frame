@@ -103,8 +103,9 @@ def create_parser() -> argparse.ArgumentParser:
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
     deps_parser.add_argument("--registry", action="store_true",
-                             help="With --vulns: also list the project's declared ranges that admit a vulnerable "
-                                  "release; with --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
+                             help="With --licenses / --sbom: fill unknown licences from the registries (npm, PyPI, "
+                                  "RubyGems, crates.io, NuGet); with --vulns: also list the project's declared ranges "
+                                  "that admit a vulnerable release; with --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
                                   "every package together with Z3, so upgrading a package in between replaces an "
                                   "override (goes to the network; cached)")
     deps_parser.add_argument("--verify", metavar="COMMAND",
@@ -518,6 +519,9 @@ def cmd_deps(args) -> int:
     if args.licenses or args.sbom:
         from frame.sca.licenses import enrich
         enrich(report.files, target)
+        if args.registry:
+            from frame.sca.licreg import RegistryLicences, enrich_from_registry
+            report.warnings.extend(enrich_from_registry(report.files, RegistryLicences()))
     if args.licenses:
         from frame.sca.licenses import Policy, check, failing, format_text as lic_text
         from frame.sil.suppressions import ConfigError, find_config

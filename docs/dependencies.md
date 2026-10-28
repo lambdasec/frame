@@ -247,7 +247,12 @@ Licences come from:
 - the lockfile: npm, Composer;
 - the installed metadata of the same version: `node_modules`, including pnpm's store, and a project `.venv`'s `License-Expression` or SPDX `License` field.
 
-Ruby, Dart, Elixir, Go and Rust lockfiles record no licences, so their packages are unknown unless installed metadata is present.
+Ruby, Dart, Elixir, Go and Rust lockfiles record no licences. `--registry` fills what is still unknown from each version's own registry record: npm, PyPI (`license_expression`, or an SPDX `License`), RubyGems, crates.io and NuGet (`licenseExpression`). Hex only publishes the latest release's licence and pub.dev and Go none, so those stay unknown rather than guessed. On devise's real `Gemfile.lock`, all 87 gems go from unknown to known. The answers are checked live against what the package managers install: each `.gem`'s own metadata, `cargo metadata`, and each `.nupkg`'s nuspec.
+
+```bash
+frame deps --licenses --registry           # goes to the registries once; cached
+frame deps --sbom cyclonedx --registry     # the SBOM carries the same licences
+```
 
 ## SBOM
 
