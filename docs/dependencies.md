@@ -104,6 +104,17 @@ C and C++ dependencies are matched against OSV's records for their upstream git 
 
 A git submodule pinned to an untagged commit is matched by commit: OSV's records give `introduced` and `fixed` commits, and the submodule's own checkout has the history that decides them, so nothing is fetched. The rule is the OSV schema's: the commit is affected when an `introduced` commit is its ancestor and no `fixed` commit lies between the two (a fix on another branch does not count; `last_affected` and `limit` bound it from above), asked of `git merge-base --is-ancestor`. When the checkout lacks an advisory's commits (a shallow clone), or an advisory gives tags but no commit ranges, it is reported as undecided, never as unaffected: a warning names it, the result ends with `NOT DECIDED: N advisory(ies)` instead of "no known vulnerabilities", the JSON has `undecided`, and `--fail-on` exits 2 (cannot be judged) when any undecided advisory is at or above its threshold. On real zlib and libexpat histories, the answers equal OSV's own commit query on every commit OSV's index answers for (the commits of the default branch). OSV's index leaves commits that reached the default branch only through a merged side branch unanswered, even when they predate the fix (33 of 34 such libexpat commits); Frame decides them by the same rule. A CMake `GIT_TAG` that is a bare commit has no checkout to ask, and stays unmatched.
 
+A project with zlib as a submodule pinned six commits after v1.2.12 (`v1.2.12-6-g441a2ac`, no tag), with advisories 2026.10.28-61e59fe:
+
+```console
+$ frame deps . --vulns
+6 known vulnerabilities:
+  CRITICAL github.com/madler/zlib@441a2ac6028a (direct) CVE-2022-37434: zlib through 1.2.12 has a heap-based buffer over-read or buffer overflow in infl; fixed upstream after this commit (see the advisory)  [.gitmodules]
+  ...
+```
+
+The six are what OSV's own commit query answers for `441a2ac`. With advisory data older than commit ranges, the same project ends `NOT DECIDED: 12 advisory(ies)` rather than reporting it clean.
+
 For air-gapped CI, pull on a connected machine into a directory and pull from it inside:
 
 ```bash
