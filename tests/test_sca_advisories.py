@@ -296,7 +296,7 @@ def test_class_entries_load_as_classes_not_functions(tmp_path, monkeypatch):
     assert [c["id"] for c in adv["classes"]] == ["a.b.Changed"]
 
 
-def test_compaction_changes_no_answer():
+def test_compaction_changes_no_answer(monkeypatch):
     """A listed version a range already covers is dropped, and a summary shared by several
     packages is stored once (Ubuntu's kernel flavours repeat each CVE ~20 times: 80% of a
     release's table). Every (package, version) of the real records answers as before."""
@@ -304,14 +304,22 @@ def test_compaction_changes_no_answer():
     root = Path(__file__).parent / "fixtures" / "sca"
     records = json.loads(gzip.decompress((root / "osv" / "records.json.gz").read_bytes()))
     records += json.loads(gzip.decompress((root / "container" / "osv_records.json.gz").read_bytes()))
-    by: dict = {}
-    for rec in records:
-        for eco, name, entry in entries(rec, ["PyPI", "npm", "Maven", "NuGet", "Go", "crates.io", "RubyGems",
-                                              "Packagist", "Debian", "Ubuntu", "Alpine"]):
-            by.setdefault(eco, {}).setdefault(name, []).append(entry)
+    import frame.sca.osv as osv
+
+    def read():
+        by: dict = {}
+        for rec in records:
+            for eco, name, entry in entries(rec, ["PyPI", "npm", "Maven", "NuGet", "Go", "crates.io", "RubyGems",
+                                                  "Packagist", "Debian", "Ubuntu", "Alpine"]):
+                by.setdefault(eco, {}).setdefault(name, []).append(entry)
+        return by
+    by = read()                                                  # pruned as read (what a build holds)
+    with monkeypatch.context() as m:
+        m.setattr(osv, "_uncovered", lambda eco, versions, ranges: versions)
+        unpruned = read()                                        # every listed version: the reference
     dropped = checked = 0
     for eco, pkgs in by.items():
-        full = {n: _merge_aliases([dict(e) for e in advs]) for n, advs in pkgs.items()}
+        full = {n: _merge_aliases([dict(e) for e in advs]) for n, advs in unpruned[eco].items()}
         tbl = json.loads(json.dumps(hoist_summaries(table(eco, pkgs))))       # as written and read back
         small = restore_summaries(tbl)
         for name, advs in full.items():

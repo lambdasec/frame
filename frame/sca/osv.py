@@ -120,6 +120,9 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
     if not isinstance(rec, dict) or rec.get("withdrawn") or not rec.get("id"):
         return
     wanted = set(ecosystems)
+    # one summary object per record, shared by every affected package's entry: a kernel CVE
+    # names ~24 Ubuntu flavours, and a full build holds every entry until its table is written
+    summary = (rec.get("summary") or rec.get("details") or "")[:300].strip()
     for aff in rec.get("affected") or []:
         pkg = aff.get("package") or {}
         full = pkg.get("ecosystem", "")
@@ -141,10 +144,12 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
             sev = "critical"
         yield eco, normalize_name(eco, pkg["name"]), {
             "id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
-            "summary": (rec.get("summary") or rec.get("details") or "")[:300].strip(),
+            "summary": summary,
             "severity": sev, "score": score, "cvss": vector,
             "published": rec.get("published"), "modified": rec.get("modified"),
-            "ranges": ranges, "versions": [str(v) for v in aff.get("versions") or []],
+            # pruned here, not only in `table`: a range of this entry still covers the version
+            # after the merge, and the listed versions were half of a full build's memory
+            "ranges": ranges, "versions": _uncovered(eco, [str(v) for v in aff.get("versions") or []], ranges),
             "functions": _functions(aff)}
 
 
