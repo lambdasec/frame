@@ -100,7 +100,9 @@ frame kb status                             # which revisions a scan here uses
 
 Every file is checked against the manifest's SHA-256 before it is cached (`~/.cache/frame/kb`, or `FRAME_KB_CACHE`). Matching, plans, reachability and scans never go to the network. With no advisories cached, `frame deps --vulns` warns and names the command to run.
 
-C and C++ dependencies are matched against OSV's records for their upstream git repositories, by the release tag a version is. Only the repositories a project uses are downloaded. A bare commit, or a version that cannot be mapped to a tag with certainty, is listed but not matched.
+C and C++ dependencies are matched against OSV's records for their upstream git repositories, by the release tag a version is. Only the repositories a project uses are downloaded. A version that cannot be mapped to a tag with certainty is listed but not matched.
+
+A git submodule pinned to an untagged commit is matched by commit: OSV's records give `introduced` and `fixed` commits, and the submodule's own checkout has the history that decides them, so nothing is fetched. The rule is the OSV schema's: the commit is affected when an `introduced` commit is its ancestor and no `fixed` commit lies between the two (a fix on another branch does not count; `last_affected` and `limit` bound it from above), asked of `git merge-base --is-ancestor`. When the checkout lacks an advisory's commits (a shallow clone), the advisory is reported as undecided, never as unaffected. On real zlib and libexpat histories, the answers equal OSV's own commit query on every commit OSV's index answers for (the commits of the default branch). OSV's index leaves commits that reached the default branch only through a merged side branch unanswered, even when they predate the fix (33 of 34 such libexpat commits); Frame decides them by the same rule. A CMake `GIT_TAG` that is a bare commit has no checkout to ask, and stays unmatched.
 
 For air-gapped CI, pull on a connected machine into a directory and pull from it inside:
 

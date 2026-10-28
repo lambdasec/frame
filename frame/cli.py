@@ -612,6 +612,7 @@ def cmd_deps(args) -> int:
             from frame.sca.mitigations import annotate as annotate_mitigations
             annotate_mitigations(findings, target.resolve(), cached_revision_dir(), excluded)
         not_checked = list(db.missing)
+        report.warnings.extend(db.notes)
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    f"run `{pull_hint(db.missing)}`")

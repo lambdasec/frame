@@ -181,7 +181,7 @@ jobs:
         FRAME_SCA_REAL: '1'
         COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      run: python -m pytest tests/test_sca_real_tools.py tests/test_sca_apply.py tests/test_sca_solve.py tests/test_sca_licenses.py tests/test_sca_licreg.py tests/test_sca_container.py tests/test_distro_versions.py -v --tb=short
+      run: python -m pytest tests/test_sca_real_tools.py tests/test_sca_apply.py tests/test_sca_solve.py tests/test_sca_licenses.py tests/test_sca_licreg.py tests/test_sca_container.py tests/test_distro_versions.py tests/test_sca_gitrange.py -v --tb=short
 
   benchmarks:
     # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).

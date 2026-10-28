@@ -318,7 +318,7 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
     for f in findings:
         sev = (f["severity"] or "unknown").upper()
         fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
-               "fixed upstream after this tag (see the advisory)" if f.get("repo") else "no fixed version")
+               ("fixed upstream after this commit (see the advisory)" if f.get("commit") else "fixed upstream after this tag (see the advisory)") if f.get("repo") else "no fixed version")
         kind = ("direct" if f["direct"] else "transitive" if f["direct"] is False else
                 "os package" if f["ecosystem"].split(":", 1)[0] in DISTRO_FAMILIES else "dependency")
         reach = f.get("reachability") or {}

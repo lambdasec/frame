@@ -165,19 +165,28 @@ def git_entries(rec: dict) -> Iterable[Tuple[str, dict]]:
     if not isinstance(rec, dict) or rec.get("withdrawn") or not rec.get("id"):
         return
     for aff in rec.get("affected") or []:
-        repos = {normalize_repo(r.get("repo", "")) for r in aff.get("ranges") or []
-                 if isinstance(r, dict) and r.get("type") == "GIT"}
+        git_ranges = [r for r in aff.get("ranges") or [] if isinstance(r, dict) and r.get("type") == "GIT"]
+        repos = {normalize_repo(r.get("repo", "")) for r in git_ranges}
         repos.discard(None)
         versions = sorted({str(v) for v in aff.get("versions") or []})
-        if not repos or not versions:
-            continue                                  # no tags: only a commit graph could decide
+        if not repos:
+            continue
         sev, score, vector = _severity(rec, aff)
         for repo in sorted(repos):
+            # the commit ranges of this repository: a pinned commit with no tag is decided on
+            # the checkout's own history (`frame.sca.gitrange`)
+            commits = [[{k: str(v) for k, v in e.items() if k in ("introduced", "fixed", "last_affected", "limit")}
+                        for e in r.get("events") or [] if isinstance(e, dict)]
+                       for r in git_ranges if normalize_repo(r.get("repo", "")) == repo]
+            commits = [c for c in commits if c]
+            if not versions and not commits:
+                continue
             yield repo, {"id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
                          "summary": (rec.get("summary") or rec.get("details") or "")[:300].strip(),
                          "severity": sev, "score": score, "cvss": vector,
                          "published": rec.get("published"), "modified": rec.get("modified"),
-                         "ranges": [], "versions": versions, "functions": _functions(aff)}
+                         "ranges": [], "versions": versions, "functions": _functions(aff),
+                         **({"commits": commits} if commits else {})}
 
 
 def table(ecosystem: str, by_pkg: Dict[str, List[dict]]) -> dict:
@@ -290,7 +299,9 @@ def _merge_aliases(advs: List[dict]) -> List[dict]:
             "modified": max((a["modified"] for a in group if a["modified"]), default=None),
             "ranges": [r for a in group for r in a["ranges"]],
             "versions": sorted({v for a in group for v in a["versions"]}),
-            "functions": functions})
+            "functions": functions,
+            **({"commits": [c for a in group for c in a.get("commits", [])]}
+               if any(a.get("commits") for a in group) else {})})
     return sorted(out, key=lambda a: a["id"])
 
 

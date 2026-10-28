@@ -6,9 +6,11 @@ repository (`cpp.normalize_repo`) and the release tag its version is, when that 
     .gitmodules                                         the pinned commit; its tag via git
     CMakeLists.txt  FetchContent_Declare / ExternalProject_Add / CPMAddPackage
 
-A bare commit, a version range or a `${VARIABLE}` gives no tag: the dependency is listed and
-not matched, never guessed. Nothing here runs a build; `git` is only asked, read-only, which
-commit a submodule is pinned to and whether that commit carries a tag.
+A bare commit, a version range or a `${VARIABLE}` gives no tag, and is never guessed. A submodule
+pinned to an untagged commit is matched by commit instead, against the advisories' GIT commit
+ranges on the submodule's own history (`frame.sca.gitrange`). Nothing here runs a build; `git`
+is only asked, read-only, which commit a submodule is pinned to, whether that commit carries a
+tag, and which commits are ancestors of which.
 """
 
 from __future__ import annotations
@@ -187,9 +189,11 @@ def parse_gitmodules(path: str, text: str, root: Optional[Path] = None) -> Depen
             commit = m.group(1) if m else None
             if commit and (base / sub / ".git").exists():
                 tag = _git(base / sub, "describe", "--tags", "--exact-match", commit)
+        checkout = base / sub if base is not None and commit and (base / sub / ".git").exists() else None
         df.add(Package(GIT, repo, tag or (commit[:12] if commit else None), direct=True,
                        spec="" if (tag or commit) else "submodule (commit unknown)", repo=repo,
-                       tags=[tag] if tag else []))
+                       tags=[tag] if tag else [], commit=commit or "",
+                       checkout=str(checkout.resolve()) if checkout else ""))
     return df
 
 

@@ -37,6 +37,8 @@ class Package:
     license_source: str = ""             # "" (the file itself) | "installed"
     repo: str = ""                       # C/C++: the upstream repository, host/owner/name
     tags: List[str] = field(default_factory=list)   # C/C++: the release tag(s) this version is
+    commit: str = ""                     # a git submodule: the full commit it is pinned to
+    checkout: str = ""                   # ... and its checkout, whose history decides commit ranges
 
     @property
     def key(self) -> str:

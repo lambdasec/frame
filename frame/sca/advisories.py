@@ -233,6 +233,7 @@ class AdvisoryDB:
     revision: Optional[str] = None
     tables: Dict[str, Dict[str, List[dict]]] = field(default_factory=dict)   # ecosystem -> name -> advisories
     missing: List[str] = field(default_factory=list)                          # ecosystems not cached
+    notes: List[str] = field(default_factory=list)                            # what matching could not decide
 
     @classmethod
     def from_dir(cls, d: Optional[Path], ecosystems: Iterable[str]) -> "AdvisoryDB":
@@ -322,7 +323,21 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
         for key, pkg in sorted(df.packages.items()):
             if not pkg.version and not pkg.tags:
                 continue
-            if pkg.repo:                                  # C/C++: OSV's affected tags of the repository
+            if pkg.repo and not pkg.tags and pkg.commit and pkg.checkout:
+                # an untagged submodule commit: OSV's commit ranges, on the checkout's history
+                from frame.sca.gitrange import commit_affected, git_ancestry
+                ancestry = git_ancestry(Path(pkg.checkout))
+                candidates, undecided = [], []
+                for adv in db.repo_advisories(pkg.repo):
+                    verdict = commit_affected(pkg.commit, adv.get("commits", []), ancestry) if adv.get("commits") else False
+                    if verdict is None:
+                        undecided.append(adv["id"])
+                    candidates.append((adv, bool(verdict)))
+                if undecided:
+                    db.notes.append(f"{pkg.repo}@{pkg.commit[:12]} ({df.path}): {len(undecided)} advisory(ies) not "
+                                    f"decided, their commits are not in the checkout (a shallow clone?): "
+                                    f"{', '.join(undecided[:5])}")
+            elif pkg.repo:                                # C/C++: OSV's affected tags of the repository
                 candidates = [(adv, any(t in adv.get("versions", ()) for t in pkg.tags))
                               for adv in db.repo_advisories(pkg.repo)]
             else:
@@ -339,7 +354,7 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     "purl": pkg.purl, "path": df.path, "direct": pkg.direct, "dev": pkg.dev,
                     "fixed": [] if pkg.repo else fixed_versions(pkg.ecosystem, pkg.version, adv),
                     **({"repo": pkg.repo, "tag": next(t for t in pkg.tags if t in adv.get("versions", ()))}
-                       if pkg.repo else {}),
+                       if pkg.repo and pkg.tags else {"repo": pkg.repo, "commit": pkg.commit} if pkg.repo else {}),
                     "via": [f"{df.packages[k].name}@{df.packages[k].version}" for k in chain],
                     "functions": adv.get("functions", []),
                     "classes": adv.get("classes", []),
