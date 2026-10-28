@@ -116,6 +116,12 @@ def cmd_kb(args) -> int:
             remember_source(args.source or source())
             print(f"{got.source}@{got.revision}: {len(got.files)} files ({got.fetched} downloaded) "
                   f"for {', '.join(ecos + ([f'{len(shards)} C/C++ repository shard(s)'] if shards else []))}")
+            from frame.sca.advisories import table_path
+            pulled = {str(f).lower() for f in got.files}
+            absent = [e for e in ecos if e.lower() != "git" and table_path(e).lower() not in pulled]
+            if absent:
+                print(f"warning: this revision has no advisories for {', '.join(absent)} "
+                      "(not published there, or not an OSV ecosystem name)", file=sys.stderr)
             return 0
         if args.kb_command == "pull":
             lock = read_lock(Path(args.project))

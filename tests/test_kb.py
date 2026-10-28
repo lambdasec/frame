@@ -112,3 +112,25 @@ def test_kb_spec_table_replaces_the_built_in_one(tmp_path, monkeypatch):
     pull(["python"], source=str(tmp_path / "mirror"))
     monkeypatch.setenv("FRAME_KB_SOURCE", str(tmp_path / "mirror"))
     assert load_table("python")["acme.shell"].is_sink == "command"
+
+
+def test_pulling_advisories_names_an_ecosystem_the_revision_lacks(tmp_path, monkeypatch, capsys):
+    import gzip as _gzip
+    import json as _json
+    from frame.kb.cli import cmd_kb
+    from frame.kb.store import MANIFEST, SCHEMA, _sha256
+    src = tmp_path / "src"
+    (src / "advisories").mkdir(parents=True)
+    data = _gzip.compress(_json.dumps({"schema": 1, "ecosystem": "Debian:12", "packages": {}}).encode())
+    (src / "advisories" / "Debian_12.json.gz").write_bytes(data)
+    (src / MANIFEST).write_text(_json.dumps({"schema": SCHEMA, "revision": "r1", "files": {
+        "advisories/Debian_12.json.gz": {"sha256": _sha256(data), "size": len(data), "language": "debian:12",
+                                         "kind": "advisories", "name": "Debian:12"}}}))
+    monkeypatch.setenv("FRAME_KB_CACHE", str(tmp_path / "cache"))
+
+    class Args:
+        kb_command, advisories, all, project, revision = "pull", True, False, str(tmp_path), None
+        ecosystems, source = "debian:12,Rocky Linux:9", str(src)
+    assert cmd_kb(Args()) == 0
+    err = capsys.readouterr().err
+    assert "no advisories for Rocky Linux:9" in err and "debian" not in err.lower()
