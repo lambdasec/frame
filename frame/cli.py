@@ -103,7 +103,8 @@ def create_parser() -> argparse.ArgumentParser:
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
     deps_parser.add_argument("--registry", action="store_true",
-                             help="With --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
+                             help="With --vulns: also list the project's declared ranges that admit a vulnerable "
+                                  "release; with --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
                                   "every package together with Z3, so upgrading a package in between replaces an "
                                   "override (goes to the network; cached)")
     deps_parser.add_argument("--verify", metavar="COMMAND",
@@ -565,6 +566,14 @@ def cmd_deps(args) -> int:
         if findings and not args.no_reachability:
             from frame.sca.reachability import Usage, annotate
             annotate(findings, Usage(target.resolve(), excluded), target.resolve())
+        exposure = None
+        if args.registry and not args.vex:
+            from frame.sca.registry import Registries, RegistryError
+            from frame.sca.solve import range_exposure
+            try:
+                exposure = range_exposure(report.files, db, Registries())
+            except RegistryError as e:
+                report.warnings.append(f"registry: {e}; declared ranges not checked")
         if findings:
             from frame.sca.advisories import cached_revision_dir
             from frame.sca.mitigations import annotate as annotate_mitigations
@@ -626,6 +635,8 @@ def cmd_deps(args) -> int:
         if findings is not None:
             data["vulnerabilities"] = findings
             data["not_checked"] = not_checked
+            if exposure is not None:
+                data["exposed_ranges"] = exposure
             if plans is not None:
                 data["plan"] = plans
                 data["edits"] = [{"path": c.path, "reason": c.reason, "diff": c.diff()} for c in outcome.changes]
@@ -639,6 +650,9 @@ def cmd_deps(args) -> int:
         if findings is not None:
             from frame.sca.discover import format_vulns
             out += "\n" + format_vulns(findings, not_checked)
+            if exposure:
+                from frame.sca.solve import format_exposure
+                out += format_exposure(exposure)
             if plans is not None:
                 from frame.sca.plan import format_plan
                 out += format_plan(plans)

@@ -217,3 +217,20 @@ def test_live_uv_relock_of_the_solved_plan(tmp_path):
     assert not out.warnings, out.warnings
     assert any(m.startswith("flask") for m in out.manual)
     assert {f["package"] for f in match(read_dependencies(tmp_path).files, db)} <= {"flask"}
+
+
+def test_a_declared_range_that_admits_vulnerable_releases():
+    from frame.sca.solve import format_exposure, range_exposure
+    df = DependencyFile("package.json", NPM, "manifest")
+    df.require("", "lib", "^1.0.0")
+    df.require("", "safe", "^2.0.0")
+    df.require("", "pinned", "1.0.0")
+    reg = Reg({"lib": {"1.0.0": {}, "1.1.0": {}, "1.2.0": {}, "2.0.0": {}},
+               "safe": {"2.0.0": {}, "2.1.0": {}}, "pinned": {"1.0.0": {}, "1.1.0": {}}})
+    rows = {r["package"]: r for r in range_exposure([df], DB({"lib": [adv("1.2.0")], "safe": [adv("2.0.0")],
+                                                               "pinned": [adv("1.1.0")]}), reg)}
+    assert set(rows) == {"lib", "pinned"}                                  # ^2.0.0 admits nothing vulnerable
+    assert (rows["lib"]["vulnerable"], rows["lib"]["admits"], rows["lib"]["floor"]) == (2, 3, "1.2.0")
+    assert rows["pinned"]["floor"] is None
+    text = format_exposure(list(rows.values()))
+    assert "raise the floor to 1.2.0" in text and "every version it admits is vulnerable" in text

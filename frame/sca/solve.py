@@ -194,3 +194,52 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
         sol.changes.append(Change(p.name, p.version, target, bool(p.direct),
                                   bool(spec and target and satisfies(eco, target, spec) is False), k in vulnerable))
     return sol
+
+
+def range_exposure(files: List[DependencyFile], db, registries) -> List[dict]:
+    """For each range the project itself declares (a manifest or a lockfile's root
+    requirements): the released versions it admits that an advisory affects, and the lowest
+    floor that leaves none. A library's consumers resolve its ranges, not its lockfile, so a
+    range that admits a vulnerable version passes it on even when the lockfile is safe."""
+    out: List[dict] = []
+    seen: Set[Tuple[str, str, str]] = set()
+    for df in files:
+        reg = registries.for_ecosystem(df.ecosystem) if hasattr(registries, "for_ecosystem") else registries
+        if reg is None or df.ecosystem not in SUPPORTED:
+            continue
+        eco = df.ecosystem
+        for name, spec in sorted(df.requires.get("", {}).items()):
+            key = (eco, normalize_name(eco, name), spec)
+            if key in seen or not spec:
+                continue
+            seen.add(key)
+            meta = reg.versions(name)
+            advisories = db.advisories(eco, name)
+            if not meta or not advisories:
+                continue
+            released = sorted_versions(eco, [v for v, m in meta.items() if not is_prerelease(v, eco)])
+            admitted = [v for v in released if satisfies(eco, v, spec) is True]
+            bad = [v for v in admitted if any(is_affected(eco, v, a) for a in advisories)]
+            if not bad:
+                continue
+            ids = sorted({a["id"] for a in advisories for v in bad if is_affected(eco, v, a)})
+            above = [v for v in admitted if sort_key(eco, v) > sort_key(eco, bad[-1])]
+            out.append({"ecosystem": eco, "package": name, "range": spec, "path": df.path,
+                        "admits": len(admitted), "vulnerable": len(bad), "lowest": bad[0], "highest": bad[-1],
+                        "advisories": ids, "floor": above[0] if above else None})
+    return out
+
+
+def format_exposure(rows: List[dict]) -> str:
+    if not rows:
+        return ""
+    lines = [f"\nDeclared ranges that admit vulnerable versions ({len(rows)}): consumers who resolve "
+             "these ranges can install them"]
+    for r in rows:
+        fix = (f"raise the floor to {r['floor']}" if r["floor"] else
+               "every version it admits is vulnerable: widen it" if r["vulnerable"] == r["admits"] else
+               "a vulnerable version is the newest it admits: widen it")
+        lines.append(f"  {r['package']} {r['range']}: admits {r['vulnerable']} vulnerable of {r['admits']} "
+                     f"({r['lowest']} .. {r['highest']}; {', '.join(r['advisories'][:3])}"
+                     f"{'...' if len(r['advisories']) > 3 else ''}); {fix}  [{r['path']}]")
+    return "\n".join(lines)

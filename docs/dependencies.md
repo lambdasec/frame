@@ -85,6 +85,19 @@ frame kb pull --advisories --all --source hf:lambdasec/frame-advisories   # conn
 FRAME_ADVISORIES_SOURCE=/mnt/frame-advisories frame kb pull --advisories  # or an https:// mirror
 ```
 
+### Declared ranges (`--vulns --registry`)
+
+A library's users resolve its declared ranges, not its lockfile, so a range that admits a vulnerable release passes it on even when the lockfile is safe. With `--registry`, `frame deps --vulns` also checks the project's own ranges against every released version:
+
+```console
+$ frame deps --vulns --registry
+Declared ranges that admit vulnerable versions (2): consumers who resolve these ranges can install them
+  express 4.17.1: admits 1 vulnerable of 1 (4.17.1 .. 4.17.1; GHSA-qw6h-vgh9-j6wx, GHSA-rv95-896h-c2vc); every version it admits is vulnerable: widen it  [package-lock.json]
+  lodash ~4.17.20: admits 3 vulnerable of 3 (4.17.20 .. 4.17.23; GHSA-29mw-wpgm-hmr9, GHSA-35jh-r3h4-6jhm, GHSA-f23m-r3pf-42rh...); every version it admits is vulnerable: widen it  [package-lock.json]
+```
+
+Where some admitted versions are safe, it names the lowest floor that leaves no vulnerable one (`raise the floor to 1.2.0`). JSON: `exposed_ranges`.
+
 ## Is it reachable?
 
 For Python, JavaScript/TypeScript, Java and C#, each vulnerability is checked against the code under the manifest that declared the package:
