@@ -141,6 +141,30 @@ Upgrade plan (13 packages):
 ...
 ```
 
+### Solving the upgrades together (`--registry`)
+
+An override is a workaround: the package in between still asks for the old version. Usually a newer release of that package admits the fix, and upgrading it is the real repair. `--registry` (npm for now) fetches every version's dependency ranges from the registry and solves the upgrades of all the packages involved together with Z3:
+- every chosen version's ranges admit the chosen versions of its dependencies;
+- no vulnerable version remains, where any version can avoid it;
+- major jumps are minimised first, then raised requirements, then the number of packages changed, then the distance from the current versions.
+
+A newer version that no longer depends on a vulnerable package takes it out of the tree. On the same Express app, the plan needs no override at all:
+
+```console
+$ frame deps --vulns --plan --registry
+Upgrade plan (14 packages):
+  body-parser 1.19.0 -> 1.20.9: re-lock to it (admitted by the solved upgrades)  [package-lock.json; fixes 3]
+  express 4.17.1 -> 4.22.3: raise the project's requirement  [package-lock.json; fixes 2]
+  nanoid@3.3.3: leaves the tree (no upgraded package depends on it)  [package-lock.json; fixes 4]
+  qs 6.7.0 -> 6.16.1: re-lock to it (admitted by the solved upgrades)  [package-lock.json; fixes 5]
+  mocha 10.2.0 -> 12.0.0 [major]: raise the project's requirement  [package-lock.json; lets diff, js-yaml, minimatch upgrade]
+...
+$ frame deps --vulns --plan --registry --apply --relock
+After applying: 37 fixed, 0 remaining
+```
+
+Express stays on 4.x, because 4.22.3 admits every fix. Mocha does jump a major version: no 10.x or 11.x release admits fixed versions of its vulnerable dependencies. Metadata is cached (`FRAME_REGISTRY_CACHE`, default beside the knowledge-base cache), so a re-plan is offline. A vulnerable package no upgrade can fix keeps its override. The other dependencies of an upgraded package are resolved by re-locking, which the plan does not model.
+
 `--apply` changes only the version text (or adds the override), so formatting and comments are kept. An edit that cannot be made safely, such as an upper bound that excludes the fix, or a Gradle `version.ref` that other libraries share, is listed as manual instead. After writing, Frame re-reads the graph and reports what is fixed and what remains.
 
 | Option | Runs | What it does |

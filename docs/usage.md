@@ -245,6 +245,7 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |
 | `--plan` | with `--vulns`: the smallest safe upgrades and the edits, as a diff |
+| `--registry` | with `--plan`: fetch release metadata (npm) and solve the upgrades of all packages together with Z3, so upgrading a package in between replaces an override (network; cached) |
 | `--apply` | write the edits, then re-read and report what is fixed and what remains |
 | `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |
 | `--verify COMMAND` | with `--apply`: run your build or tests before and after; roll back an upgrade that breaks them |
@@ -319,6 +320,7 @@ The separation logic engine; flags in [engine.md](engine.md).
 | `FRAME_KB` | on | `off` uses built-in packs only and no advisories |
 | `FRAME_KB_CACHE` | `~/.cache/frame/kb` | where packs and advisories are cached |
 | `FRAME_KB_SOURCE` | `hf:lambdasec/frame-kb` | where `kb pull` gets packs |
+| `FRAME_REGISTRY_CACHE` | beside `FRAME_KB_CACHE` (`~/.cache/frame/registry`) | registry metadata for `--plan --registry` |
 | `FRAME_ADVISORIES_SOURCE` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
 | `FRAME_GENERATED_LINE_THRESHOLD` | 2000 | a file with lines this long is treated as minified or generated |
 | `FRAME_AGGRESSIVE_DETECTORS` | off | Java context-dependent detectors (CSRF disabled, field-initializer secrets); use only with LLM triage |

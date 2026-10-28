@@ -102,6 +102,10 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--apply", action="store_true",
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
+    deps_parser.add_argument("--registry", action="store_true",
+                             help="With --plan: fetch release metadata from the registry (npm) and solve the upgrades of "
+                                  "every package together with Z3, so upgrading a package in between replaces an "
+                                  "override (goes to the network; cached)")
     deps_parser.add_argument("--verify", metavar="COMMAND",
                              help="With --apply: the project's own build / test command, run before and after; "
                                   "an upgrade that breaks a passing command is rolled back (runs the command)")
@@ -596,7 +600,18 @@ def cmd_deps(args) -> int:
         if args.plan or args.apply:
             from frame.sca.apply import apply_plan
             from frame.sca.plan import plan
-            plans = plan(findings, report.files, db)
+            registry = None
+            if args.registry:
+                from frame.sca.registry import NpmRegistry
+                registry = NpmRegistry()
+            try:
+                plans = plan(findings, report.files, db, registry)
+            except Exception as e:                        # the registry could not be reached
+                from frame.sca.registry import RegistryError
+                if not isinstance(e, RegistryError):
+                    raise
+                report.warnings.append(f"registry: {e}; planned each package alone")
+                plans = plan(findings, report.files, db)
             outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock, verify=args.verify)
             if args.apply:
                 after = match(read_dependencies(target, exclude_dirs=excluded).files, db)

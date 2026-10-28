@@ -1,0 +1,8 @@
+package.json: a small Express app (express 4.17.1, lodash ~4.17.20, mocha 10.2.0 dev).
+package-lock.json: written by npm 10 (npm install --package-lock-only).
+registry/: npm's abbreviated metadata (application/vnd.npm.install-v1+json) for the 14 packages
+  the planner reads, trimmed to dependencies / optionalDependencies / deprecated, fetched 2026-10-28.
+advisories.json.gz: those packages' advisories from lambdasec/frame-advisories 2026.10.27-ab8d558
+  (OSV data, CC-BY 4.0).
+Ground truth: the solved plan, applied and re-locked by real npm, leaves 0 vulnerabilities and no
+overrides (tests/test_sca_solve.py, live with FRAME_SCA_REAL=1).

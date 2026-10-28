@@ -15,10 +15,18 @@ requirements recorded in the lockfile and manifest (`DependencyFile.requires`):
                        `dependencyManagement`, a direct NuGet reference), or upgrade that package
     no-fix             no unaffected version is known
 
-`major` marks a target in a later major version (a breaking-change risk). Choosing upgrades
-of the packages in between (whose newer versions widen the range) needs their release
-metadata from the registry; that, and solving all packages' constraints together, is the
-next step.
+`major` marks a target in a later major version (a breaking-change risk).
+
+With a registry (`frame deps --plan --registry`, npm), the plan for a lockfile is instead
+solved over every package's constraints together (`solve.py`): upgrades of the packages in
+between whose newer versions admit the fix replace overrides, and the packages that only
+need re-locking to a newer version are listed with the version the solution needs:
+
+    update-lockfile    as above (the solver's target is reachable within every chosen range)
+    raise-requirement  a direct dependency's new version is outside the project's range
+    removed            a chosen upgrade no longer depends on it: it leaves the tree
+
+A vulnerable package the upgrades cannot fix keeps its override.
 """
 
 from __future__ import annotations
@@ -65,8 +73,9 @@ def target_version(ecosystem: str, current: str, advisories: List[dict]) -> Opti
     return None
 
 
-def plan(findings: List[dict], files: List[DependencyFile], db) -> List[dict]:
-    """One plan per vulnerable package version in each manifest or lockfile."""
+def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -> List[dict]:
+    """One plan per vulnerable package version in each manifest or lockfile (plus, with a
+    registry, the packages in between that the solved upgrade changes)."""
     by_path = {f.path: f for f in files}
     groups: Dict[Tuple[str, str, str], List[dict]] = {}
     for f in findings:
@@ -118,6 +127,57 @@ def plan(findings: List[dict], files: List[DependencyFile], db) -> List[dict]:
         if action == "override":
             entry["how"] = OVERRIDE_HOW.get(eco, "")
         out.append(entry)
+    if registry is not None:
+        out = _solved(out, findings, by_path, db, registry)
+    return out
+
+
+def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, DependencyFile], db, registry) -> List[dict]:
+    from frame.sca.solve import SUPPORTED, solve_file
+    out = list(plans)
+    for path, df in sorted(by_path.items()):
+        if df.ecosystem not in SUPPORTED or df.kind != "lockfile":
+            continue
+        vulnerable_pairs = {(f["package"], f["version"]) for f in findings if f["path"] == path}
+        vuln = {k for k, p in df.packages.items() if (p.name, p.version) in vulnerable_pairs}
+        if not vuln:
+            continue
+        sol = solve_file(df, vuln, db, registry)
+        if sol is None or not sol.changes:
+            continue
+        index = {(p["package"], p["current"]): p for p in out if p["path"] == path}
+
+        def fixed_below(name: str, version: str) -> List[str]:
+            """The vulnerable packages this one's upgrade lets go: fixed ones beneath it."""
+            start = [k for k, p in df.packages.items() if p.name == name and p.version == version]
+            seen, stack = set(), list(start)
+            while stack:
+                k = stack.pop()
+                for c in df.edges.get(k, ()):
+                    if c not in seen:
+                        seen.add(c)
+                        stack.append(c)
+            return sorted({df.packages[k].name for k in seen & sol.fixed})
+        for c in sol.changes:
+            entry = index.get((c.package, c.current))
+            if entry is not None and entry["action"] == "no-fix" and c.target is not None:
+                continue                                   # nothing safe was found for it
+            if entry is None:
+                entry = {"ecosystem": df.ecosystem, "package": c.package, "current": c.current, "path": path,
+                         "direct": c.direct, "dev": next((p.dev for p in df.packages.values()
+                                                          if p.name == c.package and p.version == c.current), False),
+                         "fixes": [], "unfixed": [], "via": [], "requirers": [], "known_requirements": True,
+                         "enables": fixed_below(c.package, c.current)}
+                out.append(entry)
+            elif any(k for k in sol.unresolved if df.packages[k].name == c.package):
+                continue                                   # still vulnerable: keep the per-package plan
+            entry["target"] = c.target
+            entry["action"] = "removed" if c.target is None else \
+                "raise-requirement" if c.raise_requirement else "update-lockfile"
+            entry["solved"] = True
+            entry.pop("how", None)
+            entry["major"] = bool(c.target and _major(c.target) is not None and _major(c.current) is not None
+                                  and _major(c.target) > _major(c.current))
     return out
 
 
@@ -130,14 +190,20 @@ def format_plan(plans: List[dict]) -> str:
         if p["action"] == "no-fix":
             lines.append(f"  {p['package']}@{p['current']}: no fixed version known ({', '.join(p['unfixed'])})")
             continue
+        if p["action"] == "removed":
+            lines.append(f"  {p['package']}@{p['current']}: leaves the tree (no upgraded package depends on it)  "
+                         f"[{p['path']}; fixes {len(p['fixes'])}]")
+            continue
         what = {"update-lockfile": "re-lock (every known range admits it)",
                 "raise-requirement": "raise the project's requirement",
                 "override": f"override: {p.get('how', '')}"}[p["action"]]
-        if not p["known_requirements"] and p["action"] == "update-lockfile":
+        if p.get("solved") and p["action"] == "update-lockfile":
+            what = "re-lock to it (admitted by the solved upgrades)"
+        elif not p["known_requirements"] and p["action"] == "update-lockfile":
             what = "re-lock (requirements not recorded in this file)"
-        lines.append(f"  {p['package']} {p['current']} -> {p['target']}{tag}: {what}  "
-                     f"[{p['path']}; fixes {len(p['fixes'])}]")
-        for r in p["requirers"]:
+        gain = f"fixes {len(p['fixes'])}" if p["fixes"] else f"lets {', '.join(p.get('enables', [])[:3])} upgrade"
+        lines.append(f"  {p['package']} {p['current']} -> {p['target']}{tag}: {what}  [{p['path']}; {gain}]")
+        for r in [] if p.get("solved") else p["requirers"]:
             if r["admits_target"] is False:
                 lines.append(f"      {r['by']} requires {r['spec']}")
     return "\n".join(lines)
