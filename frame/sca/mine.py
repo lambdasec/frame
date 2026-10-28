@@ -371,9 +371,11 @@ def canonical(ecosystem: str, package: str, path: str, fn: Fn, file_text: str) -
     return None
 
 
-def _lift(fns: List[Fn], changed: List[Fn], depth: int = 3) -> Dict[str, str]:
+def _lift(fns: List[Fn], changed: List[Fn], depth: int = 12) -> Dict[str, str]:
     """Public functions of the file that call a changed internal one directly (transitively):
-    public name -> the internal function it reaches."""
+    public name -> the internal function it reaches. Each function is visited once, so the
+    depth only bounds a chain, never a cycle; real chains are longer than three (AntiSamy's
+    processStyleTag reaches the public scan through four private callers)."""
     out: Dict[str, str] = {}
     frontier = {f.name.rsplit(".", 1)[-1]: f.name for f in changed if not f.public}
     seen = set(frontier)

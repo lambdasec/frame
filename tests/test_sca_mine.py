@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from frame.sca.mine import RecordedSource, changed_old_lines, commit_links, functions, mine
+from frame.sca.mine import RecordedSource, changed_old_lines, commit_links, functions, mine, mine_record
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMITS = ROOT / "tests" / "fixtures" / "sca" / "commits"
@@ -141,3 +141,14 @@ def test_a_rate_limited_run_stops_and_resumes_exactly_where_it_left_off():
     assert prog.rate_limited and prog.processed == 1 and prog.resume_after == "2026-01-01T00:00:00Z"
     _, report = mine(recs, ["PyPI"], RecordedSource(COMMITS), since=prog.resume_after, progress=Progress())
     assert [m.advisory for m in report] == ["GHSA-2", "GHSA-3"]             # the next run picks up there
+
+
+def test_a_chain_of_private_callers_longer_than_three_is_lifted():
+    """GHSA-3pqg-4rqg-pg9g (AntiSamy): the fix changes the private processStyleTag, which the
+    public scan reaches through actionValidate, recursiveValidateTag and processChildren."""
+    d = COMMITS / "nahsra__antisamy__0199e7e194db"
+    rec = json.loads((d / "osv.json").read_text())
+    m = mine_record(rec, "Maven", "org.owasp.antisamy:antisamy", RecordedSource(COMMITS))
+    assert [(e["id"], e.get("lifted_from")) for e in m.entries] == [
+        ("org.owasp.validator.html.scan.AntiSamyDOMScanner.scan", "AntiSamyDOMScanner.processStyleTag")]
+    assert not m.internal_only

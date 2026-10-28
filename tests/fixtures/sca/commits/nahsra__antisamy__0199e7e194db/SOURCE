@@ -1,0 +1,3 @@
+nahsra/antisamy (BSD-3-Clause) commit 0199e7e1, the fix for GHSA-3pqg-4rqg-pg9g, and the changed file
+at its parent; osv.json is the OSV record. The changed private method reaches the public
+AntiSamyDOMScanner.scan through four private callers (same-file lifting).

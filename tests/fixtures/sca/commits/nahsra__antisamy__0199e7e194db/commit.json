@@ -1,0 +1,23 @@
+{
+ "sha": "0199e7e194dba5e7d7197703f43ebe22401e61ae",
+ "parents": [
+  "578d1f99b5a8d96cbeedef5970eee97fbeb23d27"
+ ],
+ "files": [
+  {
+   "filename": "src/main/java/org/owasp/validator/html/scan/AntiSamyDOMScanner.java",
+   "status": "modified",
+   "patch": "@@ -407,10 +407,17 @@ private boolean processStyleTag(Element ele, Node parentNode) {\n         CssScanner styleScanner = new CssScanner(policy, messages, policy.isEmbedStyleSheets());\n \n         try {\n-            Node firstChild = ele.getFirstChild();\n-            if (firstChild != null) {\n+            if (ele.getChildNodes().getLength() > 0) {\n+                String toScan = \"\";\n+\n+                for (int i = 0; i < ele.getChildNodes().getLength(); i++) {\n+                    Node childNode = ele.getChildNodes().item(i);\n+                    if (!toScan.isEmpty()){\n+                        toScan += \"\\n\";\n+                    }\n+                    toScan += childNode.getTextContent();\n+                }\n \n-                String toScan = firstChild.getNodeValue();\n                 CleanResults cr = styleScanner.scanStyleSheet(toScan, policy.getMaxInputSize());\n                 errorMessages.addAll(cr.getErrorMessages());\n \n@@ -422,12 +429,17 @@ private boolean processStyleTag(Element ele, Node parentNode) {\n                  * break all CSS. To prevent that, we have this check.\n                  */\n \n-                final String cleanHTML = cr.getCleanHTML();\n+                String cleanHTML = cr.getCleanHTML();\n+                cleanHTML = cleanHTML == null || cleanHTML.equals(\"\") ? \"/* */\" : cleanHTML;\n \n-                if (cleanHTML == null || cleanHTML.equals(\"\")) {\n-                    firstChild.setNodeValue(\"/* */\");\n-                } else {\n-                    firstChild.setNodeValue(cleanHTML);\n+                ele.getFirstChild().setNodeValue(cleanHTML);\n+                /*\n+                 * Remove every other node after cleaning CSS, there will\n+                 * be only one node in the end, as it always should have.\n+                 */\n+                for (int i = 1; i < ele.getChildNodes().getLength(); i++) {\n+                    Node childNode = ele.getChildNodes().item(i);\n+                    ele.removeChild(childNode);\n                 }\n             }\n "
+  },
+  {
+   "filename": "src/test/java/org/owasp/validator/html/test/AntiSamyTest.java",
+   "status": "modified",
+   "patch": "@@ -1702,5 +1702,19 @@ public void testGithubIssue151() throws ScanException, PolicyException {\n         assertThat(result.getErrorMessages().size(), is(1));\n         assertThat(result.getCleanHTML(), both(containsString(\"img\")).and(not(containsString(\"CURSOR\"))));\n     }\n+\n+    @Test\n+    public void testSmuggledTagsInStyleContent() throws ScanException, PolicyException {\n+        // HTML tags may be smuggled into a style tag after parsing input to an internal representation.\n+        // If that happens, they should be treated as text content and not as children nodes.\n+\n+        Policy revised = policy.cloneWithDirective(Policy.USE_XHTML,\"true\");\n+        assertThat(as.scan(\"<style/>b<![cdata[</style><a href=javascript:alert(1)>test\", revised, AntiSamy.DOM).getCleanHTML(), not(containsString(\"javascript\")));\n+        assertThat(as.scan(\"<style/>b<![cdata[</style><a href=javascript:alert(1)>test\", revised, AntiSamy.SAX).getCleanHTML(), not(containsString(\"javascript\")));\n+\n+        Policy revised2 = policy.cloneWithDirective(Policy.USE_XHTML,\"false\");\n+        assertThat(as.scan(\"<select<style/>W<xmp<script>alert(1)</script>\", revised2, AntiSamy.DOM).getCleanHTML(), not(containsString(\"script\")));\n+        assertThat(as.scan(\"<select<style/>W<xmp<script>alert(1)</script>\", revised2, AntiSamy.SAX).getCleanHTML(), not(containsString(\"script\")));\n+    }\n }\n "
+  },
+  {
+   "filename": "src/test/java/org/owasp/validator/html/test/TestPolicy.java",
+   "status": "modified",
+   "patch": "@@ -43,7 +43,7 @@\n  */\n public class TestPolicy extends InternalPolicy {\n \n-    protected TestPolicy(Policy.ParseContext parseContext) throws PolicyException {\n+    protected TestPolicy(Policy.ParseContext parseContext) {\n         super(parseContext);\n     }\n "
+  }
+ ]
+}
