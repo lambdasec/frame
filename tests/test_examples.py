@@ -115,6 +115,14 @@ def test_secrets_walkthrough(tmp_path):
         assert line in out and line in readme, line
     demo = (work / "demo" / "deploy.py").read_text().splitlines()
     assert "IOSFODNN7EXAMPLE" in demo[16] and demo[18].startswith("# A rotated token")   # the README's lines 17, 19
+    shutil.rmtree(work / "demo")
+    subprocess.run([sys.executable, "make_demo.py", "--history"], cwd=work, check=True, capture_output=True)
+    out = frame(work, env, "history", "demo")
+    for line in ["4 credential(s) in the history",
+                 "Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in aad6cf42ecde billing.js:3 "
+                 "(not in the current tree, still in the history)",
+                 "AWS AWS access key ID: AKIA... (20 characters) added in aad6cf42ecde deploy.py:14 (still in the current tree)"]:
+        assert line in out and line in readme, (line, out)
 
 
 def test_the_repository_holds_no_token_shaped_string():

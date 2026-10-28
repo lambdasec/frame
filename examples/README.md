@@ -43,7 +43,7 @@ A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere
 
 ### [secrets](secrets/README.md): hardcoded credentials
 
-A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments.
+A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments. With `--history`, a key deleted from the code is still found in the git history.
 *Runs offline.*
 
 ### [ai-apps](ai-apps/README.md): LLM apps and MCP servers

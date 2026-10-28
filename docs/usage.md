@@ -277,6 +277,10 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 
 Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default 40), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
 
+### `frame history [repo]`
+
+Provider credentials anywhere in the git history: every line each commit added (all refs; `--range REV` for one branch or range, e.g. `origin/main..HEAD`), each credential reported once at the commit that first added it, with whether the current tree still has it. Values are never printed (the first four characters, the length, and a SHA-256 fingerprint in `-f json`). Comments count, unlike in `frame scan`: a real key in a comment is as leaked as one in a string. Exit 1 when any is found, 2 when the directory is not a git repository. `-f text|json`.
+
 ### `frame inventory [dir]`
 
 Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).

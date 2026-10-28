@@ -64,6 +64,20 @@ def create_parser() -> argparse.ArgumentParser:
     inv_parser.add_argument("--file-limit", type=int, default=5000,
                             help="Most source files read for frameworks and AI imports (default: 5000)")
 
+    # === HISTORY command ===
+    hist_parser = subparsers.add_parser(
+        "history",
+        help="Find provider credentials anywhere in a repository's git history",
+        description="Read every line the git history added (all refs by default) and report each provider "
+                    "credential once, at the commit that added it, with whether the current tree still has it. "
+                    "Values are never printed. Exit 1 when any is found."
+    )
+    hist_parser.add_argument("target", nargs="?", default=".", help="Repository (default: .)")
+    hist_parser.add_argument("--range", dest="rev_range", default=None,
+                             help="A revision or range to read instead of every ref (e.g. main, origin/main..HEAD)")
+    hist_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
+                             help="Output format (default: text)")
+
     # === DEPS command ===
     deps_parser = subparsers.add_parser(
         "deps",
@@ -502,6 +516,21 @@ def _apply_model_override(args) -> None:
     (scan/detect/triage/exploit) reading the env picks it up. Flag beats env."""
     if getattr(args, "model", None):
         os.environ["FRAME_LLM_MODEL"] = args.model
+
+
+def cmd_history(args) -> int:
+    import json
+    from frame.sil.secret_history import HistoryError, format_text, scan_history
+    try:
+        leaks = scan_history(Path(args.target), args.rev_range)
+    except HistoryError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.format == "json":
+        print(json.dumps({"credentials": [x.to_dict() for x in leaks]}, indent=2))
+    else:
+        print(format_text(leaks))
+    return 1 if leaks else 0
 
 
 def cmd_inventory(args) -> int:
@@ -1726,6 +1755,7 @@ def main(argv: List[str] = None) -> int:
     commands = {
         "scan": cmd_scan,
         "inventory": cmd_inventory,
+        "history": cmd_history,
         "deps": cmd_deps,
         "exploit": cmd_exploit,
         "fix": cmd_fix,

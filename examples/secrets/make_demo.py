@@ -3,8 +3,15 @@ here at run time, so this repository never contains one (GitHub push protection,
 would rightly object). None is a real credential.
 
     python make_demo.py && frame scan demo/
+    python make_demo.py --history && frame history demo/
+
+With `--history`, demo/ is also a git repository: the files are committed, then the Stripe key is
+"fixed" by reading it from the environment, as people do, and committed again.
 """
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 ALNUM = "Q7r8S9t0U1v2W3x4Y5z6A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
@@ -42,9 +49,31 @@ module.exports = {{ stripe }};
 ''',
 }
 
+FIXED_BILLING = '''const Stripe = require("stripe");
+
+const stripe = Stripe(process.env.STRIPE_KEY);
+
+module.exports = { stripe };
+'''
+
+
+def _git(out: Path, *args: str) -> None:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "demo", "GIT_AUTHOR_EMAIL": "demo@example.com",
+           "GIT_COMMITTER_NAME": "demo", "GIT_COMMITTER_EMAIL": "demo@example.com",
+           "GIT_AUTHOR_DATE": "2026-01-05T10:00:00", "GIT_COMMITTER_DATE": "2026-01-05T10:00:00"}
+    subprocess.run(["git", "-C", str(out), *args], check=True, capture_output=True, env=env)
+
+
 if __name__ == "__main__":
     out = Path(__file__).parent / "demo"
     out.mkdir(exist_ok=True)
     for name, text in FILES.items():
         (out / name).write_text(text)
     print(f"wrote {', '.join(sorted(FILES))} to {out}")
+    if "--history" in sys.argv:
+        _git(out, "init", "-q", "-b", "main")
+        _git(out, "add", "-A")
+        _git(out, "commit", "-q", "-m", "billing and deploy scripts")
+        (out / "billing.js").write_text(FIXED_BILLING)
+        _git(out, "commit", "-q", "-am", "read the Stripe key from the environment")
+        print("committed, then moved the Stripe key to an environment variable")
