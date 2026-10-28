@@ -87,6 +87,10 @@ class Reg:
     def versions(self, name):
         return {v: {"deps": d, "deprecated": False} for v, d in self.data.get(name, {}).items()} or None
 
+    def deps(self, name, version):
+        d = self.data.get(name, {}).get(version)
+        return d if isinstance(d, dict) else None              # a non-dict: the registry does not say
+
 
 class DB:
     def __init__(self, advisories):
@@ -141,3 +145,75 @@ def test_live_npm_relock_of_the_solved_plan_leaves_nothing(tmp_path):
     assert not out.warnings, out.warnings
     assert "overrides" not in json.loads((tmp_path / "package.json").read_text())
     assert match(read_dependencies(tmp_path).files, db) == []
+
+
+def test_an_unknown_range_is_never_an_open_one():
+    """The lockfile records no range for the current parent (uv.lock) and the registry gives
+    none for it: the child is held at its current version, so only a parent upgrade can fix it.
+    A parent version whose dependencies are unknown is never chosen."""
+    df, keys = _df([("app", "1.0.0"), ("lib", "1.0.0")], {"app": ["lib"]}, {"": {"app": ">=1"}}, {"app"})
+    reg = Reg({"app": {"1.0.0": "unknown", "1.1.0": "unknown", "1.2.0": {"lib": ">=1.1"}},
+               "lib": {"1.0.0": {}, "1.1.0": {}}})
+    sol = solve_file(df, {keys["lib"]}, DB({"lib": [adv("1.1.0")]}), reg)
+    assert {c.package: c.target for c in sol.changes} == {"app": "1.2.0", "lib": "1.1.0"}
+
+
+def test_pep_508_requirements():
+    from frame.sca.registry import parse_requires_dist
+    got = parse_requires_dist(["Werkzeug (>=2.0)", "Jinja2>=3.0", "asgiref (>=3.2) ; extra == 'async'",
+                               "importlib-metadata>=3.6.0; python_version < '3.10'", "idna",
+                               "typing_extensions>=4; python_version<'3.8'"])
+    assert got == {"werkzeug": ">=2.0", "jinja2": ">=3.0", "importlib-metadata": ">=3.6.0", "idna": ">=0",
+                   "typing-extensions": ">=4"}
+
+
+FLASK = Path(__file__).parent / "fixtures" / "sca" / "solve" / "flask-app"
+
+
+def flask_db():
+    return AdvisoryDB(tables={"PyPI": json.loads(gzip.decompress((FLASK / "advisories.json.gz").read_bytes()))})
+
+
+def test_the_real_flask_app_from_uv_lock(tmp_path, monkeypatch):
+    """uv.lock records no per-package ranges: the solver reads them from PyPI's metadata. The
+    project's own ranges come from the root's requires-dist (requests==2.25.1, flask<3)."""
+    from frame.sca.registry import Registries
+    monkeypatch.setenv("FRAME_REGISTRY_CACHE", str(FLASK / "registry"))
+    for n in ("pyproject.toml", "uv.lock"):
+        shutil.copy(FLASK / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    assert files[0].requires[""] == {"flask": ">=1.1.2,<3", "requests": "==2.25.1"}
+    db = flask_db()
+    reg = Registries(offline=True)
+    solved = {p["package"]: p for p in plan(match(files, db), files, db, reg)}
+    assert solved["requests"]["action"] == "raise-requirement"            # pinned by the project
+    assert solved["flask"]["action"] == "raise-requirement" and solved["flask"]["major"]
+    assert not any(p["action"] in ("override", "no-fix") for p in solved.values())
+    pypi = reg.for_ecosystem("PyPI")
+    chosen = {n: p["target"] for n, p in solved.items()}
+    final = {pk.name: chosen.get(pk.name, pk.version) for pk in files[0].packages.values()}
+    brought = {b["package"] for p in solved.values() for b in p.get("brings", [])}
+    for name, version in final.items():                                    # re-checked without the solver
+        assert not any(is_affected("PyPI", version, a) for a in db.advisories("PyPI", name)), (name, version)
+        for child, rng in (pypi.deps(name, version) or {}).items():
+            if child in final and not satisfies("PyPI", final[child], rng):
+                assert child not in chosen and child in brought, (name, version, child, rng, final[child])
+    assert "click" in brought                                              # flask 3 needs click>=8.1.3
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("uv"),
+                    reason="live: set FRAME_SCA_REAL=1 (uv and PyPI)")
+def test_live_uv_relock_of_the_solved_plan(tmp_path):
+    """The flask<3 bound is the project's: Frame leaves that raise to a person (manual), so
+    after re-locking only Flask's own advisories remain."""
+    from frame.sca.apply import apply_plan
+    from frame.sca.registry import Registries
+    for n in ("pyproject.toml", "uv.lock"):
+        shutil.copy(FLASK / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    db = flask_db()
+    plans = plan(match(files, db), files, db, Registries())
+    out = apply_plan(plans, tmp_path, write=True, relock_=True)
+    assert not out.warnings, out.warnings
+    assert any(m.startswith("flask") for m in out.manual)
+    assert {f["package"] for f in match(read_dependencies(tmp_path).files, db)} <= {"flask"}

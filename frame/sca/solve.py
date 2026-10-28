@@ -20,9 +20,12 @@ dependencies (the only packages whose choice can matter):
     min    1) major-version jumps, 2) direct requirements raised, 3) packages changed,
            4) distance from the current version
 
-The current version's ranges are the lockfile's; a candidate's are the registry's. What the
-solver cannot model it does not claim: the other dependencies of an upgraded package are
-resolved by re-locking, which may pick other versions of packages outside this set.
+The current version's ranges are the lockfile's where it records them (npm), else the
+registry's (uv.lock records none); a range known nowhere holds the child at its current
+version, and a candidate whose dependencies the registry does not give is never chosen for a
+parent. Never `*`: an unknown range is not an open one. What the solver cannot model it does
+not claim: the other dependencies of an upgraded package are resolved by re-locking, which may
+pick other versions of packages outside this set.
 """
 
 from __future__ import annotations
@@ -30,14 +33,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from frame.sca.model import NPM, DependencyFile, normalize_name
+from frame.sca.model import NPM, PYPI, DependencyFile, normalize_name
 from frame.sca.osv import is_affected
 from frame.sca.ranges import satisfies
 from frame.sca.registry import is_prerelease
 from frame.sca.versions import sort_key, sorted_versions
 
 MAX_CANDIDATES = 150
-SUPPORTED = (NPM,)
+SUPPORTED = (NPM, PYPI)
+_HOLD, _UNKNOWN = "\0hold", "\0unknown"       # range markers: keep the current child / never choose
 
 
 def _major(v: str) -> Optional[int]:
@@ -68,7 +72,7 @@ def _candidates(eco: str, current: str, meta: Optional[Dict[str, dict]]) -> List
     if not meta:
         return [current]
     cur = sort_key(eco, current)
-    newer = [v for v, m in meta.items() if not m["deprecated"] and not is_prerelease(v)
+    newer = [v for v, m in meta.items() if not m["deprecated"] and not is_prerelease(v, eco)
              and sort_key(eco, v) is not None and cur is not None and sort_key(eco, v) > cur]
     return [current] + sorted_versions(eco, newer)[:MAX_CANDIDATES]
 
@@ -108,13 +112,24 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
     for k in scope:
         opt.add(x[k] >= 0, x[k] < len(cands[k]))
 
-    def range_of(q: str, i: int, child: str) -> Optional[str]:
-        """The range version C_q[i] declares for `child`, None if it does not depend on it."""
-        n = normalize_name(eco, pkg[child].name)
-        if i == 0:                                        # the current version: the lockfile says
-            return df.requires.get(q, {}).get(n, "*") if child in df.edges.get(q, ()) else None
-        deps = (meta[q] or {}).get(cands[q][i], {}).get("deps", {})
+    def registry_range(q: str, version: str, n: str) -> Optional[str]:
+        deps = registry.deps(pkg[q].name, version)
+        if deps is None:
+            return _UNKNOWN
         return next((r for name, r in deps.items() if normalize_name(eco, name) == n), None)
+
+    def range_of(q: str, i: int, child: str) -> Optional[str]:
+        """The range version C_q[i] declares for `child`; None if it does not depend on it."""
+        n = normalize_name(eco, pkg[child].name)
+        if i == 0:                                        # the current version: it does depend on it
+            if child not in df.edges.get(q, ()):
+                return None
+            recorded = df.requires.get(q, {}).get(n)
+            if recorded:
+                return recorded
+            r = registry_range(q, pkg[q].version, n)
+            return r if r not in (None, _UNKNOWN) else _HOLD
+        return registry_range(q, cands[q][i], n)
 
     for p in scope:
         if p in roots:
@@ -128,8 +143,11 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
                 r = range_of(q, i, p)
                 if r is None:
                     continue
+                if r == _UNKNOWN:                         # its dependencies are not known: never chosen
+                    opt.add(z3.Not(z3.And(present[q], x[q] == i)))
+                    continue
                 holders.append(z3.And(present[q], x[q] == i))
-                allowed = [j for j, v in enumerate(cands[p]) if satisfies(eco, v, r) is True]
+                allowed = [0] if r == _HOLD else [j for j, v in enumerate(cands[p]) if satisfies(eco, v, r) is True]
                 opt.add(z3.Implies(z3.And(present[q], x[q] == i),
                                    z3.Or([x[p] == j for j in allowed]) if allowed else z3.BoolVal(False)))
         opt.add(present[p] == (z3.Or(holders) if holders else z3.BoolVal(False)))

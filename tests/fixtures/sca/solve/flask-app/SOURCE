@@ -1,0 +1,6 @@
+pyproject.toml: a Flask app (flask>=1.1.2,<3, requests==2.25.1).
+uv.lock: written by uv 0.9.28 (uv lock --python 3.10 --exclude-newer 2021-06-01).
+registry/PyPI/: PyPI JSON API responses the planner read (/pypi/<name>/json releases with
+  their yanked flags, /pypi/<name>/<version>/json requires_dist), fetched 2026-10-28.
+advisories.json.gz: those packages' advisories from lambdasec/frame-advisories 2026.10.27-ab8d558
+  (OSV data, CC-BY 4.0).

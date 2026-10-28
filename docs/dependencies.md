@@ -143,7 +143,7 @@ Upgrade plan (13 packages):
 
 ### Solving the upgrades together (`--registry`)
 
-An override is a workaround: the package in between still asks for the old version. Usually a newer release of that package admits the fix, and upgrading it is the real repair. `--registry` (npm for now) fetches every version's dependency ranges from the registry and solves the upgrades of all the packages involved together with Z3:
+An override is a workaround: the package in between still asks for the old version. Usually a newer release of that package admits the fix, and upgrading it is the real repair. `--registry` (npm and PyPI) fetches every version's dependency ranges from the registry and solves the upgrades of all the packages involved together with Z3:
 - every chosen version's ranges admit the chosen versions of its dependencies;
 - no vulnerable version remains, where any version can avoid it;
 - major jumps are minimised first, then raised requirements, then the number of packages changed, then the distance from the current versions.
@@ -163,7 +163,9 @@ $ frame deps --vulns --plan --registry --apply --relock
 After applying: 37 fixed, 0 remaining
 ```
 
-Express stays on 4.x, because 4.22.3 admits every fix. Mocha does jump a major version: no 10.x or 11.x release admits fixed versions of its vulnerable dependencies. Metadata is cached (`FRAME_REGISTRY_CACHE`, default beside the knowledge-base cache), so a re-plan is offline. A vulnerable package no upgrade can fix keeps its override. The other dependencies of an upgraded package are resolved by re-locking, which the plan does not model.
+Express stays on 4.x, because 4.22.3 admits every fix. Mocha does jump a major version: no 10.x or 11.x release admits fixed versions of its vulnerable dependencies. Metadata is cached (`FRAME_REGISTRY_CACHE`, default beside the knowledge-base cache), so a re-plan is offline. A vulnerable package no upgrade can fix keeps its override. The other dependencies of an upgraded package are resolved by re-locking; the plan lists the ones that must move (`re-locking also moves click 8.0.1 (>=8.1.3)`).
+
+For Python, `uv.lock` records no ranges between packages, so they come from PyPI's metadata (each version's `requires_dist`; requirements behind an `extra` are not installed by default and are skipped). A range Frame cannot learn is never treated as open: the dependency stays where it is unless its parent is upgraded to a version whose ranges are known.
 
 `--apply` changes only the version text (or adds the override), so formatting and comments are kept. An edit that cannot be made safely, such as an upper bound that excludes the fix, or a Gradle `version.ref` that other libraries share, is listed as manual instead. After writing, Frame re-reads the graph and reports what is fixed and what remains.
 

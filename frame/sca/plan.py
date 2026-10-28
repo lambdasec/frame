@@ -142,7 +142,10 @@ def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, Dependen
         vuln = {k for k, p in df.packages.items() if (p.name, p.version) in vulnerable_pairs}
         if not vuln:
             continue
-        sol = solve_file(df, vuln, db, registry)
+        reg = registry.for_ecosystem(df.ecosystem) if hasattr(registry, "for_ecosystem") else registry
+        if reg is None:
+            continue
+        sol = solve_file(df, vuln, db, reg)
         if sol is None or not sol.changes:
             continue
         index = {(p["package"], p["current"]): p for p in out if p["path"] == path}
@@ -158,6 +161,7 @@ def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, Dependen
                         seen.add(c)
                         stack.append(c)
             return sorted({df.packages[k].name for k in seen & sol.fixed})
+        changed_pairs = {(c.package, c.current) for c in sol.changes}
         for c in sol.changes:
             entry = index.get((c.package, c.current))
             if entry is not None and entry["action"] == "no-fix" and c.target is not None:
@@ -178,6 +182,23 @@ def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, Dependen
             entry.pop("how", None)
             entry["major"] = bool(c.target and _major(c.target) is not None and _major(c.current) is not None
                                   and _major(c.target) > _major(c.current))
+            entry["brings"] = _brings(df, reg, c, {pk for (pk, _v) in changed_pairs})
+    return out
+
+
+def _brings(df: DependencyFile, reg, change, changed: set) -> List[dict]:
+    """Other installed packages the new version needs at a version the lockfile does not have:
+    re-locking moves them too (they are outside the solved set, so the plan does not choose)."""
+    if change.target is None:
+        return []
+    deps = reg.deps(change.package, change.target) or {}
+    out = []
+    for name, rng in sorted(deps.items()):
+        n = normalize_name(df.ecosystem, name)
+        for pk in df.packages.values():
+            if normalize_name(df.ecosystem, pk.name) == n and pk.name not in changed and pk.version \
+                    and satisfies(df.ecosystem, pk.version, rng) is False:
+                out.append({"package": pk.name, "current": pk.version, "requires": rng})
     return out
 
 
@@ -203,6 +224,9 @@ def format_plan(plans: List[dict]) -> str:
             what = "re-lock (requirements not recorded in this file)"
         gain = f"fixes {len(p['fixes'])}" if p["fixes"] else f"lets {', '.join(p.get('enables', [])[:3])} upgrade"
         lines.append(f"  {p['package']} {p['current']} -> {p['target']}{tag}: {what}  [{p['path']}; {gain}]")
+        if p.get("brings"):
+            lines.append("      re-locking also moves " + ", ".join(
+                f"{b['package']} {b['current']} ({b['requires']})" for b in p["brings"][:5]))
         for r in [] if p.get("solved") else p["requirers"]:
             if r["admits_target"] is False:
                 lines.append(f"      {r['by']} requires {r['spec']}")

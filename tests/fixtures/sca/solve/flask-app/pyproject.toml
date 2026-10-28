@@ -1,0 +1,5 @@
+[project]
+name = "shop"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["flask>=1.1.2,<3", "requests==2.25.1"]

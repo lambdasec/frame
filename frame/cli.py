@@ -103,7 +103,7 @@ def create_parser() -> argparse.ArgumentParser:
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
     deps_parser.add_argument("--registry", action="store_true",
-                             help="With --plan: fetch release metadata from the registry (npm) and solve the upgrades of "
+                             help="With --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
                                   "every package together with Z3, so upgrading a package in between replaces an "
                                   "override (goes to the network; cached)")
     deps_parser.add_argument("--verify", metavar="COMMAND",
@@ -602,8 +602,8 @@ def cmd_deps(args) -> int:
             from frame.sca.plan import plan
             registry = None
             if args.registry:
-                from frame.sca.registry import NpmRegistry
-                registry = NpmRegistry()
+                from frame.sca.registry import Registries
+                registry = Registries()
             try:
                 plans = plan(findings, report.files, db, registry)
             except Exception as e:                        # the registry could not be reached

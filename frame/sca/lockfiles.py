@@ -193,6 +193,10 @@ def parse_uv_lock(path: str, text: str) -> DependencyFile:
         for group in (r.get("dev-dependencies") or {}).values():
             for d in group:
                 direct.setdefault(normalize_name(PYPI, d["name"]), True)
+        # the project's own declared ranges: `[package.metadata] requires-dist` of the root
+        for d in ((r.get("metadata") or {}).get("requires-dist") or []):
+            if isinstance(d, dict) and d.get("name") and d.get("specifier"):
+                df.require("", d["name"], str(d["specifier"]))
     for p in data.get("package", []):
         parent = by_name.get(normalize_name(PYPI, p["name"]))
         if parent is None:
