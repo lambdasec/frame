@@ -34,6 +34,10 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                                     # pragma: no cover
+    from frame.sca.apply import Change
 
 KINDS = ("jvm-property", "env", "properties-file", "java-call")
 JVM_OPTION_VARS = ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS")
