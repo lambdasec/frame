@@ -117,3 +117,72 @@ def test_live_nuget_agrees_with_each_nuspec(tmp_path, monkeypatch):
         nuspec = pkg.read(next(n for n in pkg.namelist() if n.endswith(".nuspec"))).decode("utf-8", "replace")
         m = re.search(r'<license\s+type="expression"\s*>([^<]+)</license>', nuspec)
         assert lic.license(NUGET, name, version) == (m.group(1).strip() if m else ""), (name, version)
+
+
+# --- Maven: POM licences, inherited, mapped through SPDX's own list ------------------------
+
+POMS = Path(__file__).parent / "fixtures" / "sca" / "maven-poms"
+SPDX = {"licenses": [
+    {"licenseId": "Apache-2.0", "name": "Apache License 2.0", "seeAlso": ["https://www.apache.org/licenses/LICENSE-2.0"]},
+    {"licenseId": "EPL-1.0", "name": "Eclipse Public License 1.0", "seeAlso": ["http://www.eclipse.org/legal/epl-v10.html"]},
+    {"licenseId": "LGPL-2.1-only", "name": "GNU Lesser General Public License v2.1 only",
+     "seeAlso": ["https://www.gnu.org/licenses/old-licenses/lgpl-2.1-standalone.html"]},
+    {"licenseId": "LGPL-2.1-or-later", "name": "GNU Lesser General Public License v2.1 or later",
+     "seeAlso": ["https://www.gnu.org/licenses/old-licenses/lgpl-2.1-standalone.html"]},
+    {"licenseId": "MIT", "name": "MIT License", "seeAlso": ["https://opensource.org/license/mit/"]}]}
+
+
+def _recorded(monkeypatch):
+    import frame.sca.licreg as L
+
+    def get_text(url):
+        p = POMS / url.rsplit("/", 1)[1]
+        return p.read_text() if p.is_file() else None
+    monkeypatch.setattr(L, "_get_text", get_text)
+    return L
+
+
+def test_pom_licences_are_inherited_from_the_parent_as_maven_does(monkeypatch):
+    L = _recorded(monkeypatch)
+    assert L.maven_declared("com.google.guava:guava", "32.1.3-jre") == [
+        ("Apache License, Version 2.0", "http://www.apache.org/licenses/LICENSE-2.0.txt")]     # from guava-parent
+    assert len(L.maven_declared("ch.qos.logback:logback-classic", "1.4.11")) == 2
+
+
+def test_mapping_to_spdx_never_guesses():
+    from frame.sca.licreg import spdx_maps, to_spdx
+    maps = spdx_maps(SPDX)
+    assert to_spdx([("Apache License, Version 2.0", "http://www.apache.org/licenses/LICENSE-2.0.txt")], maps) == "Apache-2.0"
+    assert to_spdx([("whatever", "https://opensource.org/license/MIT")], maps) == "MIT"            # by URL
+    assert to_spdx([("MIT License", "")], maps) == "MIT"                                            # exact SPDX name
+    assert to_spdx([("The MIT-style licence", "")], maps) == ""                                     # free text: unknown
+    assert to_spdx([("LGPL", "https://www.gnu.org/licenses/old-licenses/lgpl-2.1-standalone.html")], maps) == ""   # two ids
+    assert to_spdx([("Eclipse Public License 1.0", "http://www.eclipse.org/legal/epl-v10.html"),
+                    ("MIT License", "")], maps) == "EPL-1.0 OR MIT"                                  # a choice
+    assert to_spdx([("EPL", "http://www.eclipse.org/legal/epl-v10.html"), ("odd", "")], maps) == ""   # one unmapped
+
+
+@pytest.mark.skipif(not LIVE or not shutil.which("mvn"), reason="live: set FRAME_SCA_REAL=1 (mvn, Maven Central)")
+def test_live_pom_licences_agree_with_mavens_effective_pom(tmp_path):
+    """The (name, url) pairs Frame reads, parent chain included, are the ones Maven's own
+    effective POM has."""
+    from frame.sca.licreg import maven_declared
+    import xml.etree.ElementTree as ET
+    for ga, version in [("com.google.guava:guava", "32.1.3-jre"), ("ch.qos.logback:logback-classic", "1.4.11"),
+                        ("com.fasterxml.jackson.core:jackson-databind", "2.15.2"), ("junit:junit", "4.13.2"),
+                        ("org.slf4j:slf4j-api", "2.0.9")]:
+        g, a = ga.split(":")
+        pom = tmp_path / f"{a}.pom"
+        with urllib.request.urlopen(f"https://repo1.maven.org/maven2/{g.replace('.', '/')}/{a}/{version}/{a}-{version}.pom",
+                                    timeout=60) as r:
+            pom.write_bytes(r.read())
+        out = tmp_path / f"{a}-effective.xml"
+        subprocess.run(["mvn", "-q", "-B", "help:effective-pom", "-f", str(pom), f"-Doutput={out}"],
+                       check=True, capture_output=True, text=True, cwd=tmp_path, timeout=600)
+        root = ET.parse(out).getroot()
+        for el in root.iter():
+            if isinstance(el.tag, str) and "}" in el.tag:
+                el.tag = el.tag.split("}", 1)[1]
+        truth = [((lic.findtext("name") or "").strip(), (lic.findtext("url") or "").strip())
+                 for lic in root.findall("licenses/license")]
+        assert maven_declared(ga, version) == truth, ga
