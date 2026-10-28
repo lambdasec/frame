@@ -2349,6 +2349,8 @@ class JavaScriptFrontend:
                 self._ident_counter += 1
                 instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
                 func_name = f"{inner}.{self._get_text(prop_node)}"
+        elif func_node is not None and func_node.type == "call_expression":
+            func_name = self._hoist_callee_call(func_node, loc, instrs)
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
         args_exp, kwarg_names = self._with_option_kwargs(func_name, args, args_exp)
@@ -2434,6 +2436,15 @@ class JavaScriptFrontend:
 
         return instrs
 
+    def _hoist_callee_call(self, func_node: TSNode, loc: Location, instrs: List[Instr]) -> str:
+        """`f(x)(y)` (`_.template(src)(data)`, `connect(m)(C)`): the inner call runs first and its
+        result is what is called. Lowered as `$chainN = f(x)`, a real Call, so the inner call's
+        specs (a sink, a source) apply; the outer call is a call of `$chainN`."""
+        inner = f"$chain{self._ident_counter}"
+        self._ident_counter += 1
+        instrs.extend(self._translate_call_assignment(inner, func_node, loc))
+        return inner
+
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone call: func(args)
 
@@ -2464,6 +2475,8 @@ class JavaScriptFrontend:
             else:
                 # Regular method call (e.g., obj.method())
                 func_name = self._get_call_name(call_node)
+        elif func_node is not None and func_node.type == "call_expression":
+            func_name = self._hoist_callee_call(func_node, loc, instrs)
         else:
             # Simple function call
             func_name = self._get_call_name(call_node)
@@ -3068,7 +3081,12 @@ class JavaScriptFrontend:
 
         elif node.type == "call_expression":
             func = node.child_by_field_name("function")
-            func_exp = self._translate_expression(func)
+            if func is not None and func.type == "call_expression":
+                hoisted: List[Instr] = []
+                func_exp = ExpVar(PVar(self._hoist_callee_call(func, self._get_location(func), hoisted)))
+                self._add_instrs(hoisted)
+            else:
+                func_exp = self._translate_expression(func)
             if (func is not None and func.type == "member_expression"
                     and self._get_text(func.child_by_field_name("property")) == "has"
                     and func.child_by_field_name("object").type == "identifier"

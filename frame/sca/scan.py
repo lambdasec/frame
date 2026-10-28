@@ -105,7 +105,8 @@ def link(run: ScaRun, results: list, root: Path) -> None:
             for f, _ in hits:
                 reach = f["reachability"]
                 reach["level"] = "tainted"
-                reach.setdefault("flows", []).append(flow)
+                if flow not in reach.setdefault("flows", []):      # one per site, however many paths reach it
+                    reach["flows"].append(flow)
                 if _evidence_rank(flow["evidence"]) > _evidence_rank(f.get("evidence", "matched")):
                     f["evidence"] = flow["evidence"]
             if v.type.value == "vulnerable_dependency":

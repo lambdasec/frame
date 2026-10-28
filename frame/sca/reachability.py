@@ -230,8 +230,12 @@ def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
             modules = {re.sub(r"\.[^.]+\.[^.]+$", "", i) for i in fn_ids if i.count(".") >= 2}
         imported_in = sorted({fu.rel for fu in files for m in modules
                               if any(_imports_module(eco, v, m) for v in fu.imports | fu.wildcards)})
-        calls = [{"function": fid, "location": f"{fu.rel}:{line}", "source": source_of.get(fid, ""), "call": text}
-                 for fu in files for fid, line, text in _function_matches(fu, fn_ids)]
+        calls = []
+        for fu in files:
+            for fid, line, text in _function_matches(fu, fn_ids):
+                call = {"function": fid, "location": f"{fu.rel}:{line}", "source": source_of.get(fid, ""), "call": text}
+                if call not in calls:                       # a call the frontend lowered twice is one call
+                    calls.append(call)
         level = "called" if calls else "imported" if imported_in else "installed"
         f["reachability"] = {"level": level, "imported_in": imported_in[:20], "calls": calls[:50],
                              "analysed": bool(files)}

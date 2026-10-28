@@ -442,3 +442,26 @@ def test_library_mode_constructor_field_reaches_a_method_sink():
                                                          library_mode=True).scan(code, "lib.js").vulnerabilities}
     assert "CWE-78" in scan(_LIB_CTOR.replace("{arg}", "'\"' + filename + '\"'"))
     assert "CWE-78" not in scan(_LIB_CTOR.replace("{arg}", "'\"report.pdf\"'"))
+
+
+# ---- a call whose callee is itself a call: f(x)(y) -------------------------
+
+_TEMPLATE_APP = ("const _ = require('lodash');\nconst express = require('express');\nconst app = express();\n"
+                 "app.get('/t', (req, res) => { BODY });\n")
+
+
+@pytest.mark.parametrize("body", [
+    " return res.send(_.template(req.query.tpl)({})); ",                  # nested in an argument
+    " res.send(_.template(req.query.tpl)({})); ",                         # statement
+    " const out = _.template(req.query.tpl)({}); res.send(out); ",        # assignment
+    " _.template(req.query.tpl)({}); ",                                   # bare
+])
+def test_the_inner_call_of_a_curried_call_is_a_sink(body):
+    """`_.template(src)(data)`: the inner call compiles attacker-controlled template source.
+    It used to be named as one opaque string, so its sink never matched."""
+    assert "CWE-1336" in cwes(_TEMPLATE_APP.replace("BODY", body))
+
+
+def test_a_constant_template_called_with_request_data_is_not_template_injection():
+    code = _TEMPLATE_APP.replace("BODY", " res.send(_.template('<b><%- n %></b>')({ n: req.query.n })); ")
+    assert "CWE-1336" not in cwes(code)
