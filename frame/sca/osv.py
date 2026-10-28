@@ -174,7 +174,49 @@ def git_entries(rec: dict) -> Iterable[Tuple[str, dict]]:
 
 def table(ecosystem: str, by_pkg: Dict[str, List[dict]]) -> dict:
     packages = {name: _merge_aliases(advs) for name, advs in sorted(by_pkg.items())}
+    for advs in packages.values():
+        for a in advs:
+            a["versions"] = _uncovered(ecosystem, a["versions"], a["ranges"])
     return {"schema": SCHEMA, "ecosystem": ecosystem, "packages": packages}
+
+
+def _uncovered(ecosystem: str, versions: List[str], ranges: List[dict]) -> List[str]:
+    """The listed versions no range already marks affected. `is_affected` is "listed OR in a
+    range", so dropping the others changes no answer; Ubuntu's kernel advisories list every
+    published version beside an open range (`introduced: 0`), half of a release's table."""
+    if not versions or not ranges:
+        return versions
+    return [v for v in versions if not any(in_range(ecosystem, v, r) for r in ranges)]
+
+
+def hoist_summaries(tbl: dict) -> dict:
+    """Store a summary that several packages' advisories share once, in `summaries` (a CVE
+    repeated across Ubuntu's ~20 kernel flavours); `restore_summaries` puts it back on load.
+    The advisory keeps `summary: ""`, so a reader that does not know the key still works."""
+    seen: Dict[str, int] = {}
+    for advs in tbl["packages"].values():
+        for a in advs:
+            if a.get("summary"):
+                seen[a["id"]] = seen.get(a["id"], 0) + 1
+    shared: Dict[str, str] = {}
+    for advs in tbl["packages"].values():
+        for a in advs:
+            if a.get("summary") and seen.get(a["id"], 0) > 1 and shared.setdefault(a["id"], a["summary"]) == a["summary"]:
+                a["summary"] = ""
+    if shared:
+        tbl["summaries"] = shared
+    return tbl
+
+
+def restore_summaries(tbl: dict) -> Dict[str, List[dict]]:
+    shared = tbl.get("summaries") or {}
+    packages = tbl.get("packages", {})
+    if shared:
+        for advs in packages.values():
+            for a in advs:
+                if not a.get("summary") and a.get("id") in shared:
+                    a["summary"] = shared[a["id"]]
+    return packages
 
 
 def compact(records: Iterable[dict], ecosystem: str) -> dict:

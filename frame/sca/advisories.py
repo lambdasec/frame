@@ -23,7 +23,8 @@ import hashlib
 
 from frame.sca.model import (CARGO, CONAN, GIT, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT, VCPKG,
                              DependencyFile, normalize_name)
-from frame.sca.osv import DISTRO_FAMILIES, SCHEMA, entries, fixed_versions, git_entries, is_affected, table
+from frame.sca.osv import (DISTRO_FAMILIES, SCHEMA, entries, fixed_versions, git_entries, hoist_summaries,
+                           is_affected, restore_summaries, table)
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
 ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT, RUBYGEMS, PACKAGIST, PUB, HEX)
@@ -143,7 +144,7 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         if not tbl["packages"]:
             continue
         tbl["revision"] = revision
-        data = _gz_json(tbl)
+        data = _gz_json(hoist_summaries(tbl))
         rel = table_path(eco)
         target = out / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +236,7 @@ class AdvisoryDB:
             if table.get("schema") != SCHEMA:
                 db.missing.append(eco)
                 continue
-            db.tables[eco] = table.get("packages", {})
+            db.tables[eco] = restore_summaries(table)
             fn_file = d / functions_path(eco) if d is not None else None
             if fn_file is not None and fn_file.is_file():
                 extra = json.loads(gzip.decompress(fn_file.read_bytes())).get("functions", {})

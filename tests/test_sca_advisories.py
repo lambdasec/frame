@@ -294,3 +294,32 @@ def test_class_entries_load_as_classes_not_functions(tmp_path, monkeypatch):
     adv = next(a for advs in db.tables["npm"].values() for a in advs if a["id"] == adv_id)
     assert [f["id"] for f in adv.get("functions", []) if f["id"] in ("pkg.func", "a.b.Changed")] == ["pkg.func"]
     assert [c["id"] for c in adv["classes"]] == ["a.b.Changed"]
+
+
+def test_compaction_changes_no_answer():
+    """A listed version a range already covers is dropped, and a summary shared by several
+    packages is stored once (Ubuntu's kernel flavours repeat each CVE ~20 times: 80% of a
+    release's table). Every (package, version) of the real records answers as before."""
+    from frame.sca.osv import entries, hoist_summaries, is_affected, restore_summaries, table, _merge_aliases
+    root = Path(__file__).parent / "fixtures" / "sca"
+    records = json.loads(gzip.decompress((root / "osv" / "records.json.gz").read_bytes()))
+    records += json.loads(gzip.decompress((root / "container" / "osv_records.json.gz").read_bytes()))
+    by: dict = {}
+    for rec in records:
+        for eco, name, entry in entries(rec, ["PyPI", "npm", "Maven", "NuGet", "Go", "crates.io", "RubyGems",
+                                              "Packagist", "Debian", "Ubuntu", "Alpine"]):
+            by.setdefault(eco, {}).setdefault(name, []).append(entry)
+    dropped = checked = 0
+    for eco, pkgs in by.items():
+        full = {n: _merge_aliases([dict(e) for e in advs]) for n, advs in pkgs.items()}
+        tbl = json.loads(json.dumps(hoist_summaries(table(eco, pkgs))))       # as written and read back
+        small = restore_summaries(tbl)
+        for name, advs in full.items():
+            assert [a["summary"] for a in small[name]] == [a["summary"] for a in advs]
+            for a, b in zip(advs, small[name]):
+                dropped += len(a["versions"]) - len(b["versions"])
+                for v in a["versions"] + [r["events"][-1].get("fixed", "") for r in a["ranges"] if r.get("events")]:
+                    if v:
+                        checked += 1
+                        assert is_affected(eco, v, a) == is_affected(eco, v, b), (eco, name, a["id"], v)
+    assert dropped > 1000 and checked > 10000
