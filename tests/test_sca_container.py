@@ -405,3 +405,10 @@ def test_live_rpm_images_read_as_rpm_does(ref):
                if rel.startswith("var/lib/rpm/") and (Path(tmp) / "rpm" / rel.split("/")[-1]).is_file()}
     _, rpms, _ = read_rpmdb(raw)
     assert sorted([n, evr] for n, _, evr, _ in rpms) == truth
+
+
+def test_the_pull_hint_survives_a_shell():
+    import shlex
+    from frame.sca.advisories import pull_hint
+    hint = pull_hint(["Rocky Linux:9", "Debian:12"])
+    assert shlex.split(hint)[-2:] == ["--ecosystems", "Debian:12,Rocky Linux:9"]

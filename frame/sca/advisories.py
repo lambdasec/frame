@@ -66,7 +66,10 @@ def pull_hint(missing: Iterable[str]) -> str:
     """The command that caches what is missing: an image's distribution release is not a
     project ecosystem, so it is named."""
     distro = sorted(e for e in missing if e.split(":", 1)[0] in DISTRO_FAMILIES)
-    return "frame kb pull --advisories" + (f" --ecosystems {','.join(distro)}" if distro else "")
+    joined = ",".join(distro)
+    if " " in joined:
+        joined = f'"{joined}"'                         # `Rocky Linux:9` must stay one shell word
+    return "frame kb pull --advisories" + (f" --ecosystems {joined}" if distro else "")
 
 
 def table_path(ecosystem: str) -> str:
