@@ -16,6 +16,14 @@
       "sha256": "8b98ea27a667c28bc24f11b7c50c8b3a1231fcfc1536760cfe75ce4cd04889b7",
       "size": 151311
     },
+    "advisories/Go.json.gz": {
+      "advisories": 184,
+      "kind": "advisories",
+      "language": "go",
+      "name": "Go",
+      "sha256": "e14263b72a899331e036e145ea3400cf10e43b1a08e632127d76c0982f2c5fa9",
+      "size": 21504
+    },
     "advisories/Maven.json.gz": {
       "advisories": 1,
       "kind": "advisories",
@@ -31,6 +39,14 @@
       "name": "PyPI",
       "sha256": "92a8288d5a77c4e8d76fc8980a3471bb8fcd94745bfca3b62e04afc7049627d9",
       "size": 6212
+    },
+    "advisories/crates.io.json.gz": {
+      "advisories": 5,
+      "kind": "advisories",
+      "language": "crates.io",
+      "name": "crates.io",
+      "sha256": "a77f13b068b0a8da9d5f7a6ad85531a8e8b012c821edbeb8b37392639fe55f0b",
+      "size": 771
     },
     "advisories/npm.json.gz": {
       "advisories": 50,

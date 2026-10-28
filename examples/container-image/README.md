@@ -1,10 +1,10 @@
 # Container images: OS packages, language packages and their advisories
 
-`debian-12.0/` and `alpine-3.18.0/` are the package databases of the official `debian:12.0` and `alpine:3.18.0` images (their `/etc/os-release`, `/var/lib/dpkg/status` and `/lib/apk/db/installed`), recorded so this runs offline. With Docker, `frame deps --image debian:12.0` reads the same files straight from the image. `app-image/` holds the same files of an application image built by [`app-image.Dockerfile`](app-image.Dockerfile): Python packages installed with pip, an npm tree, a jar, and Debian's own `python3-urllib3`. The advisories in `offline-advisories/` are those for all these packages, from OSV's data (CC-BY 4.0).
+`debian-12.0/` and `alpine-3.18.0/` are the package databases of the official `debian:12.0` and `alpine:3.18.0` images (their `/etc/os-release`, `/var/lib/dpkg/status` and `/lib/apk/db/installed`), recorded so this runs offline. With Docker, `frame deps --image debian:12.0` reads the same files straight from the image. `app-image/` holds the same files of an application image built by [`app-image.Dockerfile`](app-image.Dockerfile): Python packages installed with pip, an npm tree, a jar, and Debian's own `python3-urllib3`, plus a Go and a Rust binary (built by [tests/fixtures/sca/container/binaries/Dockerfile](../../tests/fixtures/sca/container/binaries/Dockerfile)). The advisories in `offline-advisories/` are those for all these packages, from OSV's data (CC-BY 4.0).
 
 ```bash
 cd examples/container-image
-frame kb pull --advisories --source offline-advisories --ecosystems Debian:12,Alpine:v3.18,PyPI,npm,Maven
+frame kb pull --advisories --source offline-advisories --ecosystems Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io
 ```
 
 ## The packages
@@ -50,16 +50,18 @@ There is no manifest to edit, so `--apply` lists these for a person: upgrade the
 
 ## Language packages in an image
 
-An application image also holds what pip, npm or a build copied into it. Frame reads those from what the package managers leave: Python's `*.dist-info/METADATA`, each `node_modules/<name>/package.json`, and each jar's `META-INF/maven/**/pom.properties` (also inside a Spring Boot or WAR archive).
+An application image also holds what pip, npm or a build copied into it. Frame reads those from what the package managers and compilers leave: Python's `*.dist-info/METADATA`, each `node_modules/<name>/package.json`, each jar's `META-INF/maven/**/pom.properties` (also inside a Spring Boot or WAR archive), the build info of Go binaries, and the dependency list `cargo auditable` puts in Rust binaries.
 
 ```console
 $ frame deps --rootfs app-image --vulns
   app-image:/var/lib/dpkg/status  (Debian:12 installed): 79 packages, direct unknown
+  app-image:/usr/local/bin/svc-go  (Go image): 2 packages, direct unknown
   app-image:/app/lib/commons-text-1.9.jar  (Maven image): 1 packages, direct unknown
   app-image:/usr/local/lib/python3.12/site-packages  (PyPI image): 7 packages, direct unknown
+  app-image:/usr/local/bin/svc-rust  (crates.io image): 1 packages, direct unknown
   app-image:/app/node_modules  (npm image): 51 packages, direct unknown
 warning: app-image: 2 language package(s) installed by the OS package manager are covered by the distribution's advisories
-181 known vulnerabilities:
+272 known vulnerabilities:
   CRITICAL org.apache.commons:commons-text@1.9 (dependency) GHSA-599f-7c49-w659: Arbitrary code execution in Apache Commons Text; fixed in 1.10.0  [app-image:/app/lib/commons-text-1.9.jar]
   CRITICAL PyYAML@5.3.1 (dependency) GHSA-8q59-q68h-6hv4: Improper Input Validation in PyYAML; fixed in 5.4  [app-image:/usr/local/lib/python3.12/site-packages]
   ...
@@ -68,13 +70,16 @@ warning: app-image: 2 language package(s) installed by the OS package manager ar
 - The lists equal what the image's own tools report: `importlib.metadata` for pip's packages, `npm ls --all` for the npm tree, and the jar's own `pom.properties` (Text4Shell's commons-text 1.9).
 - The image also has Debian's `python3-urllib3` 1.26.12 and `python3-six`. dpkg owns their files, and Debian patches the packages it ships without changing the upstream version, so matching them against PyPI's advisories would report fixes Debian already made. They are left to Debian's advisories, and the warning counts them. pip's own urllib3 1.26.4 in `/usr/local` is matched against PyPI.
 - A jar without `pom.properties` is counted in a warning, never named from its file name.
+- `svc-go` was built with Go 1.21.0 and `gopkg.in/yaml.v2` replaced by v2.2.7; Frame reads both as `go version -m` prints them, and the standard library as `stdlib` 1.21.0 (89 of the advisories: Go compiles its standard library into every binary). `svc-rust` carries smallvec 1.6.0, as `rust-audit-info` prints it. A Rust binary built without `cargo auditable` lists no dependencies and is not named.
 
 ```console
 $ frame deps --rootfs app-image --vulns --plan
-Upgrade plan (44 packages):
+Upgrade plan (47 packages):
   org.apache.commons:commons-text 1.9 -> 1.10.0: replace the jar the image copies (or rebuild the application with the fixed version)  [app-image:/app/lib/commons-text-1.9.jar; fixes 1]
   lodash 4.17.20 -> 4.18.0: upgrade it in the project whose node_modules the image copies, and rebuild  [app-image:/app/node_modules; fixes 5]
   PyYAML 5.3.1 -> 5.4: upgrade it in the image's pip install step (or its requirements file)  [app-image:/usr/local/lib/python3.12/site-packages; fixes 1]
+  stdlib 1.21.0 -> 1.26.10: rebuild the binary with Go 1.26.10 or later (the standard library is compiled in)  [app-image:/usr/local/bin/svc-go; fixes 89]
+  smallvec 1.6.0 -> 1.6.1: rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)  [app-image:/usr/local/bin/svc-rust; fixes 1]
   ...
 ```
 

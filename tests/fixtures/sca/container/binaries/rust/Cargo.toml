@@ -1,0 +1,11 @@
+[package]
+name = "svc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smallvec = "=1.6.0"
+
+[profile.release]
+opt-level = "z"
+panic = "abort"

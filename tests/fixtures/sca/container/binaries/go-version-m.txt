@@ -1,0 +1,12 @@
+/out/svc-go: go1.21.0
+	path	example.com/svc
+	mod	example.com/svc	(devel)	
+	dep	gopkg.in/yaml.v2	v2.2.8
+	=>	gopkg.in/yaml.v2	v2.2.7	h1:VUgggvou5XRW9mHwD/yXxIYSMtY0zoKQf/v226p2nyo=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-trimpath=true
+	build	CGO_ENABLED=0
+	build	GOARCH=arm64
+	build	GOOS=linux

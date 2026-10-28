@@ -59,7 +59,15 @@ def _major(version: str) -> Optional[int]:
 # where a language package found in an image comes from, and so where to upgrade it
 IN_IMAGE = {"PyPI": "upgrade it in the image's pip install step (or its requirements file)",
             "npm": "upgrade it in the project whose node_modules the image copies, and rebuild",
-            "Maven": "replace the jar the image copies (or rebuild the application with the fixed version)"}
+            "Maven": "replace the jar the image copies (or rebuild the application with the fixed version)",
+            "Go": "rebuild the binary with the module upgraded (go get, then go build)",
+            "crates.io": "rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)"}
+
+
+def in_image(p: dict) -> str:
+    if p["ecosystem"] == "Go" and p["package"] == "stdlib":
+        return f"rebuild the binary with Go {p['target']} or later (the standard library is compiled in)"
+    return IN_IMAGE.get(p["ecosystem"], "upgrade it where the image installs it")
 
 
 def fixable(advisories: List[dict]) -> List[dict]:
@@ -278,7 +286,7 @@ def format_plan(plans: List[dict]) -> str:
                          f"[{p['path']}; fixes {len(p['fixes'])}]")
             continue
         what = {"upgrade-os-package": "upgrade it in the image (apt-get / apk upgrade, or a newer base image)",
-                "upgrade-in-image": IN_IMAGE.get(p["ecosystem"], "upgrade it where the image installs it"),
+                "upgrade-in-image": in_image(p),
                 "update-lockfile": "re-lock (every known range admits it)",
                 "raise-requirement": "raise the project's requirement",
                 "override": f"override: {p.get('how', '')}"}[p["action"]]

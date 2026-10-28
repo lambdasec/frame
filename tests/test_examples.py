@@ -152,8 +152,8 @@ def test_container_image_walkthrough(tmp_path):
     shutil.copytree(EXAMPLES / "container-image", work)
     env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
     env.pop("FRAME_ADVISORIES_SOURCE", None)
-    assert "5 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
-                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven")
+    assert "7 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io")
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "--rootfs", "alpine-3.18.0", "--rootfs", "debian-12.0"),
@@ -167,11 +167,15 @@ def test_container_image_walkthrough(tmp_path):
          ["app-image:/usr/local/lib/python3.12/site-packages  (PyPI image): 7 packages, direct unknown",
           "app-image:/app/node_modules  (npm image): 51 packages, direct unknown",
           "warning: app-image: 2 language package(s) installed by the OS package manager are covered by the "
-          "distribution's advisories", "181 known vulnerabilities:",
+          "distribution's advisories", "272 known vulnerabilities:",
+          "app-image:/usr/local/bin/svc-go  (Go image): 2 packages, direct unknown",
+          "app-image:/usr/local/bin/svc-rust  (crates.io image): 1 packages, direct unknown",
           "CRITICAL org.apache.commons:commons-text@1.9 (dependency) GHSA-599f-7c49-w659"]),
         (("deps", "--rootfs", "app-image", "--vulns", "--plan"),
          ["org.apache.commons:commons-text 1.9 -> 1.10.0: replace the jar the image copies",
-          "PyYAML 5.3.1 -> 5.4: upgrade it in the image's pip install step (or its requirements file)"]),
+          "PyYAML 5.3.1 -> 5.4: upgrade it in the image's pip install step (or its requirements file)",
+          "stdlib 1.21.0 -> 1.26.10: rebuild the binary with Go 1.26.10 or later (the standard library is compiled in)",
+          "smallvec 1.6.0 -> 1.6.1: rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)"]),
         (("deps", "--rootfs", "alpine-3.18.0", "--vulns", "--plan"),
          ["openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk upgrade, or a newer base image)"]),
     ]

@@ -189,3 +189,74 @@ def test_live_language_packages_of_the_rebuilt_image(tmp_path):
     got = _by_place(files)
     for place in ("usr/local/lib/python3.12/site-packages", "app/node_modules", "app/lib/commons-text-1.9.jar"):
         assert got[place] == LANG[place], place
+
+
+BIN = F / "binaries"
+
+
+def _go_truth():
+    """`go version -m`'s own listing: dep lines, a `=>` line replacing the dep above it."""
+    text = (BIN / "go-version-m.txt").read_text()
+    deps = []
+    for line in text.splitlines():
+        parts = line.strip().split("\t")
+        if parts[0] == "dep":
+            deps.append((parts[1], parts[2].lstrip("v")))
+        elif parts[0] == "=>":
+            deps[-1] = (parts[1], parts[2].lstrip("v"))
+    return {("stdlib", text.split(": go", 1)[1].split()[0])} | set(deps)
+
+
+def test_go_and_rust_binaries_read_as_their_tools_do():
+    """Real binaries (Go 1.21.0 with a replaced module; Rust built with cargo auditable) give
+    what `go version -m` and `rust-audit-info` print; the Go standard library is `stdlib`."""
+    from frame.sca.binaries import read_binary
+    go = read_binary(gzip.decompress((BIN / "svc-go.gz").read_bytes()))
+    assert go.kind == "go" and go.main == "example.com/svc" and go.toolchain == "go1.21.0"
+    assert {(n, v) for _, n, v in go.packages} == _go_truth()
+    assert ("gopkg.in/yaml.v2", "2.2.7") in {(n, v) for _, n, v in go.packages}        # the replacement, not 2.2.8
+    rust = read_binary(gzip.decompress((BIN / "svc-rust.gz").read_bytes()))
+    truth = json.loads((BIN / "rust-audit-info.json").read_text())["packages"]
+    assert rust.main == "svc"
+    assert {(e, n, v) for e, n, v in rust.packages} == {
+        ("crates.io", p["name"], p["version"]) for p in truth if p["source"] == "crates.io"}
+
+
+def test_binaries_in_a_root_filesystem(tmp_path):
+    (tmp_path / "usr/local/bin").mkdir(parents=True)
+    for name in ("svc-go", "svc-rust"):
+        p = tmp_path / "usr/local/bin" / name
+        p.write_bytes(gzip.decompress((BIN / f"{name}.gz").read_bytes()))
+        p.chmod(0o755)
+    (tmp_path / "usr/local/bin/not-run").write_bytes(gzip.decompress((BIN / "svc-go.gz").read_bytes()))  # not executable
+    files, warnings = read_rootfs(tmp_path)
+    got = {f.path.split(":/", 1)[1]: (f.ecosystem, f.kind, sorted(p.name for p in f.packages.values())) for f in files}
+    assert got == {"usr/local/bin/svc-go": ("Go", "image", ["gopkg.in/yaml.v2", "stdlib"]),
+                   "usr/local/bin/svc-rust": ("crates.io", "image", ["smallvec"])}
+
+
+def test_a_binary_without_build_info_and_an_old_go_binary():
+    from frame.sca.binaries import GO_MAGIC, read_binary
+    assert read_binary(b"\x7fELF" + b"\0" * 2000) is None                  # plain C, or Rust without auditable
+    assert read_binary(b"MZ" + b"\0" * 2000) is None                       # not ELF
+    old = b"\x7fELF" + b"\0" * 60 + GO_MAGIC + bytes([8, 0]) + b"\0" * 64  # flags without bit 1: Go < 1.18
+    assert read_binary(old).kind == "go-old"
+
+
+def test_go_replacement_by_a_local_directory_is_not_a_module_version():
+    from frame.sca.binaries import go_modinfo
+    main, deps = go_modinfo("path\tx\nmod\tx\t(devel)\t\ndep\ta.io/m\tv1.0.0\th1:x\n=>\t../m\t\n"
+                            "dep\tb.io/n\tv2.0.0\th1:y\n")
+    assert main == "x" and deps == [("b.io/n", "v2.0.0")]
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
+                    reason="live: set FRAME_SCA_REAL=1 (docker build of binaries/Dockerfile)")
+def test_live_binaries_of_the_rebuilt_image():
+    import subprocess
+    subprocess.run(["docker", "build", "-q", "-t", "frame-bin-fixture:test", str(BIN)], check=True,
+                   capture_output=True, timeout=3600)
+    files, _ = read_image("frame-bin-fixture:test")
+    got = {f.path.split(":/", 1)[1]: {(p.name, p.version) for p in f.packages.values()} for f in files if f.kind == "image"}
+    assert got["usr/local/bin/svc-go"] == _go_truth()
+    assert got["usr/local/bin/svc-rust"] == {("smallvec", "1.6.0")}

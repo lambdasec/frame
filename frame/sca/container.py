@@ -18,6 +18,8 @@ Language packages installed in the image are read too, from what the package man
     */site-packages/*.dist-info/METADATA, *.egg-info     Python (PyPI): Name and Version
     */node_modules/<name>/package.json                    npm: name and version
     *.jar (and jars inside it, a Spring Boot or WAR)      Maven: META-INF/maven/**/pom.properties
+    executables (ELF)                                     Go build info, Rust `cargo auditable`
+                                                          (`frame.sca.binaries`)
 
 A jar without `pom.properties` is counted, never named from its file name. A package whose files
 an OS package owns (dpkg's `info/*.list`, apk's `F:` lines) is left to the distribution's
@@ -39,6 +41,7 @@ from pathlib import Path
 import zipfile
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+from frame.sca.binaries import Binary, read_binary
 from frame.sca.model import MAVEN, NPM, PYPI, DependencyFile, Package
 
 OS_RELEASE = ("etc/os-release", "usr/lib/os-release")
@@ -49,6 +52,8 @@ DPKG_INFO = "var/lib/dpkg/info/"
 _PY_META = re.compile(r"(?:^|/)(?:site|dist)-packages/[^/]+\.(?:dist-info/METADATA|egg-info/PKG-INFO|egg-info)$")
 _NPM_JSON = re.compile(r"(?:^|/)node_modules/((?:@[^/]+/)?[^/@.][^/]*)/package\.json$")
 MAX_JAR = 512 * 1024 * 1024                  # a larger archive is skipped with a warning
+MAX_BINARY = 512 * 1024 * 1024
+FileData = Union[str, bytes, Binary]          # text, a jar's bytes, or what a binary carries
 
 
 class ContainerError(RuntimeError):
@@ -129,7 +134,7 @@ def parse_apk(path: str, text: str, ecosystem: str) -> DependencyFile:
     return df
 
 
-def _owned(files: Dict[str, Union[str, bytes]]) -> Set[str]:
+def _owned(files: Dict[str, FileData]) -> Set[str]:
     """Paths (relative, no leading /) an OS package installed: dpkg's file lists, apk's folders."""
     out: Set[str] = set()
     for path, text in files.items():
@@ -192,7 +197,7 @@ def _jar_coordinates(data: bytes, depth: int = 0) -> Tuple[List[Tuple[str, str, 
     return coords, unnamed
 
 
-def read_language_packages(files: Dict[str, Union[str, bytes]], origin: str,
+def read_language_packages(files: Dict[str, FileData], origin: str,
                            owned: Optional[Set[str]] = None) -> Tuple[List[DependencyFile], List[str]]:
     """PyPI, npm and Maven packages installed in an image, one DependencyFile per place
     (a site-packages directory, the outermost node_modules, a jar), skipping what an OS package
@@ -208,8 +213,18 @@ def read_language_packages(files: Dict[str, Union[str, bytes]], origin: str,
             groups[key] = DependencyFile(f"{origin}:/{where}", eco, "image")
         return groups[key]
 
+    old_go = 0
     for path in sorted(files):
         text = files[path]
+        if isinstance(text, Binary):
+            if path in owned:
+                skipped += 1
+            elif text.kind == "go-old":
+                old_go += 1
+            else:
+                for eco, name, version in text.packages:
+                    group(eco, path).add(Package(eco, name, version))
+            continue
         m = _PY_META.search(path)
         if m and isinstance(text, str):
             meta_dir = path if path.endswith(".egg-info") else path.rsplit("/", 1)[0]
@@ -245,6 +260,8 @@ def read_language_packages(files: Dict[str, Union[str, bytes]], origin: str,
             if unnamed:
                 warnings.append(f"{origin}:/{path}: {unnamed} jar(s) without Maven coordinates (pom.properties); "
                                 "not identified")
+    if old_go:
+        warnings.append(f"{origin}: {old_go} Go binary(ies) built before Go 1.18 (module list not read)")
     if skipped:
         warnings.append(f"{origin}: {skipped} language package(s) installed by the OS package manager are "
                         "covered by the distribution's advisories")
@@ -256,7 +273,7 @@ def _language_file(path: str) -> bool:
                 or (path.startswith(DPKG_INFO) and path.endswith(".list")))
 
 
-def read_files(files: Dict[str, Union[str, bytes]], origin: str) -> Tuple[List[DependencyFile], List[str]]:
+def read_files(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFile], List[str]]:
     """From {path in the image: text, or bytes for a jar}: the installed packages, and warnings."""
     lang, lang_warnings = read_language_packages(files, origin)
     os_files, os_warnings = _read_os(files, origin)
@@ -266,7 +283,7 @@ def read_files(files: Dict[str, Union[str, bytes]], origin: str) -> Tuple[List[D
     return os_files + lang, os_warnings + lang_warnings
 
 
-def _read_os(files: Dict[str, Union[str, bytes]], origin: str) -> Tuple[List[DependencyFile], List[str]]:
+def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFile], List[str]]:
     release_text = next((files[p] for p in OS_RELEASE if p in files), None)
     if release_text is None:
         return [], [f"{origin}: no /etc/os-release, so the distribution is unknown"]
@@ -300,7 +317,7 @@ _SKIP_ROOT = {"proc", "sys", "dev"}
 
 def read_rootfs(root: Path) -> Tuple[List[DependencyFile], List[str]]:
     root = Path(root)
-    files: Dict[str, Union[str, bytes]] = {}
+    files: Dict[str, FileData] = {}
     for rel in OS_RELEASE + (DPKG_STATUS, APK_INSTALLED):
         p = root / rel
         if p.is_file():
@@ -318,9 +335,18 @@ def read_rootfs(root: Path) -> Tuple[List[DependencyFile], List[str]]:
             dirnames[:] = [d for d in dirnames if d not in _SKIP_ROOT]
         for name in filenames + [d for d in dirnames if d.endswith(".egg-info")]:
             rel = f"{rel_dir}/{name}" if rel_dir else name
-            if rel in files or not _language_file(rel):
-                continue
             full = Path(dirpath) / name
+            if rel not in files and not _language_file(rel) and not full.is_symlink() and full.is_file():
+                st = full.stat()
+                if st.st_mode & 0o111 and 1024 <= st.st_size <= MAX_BINARY:
+                    with open(full, "rb") as fh:
+                        if fh.read(4) == b"\x7fELF":
+                            found = read_binary(full.read_bytes())
+                            if found is not None:
+                                files[rel] = found
+                continue
+            if rel in files:
+                continue
             if rel.endswith(".egg-info") and full.is_dir():
                 full, rel = full / "PKG-INFO", rel + "/PKG-INFO"
             if not full.is_file() or full.is_symlink():
@@ -343,7 +369,7 @@ def _norm(name: str) -> str:
 def read_image_tar(tar_path: Path, origin: Optional[str] = None) -> Tuple[List[DependencyFile], List[str]]:
     """A `docker save` tarball: apply the layers in order, keeping only the files needed."""
     origin = origin or Path(tar_path).name
-    files: Dict[str, Union[str, bytes]] = {}
+    files: Dict[str, FileData] = {}
     with tarfile.open(tar_path) as outer:
         try:
             manifest = json.load(outer.extractfile("manifest.json"))
@@ -363,6 +389,13 @@ def read_image_tar(tar_path: Path, origin: Optional[str] = None) -> Tuple[List[D
                     elif leaf.startswith(".wh."):
                         gone = (base + "/" if base else "") + leaf[4:]
                         files = {k: v for k, v in files.items() if k != gone and not k.startswith(gone + "/")}
+                    elif m.isfile() and m.mode & 0o111 and not _wanted(name) and 1024 <= m.size <= MAX_BINARY:
+                        f = layer.extractfile(m)
+                        found = read_binary(f.read()) if f is not None else None
+                        if found is not None:
+                            files[name] = found
+                        else:
+                            files.pop(name, None)                   # replaced by something else
                     elif m.isfile() and _wanted(name):
                         if name.endswith(".jar") and m.size > MAX_JAR:
                             continue
