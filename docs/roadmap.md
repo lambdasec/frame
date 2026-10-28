@@ -73,9 +73,9 @@ SAST covers Python, JavaScript/TypeScript, Java, C# and C/C++: the most used lan
 
 ## Phase 3: secrets, infrastructure, containers
 
-- Secrets: entropy and provider key formats on top of the value-shape gate, test code recognised from the program model (not file names), git history, optional live verification of a found key.
+- Secrets. Done: provider key formats as data (`specs/data/secret-formats.toml`, 17 formats with the provider's documentation and published example values), reported in any string literal of any language, read from the syntax tree (not comments), alongside the name-based rule and its value-shape gate. Next: test code recognised from the program model (not file names), git history, optional live verification of a found key.
 - IaC: Terraform, Kubernetes, Helm, CloudFormation, Dockerfiles (tree-sitter grammars); policies as KB packs; Z3 for reachability-style policy questions ("can the internet reach this bucket").
-- Containers: image layers to OS packages to the SCA pipeline (OSV distro advisories).
+- Done: containers (`frame deps --image` / `--rootfs`, `frame/sca/container.py`, `distro_versions.py`). Debian, Ubuntu and Alpine OS packages, from an image's layers (whiteouts honoured) or a root filesystem, keyed by source package and release. dpkg and apk version order are checked against the real tools (0 disagreements on 2,186 pairs; apk's is a port of apk-tools 2.14.4). On the official debian:12.0 and alpine:3.18.0 images, the packages equal `dpkg-query` / `apk list` and the advisories equal OSV's API (202, 22). Next: RPM distributions (RHEL, Rocky, Alma, SUSE: an rpm database reader), language packages inside an image, and the distribution advisories in the daily dataset build.
 
 ## Phase 4: AI application security
 

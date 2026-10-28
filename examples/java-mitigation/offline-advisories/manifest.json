@@ -1,0 +1,14 @@
+{
+  "files": {
+    "advisories/Maven.json.gz": {
+      "advisories": 16,
+      "kind": "advisories",
+      "language": "maven",
+      "name": "Maven",
+      "sha256": "6eb55e1cf14d667f21e4d441e4a34dec336a815b9446baa54b043ac66041e707",
+      "size": 3108
+    }
+  },
+  "revision": "example-2026.10.27-ab8d558",
+  "schema": 1
+}

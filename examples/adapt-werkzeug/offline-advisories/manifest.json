@@ -1,0 +1,14 @@
+{
+  "files": {
+    "advisories/PyPI.json.gz": {
+      "advisories": 16,
+      "kind": "advisories",
+      "language": "pypi",
+      "name": "PyPI",
+      "sha256": "79ec005de9244d395d164afeb769ff3d8ae25fcb34819d3ba9044ed272e65352",
+      "size": 2970
+    }
+  },
+  "revision": "example-2026.10.27-ab8d558",
+  "schema": 1
+}

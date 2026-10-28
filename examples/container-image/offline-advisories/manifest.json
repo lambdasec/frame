@@ -1,0 +1,22 @@
+{
+  "files": {
+    "advisories/Alpine_v3.18.json.gz": {
+      "advisories": 86,
+      "kind": "advisories",
+      "language": "alpine:v3.18",
+      "name": "Alpine:v3.18",
+      "sha256": "2af68cf5c6a3855aa95741ea5ac0e96e22d7d15bbfa32522254063df93a2fdaf",
+      "size": 11037
+    },
+    "advisories/Debian_12.json.gz": {
+      "advisories": 745,
+      "kind": "advisories",
+      "language": "debian:12",
+      "name": "Debian:12",
+      "sha256": "f58e2f70b28afac3e7daaca47a731de6ddec0ece9fbff61969863b3a1e96673e",
+      "size": 92089
+    }
+  },
+  "revision": "example-distro-test",
+  "schema": 1
+}

@@ -241,6 +241,8 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `-o`, `--output FILE` | write to a file instead of stdout |
 | `--exclude DIR` | skip a directory name or relative path (repeatable) |
 | `--resolve` | run Maven, Gradle and pip to resolve projects without a lockfile (runs the build configuration) |
+| `--image REF` | also read the OS packages of a container image (a reference `docker save` can export, or a saved `.tar`; repeatable) |
+| `--rootfs DIR` | also read the OS packages of an unpacked root filesystem (repeatable) |
 | `--vulns` | match against the cached advisories |
 | `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |
@@ -287,7 +289,7 @@ Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs a
 
 | Subcommand | |
 |---|---|
-| `pull` | download into the cache: `--project DIR`, `--languages a,b`, `--all`, `--revision R`, `--source S`, `--lock` (write `.frame/kb.lock`), `--advisories` (advisories instead of packs) |
+| `pull` | download into the cache: `--project DIR`, `--languages a,b`, `--all`, `--revision R`, `--source S`, `--lock` (write `.frame/kb.lock`), `--advisories` (advisories instead of packs), `--ecosystems a,b` (with `--advisories`: these instead of the project's, e.g. `Debian:12` for an image) |
 | `status` | which revisions a scan of the project uses: `--project DIR`, `-f text|json` |
 | `build PACKS_DIR OUT` | lay out a packs revision for a mirror: `--revision R`, `--specs DIR` (spec tables to include) |
 | `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` (vulnerable functions), `--mitigations DIR` (curated configuration mitigations) |

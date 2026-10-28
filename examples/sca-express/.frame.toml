@@ -1,0 +1,3 @@
+[licenses]
+deny = ["GPL-*", "AGPL-*"]
+unknown = "report"

@@ -84,7 +84,9 @@ description = "Tracing server enabled"
 | LDAP / XPath / XML | Session fixation | Secrets, unsafe deserialization | Integer overflow |
 | Header and log | CSRF (CWE-352) | Weak crypto, hashing, random | Format string |
 
-AI applications (category `ai`):
+Hardcoded secrets are found two ways. A credential-named variable (`password`, `API_KEY`, `client_secret`) bound to a literal is reported unless the value is plainly not a secret (a field name, a filename, a placeholder). Separately, any string literal containing a provider's credential format is reported whatever holds it: an argument, a dict value, a header. That covers AWS, GitHub, GitLab, Slack, Google, Stripe (live keys), OpenAI, Anthropic, SendGrid, npm, PyPI, Hugging Face, DigitalOcean, Shopify and PEM private keys. The formats are data (`frame/sil/specs/data/secret-formats.toml`, each with the provider's documentation). Literals come from the syntax tree, so a token in a comment is not reported, and the providers' own published example keys are ignored.
+
+AI applications (category `ai`; walkthrough with real output in [examples/ai-apps](../examples/ai-apps/README.md)):
 
 | Finding | What it is |
 |---|---|

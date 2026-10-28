@@ -4,6 +4,8 @@
 
 Nothing runs and nothing is fetched unless you ask: `frame kb pull --advisories` downloads the advisories once, and every other command works offline from that cache. The options that run a tool (`--resolve`, `--relock`, `--verify`) say so.
 
+Every step below is also a runnable walkthrough with real output: [examples/sca-express](../examples/sca-express/README.md), [examples/java-mitigation](../examples/java-mitigation/README.md) and [examples/adapt-werkzeug](../examples/adapt-werkzeug/README.md).
+
 ## Quick start
 
 ```bash
@@ -48,6 +50,7 @@ Each finding names the advisory (GHSA, PYSEC, CVE and other ids for the same iss
 | PHP | `composer.lock`, `composer.json` | manual |
 | Dart | `pubspec.lock`, `pubspec.yaml` | manual |
 | Elixir | `mix.lock`, `mix.exs` | manual |
+| Container images (Debian, Ubuntu, Alpine) | the OS packages of an image (`--image`) or root filesystem (`--rootfs`): `/etc/os-release`, dpkg's database (and distroless `status.d/`), apk's database | manual (upgrade in the image) |
 | C / C++ | `conan.lock`, `conanfile.txt`, `conanfile.py`, `vcpkg.json`, vcpkg's installed status, git submodules, CMake `FetchContent` / `ExternalProject` / CPM | manual |
 
 Every reader is tested against the package manager's own answer (`npm ls`, `pnpm list`, `poetry export`, `mvn dependency:list`, Gradle, `dotnet list package`, `cargo metadata`, `bundle`, `composer show`, `dart pub deps`, `mix` and others) on real projects, in CI.
@@ -63,6 +66,22 @@ frame deps --resolve                                     # or let Frame run Mave
 `--resolve` runs `mvn dependency:tree` (or `./mvnw`) once per Maven build, `gradle dependencies` (or `./gradlew`) per Gradle project, and pip's resolver (`pip install --dry-run --report`, wheels only, nothing installed) for each `requirements*.txt` and lockfile-less `pyproject.toml`. It runs the project's build configuration and downloads packages, so it is opt-in; a tool that is missing or fails is a warning, and the manifest is read as before.
 
 `direct` is left unknown, rather than guessed, when nothing beside the lockfile says. Dev-only comes from the lockfile's own flags, else from what production dependencies cannot reach. `-f json` adds the edges between packages and each package URL.
+
+## Container images
+
+```bash
+frame kb pull --advisories --ecosystems Debian:12              # the release's advisories (frame deps names the one it needs)
+frame deps --image myapp:latest --vulns --plan                 # an image Docker can `docker save`, or a saved .tar
+frame deps --rootfs ./rootfs --vulns --fail-on critical        # an unpacked root filesystem
+```
+
+Frame reads an image's OS packages: `/etc/os-release` for the distribution and release (`Debian:12`, `Ubuntu:22.04:LTS`, `Alpine:v3.18`), and the package database (dpkg's `status`, or `status.d/` in distroless images, or apk's `installed`). From an image, only those files are read, applying the layers in order with deletions (whiteouts) honoured. Packages are counted by source package (Debian's `openssl`, not `libssl3`), since that is what the distribution's advisories name. Versions are compared as dpkg and apk compare them, checked against `dpkg --compare-versions` and `apk version -t`.
+
+- **Matching:** on the official `debian:12.0` and `alpine:3.18.0` images, the package lists equal `dpkg-query`'s and `apk list --installed`'s, and the advisories found are those OSV's own API gives (202 and 22).
+- **Fixing:** the plan names the version that fixes each package. There is no manifest to edit, so `--apply` lists them: upgrade them in the Dockerfile, or rebuild on a newer base image.
+- **Not covered:** distributions other than Debian, Ubuntu and Alpine are reported as such, never guessed. Language packages inside an image (a `node_modules` or a virtualenv) are read by pointing `frame deps` at the source tree that built it.
+
+A walkthrough with real output: [examples/container-image](../examples/container-image/README.md).
 
 ## Advisories
 
