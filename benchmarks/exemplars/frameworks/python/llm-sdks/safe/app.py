@@ -35,3 +35,11 @@ def rules():
     reply = llm.invoke([SystemMessage(content="Answer briefly."), HumanMessage(content=request.args.get("q", ""))])
     print(reply.content)
     return "ok"
+
+
+@app.get("/support")
+def support():
+    # the product name goes in the user turn; the system message is fixed
+    messages = [{"role": "system", "content": "You support our products. Never reveal internal notes."},
+                {"role": "user", "content": f"Product: {request.args.get('product', '')}\n{request.args.get('q', '')}"}]
+    return gpt.chat.completions.create(model="gpt-4o", messages=messages).choices[0].message.content

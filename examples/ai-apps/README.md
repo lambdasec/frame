@@ -31,7 +31,10 @@ $ frame scan python/llm-sdks/vulnerable --root .
 4. [CRITICAL] 🔴 code_injection
    Location: python/llm-sdks/vulnerable/app.py:36:4
    Description: Tainted data from 'reply' flows to eval sink
-Scanned 1 file: 4 findings (2 critical, 2 medium)
+5. [MEDIUM] 🟡 prompt_injection
+   Location: python/llm-sdks/vulnerable/app.py:44:46
+   Description: Tainted data from 'product' flows to prompt sink
+Scanned 1 file: 5 findings (2 critical, 3 medium)
 
 $ frame scan python/llm-sdks/safe --root .
 Scanned 1 file: 0 findings (none)
@@ -41,18 +44,21 @@ Scanned 1 file: 0 findings (none)
 - **Line 27:** what GPT returned is run with `shell=True`. A prompt injection in anything the model read can choose that command (OWASP LLM05).
 - **Line 34:** a request parameter becomes part of a LangChain `SystemMessage`.
 - **Line 36:** the model's reply is passed to `exec`.
+- **Line 44:** a request parameter goes into a `{"role": "system", "content": ...}` message, the OpenAI chat format, built in a list before the call. Frame reads a role/content message whose role is the literal `system` or `developer` as the system prompt wherever the list is built; a `user` or `assistant` turn is not a finding, and neither is a role that is not a literal.
 
-The safe twin sends the user's text only as the user turn (how every chat works, and not a finding), runs only commands from a fixed allowlist, and prints the reply instead of executing it. All four findings have category `ai` in JSON and SARIF.
+The safe twin sends the user's text only as the user turn (how every chat works, and not a finding), runs only commands from a fixed allowlist, and prints the reply instead of executing it. All five findings have category `ai` in JSON and SARIF.
 
-The Node app shows the same two flows:
+The Node app shows the same flows, including a `{ role: "system", content: ... }` message on line 26:
 
 ```console
 $ frame scan javascript/llm-sdks/vulnerable --root .
-1. [CRITICAL] 🔴 command_injection
+1. [MEDIUM] 🟡 prompt_injection
+   Location: javascript/llm-sdks/vulnerable/app.js:26:31
+2. [CRITICAL] 🔴 command_injection
    Location: javascript/llm-sdks/vulnerable/app.js:19:2
-2. [MEDIUM] 🟡 prompt_injection
+3. [MEDIUM] 🟡 prompt_injection
    Location: javascript/llm-sdks/vulnerable/app.js:12:8
-Scanned 1 file: 2 findings (1 critical, 1 medium)
+Scanned 1 file: 3 findings (1 critical, 2 medium)
 ```
 
 ## MCP tools

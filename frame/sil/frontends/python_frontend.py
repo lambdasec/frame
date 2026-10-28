@@ -792,8 +792,44 @@ class PythonFrontend:
             else:
                 self._translate_statement(child)
 
+    # A chat message whose role sets the model's instructions, in the role/content shape the
+    # OpenAI chat format made common (OpenAI, Azure, Mistral, LiteLLM, Ollama...): lowered as a
+    # call constructing a system message, like LangChain's `SystemMessage(content)`, so a pack can
+    # make its content a prompt sink. A dict is otherwise lowered as `null`.
+    SYSTEM_MESSAGE_CALL = "<chat-system-message>"
+    _SYSTEM_ROLES = frozenset({"system", "developer"})
+
+    def _system_message_instrs(self, stmt: TSNode) -> List[Instr]:
+        out: List[Instr] = []
+        stack = [stmt]
+        while stack:
+            n = stack.pop()
+            if n.type in ("function_definition", "lambda", "class_definition"):
+                continue
+            if n.type == "dictionary":
+                role = content = None
+                for pair in n.named_children:
+                    if pair.type != "pair":
+                        continue
+                    k, v = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+                    if k is None or v is None or k.type != "string" or self._get_string_content(k) not in ("role", "content"):
+                        continue
+                    if self._get_string_content(k) == "role":
+                        plain = v.type == "string" and not any(c.type == "interpolation" for c in v.named_children)
+                        role = self._get_string_content(v) if plain else None
+                    else:
+                        content = v
+                if role in self._SYSTEM_ROLES and content is not None:
+                    loc = self._get_location(content)
+                    out.append(Call(loc=loc, ret=None, func=ExpConst.string(self.SYSTEM_MESSAGE_CALL),
+                                    args=[(self._translate_expression(content), Typ.unknown_type())]))
+            stack.extend(reversed(n.children))
+        return out
+
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a single statement"""
+        if node.type in ("expression_statement", "assignment", "augmented_assignment", "return_statement"):
+            self._add_instrs(self._system_message_instrs(node))
         if node.type == "expression_statement" and node.named_children \
                 and node.named_children[0].type == "yield":
             self._translate_yield(node.named_children[0])

@@ -92,7 +92,7 @@ AI applications (category `ai`; walkthrough with real output in [examples/ai-app
 
 | Finding | What it is |
 |---|---|
-| Prompt injection (CWE-1427, OWASP LLM01) | Untrusted data in a model's system instructions: Anthropic `system=`, OpenAI `instructions=`, LangChain `SystemMessage`. Untrusted data in a user turn is how a chat works and is not reported. |
+| Prompt injection (CWE-1427, OWASP LLM01) | Untrusted data in a model's system instructions: Anthropic `system=`, OpenAI `instructions=`, LangChain `SystemMessage`, and a role/content chat message whose role is `system` or `developer` (`{"role": "system", "content": ...}`, the OpenAI chat format, wherever the messages list is built; Python and JS/TS). Untrusted data in a user turn is how a chat works and is not reported. |
 | Model output reaching a sink (OWASP LLM05) | What a model returns (OpenAI, Anthropic, LangChain, LlamaIndex) can be steered by a prompt injection anywhere in what it read, so it is attacker data at every injection sink: a shell, `exec`, SQL, HTML. It is not treated as confidential, so logging it is not a finding. |
 | MCP tools | A tool's arguments are model output, so a shell or SQL sink in a tool handler (`@mcp.tool()`, `server.tool(...)` / `server.registerTool(...)`) is a finding. |
 

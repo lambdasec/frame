@@ -143,8 +143,8 @@ def test_ai_apps_walkthrough():
     readme = (EXAMPLES / "ai-apps" / "README.md").read_text()
     frameworks = ROOT / "benchmarks" / "exemplars" / "frameworks"
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
-    for app, summary in [("python/llm-sdks/vulnerable", "Scanned 1 file: 4 findings (2 critical, 2 medium)"),
-                         ("javascript/llm-sdks/vulnerable", "Scanned 1 file: 2 findings (1 critical, 1 medium)"),
+    for app, summary in [("python/llm-sdks/vulnerable", "Scanned 1 file: 5 findings (2 critical, 3 medium)"),
+                         ("javascript/llm-sdks/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)"),
                          ("python/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)"),
                          ("javascript/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)")]:
         out = frame(frameworks, env, "scan", app, "--root", ".")

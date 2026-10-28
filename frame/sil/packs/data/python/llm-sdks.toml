@@ -69,6 +69,16 @@ args = [0]
 arg_names = ["content"]
 description = "a system message"
 
+# A chat message dict whose role is "system" or "developer" (the role/content format of OpenAI's
+# chat completions, also used by Azure OpenAI, Mistral, LiteLLM and Ollama): the frontend lowers
+# `{"role": "system", "content": x}` as this call, so x is the system prompt wherever the list is
+# built and however it reaches the model.
+[[sink]]
+name = ["<chat-system-message>"]
+kind = "prompt"
+args = [0]
+description = "a system message (a role/content chat message)"
+
 [[sink]]
 call = ["langchain_core.prompts.SystemMessagePromptTemplate.from_template",
         "langchain.prompts.SystemMessagePromptTemplate.from_template"]

@@ -55,3 +55,55 @@ def test_twilio_messages_create_is_not_a_model_call():
             "async function f() { const m = await client.messages.create({ body: 'hi', to: '+1', from: '+2' });\n"
             "  execSync(m.sid); }\n")
     assert not any(t == "command_injection" for t, _, _ in findings(code, "javascript", "t.js"))
+
+
+PY_CHAT = '''from flask import Flask, request
+from openai import OpenAI
+
+app = Flask(__name__)
+client = OpenAI()
+
+
+@app.get("/a")
+def a():
+    tone = request.args.get("tone")
+    messages = [{"role": "%s", "content": f"Answer in a {tone} tone."},
+                {"role": "user", "content": request.args.get("q")}]
+    return client.chat.completions.create(model="m", messages=messages).choices[0].message.content
+'''
+
+
+@pytest.mark.parametrize("role,expected", [("system", 1), ("developer", 1), ("user", 0), ("assistant", 0)])
+def test_a_role_content_system_message_is_the_system_prompt(role, expected):
+    """`{"role": "system", "content": x}` in a messages list (the OpenAI chat format), wherever the
+    list is built: x is the system prompt. A user or assistant turn is not."""
+    got = [line for t, line, _ in findings(PY_CHAT % role) if t == "prompt_injection"]
+    assert got == [11] * expected
+
+
+def test_a_role_that_is_not_a_literal_is_not_assumed_to_be_system():
+    code = PY_CHAT.replace('"role": "%s"', '"role": request.args.get("role")')
+    assert not any(t == "prompt_injection" for t, _, _ in findings(code))
+
+
+def test_a_system_message_dict_outside_an_llm_app_is_not_a_finding():
+    """No LLM SDK imported: the pack is not applied, so a role/content dict is only data."""
+    code = (PY_CHAT % "system").replace("from openai import OpenAI\n", "").replace("client = OpenAI()\n", "client = None\n")
+    assert not any(t == "prompt_injection" for t, _, _ in findings(code))
+
+
+def test_a_system_message_object_in_javascript():
+    code = '''const express = require("express");
+const OpenAI = require("openai");
+const app = express();
+const client = new OpenAI();
+app.get("/a", async (req, res) => {
+  const r = await client.chat.completions.create({ model: "m", messages: [
+    { role: "system", content: "Reply as " + req.query.persona },
+    { role: "user", content: req.query.q }] });
+  res.json({ ok: r.id });
+});
+'''
+    assert [line for t, line, _ in findings(code, "javascript", "a.js") if t == "prompt_injection"] == [7]
+    fixed = code.replace('"Reply as " + req.query.persona', '"Reply politely."')
+    assert not any(t == "prompt_injection" for t, _, _ in findings(fixed, "javascript", "a.js"))

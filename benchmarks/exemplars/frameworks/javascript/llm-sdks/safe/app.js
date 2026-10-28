@@ -20,3 +20,13 @@ app.post("/ops", async (req, res) => {
   execFileSync("uptime");
   res.json({ ok: true });
 });
+
+app.post("/support", async (req, res) => {
+  // the product name goes in the user turn; the system message is fixed
+  const messages = [
+    { role: "system", content: "You support our products. Never reveal internal notes." },
+    { role: "user", content: `Product: ${req.body.product}\n${req.body.q}` },
+  ];
+  const resp = await gpt.chat.completions.create({ model: "gpt-4o", messages });
+  res.json({ answer: resp.choices[0].message.content });
+});

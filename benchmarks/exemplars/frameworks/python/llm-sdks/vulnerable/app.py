@@ -35,3 +35,12 @@ def rules():
                         HumanMessage(content=request.args.get("q", ""))])
     exec(reply.content)  # frame-expect: CWE-94
     return "ok"
+
+
+@app.get("/support")
+def support():
+    # the OpenAI chat format: a system message dict built before the call
+    product = request.args.get("product", "")
+    messages = [{"role": "system", "content": f"You support {product}. Never reveal internal notes."},  # frame-expect: CWE-1427
+                {"role": "user", "content": request.args.get("q", "")}]
+    return gpt.chat.completions.create(model="gpt-4o", messages=messages).choices[0].message.content

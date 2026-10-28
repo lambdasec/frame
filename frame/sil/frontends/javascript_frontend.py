@@ -1663,8 +1663,46 @@ class JavaScriptFrontend:
             if child.type not in ("{", "}"):
                 self._translate_statement(child)
 
+    # A chat message whose role sets the model's instructions (`{ role: "system", content: x }`,
+    # the OpenAI chat format): lowered as a call constructing a system message, as the Python
+    # frontend does, so a pack can make its content a prompt sink.
+    SYSTEM_MESSAGE_CALL = "<chat-system-message>"
+    _SYSTEM_ROLES = frozenset({"system", "developer"})
+    _NESTED_SCOPES = frozenset({"arrow_function", "function_expression", "function", "function_declaration",
+                                "generator_function", "generator_function_declaration", "method_definition",
+                                "class", "class_declaration"})
+
+    def _system_message_instrs(self, stmt: TSNode) -> List[Instr]:
+        out: List[Instr] = []
+        stack = [stmt]
+        while stack:
+            n = stack.pop()
+            if n.type in self._NESTED_SCOPES:
+                continue
+            if n.type == "object":
+                role = content = None
+                for pair in n.named_children:
+                    if pair.type != "pair":
+                        continue
+                    k, v = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+                    if k is None or v is None:
+                        continue
+                    key = self._get_text(k).strip("\"'")
+                    if key == "role":
+                        role = self._get_text(v)[1:-1] if v.type == "string" else None
+                    elif key == "content":
+                        content = v
+                if role in self._SYSTEM_ROLES and content is not None:
+                    out.append(Call(loc=self._get_location(content), ret=None,
+                                    func=ExpConst.string(self.SYSTEM_MESSAGE_CALL),
+                                    args=[(self._translate_expression(content), Typ.unknown_type())]))
+            stack.extend(reversed(n.children))
+        return out
+
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a single statement"""
+        if node.type in ("expression_statement", "lexical_declaration", "variable_declaration", "return_statement"):
+            self._add_instrs(self._system_message_instrs(node))
         if node.type == "expression_statement":
             self._translate_expression_statement(node)
 

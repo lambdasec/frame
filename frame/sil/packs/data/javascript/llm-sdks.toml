@@ -41,6 +41,15 @@ args = []
 arg_names = ["instructions"]
 description = "the instructions (system prompt)"
 
+# `{ role: "system", content: x }` (the OpenAI chat format, also used by Azure OpenAI, Mistral,
+# Groq, Ollama): the frontend lowers it as this call, so x is the system prompt wherever the
+# messages array is built.
+[[sink]]
+name = ["<chat-system-message>"]
+kind = "prompt"
+args = [0]
+description = "a system message (a role/content chat message)"
+
 [[sink]]
 call = ["@langchain/core/messages.SystemMessage", "langchain/schema.SystemMessage"]
 kind = "prompt"
