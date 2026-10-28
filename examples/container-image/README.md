@@ -4,7 +4,7 @@
 
 ```bash
 cd examples/container-image
-frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9"
+frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9"
 ```
 
 ## The packages
@@ -64,6 +64,19 @@ Rocky Linux:9: 8 distinct packages (0 direct, 0 dev only)
 
 Nine binary packages are eight here because Rocky Linux's advisories name source packages (`openssl`, `curl`), so `openssl-libs` is matched as `openssl` and `curl-minimal` with `libcurl-minimal` as `curl`. AlmaLinux's advisories name binary packages, and Frame follows each. Versions are `epoch:version-release` in rpm's order. The 43 are what OSV's API answers for each package.
 
+`ubi-9.4/` is the same, from Red Hat's `registry.access.redhat.com/ubi9/ubi:9.4`:
+
+```console
+$ frame deps --rootfs ubi-9.4 --vulns
+  ubi-9.4:/var/lib/rpm/rpmdb.sqlite  (Red Hat:enterprise_linux:9 installed): 9 packages, direct unknown
+Red Hat:enterprise_linux:9: 9 distinct packages (0 direct, 0 dev only)
+46 known vulnerabilities:
+  CRITICAL libxml2@2.9.13-6.el9_4 (os package) RHSA-2025:10699: Red Hat Security Advisory: libxml2 security update; fixed in 0:2.9.13-10.el9_6  [ubi-9.4:/var/lib/rpm/rpmdb.sqlite]
+  ...
+```
+
+Red Hat files its advisories under product streams (`baseos`, `appstream`, `crb`), and an image does not record which stream a package came from. Across OSV's whole Red Hat export, no advisory gives a RHEL 8 or 9 package different ranges in two streams, so Frame reads a release's streams as one table, `Red Hat:enterprise_linux:9`, without guessing a stream. The 46 are the union of OSV's answers over every RHEL 9 stream.
+
 ## Language packages in an image
 
 An application image also holds what pip, npm or a build copied into it. Frame reads those from what the package managers and compilers leave: Python's `*.dist-info/METADATA`, each `node_modules/<name>/package.json`, each jar's `META-INF/maven/**/pom.properties` (also inside a Spring Boot or WAR archive), the build info of Go binaries, and the dependency list `cargo auditable` puts in Rust binaries.
@@ -77,7 +90,7 @@ $ frame deps --rootfs app-image --vulns
   app-image:/usr/local/bin/svc-rust  (crates.io image): 1 packages, direct unknown
   app-image:/app/node_modules  (npm image): 51 packages, direct unknown
 warning: app-image: 2 language package(s) installed by the OS package manager are covered by the distribution's advisories
-273 known vulnerabilities:
+274 known vulnerabilities:
   CRITICAL org.apache.commons:commons-text@1.9 (dependency) GHSA-599f-7c49-w659: Arbitrary code execution in Apache Commons Text; fixed in 1.10.0  [app-image:/app/lib/commons-text-1.9.jar]
   CRITICAL PyYAML@5.3.1 (dependency) GHSA-8q59-q68h-6hv4: Improper Input Validation in PyYAML; fixed in 5.4  [app-image:/usr/local/lib/python3.12/site-packages]
   ...

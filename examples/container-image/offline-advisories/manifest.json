@@ -5,31 +5,31 @@
       "kind": "advisories",
       "language": "alpine:v3.18",
       "name": "Alpine:v3.18",
-      "sha256": "57d71dd0e01944d6a52fedee31f2bb782c88ac3c36b443ccec1ee66ac310da2e",
-      "size": 11044
+      "sha256": "0aa53e938f567314d8e6332c8ea820ca438d2b3b81e269f0635fc9ea4e2657a5",
+      "size": 11041
     },
     "advisories/Debian_12.json.gz": {
-      "advisories": 1367,
+      "advisories": 1368,
       "kind": "advisories",
       "language": "debian:12",
       "name": "Debian:12",
-      "sha256": "e489328957413f5c2120281758a14e1c50650fd41fce9f745e04841767c845db",
-      "size": 151423
+      "sha256": "b15e0da276067182579b3e483f6c6e13a93b0a155896babe03157b2981d38dba",
+      "size": 151535
     },
     "advisories/Go.json.gz": {
       "advisories": 184,
       "kind": "advisories",
       "language": "go",
       "name": "Go",
-      "sha256": "74fe0f7ddb4c35e7fe5b54cb6f262ea482bb0d37844570ad41165b5679ad7770",
-      "size": 21668
+      "sha256": "dca5335e6f7dd7de1391588bf10150a3b2bc9391368ab6c39bb80b520cdf2a98",
+      "size": 21667
     },
     "advisories/Maven.json.gz": {
       "advisories": 1,
       "kind": "advisories",
       "language": "maven",
       "name": "Maven",
-      "sha256": "c9a707e899ee7d017340fa890a8535b5a0f6a69be2611ededd631fcd67c5f1f8",
+      "sha256": "026b197d39ed34f3c2657b560a7baacc9392f33bb3dd1c6172f48bd0e394aba7",
       "size": 386
     },
     "advisories/PyPI.json.gz": {
@@ -37,34 +37,42 @@
       "kind": "advisories",
       "language": "pypi",
       "name": "PyPI",
-      "sha256": "b374cee4dc7755e7fe8c57b2f300c01a1631404a576b6acb385c96fd38882a73",
+      "sha256": "b39073d094b7cb8ccec7cd17a9d4af50bc97a1f3e5c309d4dfb97f46b20c0c0b",
       "size": 6212
+    },
+    "advisories/Red_Hat_enterprise_linux_9.json.gz": {
+      "advisories": 101,
+      "kind": "advisories",
+      "language": "red hat:enterprise_linux:9",
+      "name": "Red Hat:enterprise_linux:9",
+      "sha256": "fbf2fd17a96e9974e7de0dba097867ccdfd658ee02b9f72658c1b99f4516d000",
+      "size": 3194
     },
     "advisories/Rocky_Linux_9.json.gz": {
       "advisories": 58,
       "kind": "advisories",
       "language": "rocky linux:9",
       "name": "Rocky Linux:9",
-      "sha256": "846276f76cabb99a15263344b9e72a7270d083b2b0ef0a947be426b3a215e60e",
-      "size": 2890
+      "sha256": "11c1bff7bf37c7be8194ceee37a40ac597c629fbe4b02d928e82fcb3f756673d",
+      "size": 2888
     },
     "advisories/crates.io.json.gz": {
       "advisories": 5,
       "kind": "advisories",
       "language": "crates.io",
       "name": "crates.io",
-      "sha256": "1d01db37c615745894732757fa03945d79ae87ad55186a43389a567c767f86ba",
-      "size": 772
+      "sha256": "35ecd5e1a6701baecfbc0c7484cf1608eb9d49824637cabaadaf32d0cacd054b",
+      "size": 771
     },
     "advisories/npm.json.gz": {
       "advisories": 50,
       "kind": "advisories",
       "language": "npm",
       "name": "npm",
-      "sha256": "4d13db4ff6dbad1535551f6723f80ef8b8665f9cd685fb968e816a3bc34f4e29",
-      "size": 4558
+      "sha256": "2bbfdc1e6067fb2835dade7f49e81c4b16d07bebfa07cd4fca4d74fdf5dbafcb",
+      "size": 4557
     }
   },
-  "revision": "example-2026.10.28-19fdfd9",
+  "revision": "example-2026.10.28-e352943",
   "schema": 1
 }

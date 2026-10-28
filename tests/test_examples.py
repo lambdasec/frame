@@ -160,8 +160,8 @@ def test_container_image_walkthrough(tmp_path):
     shutil.copytree(EXAMPLES / "container-image", work)
     env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
     env.pop("FRAME_ADVISORIES_SOURCE", None)
-    assert "8 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
-                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9")
+    assert "9 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9")
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "--rootfs", "alpine-3.18.0", "--rootfs", "debian-12.0"),
@@ -176,11 +176,14 @@ def test_container_image_walkthrough(tmp_path):
           "43 known vulnerabilities:",
           "CRITICAL openssl@1:3.0.7-27.el9 (os package) RLSA-2026:1473: Important: openssl security update; "
           "fixed in 1:3.5.1-7.el9_7  [rocky-9.4:/var/lib/rpm/rpmdb.sqlite]"]),
+        (("deps", "--rootfs", "ubi-9.4", "--vulns"),
+         ["ubi-9.4:/var/lib/rpm/rpmdb.sqlite  (Red Hat:enterprise_linux:9 installed): 9 packages, direct unknown",
+          "46 known vulnerabilities:"]),
         (("deps", "--rootfs", "app-image", "--vulns"),
          ["app-image:/usr/local/lib/python3.12/site-packages  (PyPI image): 7 packages, direct unknown",
           "app-image:/app/node_modules  (npm image): 51 packages, direct unknown",
           "warning: app-image: 2 language package(s) installed by the OS package manager are covered by the "
-          "distribution's advisories", "273 known vulnerabilities:",
+          "distribution's advisories", "274 known vulnerabilities:",
           "app-image:/usr/local/bin/svc-go  (Go image): 2 packages, direct unknown",
           "app-image:/usr/local/bin/svc-rust  (crates.io image): 1 packages, direct unknown",
           "UNKNOWN  stdlib@1.21.0 (dependency, called) GO-2025-4010: Insufficient validation of bracketed IPv6 "
