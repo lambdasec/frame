@@ -35,7 +35,7 @@ def test_os_release_to_ecosystem():
     assert ecosystem_of(os_release('ID=ubuntu\nVERSION_ID="23.10"\nVERSION="23.10 (Mantic Minotaur)"')) == "Ubuntu:23.10"
     assert ecosystem_of(os_release("ID=alpine\nVERSION_ID=3.18.4")) == "Alpine:v3.18"
     assert ecosystem_of(os_release('ID=debian\nVERSION_ID="12"')) == "Debian:12"
-    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="9.3"')) is None           # no advisories: said, not guessed
+    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.5"')) is None          # no advisories: said, not guessed
 
 
 @pytest.mark.parametrize("ref,rootfs", [("debian:12.0", "debian-12.0"), ("alpine:3.18.0", "alpine-3.18.0")])
@@ -96,9 +96,9 @@ def test_image_layers_apply_in_order_with_whiteouts(tmp_path):
 
 def test_a_distribution_without_advisories_is_said(tmp_path):
     (tmp_path / "etc").mkdir()
-    (tmp_path / "etc/os-release").write_text('ID="rhel"\nVERSION_ID="9.3"\nPRETTY_NAME="Red Hat Enterprise Linux 9.3"\n')
+    (tmp_path / "etc/os-release").write_text('ID="sles"\nVERSION_ID="15.5"\nPRETTY_NAME="SUSE Linux Enterprise Server 15 SP5"\n')
     files, warnings = read_rootfs(tmp_path)
-    assert files == [] and "Red Hat Enterprise Linux 9.3 has no advisories in Frame" in warnings[0]
+    assert files == [] and "SUSE Linux Enterprise Server 15 SP5 has no advisories in Frame" in warnings[0]
 
 
 @pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
@@ -330,7 +330,7 @@ def test_a_function_vulnerable_on_another_platform_is_not_called():
 RPM = json.loads((F / "rpm_images.json").read_text())
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4"])
 def test_the_rpm_database_reads_as_rpm_does(rootfs):
     """rpm 4.16's sqlite database (Rocky Linux 9.4) and rpm 4.14's Berkeley DB (AlmaLinux 8.9),
     made by rpm itself from the official images: every package equals `rpm -qa`."""
@@ -341,7 +341,7 @@ def test_the_rpm_database_reads_as_rpm_does(rootfs):
     assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4"])
 def test_rpm_matching_agrees_with_the_osv_api(rootfs):
     """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
     binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
@@ -362,14 +362,17 @@ def test_rpm_matching_agrees_with_the_osv_api(rootfs):
         assert set(expected[key]) <= found.get(key, set()), (key, sorted(set(expected[key]) - found.get(key, set())))
         assert bool(expected[key]) == bool(found.get(key)), key
     names = {p.name for p in files[0].packages.values()}
-    assert ("openssl" in names) == (eco.startswith("Rocky")) and ("openssl-libs" in names) == eco.startswith("Alma")
+    assert ("openssl" in names) == eco.startswith("Rocky") and ("openssl-libs" in names) == (not eco.startswith("Rocky"))
 
 
 def test_rpm_release_and_purl():
     from frame.sca.model import Package
     assert ecosystem_of(os_release('ID="rocky"\nVERSION_ID="9.4"')) == "Rocky Linux:9"
     assert ecosystem_of(os_release('ID="almalinux"\nVERSION_ID="8.9"')) == "AlmaLinux:8"
-    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="9.4"')) is None              # not covered: said, not guessed
+    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="9.4"')) == "Red Hat:enterprise_linux:9"   # RHEL, UBI
+    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="7.9"')) is None              # streams disagree: not read
+    assert Package("Red Hat:enterprise_linux:9", "openssl-libs", "1:3.0.7-28.el9_4").purl == \
+        "pkg:rpm/redhat/openssl-libs@3.0.7-28.el9_4?distro=rhel-9&epoch=1"
     assert Package("Rocky Linux:9", "openssl", "1:3.0.7-27.el9").purl == \
         "pkg:rpm/rocky-linux/openssl@3.0.7-27.el9?distro=rocky-linux-9&epoch=1"
     assert Package("AlmaLinux:8", "bash", "4.4.20-4.el8_6").purl == "pkg:rpm/almalinux/bash@4.4.20-4.el8_6?distro=almalinux-8"
@@ -384,7 +387,7 @@ def test_rpm_source_package_names():
 
 @pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
                     reason="live: set FRAME_SCA_REAL=1 (docker save of the real images, rpm -qa)")
-@pytest.mark.parametrize("ref", ["rockylinux/rockylinux:9.4", "almalinux:8.9"])
+@pytest.mark.parametrize("ref", ["rockylinux/rockylinux:9.4", "almalinux:8.9", "registry.access.redhat.com/ubi9/ubi:9.4"])
 def test_live_rpm_images_read_as_rpm_does(ref):
     import subprocess
     from frame.sca.rpmdb import RPMDB_PATHS, read_rpmdb
@@ -393,7 +396,7 @@ def test_live_rpm_images_read_as_rpm_does(ref):
                         check=True, capture_output=True, text=True, timeout=600).stdout
     truth = sorted(line.split(" ", 1) for line in qa.splitlines() if not line.startswith("gpg-pubkey "))
     files, warnings = read_image(ref)
-    assert files[0].ecosystem in ("Rocky Linux:9", "AlmaLinux:8")
+    assert files[0].ecosystem in ("Rocky Linux:9", "AlmaLinux:8", "Red Hat:enterprise_linux:9")
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         cid = subprocess.run(["docker", "create", ref], check=True, capture_output=True, text=True).stdout.strip()
@@ -412,3 +415,45 @@ def test_the_pull_hint_survives_a_shell():
     from frame.sca.advisories import pull_hint
     hint = pull_hint(["Rocky Linux:9", "Debian:12"])
     assert shlex.split(hint)[-2:] == ["--ecosystems", "Debian:12,Rocky Linux:9"]
+
+
+
+def test_rhel_streams_merge_into_one_release_table():
+    """`Red Hat:enterprise_linux:9::baseos` and `::appstream` (any stream) become one table for the
+    release; RHEL 7 and the extended-support products are not read."""
+    from frame.sca.osv import entries
+    rec = {"id": "RHSA-X", "affected": [
+        {"package": {"ecosystem": "Red Hat:enterprise_linux:9::baseos", "name": "openssl-libs"},
+         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1:3.0.7-29.el9_4"}]}]},
+        {"package": {"ecosystem": "Red Hat:enterprise_linux:9::appstream", "name": "openssl-devel"},
+         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1:3.0.7-29.el9_4"}]}]},
+        {"package": {"ecosystem": "Red Hat:rhel_eus:9.2::baseos", "name": "openssl-libs"}, "ranges": []},
+        {"package": {"ecosystem": "Red Hat:enterprise_linux:7::server", "name": "openssl-libs"}, "ranges": []}]}
+    got = [(eco, name) for eco, name, _ in entries(rec, ["Red Hat"])]
+    assert got == [("Red Hat:enterprise_linux:9", "openssl-libs"), ("Red Hat:enterprise_linux:9", "openssl-devel")]
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1", reason="live: set FRAME_SCA_REAL=1 (OSV's Red Hat export)")
+def test_live_rhel_streams_still_agree(tmp_path):
+    """Merging a RHEL release's streams is right only while no advisory gives one package two
+    ranges in two streams. Checked over OSV's whole, current Red Hat export."""
+    import re
+    import urllib.request
+    import zipfile
+    data = tmp_path / "rh.zip"
+    data.write_bytes(urllib.request.urlopen("https://osv-vulnerabilities.storage.googleapis.com/Red%20Hat/all.zip",
+                                            timeout=600).read())
+    seen: dict = {}
+    differ = []
+    with zipfile.ZipFile(data) as z:
+        for n in z.namelist():
+            rec = json.loads(z.read(n))
+            for a in rec.get("affected", []):
+                m = re.fullmatch(r"Red Hat:enterprise_linux:(8|9)::\w+", a["package"]["ecosystem"])
+                if not m:
+                    continue
+                ev = sorted(json.dumps(e, sort_keys=True) for r in a.get("ranges", []) for e in r.get("events", []))
+                key = (m.group(1), a["package"]["name"], rec["id"])
+                if seen.setdefault(key, ev) != ev:
+                    differ.append(key)
+    assert len(seen) > 50000 and differ == [], differ[:5]

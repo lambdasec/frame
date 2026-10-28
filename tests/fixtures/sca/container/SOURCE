@@ -14,3 +14,7 @@ bash, curl-minimal, libcurl-minimal, expat, glibc, libxml2, openssl-libs, sqlite
 `rpm -e --justdb`, then `rpm --rebuilddb`. rpm_images.json: `rpm -qa` of those databases.
 rpm_osv_expected.json, rpm_osv_records.json.gz: OSV's API (/v1/query, every page) for each package as Frame names it
 (Rocky: source package; AlmaLinux: binary package), and the records it returned (OSV data, CC-BY 4.0), 2026-10-28.
+ubi-9.4/: the same, from registry.access.redhat.com/ubi9/ubi:9.4 (sqlite), keeping bash, curl-minimal,
+libcurl-minimal, expat, glibc, libxml2, openssl-libs, sqlite-libs and zlib. Its rpm_osv_expected.json entries are
+the union of OSV's /v1/query answers over every RHEL 9 stream (Red Hat:enterprise_linux:9::baseos, ::appstream,
+::crb and the rest), 2026-10-28.

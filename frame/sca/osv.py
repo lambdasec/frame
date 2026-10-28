@@ -22,6 +22,7 @@ ends the range). GIT ranges (commit hashes) are kept for C/C++ but never match a
 from __future__ import annotations
 
 import math
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from frame.sca.model import normalize_name
@@ -112,7 +113,13 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
-DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux")
+DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat")
+# Red Hat names a product stream (`Red Hat:enterprise_linux:9::baseos`, `::appstream`, `::crb`),
+# which an rpm database does not record. For RHEL 8 and 9 every advisory gives a package the same
+# range in every stream it is in (checked over OSV's whole Red Hat export), so a release's streams
+# are one table: `Red Hat:enterprise_linux:9`. RHEL 7's differ (its `ael7b` builds), and the
+# extended-support products (rhel_eus, aus, e4s, tus) are not images: neither is read.
+_RHEL_STREAM = re.compile(r"Red Hat:enterprise_linux:(8|9)::\w+")
 RPM_FAMILIES = ("AlmaLinux", "Rocky Linux")      # advisories name binary packages, versions epoch:version-release
 
 
@@ -133,6 +140,11 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
         if eco in DISTRO_FAMILIES:
             # a distribution's fixes differ per release: the release stays in the ecosystem
             # (Debian:12, Ubuntu:22.04:LTS, Alpine:v3.18); Ubuntu Pro streams are not public images
+            if eco == "Red Hat":
+                m = _RHEL_STREAM.fullmatch(full)
+                if m is None:
+                    continue
+                full = f"Red Hat:enterprise_linux:{m.group(1)}"
             if (eco not in wanted and full not in wanted) or ":Pro:" in full or full == eco:
                 continue
             eco = full

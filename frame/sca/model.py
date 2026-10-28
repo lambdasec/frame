@@ -86,11 +86,16 @@ class Package:
             return f"pkg:deb/{family.lower()}/{quote(self.name, safe='')}@{v}?arch=source&distro={distro}"
         if family == "Alpine" and release:
             return f"pkg:apk/alpine/{quote(self.name, safe='')}@{v}?distro={release.lstrip('v')}"
-        if family in ("AlmaLinux", "Rocky Linux") and release and self.version:
+        if family in ("AlmaLinux", "Rocky Linux", "Red Hat") and release and self.version:
             # purl-spec rpm type: the epoch is a qualifier, not part of the version
-            ns = family.lower().replace(" ", "-")
+            ns = "redhat" if family == "Red Hat" else family.lower().replace(" ", "-")
+            if family == "Red Hat":
+                release = release.rsplit(":", 1)[-1]                     # enterprise_linux:9 -> rhel-9
+                ns_distro = f"rhel-{release}"
+            else:
+                ns_distro = f"{ns}-{release}"
             epoch, _, evr = self.version.partition(":") if ":" in self.version else ("", "", self.version)
-            return (f"pkg:rpm/{ns}/{quote(self.name, safe='')}@{quote(evr, safe='')}?distro={ns}-{release}"
+            return (f"pkg:rpm/{ns}/{quote(self.name, safe='')}@{quote(evr, safe='')}?distro={ns_distro}"
                     + (f"&epoch={epoch}" if epoch and epoch != "0" else ""))
         return None
 

@@ -86,6 +86,8 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
     if rid == "alpine" and re.fullmatch(r"\d+\.\d+(\.\d+)?", vid):
         major, minor = vid.split(".")[:2]
         return f"Alpine:v{major}.{minor}"
+    if rid == "rhel" and vid.split(".")[0] in ("8", "9"):
+        return f"Red Hat:enterprise_linux:{vid.split('.')[0]}"     # RHEL and UBI: the release's streams merged
     rpm_family = {"almalinux": "AlmaLinux", "rocky": "Rocky Linux"}.get(rid)
     if rpm_family and re.fullmatch(r"\d+(\.\d+)*", vid):
         return f"{rpm_family}:{vid.split('.')[0]}"       # advisories are per major release (AlmaLinux:9)
@@ -305,8 +307,8 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
     has_pkgs = (DPKG_STATUS in files or APK_INSTALLED in files or any(p.startswith(DPKG_STATUS_D) for p in files)
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
-        return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux and Rocky "
-                    "Linux are read)" + ("" if has_pkgs else "; no package database found")]
+        return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
+                    "Linux and RHEL 8 / 9 are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))

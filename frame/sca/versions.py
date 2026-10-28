@@ -380,7 +380,7 @@ def _distro_parser(ecosystem: str):
     `Ubuntu:22.04:LTS`): the family decides the order."""
     from frame.sca.distro_versions import apk_key, dpkg_key, rpm_key
     return {"Debian": dpkg_key, "Ubuntu": dpkg_key, "Alpine": apk_key,
-            "AlmaLinux": rpm_key, "Rocky Linux": rpm_key}.get(ecosystem.split(":", 1)[0])
+            "AlmaLinux": rpm_key, "Rocky Linux": rpm_key, "Red Hat": rpm_key}.get(ecosystem.split(":", 1)[0])
 
 
 @lru_cache(maxsize=65536)
