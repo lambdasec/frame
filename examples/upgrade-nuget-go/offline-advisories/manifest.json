@@ -1,0 +1,22 @@
+{
+  "files": {
+    "advisories/Go.json.gz": {
+      "advisories": 42,
+      "kind": "advisories",
+      "language": "go",
+      "name": "Go",
+      "sha256": "8d72d79517903cb6e5905a8c8e88884b255d538825b4b09da51a4e2f9d12bf98",
+      "size": 5829
+    },
+    "advisories/NuGet.json.gz": {
+      "advisories": 12,
+      "kind": "advisories",
+      "language": "nuget",
+      "name": "NuGet",
+      "sha256": "274ef6ad060b2f60f6fedef86f4b332e6b7b7bd8ced5a45ca2d23e4b339ef0cd",
+      "size": 1786
+    }
+  },
+  "revision": "example-2026.10.27-ab8d558",
+  "schema": 1
+}

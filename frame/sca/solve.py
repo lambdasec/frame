@@ -17,8 +17,9 @@ dependencies (the only packages whose choice can matter):
     hard   present_q and x_q = i  =>  x_p in { j : C_p[j] satisfies range_{C_q[i]}(p) }
            a direct dependency stays installed
     soft   present_p  =>  C_p[x_p] is affected by no advisory      (weight: one per package)
-    min    1) major-version jumps, 2) direct requirements raised, 3) packages changed,
-           4) distance from the current version
+    min    1) major-version jumps, 2) direct requirements raised, 3) packages changed (leaving
+           the tree included), 4) distance of the direct dependencies from their current
+           versions, 5) distance of the rest
 
 The current version's ranges are the lockfile's where it records them (npm), else the
 registry's (uv.lock records none); a range known nowhere holds the child at its current
@@ -33,14 +34,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from frame.sca.model import CARGO, NPM, PYPI, DependencyFile, normalize_name
+from frame.sca.model import CARGO, NPM, NUGET, PYPI, DependencyFile, normalize_name
 from frame.sca.osv import is_affected
 from frame.sca.ranges import satisfies
 from frame.sca.registry import is_prerelease
 from frame.sca.versions import sort_key, sorted_versions
 
 MAX_CANDIDATES = 150
-SUPPORTED = (NPM, PYPI, CARGO)
+SUPPORTED = (NPM, PYPI, CARGO, NUGET)
+# NuGet resolves a transitive package to the LOWEST version every requirer admits ("lowest
+# applicable"), not the newest: a child is what its parents' ranges force, nothing above it
+LOWEST_APPLICABLE = (NUGET,)
 _HOLD, _UNKNOWN = "\0hold", "\0unknown"       # range markers: keep the current child / never choose
 
 
@@ -101,7 +105,8 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
     if not any(meta.values()):
         return Solution(df.path, reason="no registry metadata for these packages")
     cands = {k: _candidates(eco, p.version, meta[k]) for k, p in pkg.items()}
-    advisories = {k: db.advisories(eco, p.name) for k, p in pkg.items()}
+    from frame.sca.plan import fixable
+    advisories = {k: fixable(db.advisories(eco, p.name)) for k, p in pkg.items()}   # an unfixable one blocks nothing
     bad = {k: [any(is_affected(eco, v, a) for a in advisories[k]) for v in cands[k]] for k in scope}
     roots = {k for k, p in pkg.items() if p.direct or not parents.get(k)}
 
@@ -136,6 +141,7 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
             opt.add(present[p])
             continue
         holders = []
+        admits: List[Tuple[object, List[int]]] = []          # (holder condition, the child versions it admits)
         for q in parents.get(p, ()):
             if q not in scope:
                 continue
@@ -148,15 +154,23 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
                     continue
                 holders.append(z3.And(present[q], x[q] == i))
                 allowed = [0] if r == _HOLD else [j for j, v in enumerate(cands[p]) if satisfies(eco, v, r) is True]
+                admits.append((z3.And(present[q], x[q] == i), allowed))
                 opt.add(z3.Implies(z3.And(present[q], x[q] == i),
                                    z3.Or([x[p] == j for j in allowed]) if allowed else z3.BoolVal(False)))
         opt.add(present[p] == (z3.Or(holders) if holders else z3.BoolVal(False)))
+        if eco in LOWEST_APPLICABLE and admits:
+            # the child IS the lowest candidate every present holder admits
+            ok = [z3.And([z3.Implies(cond, z3.BoolVal(j in allowed)) for cond, allowed in admits])
+                  for j in range(len(cands[p]))]
+            for j in range(len(cands[p])):
+                opt.add(z3.Implies(z3.And(present[p], x[p] == j), z3.And(ok[j], *[z3.Not(ok[k]) for k in range(j)])))
 
     for k in vulnerable & scope:
         safe = [j for j, b in enumerate(bad[k]) if not b]
         opt.add_soft(z3.Implies(present[k], z3.Or([x[k] == j for j in safe]) if safe else z3.BoolVal(False)),
                      weight=1000, id="safe")
-    changed = z3.Sum([z3.If(x[k] != 0, 1, 0) for k in scope])
+    # a package leaving the tree is a change too (otherwise dropping one looks free)
+    changed = z3.Sum([z3.If(z3.Or(x[k] != 0, z3.Not(present[k])), 1, 0) for k in scope])
     project = df.requires.get("", {})
     raised = []
     for k in roots:
@@ -173,7 +187,11 @@ def solve_file(df: DependencyFile, vulnerable: Set[str], db, registry, timeout_m
     opt.minimize(z3.Sum(majors) if majors else z3.IntVal(0))     # a major jump may break the API
     opt.minimize(z3.Sum(raised) if raised else z3.IntVal(0))
     opt.minimize(changed)
-    opt.minimize(z3.Sum(list(x.values())))
+    # the nearest versions: of what the project declares first, then of the rest (a package that
+    # leaves the tree has no distance, so it must not beat a smaller step on a direct one)
+    opt.minimize(z3.Sum([x[k] for k in roots]) if roots else z3.IntVal(0))
+    rest = [z3.If(present[k], x[k], 0) for k in scope if k not in roots]
+    opt.minimize(z3.Sum(rest) if rest else z3.IntVal(0))
     if opt.check() != z3.sat:
         return Solution(df.path, unresolved=set(vulnerable), reason="no combination of versions satisfies every range")
     model = opt.model()

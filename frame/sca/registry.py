@@ -35,9 +35,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from frame.sca.model import CARGO, NPM, PYPI, normalize_name
+from frame.sca.model import CARGO, GO, NPM, NUGET, PYPI, normalize_name
 
 TIMEOUT = 30
 
@@ -284,12 +284,141 @@ class CratesRegistry:
         return meta["deps"] if meta is not None else None
 
 
+class NugetRegistry:
+    """nuget.org's registration index (semver2, gzip): every version, whether it is listed, and
+    its dependency groups. A dependency any target framework group declares is an edge (with
+    the strictest range when groups differ, since NuGet resolves per framework)."""
+
+    def __init__(self, base: str = "https://api.nuget.org/v3/registration5-gz-semver2", offline: bool = False):
+        self.base = base.rstrip("/")
+        self.offline = offline
+        self.fetched = 0
+        self._mem: Dict[str, Optional[Dict[str, dict]]] = {}
+
+    def _json(self, url: str) -> Optional[dict]:
+        req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "frame-sca"})
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:            # nosec: fixed registry URL
+                data = r.read()
+                if r.headers.get("Content-Encoding") == "gzip" or data[:2] == b"\x1f\x8b":
+                    data = gzip.decompress(data)
+                self.fetched += 1
+                return json.loads(data)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise RegistryError(f"{url}: HTTP {e.code}") from e
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            raise RegistryError(f"{url}: {e}") from e
+
+    def _load(self, name: str) -> Optional[Dict[str, dict]]:
+        key = name.lower()
+        if key in self._mem:
+            return self._mem[key]
+        path = cache_dir() / NUGET / _cache_name(key)
+        out = None
+        if path.is_file():
+            try:
+                out = json.loads(gzip.decompress(path.read_bytes()))
+            except (OSError, ValueError):
+                out = None
+        if out is None and not self.offline:
+            index = self._json(f"{self.base}/{urllib.parse.quote(key)}/index.json")
+            if index is not None:
+                out = {}
+                for page in index.get("items") or []:
+                    items = page.get("items")
+                    if items is None:                              # a large package: fetch the page
+                        items = (self._json(page["@id"]) or {}).get("items") or []
+                    for it in items:
+                        ce = it.get("catalogEntry") or {}
+                        v = str(ce.get("version") or "")
+                        if not v:
+                            continue
+                        deps: Dict[str, List[str]] = {}
+                        for group in ce.get("dependencyGroups") or []:
+                            for d in group.get("dependencies") or []:
+                                if d.get("id"):
+                                    deps.setdefault(d["id"], []).append(str(d.get("range") or ""))
+                        out[v.split("+", 1)[0]] = {"deprecated": ce.get("listed") is False,
+                                                   "deps": {k: _strictest(rs) for k, rs in deps.items()}}
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(gzip.compress(json.dumps(out).encode()))
+        self._mem[key] = out
+        return out
+
+    def versions(self, name: str) -> Optional[Dict[str, dict]]:
+        return self._load(name)
+
+    def deps(self, name: str, version: str) -> Optional[Dict[str, str]]:
+        meta = (self._load(name) or {}).get(version)
+        return meta["deps"] if meta is not None else None
+
+
+def _strictest(ranges: List[str]) -> str:
+    """Of the ranges framework groups give one dependency, the one with the highest lower bound
+    (what the strictest target resolves): `[4.61.3, )` over `[4.56.0, )`."""
+    from frame.sca.versions import sort_key
+
+    def lower(r: str):
+        m = re.match(r"^\s*[\[(]?\s*([^,\])\s]+)", r or "")
+        k = sort_key(NUGET, m.group(1)) if m else None
+        return (k is not None, k)
+    ranges = [r for r in ranges if r]
+    return max(ranges, key=lower) if ranges else ""
+
+
+class GoRegistry:
+    """The Go module proxy: a module's versions (`/@v/list`) and the `go` directive of each
+    version's go.mod (`/@v/<version>.mod`), the Go version it needs to build. Go resolves by
+    Minimal Version Selection (the highest version any go.mod requires), and go.mod lists every
+    module, so raising one is always possible; what can stop it is the Go toolchain."""
+
+    def __init__(self, base: str = "https://proxy.golang.org", offline: bool = False):
+        self.base = base.rstrip("/")
+        self.offline = offline
+        self.fetched = 0
+
+    @staticmethod
+    def _escape(module: str) -> str:
+        return re.sub(r"[A-Z]", lambda m: "!" + m.group(0).lower(), module)   # the proxy's case encoding
+
+    def _text(self, rel: str, cache: str) -> Optional[str]:
+        path = cache_dir() / "Go" / _cache_name(cache)
+        if path.is_file():
+            return gzip.decompress(path.read_bytes()).decode()
+        if self.offline:
+            return None
+        url = f"{self.base}/{rel}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "frame-sca"}),
+                                        timeout=TIMEOUT) as r:           # nosec: fixed proxy URL
+                text = r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code not in (404, 410):
+                raise RegistryError(f"{url}: HTTP {e.code}") from e
+            text = ""
+        except (urllib.error.URLError, OSError) as e:
+            raise RegistryError(f"{url}: {e}") from e
+        self.fetched += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(gzip.compress(text.encode()))
+        return text
+
+    def go_directive(self, module: str, version: str) -> Optional[str]:
+        v = version if version.startswith("v") else "v" + version
+        text = self._text(f"{self._escape(module)}/@v/{v}.mod", f"{module}@{v}.mod")
+        m = re.search(r"(?m)^go\s+(\d+\.\d+(?:\.\d+)?)\s*$", text or "")
+        return m.group(1) if m else None
+
+
 class Registries:
     """The registry for each ecosystem the planner supports."""
 
     def __init__(self, offline: bool = False):
         self._by = {NPM: NpmRegistry(offline=offline), PYPI: PypiRegistry(offline=offline),
-                    CARGO: CratesRegistry(offline=offline)}
+                    CARGO: CratesRegistry(offline=offline), NUGET: NugetRegistry(offline=offline),
+                    GO: GoRegistry(offline=offline)}
 
     def for_ecosystem(self, ecosystem: str):
         return self._by.get(ecosystem)

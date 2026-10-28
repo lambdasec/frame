@@ -6,7 +6,8 @@ package affects, chosen among the versions the advisories name as fixed (publish
 it needs no registry, so planning runs offline. What the change takes follows from the
 requirements recorded in the lockfile and manifest (`DependencyFile.requires`):
 
-    update-lockfile    every known requirement already admits the target (re-lock)
+    update-lockfile    every known requirement already admits the target (re-lock); never for NuGet,
+                       which resolves the lowest version a range admits, so re-locking moves nothing
                        (a manifest without a lockfile, Maven and go.mod are edited instead: their
                        versions are the requirements)
     raise-requirement  the project's own range excludes it (edit the manifest)
@@ -55,8 +56,16 @@ def _major(version: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def fixable(advisories: List[dict]) -> List[dict]:
+    """Advisories that name a fixed version: one with none (an unmaintained package, an unfixed
+    flaw) affects every version, and must not hide the upgrades that fix the others."""
+    return [a for a in advisories if any(isinstance(e, dict) and e.get("fixed")
+                                         for r in a.get("ranges", ()) for e in r.get("events") or [])]
+
+
 def target_version(ecosystem: str, current: str, advisories: List[dict]) -> Optional[str]:
-    """The lowest fixed version >= current that no advisory affects."""
+    """The lowest fixed version >= current that no advisory with a fix affects."""
+    advisories = fixable(advisories)
     cur = sort_key(ecosystem, current)
     fixed = set()
     for adv in advisories:
@@ -86,10 +95,15 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
         df = by_path.get(path)
         every = db.advisories(eco, name)                  # all of the package's advisories, not only matched
         target = target_version(eco, version, every)
+        if target is not None and sort_key(eco, target) == sort_key(eco, version):
+            target = None                                  # only advisories with no fix are left
         ids = sorted({f["id"] for f in fs})
+        by_id = {a["id"]: a for a in every}
+        still = sorted(i for i in ids if target and i in by_id and is_affected(eco, target, by_id[i]))
         entry = {"ecosystem": eco, "package": name, "current": version, "target": target, "path": path,
-                 "direct": fs[0]["direct"], "dev": fs[0]["dev"], "fixes": ids if target else [],
-                 "unfixed": [] if target else ids, "via": fs[0]["via"],
+                 "direct": fs[0]["direct"], "dev": fs[0]["dev"],
+                 "fixes": [i for i in ids if i not in still] if target else [],
+                 "unfixed": still if target else ids, "via": fs[0]["via"],
                  "major": bool(target and _major(target) is not None and _major(version) is not None
                                and _major(target) > _major(version))}
         requirers = []
@@ -124,6 +138,10 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
             action = "override"
         else:
             action = "update-lockfile"
+        if action == "update-lockfile" and eco == "NuGet":
+            # NuGet resolves the LOWEST version every range admits, so re-locking moves nothing:
+            # a direct reference is raised, a transitive one needs its own direct reference
+            action = "raise-requirement" if fs[0]["direct"] else "override"
         entry["action"] = action
         entry["known_requirements"] = bool(requirers)
         if action == "override":
@@ -131,7 +149,39 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
         out.append(entry)
     if registry is not None:
         out = _solved(out, findings, by_path, db, registry)
+        _go_toolchains(out, findings, by_path, db, registry)
     return out
+
+
+def _go_toolchains(plans: List[dict], findings: List[dict], by_path: Dict[str, DependencyFile], db,
+                   registry) -> None:
+    """Go needs no solver (go.mod lists every module, and Minimal Version Selection takes the
+    highest any go.mod requires), but a version can need a newer Go than the module builds with.
+    Say so, and name the newest fix the module's own Go can build and what it fixes."""
+    reg = registry.for_ecosystem("Go") if hasattr(registry, "for_ecosystem") else None
+    if reg is None:
+        return
+    for p in plans:
+        df = by_path.get(p["path"])
+        if p["ecosystem"] != "Go" or not p.get("target") or df is None or not df.go_version:
+            continue
+        need = reg.go_directive(p["package"], p["target"])
+        if not need or sort_key("Go", need) <= sort_key("Go", df.go_version):
+            continue
+        p["requires_go"], p["module_go"] = need, df.go_version
+        every = fixable(db.advisories("Go", p["package"]))
+        matched = [a for a in every if a["id"] in set(p["fixes"])]
+        cands = sorted_versions("Go", {e["fixed"] for a in every for r in a.get("ranges", ())
+                                       for e in r.get("events") or [] if e.get("fixed")
+                                       and sort_key("Go", e["fixed"]) is not None
+                                       and sort_key("Go", e["fixed"]) > sort_key("Go", p["current"])
+                                       and sort_key("Go", e["fixed"]) < sort_key("Go", p["target"])})
+        for v in reversed(cands):                           # the newest fix the module's Go builds
+            g = reg.go_directive(p["package"], v)
+            if g and sort_key("Go", g) <= sort_key("Go", df.go_version):
+                p["within_go"] = {"version": v, "go": g,
+                                  "fixes": sorted(a["id"] for a in matched if not is_affected("Go", v, a))}
+                break
 
 
 def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, DependencyFile], db, registry) -> List[dict]:
@@ -179,7 +229,8 @@ def _solved(plans: List[dict], findings: List[dict], by_path: Dict[str, Dependen
                 continue                                   # still vulnerable: keep the per-package plan
             entry["target"] = c.target
             entry["action"] = "removed" if c.target is None else \
-                "raise-requirement" if c.raise_requirement else "update-lockfile"
+                "raise-requirement" if c.raise_requirement or (c.direct and df.ecosystem == "NuGet") \
+                else "update-lockfile"
             entry["solved"] = True
             entry.pop("how", None)
             entry["major"] = bool(c.target and _major(c.target) is not None and _major(c.current) is not None
@@ -227,7 +278,14 @@ def format_plan(plans: List[dict]) -> str:
         elif not p["known_requirements"] and p["action"] == "update-lockfile":
             what = "re-lock (requirements not recorded in this file)"
         gain = f"fixes {len(p['fixes'])}" if p["fixes"] else f"lets {', '.join(p.get('enables', [])[:3])} upgrade"
+        if p.get("unfixed"):
+            gain += f"; {len(p['unfixed'])} with no fix stay open: {', '.join(p['unfixed'][:3])}"
         lines.append(f"  {p['package']} {p['current']} -> {p['target']}{tag}: {what}  [{p['path']}; {gain}]")
+        if p.get("requires_go"):
+            df_go = p.get("within_go")
+            lines.append(f"      needs Go {p['requires_go']} (go.mod says go {p['module_go']})" + (
+                f"; the newest fix that Go builds is {df_go['version']} (go {df_go['go']}), fixing "
+                f"{len(df_go['fixes'])} of {len(p['fixes'])}" if df_go else "; no fix builds with it"))
         if p.get("brings"):
             lines.append("      re-locking also moves " + ", ".join(
                 f"{b['package']} {b['current']} ({b['requires']})" for b in p["brings"][:5]))

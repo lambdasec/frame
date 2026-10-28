@@ -1,0 +1,5 @@
+go.mod / go.sum: a module using gin v1.7.0, tidied by Go 1.22 (golang:1.22, go mod tidy).
+registry/Go/: go.mod files from proxy.golang.org the planner read (each version's go directive), 2026-10-28.
+advisories.json.gz: those modules' advisories from lambdasec/frame-advisories 2026.10.27-ab8d558 (OSV, CC-BY 4.0).
+Verified in Docker: x/crypto v0.56.0 needs Go 1.26 (go mod tidy refuses it with 1.22 and 1.25); v0.31.0
+tidies with Go 1.21, the module's own version.

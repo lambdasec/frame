@@ -177,7 +177,7 @@ Upgrade plan (13 packages):
 
 ### Solving the upgrades together (`--registry`)
 
-An override is a workaround: the package in between still asks for the old version. Usually a newer release of that package admits the fix, and upgrading it is the real repair. `--registry` (npm, PyPI and crates.io) fetches every version's dependency ranges from the registry and solves the upgrades of all the packages involved together with Z3:
+An override is a workaround: the package in between still asks for the old version. Usually a newer release of that package admits the fix, and upgrading it is the real repair. `--registry` (npm, PyPI, crates.io and NuGet) fetches every version's dependency ranges from the registry and solves the upgrades of all the packages involved together with Z3:
 - every chosen version's ranges admit the chosen versions of its dependencies;
 - no vulnerable version remains, where any version can avoid it;
 - major jumps are minimised first, then raised requirements, then the number of packages changed, then the distance from the current versions.
@@ -201,13 +201,19 @@ Express stays on 4.x, because 4.22.3 admits every fix. Mocha does jump a major v
 
 For Rust, the ranges come from crates.io's index. `url` 2.4.1 requires `idna ^0.4`, and the fix for RUSTSEC-2024-0421 is idna 1.0.0. The solver upgrades url to 2.5.1, which requires `idna ^1.0.0`, and re-locks both with `cargo update --precise`. Optional dependencies count as built, since whether a feature enables one is not known.
 
+For .NET, NuGet resolves a transitive package to the **lowest** version every requirer admits, not the newest, so re-locking never moves one: without `--registry` a vulnerable transitive package gets a direct `PackageReference` (an override), and a direct one has its reference raised. The solver models the rule (a transitive package is the lowest version all its present parents admit), so it raises the parent whose new range starts at a fixed version. Azure.Identity 1.10.3 asks for MSAL `[4.56.0, )` and gets the vulnerable 4.56.0; 1.11.4 asks for `[4.61.3, )`, so raising Azure.Identity alone fixes MSAL. Ranges come from nuget.org's registration index; when a package's framework groups differ, the strictest range counts. `--relock` runs `dotnet restore --force-evaluate`. Walkthrough: [examples/upgrade-nuget-go](../examples/upgrade-nuget-go/README.md).
+
+Go needs no solver: `go.mod` lists every module and Go takes the highest version any `go.mod` requires, so every plan raises the line in your `go.mod`. With `--registry`, Frame reads each target's `go.mod` from the module proxy, and when the fix needs a newer Go than your `go` directive, says so and names the newest fix your Go builds and what it fixes (`needs Go 1.26.0 (go.mod says go 1.21); the newest fix that Go builds is 0.31.0 (go 1.20), fixing 6 of 26`).
+
+An advisory with no fixed version (an unmaintained package) affects every version, so it is listed as staying open and never blocks the upgrades that fix the package's other advisories.
+
 For Python, `uv.lock` records no ranges between packages, so they come from PyPI's metadata (each version's `requires_dist`; requirements behind an `extra` are not installed by default and are skipped). A range Frame cannot learn is never treated as open: the dependency stays where it is unless its parent is upgraded to a version whose ranges are known.
 
 `--apply` changes only the version text (or adds the override), so formatting and comments are kept. An edit that cannot be made safely, such as an upper bound that excludes the fix, or a Gradle `version.ref` that other libraries share, is listed as manual instead. After writing, Frame re-reads the graph and reports what is fixed and what remains.
 
 | Option | Runs | What it does |
 |---|---|---|
-| `--relock` | the package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`) | regenerates the lockfile so the new versions are resolved |
+| `--relock` | the package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `dotnet`, `go`) | regenerates the lockfile so the new versions are resolved |
 | `--verify COMMAND` | your command | runs it before and after; if it passed before and fails after, every edited manifest and lockfile is restored. If it already failed before, the edits are kept and the result says the command proves nothing |
 
 ### When an upgrade breaks your code (`--adapt`)

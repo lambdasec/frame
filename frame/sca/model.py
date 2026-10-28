@@ -115,6 +115,8 @@ class DependencyFile:
     # packages production code reaches through something that is not itself a package (a git
     # or path gem): roots for working out what is development only, besides the direct ones
     prod_roots: Set[str] = field(default_factory=set)
+    # Go: the module's `go` directive (the language version it builds with), "" when not said
+    go_version: str = ""
     warnings: List[str] = field(default_factory=list)
 
     def add(self, pkg: Package) -> Package:

@@ -176,3 +176,33 @@ def test_container_image_walkthrough(tmp_path):
     import json
     sbom = json.loads(frame(work, env, "deps", "--rootfs", "alpine-3.18.0", "--sbom", "cyclonedx"))
     assert any(c["purl"] == "pkg:apk/alpine/openssl@3.1.0-r4?distro=3.18" for c in sbom["components"])
+
+
+def test_upgrade_nuget_go_walkthrough(tmp_path):
+    work = tmp_path / "upgrade-nuget-go"
+    shutil.copytree(EXAMPLES / "upgrade-nuget-go", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"),
+           "FRAME_REGISTRY_CACHE": str(work / "offline-registry"), "PYTHONPATH": str(ROOT)}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    assert "2 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories")
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("deps", "dotnet", "--vulns", "--plan"),
+         ["4 known vulnerabilities:",
+          "Azure.Identity 1.10.3 -> 1.11.4: raise the project's requirement  [packages.lock.json; fixes 2]",
+          "Microsoft.Identity.Client 4.56.0 -> 4.60.4: override: a direct PackageReference at that version"]),
+        (("deps", "dotnet", "--vulns", "--plan", "--registry"),
+         ["Upgrade plan (3 packages):",
+          "Microsoft.Identity.Client 4.56.0 -> 4.61.3: re-lock to it (admitted by the solved upgrades)",
+          '+    <PackageReference Include="Azure.Identity" Version="1.11.4" />']),
+        (("deps", "go", "--vulns", "--plan", "--registry"),
+         ["github.com/gin-gonic/gin 1.7.0 -> 1.9.1: raise the project's requirement  [go.mod; fixes 3]",
+          "fixes 26; 1 with no fix stay open: GO-2026-5932]",
+          "needs Go 1.26.0 (go.mod says go 1.21); the newest fix that Go builds is 0.31.0 (go 1.20), fixing 6 of 26"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out and line in readme, (args, line, out[-1500:])
+    solved = frame(work, env, "deps", "dotnet", "--vulns", "--plan", "--registry").split("Edits")[0]
+    assert "override" not in solved

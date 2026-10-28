@@ -1,0 +1,6 @@
+App.csproj / packages.lock.json: a .NET 8 project referencing Azure.Identity 1.10.3, restored by the
+.NET 8 SDK (mcr.microsoft.com/dotnet/sdk:8.0, dotnet restore).
+registry/NuGet/: nuget.org registration documents (semver2) the planner read, fetched 2026-10-28.
+advisories.json.gz: those packages advisories from lambdasec/frame-advisories 2026.10.27-ab8d558 (OSV, CC-BY 4.0).
+Azure.Identity 1.10.3 requires Microsoft.Identity.Client [4.56.0, ), which NuGet resolves to 4.56.0
+(vulnerable); 1.11.4 requires [4.61.3, ) (safe). Verified: applied and restored with dotnet, 0 remaining.

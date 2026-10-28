@@ -705,6 +705,8 @@ def parse_go_mod(path: str, text: str) -> DependencyFile:
                 block = m.group(1)
                 continue
             block_kind, entry = m.group(1), m.group(2)
+            if block_kind == "go" and re.fullmatch(r"\d+\.\d+(\.\d+)?", entry.strip()):
+                df.go_version = entry.strip()
             _go_entry(block_kind, entry, indirect, requires, replaces)
             continue
         _go_entry(block, entry, indirect, requires, replaces)

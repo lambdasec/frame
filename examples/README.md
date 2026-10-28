@@ -31,6 +31,11 @@ A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two fun
 The package lists of the official `debian:12.0` and `alpine:3.18.0` images. It shows their known vulnerabilities (the same ones OSV's API reports), the version that fixes each, a CI gate, and an SBOM.
 *Runs offline; `--image` on a real image needs Docker.*
 
+### [upgrade-nuget-go](upgrade-nuget-go/README.md): .NET and Go upgrades
+
+A .NET app whose vulnerable MSAL comes through Azure.Identity, and a Go module with old `x/crypto`. NuGet picks the lowest version a range admits, so re-locking fixes nothing; solved with `--registry`, one raised `PackageReference` does it. For Go, the plan names when a fix needs a newer Go than the module declares, and the newest fix the module's own Go can build.
+*Runs offline; `--relock` needs the .NET SDK or Go.*
+
 ### [secrets](secrets/README.md): hardcoded credentials
 
 A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments.

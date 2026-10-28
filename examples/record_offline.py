@@ -19,6 +19,7 @@ from pathlib import Path
 from frame.kb.store import MANIFEST, SCHEMA as KB_SCHEMA, _sha256
 from frame.sca import read_dependencies
 from frame.sca.advisories import SCHEMA, AdvisoryDB, cached_revision_dir, ecosystems_of, table_path
+from frame.sca.model import normalize_name
 
 
 def record(example: Path) -> Path:
@@ -42,7 +43,7 @@ def record(example: Path) -> Path:
         for n in names:
             advs = db.advisories(eco, n)
             if advs:
-                packages[n] = advs
+                packages[normalize_name(eco, n)] = advs          # tables are keyed by normalised names
         data = gzip.compress(json.dumps({"schema": SCHEMA, "ecosystem": eco, "revision": revision,
                                          "packages": packages}, sort_keys=True).encode(), mtime=0)
         rel = table_path(eco)

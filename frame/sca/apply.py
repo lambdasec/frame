@@ -445,6 +445,7 @@ def _relock_commands(lockname: str, plans: List[dict]) -> Optional[List[List[str
                               ["npm", "update", *names, "--package-lock-only", "--ignore-scripts", "--no-audit",
                                "--no-fund"]],
         "npm-shrinkwrap.json": [["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"]],
+        "packages.lock.json": [["dotnet", "restore", "--force-evaluate"]],
         "pnpm-lock.yaml": [["pnpm", "install", "--lockfile-only", "--ignore-scripts"],
                            ["pnpm", "update", *names, "--lockfile-only", "--ignore-scripts"]],
         "yarn.lock": [["yarn", "install", "--mode", "update-lockfile"]],

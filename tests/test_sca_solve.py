@@ -23,6 +23,7 @@ from frame.sca.plan import plan
 from frame.sca.ranges import satisfies
 from frame.sca.registry import RecordedRegistry
 from frame.sca.solve import solve_file
+from frame.sca.versions import sorted_versions
 
 APP = Path(__file__).parent / "fixtures" / "sca" / "solve" / "express-app"
 
@@ -288,3 +289,103 @@ def test_what_relocking_moves_counts_every_installed_copy(tmp_path):
     assert "debug" not in express and "depd" in express          # depd: only 1.1.2 is locked
     braces = [b for b in solved["minimatch"]["brings"] if b["package"] == "brace-expansion"]
     assert len(braces) == 1 and "," in braces[0]["current"]
+
+
+NUGET_APP = Path(__file__).parent / "fixtures" / "sca" / "solve" / "nuget-azure"
+
+
+def nuget_db():
+    return AdvisoryDB(tables={"NuGet": json.loads(gzip.decompress((NUGET_APP / "advisories.json.gz").read_bytes()))})
+
+
+def test_nuget_resolves_the_lowest_applicable_version(tmp_path, monkeypatch):
+    """Azure.Identity 1.10.3 requires MSAL [4.56.0, ), which NuGet resolves to 4.56.0
+    (vulnerable). Re-locking moves nothing in NuGet, so the per-package plan raises the direct
+    reference and adds a direct MSAL reference; solved, raising Azure.Identity to 1.11.4 is
+    enough, because its range's lowest version, 4.61.3, is safe."""
+    from frame.sca.registry import NugetRegistry, Registries
+    monkeypatch.setenv("FRAME_REGISTRY_CACHE", str(NUGET_APP / "registry"))
+    for n in ("App.csproj", "packages.lock.json"):
+        shutil.copy(NUGET_APP / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    db = nuget_db()
+    alone = {p["package"]: p["action"] for p in plan(match(files, db), files, db)}
+    assert alone == {"Azure.Identity": "raise-requirement", "Microsoft.Identity.Client": "override"}
+    solved = {p["package"]: p for p in plan(match(files, db), files, db, Registries(offline=True))}
+    assert (solved["Azure.Identity"]["action"], solved["Azure.Identity"]["target"]) == ("raise-requirement", "1.11.4")
+    msal = solved["Microsoft.Identity.Client"]
+    assert (msal["action"], msal["target"]) == ("update-lockfile", "4.61.3")
+    reg = NugetRegistry(offline=True)                                      # re-checked without the solver
+    rng = reg.deps("Azure.Identity", "1.11.4")["Microsoft.Identity.Client"]
+    admitted = sorted_versions("NuGet", [v for v in reg.versions("Microsoft.Identity.Client")
+                                         if satisfies("NuGet", v, rng) and "-" not in v])
+    assert admitted[0] == "4.61.3"
+    assert not any(is_affected("NuGet", "4.61.3", a) for a in db.advisories("NuGet", "Microsoft.Identity.Client"))
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("dotnet"),
+                    reason="live: set FRAME_SCA_REAL=1 (dotnet and nuget.org)")
+def test_live_dotnet_restore_of_the_solved_plan(tmp_path):
+    from frame.sca.apply import apply_plan
+    from frame.sca.registry import Registries
+    for n in ("App.csproj", "packages.lock.json", "Program.cs"):
+        shutil.copy(NUGET_APP / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    db = nuget_db()
+    out = apply_plan(plan(match(files, db), files, db, Registries()), tmp_path, write=True, relock_=True)
+    assert not out.warnings, out.warnings
+    assert "Microsoft.Identity.Client" not in (tmp_path / "App.csproj").read_text()      # no override needed
+    assert match(read_dependencies(tmp_path).files, db) == []
+
+
+GO_APP = Path(__file__).parent / "fixtures" / "sca" / "solve" / "go-gin"
+
+
+def go_db():
+    return AdvisoryDB(tables={"Go": json.loads(gzip.decompress((GO_APP / "advisories.json.gz").read_bytes()))})
+
+
+def test_an_advisory_with_no_fix_does_not_hide_the_upgrades(tmp_path):
+    """x/crypto has 27 advisories; one (GO-2026-5932, openpgp is unmaintained) has no fixed
+    version. It used to make every version 'unfixed'; the other 26 are fixed by an upgrade and
+    the one stays listed as open."""
+    shutil.copy(GO_APP / "go.mod", tmp_path / "go.mod")
+    files = read_dependencies(tmp_path).files
+    db = go_db()
+    crypto = next(p for p in plan(match(files, db), files, db) if p["package"] == "golang.org/x/crypto")
+    assert crypto["target"] == "0.56.0" and crypto["action"] == "raise-requirement"
+    assert crypto["unfixed"] == ["GO-2026-5932"] and len(crypto["fixes"]) == 26
+
+
+def test_go_names_the_toolchain_a_fix_needs(tmp_path, monkeypatch):
+    """Go needs no solver (go.mod lists every module; Minimal Version Selection takes the highest
+    requirement), but x/crypto v0.56.0 needs Go 1.26 and this module says go 1.21: the plan says
+    so, and names the newest fix Go 1.21 builds (v0.31.0, checked with go mod tidy)."""
+    from frame.sca.registry import Registries
+    monkeypatch.setenv("FRAME_REGISTRY_CACHE", str(GO_APP / "registry"))
+    shutil.copy(GO_APP / "go.mod", tmp_path / "go.mod")
+    files = read_dependencies(tmp_path).files
+    assert files[0].go_version == "1.21"
+    db = go_db()
+    crypto = next(p for p in plan(match(files, db), files, db, Registries(offline=True))
+                  if p["package"] == "golang.org/x/crypto")
+    assert crypto["requires_go"] == "1.26.0"
+    assert crypto["within_go"]["version"] == "0.31.0" and crypto["within_go"]["go"] == "1.20"
+    assert 0 < len(crypto["within_go"]["fixes"]) < len(crypto["fixes"])
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
+                    reason="live: set FRAME_SCA_REAL=1 (go mod tidy in Docker)")
+def test_live_go_mod_tidy_agrees_with_the_toolchain_note(tmp_path):
+    shutil.copy(GO_APP / "go.mod", tmp_path / "go.mod")
+    shutil.copy(GO_APP / "main.go", tmp_path / "main.go")
+
+    def tidy(image, crypto):
+        text = (GO_APP / "go.mod").read_text().replace("golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9",
+                                                        f"golang.org/x/crypto v{crypto}")
+        (tmp_path / "go.mod").write_text(text)
+        return subprocess.run(["docker", "run", "--rm", "-v", f"{tmp_path}:/w", "-w", "/w", "-e", "GOTOOLCHAIN=local",
+                               image, "go", "mod", "tidy"], capture_output=True, text=True, timeout=900)
+    assert tidy("golang:1.21", "0.31.0").returncode == 0
+    refused = tidy("golang:1.22", "0.56.0")
+    assert refused.returncode != 0 and "requires go >= 1.26" in refused.stderr

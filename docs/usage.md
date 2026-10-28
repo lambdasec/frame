@@ -247,7 +247,7 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |
 | `--plan` | with `--vulns`: the smallest safe upgrades and the edits, as a diff |
-| `--registry` | with `--licenses` / `--sbom`: fill unknown licences from the registries (npm, PyPI, RubyGems, crates.io, NuGet, Maven Central); with `--vulns`: also list the project's declared ranges that admit vulnerable releases; with `--plan`: fetch release metadata (npm, PyPI, crates.io) and solve the upgrades of all packages together with Z3, so upgrading a package in between replaces an override (network; cached) |
+| `--registry` | with `--licenses` / `--sbom`: fill unknown licences from the registries (npm, PyPI, RubyGems, crates.io, NuGet, Maven Central); with `--vulns`: also list the project's declared ranges that admit vulnerable releases; with `--plan`: fetch release metadata (npm, PyPI, crates.io, NuGet) and solve the upgrades of all packages together with Z3, so upgrading a package in between replaces an override, and for Go read each fix's `go` directive from the module proxy to name fixes that need a newer Go (network; cached) |
 | `--mitigate` | with `--vulns`: write each complete configuration mitigation not yet applied (a properties file, else the Dockerfile), as a diff until `--apply` |
 | `--apply` | write what `--plan` and/or `--mitigate` propose, then re-read and report what is fixed and what remains |
 | `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |

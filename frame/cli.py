@@ -125,7 +125,7 @@ def create_parser() -> argparse.ArgumentParser:
                                   "the code that uses the upgraded packages; kept only if the command passes and a "
                                   "re-scan of the edited files finds nothing new, else everything is rolled back")
     deps_parser.add_argument("--relock", action="store_true",
-                             help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, "
+                             help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, dotnet, "
                                   "cargo, go); runs the package manager")
     deps_parser.add_argument("--no-reachability", action="store_true",
                              help="With --vulns: skip reading the project's source for imports and calls of "
