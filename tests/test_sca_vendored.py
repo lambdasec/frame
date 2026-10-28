@@ -139,3 +139,16 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
     refs = subprocess.run(["git", "ls-remote", "--tags", f"https://{lib.repo}", f"refs/tags/{h['tag']}"],
                           capture_output=True, text=True, timeout=300).stdout
     assert f"refs/tags/{h['tag']}" in refs
+
+
+def test_without_the_scan_extra_vendored_copies_are_said_not_read(tmp_path, monkeypatch):
+    """`frame deps` runs on a plain install (no tree-sitter): a candidate header is reported as
+    not read, and nothing fails."""
+    import frame.sca.vendored as V
+    _lay_out(tmp_path, "zlib")
+
+    def missing():
+        raise ImportError("No module named 'tree_sitter'")
+    monkeypatch.setattr(V, "_c_parser", missing)
+    files, warnings = V.find_vendored(tmp_path)
+    assert files == [] and "pip install" in warnings[0] and "1 possible vendored" in warnings[0]

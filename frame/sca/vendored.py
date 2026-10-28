@@ -137,6 +137,14 @@ def identify(headers: Iterable[Path], root: Path) -> Tuple[List[DependencyFile],
     index = _header_index()
     files: List[DependencyFile] = []
     warnings: List[str] = []
+    try:
+        _c_parser()
+    except ImportError:                               # `frame deps` without the scan extra
+        candidates = [h for h in headers if Path(h).name in index]
+        if candidates:
+            warnings.append(f"{len(candidates)} possible vendored C/C++ header(s) not read: identifying them needs "
+                            "the tree-sitter grammars (pip install \"frame-security[scan]\")")
+        return files, warnings
     for header in sorted(Path(h).resolve() for h in headers):
         if header.name not in index or _in_checkout(header, root):
             continue

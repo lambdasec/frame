@@ -119,9 +119,9 @@ def test_secrets_walkthrough(tmp_path):
     subprocess.run([sys.executable, "make_demo.py", "--history"], cwd=work, check=True, capture_output=True)
     out = frame(work, env, "history", "demo")
     for line in ["4 credential(s) in the history",
-                 "Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in aad6cf42ecde billing.js:3 "
+                 "Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in e325fd7f4e58 billing.js:3 "
                  "(not in the current tree, still in the history)",
-                 "AWS AWS access key ID: AKIA... (20 characters) added in aad6cf42ecde deploy.py:14 (still in the current tree)"]:
+                 "AWS AWS access key ID: AKIA... (20 characters) added in e325fd7f4e58 deploy.py:14 (still in the current tree)"]:
         assert line in out and line in readme, (line, out)
 
 

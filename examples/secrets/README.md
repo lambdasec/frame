@@ -31,10 +31,10 @@ A key "fixed" by deleting it is still in every clone. `--history` makes `demo/` 
 ```console
 $ python make_demo.py --history && frame history demo
 4 credential(s) in the history (rotate each one: removing it from the code does not remove it from clones):
-  Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in aad6cf42ecde billing.js:3 (not in the current tree, still in the history)
-  GitHub GitHub token (personal access, OAuth, user-to-server, server-to-server or refresh): ghp_... (40 characters) added in aad6cf42ecde deploy.py:6 (still in the current tree)
-  OpenAI OpenAI API key: sk-p... (56 characters) added in aad6cf42ecde deploy.py:11 (still in the current tree)
-  AWS AWS access key ID: AKIA... (20 characters) added in aad6cf42ecde deploy.py:14 (still in the current tree)
+  Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in e325fd7f4e58 billing.js:3 (not in the current tree, still in the history)
+  GitHub GitHub token (personal access, OAuth, user-to-server, server-to-server or refresh): ghp_... (40 characters) added in e325fd7f4e58 deploy.py:6 (still in the current tree)
+  OpenAI OpenAI API key: sk-p... (56 characters) added in e325fd7f4e58 deploy.py:11 (still in the current tree)
+  AWS AWS access key ID: AKIA... (20 characters) added in e325fd7f4e58 deploy.py:14 (still in the current tree)
 ```
 
 `frame scan` no longer reports the Stripe key, since the code does not have it; the history still does, so it must be rotated. The values are never printed: the first four characters, the length, and in `-f json` a SHA-256 fingerprint. The rotated GitHub token in the comment is the same credential as on line 6, so it is reported once. In history, comments count: a real key in a comment is as leaked as one in a string. `--range origin/main..HEAD` reads only what a branch adds, for a pre-merge check.

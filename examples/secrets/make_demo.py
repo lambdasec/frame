@@ -60,7 +60,7 @@ module.exports = { stripe };
 def _git(out: Path, *args: str) -> None:
     env = {**os.environ, "GIT_AUTHOR_NAME": "demo", "GIT_AUTHOR_EMAIL": "demo@example.com",
            "GIT_COMMITTER_NAME": "demo", "GIT_COMMITTER_EMAIL": "demo@example.com",
-           "GIT_AUTHOR_DATE": "2026-01-05T10:00:00", "GIT_COMMITTER_DATE": "2026-01-05T10:00:00"}
+           "GIT_AUTHOR_DATE": "2026-01-05T10:00:00+00:00", "GIT_COMMITTER_DATE": "2026-01-05T10:00:00+00:00"}
     subprocess.run(["git", "-C", str(out), *args], check=True, capture_output=True, env=env)
 
 
