@@ -55,6 +55,7 @@ scan = [
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-typescript>=0.21.0",
     "tree-sitter-c-sharp>=0.21.0",
+    "PyYAML>=6.0",                     # deployment files (Compose, Kubernetes) for configuration mitigations
 ]
 # Downloading and running the SL-COMP / SMT-LIB benchmark suites.
 benchmarks = [
@@ -92,7 +93,7 @@ include = ["frame*"]
 [tool.setuptools.package-data]
 # the built-in framework packs and library spec tables are data files; without them an
 # installed Frame has no packs and no specs
-frame = ["sil/packs/data/**/*.toml", "sil/specs/data/*.toml", "sca/data/*.txt", "sca/data/*.json"]
+frame = ["sil/packs/data/**/*.toml", "sil/specs/data/*.toml", "sca/data/*.txt", "sca/data/*.json", "sca/data/mitigations/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "frame.__version__"}

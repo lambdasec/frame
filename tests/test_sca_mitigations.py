@@ -1,0 +1,197 @@
+"""Configuration mitigations: curated per advisory (data/mitigations), and found where a running
+application gets them (Dockerfile, Compose, Kubernetes, systemd, shell, .env, properties files,
+Java source). Build-time JVM settings never count."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from frame.sca.mitigations import (MitigationError, annotate, builtin, check, format_lines, project_settings)
+
+FASTJSON = "GHSA-pv7h-hx5h-mgfj"
+LOG4SHELL = "GHSA-jfh8-c2jp-5v3q"
+
+
+def finding(adv, package, version, aliases=()):
+    return {"id": adv, "aliases": list(aliases), "ecosystem": "Maven", "package": package, "version": version}
+
+
+def write(root: Path, files: dict) -> Path:
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    return root
+
+
+def settings(root, **kw):
+    return {(s.kind, s.key, s.value, s.via) for s in project_settings(root, **kw)}
+
+
+def test_builtin_data_is_valid_and_cites_evidence():
+    data = builtin("Maven")
+    assert data[FASTJSON][0]["complete"] is True
+    log4j = data[LOG4SHELL][0]
+    assert log4j["complete"] is False and "45046" in log4j["caveat"]
+
+
+def test_validation_is_strict():
+    good = {"package": "g:a", "versions": "[1,)", "complete": True, "summary": "s", "references": ["r"],
+            "ways": [{"kind": "env", "key": "K", "value": "1"}]}
+    check({"X": [good]}, "t")
+    for bad in ({**good, "complete": False},                       # partial without a caveat
+                {**good, "references": []},                        # no evidence
+                {**good, "ways": [{"kind": "registry", "key": "k"}]},
+                {**good, "extra": 1}):
+        with pytest.raises(MitigationError):
+            check({"X": [bad]}, "t")
+
+
+def test_dockerfile_runtime_settings_and_not_build_ones(tmp_path):
+    write(tmp_path, {"Dockerfile": (
+        "FROM eclipse-temurin:17\n"
+        "RUN mvn -Dfastjson.parser.safeMode=true package\n"             # build time: not the app
+        "ENV JAVA_TOOL_OPTIONS=\"-Xmx512m -Dlog4j2.formatMsgNoLookups=true\" \\\n"
+        "    LOG4J_FORMAT_MSG_NO_LOOKUPS=true\n"
+        "ENV APP_MODE production\n"
+        "CMD [\"java\", \"-Dfastjson.parser.safeMode=true\", \"-jar\", \"app.jar\"]\n"),
+        ".mvn/jvm.config": "-Dfastjson.parser.safeMode=true\n",           # Maven's own JVM
+        "gradle.properties": "org.gradle.jvmargs=-Dfastjson.parser.safeMode=true\n"})
+    got = settings(tmp_path)
+    assert ("jvm-property", "log4j2.formatMsgNoLookups", "true", "JAVA_TOOL_OPTIONS") in got
+    assert ("env", "LOG4J_FORMAT_MSG_NO_LOOKUPS", "true", "Dockerfile ENV") in got
+    assert ("env", "APP_MODE", "production", "Dockerfile ENV") in got
+    assert ("jvm-property", "fastjson.parser.safeMode", "true", "Dockerfile CMD") in got
+    assert sum(1 for s in got if s[1] == "fastjson.parser.safeMode") == 1   # RUN, jvm.config, gradle: none
+
+
+def test_compose_kubernetes_systemd_shell_and_env_files(tmp_path):
+    write(tmp_path, {
+        "docker-compose.yml": ("services:\n  api:\n    image: shop\n    environment:\n"
+                               "      - LOG4J_FORMAT_MSG_NO_LOOKUPS=true\n"
+                               "    command: [\"java\", \"-Dfastjson.parser.safeMode=true\", \"-jar\", \"a.jar\"]\n"),
+        "k8s/deploy.yaml": ("apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: shop}\nspec:\n  template:\n"
+                            "    spec:\n      containers:\n        - name: shop\n          env:\n"
+                            "            - name: JAVA_OPTS\n              value: \"-Dlog4j2.formatMsgNoLookups=true\"\n"
+                            "---\napiVersion: v1\nkind: Service\nmetadata: {name: shop}\n"),
+        "deploy/shop.service": ("[Service]\nEnvironment=\"JDK_JAVA_OPTIONS=-Dfastjson.parser.safeMode=true\"\n"
+                                "ExecStart=/usr/bin/java -Dlog4j2.formatMsgNoLookups=true -jar /opt/shop.jar\n"),
+        "bin/start.sh": ("#!/bin/sh\nexport JAVA_OPTS=\"-Dfastjson.parser.safeMode=true\"\n"
+                         "echo -Dlog4j2.formatMsgNoLookups=true\n"                  # not a java command
+                         "exec java -Dlog4j2.formatMsgNoLookups=true -jar shop.jar\n"),
+        ".env": "LOG4J_FORMAT_MSG_NO_LOOKUPS='true'\n# COMMENTED=1\n",
+        "config/not-k8s.yaml": "containers:\n  - env: [{name: X, value: y}]\n",     # no kind/apiVersion
+    })
+    got = {(s.kind, s.key, s.value, s.via, s.location.split(":")[0]) for s in project_settings(tmp_path)}
+    assert ("env", "LOG4J_FORMAT_MSG_NO_LOOKUPS", "true", "Compose", "docker-compose.yml") in got
+    assert ("jvm-property", "fastjson.parser.safeMode", "true", "Compose command", "docker-compose.yml") in got
+    assert ("jvm-property", "log4j2.formatMsgNoLookups", "true", "JAVA_OPTS", "k8s/deploy.yaml") in got
+    assert ("jvm-property", "fastjson.parser.safeMode", "true", "JDK_JAVA_OPTIONS", "deploy/shop.service") in got
+    assert ("jvm-property", "log4j2.formatMsgNoLookups", "true", "systemd ExecStart", "deploy/shop.service") in got
+    assert ("jvm-property", "fastjson.parser.safeMode", "true", "JAVA_OPTS", "bin/start.sh") in got
+    assert ("jvm-property", "log4j2.formatMsgNoLookups", "true", "java command line", "bin/start.sh") in got
+    assert sum(1 for s in got if s[4] == "bin/start.sh" and s[1] == "log4j2.formatMsgNoLookups") == 1   # not echo
+    assert ("env", "LOG4J_FORMAT_MSG_NO_LOOKUPS", "true", ".env", ".env") in got
+    assert not any(s[4] == "config/not-k8s.yaml" for s in got)
+    assert ("env", "COMMENTED", "1", ".env", ".env") not in got
+
+
+def test_java_source_and_properties_files(tmp_path):
+    write(tmp_path, {
+        "src/main/java/shop/Boot.java": (
+            "package shop;\nimport com.alibaba.fastjson.parser.ParserConfig;\n"
+            "public class Boot {\n  static {\n    ParserConfig.getGlobalInstance().setSafeMode(true);\n"
+            "    System.setProperty(\"log4j2.formatMsgNoLookups\", \"true\");\n"
+            "    System.setProperty(\"other\", someValue());\n  }\n}\n"),
+        "src/main/resources/fastjson.properties": "# safe\nfastjson.parser.safeMode = true\n",
+        "src/main/resources/application.properties": "fastjson.parser.safeMode=true\n",   # not the file fastjson reads
+    })
+    got = settings(tmp_path, properties_files={"fastjson.properties"},
+                   calls={("ParserConfig.getGlobalInstance()", "setSafeMode")})
+    assert ("java-call", "ParserConfig.getGlobalInstance().setSafeMode", "true", "call") in got
+    assert ("jvm-property", "log4j2.formatMsgNoLookups", "true", "System.setProperty") in got
+    assert ("properties-file", "fastjson.properties:fastjson.parser.safeMode", "true", "fastjson.properties") in got
+    assert not any(s[1] == "other" for s in got)                                   # not a literal
+    assert not any("application.properties" in s[1] for s in got)
+
+
+def test_annotate_by_advisory_version_and_value(tmp_path):
+    write(tmp_path, {"Dockerfile": "FROM x\nCMD [\"java\", \"-Dfastjson.parser.safeMode=true\", \"-jar\", \"a.jar\"]\n",
+                     ".env": "LOG4J_FORMAT_MSG_NO_LOOKUPS=false\n"})
+    fs = [finding(FASTJSON, "com.alibaba:fastjson", "1.2.80"),
+          finding(FASTJSON, "com.alibaba:fastjson", "1.2.60"),                      # safeMode does not exist yet
+          finding("CVE-2021-44228", "org.apache.logging.log4j:log4j-core", "2.14.1", aliases=[LOG4SHELL]),
+          finding("GHSA-other", "com.alibaba:fastjson", "1.2.80")]
+    annotate(fs, tmp_path, None)
+    fast = fs[0]["mitigations"][0]
+    assert fast["complete"] and fast["applied"] and fast["applied"][0]["location"] == "Dockerfile:2"
+    assert "mitigations" not in fs[1] and "mitigations" not in fs[3]
+    log4j = fs[2]["mitigations"][0]
+    assert not log4j["complete"] and log4j["applied"] == []                         # set to false
+    text = "\n".join(format_lines(fs[2]))
+    assert "partial" in text and "not found" in text and "45046" in text
+
+
+def test_dataset_entries_win_for_the_same_advisory(tmp_path):
+    import gzip
+    from frame.sca.mitigations import load, mitigations_path
+    entry = {"package": "com.alibaba:fastjson", "versions": "[1.2.68,)", "complete": False, "caveat": "c",
+             "summary": "from the dataset", "references": ["r"], "ways": [{"kind": "env", "key": "K", "value": "1"}]}
+    (tmp_path / "mitigations").mkdir()
+    (tmp_path / mitigations_path("Maven")).write_bytes(gzip.compress(json.dumps(
+        {"mitigations": {FASTJSON: [entry]}}).encode()))
+    data = load("Maven", tmp_path)
+    assert data[FASTJSON][0]["summary"] == "from the dataset" and LOG4SHELL in data
+
+
+def test_shipped_in_the_advisories_dataset_and_pulled_with_the_ecosystem(tmp_path, monkeypatch):
+    from frame.kb.store import KBError, pull
+    from frame.sca.advisories import build_advisories
+    osv = tmp_path / "osv"
+    osv.mkdir()
+    (osv / "r.json").write_text(json.dumps({"id": FASTJSON, "modified": "2024-01-01T00:00:00Z", "affected": [
+        {"package": {"ecosystem": "Maven", "name": "com.alibaba:fastjson"},
+         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2.83"}]}]}]}))
+    mits = tmp_path / "mits"
+    mits.mkdir()
+    (mits / "Maven.json").write_text(json.dumps({FASTJSON: builtin("Maven")[FASTJSON]}))
+    build_advisories([osv], tmp_path / "mirror", "r1", ["Maven"], mitigations_dir=mits)
+    manifest = json.loads((tmp_path / "mirror" / "manifest.json").read_text())
+    assert manifest["files"]["mitigations/Maven.json.gz"]["kind"] == "mitigations"
+    monkeypatch.setenv("FRAME_KB_CACHE", str(tmp_path / "cache"))
+    got = pull(["maven"], source=str(tmp_path / "mirror"))
+    assert "mitigations/Maven.json.gz" in got.files
+    (mits / "Maven.json").write_text(json.dumps({FASTJSON: [{"package": "x"}]}))     # invalid: refused
+    with pytest.raises(KBError):
+        build_advisories([osv], tmp_path / "mirror2", "r1", ["Maven"], mitigations_dir=mits)
+
+
+def test_frame_deps_shows_a_mitigation_end_to_end(tmp_path, monkeypatch):
+    """fastjson 1.2.80 in a pom, safeMode in the Dockerfile: the advisory is reported with the
+    mitigation applied, and the VEX statement stays affected with the evidence as a note."""
+    import subprocess
+    import sys
+    from frame.sca.advisories import build_advisories
+    osv = tmp_path / "osv"
+    osv.mkdir()
+    (osv / "r.json").write_text(json.dumps({"id": FASTJSON, "summary": "Unsafe deserialization in fastjson",
+        "modified": "2024-01-01T00:00:00Z", "aliases": ["CVE-2022-25845"], "affected": [
+            {"package": {"ecosystem": "Maven", "name": "com.alibaba:fastjson"},
+             "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2.83"}]}]}]}))
+    build_advisories([osv], tmp_path / "mirror", "r1", ["Maven"])
+    proj = write(tmp_path / "proj", {
+        "pom.xml": ("<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId>"
+                    "<version>1</version><dependencies><dependency><groupId>com.alibaba</groupId>"
+                    "<artifactId>fastjson</artifactId><version>1.2.80</version></dependency></dependencies></project>"),
+        "Dockerfile": "FROM x\nENV JAVA_TOOL_OPTIONS=-Dfastjson.parser.safeMode=true\n"})
+    env = {"FRAME_KB_CACHE": str(tmp_path / "cache"), "FRAME_ADVISORIES_SOURCE": str(tmp_path / "mirror"),
+           "PATH": __import__("os").environ["PATH"]}
+    run = lambda *a: subprocess.run([sys.executable, "-m", "frame.cli", *a], capture_output=True, text=True, env=env)
+    assert run("kb", "pull", "--advisories", "--project", str(proj)).returncode == 0
+    text = run("deps", str(proj), "--vulns").stdout
+    assert "mitigation (complete)" in text and "APPLIED at Dockerfile:2 (JAVA_TOOL_OPTIONS)" in text
+    vex = json.loads(run("deps", str(proj), "--vex", "openvex").stdout)
+    (st,) = vex["statements"]
+    assert st["status"] == "affected"                     # evidence, not a decision Frame makes
+    assert "complete mitigation is set" in st["status_notes"] and "Dockerfile:2" in st["status_notes"]
+    assert "inline_mitigations_already_exist" in st["status_notes"]

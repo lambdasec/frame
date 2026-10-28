@@ -287,7 +287,7 @@ Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs a
 | `pull` | download into the cache: `--project DIR`, `--languages a,b`, `--all`, `--revision R`, `--source S`, `--lock` (write `.frame/kb.lock`), `--advisories` (advisories instead of packs) |
 | `status` | which revisions a scan of the project uses: `--project DIR`, `-f text|json` |
 | `build PACKS_DIR OUT` | lay out a packs revision for a mirror: `--revision R`, `--specs DIR` (spec tables to include) |
-| `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` |
+| `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` (vulnerable functions), `--mitigations DIR` (curated configuration mitigations) |
 | `mine-functions INPUTS...` | for dataset maintainers: vulnerable functions from advisories' fix commits: `--out DIR`, `--existing DIR` (curated entries, which win), `--ecosystems a,b`, `--limit N`, `--cache DIR`, `--recorded DIR` (commits on disk instead of GitHub), `--since TIMESTAMP` (resume after the last run's `resume_after`); uses `GITHUB_TOKEN` when set |
 
 ### `frame solve`, `check`, `parse`, `repl`

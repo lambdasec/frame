@@ -53,6 +53,8 @@ def add_kb_command(subparsers) -> None:
     mf.add_argument("--recorded", metavar="DIR", help="Read commits recorded on disk instead of GitHub")
     mf.add_argument("--since", metavar="TIMESTAMP",
                     help="Only advisories modified after this (oldest first); use the last run's resume_after")
+    ba.add_argument("--mitigations", metavar="DIR",
+                    help="Directory of <Ecosystem>.json curated configuration mitigations (advisory id -> [mitigation])")
     ba.add_argument("--functions", metavar="DIR",
                     help="Directory of <Ecosystem>.json vulnerable-function files (advisory id -> [{id, source}])")
 
@@ -150,7 +152,8 @@ def cmd_kb(args) -> int:
             from frame.sca.advisories import build_advisories
             ecos = [e.strip() for e in args.ecosystems.split(",")] if args.ecosystems else None
             manifest = build_advisories([Path(i) for i in args.inputs], Path(args.out), args.revision, ecos,
-                                        Path(args.functions) if args.functions else None)
+                                        Path(args.functions) if args.functions else None,
+                                        Path(args.mitigations) if args.mitigations else None)
             files = json.loads(manifest.read_text())["files"]
             for rel, meta in sorted(files.items()):
                 print(f"{rel}: {meta['advisories']} advisories, {meta['size']} bytes")

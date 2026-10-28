@@ -142,6 +142,14 @@ def build_statements(findings: List[dict], plans: Optional[List[dict]] = None,
             st.notes.append("attacker data reaches the vulnerable function at " + ", ".join(sorted(set(flows))[:5]))
         elif calls:
             st.notes.append("the vulnerable function is called at " + ", ".join(sorted(set(calls))[:5]))
+        for m in fs[0].get("mitigations", []):
+            where = ", ".join(a["location"] for a in m["applied"][:3])
+            if m["applied"] and m["complete"]:
+                st.notes.append(f"a complete mitigation is set ({m['summary']}) at {where}; if that is how the "
+                                f"application runs, record not_affected (inline_mitigations_already_exist) in "
+                                f"{DECISIONS_FILE}")
+            elif m["applied"]:
+                st.notes.append(f"a partial mitigation is set ({m['summary']}) at {where}: {m['caveat']}")
         if decision is not None:
             decision.used = True
             if decision.status == "not_affected" and st.level == "tainted":

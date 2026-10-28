@@ -58,3 +58,19 @@ def test_spec_tables_load_and_are_strict():
         parse_table({"spec": [{"name": "x", "is_snk": "sql"}]}, "t")
     with pytest.raises(SpecTableError, match="twice"):
         parse_table({"spec": [{"name": "x"}, {"name": "x"}]}, "t")
+
+
+def test_every_data_file_ships_in_the_package():
+    """A data file no package-data glob covers is missing from an installed Frame, while every
+    test run from the source tree still passes."""
+    import re
+    globs = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["frame"]
+
+    def covers(glob, path):          # as setuptools does: `*` stays within a directory, `**/` spans them
+        rx = re.escape(glob).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*")
+        return re.fullmatch(rx, path) is not None
+    pkg = ROOT / "frame"
+    data = [p.relative_to(pkg).as_posix() for p in pkg.rglob("*")
+            if p.is_file() and p.suffix in (".toml", ".json", ".txt") and "/data/" in f"/{p.relative_to(pkg).as_posix()}"]
+    uncovered = [d for d in data if not any(covers(g, d) for g in globs)]
+    assert data and not uncovered, uncovered

@@ -322,6 +322,9 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
             lines.append(f"           via {' -> '.join(f['via'])}")
         for c in reach.get("calls", [])[:3]:
             lines.append(f"           calls {c['function']} at {c['location']}")
+        if f.get("mitigations"):
+            from frame.sca.mitigations import format_lines
+            lines.extend(f"           {m}" for m in format_lines(f))
     if gap:
         lines.append(gap)
     return "\n".join(lines)

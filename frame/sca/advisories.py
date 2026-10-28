@@ -105,11 +105,14 @@ def _load_json(data: bytes, origin: str) -> Iterator[dict]:
 
 
 def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
-                     ecosystems: Optional[Iterable[str]] = None, functions_dir: Optional[Path] = None) -> Path:
+                     ecosystems: Optional[Iterable[str]] = None, functions_dir: Optional[Path] = None,
+                     mitigations_dir: Optional[Path] = None) -> Path:
     """Lay out an advisories revision: `advisories/<ecosystem>.json.gz` per ecosystem plus
     `manifest.json` (same format as `frame kb build`). With `functions_dir`, Frame's own
     vulnerable-function data (`<Ecosystem>.json`: advisory id -> [{"id", "source"}], curated or
-    derived from fix commits) is shipped beside it as `functions/<ecosystem>.json.gz`."""
+    derived from fix commits) is shipped beside it as `functions/<ecosystem>.json.gz`. With
+    `mitigations_dir`, curated configuration mitigations (`<Ecosystem>.json`, validated by
+    `frame.sca.mitigations.check`) are shipped as `mitigations/<ecosystem>.json.gz`."""
     import re
     from frame.kb.store import KBError, MANIFEST, _sha256
     from frame.kb.store import SCHEMA as KB_SCHEMA
@@ -152,6 +155,21 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         (out / rel).write_bytes(data)
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                       "kind": "functions", "name": eco, "advisories": len(fns)}
+    for f in sorted(Path(mitigations_dir).glob("*.json")) if mitigations_dir is not None else []:
+        from frame.sca.mitigations import MitigationError, check, mitigations_path
+        eco = f.stem
+        if eco not in ECOSYSTEMS:
+            raise KBError(f"{f}: not an ecosystem ({', '.join(ECOSYSTEMS)})")
+        try:
+            mits = check(json.loads(f.read_text(encoding="utf-8")), str(f))
+        except MitigationError as e:
+            raise KBError(str(e)) from e
+        data = _gz_json({"schema": SCHEMA, "ecosystem": eco, "revision": revision, "mitigations": mits})
+        rel = mitigations_path(eco)
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+        files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
+                      "kind": "mitigations", "name": eco, "advisories": len(mits)}
     shards: Dict[str, Dict[str, List[dict]]] = {}
     for repo in sorted(by_repo):
         shards.setdefault(git_shard(repo), {})[repo] = table(GIT, {repo: by_repo.pop(repo)})["packages"][repo]

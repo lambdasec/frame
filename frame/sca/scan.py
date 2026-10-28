@@ -48,7 +48,10 @@ def prepare(target: Path, excluded: Iterable) -> ScaRun:
         run.warnings.append(f"no advisories cached for {', '.join(db.missing)}: run `frame kb pull --advisories`")
     run.findings = match(report.files, db)
     if run.findings:
+        from frame.sca.advisories import cached_revision_dir
+        from frame.sca.mitigations import annotate as annotate_mitigations
         annotate(run.findings, Usage(target, excluded), target)
+        annotate_mitigations(run.findings, target, cached_revision_dir(), excluded)
     return run
 
 

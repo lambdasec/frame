@@ -157,6 +157,34 @@ frame fix src/ --deps --in-place    # write only the verified patches
 
 For each call site where attacker data reaches a vulnerable function, an LLM proposes a change to how your code uses it, with the dependency's version unchanged (validating the input, or calling a safe alternative). The taint engine then re-runs the whole analysis on a patched copy of the project. A patch is kept only if the flow is gone and nothing new appears. `--include-called` also covers call sites with no attacker data flow. This needs a model (`FRAME_LLM_*`, see [ai.md](ai.md)).
 
+## Configuration mitigations
+
+Some vulnerabilities can be switched off by a setting while you wait for an upgrade. Frame ships these per advisory, curated from the advisory's own text and the library's source or documentation, and `frame deps --vulns` shows whether your project already applies one:
+
+```console
+$ frame deps --vulns
+  CRITICAL com.alibaba:fastjson@1.2.80 (direct) GHSA-crf3-v9rr-v7hj: fastjson has a remote code execution (RCE) vulnerability; no fixed version  [pom.xml]
+  HIGH     com.alibaba:fastjson@1.2.80 (direct) GHSA-pv7h-hx5h-mgfj: Unsafe deserialization in com.alibaba:fastjson; fixed in 1.2.83  [pom.xml]
+           mitigation (complete): enable fastjson safeMode, which disables autoType completely: APPLIED at Dockerfile:2 (JAVA_TOOL_OPTIONS)
+```
+
+A mitigation belongs to an advisory, not a package: nothing says safeMode stops the newer GHSA-crf3-v9rr-v7hj, so none is shown for it.
+
+A mitigation is `complete` only when the advisory or the library says it stops that vulnerability; otherwise it is `partial` and comes with the caveat. Log4Shell's `log4j2.formatMsgNoLookups=true`, for instance, does not stop CVE-2021-45046, and Apache withdrew that advice. Each one applies only to the versions where the setting exists.
+
+Frame looks for the setting where a running application gets it, and never in build configuration:
+
+| Kind | Where |
+|---|---|
+| JVM system property | `-Dkey=value` in a Dockerfile `CMD` / `ENTRYPOINT`, a `java` command line in a shell script or systemd `ExecStart`, the JVM option variables (`JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS`, `JAVA_OPTS`) wherever they are set, or `System.setProperty("key", "value")` in Java source |
+| Environment variable | Dockerfile `ENV`, Compose `environment`, Kubernetes container `env`, systemd `Environment=`, `.env`, `export` in shell scripts |
+| Properties file | a file with the name the library reads (`fastjson.properties`, `log4j2.component.properties`) |
+| Call | the call the library documents, from the Java syntax tree (`ParserConfig.getGlobalInstance().setSafeMode(true)`) |
+
+`.mvn/jvm.config`, `gradle.properties` and `RUN mvn -D...` configure the build's JVM, not the application's, so they do not count.
+
+A mitigation found is evidence, with its location, not a verdict: a Dockerfile does not prove that is how the service runs. In VEX the statement stays `affected` with the evidence in its notes. If it is how the application runs, record the decision in `.frame/vex.toml` with the justification `inline_mitigations_already_exist`.
+
 ## Licences
 
 ```bash

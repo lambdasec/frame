@@ -1,0 +1,38 @@
+{
+  "GHSA-pv7h-hx5h-mgfj": [
+    {
+      "package": "com.alibaba:fastjson",
+      "versions": "[1.2.68,)",
+      "complete": true,
+      "summary": "enable fastjson safeMode, which disables autoType completely",
+      "ways": [
+        {"kind": "jvm-property", "key": "fastjson.parser.safeMode", "value": "true"},
+        {"kind": "properties-file", "file": "fastjson.properties", "key": "fastjson.parser.safeMode", "value": "true"},
+        {"kind": "java-call", "receiver": "ParserConfig.getGlobalInstance()", "method": "setSafeMode", "args": ["true"]},
+        {"kind": "java-call", "receiver": "com.alibaba.fastjson.parser.ParserConfig.getGlobalInstance()", "method": "setSafeMode", "args": ["true"]}
+      ],
+      "references": [
+        "https://github.com/advisories/GHSA-pv7h-hx5h-mgfj (Workaround: enable safeMode)",
+        "https://github.com/alibaba/fastjson/wiki/fastjson_safemode (since 1.2.68; the three ways)"
+      ]
+    }
+  ],
+  "GHSA-jfh8-c2jp-5v3q": [
+    {
+      "package": "org.apache.logging.log4j:log4j-core",
+      "versions": "[2.10.0,)",
+      "complete": false,
+      "summary": "disable message lookups (log4j2.formatMsgNoLookups=true)",
+      "caveat": "does NOT mitigate CVE-2021-45046 (GHSA-7rjr-3q55-vv33), and Apache withdrew this advice: upgrade, or remove the JndiLookup class from the classpath",
+      "ways": [
+        {"kind": "jvm-property", "key": "log4j2.formatMsgNoLookups", "value": "true"},
+        {"kind": "env", "key": "LOG4J_FORMAT_MSG_NO_LOOKUPS", "value": "true"},
+        {"kind": "properties-file", "file": "log4j2.component.properties", "key": "log4j2.formatMsgNoLookups", "value": "true"}
+      ],
+      "references": [
+        "https://github.com/advisories/GHSA-7rjr-3q55-vv33 (setting log4j2.formatMsgNoLookups does NOT mitigate CVE-2021-45046)",
+        "apache/logging-log4j2@log4j-2.10.0: Constants.java defines log4j2.formatMsgNoLookups (absent in 2.9.1); EnvironmentPropertySource maps LOG4J_ variables; PropertiesUtil reads log4j2.component.properties"
+      ]
+    }
+  ]
+}

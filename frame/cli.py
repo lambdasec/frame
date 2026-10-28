@@ -561,6 +561,10 @@ def cmd_deps(args) -> int:
         if findings and not args.no_reachability:
             from frame.sca.reachability import Usage, annotate
             annotate(findings, Usage(target.resolve(), excluded), target.resolve())
+        if findings:
+            from frame.sca.advisories import cached_revision_dir
+            from frame.sca.mitigations import annotate as annotate_mitigations
+            annotate_mitigations(findings, target.resolve(), cached_revision_dir(), excluded)
         not_checked = list(db.missing)
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
