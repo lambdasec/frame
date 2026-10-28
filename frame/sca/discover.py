@@ -301,11 +301,16 @@ def format_text(report: DependencyReport) -> str:
 __all__: List[str] = ["DependencyReport", "read_dependencies", "format_text", "REPORTS"]
 
 
+def _pull_hint(missing: Sequence[str]) -> str:
+    from frame.sca.advisories import pull_hint
+    return pull_hint(missing)
+
+
 def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
     """`missing`: ecosystems with no advisories cached. Their packages were not checked, so
     "no known vulnerabilities" is never said about them."""
     gap = (f"NOT CHECKED: no advisories cached for {', '.join(missing)} "
-           "(run `frame kb pull --advisories`)") if missing else ""
+           f"(run `{_pull_hint(missing)}`)") if missing else ""
     if not findings:
         return gap or "No known vulnerabilities in the resolved versions."
     lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]
@@ -313,11 +318,12 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
         sev = (f["severity"] or "unknown").upper()
         fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
                "fixed upstream after this tag (see the advisory)" if f.get("repo") else "no fixed version")
-        kind = "direct" if f["direct"] else "transitive" if f["direct"] is False else "dependency"
+        kind = ("direct" if f["direct"] else "transitive" if f["direct"] is False else
+                "os package" if f["ecosystem"].split(":", 1)[0] in ("Debian", "Ubuntu", "Alpine") else "dependency")
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
         lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{level}) "
-                     f"{f['id']}: {f['summary'][:80]}; {fix}  [{f['path']}]")
+                     f"{f['id']}: {' '.join(f['summary'].split())[:80]}; {fix}  [{f['path']}]")
         if len(f["via"]) > 1:
             lines.append(f"           via {' -> '.join(f['via'])}")
         for c in reach.get("calls", [])[:3]:

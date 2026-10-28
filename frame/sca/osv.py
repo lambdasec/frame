@@ -110,6 +110,9 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
+DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine")
+
+
 def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:
     """(ecosystem, normalised package name, advisory entry) for each `affected` package of a
     record in `ecosystems`. Malicious-package records (OpenSSF, `MAL-` ids) carry no rating;
@@ -119,8 +122,17 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
     wanted = set(ecosystems)
     for aff in rec.get("affected") or []:
         pkg = aff.get("package") or {}
-        eco = pkg.get("ecosystem", "").split(":", 1)[0]
-        if eco not in wanted or not pkg.get("name"):
+        full = pkg.get("ecosystem", "")
+        eco = full.split(":", 1)[0]
+        if eco in DISTRO_FAMILIES:
+            # a distribution's fixes differ per release: the release stays in the ecosystem
+            # (Debian:12, Ubuntu:22.04:LTS, Alpine:v3.18); Ubuntu Pro streams are not public images
+            if (eco not in wanted and full not in wanted) or ":Pro:" in full or full == eco:
+                continue
+            eco = full
+        elif eco not in wanted:
+            continue
+        if not pkg.get("name"):
             continue
         ranges = [{"type": r["type"], "events": [e for e in r.get("events") or [] if isinstance(e, dict)]}
                   for r in aff.get("ranges") or [] if isinstance(r, dict) and r.get("type")]

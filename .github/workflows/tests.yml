@@ -91,7 +91,7 @@ jobs:
           FRAME_ADVISORIES_SOURCE="$RUNNER_TEMP/advisories" frame kb pull --advisories --project .
         fi
     - name: Known vulnerabilities in Frame's dependencies
-      run: frame deps . --exclude tests --exclude benchmarks --resolve --vulns --fail-on high
+      run: frame deps . --exclude tests --exclude benchmarks --exclude examples --resolve --vulns --fail-on high
 
   sca-real:
     # `frame deps` against the real package managers (tests/sca_real/): each tool resolves a
@@ -181,7 +181,7 @@ jobs:
         FRAME_SCA_REAL: '1'
         COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      run: python -m pytest tests/test_sca_real_tools.py tests/test_sca_apply.py tests/test_sca_solve.py tests/test_sca_licenses.py tests/test_sca_licreg.py -v --tb=short
+      run: python -m pytest tests/test_sca_real_tools.py tests/test_sca_apply.py tests/test_sca_solve.py tests/test_sca_licenses.py tests/test_sca_licreg.py tests/test_sca_container.py tests/test_distro_versions.py -v --tb=short
 
   benchmarks:
     # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).

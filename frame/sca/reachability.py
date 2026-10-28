@@ -240,6 +240,7 @@ def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
                 call = {"function": fid, "location": f"{fu.rel}:{line}", "source": source_of.get(fid, ""), "call": text}
                 if call not in calls:                       # a call the frontend lowered twice is one call
                     calls.append(call)
+        calls.sort(key=lambda c: (c["location"].rpartition(":")[0], int(c["location"].rpartition(":")[2] or 0)))
         level = "called" if calls else "imported" if imported_in else "installed"
         f["reachability"] = {"level": level, "imported_in": imported_in[:20], "calls": calls[:50],
                              **({"changed_classes": classes} if classes else {}),

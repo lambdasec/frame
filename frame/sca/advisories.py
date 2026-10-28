@@ -23,7 +23,7 @@ import hashlib
 
 from frame.sca.model import (CARGO, CONAN, GIT, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT, VCPKG,
                              DependencyFile, normalize_name)
-from frame.sca.osv import SCHEMA, entries, fixed_versions, git_entries, is_affected, table
+from frame.sca.osv import DISTRO_FAMILIES, SCHEMA, entries, fixed_versions, git_entries, is_affected, table
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
 ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT, RUBYGEMS, PACKAGIST, PUB, HEX)
@@ -61,8 +61,15 @@ def remember_source(src: str) -> None:
     p.write_text(src + "\n")
 
 
+def pull_hint(missing: Iterable[str]) -> str:
+    """The command that caches what is missing: an image's distribution release is not a
+    project ecosystem, so it is named."""
+    distro = sorted(e for e in missing if e.split(":", 1)[0] in DISTRO_FAMILIES)
+    return "frame kb pull --advisories" + (f" --ecosystems {','.join(distro)}" if distro else "")
+
+
 def table_path(ecosystem: str) -> str:
-    return f"advisories/{ecosystem}.json.gz"
+    return f"advisories/{ecosystem.replace(':', '_')}.json.gz"     # Debian:12 -> Debian_12 (portable names)
 
 
 def functions_path(ecosystem: str) -> str:
@@ -121,17 +128,17 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
     wanted = list(ecosystems) if ecosystems else list(ECOSYSTEMS) + [GIT]
     with_git = GIT in wanted
     wanted = [e for e in wanted if e != GIT]
-    by_eco: Dict[str, Dict[str, List[dict]]] = {e: {} for e in wanted}
+    by_eco: Dict[str, Dict[str, List[dict]]] = {e: {} for e in wanted if e not in DISTRO_FAMILIES}
     by_repo: Dict[str, List[dict]] = {}
     for rec in _records(inputs):                              # one pass; raw records are not kept
         for eco, name, entry in entries(rec, wanted):
-            by_eco[eco].setdefault(name, []).append(entry)
+            by_eco.setdefault(eco, {}).setdefault(name, []).append(entry)
         if with_git:
             for repo, entry in git_entries(rec):
                 by_repo.setdefault(repo, []).append(entry)
     out = Path(out)
     files: Dict[str, dict] = {}
-    for eco in wanted:
+    for eco in sorted(by_eco):                                # distribution releases appear as they are read
         tbl = table(eco, by_eco.pop(eco))
         if not tbl["packages"]:
             continue

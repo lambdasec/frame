@@ -273,3 +273,18 @@ def test_live_cargo_relock_of_the_solved_plan(tmp_path):
     out = apply_plan(plan(match(files, db), files, db, Registries()), tmp_path, write=True, relock_=True)
     assert not out.warnings, out.warnings
     assert match(read_dependencies(tmp_path).files, db) == []
+
+
+def test_what_relocking_moves_counts_every_installed_copy(tmp_path):
+    """express 4.22.3 needs debug 2.6.9, which the lockfile already has beside mocha's 4.3.4:
+    nothing to move. minimatch 10 needs brace-expansion ^5, which no installed copy satisfies:
+    listed once, with both installed versions."""
+    for n in ("package.json", "package-lock.json"):
+        shutil.copy(APP / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    db = app_db()
+    solved = {p["package"]: p for p in plan(match(files, db), files, db, RecordedRegistry(APP / "registry"))}
+    express = {b["package"] for b in solved["express"].get("brings", [])}
+    assert "debug" not in express and "depd" in express          # depd: only 1.1.2 is locked
+    braces = [b for b in solved["minimatch"]["brings"] if b["package"] == "brace-expansion"]
+    assert len(braces) == 1 and "," in braces[0]["current"]

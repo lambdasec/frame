@@ -37,6 +37,9 @@ def add_kb_command(subparsers) -> None:
                          "pins the revision (default: .)")
     pl.add_argument("--languages", help="Comma-separated languages instead of the project's")
     pl.add_argument("--all", action="store_true", help="Every language")
+    pl.add_argument("--ecosystems", metavar="LIST",
+                    help="With --advisories: these ecosystems instead of the project's, e.g. Debian:12,Alpine:v3.18 "
+                         "for a container image (frame deps --image prints the one it needs)")
     pl.add_argument("--revision", help="Revision to fetch (default: the lockfile's, else main)")
     pl.add_argument("--source", help="hf:org/name, an https mirror, or a local directory "
                                      "(default: $FRAME_KB_SOURCE, else hf:lambdasec/frame-kb)")
@@ -95,7 +98,9 @@ def cmd_kb(args) -> int:
         if args.kb_command == "pull" and args.advisories:
             from frame.sca.advisories import CPP_ECOSYSTEMS, ECOSYSTEMS, ecosystems_of, git_shard, repos_of, source
             shards: list = []
-            if args.all:
+            if args.ecosystems:
+                ecos = [e.strip() for e in args.ecosystems.split(",") if e.strip()]
+            elif args.all:
                 ecos = list(ECOSYSTEMS) + ["git"]
             else:
                 from frame.sca import read_dependencies

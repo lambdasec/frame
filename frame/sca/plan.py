@@ -108,6 +108,8 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
         kind = df.kind if df is not None else ""
         if target is None:
             action = "no-fix"
+        elif kind == "installed":
+            action = "upgrade-os-package"                 # a package of a container image or root filesystem
         elif eco == "Go":
             action = "raise-requirement"                  # go.mod is the requirement list, indirect ones too
         elif eco == "Maven" and kind in ("manifest", "resolved"):
@@ -195,10 +197,11 @@ def _brings(df: DependencyFile, reg, change, changed: set) -> List[dict]:
     out = []
     for name, rng in sorted(deps.items()):
         n = normalize_name(df.ecosystem, name)
-        for pk in df.packages.values():
-            if normalize_name(df.ecosystem, pk.name) == n and pk.name not in changed and pk.version \
-                    and satisfies(df.ecosystem, pk.version, rng) is False:
-                out.append({"package": pk.name, "current": pk.version, "requires": rng})
+        installed = sorted({pk.version for pk in df.packages.values()
+                            if normalize_name(df.ecosystem, pk.name) == n and pk.version and pk.name not in changed})
+        # a copy that already satisfies the range is the one the new version gets (npm keeps several)
+        if installed and not any(satisfies(df.ecosystem, v, rng) is True for v in installed):
+            out.append({"package": name, "current": ", ".join(installed), "requires": rng})
     return out
 
 
@@ -215,7 +218,8 @@ def format_plan(plans: List[dict]) -> str:
             lines.append(f"  {p['package']}@{p['current']}: leaves the tree (no upgraded package depends on it)  "
                          f"[{p['path']}; fixes {len(p['fixes'])}]")
             continue
-        what = {"update-lockfile": "re-lock (every known range admits it)",
+        what = {"upgrade-os-package": "upgrade it in the image (apt-get / apk upgrade, or a newer base image)",
+                "update-lockfile": "re-lock (every known range admits it)",
                 "raise-requirement": "raise the project's requirement",
                 "override": f"override: {p.get('how', '')}"}[p["action"]]
         if p.get("solved") and p["action"] == "update-lockfile":

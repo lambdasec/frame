@@ -45,7 +45,8 @@ def prepare(target: Path, excluded: Iterable) -> ScaRun:
     run.revision = db.revision
     run.missing = list(db.missing)
     if db.missing:
-        run.warnings.append(f"no advisories cached for {', '.join(db.missing)}: run `frame kb pull --advisories`")
+        from frame.sca.advisories import pull_hint
+        run.warnings.append(f"no advisories cached for {', '.join(db.missing)}: run `{pull_hint(db.missing)}`")
     run.findings = match(report.files, db)
     if run.findings:
         from frame.sca.advisories import cached_revision_dir

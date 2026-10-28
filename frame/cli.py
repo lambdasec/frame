@@ -87,6 +87,11 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--plan", action="store_true",
                              help="With --vulns: the smallest upgrade that leaves every known advisory for each "
                                   "vulnerable package, and what it takes (re-lock, raise a requirement, override)")
+    deps_parser.add_argument("--image", action="append", default=[], metavar="REF",
+                             help="Also read the OS packages of a container image (a reference `docker save` "
+                                  "can export, or a `docker save` .tar); repeatable")
+    deps_parser.add_argument("--rootfs", action="append", default=[], metavar="DIR",
+                             help="Also read the OS packages of an unpacked root filesystem; repeatable")
     deps_parser.add_argument("--licenses", action="store_true",
                              help="Check licences against the [licenses] policy in .frame.toml (exit 1 on a violation)")
     deps_parser.add_argument("--vex", choices=["openvex", "cyclonedx"],
@@ -524,6 +529,20 @@ def cmd_deps(args) -> int:
         parts = tuple(p for p in Path(e).parts if p not in (".", ""))
         excluded.add(parts[0] if len(parts) == 1 else parts)
     report = read_dependencies(target, exclude_dirs=excluded, resolve=args.resolve)
+    if args.image or args.rootfs:
+        from frame.sca.container import ContainerError, read_image, read_rootfs
+        for ref in args.image:
+            try:
+                got, warns = read_image(ref)
+            except ContainerError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
+            report.files.extend(got)
+            report.warnings.extend(warns)
+        for d in args.rootfs:
+            got, warns = read_rootfs(Path(d))
+            report.files.extend(got)
+            report.warnings.extend(warns)
     if args.licenses or args.sbom:
         from frame.sca.licenses import enrich
         enrich(report.files, target)
@@ -573,7 +592,7 @@ def cmd_deps(args) -> int:
     if args.vex:
         args.vulns = True
     if args.vulns:
-        from frame.sca.advisories import AdvisoryDB, ecosystems_of, match, repos_of
+        from frame.sca.advisories import AdvisoryDB, ecosystems_of, match, pull_hint, repos_of
         db = AdvisoryDB.cached(ecosystems_of(report.files), repos_of(report.files))
         findings = match(report.files, db)
         if findings and not args.no_reachability:
@@ -594,7 +613,7 @@ def cmd_deps(args) -> int:
         not_checked = list(db.missing)
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
-                                   "run `frame kb pull --advisories`")
+                                   f"run `{pull_hint(db.missing)}`")
         mitigation = None
         if findings and args.mitigate:
             from frame.sca.mitigations import propose
@@ -763,8 +782,9 @@ def cmd_deps(args) -> int:
     else:
         print(out)
     if findings is not None and not_checked and args.fail_on != "none":
+        from frame.sca.advisories import pull_hint
         print(f"Error: --fail-on cannot be judged: no advisories cached for {', '.join(not_checked)} "
-              "(run `frame kb pull --advisories`)", file=sys.stderr)
+              f"(run `{pull_hint(not_checked)}`)", file=sys.stderr)
         return 2
     if findings and args.fail_on != "none":
         rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}

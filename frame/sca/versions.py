@@ -375,9 +375,16 @@ _PARSERS = {PYPI: _pep440, NPM: _semver, CARGO: _semver, SWIFT: _semver, NUGET: 
             RUBYGEMS: _rubygems, PACKAGIST: _packagist, PUB: _semver, HEX: _semver}
 
 
+def _distro_parser(ecosystem: str):
+    """Linux distribution ecosystems carry their release (`Debian:12`, `Alpine:v3.18`,
+    `Ubuntu:22.04:LTS`): the family decides the order."""
+    from frame.sca.distro_versions import apk_key, dpkg_key
+    return {"Debian": dpkg_key, "Ubuntu": dpkg_key, "Alpine": apk_key}.get(ecosystem.split(":", 1)[0])
+
+
 @lru_cache(maxsize=65536)
 def sort_key(ecosystem: str, version: str) -> Optional[Any]:
-    parse = _PARSERS.get(ecosystem)
+    parse = _PARSERS.get(ecosystem) or _distro_parser(ecosystem)
     if parse is None or not isinstance(version, str):
         return None
     try:

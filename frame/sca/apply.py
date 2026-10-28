@@ -398,6 +398,10 @@ def edits(plans: List[dict], root: Path) -> Tuple[_Files, List[str]]:
             continue
         if p["action"] == "update-lockfile":
             continue                                         # nothing to edit: re-locking does it
+        if p["action"] == "upgrade-os-package":
+            manual.append(f"{p['package']} {p['current']} -> {p['target']}: an OS package of {p['path'].split(':/')[0]}; "
+                          "upgrade it in the Dockerfile (apt-get / apk upgrade) or rebuild on a newer base image")
+            continue
         home = _home(p["path"])
         rel_in = (lambda n: f"{home}/{n}" if home else n)
         name = Path(p["path"]).name

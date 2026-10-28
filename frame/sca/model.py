@@ -78,6 +78,12 @@ class Package:
             return f"pkg:{host.split('.')[0]}/{quote(owner, safe='')}/{quote(name, safe='')}@{v}"
         if self.ecosystem == VCPKG:
             return f"pkg:generic/{quote(self.name, safe='')}@{v}"
+        family, _, release = self.ecosystem.partition(":")
+        if family in ("Debian", "Ubuntu") and release:          # source packages (purl-spec deb type)
+            distro = f"{family.lower()}-{release.split(':')[0]}"
+            return f"pkg:deb/{family.lower()}/{quote(self.name, safe='')}@{v}?arch=source&distro={distro}"
+        if family == "Alpine" and release:
+            return f"pkg:apk/alpine/{quote(self.name, safe='')}@{v}?distro={release.lstrip('v')}"
         return None
 
     def to_dict(self) -> dict:
