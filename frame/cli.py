@@ -115,6 +115,10 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--verify", metavar="COMMAND",
                              help="With --apply: the project's own build / test command, run before and after; "
                                   "an upgrade that breaks a passing command is rolled back (runs the command)")
+    deps_parser.add_argument("--adapt", action="store_true",
+                             help="With --verify: when the upgrade breaks the command, let a model (FRAME_LLM_*) adapt "
+                                  "the code that uses the upgraded packages; kept only if the command passes and a "
+                                  "re-scan of the edited files finds nothing new, else everything is rolled back")
     deps_parser.add_argument("--relock", action="store_true",
                              help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, "
                                   "cargo, go); runs the package manager")
@@ -649,7 +653,21 @@ def cmd_deps(args) -> int:
                     raise
                 report.warnings.append(f"registry: {e}; planned each package alone")
                 plans = plan(findings, report.files, db)
-            outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock, verify=args.verify)
+            adapt_fn = None
+            if args.adapt:
+                from frame.sil.llm_client import LLMConfig
+                if not args.verify:
+                    print("Error: --adapt needs --verify COMMAND (the project's own check decides)", file=sys.stderr)
+                    return 2
+                config = LLMConfig.from_env()
+                if not (config.base_url and config.model):
+                    print("Error: --adapt needs a model: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL", file=sys.stderr)
+                    return 2
+                from frame.sca.adapt import adapt
+                upgrades = [p for p in plans if p.get("target")]
+                adapt_fn = lambda output: adapt(target, upgrades, args.verify, output, config, excluded)  # noqa: E731
+            outcome = apply_plan(plans, target, write=args.apply, relock_=args.relock, verify=args.verify,
+                                 adapt_fn=adapt_fn)
             if args.apply:
                 after = match(read_dependencies(target, exclude_dirs=excluded).files, db)
                 key = lambda f: (f["path"], f["package"], f["id"])
@@ -676,6 +694,11 @@ def cmd_deps(args) -> int:
                 if verified is not None:
                     data["applied"] = {**verified, "relocked": outcome.relocked, "warnings": outcome.warnings,
                                    **({"verify": outcome.verify} if outcome.verify else {})}
+                if outcome.adaptation is not None:
+                    ad = outcome.adaptation
+                    data["applied"]["adaptation"] = {"status": ad.status, "rounds": ad.rounds, "rationale": ad.rationale,
+                                                     "introduced": ad.introduced,
+                                                     "edits": [{"path": c.path, "diff": c.diff()} for c in ad.changes]}
         out = json.dumps(data, indent=2)
     else:
         out = format_text(report)
@@ -711,8 +734,23 @@ def cmd_deps(args) -> int:
                                            else ""))
                     for w in outcome.warnings:
                         out += f"\nwarning: {w}"
+                    ad = outcome.adaptation
+                    if ad is not None and ad.status == "adapted":
+                        out += (f"\nAdapted: the code was changed for the new versions in {ad.rounds} round(s) "
+                                f"({ad.rationale}); the command passes and a re-scan of the edited files finds "
+                                "nothing new:")
+                        for c in ad.changes:
+                            out += "\n" + c.diff()
+                    elif ad is not None:
+                        out += {"no-usage": "\nAdapt: no code imports the upgraded packages; nothing to adapt.",
+                                "failed": f"\nAdapt: the model's edits did not make the command pass in {ad.rounds} "
+                                          "round(s); they were restored.",
+                                "introduces-findings": "\nAdapt: the edits made the command pass but added "
+                                                       f"findings ({', '.join(ad.introduced)}); they were restored."
+                                }.get(ad.status, "")
                     if outcome.verify:
-                        out += {"passed": "\nVerify: the command passes after the upgrade.",
+                        out += {"adapted": "",
+                                "passed": "\nVerify: the command passes after the upgrade.",
                                 "rolled-back": "\nVerify: the command passed before and fails after the upgrade; "
                                                "every edit was rolled back:\n" + outcome.verify_output,
                                 "failing-before": "\nVerify: the command already failed before the upgrade, so "

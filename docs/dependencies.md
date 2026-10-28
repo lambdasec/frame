@@ -191,6 +191,28 @@ For Python, `uv.lock` records no ranges between packages, so they come from PyPI
 | `--relock` | the package manager (`npm`, `pnpm`, `yarn`, `poetry`, `uv`, `cargo`, `go`) | regenerates the lockfile so the new versions are resolved |
 | `--verify COMMAND` | your command | runs it before and after; if it passed before and fails after, every edited manifest and lockfile is restored. If it already failed before, the edits are kept and the result says the command proves nothing |
 
+### When an upgrade breaks your code (`--adapt`)
+
+A fix in a new major version often changes the API your code uses. With `--adapt`, an upgrade that turns your `--verify` command from passing to failing goes to a model before it is rolled back:
+1. The model gets the upgrades, the failing output, and the files that import the upgraded packages, and proposes minimal edits to your source.
+2. Frame applies them and runs your command again, for up to three rounds, each seeing the latest output. It never touches a manifest or lockfile, since that would undo the upgrade.
+3. The result is kept only if your command passes **and** a Frame scan of every edited file finds nothing it did not find before. Otherwise every edit is restored and the upgrade is rolled back.
+
+It needs a model (`FRAME_LLM_*`, see [ai.md](ai.md)).
+
+```console
+$ frame deps --vulns --plan --apply --verify ".venv/bin/pip install -q -r requirements.txt && .venv/bin/python -m pytest -q" --adapt
+  werkzeug 2.2.3 -> 3.1.9 [major]: raise the project's requirement  [requirements.txt; fixes 8]
+Adapted: the code was changed for the new versions in 1 round(s) (Werkzeug 3 removed url_parse/url_quote; use urllib.parse equivalents ...); the command passes and a re-scan of the edited files finds nothing new:
+--- a/app.py
++++ b/app.py
+-from werkzeug.urls import url_parse, url_quote
++from urllib.parse import quote, urlsplit
+...
+```
+
+Without `--adapt`, the same upgrade is rolled back (`ImportError: cannot import name 'url_parse'`).
+
 ## Fixing in code, when you cannot upgrade
 
 ```bash

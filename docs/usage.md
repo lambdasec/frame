@@ -250,6 +250,7 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--apply` | write what `--plan` and/or `--mitigate` propose, then re-read and report what is fixed and what remains |
 | `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |
 | `--verify COMMAND` | with `--apply`: run your build or tests before and after; roll back an upgrade that breaks them |
+| `--adapt` | with `--verify`: when the upgrade breaks the command, let a model adapt the code that uses the upgraded packages; kept only if the command passes and a re-scan finds nothing new (needs `FRAME_LLM_*`) |
 | `--licenses` | check licences against `[licenses]` (exit 1 on a violation) |
 | `--sbom cyclonedx\|spdx` | print a CycloneDX 1.6 or SPDX 2.3 SBOM |
 | `--vex openvex\|cyclonedx` | print VEX statements (implies `--vulns`; exit 1 on a conflict with `.frame/vex.toml`) |

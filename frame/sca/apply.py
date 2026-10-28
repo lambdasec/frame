@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from frame.sca.model import GO, MAVEN, NPM, NUGET, PYPI, normalize_name
 from frame.sca.ranges import satisfies
@@ -46,6 +46,7 @@ class Outcome:
     # edit and re-locked file restored) | "failing-before" (it already failed: proves nothing)
     verify: str = ""
     verify_output: str = ""
+    adaptation: object = None             # adapt.Adaptation when --adapt ran
 
 
 class _Files:
@@ -529,7 +530,7 @@ def _snapshot(plans: List[dict], changes: List[Change], root: Path) -> Dict[Path
 
 
 def apply_plan(plans: List[dict], root: Path, write: bool = False, relock_: bool = False,
-               verify: Optional[str] = None) -> Outcome:
+               verify: Optional[str] = None, adapt_fn: Optional[Callable[[str], object]] = None) -> Outcome:
     """Edit (and with `relock_`, re-lock). With `verify`, the project's own build or test
     command runs before and after: if it passed before and fails after, every file the
     upgrade touched is restored."""
@@ -551,7 +552,12 @@ def apply_plan(plans: List[dict], root: Path, write: bool = False, relock_: bool
         if after_ok:
             out.verify = "passed"
         elif before_ok:
-            for p, data in saved.items():
+            if adapt_fn is not None:                       # let the code adapt to the upgrade first
+                out.adaptation = adapt_fn(out.verify_output)
+            if getattr(out.adaptation, "status", "") == "adapted":
+                out.verify, out.verify_output = "adapted", out.adaptation.output
+                return out
+            for p, data in saved.items():                  # a failed adaptation restored its own edits
                 if data is None:
                     if p.exists():
                         p.unlink()
