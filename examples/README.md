@@ -1,16 +1,50 @@
 # Examples
 
-Small projects that show each feature doing its job, with the commands to run and what they print. Each runs offline from data recorded beside it, except where it says it needs a model. `tests/test_examples.py` runs every one on each change and checks that the output still matches the README, so what you read is what you get.
+Each folder is a small project that shows one part of Frame at work. Its README has the commands to run and what they print. Every example runs offline from data recorded beside it, except where noted below.
 
-| Example | What it shows |
-|---|---|
-| [sca-express](sca-express/README.md) | An Express app's dependencies end to end: the graph, known vulnerabilities and whether the code calls the vulnerable function, the source scan finding attacker data reaching it, upgrade plans one package at a time and solved together with Z3, licences, SBOM and VEX |
-| [java-mitigation](java-mitigation/README.md) | fastjson and Log4j: a partial mitigation already in the Dockerfile (with its caveat), a complete one missing, and `--mitigate` writing and confirming it |
-| [adapt-werkzeug](adapt-werkzeug/README.md) | A major upgrade that breaks the tests: rolled back by `--verify`, then the code adapted by a model with `--adapt` and kept because the tests pass and a re-scan finds nothing new |
-| [container-image](container-image/README.md) | The OS packages of a Debian and an Alpine image, their known vulnerabilities (as OSV's API reports them), the versions that fix them, an SBOM with apk's licences |
-| [secrets](secrets/README.md) | Hardcoded credentials found by their provider format wherever they sit: client constructors, headers, keyword arguments |
-| [ai-apps](ai-apps/README.md) | Prompt injection into system instructions, model output run as a shell command or code, and MCP tool handlers, in Python and TypeScript, each with a safe twin |
+```bash
+pip install "frame-security[scan]"
+cd examples/sca-express        # pick one; its README takes it from there
+```
 
-More, per framework, with a vulnerable app and its safe twin each: [benchmarks/exemplars/frameworks](../benchmarks/exemplars/frameworks). The quickstart's cross-file Flask app: [benchmarks/exemplars/quickstart](../benchmarks/exemplars/quickstart).
+`tests/test_examples.py` reruns each README's commands on every change and fails if the output no longer matches, so what you read is what you get.
 
-To record the offline data for a new example: `python examples/record_offline.py examples/<name>` (after `frame kb pull --advisories`).
+## The examples
+
+### [sca-express](sca-express/README.md): dependencies, start to finish
+
+An Express app with a vulnerable lodash and an old Express. It shows the dependency graph, the 37 known vulnerabilities, and that the code calls the vulnerable `lodash.template`. The source scan then proves request data reaches it. Planned one package at a time, the fix needs overrides; solved together with Z3, it needs none. Also: licences, an SBOM and VEX.
+*Runs offline.*
+
+### [java-mitigation](java-mitigation/README.md): settings that stop a vulnerability
+
+A Maven service using fastjson and Log4j. Frame finds the Log4j mitigation already set in the Dockerfile, and says why it is only partial. It notices fastjson's complete mitigation is missing, and `--mitigate` writes it and confirms it took effect.
+*Runs offline.*
+
+### [adapt-werkzeug](adapt-werkzeug/README.md): an upgrade that breaks your code
+
+A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two functions the code uses. `--verify` runs the tests and rolls the upgrade back; `--adapt` lets a model rewrite the code, and the result is kept only because the tests pass and a re-scan finds nothing new.
+*The plan runs offline; the rollback needs pip, and `--adapt` needs a model (`FRAME_LLM_*`).*
+
+### [container-image](container-image/README.md): OS packages in a Docker image
+
+The package lists of the official `debian:12.0` and `alpine:3.18.0` images. It shows their known vulnerabilities (the same ones OSV's API reports), the version that fixes each, a CI gate, and an SBOM.
+*Runs offline; `--image` on a real image needs Docker.*
+
+### [secrets](secrets/README.md): hardcoded credentials
+
+A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments.
+*Runs offline.*
+
+### [ai-apps](ai-apps/README.md): LLM apps and MCP servers
+
+Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each beside a safe twin. Shows untrusted input reaching a model's system prompt (prompt injection), model output run as a shell command or code, and MCP tool arguments reaching a shell or SQL.
+*Runs offline.*
+
+## More
+
+- One vulnerable app and its safe twin for every supported framework: [benchmarks/exemplars/frameworks](../benchmarks/exemplars/frameworks). These measure Frame (every finding is labelled) rather than walk you through a feature.
+- The quickstart's three-file Flask app, where the vulnerability spans files: [benchmarks/exemplars/quickstart](../benchmarks/exemplars/quickstart).
+- Every command and option: [docs/usage.md](../docs/usage.md); dependencies in depth: [docs/dependencies.md](../docs/dependencies.md).
+
+To add an example: make the folder with its README, record its offline data with `python examples/record_offline.py examples/<name>` (after `frame kb pull --advisories`), and add a test to `tests/test_examples.py`.
