@@ -221,3 +221,9 @@ benchmarks/cache/
 # SCA fixtures: Gradle subprojects are commonly named lib/
 !tests/sca_real/**/lib/
 !tests/fixtures/sca/**/lib/
+
+# root filesystems recorded from container images (dpkg / apk databases live under var/ and lib/)
+!tests/fixtures/sca/container/**/var/
+!tests/fixtures/sca/container/**/lib/
+!examples/container-image/**/var/
+!examples/container-image/**/lib/

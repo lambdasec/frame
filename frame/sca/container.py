@@ -197,6 +197,11 @@ def read_image(ref: str) -> Tuple[List[DependencyFile], List[str]]:
         return read_image_tar(p, ref)
     if shutil.which("docker") is None:
         raise ContainerError(f"{ref}: reading an image needs docker on PATH (or pass a `docker save` .tar)")
+    present = subprocess.run(["docker", "image", "inspect", ref], capture_output=True, text=True, timeout=120)
+    if present.returncode != 0:                           # `docker save` does not pull
+        pulled = subprocess.run(["docker", "pull", ref], capture_output=True, text=True, timeout=1200)
+        if pulled.returncode != 0:
+            raise ContainerError(f"{ref}: docker pull failed: {(pulled.stderr or pulled.stdout).strip()[-300:]}")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "image.tar"
         proc = subprocess.run(["docker", "save", "-o", str(out), ref], capture_output=True, text=True, timeout=1200)
