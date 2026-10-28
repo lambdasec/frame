@@ -1,0 +1,14 @@
+{
+  "files": {
+    "advisories/GIT/47.json.gz": {
+      "advisories": 31,
+      "kind": "advisories",
+      "language": "git",
+      "name": "47",
+      "sha256": "2ba5005c32a1d29f918302526373091c2c5b7ea471ab5ef53ea6ab5ac62dd3f1",
+      "size": 5637
+    }
+  },
+  "revision": "example-2026.10.28-61e59fe",
+  "schema": 1
+}

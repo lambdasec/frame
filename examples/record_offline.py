@@ -18,7 +18,8 @@ from pathlib import Path
 
 from frame.kb.store import MANIFEST, SCHEMA as KB_SCHEMA, _sha256
 from frame.sca import read_dependencies
-from frame.sca.advisories import SCHEMA, AdvisoryDB, cached_revision_dir, ecosystems_of, table_path
+from frame.sca.advisories import (SCHEMA, AdvisoryDB, cached_revision_dir, ecosystems_of, git_shard, repos_of,
+                                  table_path)
 from frame.sca.model import normalize_name
 
 
@@ -28,8 +29,9 @@ def record(example: Path) -> Path:
     from frame.sca.container import OS_RELEASE, read_rootfs
     for d in sorted(p for p in example.iterdir() if any((p / r).is_file() for r in OS_RELEASE)):
         files += read_rootfs(d)[0]
-    ecos = ecosystems_of(files)
-    db = AdvisoryDB.cached(ecos)
+    ecos = [e for e in ecosystems_of(files) if e != "GIT"]      # C/C++: per-repository shards, below
+    repos = repos_of(files)
+    db = AdvisoryDB.cached(ecos, repos)
     if db.missing:
         from frame.sca.advisories import pull_hint
         sys.exit(f"no advisories cached for {', '.join(db.missing)}: run `{pull_hint(db.missing)}` first")
@@ -51,6 +53,19 @@ def record(example: Path) -> Path:
         (out / rel).write_bytes(data)
         manifest["files"][rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                                   "kind": "advisories", "name": eco,
+                                  "advisories": sum(len(v) for v in packages.values())}
+    shards: dict = {}
+    for repo in repos:                                       # the C/C++ repositories' shards, only those repos
+        advs = db.repo_advisories(repo)
+        if advs:
+            shards.setdefault(git_shard(repo), {})[repo] = advs
+    for rel, packages in sorted(shards.items()):
+        data = gzip.compress(json.dumps({"schema": SCHEMA, "ecosystem": "GIT", "revision": revision,
+                                         "packages": packages}, sort_keys=True).encode(), mtime=0)
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+        manifest["files"][rel] = {"sha256": _sha256(data), "size": len(data), "language": "git", "kind": "advisories",
+                                  "name": rel.rsplit("/", 1)[1].split(".")[0],
                                   "advisories": sum(len(v) for v in packages.values())}
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return out

@@ -51,7 +51,7 @@ Each finding names the advisory (GHSA, PYSEC, CVE and other ids for the same iss
 | Dart | `pubspec.lock`, `pubspec.yaml` | manual |
 | Elixir | `mix.lock`, `mix.exs` | manual |
 | Container images (Debian, Ubuntu, Alpine, AlmaLinux, Rocky Linux) | the OS packages of an image (`--image`) or root filesystem (`--rootfs`): `/etc/os-release`, dpkg's database (and distroless `status.d/`), apk's database, rpm's database (sqlite or Berkeley DB); and the PyPI, npm and Maven packages installed in it (`*.dist-info`, `node_modules/*/package.json`, jars' `pom.properties`), and the modules compiled into Go and Rust binaries | manual (upgrade in the image) |
-| C / C++ | `conan.lock`, `conanfile.txt`, `conanfile.py`, `vcpkg.json`, vcpkg's installed status, git submodules, CMake `FetchContent` / `ExternalProject` / CPM | manual |
+| C / C++ | `conan.lock`, `conanfile.txt`, `conanfile.py`, `vcpkg.json`, vcpkg's installed status, git submodules, CMake `FetchContent` / `ExternalProject` / CPM, and vendored copies of fourteen common libraries (by the version their header declares) | manual |
 
 Every reader is tested against the package manager's own answer (`npm ls`, `pnpm list`, `poetry export`, `mvn dependency:list`, Gradle, `dotnet list package`, `cargo metadata`, `bundle`, `composer show`, `dart pub deps`, `mix` and others) on real projects, in CI.
 
@@ -100,6 +100,8 @@ frame kb status                             # which revisions a scan here uses
 
 Every file is checked against the manifest's SHA-256 before it is cached (`~/.cache/frame/kb`, or `FRAME_KB_CACHE`). Matching, plans, reachability and scans never go to the network. With no advisories cached, `frame deps --vulns` warns and names the command to run.
 
+### C and C++ dependencies
+
 C and C++ dependencies are matched against OSV's records for their upstream git repositories, by the release tag a version is. Only the repositories a project uses are downloaded. A version that cannot be mapped to a tag with certainty is listed but not matched.
 
 A git submodule pinned to an untagged commit is matched by commit: OSV's records give `introduced` and `fixed` commits, and the submodule's own checkout has the history that decides them, so nothing is fetched. The rule is the OSV schema's: the commit is affected when an `introduced` commit is its ancestor and no `fixed` commit lies between the two (a fix on another branch does not count; `last_affected` and `limit` bound it from above), asked of `git merge-base --is-ancestor`. When the checkout lacks an advisory's commits (a shallow clone), or an advisory gives tags but no commit ranges, it is reported as undecided, never as unaffected: a warning names it, the result ends with `NOT DECIDED: N advisory(ies)` instead of "no known vulnerabilities", the JSON has `undecided`, and `--fail-on` exits 2 (cannot be judged) when any undecided advisory is at or above its threshold. On real zlib and libexpat histories, the answers equal OSV's own commit query on every commit OSV's index answers for (the commits of the default branch). OSV's index leaves commits that reached the default branch only through a merged side branch unanswered, even when they predate the fix (33 of 34 such libexpat commits); Frame decides them by the same rule. A CMake `GIT_TAG` that is a bare commit has no checkout to ask, and stays unmatched.
@@ -114,6 +116,8 @@ $ frame deps . --vulns
 ```
 
 The six are what OSV's own commit query answers for `441a2ac`. With advisory data older than commit ranges, the same project ends `NOT DECIDED: 12 advisory(ies)` rather than reporting it clean.
+
+A library copied into the tree (vendored) has no manifest, but its own header says its version: zlib's `#define ZLIB_VERSION "1.2.11"`, expat's `XML_MAJOR_VERSION` / `MINOR` / `MICRO`. Frame knows fourteen such libraries (`frame/sca/data/vendored.json`: zlib, libpng, expat, cJSON, curl, Lua, Mbed TLS, libxml2, PCRE2, SQLite, FreeType, libarchive, c-ares, uriparser), each with the header and macros that state its version (read from the header's syntax tree), the library's own source files that must sit beside the header (a lone `zlib.h` copied in to build against the system zlib is not vendored zlib), and its repository's release-tag forms (`v{V}`, `curl-{V_}`, `VER-{V-}`, `version-{V}`). The version is matched by tag like any other C/C++ dependency. Every entry was checked against real releases of the library and its tag forms against the tags OSV lists for the repository (`tests/test_sca_vendored.py`; live, each release is downloaded again and its tag confirmed with `git ls-remote`). A development version (`8.6.1-DEV`, which curl's git tree carries between releases) is reported and not matched; a header inside a git submodule is left to the submodule's commit. libxml2 2.12 and later ship `xmlversion.h` only after `configure`, so an unconfigured copy is not identified. Walkthrough: [examples/vendored-c](../examples/vendored-c/README.md).
 
 For air-gapped CI, pull on a connected machine into a directory and pull from it inside:
 

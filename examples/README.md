@@ -36,6 +36,11 @@ The package lists of the official `debian:12.0`, `alpine:3.18.0` and `rockylinux
 A .NET app whose vulnerable MSAL comes through Azure.Identity, and a Go module with old `x/crypto`. NuGet picks the lowest version a range admits, so re-locking fixes nothing; solved with `--registry`, one raised `PackageReference` does it. For Go, the plan names when a fix needs a newer Go than the module declares, and the newest fix the module's own Go can build.
 *Runs offline; `--relock` needs the .NET SDK or Go.*
 
+### [vendored-c](vendored-c/README.md): C libraries copied into a repository
+
+A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere. Frame identifies each by the version its own header declares (only when the library's sources are beside it), and matches the 13 known vulnerabilities by release tag.
+*Runs offline.*
+
 ### [secrets](secrets/README.md): hardcoded credentials
 
 A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments.

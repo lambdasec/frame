@@ -139,10 +139,14 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
     report = DependencyReport(root=str(base))
     by_dir: Dict[Path, List[Path]] = {}
     gradle_dirs: List[Path] = []
+    from frame.sca.vendored import header_names, identify
+    vendored_names, vendored_headers = header_names(), []
     for path in sorted(base.rglob("*")):
         if not path.is_file() or FrameScanner._is_excluded_dir_member(path, base, excluded):
             continue
         name = path.name
+        if name in vendored_names:
+            vendored_headers.append(path)
         if name in _GRADLE_BUILD:
             gradle_dirs.append(path.parent)
         if _kind(path) in LOCKFILES or name in REPORTS or manifest_parser(name) is not None:
@@ -200,6 +204,10 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
                     report.warnings.append(warn)
                 if df is not None:
                     resolved[p] = df
+
+    vendored, vendored_warnings = identify(vendored_headers, base)    # C/C++ libraries copied in
+    report.files.extend(vendored)
+    report.warnings.extend(vendored_warnings)
 
     for d, paths in by_dir.items():
         locked = locked_in.get(d, set())

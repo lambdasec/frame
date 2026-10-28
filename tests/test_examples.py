@@ -230,3 +230,27 @@ def test_upgrade_nuget_go_walkthrough(tmp_path):
             assert line in out and line in readme, (args, line, out[-1500:])
     solved = frame(work, env, "deps", "dotnet", "--vulns", "--plan", "--registry").split("Edits")[0]
     assert "override" not in solved
+
+
+def test_vendored_c_walkthrough(tmp_path):
+    work = tmp_path / "vendored-c"
+    shutil.copytree(EXAMPLES / "vendored-c", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    assert "1 C/C++ repository shard(s)" in frame(work, env, "kb", "pull", "--advisories", "--source",
+                                                   "offline-advisories", "--project", ".")
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("deps", "."), ["third_party/cjson/cJSON.h  (GIT vendored): 1 packages, 1 direct",
+                         "third_party/zlib/zlib.h  (GIT vendored): 1 packages, 1 direct"]),
+        (("deps", ".", "--vulns"), ["13 known vulnerabilities:",
+                                    "CRITICAL github.com/madler/zlib@1.2.11 (direct) CVE-2022-37434"]),
+        (("deps", ".", "--vulns", "--plan"),
+         ["github.com/madler/zlib@1.2.11: fixed upstream by commit (OSV names no release); update to a release after "
+          "the fix (CVE-2018-25032, CVE-2022-37434, CVE-2023-45853, CVE-2026-22184, CVE-2026-3381, CVE-2026-76844)"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out and line in readme, (args, line, out[-1500:])
+    assert "include/zlib.h" not in frame(work, env, "deps", ".")            # a lone header is not vendored zlib

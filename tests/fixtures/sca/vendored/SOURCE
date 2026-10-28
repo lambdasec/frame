@@ -1,0 +1,7 @@
+headers.json.gz: for each library in frame/sca/data/vendored.json, the version header (and the paths of the
+companion sources beside it) of one real release: GitHub's release archive at the tag, or the project's own
+release download where the header is generated (sqlite's amalgamation from sqlite.org, libxml2 and curl
+release tarballs). Fetched 2026-10-28; each was checked by the detector before recording.
+osv_tags.json.gz: every tag OSV's GIT records list (affected `versions`) for those repositories, from OSV's
+GIT export (osv-vulnerabilities GIT/all.zip), 2026-10-28 (OSV data, CC-BY 4.0).
+zlib_osv_records.json.gz: OSV's GIT records naming github.com/madler/zlib, same export.
