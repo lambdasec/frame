@@ -180,7 +180,7 @@ def test_container_image_walkthrough(tmp_path):
           "stdlib 1.21.0 -> 1.26.10: rebuild the binary with Go 1.26.10 or later (the standard library is compiled in)",
           "smallvec 1.6.0 -> 1.6.1: rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)"]),
         (("deps", "--rootfs", "alpine-3.18.0", "--vulns", "--plan"),
-         ["openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk upgrade, or a newer base image)"]),
+         ["openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk / dnf upgrade, or a newer base image)"]),
     ]
     for args, lines in shown:
         out = frame(work, env, *args)

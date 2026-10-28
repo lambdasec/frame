@@ -112,7 +112,8 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
-DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine")
+DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux")
+RPM_FAMILIES = ("AlmaLinux", "Rocky Linux")      # advisories name binary packages, versions epoch:version-release
 
 
 def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:

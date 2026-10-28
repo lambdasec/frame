@@ -41,9 +41,9 @@ Both counts are what OSV's own API answers for every one of these packages at th
 ```console
 $ frame deps --rootfs alpine-3.18.0 --vulns --plan
 Upgrade plan (3 packages):
-  busybox 1.36.0-r9 -> 1.36.1-r7: upgrade it in the image (apt-get / apk upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 5]
-  musl 1.2.4-r0 -> 1.2.4-r3: upgrade it in the image (apt-get / apk upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 1]
-  openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 16]
+  busybox 1.36.0-r9 -> 1.36.1-r7: upgrade it in the image (apt-get / apk / dnf upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 5]
+  musl 1.2.4-r0 -> 1.2.4-r3: upgrade it in the image (apt-get / apk / dnf upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 1]
+  openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk / dnf upgrade, or a newer base image)  [alpine-3.18.0:/lib/apk/db/installed; fixes 16]
 ```
 
 There is no manifest to edit, so `--apply` lists these for a person: upgrade them in the Dockerfile (`apk upgrade`, `apt-get upgrade`) or rebuild on a newer base image.

@@ -43,6 +43,11 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 from frame.sca.binaries import Binary, read_binary
 from frame.sca.model import MAVEN, NPM, PYPI, DependencyFile, Package
+from frame.sca.rpmdb import RPMDB_PATHS, SQLITE_PATHS, read_rpmdb
+
+# how each rpm distribution's OSV records name packages: Rocky Linux by source package
+# (RLSA-2024:6783 names `openssl`), AlmaLinux by binary package (`openssl-libs`, `openssl-devel`)
+RPM_BY_SOURCE = ("Rocky Linux",)
 
 OS_RELEASE = ("etc/os-release", "usr/lib/os-release")
 DPKG_STATUS = "var/lib/dpkg/status"
@@ -81,6 +86,9 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
     if rid == "alpine" and re.fullmatch(r"\d+\.\d+(\.\d+)?", vid):
         major, minor = vid.split(".")[:2]
         return f"Alpine:v{major}.{minor}"
+    rpm_family = {"almalinux": "AlmaLinux", "rocky": "Rocky Linux"}.get(rid)
+    if rpm_family and re.fullmatch(r"\d+(\.\d+)*", vid):
+        return f"{rpm_family}:{vid.split('.')[0]}"       # advisories are per major release (AlmaLinux:9)
     return None
 
 
@@ -140,6 +148,7 @@ def _owned(files: Dict[str, FileData]) -> Set[str]:
     for path, text in files.items():
         if path.startswith(DPKG_INFO) and path.endswith(".list") and isinstance(text, str):
             out.update(line.strip().lstrip("/") for line in text.splitlines() if line.strip())
+    read_rpmdb(files, out)                                  # every file an rpm package installed
     apk = files.get(APK_INSTALLED)
     if isinstance(apk, str):
         folder = ""
@@ -293,10 +302,11 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
     release = os_release(release_text)
     eco = ecosystem_of(release)
     pretty = release.get("PRETTY_NAME") or release.get("ID", "?")
-    has_pkgs = DPKG_STATUS in files or APK_INSTALLED in files or any(p.startswith(DPKG_STATUS_D) for p in files)
+    has_pkgs = (DPKG_STATUS in files or APK_INSTALLED in files or any(p.startswith(DPKG_STATUS_D) for p in files)
+                or any(p in files for p in RPMDB_PATHS))
     if eco is None:
-        return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu and Alpine are read)"
-                    + ("" if has_pkgs else "; no package database found")]
+        return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux and Rocky "
+                    "Linux are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))
@@ -305,14 +315,31 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS_D.rstrip('/')}", "\n\n".join(files[p] for p in status_d), eco))
     if APK_INSTALLED in files:
         out.append(parse_apk(f"{origin}:/{APK_INSTALLED}", files[APK_INSTALLED], eco))
+    warnings: List[str] = []
+    rpm_path, rpms, rpm_warnings = read_rpmdb(files)
+    warnings += [f"{origin}:{w}" for w in rpm_warnings]
+    if rpm_path and rpms:
+        df = DependencyFile(f"{origin}:/{rpm_path}", eco, "installed")
+        by_source = eco.split(":", 1)[0] in RPM_BY_SOURCE
+        for name, source, evr, lic in rpms:
+            pkg = df.add(Package(eco, source if by_source else name, evr))
+            if lic and not pkg.license:
+                pkg.license = lic
+        out.append(df)
     if not out:
+        if warnings:
+            return [], warnings
         return [], [f"{origin}: {pretty}, but no package database (a scratch or static image?)"]
-    return out, []
+    return out, warnings
 
 
 def _wanted(path: str) -> bool:
     return (path in OS_RELEASE or path in (DPKG_STATUS, APK_INSTALLED) or path.startswith(DPKG_STATUS_D)
-            or _language_file(path))
+            or path in RPMDB_PATHS or path.endswith("rpmdb.sqlite-wal") or _language_file(path))
+
+
+def _binary_os_file(path: str) -> bool:
+    return path in RPMDB_PATHS or path.endswith("rpmdb.sqlite-wal")
 
 
 _SKIP_ROOT = {"proc", "sys", "dev"}
@@ -325,6 +352,10 @@ def read_rootfs(root: Path) -> Tuple[List[DependencyFile], List[str]]:
         p = root / rel
         if p.is_file():
             files[rel] = p.read_text(encoding="utf-8", errors="replace")
+    for rel in RPMDB_PATHS + tuple(p + "-wal" for p in SQLITE_PATHS):
+        p = root / rel
+        if p.is_file():
+            files[rel] = p.read_bytes()
     sd = root / DPKG_STATUS_D
     if sd.is_dir():
         for p in sorted(sd.iterdir()):
@@ -405,7 +436,8 @@ def read_image_tar(tar_path: Path, origin: Optional[str] = None) -> Tuple[List[D
                         f = layer.extractfile(m)
                         if f is not None:
                             data = f.read()
-                            files[name] = data if name.endswith(".jar") else data.decode("utf-8", "replace")
+                            files[name] = (data if name.endswith(".jar") or _binary_os_file(name)
+                                           else data.decode("utf-8", "replace"))
     return read_files(files, origin)
 
 

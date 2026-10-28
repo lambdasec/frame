@@ -400,7 +400,7 @@ def edits(plans: List[dict], root: Path) -> Tuple[_Files, List[str]]:
             continue                                         # nothing to edit: re-locking does it
         if p["action"] == "upgrade-os-package":
             manual.append(f"{p['package']} {p['current']} -> {p['target']}: an OS package of {p['path'].split(':/')[0]}; "
-                          "upgrade it in the Dockerfile (apt-get / apk upgrade) or rebuild on a newer base image")
+                          "upgrade it in the Dockerfile (apt-get / apk / dnf upgrade) or rebuild on a newer base image")
             continue
         if p["action"] == "upgrade-in-image":
             from frame.sca.plan import in_image

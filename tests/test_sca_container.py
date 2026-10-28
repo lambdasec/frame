@@ -325,3 +325,83 @@ def test_a_function_vulnerable_on_another_platform_is_not_called():
     assert _platform_admits(windows_only, ("windows", "amd64"))
     assert not _platform_admits({"id": "x.F", "goarch": ["ppc64le"]}, ("linux", "amd64"))
     assert _platform_admits({"id": "x.F"}, ("linux", "amd64"))
+
+
+RPM = json.loads((F / "rpm_images.json").read_text())
+
+
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9"])
+def test_the_rpm_database_reads_as_rpm_does(rootfs):
+    """rpm 4.16's sqlite database (Rocky Linux 9.4) and rpm 4.14's Berkeley DB (AlmaLinux 8.9),
+    made by rpm itself from the official images: every package equals `rpm -qa`."""
+    from frame.sca.rpmdb import read_rpmdb, RPMDB_PATHS
+    files = {rel: (F / rootfs / rel).read_bytes() for rel in RPMDB_PATHS if (F / rootfs / rel).is_file()}
+    _, rpms, warnings = read_rpmdb(files)
+    assert not warnings
+    assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
+
+
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9"])
+def test_rpm_matching_agrees_with_the_osv_api(rootfs):
+    """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
+    binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
+    and the advisories found offline are OSV's API answer for every package at its version."""
+    from frame.sca.osv import compact
+    records = json.loads(gzip.decompress((F / "rpm_osv_records.json.gz").read_bytes()))
+    expected = json.loads((F / "rpm_osv_expected.json").read_text())
+    files, warnings = read_rootfs(F / rootfs)
+    assert not warnings and files[0].ecosystem == RPM[rootfs]["ecosystem"]
+    eco = files[0].ecosystem
+    db = AdvisoryDB(tables={eco: compact(records, eco)["packages"]})
+    found = {}
+    for f in match(files, db):
+        found.setdefault(f"{eco}|{f['package']}|{f['version']}", set()).update([f["id"], *f.get("aliases", [])])
+    keys = [k for k in expected if k.startswith(eco + "|")]
+    assert len(keys) == len(files[0].packages)
+    for key in keys:
+        assert set(expected[key]) <= found.get(key, set()), (key, sorted(set(expected[key]) - found.get(key, set())))
+        assert bool(expected[key]) == bool(found.get(key)), key
+    names = {p.name for p in files[0].packages.values()}
+    assert ("openssl" in names) == (eco.startswith("Rocky")) and ("openssl-libs" in names) == eco.startswith("Alma")
+
+
+def test_rpm_release_and_purl():
+    from frame.sca.model import Package
+    assert ecosystem_of(os_release('ID="rocky"\nVERSION_ID="9.4"')) == "Rocky Linux:9"
+    assert ecosystem_of(os_release('ID="almalinux"\nVERSION_ID="8.9"')) == "AlmaLinux:8"
+    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="9.4"')) is None              # not covered: said, not guessed
+    assert Package("Rocky Linux:9", "openssl", "1:3.0.7-27.el9").purl == \
+        "pkg:rpm/rocky-linux/openssl@3.0.7-27.el9?distro=rocky-linux-9&epoch=1"
+    assert Package("AlmaLinux:8", "bash", "4.4.20-4.el8_6").purl == "pkg:rpm/almalinux/bash@4.4.20-4.el8_6?distro=almalinux-8"
+
+
+def test_rpm_source_package_names():
+    from frame.sca.rpmdb import source_name
+    assert source_name("openssl-3.0.7-27.el9.src.rpm") == "openssl"
+    assert source_name("python3.9-3.9.18-3.el9.src.rpm") == "python3.9"
+    assert source_name("") == ""
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
+                    reason="live: set FRAME_SCA_REAL=1 (docker save of the real images, rpm -qa)")
+@pytest.mark.parametrize("ref", ["rockylinux/rockylinux:9.4", "almalinux:8.9"])
+def test_live_rpm_images_read_as_rpm_does(ref):
+    import subprocess
+    from frame.sca.rpmdb import RPMDB_PATHS, read_rpmdb
+    qa = subprocess.run(["docker", "run", "--rm", ref, "rpm", "-qa", "--qf",
+                         "%{NAME} %|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}\\n"],
+                        check=True, capture_output=True, text=True, timeout=600).stdout
+    truth = sorted(line.split(" ", 1) for line in qa.splitlines() if not line.startswith("gpg-pubkey "))
+    files, warnings = read_image(ref)
+    assert files[0].ecosystem in ("Rocky Linux:9", "AlmaLinux:8")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        cid = subprocess.run(["docker", "create", ref], check=True, capture_output=True, text=True).stdout.strip()
+        try:
+            subprocess.run(["docker", "cp", f"{cid}:/var/lib/rpm", tmp], check=True, capture_output=True)
+        finally:
+            subprocess.run(["docker", "rm", cid], capture_output=True)
+        raw = {rel: (Path(tmp) / "rpm" / rel.split("/")[-1]).read_bytes() for rel in RPMDB_PATHS
+               if rel.startswith("var/lib/rpm/") and (Path(tmp) / "rpm" / rel.split("/")[-1]).is_file()}
+    _, rpms, _ = read_rpmdb(raw)
+    assert sorted([n, evr] for n, _, evr, _ in rpms) == truth

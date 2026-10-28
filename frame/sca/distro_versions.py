@@ -190,6 +190,97 @@ def apk_compare(a: str, b: str) -> int:
     return 0
 
 
+# -- rpm ---------------------------------------------------------------------------------------
+# rpmvercmp from rpm's rpmio/rpmvercmp.c (rpm 4.15+: `~` sorts before anything, `^` after the base
+# version but before any other suffix), line by line, then epoch:version-release as rpm compares it.
+
+def _ralpha(c: str) -> bool:
+    return ("a" <= c <= "z") or ("A" <= c <= "Z")
+
+
+def _rdigit(c: str) -> bool:
+    return "0" <= c <= "9"
+
+
+def rpmvercmp(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    one, two, n1, n2 = 0, 0, len(a), len(b)
+    at = lambda s, i: s[i] if i < len(s) else ""                       # noqa: E731
+    while one < n1 or two < n2:
+        while one < n1 and not (_ralpha(a[one]) or _rdigit(a[one])) and a[one] not in "~^":
+            one += 1
+        while two < n2 and not (_ralpha(b[two]) or _rdigit(b[two])) and b[two] not in "~^":
+            two += 1
+        c1, c2 = at(a, one), at(b, two)
+        if c1 == "~" or c2 == "~":                     # tilde: before everything else
+            if c1 != "~":
+                return 1
+            if c2 != "~":
+                return -1
+            one, two = one + 1, two + 1
+            continue
+        if c1 == "^" or c2 == "^":                     # caret: after the base, before anything else
+            if not c1:
+                return -1
+            if not c2:
+                return 1
+            if c1 != "^":
+                return 1
+            if c2 != "^":
+                return -1
+            one, two = one + 1, two + 1
+            continue
+        if not (c1 and c2):
+            break
+        s1, s2 = one, two
+        if _rdigit(a[s1]):
+            while s1 < n1 and _rdigit(a[s1]):
+                s1 += 1
+            while s2 < n2 and _rdigit(b[s2]):
+                s2 += 1
+            isnum = True
+        else:
+            while s1 < n1 and _ralpha(a[s1]):
+                s1 += 1
+            while s2 < n2 and _ralpha(b[s2]):
+                s2 += 1
+            isnum = False
+        if one == s1:
+            return -1                                  # arbitrary (rpm says so)
+        if two == s2:
+            return 1 if isnum else -1                  # numeric segments are newer than alpha
+        seg1, seg2 = a[one:s1], b[two:s2]
+        if isnum:
+            seg1, seg2 = seg1.lstrip("0"), seg2.lstrip("0")
+            if len(seg1) != len(seg2):
+                return 1 if len(seg1) > len(seg2) else -1
+        if seg1 != seg2:
+            return -1 if seg1 < seg2 else 1
+        one, two = s1, s2
+    if one >= n1 and two >= n2:
+        return 0
+    return -1 if one >= n1 else 1
+
+
+def _split_evr(v: str):
+    epoch, _, rest = v.partition(":") if ":" in v else ("0", "", v)
+    if not epoch.isdigit():
+        raise ValueError(f"bad rpm epoch in {v!r}")
+    version, sep, release = rest.rpartition("-")
+    return int(epoch), (version if sep else rest), (release if sep else None)
+
+
+def rpm_compare(a: str, b: str) -> int:
+    """epoch:version-release order as rpm's labelCompare: a missing epoch is 0, a missing
+    release is empty (so `1.0` sorts before `1.0-1`)."""
+    ea, va, ra = _split_evr(a)
+    eb, vb, rb = _split_evr(b)
+    if ea != eb:
+        return -1 if ea < eb else 1
+    return rpmvercmp(va, vb) or rpmvercmp(ra or "", rb or "")
+
+
 class _CmpKey:
     __slots__ = ("v", "cmp")
 
@@ -211,3 +302,7 @@ def dpkg_key(v: str) -> _CmpKey:
 
 def apk_key(v: str) -> _CmpKey:
     return _CmpKey(v, apk_compare)
+
+
+def rpm_key(v: str) -> _CmpKey:
+    return _CmpKey(v, rpm_compare)

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
+from frame.sca.osv import DISTRO_FAMILIES
 from frame.sca.jvm import (GRADLE_REPORT_FILES, MAVEN_TREE_FILES, MAVEN_TREE_JSON_FILES, parse_gradle_report,
                            parse_maven_tree, parse_maven_tree_json)
 from frame.sca.lockfiles import (DEV_FLAGGED, LOCKFILES, LockfileError, _propagate_dev, _pyproject_direct,
@@ -319,7 +320,7 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
         fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
                "fixed upstream after this tag (see the advisory)" if f.get("repo") else "no fixed version")
         kind = ("direct" if f["direct"] else "transitive" if f["direct"] is False else
-                "os package" if f["ecosystem"].split(":", 1)[0] in ("Debian", "Ubuntu", "Alpine") else "dependency")
+                "os package" if f["ecosystem"].split(":", 1)[0] in DISTRO_FAMILIES else "dependency")
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
         lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{level}) "

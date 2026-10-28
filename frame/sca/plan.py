@@ -285,7 +285,7 @@ def format_plan(plans: List[dict]) -> str:
             lines.append(f"  {p['package']}@{p['current']}: leaves the tree (no upgraded package depends on it)  "
                          f"[{p['path']}; fixes {len(p['fixes'])}]")
             continue
-        what = {"upgrade-os-package": "upgrade it in the image (apt-get / apk upgrade, or a newer base image)",
+        what = {"upgrade-os-package": "upgrade it in the image (apt-get / apk / dnf upgrade, or a newer base image)",
                 "upgrade-in-image": in_image(p),
                 "update-lockfile": "re-lock (every known range admits it)",
                 "raise-requirement": "raise the project's requirement",

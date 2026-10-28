@@ -8,3 +8,9 @@ lang-image/: the files Frame reads from an image built by lang-image.Dockerfile 
 dpkg status and info/*.list, Python dist-info/egg-info, node_modules package.json, the commons-text 1.9 jar.
 lang-image.json: what the image's own tools report: dpkg-query (source packages), importlib.metadata for
 /usr/local's Python, `npm ls --all --json` in the build stage, and the jar's pom.properties.
+rocky-9.4/, alma-8.9/: /etc/os-release and an rpm database made by rpm itself in rockylinux/rockylinux:9.4 (sqlite)
+and almalinux:8.9 (Berkeley DB): `rpmdb --exportdb` | `rpmdb --importdb` into a new database, every package but
+bash, curl-minimal, libcurl-minimal, expat, glibc, libxml2, openssl-libs, sqlite-libs and zlib removed with
+`rpm -e --justdb`, then `rpm --rebuilddb`. rpm_images.json: `rpm -qa` of those databases.
+rpm_osv_expected.json, rpm_osv_records.json.gz: OSV's API (/v1/query, every page) for each package as Frame names it
+(Rocky: source package; AlmaLinux: binary package), and the records it returned (OSV data, CC-BY 4.0), 2026-10-28.

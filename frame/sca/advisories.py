@@ -70,7 +70,8 @@ def pull_hint(missing: Iterable[str]) -> str:
 
 
 def table_path(ecosystem: str) -> str:
-    return f"advisories/{ecosystem.replace(':', '_')}.json.gz"     # Debian:12 -> Debian_12 (portable names)
+    # Debian:12 -> Debian_12, Rocky Linux:9 -> Rocky_Linux_9 (portable names)
+    return f"advisories/{ecosystem.replace(':', '_').replace(' ', '_')}.json.gz"
 
 
 def functions_path(ecosystem: str) -> str:
