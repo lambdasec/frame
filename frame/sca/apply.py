@@ -462,22 +462,48 @@ def relock(plans: List[dict], root: Path) -> Tuple[List[str], List[str]]:
         if not cmds:
             continue
         cwd = (Path(root) / path).parent
+        if shutil.which(cmds[0][0]) is None:
+            warnings.append(f"{path}: re-locking needs {cmds[0][0]} on PATH")
+            continue
+        if Path(path).name == "Cargo.lock":
+            # one `cargo update -p X --precise V` per package: a dependency can move only after the
+            # package that requires it, so a step that fails is retried while the others progress
+            pending, failed = list(cmds), {}
+            while pending:
+                progressed, rest = False, []
+                for cmd in pending:
+                    ok, msg = _run_relock(cmd, cwd)
+                    if ok:
+                        progressed = True
+                        failed.pop(tuple(cmd), None)
+                    else:
+                        failed[tuple(cmd)] = msg
+                        rest.append(cmd)
+                pending = rest if progressed else []
+            if failed:
+                warnings.extend(f"{path}: {msg}" for msg in failed.values())
+            else:
+                done.append(path)
+            continue
         for cmd in cmds:
-            if shutil.which(cmd[0]) is None:
-                warnings.append(f"{path}: re-locking needs {cmd[0]} on PATH")
-                break
-            try:
-                proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=TIMEOUT)
-            except (OSError, subprocess.TimeoutExpired) as e:
-                warnings.append(f"{path}: {' '.join(cmd[:2])} could not run ({e})")
-                break
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout).strip().splitlines()
-                warnings.append(f"{path}: {' '.join(cmd[:2])} failed: {tail[-1][:200] if tail else proc.returncode}")
+            ok, msg = _run_relock(cmd, cwd)
+            if not ok:
+                warnings.append(f"{path}: {msg}")
                 break
         else:
             done.append(path)
     return done, warnings
+
+
+def _run_relock(cmd: List[str], cwd: Path) -> Tuple[bool, str]:
+    try:
+        proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"{' '.join(cmd[:2])} could not run ({e})"
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, f"{' '.join(cmd[:2])} failed: {tail[-1][:200] if tail else proc.returncode}"
+    return True, ""
 
 
 def _run_verify(command: str, root: Path) -> Tuple[bool, str]:

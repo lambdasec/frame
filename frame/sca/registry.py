@@ -14,6 +14,11 @@ yanked counts as deprecated), and `/pypi/<name>/<version>/json` for that version
 `extra == ...` marker is not installed by default and is not an edge; other markers
 (`python_version`) are kept, which can only make the plan stricter. PyPI reports a version
 with no dependencies and one whose metadata omits them the same way (`requires_dist: null`).
+crates.io: the sparse index (`index.crates.io`), one JSON line per version with its
+dependencies (`req`, `kind`; a `package` field is the real crate name of a renamed one) and
+`yanked`. Dev-dependencies are not built into dependents and are not edges. Optional ones are
+kept: whether a feature enables one is not known here, and assuming it is off could claim a
+vulnerable crate gone while it is still built.
 Deprecated and pre-release versions are kept in the data and filtered by the planner.
 
 Tests read recorded documents from a directory (`RecordedRegistry`), the same JSON the
@@ -32,7 +37,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Optional
 
-from frame.sca.model import NPM, PYPI, normalize_name
+from frame.sca.model import CARGO, NPM, PYPI, normalize_name
 
 TIMEOUT = 30
 
@@ -209,11 +214,82 @@ class PypiRegistry:
         return parse_requires_dist(doc.get("requires_dist")) if doc is not None else None
 
 
+def crates_index_path(name: str) -> str:
+    n = name.lower()
+    if len(n) <= 2:
+        return f"{len(n)}/{n}"
+    if len(n) == 3:
+        return f"3/{n[0]}/{n}"
+    return f"{n[:2]}/{n[2:4]}/{n}"
+
+
+class CratesRegistry:
+    """crates.io's sparse index, cached per crate."""
+
+    def __init__(self, base: str = "https://index.crates.io", offline: bool = False):
+        self.base = base.rstrip("/")
+        self.offline = offline
+        self.fetched = 0
+        self._mem: Dict[str, Optional[Dict[str, dict]]] = {}
+
+    def _load(self, name: str) -> Optional[Dict[str, dict]]:
+        if name in self._mem:
+            return self._mem[name]
+        path = cache_dir() / CARGO / _cache_name(name.lower())
+        lines = None
+        if path.is_file():
+            try:
+                lines = gzip.decompress(path.read_bytes()).decode()
+            except OSError:
+                lines = None
+        if lines is None and not self.offline:
+            url = f"{self.base}/{crates_index_path(name)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "frame-sca"})
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:          # nosec: fixed index URL
+                    lines = r.read().decode()
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 410):
+                    raise RegistryError(f"{url}: HTTP {e.code}") from e
+            except (urllib.error.URLError, OSError) as e:
+                raise RegistryError(f"{url}: {e}") from e
+            if lines is not None:
+                self.fetched += 1
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(gzip.compress(lines.encode()))
+        out = None
+        if lines is not None:
+            out = {}
+            for line in lines.splitlines():
+                try:
+                    v = json.loads(line)
+                except ValueError:
+                    continue
+                deps = {}
+                for d in v.get("deps") or []:
+                    if d.get("kind") == "dev":
+                        continue
+                    crate = d.get("package") or d.get("name")
+                    if crate:
+                        deps[crate] = str(d.get("req") or "*")
+                out[str(v.get("vers"))] = {"deprecated": bool(v.get("yanked")), "deps": deps}
+        self._mem[name] = out
+        return out
+
+    def versions(self, name: str) -> Optional[Dict[str, dict]]:
+        return self._load(name)
+
+    def deps(self, name: str, version: str) -> Optional[Dict[str, str]]:
+        meta = (self._load(name) or {}).get(version)
+        return meta["deps"] if meta is not None else None
+
+
 class Registries:
     """The registry for each ecosystem the planner supports."""
 
     def __init__(self, offline: bool = False):
-        self._by = {NPM: NpmRegistry(offline=offline), PYPI: PypiRegistry(offline=offline)}
+        self._by = {NPM: NpmRegistry(offline=offline), PYPI: PypiRegistry(offline=offline),
+                    CARGO: CratesRegistry(offline=offline)}
 
     def for_ecosystem(self, ecosystem: str):
         return self._by.get(ecosystem)

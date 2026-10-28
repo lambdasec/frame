@@ -234,3 +234,42 @@ def test_a_declared_range_that_admits_vulnerable_releases():
     assert rows["pinned"]["floor"] is None
     text = format_exposure(list(rows.values()))
     assert "raise the floor to 1.2.0" in text and "every version it admits is vulnerable" in text
+
+
+CARGO_URL = Path(__file__).parent / "fixtures" / "sca" / "solve" / "cargo-url"
+
+
+def test_the_real_cargo_app_upgrades_url_for_idna(tmp_path, monkeypatch):
+    """url 2.4.1 requires idna ^0.4; the fix is idna 1.0.0, which url 2.5.1 requires (the index
+    says so: 2.5.2 went back to ^0.5). Per package this was a re-lock that could not work."""
+    from frame.sca.registry import CratesRegistry, Registries, crates_index_path
+    assert [crates_index_path(n) for n in ("a", "ab", "url", "idna", "serde_json")] == \
+        ["1/a", "2/ab", "3/u/url", "id/na/idna", "se/rd/serde_json"]
+    monkeypatch.setenv("FRAME_REGISTRY_CACHE", str(CARGO_URL / "registry"))
+    for n in ("Cargo.toml", "Cargo.lock"):
+        shutil.copy(CARGO_URL / n, tmp_path / n)
+    files = read_dependencies(tmp_path).files
+    db = AdvisoryDB(tables={"crates.io": json.loads(gzip.decompress((CARGO_URL / "advisories.json.gz").read_bytes()))})
+    solved = {p["package"]: p for p in plan(match(files, db), files, db, Registries(offline=True))}
+    assert (solved["url"]["target"], solved["idna"]["target"]) == ("2.5.1", "1.0.0")
+    assert solved["url"]["action"] == "update-lockfile" and solved["url"]["enables"] == ["idna"]
+    idx = CratesRegistry(offline=True)
+    assert satisfies("crates.io", "1.0.0", idx.deps("url", "2.5.1")["idna"])     # re-checked without the solver
+    assert not any(is_affected("crates.io", "1.0.0", a) for a in db.advisories("crates.io", "idna"))
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("cargo"),
+                    reason="live: set FRAME_SCA_REAL=1 (cargo and crates.io)")
+def test_live_cargo_relock_of_the_solved_plan(tmp_path):
+    """cargo update -p X --precise V, retried in dependency order (idna can move only after url)."""
+    from frame.sca.apply import apply_plan
+    from frame.sca.registry import Registries
+    for n in ("Cargo.toml", "Cargo.lock"):
+        shutil.copy(CARGO_URL / n, tmp_path / n)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
+    files = read_dependencies(tmp_path).files
+    db = AdvisoryDB(tables={"crates.io": json.loads(gzip.decompress((CARGO_URL / "advisories.json.gz").read_bytes()))})
+    out = apply_plan(plan(match(files, db), files, db, Registries()), tmp_path, write=True, relock_=True)
+    assert not out.warnings, out.warnings
+    assert match(read_dependencies(tmp_path).files, db) == []

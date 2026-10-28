@@ -33,14 +33,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from frame.sca.model import NPM, PYPI, DependencyFile, normalize_name
+from frame.sca.model import CARGO, NPM, PYPI, DependencyFile, normalize_name
 from frame.sca.osv import is_affected
 from frame.sca.ranges import satisfies
 from frame.sca.registry import is_prerelease
 from frame.sca.versions import sort_key, sorted_versions
 
 MAX_CANDIDATES = 150
-SUPPORTED = (NPM, PYPI)
+SUPPORTED = (NPM, PYPI, CARGO)
 _HOLD, _UNKNOWN = "\0hold", "\0unknown"       # range markers: keep the current child / never choose
 
 

@@ -109,7 +109,7 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--registry", action="store_true",
                              help="With --licenses / --sbom: fill unknown licences from the registries (npm, PyPI, "
                                   "RubyGems, crates.io, NuGet, Maven Central); with --vulns: also list the project's declared ranges "
-                                  "that admit a vulnerable release; with --plan: fetch release metadata from the registry (npm, PyPI) and solve the upgrades of "
+                                  "that admit a vulnerable release; with --plan: fetch release metadata from the registry (npm, PyPI, crates.io) and solve the upgrades of "
                                   "every package together with Z3, so upgrading a package in between replaces an "
                                   "override (goes to the network; cached)")
     deps_parser.add_argument("--verify", metavar="COMMAND",

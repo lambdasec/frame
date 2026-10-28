@@ -1,0 +1,5 @@
+Cargo.toml / Cargo.lock: written by cargo 1.92 (cargo generate-lockfile; cargo update -p url --precise 2.4.1).
+registry/crates.io/: crates.io sparse-index entries (index.crates.io) for the locked crates, fetched 2026-10-28.
+advisories.json.gz: those crates' advisories from lambdasec/frame-advisories 2026.10.27-ab8d558 (OSV, CC-BY 4.0).
+url 2.4.1 requires idna ^0.4.0; RUSTSEC-2024-0421 (GHSA-h97m-ww89-6jmq) is fixed in idna 1.0.0, which
+url 2.5.1 requires (2.5.2 went back to ^0.5.0, 2.5.3 on requires ^1.0.3).
