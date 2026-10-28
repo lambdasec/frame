@@ -327,7 +327,8 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
         if len(f["via"]) > 1:
             lines.append(f"           via {' -> '.join(f['via'])}")
         for c in reach.get("calls", [])[:3]:
-            lines.append(f"           calls {c['function']} at {c['location']}")
+            lines.append(f"           contains {c['function']} (linked into the binary)" if c.get("in_binary")
+                         else f"           calls {c['function']} at {c['location']}")
         if reach.get("changed_classes") and not reach.get("calls"):
             changed = ", ".join(reach["changed_classes"][:2])
             where = (f"imported in {', '.join(reach['imported_in'][:2])}" if reach.get("imported_in")

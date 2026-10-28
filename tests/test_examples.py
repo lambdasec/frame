@@ -170,6 +170,9 @@ def test_container_image_walkthrough(tmp_path):
           "distribution's advisories", "272 known vulnerabilities:",
           "app-image:/usr/local/bin/svc-go  (Go image): 2 packages, direct unknown",
           "app-image:/usr/local/bin/svc-rust  (crates.io image): 1 packages, direct unknown",
+          "UNKNOWN  stdlib@1.21.0 (dependency, called) GO-2025-4010: Insufficient validation of bracketed IPv6 "
+          "hostnames in net/url; fixed in 1.24.8  [app-image:/usr/local/bin/svc-go]",
+          "contains net/url.Parse (linked into the binary)",
           "CRITICAL org.apache.commons:commons-text@1.9 (dependency) GHSA-599f-7c49-w659"]),
         (("deps", "--rootfs", "app-image", "--vulns", "--plan"),
          ["org.apache.commons:commons-text 1.9 -> 1.10.0: replace the jar the image copies",

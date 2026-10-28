@@ -103,8 +103,10 @@ def _functions(affected: dict) -> List[dict]:
     es = affected.get("ecosystem_specific") or {}
     for imp in es.get("imports") or []:
         path = imp.get("path") if isinstance(imp, dict) else None
+        # a function vulnerable only on some platforms (Go's `goos` / `goarch`) says which
+        only = {k: sorted(imp[k]) for k in ("goos", "goarch") if isinstance(imp.get(k), list) and imp[k]}
         for sym in (imp.get("symbols") or []) if path else []:
-            out.append({"id": f"{path}.{sym}", "source": "osv"})
+            out.append({"id": f"{path}.{sym}", "source": "osv", **only})
     for fn in ((es.get("affects") or {}).get("functions") or []):
         out.append({"id": str(fn), "source": "osv"})
     return out

@@ -71,6 +71,16 @@ warning: app-image: 2 language package(s) installed by the OS package manager ar
 - The image also has Debian's `python3-urllib3` 1.26.12 and `python3-six`. dpkg owns their files, and Debian patches the packages it ships without changing the upstream version, so matching them against PyPI's advisories would report fixes Debian already made. They are left to Debian's advisories, and the warning counts them. pip's own urllib3 1.26.4 in `/usr/local` is matched against PyPI.
 - A jar without `pom.properties` is counted in a warning, never named from its file name.
 - `svc-go` was built with Go 1.21.0 and `gopkg.in/yaml.v2` replaced by v2.2.7; Frame reads both as `go version -m` prints them, and the standard library as `stdlib` 1.21.0 (89 of the advisories: Go compiles its standard library into every binary). `svc-rust` carries smallvec 1.6.0, as `rust-audit-info` prints it. A Rust binary built without `cargo auditable` lists no dependencies and is not named.
+- Which of those 89 matter: Go keeps a function table even in a stripped binary, and its linker drops every function nothing calls. An advisory whose vulnerable function the binary contains is marked `called`, the rest stay `installed` (never "not affected": an inlined function has no entry of its own):
+
+```console
+$ frame deps --rootfs app-image --vulns
+  ...
+  UNKNOWN  stdlib@1.21.0 (dependency, called) GO-2025-4010: Insufficient validation of bracketed IPv6 hostnames in net/url; fixed in 1.24.8  [app-image:/usr/local/bin/svc-go]
+           contains net/url.Parse (linked into the binary)
+```
+
+  On this binary the called set is exactly what `govulncheck -mode binary` reports for an unstripped build of the same program (tests/test_sca_container.py). On a stripped binary govulncheck itself falls back to every function of each package present.
 
 ```console
 $ frame deps --rootfs app-image --vulns --plan

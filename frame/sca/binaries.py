@@ -9,11 +9,18 @@
 
 Older Go binaries keep the module list behind pointers into the data segment; they are counted,
 not read. Nothing is guessed from symbol names or strings.
+
+A Go binary also keeps its function table (`pclntab`, which stack traces need, so `-s -w` does
+not strip it). Go's linker drops functions nothing can reach, so a function in the table is one
+the program's call graph reaches: the evidence `govulncheck -mode binary` uses. `go_functions`
+returns those names as advisories write them (`net/http.Server.Serve`). It is positive evidence
+only: an inlined function has no entry of its own, so absence proves nothing.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import struct
 import zlib
 from dataclasses import dataclass, field
@@ -31,6 +38,9 @@ class Binary:
     packages: List[Tuple[str, str, str]] = field(default_factory=list)   # (ecosystem, name, version)
     main: str = ""                               # the main module / root crate
     toolchain: str = ""                          # Go version
+    functions: frozenset = frozenset()           # Go: functions in the binary, as advisories name them
+    goos: str = ""                               # Go: the platform it was built for (`build GOOS=`)
+    goarch: str = ""
 
 
 def _uvarint(data: bytes, pos: int) -> Tuple[int, int]:
@@ -80,8 +90,11 @@ def _go(data: bytes) -> Optional[Binary]:
         return None
     if len(raw) >= 33 and raw[-17] == ord("\n"):
         raw = raw[16:-16]                            # the linker's 16-byte sentinels
-    main, deps = go_modinfo(raw.decode("utf-8", "replace"))
-    out = Binary("go", main=main, toolchain=version)
+    info = raw.decode("utf-8", "replace")
+    main, deps = go_modinfo(info)
+    settings = dict(line.split("\t", 1)[1].split("=", 1) for line in info.splitlines()
+                    if line.startswith("build\t") and "=" in line)
+    out = Binary("go", main=main, toolchain=version, goos=settings.get("GOOS", ""), goarch=settings.get("GOARCH", ""))
     go_ver = version.split()[0] if version else ""
     if go_ver.startswith("go") and go_ver[2:3].isdigit():
         out.packages.append((GO, "stdlib", go_ver[2:]))
@@ -144,8 +157,70 @@ def _rust(data: bytes) -> Optional[Binary]:
     return out
 
 
+_PCLN_MAGIC = (0xFFFFFFF0, 0xFFFFFFF1)            # Go 1.18-1.19, Go 1.20+ (same header layout)
+
+
+def _pclntab(data: bytes) -> Optional[bytes]:
+    sec = _elf_section(data, ".gopclntab") or _elf_section(data, ".data.rel.ro.gopclntab")
+    if sec is not None:
+        return sec
+    for magic in _PCLN_MAGIC:                     # no section headers: find the header itself
+        for end in "<>":
+            at = data.find(struct.pack(end + "I", magic) + b"\0\0")
+            if at >= 0 and data[at + 6] in (1, 2, 4) and data[at + 7] in (4, 8):
+                return data[at:]
+    return None
+
+
+def go_function_names(data: bytes) -> List[str]:
+    """Every function name in a Go 1.18+ binary's pclntab, as the runtime spells it."""
+    tab = _pclntab(data)
+    if tab is None or len(tab) < 8:
+        return []
+    for end in "<>":
+        magic, = struct.unpack_from(end + "I", tab, 0)
+        if magic in _PCLN_MAGIC:
+            break
+    else:
+        return []
+    ptr = tab[7]
+    word = end + ("Q" if ptr == 8 else "I")
+    try:
+        nfunc = struct.unpack_from(word, tab, 8)[0]
+        funcname_off = struct.unpack_from(word, tab, 8 + 3 * ptr)[0]
+        pcln_off = struct.unpack_from(word, tab, 8 + 7 * ptr)[0]
+        names = []
+        for i in range(nfunc):
+            _, funcoff = struct.unpack_from(end + "II", tab, pcln_off + 8 * i)
+            _, nameoff = struct.unpack_from(end + "Ii", tab, pcln_off + funcoff)
+            start = funcname_off + nameoff
+            names.append(tab[start:tab.index(b"\0", start)].decode("utf-8", "replace"))
+        return names
+    except (struct.error, ValueError):
+        return []
+
+
+_GENERIC = re.compile(r"\[[^\[\]]*\]")
+_CLOSURE = re.compile(r"(\.(func|gowrap|deferwrap)\d+(\.\d+)*)+$")
+_ESCAPED = re.compile(r"%([0-9a-fA-F]{2})")      # the linker escapes `.` in a path's last element
+
+
+def advisory_name(runtime_name: str) -> str:
+    """`net/http.(*Server).Serve` -> `net/http.Server.Serve`; generics' type arguments and the
+    closures inside a function (`F.func1`) belong to the function they are written in."""
+    name = _ESCAPED.sub(lambda m: chr(int(m.group(1), 16)), runtime_name)
+    while _GENERIC.search(name):
+        name = _GENERIC.sub("", name)
+    name = name.replace("(*", "").replace(")", "")
+    return _CLOSURE.sub("", name)
+
+
 def read_binary(data: bytes) -> Optional[Binary]:
     """The dependencies compiled into an ELF binary, or None if it carries none Frame reads."""
     if data[:4] != ELF:
         return None
-    return _go(data) or _rust(data)
+    go = _go(data)
+    if go is not None and go.kind == "go":
+        go.functions = frozenset(advisory_name(n) for n in go_function_names(data))
+        return go
+    return go or _rust(data)

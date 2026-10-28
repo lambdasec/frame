@@ -597,7 +597,8 @@ def cmd_deps(args) -> int:
         findings = match(report.files, db)
         if findings and not args.no_reachability:
             from frame.sca.reachability import Usage, annotate
-            annotate(findings, Usage(target.resolve(), excluded), target.resolve())
+            annotate(findings, Usage(target.resolve(), excluded), target.resolve(),
+                     {df.path: (df.binary_functions, df.binary_platform) for df in report.files if df.binary_functions})
         exposure = None
         if args.registry and not args.vex:
             from frame.sca.registry import Registries, RegistryError

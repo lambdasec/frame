@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 
 # OSV ecosystem names
@@ -117,6 +117,9 @@ class DependencyFile:
     prod_roots: Set[str] = field(default_factory=set)
     # Go: the module's `go` directive (the language version it builds with), "" when not said
     go_version: str = ""
+    # a Go binary: the functions it contains, as advisories name them (`frame.sca.binaries`)
+    binary_functions: frozenset = frozenset()
+    binary_platform: Tuple[str, str] = ("", "")   # its GOOS, GOARCH
     warnings: List[str] = field(default_factory=list)
 
     def add(self, pkg: Package) -> Package:

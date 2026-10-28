@@ -214,9 +214,26 @@ def _function_matches(fu: FileUsage, ids: Set[str]) -> List[Tuple[str, int, str]
     return hits
 
 
-def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
-    """Add `reachability` to each finding (in place)."""
+def _platform_admits(fn: dict, platform: Tuple[str, str]) -> bool:
+    goos, goarch = platform
+    return ((not fn.get("goos") or not goos or goos in fn["goos"])
+            and (not fn.get("goarch") or not goarch or goarch in fn["goarch"]))
+
+
+def annotate(findings: List[dict], usage: Usage, root: Path,
+             binaries: Optional[Dict[str, Tuple[frozenset, Tuple[str, str]]]] = None) -> None:
+    """Add `reachability` to each finding (in place). `binaries` maps a binary's path to the
+    functions it contains and its (GOOS, GOARCH): a finding in that binary is `called` when it
+    contains a function the advisory names for that platform (Go's linker keeps only what the
+    call graph reaches), else `installed`."""
     for f in findings:
+        if binaries and f["path"] in binaries:
+            fns, platform = binaries[f["path"]]
+            calls = [{"function": x["id"], "location": f["path"], "source": x.get("source", ""), "in_binary": True}
+                     for x in f.get("functions", []) if x["id"] in fns and _platform_admits(x, platform)]
+            f["reachability"] = {"level": "called" if calls else "installed", "imported_in": [],
+                                 "calls": calls[:50], "analysed": bool(fns)}
+            continue
         eco = f["ecosystem"]
         langs = LANGUAGES.get(eco, ())
         home = _home_of(f["path"])

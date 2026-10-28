@@ -223,7 +223,10 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
                 old_go += 1
             else:
                 for eco, name, version in text.packages:
-                    group(eco, path).add(Package(eco, name, version))
+                    df = group(eco, path)
+                    df.add(Package(eco, name, version))
+                    df.binary_functions = text.functions
+                    df.binary_platform = (text.goos, text.goarch)
             continue
         m = _PY_META.search(path)
         if m and isinstance(text, str):

@@ -260,3 +260,68 @@ def test_live_binaries_of_the_rebuilt_image():
     got = {f.path.split(":/", 1)[1]: {(p.name, p.version) for p in f.packages.values()} for f in files if f.kind == "image"}
     assert got["usr/local/bin/svc-go"] == _go_truth()
     assert got["usr/local/bin/svc-rust"] == {("smallvec", "1.6.0")}
+    out = subprocess.run(["docker", "run", "--rm", "frame-bin-fixture:test", "cat", "/truth/govulncheck.json"],
+                         check=True, capture_output=True, text=True, timeout=300).stdout
+    dec, docs, i = json.JSONDecoder(), [], 0
+    while i < len(out):
+        while i < len(out) and out[i].isspace():
+            i += 1
+        if i < len(out):
+            o, i = dec.raw_decode(out, i)
+            docs.append(o)
+    called = {o["finding"]["osv"] for o in docs if "finding" in o and o["finding"]["trace"][0].get("function")}
+    binary = subprocess.run(["docker", "run", "--rm", "frame-bin-fixture:test", "cat", "/usr/local/bin/svc-go"],
+                            check=True, capture_output=True, timeout=300).stdout
+    tmp = Path(subprocess.check_output(["mktemp", "-d"], text=True).strip()) / "svc-go"
+    tmp.write_bytes(binary)
+    assert _govulncheck_called(tmp, [o["osv"] for o in docs if "osv" in o]) == called
+
+
+def _govulncheck_called(binary: Path, records: list) -> set:
+    """What Frame marks `called` in a Go binary: read it from a root filesystem, match it against
+    a table built from these OSV records, and annotate reachability as `frame deps` does."""
+    import tempfile
+    from frame.sca.osv import compact
+    from frame.sca.reachability import Usage, annotate
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "usr/local/bin").mkdir(parents=True)
+        (root / "usr/local/bin/svc").write_bytes(binary.read_bytes() if binary.suffix != ".gz"
+                                                 else gzip.decompress(binary.read_bytes()))
+        (root / "usr/local/bin/svc").chmod(0o755)
+        files, _ = read_rootfs(root)
+        findings = match(files, AdvisoryDB(tables={"Go": compact(records, "Go")["packages"]}))
+        annotate(findings, Usage(root, set()), root,
+                 {df.path: (df.binary_functions, df.binary_platform) for df in files if df.binary_functions})
+    called = set()
+    for f in findings:
+        if f["reachability"]["level"] == "called":
+            called.update(i for i in [f["id"], *f.get("aliases", [])] if i.startswith("GO-"))
+    return called
+
+
+def test_go_functions_in_a_stripped_binary_agree_with_govulncheck():
+    """govulncheck -mode binary on the unstripped twin of svc-go (on a stripped binary it falls
+    back to every symbol of each package present) and Frame on the stripped svc-go itself, from
+    the same OSV records: the same advisories are reached through a function the binary contains."""
+    gv = json.loads(gzip.decompress((BIN / "govulncheck.json.gz").read_bytes()))
+    assert gv["config"]["scanner_version"] == "v1.1.4" and gv["config"]["scan_mode"] == "binary"
+    assert _govulncheck_called(BIN / "svc-go.gz", gv["osv"]) == set(gv["called"])
+    assert len(gv["called"]) == 4                                          # three standard-library, one yaml.v2
+
+
+def test_go_runtime_names_as_advisories_write_them():
+    from frame.sca.binaries import advisory_name
+    assert advisory_name("net/http.(*Server).Serve") == "net/http.Server.Serve"
+    assert advisory_name("sync/atomic.(*Pointer[...]).Load") == "sync/atomic.Pointer.Load"
+    assert advisory_name("pkg.F[...].func2.1") == "pkg.F"                  # a closure belongs to its function
+    assert advisory_name("gopkg.in/yaml%2ev2.(*decoder).unmarshal") == "gopkg.in/yaml.v2.decoder.unmarshal"
+
+
+def test_a_function_vulnerable_on_another_platform_is_not_called():
+    from frame.sca.reachability import _platform_admits
+    windows_only = {"id": "os.Chdir", "goos": ["windows"]}
+    assert not _platform_admits(windows_only, ("linux", "arm64"))
+    assert _platform_admits(windows_only, ("windows", "amd64"))
+    assert not _platform_admits({"id": "x.F", "goarch": ["ppc64le"]}, ("linux", "amd64"))
+    assert _platform_admits({"id": "x.F"}, ("linux", "amd64"))
