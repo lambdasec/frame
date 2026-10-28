@@ -287,6 +287,12 @@ class VulnType(Enum):
 # Vulnerability Check
 # =============================================================================
 
+def _display_name(var: str) -> str:
+    """A frontend temporary (`$reply_4`, the value of `reply = ...`) as the program names it."""
+    m = re.fullmatch(r"\$+([A-Za-z_][\w.]*?)_\d+", var or "")
+    return m.group(1) if m else var
+
+
 @dataclass
 class VulnerabilityCheck:
     """
@@ -5783,7 +5789,7 @@ class SILTranslator:
             formula=formula,
             vuln_type=vuln_type,
             location=instr.loc,
-            description=f"Tainted data from '{taint_info.source_var if taint_info else 'unknown'}' "
+            description=f"Tainted data from '{_display_name(taint_info.source_var) if taint_info else 'unknown'}' "
                        f"flows to {sink_kind.value} sink",
             tainted_var=tainted_var,
             source_var=taint_info.source_var if taint_info else "",

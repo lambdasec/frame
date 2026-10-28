@@ -1197,6 +1197,7 @@ class FrameScanner:
             # data flows -- currently hardcoded secrets. Replaces the per-
             # language hardcoded_secret regexes.
             literal_vulns = self._scan_literals(program, filename)
+            literal_vulns += self._scan_provider_tokens(source_code, filename, {v.line for v in literal_vulns})
             result.vulnerabilities.extend(literal_vulns)
             if self.verbose:
                 print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
@@ -1875,6 +1876,10 @@ class FrameScanner:
         from frame.sil.translator import VulnType as _VT
         idor_vulns = [v for v in vulns if v.type == _VT.IDOR]
         vulns = [v for v in vulns if v.type != _VT.IDOR]
+        # A hardcoded credential is one literal: two on nearby lines are two credentials, not
+        # one flow reported twice, so they skip the windowed merge too (exact duplicates only).
+        secret_vulns = [v for v in vulns if v.type == _VT.HARDCODED_SECRET]
+        vulns = [v for v in vulns if v.type != _VT.HARDCODED_SECRET]
 
         is_better = _vuln_is_better
 
@@ -1949,6 +1954,12 @@ class FrameScanner:
             if existing is None or is_better(v, existing):
                 idor_seen[key] = v
         deduplicated.extend(idor_seen.values())
+        secret_seen: dict = {}
+        for v in secret_vulns:
+            key = (v.location, v.line, v.cwe_id)
+            if key not in secret_seen or is_better(v, secret_seen[key]):
+                secret_seen[key] = v
+        deduplicated.extend(sorted(secret_seen.values(), key=lambda v: (v.location, v.line)))
 
         return deduplicated
 
@@ -2307,6 +2318,53 @@ class FrameScanner:
                 type=vt, severity=self.SEVERITY_MAP.get(vt, Severity.MEDIUM), location=filename,
                 line=f.line, column=f.column, description=f.description, procedure="<module>",
                 sink_type=f.kind, confidence=0.95, cwe_id=self.CWE_MAP.get(vt), category=hardening.CATEGORY))
+        return out
+
+    _STRING_NODES = frozenset({"string", "string_literal", "verbatim_string_literal", "raw_string_literal",
+                               "template_string", "interpreted_string_literal", "concatenated_string",
+                               "text_block", "interpolated_string_expression"})
+
+    def _scan_provider_tokens(self, source_code: str, filename: str, seen_lines: set) -> List[Vulnerability]:
+        """A string literal that contains a provider's credential format (`secret-formats.toml`)
+        is a hardcoded credential whatever holds it: an argument, a dict value, a variable
+        named `x`. Literals are read from the syntax tree, so comments never count."""
+        from frame.sil.secret_formats import find
+        grammar = {"python": "python", "javascript": "javascript", "typescript": "typescript",
+                   "java": "java", "csharp": "c_sharp", "c": "c", "cpp": "cpp"}.get(self.language)
+        if grammar is None or not source_code:
+            return []
+        try:
+            import importlib
+            import tree_sitter
+            mod = importlib.import_module(f"tree_sitter_{grammar}")
+            lang = tree_sitter.Language(mod.language_typescript() if grammar == "typescript" else mod.language())
+            try:
+                parser = tree_sitter.Parser(lang)
+            except TypeError:                                  # older bindings
+                parser = tree_sitter.Parser()
+                parser.set_language(lang)
+            root = parser.parse(source_code.encode("utf-8")).root_node
+        except Exception:
+            return []
+        out: List[Vulnerability] = []
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            if n.type in self._STRING_NODES:
+                text = n.text.decode("utf-8", "replace")
+                hit = find(text)
+                line = n.start_point[0] + 1
+                if hit and line not in seen_lines:
+                    seen_lines.add(line)
+                    fmt, _ = hit
+                    out.append(Vulnerability(
+                        type=VulnType.HARDCODED_SECRET,
+                        severity=self.SEVERITY_MAP.get(VulnType.HARDCODED_SECRET, Severity.HIGH),
+                        location=filename, line=line, column=n.start_point[1],
+                        description=f"Hardcoded {fmt.description} ({fmt.provider} format: {fmt.id})",
+                        procedure="<literal>", sink_type="hardcoded_secret", confidence=0.95, cwe_id="CWE-798"))
+                continue                                       # a string's parts are not separate literals
+            stack.extend(n.children)
         return out
 
     def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
