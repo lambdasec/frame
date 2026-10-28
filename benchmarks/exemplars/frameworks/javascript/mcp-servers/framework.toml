@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/mcp-servers"]
+requires_pack = true
+description = "MCP server (TypeScript SDK): tool arguments are model output, here reaching a shell"

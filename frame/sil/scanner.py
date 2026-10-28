@@ -759,6 +759,7 @@ class FrameScanner:
         VulnType.XPATH_INJECTION: Severity.MEDIUM,
         VulnType.CODE_INJECTION: Severity.CRITICAL,
         VulnType.TEMPLATE_INJECTION: Severity.HIGH,
+        VulnType.PROMPT_INJECTION: Severity.MEDIUM,
         VulnType.NOSQL_INJECTION: Severity.HIGH,
         VulnType.XXE: Severity.HIGH,
         VulnType.REGEX_DOS: Severity.MEDIUM,
@@ -886,6 +887,7 @@ class FrameScanner:
         VulnType.XML_INJECTION: "CWE-91",
         VulnType.CODE_INJECTION: "CWE-94",
         VulnType.TEMPLATE_INJECTION: "CWE-1336",
+        VulnType.PROMPT_INJECTION: "CWE-1427",
         VulnType.NOSQL_INJECTION: "CWE-943",
         VulnType.XXE: "CWE-611",
         VulnType.REGEX_DOS: "CWE-1333",
@@ -1848,6 +1850,7 @@ class FrameScanner:
             cwe_id=cwe_id,
             evidence=evidence_of_check(verified, bool(check.source_var and check.sink_type)),
             sink_call=getattr(check, "sink_call", ""),
+            category="ai" if getattr(check, "source_kind", "") == "llm" else "",
         )
 
     def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:

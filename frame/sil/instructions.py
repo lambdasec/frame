@@ -65,6 +65,10 @@ class TaintKind(Enum):
     # predictable. It matters only where a value must be unpredictable
     # (SinkKind.UNPREDICTABLE), and only there.
     WEAK_RANDOM = "weak_random"
+    # What a language model returned (OWASP LLM05: improper output handling). It can be steered
+    # by a prompt injection anywhere in what the model read, so it is attacker data for every
+    # sink; findings from it are in the `ai` category.
+    LLM_OUTPUT = "llm"
 
     def __str__(self) -> str:
         return self.value
@@ -95,6 +99,7 @@ class SinkKind(Enum):
     XML_INJECTION = "xml_injection"  # XML injection via raw write (CWE-91)
     EVAL = "eval"               # Dynamic code evaluation (CWE-94)
     TEMPLATE = "template"       # Template injection (CWE-1336)
+    PROMPT = "prompt"           # Untrusted data in a model's system instructions (CWE-1427, OWASP LLM01)
     NOSQL_QUERY = "nosql"       # NoSQL injection (CWE-943)
     XML_PARSE = "xml"           # XXE - XML External Entity (CWE-611)
     REGEX = "regex"             # ReDoS via regex (CWE-1333)
@@ -196,6 +201,8 @@ _SINK_KIND_ALIASES = {
     "redos": "regex",
     "buffer": "buffer_overflow",
     "network": "sensitive_exposure",   # data sent out over a socket (CWE-200)
+    "prompt_injection": "prompt",
+    "llm_prompt": "prompt",
 }
 
 

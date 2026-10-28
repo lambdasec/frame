@@ -1,0 +1,15 @@
+[pack]
+name = "mcp-servers"
+language = "python"
+description = "MCP servers: a tool's arguments are model output (a prompt injection can steer them), so they are attacker data in the handler"
+detect = { imports = ["mcp", "fastmcp"] }
+references = ["https://modelcontextprotocol.io/specification"]
+
+# @mcp.tool() / @server.tool() on FastMCP (the official SDK's mcp.server.fastmcp, and fastmcp).
+[[entrypoint]]
+id = "tool"
+decorator = ["*.tool", "mcp.server.fastmcp.FastMCP.tool", "fastmcp.FastMCP.tool"]
+params = "all"
+exclude_param = ["self", "ctx", "context"]
+exclude_param_type = ["mcp.server.fastmcp.Context", "fastmcp.Context"]
+kind = "llm"

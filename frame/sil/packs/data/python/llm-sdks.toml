@@ -1,0 +1,78 @@
+[pack]
+name = "llm-sdks"
+language = "python"
+description = "LLM SDKs (OpenAI, Anthropic, LangChain, LlamaIndex): model output is attacker-steerable (OWASP LLM05), untrusted data in system instructions is prompt injection (CWE-1427, OWASP LLM01)"
+detect = { imports = ["openai", "anthropic", "langchain", "langchain_core", "langchain_openai",
+                      "langchain_anthropic", "langchain_community", "llama_index"] }
+references = ["https://genai.owasp.org/llm-top-10/", "https://cwe.mitre.org/data/definitions/1427.html"]
+
+# What a model returns can be steered by a prompt injection anywhere in what it read (a
+# retrieved page, a tool result, a user message), so it is attacker data at every sink:
+# exec, a shell, SQL, HTML. Only generation calls: embeddings, files and moderation are not.
+[[source]]
+call = ["openai.OpenAI.chat.completions.create", "openai.AsyncOpenAI.chat.completions.create",
+        "openai.AzureOpenAI.chat.completions.create", "openai.AsyncAzureOpenAI.chat.completions.create",
+        "openai.OpenAI.completions.create", "openai.AsyncOpenAI.completions.create",
+        "openai.OpenAI.responses.create", "openai.AsyncOpenAI.responses.create",
+        "openai.OpenAI.beta.chat.completions.parse", "openai.OpenAI.chat.completions.parse",
+        "openai.ChatCompletion.create", "openai.Completion.create"]
+kind = "llm"
+description = "the model's reply"
+
+[[source]]
+call = ["anthropic.Anthropic.messages.create", "anthropic.AsyncAnthropic.messages.create",
+        "anthropic.AnthropicBedrock.messages.create", "anthropic.AnthropicVertex.messages.create",
+        "anthropic.Anthropic.completions.create"]
+kind = "llm"
+description = "the model's reply"
+
+[[source]]
+call = ["langchain_openai.ChatOpenAI.invoke", "langchain_openai.ChatOpenAI.ainvoke",
+        "langchain_openai.ChatOpenAI.predict", "langchain_openai.OpenAI.invoke",
+        "langchain_openai.AzureChatOpenAI.invoke", "langchain_anthropic.ChatAnthropic.invoke",
+        "langchain_anthropic.ChatAnthropic.ainvoke", "langchain_community.chat_models.ChatOpenAI.invoke",
+        "langchain.chat_models.ChatOpenAI.invoke", "langchain.chat_models.ChatOpenAI.predict",
+        "langchain.llms.OpenAI.predict", "langchain.llms.OpenAI"]
+kind = "llm"
+description = "the model's reply"
+
+[[source]]
+call = ["llama_index.llms.openai.OpenAI.complete", "llama_index.llms.openai.OpenAI.chat",
+        "llama_index.llms.anthropic.Anthropic.complete", "llama_index.core.**.query_engine.query",
+        "llama_index.core.VectorStoreIndex.**.query"]
+kind = "llm"
+description = "the model's reply"
+
+# Untrusted data in the model's instructions: the system prompt sets what the model may do,
+# so data there can rewrite it. A user turn carrying user input is how a chat works, and is
+# not a finding.
+[[sink]]
+call = ["anthropic.Anthropic.messages.create", "anthropic.AsyncAnthropic.messages.create",
+        "anthropic.AnthropicBedrock.messages.create", "anthropic.AnthropicVertex.messages.create"]
+kind = "prompt"
+args = []
+arg_names = ["system"]
+description = "the system prompt"
+
+[[sink]]
+call = ["openai.OpenAI.responses.create", "openai.AsyncOpenAI.responses.create"]
+kind = "prompt"
+args = []
+arg_names = ["instructions"]
+description = "the instructions (system prompt)"
+
+[[sink]]
+call = ["langchain_core.messages.SystemMessage", "langchain.schema.SystemMessage",
+        "langchain_core.messages.system.SystemMessage", "langchain.schema.messages.SystemMessage"]
+kind = "prompt"
+args = [0]
+arg_names = ["content"]
+description = "a system message"
+
+[[sink]]
+call = ["langchain_core.prompts.SystemMessagePromptTemplate.from_template",
+        "langchain.prompts.SystemMessagePromptTemplate.from_template"]
+kind = "prompt"
+args = [0]
+arg_names = ["template"]
+description = "a system message template"

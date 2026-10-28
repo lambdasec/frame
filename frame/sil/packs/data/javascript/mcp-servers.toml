@@ -1,0 +1,15 @@
+[pack]
+name = "mcp-servers"
+language = "javascript"
+description = "MCP servers: a tool's arguments are model output (a prompt injection can steer them), so they are attacker data in the handler"
+detect = { imports = ["@modelcontextprotocol/sdk/server/mcp.js", "@modelcontextprotocol/sdk/server/index.js",
+                      "@modelcontextprotocol/sdk", "fastmcp"] }
+references = ["https://modelcontextprotocol.io/specification"]
+
+# server.tool(name, [description], [schema], handler) and server.registerTool(name, config, handler)
+[[entrypoint]]
+id = "tool"
+registered_via = ["*.tool", "*.registerTool", "*.addTool"]
+params = "all"
+exclude_param = ["extra", "context", "ctx"]
+kind = "llm"

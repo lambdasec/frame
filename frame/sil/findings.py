@@ -45,6 +45,7 @@ _GROUPS = {
         "privilege_management", "incorrect_permissions", "trust_boundary_violation",
         "cors_misconfiguration"},
     "dependency": {"vulnerable_dependency"},
+    "ai": {"prompt_injection"},
     "hardening": {
         "debug_enabled", "security_misconfiguration", "error_disclosure", "ci_cd_vulnerability",
         "code_integrity", "insufficient_logging", "unhandled_exception", "improper_error_handling",

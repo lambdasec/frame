@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/llm-sdks"]
+requires_pack = true
+description = "LLM SDKs in Node: request data in Claude's system prompt, OpenAI output run as a shell command"

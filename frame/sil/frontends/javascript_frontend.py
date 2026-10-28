@@ -225,6 +225,13 @@ class JavaScriptFrontend:
             self._imports.bind(local, module)
         for local, qualified in self._imported_names.items():
             self._imports.bind(local, qualified)
+        # `const client = new OpenAI()`: a name declared once in the file and bound to an instance
+        # of an imported class names what it is, so `client.chat.completions.create` has the
+        # canonical id `openai.chat.completions.create` (packs match SDK clients by it)
+        self._instance_names = set()
+        for local, qualified in self._instance_bindings(tree.root_node).items():
+            self._imports.bind(local, qualified)
+            self._instance_names.add(local)
         self._imports.finish()
         program.imports = self._imports.as_dict()
 
@@ -2450,6 +2457,39 @@ class JavaScriptFrontend:
             instrs.append(Sanitize(loc=loc, var=PVar(target), sanitizes=[SinkKind.HTML_OUTPUT, SinkKind.XSS]))
         return instrs
 
+    def _instance_bindings(self, root: TSNode) -> Dict[str, str]:
+        """name -> the imported class it is an instance of: `const x = new C(...)` where C
+        resolves through the file's imports, for names declared exactly once in the file
+        (another declaration, a parameter or an assignment of the same name leaves it unbound)."""
+        counts: Dict[str, int] = {}
+        found: Dict[str, str] = {}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            name = None
+            if n.type == "variable_declarator":
+                name_node = n.child_by_field_name("name")
+                name = self._get_text(name_node) if name_node is not None and name_node.type == "identifier" else None
+                value = n.child_by_field_name("value")
+                if name and value is not None and value.type == "new_expression":
+                    ctor = value.child_by_field_name("constructor")
+                    text = self._get_text(ctor) if ctor is not None else ""
+                    head, _, rest = text.partition(".")
+                    base = self._module_aliases.get(head) or self._imported_names.get(head)
+                    if base and not base.startswith(".") and re.fullmatch(r"[\w$.]+", text):
+                        found[name] = base + ("." + rest if rest else "")
+            elif n.type in ("formal_parameters", "required_parameter", "optional_parameter"):
+                for c in n.named_children:
+                    if c.type == "identifier":
+                        counts[self._get_text(c)] = counts.get(self._get_text(c), 0) + 1
+            elif n.type == "assignment_expression":
+                left = n.child_by_field_name("left")
+                name = self._get_text(left) if left is not None and left.type == "identifier" else None
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+        return {k: v for k, v in found.items() if counts.get(k) == 1}
+
     _TEMPLATE_COMPILERS = frozenset({"lodash.template", "_.template", "underscore.template", "lodash/template"})
 
     def _escaping_template(self, func_node: TSNode) -> bool:
@@ -3437,6 +3477,8 @@ class JavaScriptFrontend:
         """Is this call named after an imported third-party package (not a relative import)?"""
         modules = {m for m in self._module_aliases.values() if not m.startswith(".")}
         modules |= {q.rsplit(".", 1)[0] for q in self._imported_names.values() if not q.startswith(".")}
+        if func_name.split(".", 1)[0] in getattr(self, "_instance_names", ()):
+            return True                                   # a method of an imported class's instance
         return any(func_name.startswith(m + ".") for m in modules)
 
     def _with_option_kwargs(self, func_name: str, args: List[TSNode], args_exp):

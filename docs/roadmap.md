@@ -79,9 +79,9 @@ SAST covers Python, JavaScript/TypeScript, Java, C# and C/C++: the most used lan
 
 ## Phase 4: AI application security
 
-- LLM taint: untrusted input (requests, retrieved documents, tool output) reaching a prompt (prompt injection, OWASP LLM01); LLM output reaching exec, SQL or HTML (OWASP LLM05).
-- Packs for the OpenAI, Anthropic, LangChain, LlamaIndex and MCP SDKs.
-- MCP servers: tool handlers scanned as ordinary SAST through an MCP entrypoint pack, plus tool-metadata checks (injected instructions, over-broad capabilities).
+- Done: LLM taint. Untrusted data in a model's system instructions is prompt injection (CWE-1427, a `prompt` sink kind; a user turn is not), and model output is an `llm` source kind, attacker data at every injection sink but not at confidentiality sinks (logs). Findings are in the `ai` category. Next: OpenAI chat `{"role": "system"}` messages (a dict inside a list in the Python frontend), and retrieved documents and tool output as sources (indirect injection).
+- Done: packs for the OpenAI, Anthropic, LangChain and LlamaIndex SDKs (`llm-sdks`, Python and JS/TS), matched on SDK clients through their constructors (JS now binds `const client = new OpenAI()` like Python).
+- Done: MCP servers. Tool handlers (`@mcp.tool()`, `server.tool` / `server.registerTool`) are entry points whose arguments are model output, including destructured parameters (`async ({ path }) => ...`). Next: tool-metadata checks (injected instructions, over-broad capabilities).
 - Not planned: detecting AI-generated code. Detectors are unreliable and authorship does not change whether code is vulnerable; guardrails on agent edits (pre-commit, `--files`, MCP) cover the need.
 
 ## Phase 5: autonomous pentesting

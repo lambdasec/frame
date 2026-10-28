@@ -1,0 +1,48 @@
+[pack]
+name = "llm-sdks"
+language = "javascript"
+description = "LLM SDKs (OpenAI, Anthropic, LangChain): model output is attacker-steerable (OWASP LLM05), untrusted data in system instructions is prompt injection (CWE-1427, OWASP LLM01)"
+detect = { imports = ["openai", "@anthropic-ai/sdk", "@langchain/openai", "@langchain/anthropic", "@langchain/core",
+                      "langchain"] }
+references = ["https://genai.owasp.org/llm-top-10/", "https://cwe.mitre.org/data/definitions/1427.html"]
+
+# Calls on a client built with `new OpenAI()` / `new Anthropic()` (the client's canonical id is
+# the SDK module: a default import names the module, a named one the class).
+[[source]]
+call = ["openai.chat.completions.create", "openai.OpenAI.chat.completions.create",
+        "openai.AzureOpenAI.chat.completions.create", "openai.completions.create",
+        "openai.responses.create", "openai.OpenAI.responses.create",
+        "openai.beta.chat.completions.parse", "openai.chat.completions.parse"]
+kind = "llm"
+description = "the model's reply"
+
+[[source]]
+call = ["@anthropic-ai/sdk.messages.create", "@anthropic-ai/sdk.Anthropic.messages.create"]
+kind = "llm"
+description = "the model's reply"
+
+[[source]]
+call = ["@langchain/openai.ChatOpenAI.invoke", "@langchain/openai.OpenAI.invoke",
+        "@langchain/anthropic.ChatAnthropic.invoke", "langchain/chat_models/openai.ChatOpenAI.invoke"]
+kind = "llm"
+description = "the model's reply"
+
+[[sink]]
+call = ["@anthropic-ai/sdk.messages.create", "@anthropic-ai/sdk.Anthropic.messages.create"]
+kind = "prompt"
+args = []
+arg_names = ["system"]
+description = "the system prompt"
+
+[[sink]]
+call = ["openai.responses.create", "openai.OpenAI.responses.create"]
+kind = "prompt"
+args = []
+arg_names = ["instructions"]
+description = "the instructions (system prompt)"
+
+[[sink]]
+call = ["@langchain/core/messages.SystemMessage", "langchain/schema.SystemMessage"]
+kind = "prompt"
+args = [0]
+description = "a system message"

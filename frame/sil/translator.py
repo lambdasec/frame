@@ -95,6 +95,7 @@ class VulnType(Enum):
     XML_INJECTION = "xml_injection"             # CWE-91
     CODE_INJECTION = "code_injection"           # CWE-94
     TEMPLATE_INJECTION = "template_injection"   # CWE-1336
+    PROMPT_INJECTION = "prompt_injection"       # CWE-1427
     NOSQL_INJECTION = "nosql_injection"         # CWE-943
     XXE = "xxe"                                 # CWE-611
     REGEX_DOS = "regex_dos"                     # CWE-1333
@@ -213,6 +214,7 @@ class VulnType(Enum):
             SinkKind.XML_INJECTION: cls.XML_INJECTION,
             SinkKind.EVAL: cls.CODE_INJECTION,
             SinkKind.TEMPLATE: cls.TEMPLATE_INJECTION,
+            SinkKind.PROMPT: cls.PROMPT_INJECTION,
             SinkKind.NOSQL_QUERY: cls.NOSQL_INJECTION,
             SinkKind.XML_PARSE: cls.XXE,
             SinkKind.REGEX: cls.REGEX_DOS,
@@ -315,6 +317,7 @@ class VulnerabilityCheck:
     # Data flow path (list of variables/expressions)
     data_flow_path: List[str] = field(default_factory=list)
     sink_call: str = ""     # the sink call (canonical id, else its text): links SCA advisories to flows
+    source_kind: str = ""   # the TaintKind value of the flow's source (`llm`: model output -> category ai)
 
     # Per-edge branch conditions assumed on the path to this sink (pure formulas).
     # If their conjunction is unsatisfiable the sink is on an infeasible path and
@@ -5788,6 +5791,7 @@ class SILTranslator:
             sink_type=sink_kind.value,
             procedure_name=proc_name,
             data_flow_path=taint_info.propagation_path if taint_info else [],
+            source_kind=taint_info.source_kind.value if taint_info else "",
         )
         # Predictable (weak PRNG) data matters only where a value must be unpredictable,
         # and such a sink only for predictable data: any other pairing is no finding
@@ -5795,9 +5799,17 @@ class SILTranslator:
         weak = taint_info is not None and taint_info.source_kind == TaintKind.WEAK_RANDOM
         if weak != (sink_kind == SinkKind.UNPREDICTABLE):
             check.kind_mismatch = True
+        # Model output is attacker-steerable, not confidential: it matters at injection sinks,
+        # not where a secret or personal data would leak (logs, error pages, responses).
+        if taint_info is not None and taint_info.source_kind == TaintKind.LLM_OUTPUT \
+                and sink_kind in self._CONFIDENTIALITY_SINKS:
+            check.kind_mismatch = True
         if isinstance(instr, Call):
             check.sink_call = instr.canonical or str(getattr(instr.func, "value", instr.func)).strip('"')
         return check
+
+    _CONFIDENTIALITY_SINKS = frozenset({SinkKind.SENSITIVE_LOG, SinkKind.SENSITIVE_EXPOSURE, SinkKind.SECRET_EXPOSURE,
+                                        SinkKind.ERROR_DISCLOSURE, SinkKind.CREDENTIAL, SinkKind.HARDCODED_SECRET})
 
     # Matches an unbounded conversion in a scanf format string: %s / %[ / %ls
     # with no field width (e.g. "%s", "%[^\n]"), but NOT a bounded "%9s".

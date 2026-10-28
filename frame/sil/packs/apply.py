@@ -330,8 +330,49 @@ def _param_type_matches(program: Program, table: ImportTable, proc: Procedure, n
     return _glob(patterns, written, written.split("<")[0], resolved)
 
 
+def _split_top(text: str) -> List[str]:
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        if ch in "{[(":
+            depth += 1
+        elif ch in "}])":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return parts + [cur]
+
+
+def bound_names(param: str) -> List[str]:
+    """The names a parameter binds: itself, or for a destructuring pattern (`{ path }`,
+    `{ opts: { depth } }`, `[a, b = 1]`, `{ ...rest }`) each name it binds, not the keys."""
+    p = param.strip()
+    if not p or p[0] not in "{[":
+        return [p.split(":", 1)[0].split("=", 1)[0].strip()] if p else []
+    inner = p[1:p.rfind("}" if p[0] == "{" else "]")] if p.rfind("}" if p[0] == "{" else "]") > 0 else p[1:]
+    out: List[str] = []
+    for part in _split_top(inner):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("..."):
+            part = part[3:]
+        if p[0] == "{" and ":" in part.split("=", 1)[0] and part.index(":") < (part.find("{") if "{" in part else len(part)):
+            part = part.split(":", 1)[1]                      # `key: target` binds the target
+        target = part.strip()
+        if target[:1] in "{[":
+            out.extend(bound_names(target.split("=", 1)[0] if not target.endswith(("}", "]")) else target))
+        else:
+            name = target.split("=", 1)[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                out.append(name)
+    return out
+
+
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
-    names = [p.name for p, _ in proc.params]
+    names = [n for p, _ in proc.params for n in (bound_names(p.name) if p.name[:1] in "{[" else [p.name])]
     out: List[str] = []
     for n in names:
         if n in _IMPLICIT_RECEIVERS or _glob(e.exclude_param, n):

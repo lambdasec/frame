@@ -25,6 +25,7 @@ Frame knows what makes data safe (parameterised queries, `shlex.quote`, `basenam
 | **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ |
 | **C#** | ASP.NET Core MVC and Web API, Minimal APIs, Razor Pages, Blazor, SignalR, Azure Functions, WebForms, WCF/gRPC, EF Core/EF6, Dapper, NHibernate |
 | **C / C++** | CGI/FastCGI, POSIX sockets, libmicrohttpd, civetweb/Mongoose, cpp-httplib, Crow, Qt, Boost.Beast, gRPC, libcurl, OpenSSL, libxml2, libarchive, SQLite/libpq/MySQL |
+| **AI apps** | OpenAI, Anthropic, LangChain and LlamaIndex SDKs (Python; OpenAI, Anthropic and LangChain in JS/TS), MCP servers (FastMCP, the TypeScript SDK) |
 
 Every pack is proven by a vulnerable app and its safe twin, scanned through the real CLI in the test suite: 80+ apps and 400+ labelled flaws in [`benchmarks/exemplars/frameworks/`](../benchmarks/exemplars/frameworks).
 
@@ -82,6 +83,16 @@ description = "Tracing server enabled"
 | Template (SSTI) | Broken authentication | XXE (CWE-611) | Null dereference |
 | LDAP / XPath / XML | Session fixation | Secrets, unsafe deserialization | Integer overflow |
 | Header and log | CSRF (CWE-352) | Weak crypto, hashing, random | Format string |
+
+AI applications (category `ai`):
+
+| Finding | What it is |
+|---|---|
+| Prompt injection (CWE-1427, OWASP LLM01) | Untrusted data in a model's system instructions: Anthropic `system=`, OpenAI `instructions=`, LangChain `SystemMessage`. Untrusted data in a user turn is how a chat works and is not reported. |
+| Model output reaching a sink (OWASP LLM05) | What a model returns (OpenAI, Anthropic, LangChain, LlamaIndex) can be steered by a prompt injection anywhere in what it read, so it is attacker data at every injection sink: a shell, `exec`, SQL, HTML. It is not treated as confidential, so logging it is not a finding. |
+| MCP tools | A tool's arguments are model output, so a shell or SQL sink in a tool handler (`@mcp.tool()`, `server.tool(...)` / `server.registerTool(...)`) is a finding. |
+
+Not covered yet: OpenAI chat requests that put untrusted data in a `{"role": "system"}` message, since a dict inside a list is not yet followed by the Python frontend.
 
 Protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`. They are `[[setting]]` entries in packs, so a pack can add its own; only an explicit off switch is reported, never a missing option.
 
