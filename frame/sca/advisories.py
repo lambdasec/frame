@@ -112,6 +112,10 @@ def _load_json(data: bytes, origin: str) -> Iterator[dict]:
         yield from (doc.get("vulns") if isinstance(doc.get("vulns"), list) else [doc])
 
 
+# what `frame kb mine-functions --out DIR` writes besides its per-ecosystem tables
+MINER_REPORTS = ("needs-curation.json", "progress.json")
+
+
 def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
                      ecosystems: Optional[Iterable[str]] = None, functions_dir: Optional[Path] = None,
                      mitigations_dir: Optional[Path] = None) -> Path:
@@ -154,6 +158,8 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
                       "advisories": sum(len(v) for v in tbl["packages"].values())}
     for f in sorted(Path(functions_dir).glob("*.json")) if functions_dir is not None else []:
         eco = f.stem
+        if f.name in MINER_REPORTS:
+            continue                       # `frame kb mine-functions` writes these beside its tables
         if eco not in ECOSYSTEMS:
             raise KBError(f"{f}: not an ecosystem ({', '.join(ECOSYSTEMS)})")
         fns = _check_functions(json.loads(f.read_text(encoding="utf-8")), str(f))

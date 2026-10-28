@@ -331,3 +331,20 @@ def test_compaction_changes_no_answer(monkeypatch):
                         checked += 1
                         assert is_affected(eco, v, a) == is_affected(eco, v, b), (eco, name, a["id"], v)
     assert dropped > 1000 and checked > 10000
+
+
+def test_build_reads_the_miners_output_directory(tmp_path):
+    """`frame kb mine-functions --out DIR` writes needs-curation.json and progress.json beside
+    its tables; `build-advisories --functions DIR` takes that directory as it is, and still
+    refuses any other file that is not an ecosystem."""
+    from frame.kb.store import KBError
+    from frame.sca.advisories import MINER_REPORTS
+    fns = tmp_path / "mined"
+    fns.mkdir()
+    (fns / "PyPI.json").write_text("{}")
+    for name in MINER_REPORTS:
+        (fns / name).write_text("{}")
+    build_advisories([], tmp_path / "out", "r1", ecosystems=["PyPI"], functions_dir=fns)
+    (fns / "state.json").write_text("{}")
+    with pytest.raises(KBError, match="not an ecosystem"):
+        build_advisories([], tmp_path / "out2", "r1", ecosystems=["PyPI"], functions_dir=fns)

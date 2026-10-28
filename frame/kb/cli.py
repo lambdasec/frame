@@ -139,7 +139,7 @@ def cmd_kb(args) -> int:
                       f"packs:   {st['packs']}\ncache:   {st['cache']}")
             return 0
         if args.kb_command == "mine-functions":
-            from frame.sca.advisories import _records
+            from frame.sca.advisories import MINER_REPORTS, _records
             from frame.sca.mine import GitHubSource, Progress, RecordedSource, mine
             ecos = [e.strip() for e in args.ecosystems.split(",") if e.strip()]
             existing = {}
@@ -165,8 +165,9 @@ def cmd_kb(args) -> int:
                     (out / f"{e}.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n")
             curate = [{"advisory": m.advisory, "internal_only": m.internal_only,
                        "outside_functions": m.outside_functions} for m in report if m.needs_curation]
-            (out / "needs-curation.json").write_text(json.dumps(curate, indent=1) + "\n")
-            (out / "progress.json").write_text(json.dumps({
+            curation_file, progress_file = MINER_REPORTS          # build-advisories skips them
+            (out / curation_file).write_text(json.dumps(curate, indent=1) + "\n")
+            (out / progress_file).write_text(json.dumps({
                 "processed": progress.processed, "rate_limited": progress.rate_limited,
                 "resume_after": progress.resume_after or args.since or ""}, indent=1) + "\n")
             mined = sum(1 for m in report if m.entries)
