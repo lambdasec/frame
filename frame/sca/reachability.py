@@ -228,6 +228,10 @@ def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
         if fn_ids and not modules:
             # an advisory naming functions also names their packages (Java classes, C# types)
             modules = {re.sub(r"\.[^.]+\.[^.]+$", "", i) for i in fn_ids if i.count(".") >= 2}
+        classes = sorted({x["id"] for x in f.get("classes", [])})
+        if classes and not modules:
+            # no function named, but the fix commit names the classes it changed: their packages
+            modules = {c.rsplit(".", 1)[0] for c in classes if "." in c}
         imported_in = sorted({fu.rel for fu in files for m in modules
                               if any(_imports_module(eco, v, m) for v in fu.imports | fu.wildcards)})
         calls = []
@@ -238,4 +242,5 @@ def annotate(findings: List[dict], usage: Usage, root: Path) -> None:
                     calls.append(call)
         level = "called" if calls else "imported" if imported_in else "installed"
         f["reachability"] = {"level": level, "imported_in": imported_in[:20], "calls": calls[:50],
+                             **({"changed_classes": classes} if classes else {}),
                              "analysed": bool(files)}

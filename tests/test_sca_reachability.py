@@ -149,3 +149,24 @@ def test_function_files_are_validated(tmp_path):
     (fns / "npm.json").write_text(json.dumps({"GHSA-x": [{"id": "a.b", "source": "guessed"}]}))
     with pytest.raises(KBError, match="source"):
         build_advisories([raw], tmp_path / "out", "r1", functions_dir=fns)
+
+
+def test_a_changed_class_gives_the_imported_level_and_is_never_a_function(tmp_path):
+    """No vulnerable function is known, but the fix commit names the class it changed: its
+    package decides `imported`, and it is not matched as a call or used as a sink."""
+    from frame.sca.reachability import Usage, annotate
+    (tmp_path / "pom.xml").write_text("<project/>")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.java").write_text(
+        "import org.springframework.util.MimeTypeUtils;\nclass App { void f(String s) { MimeTypeUtils.parseMimeType(s); } }\n")
+    (tmp_path / "src" / "Other.java").write_text("import com.example.Thing;\nclass Other {}\n")
+    cls = [{"id": "org.springframework.util.MimeTypeUtils", "kind": "class", "source": "fix-commit"}]
+    hit = {"ecosystem": "Maven", "package": "org.springframework:spring-core", "path": "pom.xml", "classes": cls}
+    miss = {"ecosystem": "Maven", "package": "org.apache.tomcat:tomcat-coyote", "path": "pom.xml",
+            "classes": [{"id": "org.apache.coyote.http2.Http2Parser", "kind": "class", "source": "fix-commit"}]}
+    plain = {"ecosystem": "Maven", "package": "org.example:lib", "path": "pom.xml"}
+    annotate([hit, miss, plain], Usage(tmp_path, ()), tmp_path)
+    assert hit["reachability"]["level"] == "imported" and hit["reachability"]["imported_in"] == ["src/App.java"]
+    assert hit["reachability"]["calls"] == [] and hit["reachability"]["changed_classes"] == [cls[0]["id"]]
+    assert miss["reachability"]["level"] == "installed" and miss["reachability"]["changed_classes"]
+    assert plain["reachability"]["level"] == "installed" and "changed_classes" not in plain["reachability"]

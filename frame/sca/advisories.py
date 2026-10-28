@@ -234,12 +234,15 @@ class AdvisoryDB:
                 extra = json.loads(gzip.decompress(fn_file.read_bytes())).get("functions", {})
                 for advs in db.tables[eco].values():
                     for adv in advs:
-                        have = {x["id"] for x in adv.get("functions", [])}
+                        have = {x["id"] for x in adv.get("functions", []) + adv.get("classes", [])}
                         for ident in [adv["id"], *adv.get("aliases", [])]:
                             for fn in extra.get(ident, []):
                                 if fn["id"] not in have:
                                     have.add(fn["id"])
-                                    adv.setdefault("functions", []).append(fn)
+                                    # a class the fix changed is not a function: only reachability's
+                                    # `imported` level reads it, never sinks or call matching
+                                    key = "classes" if fn.get("kind") == "class" else "functions"
+                                    adv.setdefault(key, []).append(fn)
         return db
 
     @classmethod
@@ -321,6 +324,7 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                        if pkg.repo else {}),
                     "via": [f"{df.packages[k].name}@{df.packages[k].version}" for k in chain],
                     "functions": adv.get("functions", []),
+                    "classes": adv.get("classes", []),
                     "category": "dependency", "evidence": "matched"})
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, None: 4}
     out.sort(key=lambda f: (rank.get(f["severity"], 4), f["path"], f["package"], f["id"]))

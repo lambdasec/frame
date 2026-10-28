@@ -109,6 +109,8 @@ For Python, JavaScript/TypeScript, Java and C#, each vulnerability is checked ag
 | `called` | your code calls a function the advisory names as vulnerable (file and line given) |
 | `tainted` | attacker data reaches that call (`frame scan --sca`) |
 
+Without a known vulnerable function, the fallback is the module: Python, npm and NuGet packages are `imported` when your code imports them. A Maven artifact's coordinates do not say which Java packages it holds, so for Java the fallback comes from the fix commit instead: the advisory dataset records the classes a fix changed (read from each file's own package declaration), and the advisory is `imported` when your code imports from that package. The output names the class either way (`the fix changed org.springframework.util.MimeTypeUtils (imported in src/App.java)`). The package is the class's own: jackson-databind's fixes change `com.fasterxml.jackson.databind.jsontype.impl`, which applications rarely import directly, and widening it to `com.fasterxml.jackson` would also match jackson-core, so it is not widened.
+
 The evidence is positive only. A package your code never imports can still be reached through another library (Log4Shell reached applications that logged through SLF4J), so an unused package stays `installed`, never "unreachable". `--no-reachability` skips reading the source.
 
 `frame scan DIR --sca` puts dependencies into the source scan: every function an advisory names becomes a taint sink, so attacker data reaching it is a finding at the call site (`vulnerable_dependency`, CWE-1395, category `dependency`, at the advisory's severity). A call that is already a sink keeps its own finding and raises the advisory to `tainted`:

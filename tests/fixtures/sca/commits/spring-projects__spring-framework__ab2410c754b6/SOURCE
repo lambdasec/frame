@@ -1,0 +1,3 @@
+spring-projects/spring-framework (Apache-2.0) commit ab2410c7, a fix for GHSA-4487-x383-qpph,
+and the files it changed at its parent; osv.json is the OSV record (references trimmed to this commit).
+The fix changes MimeTypeUtils outside any function: a class-level entry, no function.

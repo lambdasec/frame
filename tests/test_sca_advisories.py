@@ -278,3 +278,19 @@ def test_a_pull_from_a_mirror_is_what_later_reads_use(tmp_path):
     out = run("deps", str(proj), "--vulns", "--fail-on", "critical", "-f", "json")
     data = json.loads(out.stdout)
     assert data["not_checked"] == [] and any(v["package"] == "lodash" for v in data["vulnerabilities"])
+
+
+def test_class_entries_load_as_classes_not_functions(tmp_path, monkeypatch):
+    raw = tmp_path / "osv"
+    raw.mkdir()
+    (raw / "all.json").write_text(json.dumps(RECORDS))
+    adv_id = next(r["id"] for r in RECORDS if any(a["package"]["ecosystem"] == "npm" for a in r.get("affected", [])))
+    fns = tmp_path / "fns"
+    fns.mkdir()
+    (fns / "npm.json").write_text(json.dumps({adv_id: [
+        {"id": "pkg.func", "source": "curated"}, {"id": "a.b.Changed", "kind": "class", "source": "fix-commit"}]}))
+    build_advisories([raw], tmp_path / "mirror", "r1", ["npm"], functions_dir=fns)
+    db = AdvisoryDB.from_dir(tmp_path / "mirror", ["npm"])
+    adv = next(a for advs in db.tables["npm"].values() for a in advs if a["id"] == adv_id)
+    assert [f["id"] for f in adv.get("functions", []) if f["id"] in ("pkg.func", "a.b.Changed")] == ["pkg.func"]
+    assert [c["id"] for c in adv["classes"]] == ["a.b.Changed"]

@@ -152,3 +152,27 @@ def test_a_chain_of_private_callers_longer_than_three_is_lifted():
     assert [(e["id"], e.get("lifted_from")) for e in m.entries] == [
         ("org.owasp.validator.html.scan.AntiSamyDOMScanner.scan", "AntiSamyDOMScanner.processStyleTag")]
     assert not m.internal_only
+
+
+def test_a_fix_outside_any_function_still_names_the_class_it_changed():
+    """GHSA-4487-x383-qpph (Spring): the fix changes MimeTypeUtils outside any function, so no
+    function is named; the class is, from the file's own package declaration."""
+    d = COMMITS / "spring-projects__spring-framework__ab2410c754b6"
+    rec = json.loads((d / "osv.json").read_text())
+    m = mine_record(rec, "Maven", "org.springframework:spring-core", RecordedSource(COMMITS))
+    assert not m.entries and m.needs_curation                          # still listed for a person
+    assert [c["id"] for c in m.classes] == ["org.springframework.util.MimeTypeUtils"]
+    tables, _ = mine([rec], ["Maven"], RecordedSource(COMMITS))
+    assert tables["Maven"][rec["id"]] == [{"id": "org.springframework.util.MimeTypeUtils", "kind": "class",
+                                           "source": "fix-commit", "commit": m.classes[0]["commit"]}]
+    curated = {"Maven": {rec["id"]: [{"id": "org.springframework.util.MimeTypeUtils.parseMimeType", "source": "curated"}]}}
+    tables, _ = mine([rec], ["Maven"], RecordedSource(COMMITS), existing=curated)
+    assert tables == curated                                           # functions known: no class fallback
+
+
+def test_declared_type_reads_the_declarations_not_the_path():
+    from frame.sca.mine import declared_type
+    assert declared_type("package a.b;\npublic class P { int x = 1; }\n", "java", "x/y/P.java") == "a.b.P"
+    assert declared_type("package a.b;\nclass Other {}\n", "java", "P.java") is None
+    assert declared_type("class P {}\n", "java", "P.java") is None
+    assert declared_type("namespace A.B;\npublic sealed class P { }", "csharp", "P.cs") == "A.B.P"

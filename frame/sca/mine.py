@@ -12,7 +12,11 @@ the public functions that commit changed, as Frame canonical call ids (`frame kb
        the same file that call it directly (transitively); `lifted_from` names it. A fix that only
        changes internals nothing public calls directly yields nothing: it needs curating.
 
-Entries are `{"id", "source": "fix-commit", "commit", ["lifted_from"]}`. Nothing is guessed:
+Entries are `{"id", "source": "fix-commit", "commit", ["lifted_from"]}`. When no function can be
+named (only internal ones changed, or code outside any function), a Java / C# fix still names
+the classes it changed: `{"id": "<package>.<Type>", "kind": "class", ...}`, read from the
+file's own package / namespace declaration and its type named after the file. Frame uses them
+only for the `imported` level (the package), never as functions. Nothing is guessed:
 a file Frame cannot place in its package, or a name it cannot prove public, is left out.
 """
 
@@ -397,11 +401,37 @@ def _lift(fns: List[Fn], changed: List[Fn], depth: int = 12) -> Dict[str, str]:
     return out
 
 
+def declared_type(text: str, lang: str, path: str) -> Optional[str]:
+    """`<package>.<Type>` of a Java / C# file: its package (namespace) declaration and the type
+    it declares named after the file. None when either is missing (not guessed from the path)."""
+    if lang not in ("java", "csharp"):
+        return None
+    root = _parser(lang).parse(text.encode("utf-8")).root_node
+    stem = Path(path).stem
+    package, found = "", False
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        if n.type in ("package_declaration", "namespace_declaration", "file_scoped_namespace_declaration"):
+            name = n.child_by_field_name("name") or next(
+                (c for c in n.named_children if c.type in ("scoped_identifier", "identifier", "qualified_name")), None)
+            if name is not None and not package:
+                package = _t(name)
+        if n.type in ("class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
+                      "struct_declaration") and _t(n.child_by_field_name("name")) == stem:
+            found = True
+        if n.type in ("program", "compilation_unit", "namespace_declaration", "declaration_list",
+                      "file_scoped_namespace_declaration"):
+            stack.extend(n.named_children)
+    return f"{package}.{stem}" if package and found else None
+
+
 @dataclass
 class Mined:
     advisory: str
     modified: str = ""                                          # the OSV record's `modified`
     entries: List[dict] = field(default_factory=list)
+    classes: List[dict] = field(default_factory=list)          # changed classes (when no function is named)
     internal_only: List[str] = field(default_factory=list)    # changed functions nothing public reaches
     outside_functions: List[str] = field(default_factory=list)  # files changed outside any function
     skipped: List[str] = field(default_factory=list)
@@ -439,6 +469,9 @@ def mine_record(record: dict, ecosystem: str, package: str, source) -> Mined:
                 res.skipped.append(f"{path}: not available at {parent[:12]}")
                 continue
             lines = changed_old_lines(f.get("patch", ""))
+            cls = declared_type(text, lang, path)
+            if cls and cls not in {c["id"] for c in res.classes}:
+                res.classes.append({"id": cls, "kind": "class", "source": "fix-commit", "commit": url})
             fns = functions(text, lang)
             changed = [fn for fn in fns if any(fn.start <= n <= fn.end for n in lines)]
             if any(not any(fn.start <= n <= fn.end for fn in fns) for n in lines):
@@ -508,9 +541,13 @@ def mine(records: Iterable[dict], ecosystems: Iterable[str], source, limit: Opti
             report.append(m)
             prog.processed += 1
             prog.resume_after = max(prog.resume_after, m.modified)
+            have = out[eco].get(rec["id"], [])
             if m.entries:
-                have = out[eco].setdefault(rec["id"], [])
                 ids = {x["id"] for x in have}
-                have.extend(e for e in m.entries if e["id"] not in ids)
+                kept = [x for x in have if x.get("kind") != "class"]   # functions replace a class fallback
+                out[eco][rec["id"]] = kept + [e for e in m.entries if e["id"] not in ids]
+            elif m.classes and not any(x.get("kind") != "class" for x in have):
+                ids = {x["id"] for x in have}
+                out[eco][rec["id"]] = have + [c for c in m.classes if c["id"] not in ids]
             break
     return out, report
