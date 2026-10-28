@@ -465,3 +465,48 @@ def test_the_inner_call_of_a_curried_call_is_a_sink(body):
 def test_a_constant_template_called_with_request_data_is_not_template_injection():
     code = _TEMPLATE_APP.replace("BODY", " res.send(_.template('<b><%- n %></b>')({ n: req.query.n })); ")
     assert "CWE-1336" not in cwes(code)
+
+
+# ---- lodash's escaping template: <%- %> output is HTML-safe, nothing else is -----------
+
+_LODASH_APP = ("const _ = require('lodash');\nconst express = require('express');\nconst app = express();\n"
+               "const mysql = require('mysql');\nconst conn = mysql.createConnection({});\n"
+               "app.get('/t', (req, res) => { BODY });\n")
+
+
+@pytest.mark.parametrize("body", [
+    " res.send(_.template('<b><%- n %></b>')({ n: req.query.n })); ",
+    " const t = _.template('<b><%- n %></b>'); res.send(t({ n: req.query.n })); ",
+])
+def test_an_escaping_only_template_is_not_xss(body):
+    assert "CWE-79" not in cwes(_LODASH_APP.replace("BODY", body))
+
+
+@pytest.mark.parametrize("body", [
+    " res.send(_.template('<b><%= n %></b>')({ n: req.query.n })); ",                 # <%= is raw
+    " res.send(_.template('<% print(n) %>')({ n: req.query.n })); ",                  # code prints raw
+    " res.send(_.template('<b>${n}</b>')({ n: req.query.n })); ",                     # lodash interpolates ${}
+    " let t = _.template('<b><%- n %></b>'); res.send(t({ n: req.query.n })); ",      # a let can be rebound
+    " res.send(_.template('<%- n %>', { escape: /{{(.+?)}}/g })({ n: req.query.n })); ",   # options
+])
+def test_a_template_that_can_print_raw_is_still_xss(body):
+    assert "CWE-79" in cwes(_LODASH_APP.replace("BODY", body))
+
+
+def test_templatesettings_in_the_file_disables_it():
+    code = _LODASH_APP.replace("const app", "_.templateSettings.escape = /{{(.+?)}}/g;\nconst app").replace(
+        "BODY", " res.send(_.template('<b><%- n %></b>')({ n: req.query.n })); ")
+    assert "CWE-79" in cwes(code)
+
+
+def test_html_escaping_is_not_sql_escaping():
+    body = " conn.query('SELECT ' + _.template('<%- n %>')({ n: req.query.n })); "
+    assert "CWE-89" in cwes(_LODASH_APP.replace("BODY", body))
+
+
+def test_another_functions_t_is_not_the_escaping_template():
+    body = (" const t = _.template('<b><%- n %></b>'); res.send(t({ n: req.query.n })); });\n"
+            "app.get('/u', (req, res) => { const t = (x) => x; res.send(t(req.query.n)); ")
+    code = _LODASH_APP.replace("BODY", body)
+    r = FrameScanner(language="javascript").scan(code, "t")
+    assert {v.line for v in r.vulnerabilities if v.cwe_id == "CWE-79"} == {7}

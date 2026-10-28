@@ -2349,7 +2349,9 @@ class JavaScriptFrontend:
                 self._ident_counter += 1
                 instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
                 func_name = f"{inner}.{self._get_text(prop_node)}"
-        elif func_node is not None and func_node.type == "call_expression":
+        self._note_escaping_const(call_node)
+        escaping = self._escaping_callee(func_node)
+        if func_node is not None and func_node.type == "call_expression":
             func_name = self._hoist_callee_call(func_node, loc, instrs)
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
@@ -2409,6 +2411,16 @@ class JavaScriptFrontend:
                 if 0 <= idx < len(args):
                     instrs.extend(self._check_expression_for_taint_source(args[idx], target, loc))
 
+        # `f(x)(req.query.n)`: calling the value a hoisted call returned has no spec, so it returns
+        # what its arguments carry -- including request data written inline in them
+        if func_name.startswith("$chain") and "." not in func_name:
+            for arg in args:
+                parts = ([c.child_by_field_name("value") for c in arg.named_children if c.type == "pair"]
+                         if arg.type == "object" else list(arg.named_children) if arg.type == "array" else [arg])
+                for part in parts:
+                    if part is not None:
+                        instrs.extend(self._check_expression_for_taint_source(part, target, loc))
+
         # `req.query.p.trim()`, `req.headers.authorization.split(' ')[0]`: a method called on an
         # inline request value returns request data (a string method keeps the payload).
         if func_node is not None and func_node.type == "member_expression":
@@ -2434,7 +2446,59 @@ class JavaScriptFrontend:
                             call=func_name
                         ))
 
+        if escaping:                                      # last: after the result is defined and tainted
+            instrs.append(Sanitize(loc=loc, var=PVar(target), sanitizes=[SinkKind.HTML_OUTPUT, SinkKind.XSS]))
         return instrs
+
+    _TEMPLATE_COMPILERS = frozenset({"lodash.template", "_.template", "underscore.template", "lodash/template"})
+
+    def _escaping_template(self, func_node: TSNode) -> bool:
+        """`_.template("<b><%- x %></b>")`: a literal template whose only tags are `<%- %>`
+        (lodash / underscore HTML-escape them), so what the compiled template returns is escaped
+        for HTML. Not when the template has `<%= %>` (raw), `<% %>` (code that can print raw) or
+        `${...}` (lodash interpolates it raw), when an options argument or `templateSettings`
+        could change the delimiters, or when the template is not a literal."""
+        if func_node is None or func_node.type != "call_expression":
+            return False
+        if self._get_call_name(func_node) not in self._TEMPLATE_COMPILERS:
+            return False
+        args = self._get_call_args(func_node)
+        if len(args) != 1 or args[0].type not in ("string", "template_string"):
+            return False
+        if args[0].type == "template_string" and any(c.type == "template_substitution" for c in args[0].children):
+            return False
+        text = self._get_text(args[0])
+        if "templateSettings" in self._source or "${" in text:
+            return False
+        tags = re.findall(r"<%(.?)", text)
+        return bool(tags) and all(t == "-" for t in tags)
+
+    _FUNCTION_TYPES = ("function_declaration", "function_expression", "arrow_function", "method_definition",
+                       "generator_function_declaration", "program")
+
+    def _scope_of(self, node: TSNode) -> Tuple[int, int]:
+        n = node.parent
+        while n is not None and n.type not in self._FUNCTION_TYPES:
+            n = n.parent
+        return (n.start_byte, n.end_byte) if n is not None else (0, 0)
+
+    def _escaping_callee(self, func_node: TSNode) -> bool:
+        """The callee is an escaping template: compiled right there (`_.template("<%- x %>")(d)`),
+        or a `const` in the same function bound to one (`const t = _.template(...); t(d)`)."""
+        if func_node is None:
+            return False
+        if func_node.type == "identifier":
+            return (self._scope_of(func_node), self._get_text(func_node)) in getattr(self, "_escaping_consts", set())
+        return self._escaping_template(func_node)
+
+    def _note_escaping_const(self, call_node: TSNode) -> None:
+        decl = call_node.parent
+        stmt = decl.parent if decl is not None else None
+        if (decl is not None and decl.type == "variable_declarator" and stmt is not None
+                and stmt.type == "lexical_declaration" and self._get_text(stmt).startswith("const")
+                and self._escaping_template(call_node)):
+            name = self._get_text(decl.child_by_field_name("name"))
+            self._escaping_consts = getattr(self, "_escaping_consts", set()) | {(self._scope_of(call_node), name)}
 
     def _hoist_callee_call(self, func_node: TSNode, loc: Location, instrs: List[Instr]) -> str:
         """`f(x)(y)` (`_.template(src)(data)`, `connect(m)(C)`): the inner call runs first and its
@@ -3081,6 +3145,12 @@ class JavaScriptFrontend:
 
         elif node.type == "call_expression":
             func = node.child_by_field_name("function")
+            if func is not None and self._escaping_callee(func):
+                # the compiled, escaping template's output: a temporary sanitized for HTML only
+                out = f"$chain{self._ident_counter}"
+                self._ident_counter += 1
+                self._add_instrs(self._translate_call_assignment(out, node, self._get_location(node)))
+                return ExpVar(PVar(out))
             if func is not None and func.type == "call_expression":
                 hoisted: List[Instr] = []
                 func_exp = ExpVar(PVar(self._hoist_callee_call(func, self._get_location(func), hoisted)))
