@@ -282,9 +282,10 @@ def format_plan(plans: List[dict]) -> str:
             if p["ecosystem"] == "GIT":
                 # OSV's GIT records name the fixing commit, not the release that first contains it
                 lines.append(f"  {p['package']}@{p['current']}: fixed upstream by commit (OSV names no release); "
-                             f"update to a release after the fix ({', '.join(p['unfixed'])})")
+                             f"update to a release after the fix ({', '.join(p['unfixed'])})  [{p['path']}]")
             else:
-                lines.append(f"  {p['package']}@{p['current']}: no fixed version known ({', '.join(p['unfixed'])})")
+                lines.append(f"  {p['package']}@{p['current']}: no fixed version known ({', '.join(p['unfixed'])})  "
+                             f"[{p['path']}]")
             continue
         if p["action"] == "removed":
             lines.append(f"  {p['package']}@{p['current']}: leaves the tree (no upgraded package depends on it)  "

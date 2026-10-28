@@ -253,15 +253,25 @@ def test_vendored_c_walkthrough(tmp_path):
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "."), ["third_party/cjson/cJSON.h  (GIT vendored): 1 packages, 1 direct",
-                         "third_party/zlib/zlib.h  (GIT vendored): 1 packages, 1 direct"]),
-        (("deps", ".", "--vulns"), ["13 known vulnerabilities:",
+                         "third_party/zlib/zlib.h  (GIT vendored): 1 packages, 1 direct",
+                         "vendor/zlib-src  (GIT vendored): 1 packages, 1 direct"]),
+        (("deps", ".", "--vulns"), ["19 known vulnerabilities:",
                                     "CRITICAL github.com/madler/zlib@1.2.11 (direct) CVE-2022-37434"]),
         (("deps", ".", "--vulns", "--plan"),
          ["github.com/madler/zlib@1.2.11: fixed upstream by commit (OSV names no release); update to a release after "
-          "the fix (CVE-2018-25032, CVE-2022-37434, CVE-2023-45853, CVE-2026-22184, CVE-2026-3381, CVE-2026-76844)"]),
+          "the fix (CVE-2018-25032, CVE-2022-37434, CVE-2023-45853, CVE-2026-22184, CVE-2026-3381, CVE-2026-76844)  "
+          "[vendor/zlib-src]", "Upgrade plan (3 packages):"]),
     ]
     for args, lines in shown:
         out = frame(work, env, *args)
         for line in lines:
             assert line in out and line in readme, (args, line, out[-1500:])
     assert "include/zlib.h" not in frame(work, env, "deps", ".")            # a lone header is not vendored zlib
+    lone = tmp_path / "lone" / "z"                                          # inflate.c alone fits three releases
+    lone.mkdir(parents=True)
+    shutil.copy(work / "vendor" / "zlib-src" / "inflate.c", lone)
+    out = frame(work, env, "deps", str(tmp_path / "lone"), "--vulns")
+    for line in ["warning: github.com/madler/zlib 1.2.9 or 1.2.10 or 1.2.11 (z): 1 advisory(ies) not decided, they "
+                 "affect some of the 3 releases these files are in: CVE-2026-76844", "5 known vulnerabilities:",
+                 "NOT DECIDED: 1 advisory(ies) (see the warnings above)"]:
+        assert line in out and line in readme, (line, out)

@@ -322,7 +322,7 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
     out: List[dict] = []
     for df in files:
         for key, pkg in sorted(df.packages.items()):
-            if not pkg.version and not pkg.tags:
+            if not pkg.version and not pkg.tags and not pkg.alternatives:
                 continue
             if pkg.repo and not pkg.tags and pkg.commit and pkg.checkout:
                 # an untagged submodule commit: OSV's commit ranges, on the checkout's history
@@ -345,6 +345,19 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     if ids:
                         db.notes.append(f"{pkg.repo}@{pkg.commit[:12]} ({df.path}): {len(ids)} advisory(ies) not "
                                         f"decided, {why}: {', '.join(ids[:5])}")
+            elif pkg.repo and pkg.alternatives:           # one of several releases (a vendored copy's files)
+                candidates, split = [], []
+                for adv in db.repo_advisories(pkg.repo):
+                    hits = [any(t in adv.get("versions", ()) for t in tags) for tags in pkg.alternatives]
+                    if all(hits):
+                        candidates.append((adv, True))
+                    elif any(hits):
+                        split.append(adv["id"])           # affects some of the releases it may be
+                        db.undecided.append(adv.get("severity"))
+                if split:
+                    db.notes.append(f"{pkg.repo} {pkg.version} ({df.path}): {len(split)} advisory(ies) not decided, "
+                                    f"they affect some of the {len(pkg.alternatives)} releases these files are in: "
+                                    f"{', '.join(split[:5])}")
             elif pkg.repo:                                # C/C++: OSV's affected tags of the repository
                 candidates = [(adv, any(t in adv.get("versions", ()) for t in pkg.tags))
                               for adv in db.repo_advisories(pkg.repo)]
@@ -362,7 +375,10 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     "purl": pkg.purl, "path": df.path, "direct": pkg.direct, "dev": pkg.dev,
                     "fixed": [] if pkg.repo else fixed_versions(pkg.ecosystem, pkg.version, adv),
                     **({"repo": pkg.repo, "tag": next(t for t in pkg.tags if t in adv.get("versions", ()))}
-                       if pkg.repo and pkg.tags else {"repo": pkg.repo, "commit": pkg.commit} if pkg.repo else {}),
+                       if pkg.repo and pkg.tags else
+                       {"repo": pkg.repo, "tags": [next(t for t in tags if t in adv.get("versions", ()))
+                                                   for tags in pkg.alternatives]}
+                       if pkg.repo and pkg.alternatives else {"repo": pkg.repo, "commit": pkg.commit} if pkg.repo else {}),
                     "via": [f"{df.packages[k].name}@{df.packages[k].version}" for k in chain],
                     "functions": adv.get("functions", []),
                     "classes": adv.get("classes", []),

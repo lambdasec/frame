@@ -28,6 +28,7 @@
      "reference": "https://github.com/Mbed-TLS/mbedtls/blob/v3.5.2/include/mbedtls/build_info.h"},
     {"name": "libxml2", "repo": "github.com/gnome/libxml2", "tag": ["v{V}", "LIBXML2_{V_}", "LIBXML_{V_}"],
      "header": "xmlversion.h", "version": {"macro": "LIBXML_DOTTED_VERSION"}, "companions": ["../../parser.c"],
+     "exclude_tags": {"LIBXML2_6_0": "names 2.6.0 (LIBXML + 2_6_0), not 6.0"},
      "reference": "https://gitlab.gnome.org/GNOME/libxml2/-/blob/v2.12.3/include/libxml/xmlversion.h.in"},
     {"name": "pcre2", "repo": "github.com/pcre2project/pcre2", "tag": "pcre2-{V}",
      "header": ["pcre2.h", "pcre2.h.generic"], "version": {"parts": ["PCRE2_MAJOR", "PCRE2_MINOR"]},

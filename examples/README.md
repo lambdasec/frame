@@ -38,7 +38,7 @@ A .NET app whose vulnerable MSAL comes through Azure.Identity, and a Go module w
 
 ### [vendored-c](vendored-c/README.md): C libraries copied into a repository
 
-A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere. Frame identifies each by the version its own header declares (only when the library's sources are beside it), and matches the 13 known vulnerabilities by release tag.
+A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere. Frame identifies each by the version its own header declares (only when the library's sources are beside it), and a second zlib copy in `vendor/zlib-src/` with no header at all by its files' git blob ids, then matches the 19 known vulnerabilities by release tag.
 *Runs offline.*
 
 ### [secrets](secrets/README.md): hardcoded credentials

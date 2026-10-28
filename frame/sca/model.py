@@ -39,6 +39,7 @@ class Package:
     tags: List[str] = field(default_factory=list)   # C/C++: the release tag(s) this version is
     commit: str = ""                     # a git submodule: the full commit it is pinned to
     checkout: str = ""                   # ... and its checkout, whose history decides commit ranges
+    alternatives: List[List[str]] = field(default_factory=list)   # C/C++: one of these releases (each its tags)
 
     @property
     def key(self) -> str:

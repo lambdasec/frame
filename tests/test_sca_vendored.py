@@ -139,6 +139,14 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
     refs = subprocess.run(["git", "ls-remote", "--tags", f"https://{lib.repo}", f"refs/tags/{h['tag']}"],
                           capture_output=True, text=True, timeout=300).stdout
     assert f"refs/tags/{h['tag']}" in refs
+    # without its header, the same sources are known by their blob ids (sqlite's amalgamation is
+    # generated, so its repository has no sqlite3.c to fingerprint)
+    if name != "sqlite":
+        (tmp_path / h["header"]).unlink()
+        from frame.sca.vendored import identify_by_fingerprint
+        files, _ = identify_by_fingerprint(list(tmp_path.rglob("*.c")), tmp_path)
+        [pkg] = [p for f in files for p in f.packages.values()]
+        assert pkg.version == h["version"] or any(h["tag"] in a for a in pkg.alternatives)
 
 
 def test_without_the_scan_extra_vendored_copies_are_said_not_read(tmp_path, monkeypatch):
@@ -152,3 +160,98 @@ def test_without_the_scan_extra_vendored_copies_are_said_not_read(tmp_path, monk
     monkeypatch.setattr(V, "_c_parser", missing)
     files, warnings = V.find_vendored(tmp_path)
     assert files == [] and "pip install" in warnings[0] and "1 possible vendored" in warnings[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# copies without their version header: file fingerprints (git blob ids at each release)
+
+EXAMPLE = Path(__file__).parent.parent / "examples" / "vendored-c" / "third_party"
+
+
+def _copy(dst: Path, *files: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        (dst / f.name).write_bytes(f.read_bytes())
+
+
+def test_the_fingerprint_data_is_well_formed():
+    from frame.sca.vendored import _indices, _runs, fingerprints
+    data = fingerprints()
+    assert set(data) == set(LIBS) - {"sqlite"}           # sqlite's sources are generated
+    for name, lib in data.items():
+        assert lib["releases"] == sorted(lib["releases"], key=lambda v: [int(x) for x in v.split(".")])
+        assert len(set(lib["releases"])) == len(lib["releases"])
+        n = len(lib["releases"])
+        for blobs in lib["files"].values():
+            for blob, runs in blobs.items():
+                assert re.fullmatch(r"[0-9a-f]{16}", blob) and max(_indices(runs)) < n
+    assert "6.0" not in data["libxml2"]["releases"]       # LIBXML2_6_0 is 2.6.0 (exclude_tags)
+    assert _runs([0, 1, 2, 5, 7, 8]) == "0-2,5,7-8" and _indices("0-2,5,7-8") == {0, 1, 2, 5, 7, 8}
+
+
+def test_a_copy_without_its_header_is_known_by_its_files(tmp_path):
+    """zlib 1.2.11's inflate.c and deflate.c (from the release archive) with zlib.h renamed away,
+    and cJSON 1.7.14's cJSON.c alone: each is exactly its release."""
+    _copy(tmp_path / "src" / "z", EXAMPLE / "zlib" / "inflate.c", EXAMPLE / "zlib" / "deflate.c")
+    (tmp_path / "src" / "z" / "z.h").write_bytes((EXAMPLE / "zlib" / "zlib.h").read_bytes())
+    _copy(tmp_path / "lib" / "cj", EXAMPLE / "cjson" / "cJSON.c")
+    from frame.sca import read_dependencies
+    report = read_dependencies(tmp_path)
+    got = {(f.path, f.kind, p.name, p.version, tuple(p.tags)) for f in report.files for p in f.packages.values()}
+    assert got == {("lib/cj", "vendored", "github.com/davegamble/cjson", "1.7.14", ("v1.7.14",)),
+                   ("src/z", "vendored", "github.com/madler/zlib", "1.2.11", ("v1.2.11",))}
+
+
+def test_windows_line_endings_are_the_same_file(tmp_path):
+    from frame.sca.vendored import identify_by_fingerprint
+    for f in ("inflate.c", "deflate.c"):
+        (tmp_path / f).write_bytes((EXAMPLE / "zlib" / f).read_bytes().replace(b"\n", b"\r\n"))
+    files, _ = identify_by_fingerprint(list(tmp_path.glob("*.c")), tmp_path)
+    assert [p.version for f in files for p in f.packages.values()] == ["1.2.11"]
+
+
+def test_an_edited_file_is_not_upstream_s(tmp_path):
+    from frame.sca.vendored import identify_by_fingerprint
+    (tmp_path / "inflate.c").write_bytes((EXAMPLE / "zlib" / "inflate.c").read_bytes() + b"/* local patch */\n")
+    assert identify_by_fingerprint([tmp_path / "inflate.c"], tmp_path) == ([], [])
+
+
+def test_a_header_identified_copy_is_not_reported_twice(tmp_path):
+    from frame.sca import read_dependencies
+    _copy(tmp_path / "zlib", *(EXAMPLE / "zlib" / f for f in ("zlib.h", "inflate.c", "deflate.c")))
+    assert [(f.path, f.kind) for f in read_dependencies(tmp_path).files] == [("zlib/zlib.h", "vendored")]
+
+
+def test_one_file_shared_by_several_releases_decides_only_what_they_agree_on(tmp_path):
+    """inflate.c alone is the same in zlib 1.2.9, 1.2.10 and 1.2.11: an advisory affecting all
+    three is reported, one affecting some is not decided (never reported as not affecting)."""
+    from frame.sca.advisories import AdvisoryDB, match
+    from frame.sca.osv import git_entries, table
+    from frame.sca.vendored import identify_by_fingerprint
+    _copy(tmp_path / "z", EXAMPLE / "zlib" / "inflate.c")
+    files, _ = identify_by_fingerprint([tmp_path / "z" / "inflate.c"], tmp_path)
+    [pkg] = [p for f in files for p in f.packages.values()]
+    assert pkg.version == "1.2.9 or 1.2.10 or 1.2.11" and not pkg.tags
+    assert pkg.alternatives == [["v1.2.9"], ["v1.2.10"], ["v1.2.11"]]
+    records = json.loads(gzip.decompress((F / "zlib_osv_records.json.gz").read_bytes()))
+    by: dict = {}
+    for rec in records:
+        for repo, e in git_entries(rec):
+            by.setdefault(repo, []).append(e)
+    db = AdvisoryDB(tables={"GIT": table("GIT", by)["packages"]})
+    found = {f["id"] for f in match(files, db)}
+    listed = {r["id"]: {t for a in r["affected"] for t in a.get("versions") or []} for r in records}
+    assert found == {i for i, v in listed.items() if {"v1.2.9", "v1.2.10", "v1.2.11"} <= v}
+    some = {i for i, v in listed.items() if v & {"v1.2.9", "v1.2.10", "v1.2.11"}} - found
+    assert len(db.undecided) == len(some) and (not some or "not decided" in db.notes[0])
+
+
+def test_files_of_different_releases_are_said_not_matched(tmp_path, monkeypatch):
+    import frame.sca.vendored as V
+    (tmp_path / "inflate.c").write_bytes(b"a")
+    (tmp_path / "deflate.c").write_bytes(b"b")
+    fake = {"zlib": {"releases": ["1.0", "1.1"],
+                     "files": {"inflate.c": {V.blob_id(b"a")[:16]: "0"}, "deflate.c": {V.blob_id(b"b")[:16]: "1"}}}}
+    monkeypatch.setattr(V, "fingerprints", lambda: fake)
+    files, warnings = V.identify_by_fingerprint([tmp_path / "inflate.c", tmp_path / "deflate.c"], tmp_path)
+    assert files == [] and "different releases" in warnings[0]
