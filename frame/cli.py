@@ -102,6 +102,10 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--apply", action="store_true",
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
+    deps_parser.add_argument("--mitigate", action="store_true",
+                             help="With --vulns: write each complete configuration mitigation not yet applied (a "
+                                  "properties file the library reads, else the Dockerfile), shown as a diff; with "
+                                  "--apply written, then confirmed by re-reading the project")
     deps_parser.add_argument("--registry", action="store_true",
                              help="With --licenses / --sbom: fill unknown licences from the registries (npm, PyPI, "
                                   "RubyGems, crates.io, NuGet); with --vulns: also list the project's declared ranges "
@@ -560,6 +564,7 @@ def cmd_deps(args) -> int:
             print(text)
         return 0
     findings = None
+    mitigation = None
     not_checked: list = []
     if args.vex:
         args.vulns = True
@@ -586,6 +591,25 @@ def cmd_deps(args) -> int:
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    "run `frame kb pull --advisories`")
+        mitigation = None
+        if findings and args.mitigate:
+            from frame.sca.mitigations import propose
+            m_edits, m_manual = propose(findings, target.resolve())
+            mitigation = {"edits": m_edits, "manual": m_manual, "confirmed": None}
+            if args.apply and m_edits:
+                for c in m_edits:
+                    dest = target.resolve() / c.path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(c.after, encoding="utf-8")
+                from frame.sca.advisories import AdvisoryDB, cached_revision_dir, ecosystems_of, match
+                from frame.sca.mitigations import annotate as annotate_mitigations
+                files_now = read_dependencies(target, exclude_dirs=excluded).files
+                again = match(files_now, AdvisoryDB.cached(ecosystems_of(files_now)))
+                annotate_mitigations(again, target.resolve(), cached_revision_dir(), excluded)
+                reasons = " ".join(c.reason for c in m_edits)
+                mitigation["confirmed"] = sorted({f"{f['package']}@{f['version']} {f['id']}" for f in again
+                                                  for m in f.get("mitigations", []) if m["applied"]
+                                                  and f["id"] in reasons})
         plans = None
         outcome = None
         verified = None
@@ -610,7 +634,7 @@ def cmd_deps(args) -> int:
             else:
                 print(text)
             return 1 if any(s.conflict for s in stmts) else 0
-        if args.plan or args.apply:
+        if args.plan or (args.apply and not args.mitigate):      # --apply writes what was asked for
             from frame.sca.apply import apply_plan
             from frame.sca.plan import plan
             registry = None
@@ -636,6 +660,10 @@ def cmd_deps(args) -> int:
                 findings = after
     if args.format == "json":
         data = report.to_dict()
+        if mitigation is not None:
+            data["mitigation"] = {"edits": [{"path": c.path, "reason": c.reason, "diff": c.diff()}
+                                            for c in mitigation["edits"]],
+                                  "manual": mitigation["manual"], "confirmed": mitigation["confirmed"]}
         if findings is not None:
             data["vulnerabilities"] = findings
             data["not_checked"] = not_checked
@@ -657,6 +685,16 @@ def cmd_deps(args) -> int:
             if exposure:
                 from frame.sca.solve import format_exposure
                 out += format_exposure(exposure)
+            if mitigation is not None:
+                out += "\n\nConfiguration mitigations" + ("" if args.apply else " (dry run; --apply writes them)") + ":"
+                for c in mitigation["edits"]:
+                    out += "\n" + c.diff()
+                for m in mitigation["manual"]:
+                    out += f"\nmanual: {m}"
+                if mitigation["confirmed"] is not None:
+                    out += f"\nApplied and confirmed by re-reading the project: {', '.join(mitigation['confirmed']) or 'none'}"
+                if not mitigation["edits"] and not mitigation["manual"]:
+                    out += "\n  nothing to apply"
             if plans is not None:
                 from frame.sca.plan import format_plan
                 out += format_plan(plans)

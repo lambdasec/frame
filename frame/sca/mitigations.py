@@ -427,7 +427,7 @@ def annotate(findings: List[dict], root: Path, revision_dir: Optional[Path], exc
                        for w in e["ways"] for s in settings if _matches(w, s)]
             out.append({"summary": e["summary"], "complete": e["complete"], "caveat": e.get("caveat", ""),
                         "ways": [describe(w) for w in e["ways"]], "references": e["references"],
-                        "applied": applied})
+                        "applied": applied, "settings": e["ways"]})
         f["mitigations"] = out
 
 
@@ -443,3 +443,71 @@ def format_lines(f: dict) -> List[str]:
         if m["caveat"]:
             lines.append(f"  caveat: {m['caveat']}")
     return lines
+
+
+# ---------------------------------------------------------------------------------------------
+# writing one (frame deps --vulns --mitigate)
+
+def _resources_dir(root: Path, manifest: str) -> Optional[Path]:
+    d = (root / manifest).parent / "src" / "main" / "resources"
+    return d if d.is_dir() else None
+
+
+def _final_stage_insert(text: str, line: str) -> str:
+    """`line` at the end of the Dockerfile's last stage, before its CMD / ENTRYPOINT."""
+    lines = text.splitlines()
+    last_from = max((i for i, ln in enumerate(lines) if re.match(r"(?i)^\s*FROM\s", ln)), default=-1)
+    at = len(lines)
+    for i in range(len(lines) - 1, last_from, -1):
+        if re.match(r"(?i)^\s*(CMD|ENTRYPOINT)\s", lines[i]):
+            at = i
+    lines.insert(at, line)
+    return "\n".join(lines) + "\n"
+
+
+def propose(findings: List[dict], root: Path) -> Tuple[List["Change"], List[str]]:
+    """Edits that apply a complete, not yet applied mitigation, one per advisory: a properties
+    file the library reads from the classpath (inside the artifact, whatever runs it), else the
+    JVM option / environment variable in the Dockerfile's last stage. Everything else is listed
+    for a person, with the setting (partial mitigations always)."""
+    from frame.sca.apply import Change
+    root = Path(root)
+    edits: Dict[str, Change] = {}
+    manual: List[str] = []
+    done: Set[Tuple[str, str]] = set()
+    dockerfiles = sorted(p for p in root.rglob("Dockerfile") if not set(p.relative_to(root).parts) & _SKIP_DIRS)
+    for f in findings:
+        for m in f.get("mitigations", []):
+            key = (f["id"], m["summary"])
+            if m["applied"] or key in done:
+                continue
+            done.add(key)
+            label = f"{f['package']}@{f['version']} {f['id']}"
+            if not m["complete"]:
+                manual.append(f"{label}: partial mitigation not applied automatically ({m['summary']}): {m['caveat']}")
+                continue
+            ways: Dict[str, dict] = {}
+            for w in m.get("settings", []):
+                ways.setdefault(w["kind"], w)
+            res = _resources_dir(root, f["path"])
+            if "properties-file" in ways and res is not None:
+                w = ways["properties-file"]
+                rel = (res / w["file"]).relative_to(root).as_posix()
+                cur = edits[rel].after if rel in edits else (root / rel).read_text() if (root / rel).is_file() else ""
+                new = cur + ("" if not cur or cur.endswith("\n") else "\n") + f"{w['key']}={w['value']}\n"
+                edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, new, f"{label}: {m['summary']}")
+                continue
+            if dockerfiles and ("jvm-property" in ways or "env" in ways):
+                rel = dockerfiles[0].relative_to(root).as_posix()
+                cur = edits[rel].after if rel in edits else dockerfiles[0].read_text()
+                if "jvm-property" in ways:
+                    w = ways["jvm-property"]
+                    line = f'ENV JAVA_TOOL_OPTIONS="${{JAVA_TOOL_OPTIONS}} -D{w["key"]}={w["value"]}"'
+                else:
+                    w = ways["env"]
+                    line = f"ENV {w['key']}={w['value']}"
+                edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, _final_stage_insert(cur, line),
+                                  f"{label}: {m['summary']}")
+                continue
+            manual.append(f"{label}: set one of {'; '.join(m['ways'])} where the application runs")
+    return list(edits.values()), manual

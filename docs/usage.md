@@ -246,7 +246,8 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |
 | `--plan` | with `--vulns`: the smallest safe upgrades and the edits, as a diff |
 | `--registry` | with `--licenses` / `--sbom`: fill unknown licences from the registries (npm, PyPI, RubyGems, crates.io, NuGet); with `--vulns`: also list the project's declared ranges that admit vulnerable releases; with `--plan`: fetch release metadata (npm, PyPI) and solve the upgrades of all packages together with Z3, so upgrading a package in between replaces an override (network; cached) |
-| `--apply` | write the edits, then re-read and report what is fixed and what remains |
+| `--mitigate` | with `--vulns`: write each complete configuration mitigation not yet applied (a properties file, else the Dockerfile), as a diff until `--apply` |
+| `--apply` | write what `--plan` and/or `--mitigate` propose, then re-read and report what is fixed and what remains |
 | `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |
 | `--verify COMMAND` | with `--apply`: run your build or tests before and after; roll back an upgrade that breaks them |
 | `--licenses` | check licences against `[licenses]` (exit 1 on a violation) |

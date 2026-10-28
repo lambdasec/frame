@@ -222,6 +222,19 @@ Frame looks for the setting where a running application gets it, and never in bu
 
 `.mvn/jvm.config`, `gradle.properties` and `RUN mvn -D...` configure the build's JVM, not the application's, so they do not count.
 
+`--mitigate` writes a complete mitigation that is not applied yet, shown as a diff until `--apply`. It prefers a properties file the library reads from the classpath (`src/main/resources/fastjson.properties`), since that travels inside the artifact whatever runs it. Otherwise it extends the JVM options in the Dockerfile's last stage, keeping any earlier value (`ENV JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS} -D..."`). After writing, Frame re-reads the project and confirms the mitigation is seen. A partial mitigation is never written for you, and one with nowhere to go is listed with the exact setting. `--apply` writes only what you asked for: `--mitigate --apply` changes no versions, and `--plan --mitigate --apply` does both.
+
+```console
+$ frame deps --vulns --mitigate --apply
+Configuration mitigations:
+--- a/src/main/resources/fastjson.properties
++++ b/src/main/resources/fastjson.properties
+@@ -0,0 +1 @@
++fastjson.parser.safeMode=true
+
+Applied and confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj
+```
+
 A mitigation found is evidence, with its location, not a verdict: a Dockerfile does not prove that is how the service runs. In VEX the statement stays `affected` with the evidence in its notes. If it is how the application runs, record the decision in `.frame/vex.toml` with the justification `inline_mitigations_already_exist`.
 
 ## Licences

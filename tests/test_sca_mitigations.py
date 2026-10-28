@@ -195,3 +195,74 @@ def test_frame_deps_shows_a_mitigation_end_to_end(tmp_path, monkeypatch):
     assert st["status"] == "affected"                     # evidence, not a decision Frame makes
     assert "complete mitigation is set" in st["status_notes"] and "Dockerfile:2" in st["status_notes"]
     assert "inline_mitigations_already_exist" in st["status_notes"]
+
+
+# --- writing a mitigation (frame deps --vulns --mitigate) ---------------------------------
+
+def _annotated(root, *fs):
+    annotate(list(fs), root, None)
+    return list(fs)
+
+
+def test_propose_prefers_the_artifact_then_the_dockerfile_and_never_a_partial_one(tmp_path):
+    from frame.sca.mitigations import propose, project_settings
+    root = write(tmp_path, {"pom.xml": "<project/>",
+                            "Dockerfile": ("FROM maven:3 AS build\nRUN mvn package\nFROM eclipse-temurin:17\n"
+                                           "ENV JAVA_TOOL_OPTIONS=-Xmx1g\nCMD [\"java\", \"-jar\", \"/a.jar\"]\n")})
+    fast = finding(FASTJSON, "com.alibaba:fastjson", "1.2.80")
+    fast["path"] = "pom.xml"
+    log4j = finding("CVE-2021-44228", "org.apache.logging.log4j:log4j-core", "2.14.1", aliases=[LOG4SHELL])
+    log4j["path"] = "pom.xml"
+    edits, manual = propose(_annotated(root, fast, log4j), root)
+    (docker,) = edits                                                  # no resources dir: the Dockerfile
+    lines = docker.after.splitlines()
+    added = 'ENV JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS} -Dfastjson.parser.safeMode=true"'
+    assert lines.index(added) == len(lines) - 2 and lines.index(added) > lines.index("FROM eclipse-temurin:17")
+    assert len(manual) == 1 and "partial" in manual[0] and "45046" in manual[0]
+    (root / "Dockerfile").write_text(docker.after)
+    got = {(s.key, s.value, s.via) for s in project_settings(root)}
+    assert ("fastjson.parser.safeMode", "true", "JAVA_TOOL_OPTIONS") in got        # Frame's reader sees it
+    assert ("JAVA_TOOL_OPTIONS", "-Xmx1g", "Dockerfile ENV") in {(s.key, s.value, s.via) for s in project_settings(root)
+                                                                  if s.kind == "env"}
+    (root / "src" / "main" / "resources").mkdir(parents=True)
+    (root / "Dockerfile").write_text("FROM x\n")
+    fast2 = finding(FASTJSON, "com.alibaba:fastjson", "1.2.80")
+    fast2["path"] = "pom.xml"
+    (props,) = propose(_annotated(root, fast2), root)[0]
+    assert props.path == "src/main/resources/fastjson.properties" and props.after == "fastjson.parser.safeMode=true\n"
+
+
+def test_nowhere_to_write_it_is_manual(tmp_path):
+    from frame.sca.mitigations import propose
+    root = write(tmp_path, {"pom.xml": "<project/>"})
+    f = finding(FASTJSON, "com.alibaba:fastjson", "1.2.80")
+    f["path"] = "pom.xml"
+    edits, manual = propose(_annotated(root, f), root)
+    assert not edits and "-Dfastjson.parser.safeMode=true" in manual[0]
+
+
+def test_cli_mitigate_apply_confirms_and_touches_nothing_else(tmp_path):
+    import subprocess
+    import sys
+    from frame.sca.advisories import build_advisories
+    osv = tmp_path / "osv"
+    osv.mkdir()
+    (osv / "r.json").write_text(json.dumps({"id": FASTJSON, "summary": "Unsafe deserialization in fastjson",
+        "modified": "2024-01-01T00:00:00Z", "affected": [
+            {"package": {"ecosystem": "Maven", "name": "com.alibaba:fastjson"},
+             "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2.83"}]}]}]}))
+    build_advisories([osv], tmp_path / "mirror", "r1", ["Maven"])
+    pom = ("<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId>"
+           "<version>1</version><dependencies><dependency><groupId>com.alibaba</groupId>"
+           "<artifactId>fastjson</artifactId><version>1.2.80</version></dependency></dependencies></project>")
+    proj = write(tmp_path / "proj", {"pom.xml": pom, "src/main/resources/application.properties": "a=b\n"})
+    env = {"FRAME_KB_CACHE": str(tmp_path / "cache"), "FRAME_ADVISORIES_SOURCE": str(tmp_path / "mirror"),
+           "PATH": __import__("os").environ["PATH"]}
+    run = lambda *a: subprocess.run([sys.executable, "-m", "frame.cli", *a], capture_output=True, text=True, env=env)
+    assert run("kb", "pull", "--advisories", "--project", str(proj)).returncode == 0
+    out = run("deps", str(proj), "--vulns", "--mitigate", "--apply").stdout
+    assert "confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj" in out
+    assert (proj / "src/main/resources/fastjson.properties").read_text() == "fastjson.parser.safeMode=true\n"
+    assert (proj / "pom.xml").read_text() == pom                        # --mitigate --apply writes no upgrade
+    again = run("deps", str(proj), "--vulns", "--mitigate").stdout
+    assert "nothing to apply" in again and "APPLIED" in again           # idempotent
