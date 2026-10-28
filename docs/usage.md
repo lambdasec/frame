@@ -290,7 +290,7 @@ Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs a
 | `status` | which revisions a scan of the project uses: `--project DIR`, `-f text|json` |
 | `build PACKS_DIR OUT` | lay out a packs revision for a mirror: `--revision R`, `--specs DIR` (spec tables to include) |
 | `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` (vulnerable functions), `--mitigations DIR` (curated configuration mitigations) |
-| `mine-functions INPUTS...` | for dataset maintainers: vulnerable functions from advisories' fix commits: `--out DIR`, `--existing DIR` (curated entries, which win), `--ecosystems a,b`, `--limit N`, `--cache DIR`, `--recorded DIR` (commits on disk instead of GitHub), `--since TIMESTAMP` (resume after the last run's `resume_after`); uses `GITHUB_TOKEN` when set |
+| `mine-functions INPUTS...` | for dataset maintainers: vulnerable functions from advisories' fix commits: `--out DIR`, `--existing DIR` (curated entries, which win), `--ecosystems a,b`, `--limit N`, `--cache DIR`, `--recorded DIR` (commits on disk instead of GitHub), `--since TIMESTAMP` (resume after the last run's `resume_after`), `--only IDS` (only these advisories: a comma list, a file of ids, or a `needs-curation.json`); uses `GITHUB_TOKEN` when set |
 
 ### `frame solve`, `check`, `parse`, `repl`
 

@@ -176,3 +176,28 @@ def test_declared_type_reads_the_declarations_not_the_path():
     assert declared_type("package a.b;\nclass Other {}\n", "java", "P.java") is None
     assert declared_type("class P {}\n", "java", "P.java") is None
     assert declared_type("namespace A.B;\npublic sealed class P { }", "csharp", "P.cs") == "A.B.P"
+
+
+def test_mine_functions_only_a_list_of_advisories(tmp_path):
+    """A one-off re-mine of the needs-curation list: only those ids (or aliases), the rest kept."""
+    import subprocess
+    import sys
+    from frame.kb.cli import only_ids
+    spring = json.loads((COMMITS / "spring-projects__spring-framework__ab2410c754b6" / "osv.json").read_text())
+    other = {**spring, "id": "GHSA-other", "aliases": []}
+    osv = tmp_path / "osv"
+    osv.mkdir()
+    (osv / "a.json").write_text(json.dumps(spring))
+    (osv / "b.json").write_text(json.dumps(other))
+    needs = tmp_path / "needs-curation.json"
+    needs.write_text(json.dumps([{"advisory": spring["id"], "internal_only": [], "outside_functions": ["x"]}]))
+    assert only_ids(str(needs)) == {spring["id"]} and only_ids("A, B") == {"A", "B"}
+    existing = tmp_path / "mined"
+    existing.mkdir()
+    (existing / "Maven.json").write_text(json.dumps({"GHSA-kept": [{"id": "a.b.C.m", "source": "fix-commit"}]}))
+    out = tmp_path / "out"
+    subprocess.run([sys.executable, "-m", "frame.cli", "kb", "mine-functions", str(osv), "--out", str(out),
+                    "--existing", str(existing), "--ecosystems", "Maven", "--recorded", str(COMMITS),
+                    "--only", str(needs)], check=True, capture_output=True, text=True)
+    got = json.loads((out / "Maven.json").read_text())
+    assert set(got) == {"GHSA-kept", spring["id"]}                     # GHSA-other was not mined

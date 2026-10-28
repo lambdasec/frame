@@ -9,6 +9,20 @@ from pathlib import Path
 from frame.kb.store import KBError, build, pull, read_lock, status, write_lock
 
 
+def only_ids(value: str) -> set:
+    """Advisory ids from a comma list, a file of ids (one per line), or a needs-curation.json."""
+    p = Path(value)
+    if p.is_file():
+        text = p.read_text()
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return {ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith("#")}
+        items = data if isinstance(data, list) else list(data)
+        return {x["advisory"] if isinstance(x, dict) else str(x) for x in items}
+    return {x.strip() for x in value.split(",") if x.strip()}
+
+
 def add_kb_command(subparsers) -> None:
     p = subparsers.add_parser(
         "kb", help="Download, pin and inspect Frame's knowledge base (framework packs, vulnerability advisories)",
@@ -51,6 +65,9 @@ def add_kb_command(subparsers) -> None:
     mf.add_argument("--limit", type=int, help="Mine at most this many advisories")
     mf.add_argument("--cache", metavar="DIR", help="Commit cache (default: ~/.cache/frame/mine)")
     mf.add_argument("--recorded", metavar="DIR", help="Read commits recorded on disk instead of GitHub")
+    mf.add_argument("--only", metavar="IDS",
+                    help="Mine only these advisories: a comma-separated list, a file with one id per line, or a "
+                         "needs-curation.json (matched by id or alias); --since is not needed")
     mf.add_argument("--since", metavar="TIMESTAMP",
                     help="Only advisories modified after this (oldest first); use the last run's resume_after")
     ba.add_argument("--mitigations", metavar="DIR",
@@ -129,7 +146,12 @@ def cmd_kb(args) -> int:
             source = RecordedSource(Path(args.recorded)) if args.recorded else GitHubSource(
                 Path(args.cache) if args.cache else Path.home() / ".cache" / "frame" / "mine")
             progress = Progress()
-            tables, report = mine(_records([Path(i) for i in args.inputs]), ecos, source, args.limit, existing,
+            records = _records([Path(i) for i in args.inputs])
+            if args.only:
+                wanted = only_ids(args.only)
+                records = (r for r in records if isinstance(r, dict)
+                           and ({r.get("id"), *(r.get("aliases") or [])} & wanted))
+            tables, report = mine(records, ecos, source, args.limit, existing,
                                   since=args.since, progress=progress)
             out = Path(args.out)
             out.mkdir(parents=True, exist_ok=True)
