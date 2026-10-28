@@ -26,9 +26,9 @@ A Maven service using fastjson and Log4j. Frame finds the Log4j mitigation alrea
 A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two functions the code uses. `--verify` runs the tests and rolls the upgrade back; `--adapt` lets a model rewrite the code, and the result is kept only because the tests pass and a re-scan finds nothing new.
 *The plan runs offline; the rollback needs pip, and `--adapt` needs a model (`FRAME_LLM_*`).*
 
-### [container-image](container-image/README.md): OS packages in a Docker image
+### [container-image](container-image/README.md): what is inside a Docker image
 
-The package lists of the official `debian:12.0` and `alpine:3.18.0` images. It shows their known vulnerabilities (the same ones OSV's API reports), the version that fixes each, a CI gate, and an SBOM.
+The package lists of the official `debian:12.0` and `alpine:3.18.0` images, and an application image with pip packages, an npm tree and a jar. It shows their known vulnerabilities (OS packages: the same ones OSV's API reports), why Debian's own Python packages are left to Debian's advisories, the fix for each, a CI gate, and an SBOM.
 *Runs offline; `--image` on a real image needs Docker.*
 
 ### [upgrade-nuget-go](upgrade-nuget-go/README.md): .NET and Go upgrades

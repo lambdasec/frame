@@ -50,7 +50,7 @@ Each finding names the advisory (GHSA, PYSEC, CVE and other ids for the same iss
 | PHP | `composer.lock`, `composer.json` | manual |
 | Dart | `pubspec.lock`, `pubspec.yaml` | manual |
 | Elixir | `mix.lock`, `mix.exs` | manual |
-| Container images (Debian, Ubuntu, Alpine) | the OS packages of an image (`--image`) or root filesystem (`--rootfs`): `/etc/os-release`, dpkg's database (and distroless `status.d/`), apk's database | manual (upgrade in the image) |
+| Container images (Debian, Ubuntu, Alpine) | the OS packages of an image (`--image`) or root filesystem (`--rootfs`): `/etc/os-release`, dpkg's database (and distroless `status.d/`), apk's database; and the PyPI, npm and Maven packages installed in it (`*.dist-info`, `node_modules/*/package.json`, jars' `pom.properties`) | manual (upgrade in the image) |
 | C / C++ | `conan.lock`, `conanfile.txt`, `conanfile.py`, `vcpkg.json`, vcpkg's installed status, git submodules, CMake `FetchContent` / `ExternalProject` / CPM | manual |
 
 Every reader is tested against the package manager's own answer (`npm ls`, `pnpm list`, `poetry export`, `mvn dependency:list`, Gradle, `dotnet list package`, `cargo metadata`, `bundle`, `composer show`, `dart pub deps`, `mix` and others) on real projects, in CI.
@@ -79,7 +79,9 @@ Frame reads an image's OS packages: `/etc/os-release` for the distribution and r
 
 - **Matching:** on the official `debian:12.0` and `alpine:3.18.0` images, the package lists equal `dpkg-query`'s and `apk list --installed`'s, and the advisories found are those OSV's own API gives (202 and 22).
 - **Fixing:** the plan names the version that fixes each package. There is no manifest to edit, so `--apply` lists them: upgrade them in the Dockerfile, or rebuild on a newer base image.
-- **Not covered:** distributions other than Debian, Ubuntu and Alpine are reported as such, never guessed. Language packages inside an image (a `node_modules` or a virtualenv) are read by pointing `frame deps` at the source tree that built it.
+- **Language packages:** Python packages (`site-packages/*.dist-info/METADATA`, `*.egg-info`), npm packages (each `node_modules/<name>/package.json` whose name is its directory's), and Maven artifacts (each jar's `META-INF/maven/**/pom.properties`, including jars inside a Spring Boot or WAR archive) are read too, one group per place (`/usr/local/lib/python3.12/site-packages`, `/app/node_modules`, the jar). A jar with no `pom.properties` is counted in a warning, never named from its file name. On a real image they equal `importlib.metadata`, `npm ls --all` and the jars' own coordinates.
+- **Packages the distribution ships:** a Python or Node package whose files an OS package owns (dpkg's `info/*.list`, apk's `F:` lines), such as Debian's `python3-urllib3`, is left to the distribution's advisories. Debian and Alpine patch what they ship without changing the upstream version, so PyPI's or npm's advisories would report fixes already made. The warning counts them.
+- **Not covered:** distributions other than Debian, Ubuntu and Alpine are reported as such, never guessed (their language packages are still read). Go and Rust binaries are not read yet. With the project that built the image, `frame deps .` also says direct or transitive and can apply upgrades.
 
 A walkthrough with real output: [examples/container-image](../examples/container-image/README.md).
 

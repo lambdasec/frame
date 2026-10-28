@@ -227,3 +227,5 @@ benchmarks/cache/
 !tests/fixtures/sca/container/**/lib/
 !examples/container-image/**/var/
 !examples/container-image/**/lib/
+!tests/fixtures/sca/container/**/*.egg-info/
+!examples/container-image/**/*.egg-info/

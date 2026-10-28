@@ -56,6 +56,12 @@ def _major(version: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+# where a language package found in an image comes from, and so where to upgrade it
+IN_IMAGE = {"PyPI": "upgrade it in the image's pip install step (or its requirements file)",
+            "npm": "upgrade it in the project whose node_modules the image copies, and rebuild",
+            "Maven": "replace the jar the image copies (or rebuild the application with the fixed version)"}
+
+
 def fixable(advisories: List[dict]) -> List[dict]:
     """Advisories that name a fixed version: one with none (an unmaintained package, an unfixed
     flaw) affects every version, and must not hide the upgrades that fix the others."""
@@ -124,6 +130,8 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
             action = "no-fix"
         elif kind == "installed":
             action = "upgrade-os-package"                 # a package of a container image or root filesystem
+        elif kind == "image":
+            action = "upgrade-in-image"                   # a language package found in an image: no manifest to edit
         elif eco == "Go":
             action = "raise-requirement"                  # go.mod is the requirement list, indirect ones too
         elif eco == "Maven" and kind in ("manifest", "resolved"):
@@ -270,6 +278,7 @@ def format_plan(plans: List[dict]) -> str:
                          f"[{p['path']}; fixes {len(p['fixes'])}]")
             continue
         what = {"upgrade-os-package": "upgrade it in the image (apt-get / apk upgrade, or a newer base image)",
+                "upgrade-in-image": IN_IMAGE.get(p["ecosystem"], "upgrade it where the image installs it"),
                 "update-lockfile": "re-lock (every known range admits it)",
                 "raise-requirement": "raise the project's requirement",
                 "override": f"override: {p.get('how', '')}"}[p["action"]]

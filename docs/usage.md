@@ -241,8 +241,8 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `-o`, `--output FILE` | write to a file instead of stdout |
 | `--exclude DIR` | skip a directory name or relative path (repeatable) |
 | `--resolve` | run Maven, Gradle and pip to resolve projects without a lockfile (runs the build configuration) |
-| `--image REF` | also read the OS packages of a container image (a reference `docker save` can export, or a saved `.tar`; repeatable) |
-| `--rootfs DIR` | also read the OS packages of an unpacked root filesystem (repeatable) |
+| `--image REF` | also read a container image's OS packages and the PyPI, npm and Maven packages installed in it (a reference Docker has or can pull, or a `docker save` `.tar`; repeatable) |
+| `--rootfs DIR` | the same for an unpacked root filesystem (repeatable) |
 | `--vulns` | match against the cached advisories |
 | `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing (default none) |

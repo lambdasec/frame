@@ -152,8 +152,8 @@ def test_container_image_walkthrough(tmp_path):
     shutil.copytree(EXAMPLES / "container-image", work)
     env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
     env.pop("FRAME_ADVISORIES_SOURCE", None)
-    assert "2 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
-                              "--ecosystems", "Debian:12,Alpine:v3.18")
+    assert "5 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven")
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "--rootfs", "alpine-3.18.0", "--rootfs", "debian-12.0"),
@@ -163,6 +163,15 @@ def test_container_image_walkthrough(tmp_path):
          ["22 known vulnerabilities:", "CRITICAL busybox@1.36.0-r9 (os package) ALPINE-CVE-2022-48174",
           "HIGH     musl@1.2.4-r0 (os package) ALPINE-CVE-2025-26519"]),
         (("deps", "--rootfs", "debian-12.0", "--vulns"), ["202 known vulnerabilities:"]),
+        (("deps", "--rootfs", "app-image", "--vulns"),
+         ["app-image:/usr/local/lib/python3.12/site-packages  (PyPI image): 7 packages, direct unknown",
+          "app-image:/app/node_modules  (npm image): 51 packages, direct unknown",
+          "warning: app-image: 2 language package(s) installed by the OS package manager are covered by the "
+          "distribution's advisories", "181 known vulnerabilities:",
+          "CRITICAL org.apache.commons:commons-text@1.9 (dependency) GHSA-599f-7c49-w659"]),
+        (("deps", "--rootfs", "app-image", "--vulns", "--plan"),
+         ["org.apache.commons:commons-text 1.9 -> 1.10.0: replace the jar the image copies",
+          "PyYAML 5.3.1 -> 5.4: upgrade it in the image's pip install step (or its requirements file)"]),
         (("deps", "--rootfs", "alpine-3.18.0", "--vulns", "--plan"),
          ["openssl 3.1.0-r4 -> 3.1.8-r0: upgrade it in the image (apt-get / apk upgrade, or a newer base image)"]),
     ]

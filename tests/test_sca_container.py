@@ -9,12 +9,13 @@ import json
 import os
 import shutil
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from frame.sca.advisories import AdvisoryDB, match
-from frame.sca.container import ecosystem_of, os_release, read_image, read_image_tar, read_rootfs
+from frame.sca.container import ecosystem_of, os_release, read_files, read_image, read_image_tar, read_rootfs
 from frame.sca.osv import compact
 
 F = Path(__file__).parent / "fixtures" / "sca" / "container"
@@ -107,3 +108,84 @@ def test_live_docker_save_of_the_real_image(ref):
     files, warnings = read_image(ref)
     assert not warnings
     assert sorted([p.name, p.version] for p in files[0].packages.values()) == IMAGES[ref]["packages"]
+
+
+LANG = json.loads((F / "lang-image.json").read_text())
+
+
+def _by_place(files):
+    return {f.ecosystem if f.kind == "installed" else f.path.split(":/", 1)[1]:
+            sorted([p.name, p.version] for p in f.packages.values()) for f in files}
+
+
+def test_language_packages_in_an_image_read_as_their_tools_do():
+    """pip's /usr/local packages, the npm tree, and the jar's Maven coordinates equal what
+    importlib.metadata, `npm ls` and the jar's pom.properties say; Debian's own python3-urllib3
+    and python3-six (owned by dpkg) are left to Debian's advisories."""
+    files, warnings = read_rootfs(F / "lang-image")
+    assert _by_place(files) == LANG
+    assert {f.kind for f in files if f.ecosystem in ("PyPI", "npm", "Maven")} == {"image"}
+    assert any("2 language package(s) installed by the OS package manager" in w for w in warnings)
+    assert ["urllib3", "1.26.4"] in LANG["usr/local/lib/python3.12/site-packages"]           # pip's, not Debian's 1.26.12
+
+
+def _jar(entries: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_jars_inside_jars_and_jars_without_coordinates():
+    from frame.sca.container import read_language_packages
+    pom = "groupId=org.yaml\nartifactId=snakeyaml\nversion=1.33\n"
+    boot = _jar({"BOOT-INF/lib/snakeyaml-1.33.jar": _jar({"META-INF/maven/org.yaml/snakeyaml/pom.properties": pom}),
+                 "BOOT-INF/lib/homemade.jar": _jar({"a/B.class": b""}),
+                 "META-INF/maven/com.acme/app/pom.properties": "groupId=com.acme\nartifactId=app\nversion=1.0\n"})
+    files, warnings = read_language_packages({"srv/app.jar": boot, "opt/log4j-core-2.14.1.jar": _jar({"x": b""})}, "img")
+    assert {(p.name, p.version) for f in files for p in f.packages.values()} == {
+        ("org.yaml:snakeyaml", "1.33"), ("com.acme:app", "1.0")}
+    # named only from pom.properties, never from a file name
+    assert any("opt/log4j-core-2.14.1.jar: 1 jar(s) without Maven coordinates" in w for w in warnings)
+    assert any("srv/app.jar: 1 jar(s) without" in w for w in warnings)
+
+
+def test_npm_package_json_must_be_the_package_itself():
+    from frame.sca.container import read_language_packages
+    files, _ = read_language_packages({
+        "app/node_modules/@scope/x/package.json": '{"name": "@scope/x", "version": "1.0.0"}',
+        "app/node_modules/x/node_modules/y/package.json": '{"name": "y", "version": "2.0.0"}',
+        "app/node_modules/z/package.json": '{"name": "not-z", "version": "3.0.0"}',      # not this directory's package
+        "app/node_modules/w/package.json": '{"name": "w"}'}, "img")
+    assert [(f.path, sorted((p.name, p.version) for p in f.packages.values())) for f in files] == [
+        ("img:/app/node_modules", [("@scope/x", "1.0.0"), ("y", "2.0.0")])]
+
+
+def test_apk_owned_python_packages_are_the_distributions():
+    from frame.sca.container import read_language_packages
+    files, warnings = read_language_packages({
+        "lib/apk/db/installed": "P:py3-urllib3\nV:1.26.18-r0\no:py3-urllib3\n"
+                                "F:usr/lib/python3.11/site-packages/urllib3-1.26.18.dist-info\nR:METADATA\n",
+        "usr/lib/python3.11/site-packages/urllib3-1.26.18.dist-info/METADATA": "Name: urllib3\nVersion: 1.26.18\n",
+        "usr/lib/python3.11/site-packages/flask-2.0.0.dist-info/METADATA": "Name: Flask\nVersion: 2.0.0\n"}, "img")
+    assert [(p.name, p.version) for f in files for p in f.packages.values()] == [("Flask", "2.0.0")]
+    assert "1 language package(s)" in warnings[0]
+
+
+def test_an_image_without_a_distribution_still_has_its_language_packages():
+    files, warnings = read_files({"app/node_modules/x/package.json": '{"name": "x", "version": "1.0.0"}'}, "img")
+    assert [f.ecosystem for f in files] == ["npm"] and warnings == []
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
+                    reason="live: set FRAME_SCA_REAL=1 (docker build of lang-image.Dockerfile)")
+def test_live_language_packages_of_the_rebuilt_image(tmp_path):
+    import subprocess
+    shutil.copy(F / "lang-image.Dockerfile", tmp_path / "Dockerfile")
+    subprocess.run(["docker", "build", "-q", "-t", "frame-lang-fixture:test", str(tmp_path)], check=True,
+                   capture_output=True, timeout=1800)
+    files, _ = read_image("frame-lang-fixture:test")
+    got = _by_place(files)
+    for place in ("usr/local/lib/python3.12/site-packages", "app/node_modules", "app/lib/commons-text-1.9.jar"):
+        assert got[place] == LANG[place], place

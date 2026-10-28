@@ -402,6 +402,11 @@ def edits(plans: List[dict], root: Path) -> Tuple[_Files, List[str]]:
             manual.append(f"{p['package']} {p['current']} -> {p['target']}: an OS package of {p['path'].split(':/')[0]}; "
                           "upgrade it in the Dockerfile (apt-get / apk upgrade) or rebuild on a newer base image")
             continue
+        if p["action"] == "upgrade-in-image":
+            from frame.sca.plan import IN_IMAGE
+            manual.append(f"{p['package']} {p['current']} -> {p['target']}: installed in {p['path']}; "
+                          + IN_IMAGE.get(p["ecosystem"], "upgrade it where the image installs it"))
+            continue
         home = _home(p["path"])
         rel_in = (lambda n: f"{home}/{n}" if home else n)
         name = Path(p["path"]).name

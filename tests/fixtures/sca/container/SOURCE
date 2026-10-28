@@ -4,3 +4,7 @@ images.json: the source packages Frame reads from each image, equal to `dpkg-que
 '${source:Package} ${source:Version}'` and to `apk list --installed`'s origins.
 osv_records.json.gz, osv_expected.json: OSV's API (/v1/query) for every one of those packages at its
 version, and the records it returned (OSV data, CC-BY 4.0).
+lang-image/: the files Frame reads from an image built by lang-image.Dockerfile (docker export, 2026-10-28):
+dpkg status and info/*.list, Python dist-info/egg-info, node_modules package.json, the commons-text 1.9 jar.
+lang-image.json: what the image's own tools report: dpkg-query (source packages), importlib.metadata for
+/usr/local's Python, `npm ls --all --json` in the build stage, and the jar's pom.properties.

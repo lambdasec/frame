@@ -24,9 +24,9 @@ from frame.sca.model import normalize_name
 
 def record(example: Path) -> Path:
     files = read_dependencies(example, exclude_dirs={"offline-advisories", "offline-registry", "node_modules"}).files
-    # unpacked root filesystems (a subdirectory with etc/os-release): their OS packages too
-    from frame.sca.container import read_rootfs
-    for d in sorted(p for p in example.iterdir() if (p / "etc" / "os-release").is_file()):
+    # unpacked root filesystems (a subdirectory with an os-release): their OS packages too
+    from frame.sca.container import OS_RELEASE, read_rootfs
+    for d in sorted(p for p in example.iterdir() if any((p / r).is_file() for r in OS_RELEASE)):
         files += read_rootfs(d)[0]
     ecos = ecosystems_of(files)
     db = AdvisoryDB.cached(ecos)
