@@ -186,6 +186,9 @@ def test_container_image_walkthrough(tmp_path):
         out = frame(work, env, *args)
         for line in lines:
             assert line in out and line in readme, (args, line, out[-1500:])
+    called = [line for line in frame(work, env, "deps", "--rootfs", "app-image", "--vulns").splitlines()
+              if "svc-go]" in line and ", called)" in line]
+    assert len(called) == 4 and not any("GO-2025-3750" in line for line in called), called   # = govulncheck's set
     gate = subprocess.run([sys.executable, "-m", "frame.cli", "deps", "--rootfs", "debian-12.0", "--vulns",
                            "--fail-on", "critical"], cwd=work, env=env, capture_output=True, text=True)
     assert gate.returncode == 1

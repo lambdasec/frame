@@ -80,7 +80,7 @@ $ frame deps --rootfs app-image --vulns
            contains net/url.Parse (linked into the binary)
 ```
 
-  On this binary the called set is exactly what `govulncheck -mode binary` reports for an unstripped build of the same program (tests/test_sca_container.py). On a stripped binary govulncheck itself falls back to every function of each package present.
+  Four of `svc-go`'s advisories are `called` (three in the standard library, through `net/url.Parse` and `encoding/xml`, and yaml.v2's), and Windows-only ones such as GO-2025-3750 are not, since the binary was built for Linux. The called set is exactly what `govulncheck -mode binary` reports for an unstripped build of the same program (tests/test_sca_container.py). On a stripped binary govulncheck itself falls back to every function of each package present.
 
 ```console
 $ frame deps --rootfs app-image --vulns --plan

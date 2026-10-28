@@ -5,31 +5,31 @@
       "kind": "advisories",
       "language": "alpine:v3.18",
       "name": "Alpine:v3.18",
-      "sha256": "33e36fc4ae29a5a2266317f173e6bd6e3fb616156a6604ef5363b7fe4813d078",
-      "size": 11043
+      "sha256": "a00e33d0e12d6b7c40e584d207f4ba9d9c31c7a9a10d83b4e9c1b370c994d440",
+      "size": 11042
     },
     "advisories/Debian_12.json.gz": {
       "advisories": 1366,
       "kind": "advisories",
       "language": "debian:12",
       "name": "Debian:12",
-      "sha256": "8b98ea27a667c28bc24f11b7c50c8b3a1231fcfc1536760cfe75ce4cd04889b7",
-      "size": 151311
+      "sha256": "81b0b23316078d1dd3007d55c0e7e02b25ac8b110a3ffb27c13f50a76f403488",
+      "size": 151312
     },
     "advisories/Go.json.gz": {
       "advisories": 184,
       "kind": "advisories",
       "language": "go",
       "name": "Go",
-      "sha256": "e14263b72a899331e036e145ea3400cf10e43b1a08e632127d76c0982f2c5fa9",
-      "size": 21504
+      "sha256": "d7711824bbc979ffc8718ff03c9307afd969607d906c778cfa4f7658857233bb",
+      "size": 21669
     },
     "advisories/Maven.json.gz": {
       "advisories": 1,
       "kind": "advisories",
       "language": "maven",
       "name": "Maven",
-      "sha256": "3ce481793cc828a8497d5b77d6f82608807964a91476c6c99d2a843ba0da8ea1",
+      "sha256": "23d51ef9348ba8da996e9f764810e911f92ed46ba24435fd468bac0364190440",
       "size": 386
     },
     "advisories/PyPI.json.gz": {
@@ -37,7 +37,7 @@
       "kind": "advisories",
       "language": "pypi",
       "name": "PyPI",
-      "sha256": "92a8288d5a77c4e8d76fc8980a3471bb8fcd94745bfca3b62e04afc7049627d9",
+      "sha256": "dfa745e226e81ac12aed7cdfe9ede8b2debb0f84a0b6cfca535910acf49cb341",
       "size": 6212
     },
     "advisories/crates.io.json.gz": {
@@ -45,7 +45,7 @@
       "kind": "advisories",
       "language": "crates.io",
       "name": "crates.io",
-      "sha256": "a77f13b068b0a8da9d5f7a6ad85531a8e8b012c821edbeb8b37392639fe55f0b",
+      "sha256": "0514dc6f596921025fdddfb819dc5ee89f80d4b4a0b0098b01bfc5912649bdf8",
       "size": 771
     },
     "advisories/npm.json.gz": {
@@ -53,10 +53,10 @@
       "kind": "advisories",
       "language": "npm",
       "name": "npm",
-      "sha256": "ad771435e7819e585e172b5629b06781af3f3d2648fcde14e13549a5f0fcae81",
-      "size": 4558
+      "sha256": "31afe2f3bab1c25c381bd76e233c3b5a9ee1fcb729717e2c66d57d6a26ff2149",
+      "size": 4557
     }
   },
-  "revision": "example-2026.10.28-a5711a8",
+  "revision": "example-2026.10.28-f3942c2",
   "schema": 1
 }
