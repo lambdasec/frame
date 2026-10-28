@@ -234,6 +234,7 @@ class AdvisoryDB:
     tables: Dict[str, Dict[str, List[dict]]] = field(default_factory=dict)   # ecosystem -> name -> advisories
     missing: List[str] = field(default_factory=list)                          # ecosystems not cached
     notes: List[str] = field(default_factory=list)                            # what matching could not decide
+    undecided: List[Optional[str]] = field(default_factory=list)            # ... their severities
 
     @classmethod
     def from_dir(cls, d: Optional[Path], ecosystems: Iterable[str]) -> "AdvisoryDB":
@@ -327,16 +328,23 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                 # an untagged submodule commit: OSV's commit ranges, on the checkout's history
                 from frame.sca.gitrange import commit_affected, git_ancestry
                 ancestry = git_ancestry(Path(pkg.checkout))
-                candidates, undecided = [], []
+                candidates, missing, no_ranges = [], [], []
                 for adv in db.repo_advisories(pkg.repo):
-                    verdict = commit_affected(pkg.commit, adv.get("commits", []), ancestry) if adv.get("commits") else False
+                    if not adv.get("commits"):
+                        no_ranges.append(adv["id"])          # tags only: an untagged commit is not decided
+                        db.undecided.append(adv.get("severity"))
+                        continue
+                    verdict = commit_affected(pkg.commit, adv["commits"], ancestry)
                     if verdict is None:
-                        undecided.append(adv["id"])
+                        missing.append(adv["id"])
+                        db.undecided.append(adv.get("severity"))
                     candidates.append((adv, bool(verdict)))
-                if undecided:
-                    db.notes.append(f"{pkg.repo}@{pkg.commit[:12]} ({df.path}): {len(undecided)} advisory(ies) not "
-                                    f"decided, their commits are not in the checkout (a shallow clone?): "
-                                    f"{', '.join(undecided[:5])}")
+                for ids, why in ((missing, "their commits are not in the checkout (a shallow clone?)"),
+                                 (no_ranges, "they give tags but no commit ranges (pull newer advisories, "
+                                             "or pin the submodule to a tag)")):
+                    if ids:
+                        db.notes.append(f"{pkg.repo}@{pkg.commit[:12]} ({df.path}): {len(ids)} advisory(ies) not "
+                                        f"decided, {why}: {', '.join(ids[:5])}")
             elif pkg.repo:                                # C/C++: OSV's affected tags of the repository
                 candidates = [(adv, any(t in adv.get("versions", ()) for t in pkg.tags))
                               for adv in db.repo_advisories(pkg.repo)]

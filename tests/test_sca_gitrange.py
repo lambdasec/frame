@@ -106,10 +106,17 @@ def test_an_untagged_submodule_is_matched_by_commit(history, tmp_path):
     db = AdvisoryDB(tables={"GIT": {"github.com/acme/lib": [
         {**entry, "id": "OPEN", "commits": [[{"introduced": "0"}, {"fixed": c["F"]}]]},
         {**entry, "id": "DONE", "commits": [[{"introduced": "0"}, {"fixed": c["B"]}]]},
-        {**entry, "id": "ELSEWHERE", "commits": [[{"introduced": "e" * 40}, {"fixed": "d" * 40}]]}]}})
+        {**entry, "id": "ELSEWHERE", "commits": [[{"introduced": "e" * 40}, {"fixed": "d" * 40}]]},
+        {**entry, "id": "TAGS-ONLY", "versions": ["v1.0"]}]}})
     found = match(read_dependencies(app).files, db)
     assert [(f["id"], f["commit"]) for f in found] == [("OPEN", c["C"])]
-    assert any("1 advisory(ies) not decided" in n and "ELSEWHERE" in n for n in db.notes)
+    assert any("not in the checkout" in n and "ELSEWHERE" in n for n in db.notes)
+    # an advisory with tags but no commit ranges cannot decide an untagged commit: said, not "clean"
+    assert any("no commit ranges" in n and "TAGS-ONLY" in n for n in db.notes)
+    assert db.undecided == ["high", "high"]
+    from frame.sca.discover import format_vulns
+    assert "No known vulnerabilities" not in format_vulns([], (), len(db.undecided))
+    assert "NOT DECIDED: 2 advisory(ies)" in format_vulns([], (), len(db.undecided))
 
 
 def _osv_commit_query(commit: str) -> set:

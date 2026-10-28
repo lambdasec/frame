@@ -307,11 +307,14 @@ def _pull_hint(missing: Sequence[str]) -> str:
     return pull_hint(missing)
 
 
-def format_vulns(findings: List[dict], missing: Sequence[str] = ()) -> str:
-    """`missing`: ecosystems with no advisories cached. Their packages were not checked, so
-    "no known vulnerabilities" is never said about them."""
+def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: int = 0) -> str:
+    """`missing`: ecosystems with no advisories cached; `undecided`: advisories matching could
+    not decide (an untagged commit, see the warnings). Neither is ever called "no known
+    vulnerabilities"."""
     gap = (f"NOT CHECKED: no advisories cached for {', '.join(missing)} "
            f"(run `{_pull_hint(missing)}`)") if missing else ""
+    if undecided:
+        gap = "\n".join(x for x in (gap, f"NOT DECIDED: {undecided} advisory(ies) (see the warnings above)") if x)
     if not findings:
         return gap or "No known vulnerabilities in the resolved versions."
     lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]

@@ -589,6 +589,8 @@ def cmd_deps(args) -> int:
     findings = None
     mitigation = None
     not_checked: list = []
+    undecided = 0
+    undecided_severities: list = []
     if args.vex:
         args.vulns = True
     if args.vulns:
@@ -613,6 +615,8 @@ def cmd_deps(args) -> int:
             annotate_mitigations(findings, target.resolve(), cached_revision_dir(), excluded)
         not_checked = list(db.missing)
         report.warnings.extend(db.notes)
+        undecided = len(db.undecided)
+        undecided_severities = list(db.undecided)
         if db.missing:
             report.warnings.append(f"no advisories cached for {', '.join(db.missing)}: "
                                    f"run `{pull_hint(db.missing)}`")
@@ -709,6 +713,7 @@ def cmd_deps(args) -> int:
         if findings is not None:
             data["vulnerabilities"] = findings
             data["not_checked"] = not_checked
+            data["undecided"] = undecided
             if exposure is not None:
                 data["exposed_ranges"] = exposure
             if plans is not None:
@@ -728,7 +733,7 @@ def cmd_deps(args) -> int:
         out = format_text(report)
         if findings is not None:
             from frame.sca.discover import format_vulns
-            out += "\n" + format_vulns(findings, not_checked)
+            out += "\n" + format_vulns(findings, not_checked, undecided)
             if exposure:
                 from frame.sca.solve import format_exposure
                 out += format_exposure(exposure)
@@ -788,6 +793,14 @@ def cmd_deps(args) -> int:
         print(f"Error: --fail-on cannot be judged: no advisories cached for {', '.join(not_checked)} "
               f"(run `{pull_hint(not_checked)}`)", file=sys.stderr)
         return 2
+    if findings is not None and undecided_severities and args.fail_on not in (None, "none"):
+        rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+        at_or_above = [s for s in undecided_severities
+                       if args.fail_on == "any" or s is None or rank.get(s, 0) >= rank.get(args.fail_on, 0)]
+        if at_or_above:
+            print(f"Error: --fail-on cannot be judged: {len(at_or_above)} advisory(ies) at or above "
+                  f"{args.fail_on} were not decided (see the warnings)", file=sys.stderr)
+            return 2
     if findings and args.fail_on != "none":
         rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
         if args.fail_on == "any" or any(rank.get(f["severity"] or "", 0) >= rank[args.fail_on] for f in findings):
