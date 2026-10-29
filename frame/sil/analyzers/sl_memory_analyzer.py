@@ -21,6 +21,7 @@ Frame's entailment checker is used to verify:
 - Before free: current_heap |- ptr |-> _ (ptr is valid to free)
 """
 
+from frame.sil import c_facts
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple
 from enum import Enum
@@ -95,10 +96,10 @@ class SLMemoryAnalyzer:
     """
 
     # Allocation functions
-    ALLOC_FUNCS = {'malloc', 'calloc', 'realloc', 'strdup', 'strndup'}
+    ALLOC_FUNCS = c_facts.allocators('heap', returning=True)        # specs/data/c.toml
 
     # Deallocation functions
-    FREE_FUNCS = {'free', 'cfree'}
+    FREE_FUNCS = c_facts.releasers('heap')
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose

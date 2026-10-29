@@ -15,6 +15,7 @@ We detect violations by checking if the current heap state entails
 the required precondition for memory operations.
 """
 
+from frame.sil import c_facts
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple
 from enum import Enum
@@ -70,16 +71,10 @@ class MemorySafetyAnalyzer:
     """
 
     # Allocation functions
-    ALLOC_FUNCS = {
-        'malloc', 'calloc', 'realloc', 'strdup', 'strndup',
-        'aligned_alloc', 'posix_memalign', 'valloc', 'pvalloc',
-        'memalign', 'mmap', 'alloca', '_alloca',
-    }
+    ALLOC_FUNCS = c_facts.allocators('heap', 'stack', 'mapped')     # specs/data/c.toml
 
     # Deallocation functions
-    FREE_FUNCS = {
-        'free', 'cfree', 'munmap',
-    }
+    FREE_FUNCS = c_facts.releasers('heap', 'mapped')
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose

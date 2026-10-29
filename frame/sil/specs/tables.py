@@ -25,6 +25,8 @@ DATA_DIR = Path(__file__).parent / "data"
 TABLES = ("python", "javascript", "java", "csharp", "c", "cpp")
 _FIELDS = {f.name: f for f in fields(ProcSpec)}
 _SET_FIELDS = {"modifies"}
+ALLOCATION_KINDS = frozenset({"heap", "stack", "mapped", "new", "new_array"})
+RELEASE_KINDS = ALLOCATION_KINDS - {"stack"}           # stack memory is never released by a call
 
 
 class SpecTableError(ValueError):
@@ -43,6 +45,12 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
             raise SpecTableError(f"{origin}: {name}: unknown field(s) {sorted(unknown)}")
         if name in specs:
             raise SpecTableError(f"{origin}: {name} is listed twice")
+        for key, kinds in (("allocates", ALLOCATION_KINDS), ("frees", RELEASE_KINDS)):
+            if key in entry and entry[key] not in kinds:
+                raise SpecTableError(f"{origin}: {name}: {key} must be one of {sorted(kinds)}")
+        derefs = entry.get("dereferences", [])
+        if not isinstance(derefs, list) or not all(isinstance(i, int) and i >= -1 for i in derefs):
+            raise SpecTableError(f"{origin}: {name}: dereferences must be argument positions (-1: every one)")
         specs[name] = ProcSpec(**{k: (set(v) if k in _SET_FIELDS else v) for k, v in entry.items()})
     return specs
 

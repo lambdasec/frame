@@ -11,6 +11,7 @@ Key features:
 4. Builds complete function summaries for inter-procedural analysis
 """
 
+from frame.sil import c_facts
 from typing import Dict, List, Optional, Set, Any, Tuple
 import tree_sitter_c as tsc
 import tree_sitter_cpp as tscpp
@@ -32,9 +33,8 @@ class TreeSitterFunctionSummarizer:
     """
 
     # Known allocation functions
-    ALLOC_FUNCS = {'malloc', 'calloc', 'realloc', 'strdup', 'strndup',
-                   'aligned_alloc', 'valloc', 'pvalloc', 'memalign'}
-    FREE_FUNCS = {'free', 'cfree'}
+    ALLOC_FUNCS = c_facts.allocators('heap', returning=True)        # specs/data/c.toml
+    FREE_FUNCS = c_facts.releasers('heap')
 
     # C++ operators
     CPP_NEW_OPS = {'new', 'new[]'}

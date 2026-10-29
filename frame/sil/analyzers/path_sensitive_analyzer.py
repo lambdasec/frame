@@ -20,6 +20,7 @@ This eliminates false positives from "good" code paths because the
 path-sensitive analysis tracks that the pointer was validated.
 """
 
+from frame.sil import c_facts
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple, Any, Union
 from enum import Enum
@@ -131,11 +132,9 @@ class PathSensitiveAnalyzer:
     memory safety properties along each control flow path.
     """
 
-    ALLOC_FUNCS = {'malloc', 'calloc', 'realloc', 'strdup', 'strndup', 'aligned_alloc'}
-    FREE_FUNCS = {'free', 'cfree'}
-    DEREF_FUNCS = {'strlen', 'strcpy', 'strncpy', 'memcpy', 'memmove', 'memset',
-                   'printf', 'fprintf', 'sprintf', 'snprintf', 'puts', 'fputs',
-                   'fwrite', 'fread', 'printLine', 'printIntLine', 'printLongLine'}
+    ALLOC_FUNCS = c_facts.allocators('heap', returning=True)        # specs/data/c.toml
+    FREE_FUNCS = c_facts.releasers('heap')
+    DEREF_FUNCS = frozenset(c_facts.dereferences()) | {'printLine', 'printIntLine', 'printLongLine'}
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose

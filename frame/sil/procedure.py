@@ -144,14 +144,27 @@ class ProcSpec:
     # Memory specifications
     # =========================================================================
 
-    # Does this function allocate memory?
-    allocates: bool = False
+    # The memory this function allocates ("heap": malloc and kin, "stack": alloca,
+    # "mapped": mmap, "new" / "new_array": C++ new and new[]); "" when none.
+    allocates: str = ""
 
-    # Does this function free memory?
-    frees: bool = False
+    # The memory this function releases, by the kind that allocated it ("heap": free,
+    # "mapped": munmap, "new": delete, "new_array": delete[]); "" when none.
+    frees: str = ""
+
+    # The argument an allocator stores the new memory through, when it does not return it
+    # (posix_memalign(&p, ...) returns an error code); None when it returns the memory.
+    allocates_via: Optional[int] = None
 
     # Can this function return null?
     may_return_null: bool = False
+
+    # Does this function never return (exit, abort, longjmp)?
+    noreturn: bool = False
+
+    # Argument positions this function reads through as pointers (strlen(s), memcpy(d, s, n));
+    # -1 for every argument (printf's varargs).
+    dereferences: List[int] = field(default_factory=list)
 
     # =========================================================================
     # Structural weakness specifications
@@ -257,11 +270,11 @@ class ProcSpec:
 
     def is_allocator(self) -> bool:
         """Check if this function allocates memory (malloc, new, etc.)"""
-        return self.allocates
+        return bool(self.allocates)
 
     def is_deallocator(self) -> bool:
         """Check if this function frees memory (free, delete, etc.)"""
-        return self.frees
+        return bool(self.frees)
 
 
 # =============================================================================

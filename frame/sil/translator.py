@@ -39,6 +39,7 @@ from .instructions import (
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
+from . import c_facts as _c_facts
 from .kinds import check as _kinds_check, load as _load_kinds
 
 _KINDS = _load_kinds()
@@ -7164,13 +7165,11 @@ class SILTranslator:
     # Standard C/C++ library functions that never return to the caller. A call
     # to one ends the current path, so nothing after it on that branch runs.
     _NORETURN_FUNCS = frozenset({
-        "exit", "_exit", "_Exit", "quick_exit", "abort", "_abort",
-        "longjmp", "siglongjmp", "__assert_fail", "err", "errx",
         "__frame_goto__",   # the C frontend's lowering of `goto`
         # other languages' process exits and request aborts
         "sys.exit", "quit", "os._exit", "os.abort", "flask.abort", "werkzeug.exceptions.abort",
         "System.exit", "Environment.Exit", "process.exit", "os.Exit",
-    })
+    }) | _c_facts.noreturn()                                         # C: specs/data/c.toml
 
     def _is_noreturn_call(self, instr: Instr) -> bool:
         """Is `instr` a call to a function that never returns (exit/abort/...)?"""
@@ -8209,10 +8208,7 @@ class SILTranslator:
     # =========================================================================
 
     # Allocator families and the one deallocator that correctly releases each.
-    _C_HEAP_ALLOCATORS = frozenset({
-        "malloc", "calloc", "realloc", "reallocarray", "strdup", "strndup",
-        "aligned_alloc", "memalign", "posix_memalign", "valloc", "pvalloc",
-    })
+    _C_HEAP_ALLOCATORS = _c_facts.allocators("heap")              # specs/data/c.toml
     _EXPECTED_FREE = {"c_heap": "free", "new": "delete", "new_array": "delete[]"}
     _ALLOC_KIND_LABEL = {"c_heap": "malloc/calloc/realloc", "new": "new",
                          "new_array": "new[]"}

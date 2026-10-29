@@ -21,6 +21,7 @@ Key CWE Types Detected:
 - CWE-480: Use of Incorrect Operator (assignment in condition)
 """
 
+from frame.sil import c_facts
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple, Any
 from enum import Enum
@@ -98,8 +99,8 @@ class SLSemanticAnalyzer:
     for memory safety verification.
     """
 
-    ALLOC_FUNCS = {'malloc', 'calloc', 'realloc', 'strdup', 'strndup', 'aligned_alloc'}
-    FREE_FUNCS = {'free', 'cfree'}
+    ALLOC_FUNCS = c_facts.allocators('heap', returning=True)        # specs/data/c.toml
+    FREE_FUNCS = c_facts.releasers('heap')
 
     # Functions that copy unbounded data (unsafe without size check)
     UNSAFE_COPY_FUNCS = {'strcpy', 'strcat', 'wcscpy', 'wcscat', 'gets', 'sprintf'}
@@ -112,9 +113,8 @@ class SLSemanticAnalyzer:
     DELETE_OPS = {'delete', 'delete[]'}
 
     # Functions that dereference pointers
-    DEREF_FUNCS = {'printLine', 'printIntLine', 'printLongLine', 'printHexCharLine',
-                   'printWLine', 'printLongLongLine', 'printf', 'fprintf', 'sprintf',
-                   'strlen', 'wcslen', 'strcpy', 'strncpy', 'memcpy', 'memmove'}
+    DEREF_FUNCS = frozenset(c_facts.dereferences()) | {'printLine', 'printIntLine', 'printLongLine',
+                                                       'printHexCharLine', 'printWLine', 'printLongLongLine'}
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
