@@ -19,7 +19,7 @@ from pathlib import PurePath
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..instructions import Assign, Call, TaintKind, TaintSource
-from ..metadata import ImportTable, qualify_type
+from ..metadata import ClassInfo, ImportTable, qualify_type
 from ..procedure import Procedure, ProcSpec, Program
 from ..types import PVar
 from .loader import PackSet, builtin_packs
@@ -397,6 +397,15 @@ def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: Impor
     return out
 
 
+def _entry_fields(e: Entrypoint, cls: ClassInfo) -> List[str]:
+    if e.fields == "settable":
+        return list(cls.settable_fields)
+    if e.fields == "annotated":
+        return [f for f in cls.fields
+                if any(_glob(e.field_annotation, a.name, a.canonical) for a in cls.field_annotations.get(f, ()))]
+    return list(cls.fields)
+
+
 def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
     entries = [(p, e) for p in packs for e in p.entrypoints]
     if not entries:
@@ -418,7 +427,7 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
             for n in _entry_params(e, proc, program, table):
                 tainted.setdefault(n, (pack, e))
             if e.fields and cls is not None:
-                for f in cls.fields:
+                for f in _entry_fields(e, cls):
                     tainted.setdefault(f, (pack, e))
         for n, (pack, e) in reversed(list(tainted.items())):
             kind = TaintKind(_SOURCE_KIND_VALUES.get(e.kind, e.kind))

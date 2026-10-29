@@ -49,6 +49,8 @@ class ClassInfo:
     annotations: List[Annotation] = field(default_factory=list)
     package: Optional[str] = None               # Java package / C# namespace
     fields: List[str] = field(default_factory=list)   # declared instance fields / properties
+    field_annotations: Dict[str, List[Annotation]] = field(default_factory=dict)  # per field, where recorded
+    settable_fields: List[str] = field(default_factory=list)  # public members code outside can assign (C#)
 
 
 class ImportTable:

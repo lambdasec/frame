@@ -43,7 +43,7 @@ _PACK_KEYS = {"name", "language", "description", "detect", "version", "reference
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "params", "param_annotation", "param_type", "exclude_param",
-               "exclude_param_type", "tainted_param_type", "fields", "kind", "description"}
+               "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
@@ -74,7 +74,8 @@ class Entrypoint:
     exclude_param: List[str] = field(default_factory=list)
     exclude_param_type: List[str] = field(default_factory=list)
     tainted_param_type: List[str] = field(default_factory=list)  # request objects: taint the whole param
-    fields: bool = False
+    fields: str = ""                     # "" | "all" | "annotated" | "settable" (true means "all")
+    field_annotation: List[str] = field(default_factory=list)
     kind: str = "user_input"
     description: str = ""
 
@@ -237,7 +238,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         _check_keys(origin, where, t, _ENTRY_KEYS)
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
         for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "param_annotation", "param_type",
-                    "exclude_param", "exclude_param_type", "tainted_param_type"):
+                    "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation"):
             if key in t:
                 setattr(e, key, _strings(origin, f"{where}.{key}", t[key]))
         if "annotation" in t:                                   # alias of decorator
@@ -255,7 +256,16 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "params = \"annotated\" needs param_annotation")
         if params == "typed" and not e.param_type:
             raise _fail(origin, where, "params = \"typed\" needs param_type")
-        e.fields = bool(t.get("fields", False))
+        fields = t.get("fields", False)
+        if fields is True:
+            fields = "all"
+        if fields is False:
+            fields = ""
+        if fields not in ("", "all", "annotated", "settable"):
+            raise _fail(origin, f"{where}.fields", "must be true | false | all | annotated | settable")
+        if (fields == "annotated") != bool(e.field_annotation):
+            raise _fail(origin, where, "fields = \"annotated\" and field_annotation go together")
+        e.fields = fields
         e.kind = _source_kind(origin, f"{where}.kind", t.get("kind", "user_input"))
         if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via):
             raise _fail(origin, where, "needs at least one of decorator/annotation, class_decorator, "

@@ -40,7 +40,7 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
-    ClassInfo, ImportTable, canonical_call, parse_annotation,
+    Annotation, ClassInfo, ImportTable, canonical_call, parse_annotation,
 )
 from frame.sil.packs import finish_program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
@@ -402,49 +402,54 @@ class CSharpFrontend:
         kind = {"struct_declaration": "struct", "interface_declaration": "interface",
                 "enum_declaration": "enum"}.get(node.type, "class")
         members = node.child_by_field_name("body")
-        fields = self._bindable_members(members, attrs)
+        fields, field_annotations, settable = self._members(members)
         program.class_info[name] = ClassInfo(
-            name=name, kind=kind, bases=bases, fields=fields,
+            name=name, kind=kind, bases=bases, fields=fields, field_annotations=field_annotations,
+            settable_fields=settable,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports) for a in attrs],
             package=self._current_namespace or None)
 
-    _BINDING_ATTRIBUTES = ("Bind", "From", "Parameter", "SupplyParameterFrom", "CascadingParameter", "TempData")
-
-    def _bindable_members(self, body: Optional[TSNode], class_attrs: List[str]) -> List[str]:
-        """`ClassInfo.fields` for C#: the properties / fields the framework fills from the request.
-
-        A member is listed when it carries a binding attribute (`[BindProperty]`,
-        `[FromQuery]`, `[Parameter]`...); with a class-level `[BindProperties]` every settable
-        public property is. Constructor-injected services (private readonly fields) and
-        plain view-model properties are not request data, so they are left out."""
-        out: List[str] = []
+    def _members(self, body: Optional[TSNode]
+                 ) -> Tuple[List[str], Dict[str, List[Annotation]], List[str]]:
+        """`ClassInfo.fields`, `field_annotations` and `settable_fields` for C#: every instance field
+        and property, the attributes each carries, and the public ones code outside the class can
+        assign (not `readonly`, a property with a `set`/`init` accessor). Which of them a framework
+        fills from the request is the packs' business (`fields = "annotated"` / `"settable"`)."""
+        names: List[str] = []
+        annotations: Dict[str, List[Annotation]] = {}
+        settable: List[str] = []
         if body is None:
-            return out
-        all_bound = any(re.match(r"\s*(\w+\.)*BindProperties\b", a) for a in class_attrs)
+            return names, annotations, settable
         for member in body.children:
             if member.type not in ("property_declaration", "field_declaration"):
                 continue
-            attrs = self._get_attributes(member)
-            marked = any(re.match(r"\s*(\w+\.)*(%s)" % "|".join(self._BINDING_ATTRIBUTES), a) for a in attrs)
             mods = {self._get_text(c) for c in member.children if c.type == "modifier"}
-            settable = "public" in mods and "readonly" not in mods and "static" not in mods
+            if "static" in mods or "const" in mods:
+                continue
+            can_set = "public" in mods and "readonly" not in mods
             if member.type == "property_declaration":
                 acc = next((c for c in member.children if c.type == "accessor_list"), None)
                 text = self._get_text(acc) if acc is not None else ""
-                settable = settable and bool(re.search(r"\b(set|init)\b", text))
-                if marked or (all_bound and settable):
-                    nm = member.child_by_field_name("name")
-                    if nm is not None:
-                        out.append(self._get_text(nm))
-            elif marked or (all_bound and settable):
+                can_set = can_set and bool(re.search(r"\b(set|init)\b", text))
+                nm = member.child_by_field_name("name")
+                declared = [self._get_text(nm)] if nm is not None else []
+            else:
+                declared = []
                 for d in self._descendants_of(member):
                     if d.type == "variable_declarator":
                         nm = d.child_by_field_name("name") or next(
                             (c for c in d.children if c.type == "identifier"), None)
                         if nm is not None:
-                            out.append(self._get_text(nm))
-        return out
+                            declared.append(self._get_text(nm))
+            attrs = [parse_annotation(a, self._imports) for a in self._get_attributes(member)]
+            for n in declared:
+                names.append(n)
+                if attrs:
+                    annotations[n] = attrs
+                if can_set:
+                    settable.append(n)
+        return names, annotations, settable
 
     _STRING_LITERAL_TYPES = frozenset({
         "string_literal", "verbatim_string_literal", "raw_string_literal"})

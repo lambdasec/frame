@@ -28,16 +28,25 @@ param_annotation = ["FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeade
                     "Microsoft.AspNetCore.Mvc.From*"]
 
 # Razor Pages: handler methods (OnGet, OnPostLogin, OnGetExport...) take route / query / form values as
-# parameters, and [BindProperty] properties are filled from the request before the handler runs.
+# parameters, and [BindProperty] / [From*] properties are filled from the request before the handler runs.
 [[entrypoint]]
 id = "razor-page-handler"
 extends = ["PageModel", "Microsoft.AspNetCore.Mvc.RazorPages.PageModel"]
 method = ["On[A-Z]*"]
 params = "all"
-fields = true
+fields = "annotated"
+field_annotation = ["BindProperty*", "From*", "TempData*", "*.BindProperty*", "*.From*", "*.TempData*"]
 exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
                       "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
                       "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# [BindProperties] on a page model binds every public settable property.
+[[entrypoint]]
+id = "razor-page-bind-properties"
+extends = ["PageModel", "Microsoft.AspNetCore.Mvc.RazorPages.PageModel"]
+class_annotation = ["BindProperties*", "*.BindProperties*"]
+method = ["On[A-Z]*"]
+fields = "settable"
 
 # SignalR: every public hub method is invoked by a remote client with the arguments it chose.
 [[entrypoint]]
@@ -54,7 +63,9 @@ exclude_param_type = ["Exception", "CancellationToken", "int", "long", "short", 
 id = "blazor-component"
 extends = ["ComponentBase", "Microsoft.AspNetCore.Components.ComponentBase", "LayoutComponentBase"]
 method = ["*"]
-fields = true
+fields = "annotated"
+field_annotation = ["Parameter*", "SupplyParameterFrom*", "CascadingParameter*",
+                    "*.Parameter*", "*.SupplyParameterFrom*", "*.CascadingParameter*"]
 
 # Request reads that are method calls (the property forms Request.Query[..], Request.Cookies[..] are built in).
 [[source]]
