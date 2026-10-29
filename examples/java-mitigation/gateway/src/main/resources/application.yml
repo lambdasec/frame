@@ -1,0 +1,12 @@
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: orders
+          uri: http://orders:8080
+          predicates:
+            - Path=/orders/**
+management:
+  endpoint:
+    gateway:
+      enabled: false

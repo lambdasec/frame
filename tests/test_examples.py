@@ -76,11 +76,19 @@ def test_java_mitigation_walkthrough(tmp_path):
     work, env = _example(tmp_path, "java-mitigation")
     readme = (work / "README.md").read_text()
     out = frame(work, env, "deps", "--vulns")
-    for line in ["10 known vulnerabilities:",
+    for line in ["12 known vulnerabilities:",
                  "mitigation (partial): disable message lookups (log4j2.formatMsgNoLookups=true): APPLIED at Dockerfile:7 (Dockerfile ENV)",
                  "caveat: does NOT mitigate CVE-2021-45046 (GHSA-7rjr-3q55-vv33)",
                  "mitigation (complete): enable fastjson safeMode, which disables autoType completely: not found"]:
         assert line in out and line in readme, line
+    gateway = frame(work, env, "deps", "gateway", "--vulns")
+    for line in ["2 known vulnerabilities:",
+                 "mitigation (complete): disable the Cloud Foundry actuator endpoints (management.cloudfoundry.enabled=false): "
+                 "not found; set one of management.cloudfoundry.enabled=false (application.properties / .yml, -D, --argument, "
+                 "or MANAGEMENT_CLOUDFOUNDRY_ENABLED=false)",
+                 "mitigation (complete): disable the Gateway actuator endpoint (management.endpoint.gateway.enabled=false), "
+                 "through which the SpEL injection is reached: APPLIED at src/main/resources/application.yml:12 (application.yml)"]:
+        assert line in gateway and line in readme, (line, gateway)
     dry = frame(work, env, "deps", "--vulns", "--mitigate")
     assert "+fastjson.parser.safeMode=true" in dry and not (work / "src/main/resources/fastjson.properties").exists()
     applied = frame(work, env, "deps", "--vulns", "--mitigate", "--apply")

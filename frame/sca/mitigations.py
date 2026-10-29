@@ -15,6 +15,10 @@ Whether it is applied is read, never guessed, from where a running application g
   - environment variables: Dockerfile ENV, Compose `environment`, Kubernetes container `env`,
     systemd `Environment=`, `.env` files, `export` in shell scripts;
   - properties files with the name the library reads (`fastjson.properties`);
+  - Spring Boot properties (`spring-property`), as Spring's relaxed binding reads them:
+    `application*.properties` / `application*.yml` / `bootstrap*` (YAML flattened to dotted
+    keys), a `-D` system property, a `--key=value` argument on a `java` command line, or an
+    environment variable (`MANAGEMENT_CLOUDFOUNDRY_ENABLED`: dots as `_`, dashes dropped);
   - a call (`ParserConfig.getGlobalInstance().setSafeMode(true)`), from the Java syntax tree.
 Build-time settings (`.mvn/jvm.config`, `gradle.properties`, `RUN mvn -D...`) configure the
 build's JVM, not the application's, and do not count.
@@ -39,7 +43,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:                                     # pragma: no cover
     from frame.sca.apply import Change
 
-KINDS = ("jvm-property", "env", "properties-file", "java-call")
+KINDS = ("jvm-property", "env", "properties-file", "java-call", "spring-property")
 JVM_OPTION_VARS = ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "JAVA_OPTS")
 
 
@@ -82,7 +86,8 @@ def check(data, origin: str) -> Dict[str, List[dict]]:
                     raise MitigationError(f"{origin}: {adv}: a way's kind must be one of {KINDS}")
                 need = {"jvm-property": ("key", "value"), "env": ("key", "value"),
                         "properties-file": ("file", "key", "value"),
-                        "java-call": ("receiver", "method", "args")}[w["kind"]]
+                        "java-call": ("receiver", "method", "args"),
+                        "spring-property": ("key", "value")}[w["kind"]]
                 if any(k not in w for k in need):
                     raise MitigationError(f"{origin}: {adv}: a {w['kind']} way needs {need}")
     return data
@@ -109,7 +114,7 @@ def load(ecosystem: str, revision_dir: Optional[Path]) -> Dict[str, List[dict]]:
 
 @dataclass(frozen=True)
 class Setting:
-    kind: str                  # "jvm-property" | "env" | "properties-file" | "java-call"
+    kind: str                  # "jvm-property" | "env" | "properties-file" | "java-call" | "spring-property"
     key: str                   # property / variable name; for a properties file "<file>:<key>"; for a call "<receiver>.<method>"
     value: str
     location: str              # "path:line"
@@ -121,6 +126,9 @@ def _d_props(tokens: Iterable[str], loc: str, via: str) -> Iterator[Setting]:
         m = re.fullmatch(r"-D([\w.\-]+)=(.*)", t)
         if m:
             yield Setting("jvm-property", m.group(1), m.group(2), loc, via)
+        m = re.fullmatch(r"--([A-Za-z][\w.\-\[\]]*)=(.*)", t)   # a Spring Boot command-line argument
+        if m:
+            yield Setting("spring-property", m.group(1), m.group(2), loc, f"{via} argument")
 
 
 def _split(text: str) -> List[str]:
@@ -244,6 +252,46 @@ def read_yaml(rel: str, text: str) -> Iterator[Setting]:
                 yield from _container_settings(rel, text, c, "Kubernetes")
 
 
+_SPRING_CONFIG = re.compile(r"^(application|bootstrap)(-[\w.\-]+)?\.(properties|ya?ml)$")
+
+
+def _flatten(prefix: str, node) -> Iterator[Tuple[str, object]]:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _flatten(f"{prefix}.{k}" if prefix else str(k), v)
+    elif not isinstance(node, list):
+        yield prefix, node
+
+
+def read_spring_config(rel: str, text: str) -> Iterator[Setting]:
+    """Spring Boot's own configuration files: `application.properties`, `application-prod.yml`..."""
+    via = Path(rel).name
+    if rel.endswith(".properties"):
+        for i, line in enumerate(text.splitlines(), 1):
+            st = line.strip()
+            m = re.match(r"^([^=:\s]+)\s*[=:\s]\s*(.*)$", st) if st and st[0] not in "#!" else None
+            if m:
+                yield Setting("spring-property", m.group(1), m.group(2).strip(), f"{rel}:{i}", via)
+        return
+    lines = text.splitlines()
+    for doc in _yaml_docs(text):
+        for key, value in _flatten("", doc):
+            v = str(value).lower() if isinstance(value, bool) else str(value)
+            leaf = key.rsplit(".", 1)[-1]
+            line = next((i for i, ln in enumerate(lines, 1) if ln.strip().startswith(f"{leaf}:")), 0)
+            yield Setting("spring-property", key, v, f"{rel}:{line}", via)
+
+
+def _relaxed(key: str) -> str:
+    """Spring's relaxed binding: `first-name`, `firstName`, `first_name` are one name."""
+    return ".".join(seg.replace("-", "").replace("_", "").lower() for seg in key.split("."))
+
+
+def spring_env_name(key: str) -> str:
+    """The environment variable Spring Boot binds to a property (dots to `_`, dashes dropped)."""
+    return key.replace("-", "").replace(".", "_").upper()
+
+
 def read_env_file(rel: str, text: str) -> Iterator[Setting]:
     for i, line in enumerate(text.splitlines(), 1):
         m = re.match(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=(.*)$", line)
@@ -347,6 +395,8 @@ def project_settings(root: Path, properties_files: Set[str] = frozenset(),
             reader = None
             if name == "Dockerfile" or name.startswith("Dockerfile.") or name.endswith(".dockerfile"):
                 reader = read_dockerfile
+            elif _SPRING_CONFIG.match(name):
+                reader = read_spring_config
             elif name.endswith((".yaml", ".yml")):
                 reader = read_yaml
             elif name == ".env" or name.startswith(".env."):
@@ -387,6 +437,12 @@ def _matches(way: dict, s: Setting) -> bool:
     if way["kind"] == "java-call":
         return s.kind == "java-call" and s.key == f"{_norm(way['receiver'])}.{way['method']}" \
             and s.value == ",".join(_norm(a) for a in way["args"])
+    if way["kind"] == "spring-property":
+        if s.value.strip().strip("'\"").lower() != value:
+            return False
+        if s.kind in ("spring-property", "jvm-property"):
+            return _relaxed(s.key) == _relaxed(way["key"])
+        return s.kind == "env" and s.key == spring_env_name(way["key"])
     return False
 
 
@@ -398,6 +454,9 @@ def describe(way: dict) -> str:
         return f"{way['key']}={way['value']}"
     if k == "properties-file":
         return f"{way['key']}={way['value']} in {way['file']}"
+    if k == "spring-property":
+        return (f"{way['key']}={way['value']} (application.properties / .yml, -D, --argument, "
+                f"or {spring_env_name(way['key'])}={way['value']})")
     return f"{way['receiver']}.{way['method']}({', '.join(way['args'])})"
 
 
@@ -494,6 +553,13 @@ def propose(findings: List[dict], root: Path) -> Tuple[List["Change"], List[str]
             for w in m.get("settings", []):
                 ways.setdefault(w["kind"], w)
             res = _resources_dir(root, f["path"])
+            if "spring-property" in ways and res is not None:      # the application's own configuration
+                w = ways["spring-property"]
+                rel = (res / "application.properties").relative_to(root).as_posix()
+                cur = edits[rel].after if rel in edits else (root / rel).read_text() if (root / rel).is_file() else ""
+                new = cur + ("" if not cur or cur.endswith("\n") else "\n") + f"{w['key']}={w['value']}\n"
+                edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, new, f"{label}: {m['summary']}")
+                continue
             if "properties-file" in ways and res is not None:
                 w = ways["properties-file"]
                 rel = (res / w["file"]).relative_to(root).as_posix()

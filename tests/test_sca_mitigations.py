@@ -266,3 +266,65 @@ def test_cli_mitigate_apply_confirms_and_touches_nothing_else(tmp_path):
     assert (proj / "pom.xml").read_text() == pom                        # --mitigate --apply writes no upgrade
     again = run("deps", str(proj), "--vulns", "--mitigate").stdout
     assert "nothing to apply" in again and "APPLIED" in again           # idempotent
+
+
+# -- Spring Boot properties (spring-property): from the Spring advisories' own workarounds ---------
+
+CLOUDFOUNDRY = "GHSA-g5h3-w546-pj7f"          # CVE-2023-20873
+ACTUATOR = "org.springframework.boot:spring-boot-actuator-autoconfigure"
+
+
+def test_spring_advisory_workarounds_are_curated_with_their_evidence():
+    data = builtin("Maven")
+    for adv, key in [(CLOUDFOUNDRY, "management.cloudfoundry.enabled"),
+                     ("GHSA-3gx9-37ww-9qw6", "management.endpoint.gateway.enabled"),
+                     ("GHSA-jjfh-589g-3hjx", "management.metrics.enable.http.server.requests"),
+                     ("GHSA-v94h-hvhg-mf9h", "management.metrics.enable.http.server.requests")]:
+        [e] = data[adv]
+        assert e["ways"] == [{"kind": "spring-property", "key": key, "value": "false"}]
+        assert any(r.startswith("https://spring.io/security/cve-") for r in e["references"])
+    assert data["GHSA-v94h-hvhg-mf9h"][0]["complete"] is False      # Spring Framework without Boot
+
+
+@pytest.mark.parametrize("files,via", [
+    ({"src/main/resources/application.properties": "server.port=8080\nmanagement.cloudfoundry.enabled=false\n"},
+     "application.properties"),
+    ({"src/main/resources/application.yml": "management:\n  cloudfoundry:\n    enabled: false\n"}, "application.yml"),
+    ({"config/application-prod.yaml": "management:\n  cloud-foundry:\n    enabled: false\n"}, "application-prod.yaml"),
+    ({"Dockerfile": "FROM eclipse-temurin:17\nENV MANAGEMENT_CLOUDFOUNDRY_ENABLED=false\n"}, "Dockerfile ENV"),
+    ({"Dockerfile": "FROM eclipse-temurin:17\nCMD [\"java\", \"-Dmanagement.cloudfoundry.enabled=false\", \"-jar\", \"a.jar\"]\n"},
+     "Dockerfile CMD"),
+    ({"Dockerfile": "FROM eclipse-temurin:17\nCMD [\"java\", \"-jar\", \"a.jar\", \"--management.cloudfoundry.enabled=false\"]\n"},
+     "Dockerfile CMD argument"),
+])
+def test_a_spring_property_is_found_wherever_spring_boot_reads_it(tmp_path, files, via):
+    """Spring's relaxed binding: application.properties / .yml (any profile), an environment variable
+    (dots as `_`), a system property, a command-line argument; `cloud-foundry` is `cloudfoundry`."""
+    write(tmp_path, files)
+    fs = [finding(CLOUDFOUNDRY, ACTUATOR, "2.7.10")]
+    annotate(fs, tmp_path, None)
+    [m] = fs[0]["mitigations"]
+    assert m["complete"] and [a["via"] for a in m["applied"]] == [via]
+    assert "MANAGEMENT_CLOUDFOUNDRY_ENABLED=false" in m["ways"][0]
+
+
+@pytest.mark.parametrize("files", [
+    {"src/main/resources/application.properties": "management.cloudfoundry.enabled=true\n"},     # the default
+    {"src/main/resources/application.yml": "management:\n  cloudfoundry:\n    skip-ssl-validation: false\n"},
+    {"src/main/resources/fastjson.properties": "management.cloudfoundry.enabled=false\n"},      # not Spring's file
+])
+def test_a_different_value_or_file_is_not_the_mitigation(tmp_path, files):
+    write(tmp_path, files)
+    fs = [finding(CLOUDFOUNDRY, ACTUATOR, "2.7.10")]
+    annotate(fs, tmp_path, None)
+    assert fs[0]["mitigations"][0]["applied"] == []
+
+
+def test_propose_writes_a_spring_property_into_the_application_s_own_configuration(tmp_path):
+    from frame.sca.mitigations import propose
+    write(tmp_path, {"pom.xml": "<project/>\n", "src/main/resources/application.properties": "server.port=8080\n"})
+    fs = [{**finding(CLOUDFOUNDRY, ACTUATOR, "2.7.10"), "path": "pom.xml"}]
+    annotate(fs, tmp_path, None)
+    changes, manual = propose(fs, tmp_path)
+    assert not manual and [(c.path, c.after) for c in changes] == [
+        ("src/main/resources/application.properties", "server.port=8080\nmanagement.cloudfoundry.enabled=false\n")]

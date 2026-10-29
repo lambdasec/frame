@@ -1,6 +1,6 @@
 # Configuration mitigations: fastjson and Log4j
 
-A Maven service with two dependencies that have well-known vulnerabilities: fastjson 1.2.80 (its `JSON.parseObject` is how orders are read, `src/main/java/shop/Orders.java`) and log4j-core 2.14.1. The `Dockerfile` already sets one mitigation. Every output below is what the command prints, offline from `offline-advisories/` (`tests/test_examples.py` checks).
+A Maven service with two dependencies that have well-known vulnerabilities (and, in `gateway/`, a Spring Cloud Gateway service, below): fastjson 1.2.80 (its `JSON.parseObject` is how orders are read, `src/main/java/shop/Orders.java`) and log4j-core 2.14.1. The `Dockerfile` already sets one mitigation. Every output below is what the command prints, offline from `offline-advisories/` (`tests/test_examples.py` checks).
 
 ```bash
 cd examples/java-mitigation
@@ -11,7 +11,7 @@ frame kb pull --advisories --source offline-advisories
 
 ```console
 $ frame deps --vulns
-10 known vulnerabilities:
+12 known vulnerabilities:
   CRITICAL org.apache.logging.log4j:log4j-core@2.14.1 (direct) GHSA-jfh8-c2jp-5v3q: Remote code injection in Log4j; fixed in 2.15.0  [pom.xml]
            mitigation (partial): disable message lookups (log4j2.formatMsgNoLookups=true): APPLIED at Dockerfile:7 (Dockerfile ENV)
              caveat: does NOT mitigate CVE-2021-45046 (GHSA-7rjr-3q55-vv33), and Apache withdrew this advice: upgrade, or remove the JndiLookup class from the classpath
@@ -46,5 +46,31 @@ It is written to a properties file fastjson reads from the classpath, so it trav
 Nothing here changes a version. `--plan` shows the upgrades, and fastjson's newer GHSA-crf3-v9rr-v7hj has no fixed version and no curated mitigation, so it stays open either way.
 
 A mitigation found is evidence, not a verdict: a VEX document from `frame deps --vex openvex` keeps the advisory `affected`, with the mitigation in its notes, until you record `inline_mitigations_already_exist` in `.frame/vex.toml`.
+
+## Spring Boot properties
+
+`gateway/` is a Spring Cloud Gateway 3.1.0 service on Spring Boot 2.6.3. Spring's advisories name a property as the workaround for both of its critical advisories, and its `application.yml` already sets one of them:
+
+```console
+$ frame deps gateway --vulns
+2 known vulnerabilities:
+  CRITICAL org.springframework.boot:spring-boot-actuator-autoconfigure@2.6.3 (direct) GHSA-g5h3-w546-pj7f: Spring Boot Security Bypass with Wildcard Pattern Matching on Cloud Foundry; fixed in 2.6.15  [pom.xml]
+           mitigation (complete): disable the Cloud Foundry actuator endpoints (management.cloudfoundry.enabled=false): not found; set one of management.cloudfoundry.enabled=false (application.properties / .yml, -D, --argument, or MANAGEMENT_CLOUDFOUNDRY_ENABLED=false)
+  CRITICAL org.springframework.cloud:spring-cloud-gateway@3.1.0 (direct) GHSA-3gx9-37ww-9qw6: Spring Cloud Gateway vulnerable to Code Injection when Gateway Actuator endpoint; fixed in 3.1.1  [pom.xml]
+           mitigation (complete): disable the Gateway actuator endpoint (management.endpoint.gateway.enabled=false), through which the SpEL injection is reached: APPLIED at src/main/resources/application.yml:12 (application.yml)
+```
+
+A Spring Boot property is found wherever Spring Boot reads it, under its relaxed names: `application.properties` or `application.yml` (any profile; YAML keys are flattened, `cloud-foundry` is `cloudfoundry`), a `-D` system property, a `--key=value` argument on the `java` command line, or the environment variable Spring Boot binds (`MANAGEMENT_CLOUDFOUNDRY_ENABLED`). The missing one goes into the application's own configuration:
+
+```console
+$ frame deps gateway --vulns --mitigate
+Configuration mitigations (dry run; --apply writes them):
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -0,0 +1 @@
++management.cloudfoundry.enabled=false
+```
+
+Each entry quotes the workaround from Spring's advisory (spring.io/security/cve-2022-22947, cve-2023-20873) and the source showing the property exists in every version it is offered for (`@ConditionalOnProperty(prefix = "management.cloudfoundry", name = "enabled")` from Spring Boot 2.0.0; the gateway endpoint's `id = "gateway"`).
 
 See [docs/dependencies.md](../../docs/dependencies.md#configuration-mitigations).

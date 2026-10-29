@@ -1,38 +1,151 @@
 {
-  "GHSA-pv7h-hx5h-mgfj": [
+ "GHSA-pv7h-hx5h-mgfj": [
+  {
+   "package": "com.alibaba:fastjson",
+   "versions": "[1.2.68,)",
+   "complete": true,
+   "summary": "enable fastjson safeMode, which disables autoType completely",
+   "ways": [
     {
-      "package": "com.alibaba:fastjson",
-      "versions": "[1.2.68,)",
-      "complete": true,
-      "summary": "enable fastjson safeMode, which disables autoType completely",
-      "ways": [
-        {"kind": "jvm-property", "key": "fastjson.parser.safeMode", "value": "true"},
-        {"kind": "properties-file", "file": "fastjson.properties", "key": "fastjson.parser.safeMode", "value": "true"},
-        {"kind": "java-call", "receiver": "ParserConfig.getGlobalInstance()", "method": "setSafeMode", "args": ["true"]},
-        {"kind": "java-call", "receiver": "com.alibaba.fastjson.parser.ParserConfig.getGlobalInstance()", "method": "setSafeMode", "args": ["true"]}
-      ],
-      "references": [
-        "https://github.com/advisories/GHSA-pv7h-hx5h-mgfj (Workaround: enable safeMode)",
-        "https://github.com/alibaba/fastjson/wiki/fastjson_safemode (since 1.2.68; the three ways)"
-      ]
-    }
-  ],
-  "GHSA-jfh8-c2jp-5v3q": [
+     "kind": "jvm-property",
+     "key": "fastjson.parser.safeMode",
+     "value": "true"
+    },
     {
-      "package": "org.apache.logging.log4j:log4j-core",
-      "versions": "[2.10.0,)",
-      "complete": false,
-      "summary": "disable message lookups (log4j2.formatMsgNoLookups=true)",
-      "caveat": "does NOT mitigate CVE-2021-45046 (GHSA-7rjr-3q55-vv33), and Apache withdrew this advice: upgrade, or remove the JndiLookup class from the classpath",
-      "ways": [
-        {"kind": "jvm-property", "key": "log4j2.formatMsgNoLookups", "value": "true"},
-        {"kind": "env", "key": "LOG4J_FORMAT_MSG_NO_LOOKUPS", "value": "true"},
-        {"kind": "properties-file", "file": "log4j2.component.properties", "key": "log4j2.formatMsgNoLookups", "value": "true"}
-      ],
-      "references": [
-        "https://github.com/advisories/GHSA-7rjr-3q55-vv33 (setting log4j2.formatMsgNoLookups does NOT mitigate CVE-2021-45046)",
-        "apache/logging-log4j2@log4j-2.10.0: Constants.java defines log4j2.formatMsgNoLookups (absent in 2.9.1); EnvironmentPropertySource maps LOG4J_ variables; PropertiesUtil reads log4j2.component.properties"
-      ]
+     "kind": "properties-file",
+     "file": "fastjson.properties",
+     "key": "fastjson.parser.safeMode",
+     "value": "true"
+    },
+    {
+     "kind": "java-call",
+     "receiver": "ParserConfig.getGlobalInstance()",
+     "method": "setSafeMode",
+     "args": [
+      "true"
+     ]
+    },
+    {
+     "kind": "java-call",
+     "receiver": "com.alibaba.fastjson.parser.ParserConfig.getGlobalInstance()",
+     "method": "setSafeMode",
+     "args": [
+      "true"
+     ]
     }
-  ]
+   ],
+   "references": [
+    "https://github.com/advisories/GHSA-pv7h-hx5h-mgfj (Workaround: enable safeMode)",
+    "https://github.com/alibaba/fastjson/wiki/fastjson_safemode (since 1.2.68; the three ways)"
+   ]
+  }
+ ],
+ "GHSA-jfh8-c2jp-5v3q": [
+  {
+   "package": "org.apache.logging.log4j:log4j-core",
+   "versions": "[2.10.0,)",
+   "complete": false,
+   "summary": "disable message lookups (log4j2.formatMsgNoLookups=true)",
+   "caveat": "does NOT mitigate CVE-2021-45046 (GHSA-7rjr-3q55-vv33), and Apache withdrew this advice: upgrade, or remove the JndiLookup class from the classpath",
+   "ways": [
+    {
+     "kind": "jvm-property",
+     "key": "log4j2.formatMsgNoLookups",
+     "value": "true"
+    },
+    {
+     "kind": "env",
+     "key": "LOG4J_FORMAT_MSG_NO_LOOKUPS",
+     "value": "true"
+    },
+    {
+     "kind": "properties-file",
+     "file": "log4j2.component.properties",
+     "key": "log4j2.formatMsgNoLookups",
+     "value": "true"
+    }
+   ],
+   "references": [
+    "https://github.com/advisories/GHSA-7rjr-3q55-vv33 (setting log4j2.formatMsgNoLookups does NOT mitigate CVE-2021-45046)",
+    "apache/logging-log4j2@log4j-2.10.0: Constants.java defines log4j2.formatMsgNoLookups (absent in 2.9.1); EnvironmentPropertySource maps LOG4J_ variables; PropertiesUtil reads log4j2.component.properties"
+   ]
+  }
+ ],
+ "GHSA-3gx9-37ww-9qw6": [
+  {
+   "package": "org.springframework.cloud:spring-cloud-gateway",
+   "versions": "[2.0.0,)",
+   "complete": true,
+   "summary": "disable the Gateway actuator endpoint (management.endpoint.gateway.enabled=false), through which the SpEL injection is reached",
+   "ways": [
+    {
+     "kind": "spring-property",
+     "key": "management.endpoint.gateway.enabled",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://spring.io/security/cve-2022-22947 (Mitigation: \"If the Gateway actuator endpoint is not needed it should be disabled via management.endpoint.gateway.enabled: false\"; if it is needed, secure it with Spring Security)",
+    "spring-cloud/spring-cloud-gateway@v2.0.0.RELEASE and v3.1.0: GatewayControllerEndpoint is @RestControllerEndpoint(id = \"gateway\"); spring-boot@v2.0.0.RELEASE OnEnabledEndpointCondition reads management.endpoint.<id>.enabled"
+   ]
+  }
+ ],
+ "GHSA-g5h3-w546-pj7f": [
+  {
+   "package": "org.springframework.boot:spring-boot-actuator-autoconfigure",
+   "versions": "[2.0.0,)",
+   "complete": true,
+   "summary": "disable the Cloud Foundry actuator endpoints (management.cloudfoundry.enabled=false)",
+   "ways": [
+    {
+     "kind": "spring-property",
+     "key": "management.cloudfoundry.enabled",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://spring.io/security/cve-2023-20873 (Workarounds: \"Disable Cloud Foundry actuator endpoints by setting management.cloudfoundry.enabled to false\")",
+    "spring-projects/spring-boot@v2.0.0.RELEASE, v2.5.14 and v3.0.5: CloudFoundryActuatorAutoConfiguration and ReactiveCloudFoundryActuatorAutoConfiguration are @ConditionalOnProperty(prefix = \"management.cloudfoundry\", name = \"enabled\", matchIfMissing = true)"
+   ]
+  }
+ ],
+ "GHSA-jjfh-589g-3hjx": [
+  {
+   "package": "org.springframework.boot:spring-boot-actuator",
+   "versions": "[2.0.0,)",
+   "complete": true,
+   "summary": "disable the web server request metrics (management.metrics.enable.http.server.requests=false)",
+   "ways": [
+    {
+     "kind": "spring-property",
+     "key": "management.metrics.enable.http.server.requests",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://spring.io/security/cve-2023-34055 (\"As a temporary workaround, Spring Boot users can choose to disable web metrics with the following property: management.metrics.enable.http.server.requests=false\")",
+    "spring-projects/spring-boot@v2.0.0.RELEASE, v2.7.17 and v3.1.5: MetricsProperties (prefix management.metrics) has the Map<String, Boolean> enable"
+   ]
+  }
+ ],
+ "GHSA-v94h-hvhg-mf9h": [
+  {
+   "package": "org.springframework:spring-webmvc",
+   "versions": "[6.0.0,)",
+   "complete": false,
+   "summary": "disable web framework observations in Spring Boot (management.metrics.enable.http.server.requests=false)",
+   "caveat": "a Spring Boot property: it applies to Spring Boot 3.0.x and 3.1.x applications only (the advisory's wording); an application using Spring Framework without Spring Boot has no such setting",
+   "ways": [
+    {
+     "kind": "spring-property",
+     "key": "management.metrics.enable.http.server.requests",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://spring.io/security/cve-2023-34053 (\"As a temporary workaround, Spring Boot 3.0.x and 3.1.x users can choose to disable web framework observations with the following property: management.metrics.enable.http.server.requests=false\")",
+    "spring-projects/spring-boot@v3.1.5: MetricsProperties (prefix management.metrics) has the Map<String, Boolean> enable"
+   ]
+  }
+ ]
 }
