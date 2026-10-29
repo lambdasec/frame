@@ -7182,7 +7182,9 @@ class SILTranslator:
                 name = func.value
         if not name:
             return False
-        return self._strip_self_receiver(name) in self._NORETURN_FUNCS
+        name = self._strip_self_receiver(name)
+        fact = (getattr(self.program, "library_facts", None) or {}).get(name)   # a C pack's [[function]]
+        return name in self._NORETURN_FUNCS or bool(fact and fact.noreturn)
 
     def _deref_base(self, exp: Exp) -> Optional[str]:
         """The base pointer variable a dereference address reads through.

@@ -1,0 +1,33 @@
+# Juliet's support library (io.c, declared in std_testcase.h): its print helpers read the value
+# they are given, so a freed or uninitialised pointer passed to one is used there. A benchmark
+# harness's own functions, so a pack the benchmark runner passes (sast_runner.BENCHMARK_PACKS),
+# never shipped with Frame.
+[pack]
+name = "juliet-support"
+language = "c"
+description = "Juliet test-suite support functions (printLine and kin)"
+detect = { imports = ["std_testcase.h"] }
+
+[[function]]
+name = "printLine"
+dereferences = [0]
+
+[[function]]
+name = "printWLine"
+dereferences = [0]
+
+[[function]]
+name = "printIntLine"
+dereferences = [0]
+
+[[function]]
+name = "printLongLine"
+dereferences = [0]
+
+[[function]]
+name = "printLongLongLine"
+dereferences = [0]
+
+[[function]]
+name = "printHexCharLine"
+dereferences = [0]

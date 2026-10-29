@@ -1,0 +1,22 @@
+# What the project's own memory functions do, so Frame's memory analysis can follow them.
+[pack]
+name = "pool"
+language = "c"
+description = "The pool allocator and the logging helpers in src/pool.h"
+detect = { imports = ["pool.h"] }
+
+[[function]]
+name = "pool_alloc"
+allocates = "heap"
+
+[[function]]
+name = "pool_release"
+frees = "heap"
+
+[[function]]
+name = "log_message"
+dereferences = [0]
+
+[[function]]
+name = "fatal"
+noreturn = true

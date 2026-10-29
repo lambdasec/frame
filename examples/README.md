@@ -56,6 +56,11 @@ Three Apache Kafka methods (CVE-2026-114349, CVE-2026-111551), reduced from the 
 minimist 1.2.5 with its critical prototype pollution: `--backport` applies the advisory's own fix commit to the installed version as a patch-package patch (of the four commits the advisory links, only the one for the 1.x line applies). The advisory's proof of concept pollutes before and not after.
 *Runs offline (the OSV record and commits are recorded); the proof needs npm.*
 
+### [c-memory-pack](c-memory-pack/README.md): a C project's own allocator
+
+A C file that allocates from the project's own pool, logs through its own helper and stops through its own `fatal`. A four-line pack (`[[function]]` facts) lets the memory analysis follow them as it follows `malloc`, `free` and `exit`: the use after free appears, and a false uninitialised-read report on the path `fatal` never returns from goes away.
+*Runs offline.*
+
 ### [ai-apps](ai-apps/README.md): LLM apps and MCP servers
 
 Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each beside a safe twin. Shows untrusted input reaching a model's system prompt (prompt injection), model output run as a shell command or code, and MCP tool arguments reaching a shell or SQL.

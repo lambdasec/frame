@@ -134,9 +134,13 @@ class PathSensitiveAnalyzer:
 
     ALLOC_FUNCS = c_facts.allocators('heap', returning=True)        # specs/data/c.toml
     FREE_FUNCS = c_facts.releasers('heap')
-    DEREF_FUNCS = frozenset(c_facts.dereferences()) | {'printLine', 'printIntLine', 'printLongLine'}
+    DEREF_FUNCS = frozenset(c_facts.dereferences())
 
     def __init__(self, verbose: bool = False):
+        # The C library's facts, and those of the packs applied to this file (c_facts.active)
+        self.ALLOC_FUNCS = c_facts.allocators('heap', returning=True)
+        self.FREE_FUNCS = c_facts.releasers('heap')
+        self.DEREF_FUNCS = frozenset(c_facts.dereferences())
         self.verbose = verbose
         self.vulnerabilities: List[MemoryVuln] = []
         self._reported: Set[Tuple[str, int, str]] = set()

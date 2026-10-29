@@ -351,6 +351,28 @@ def test_java_allocation_walkthrough(tmp_path):
             assert line in out and line in readme, (args, line, out[-1500:])
 
 
+def test_c_memory_pack_walkthrough(tmp_path):
+    work = tmp_path / "c-memory-pack"
+    shutil.copytree(EXAMPLES / "c-memory-pack", work)
+    bare = tmp_path / "bare"
+    shutil.copytree(work / "src", bare / "src")                  # the same source with no pack beside it
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    for cwd, args, lines in [
+        (work, ("packs", "check", ".frame/packs/pool.toml"),
+         ["ok   .frame/packs/pool.toml: c/pool (0 entry points, 0 rules, 4 function facts)"]),
+        (work, ("scan", "src", "--root", "."),
+         ["Location: src/session.c:12:4", "Description: Use after free: 'name' was freed. SL check: emp ⊬ name |-> _",
+          "Scanned 2 files: 1 finding (1 critical)"]),
+        (bare, ("scan", "src", "--root", "."),
+         ["Location: src/session.c:23:4", "Use of uninitialized variable 'port'",
+          "Scanned 2 files: 1 finding (1 medium)"]),
+    ]:
+        out = frame(cwd, env, *args)
+        for line in lines:
+            assert line in out and line in readme, (args, line, out[-1500:])
+
+
 def test_npm_backport_walkthrough(tmp_path):
     work = tmp_path / "npm-backport"
     shutil.copytree(EXAMPLES / "npm-backport", work)

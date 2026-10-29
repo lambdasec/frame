@@ -6,20 +6,42 @@ says what malloc, free or exit do."""
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
-from typing import Dict, FrozenSet, List
+from typing import Any, Dict, FrozenSet, Iterator, List, Mapping
 
 from frame.sil.procedure import ProcSpec
 from frame.sil.specs.tables import load_table
 
 
+# Facts the packs applied to the file being analysed add (`[[function]]`), over the tables'.
+_EXTRA: ContextVar[Mapping[str, Any]] = ContextVar("c_facts_extra", default={})
+
+
 @lru_cache(maxsize=1)
-def _specs() -> Dict[str, ProcSpec]:
+def _table_specs() -> Dict[str, ProcSpec]:
     out: Dict[str, ProcSpec] = {}
     for table in ("c", "cpp"):
         for name, spec in load_table(table).items():
             out.setdefault(name, spec)
     return out
+
+
+def _specs() -> Mapping[str, Any]:
+    extra = _EXTRA.get()
+    return {**_table_specs(), **extra} if extra else _table_specs()
+
+
+@contextmanager
+def active(facts: Mapping[str, Any]) -> Iterator[None]:
+    """While analysing one file: its packs' library facts (`Program.library_facts`) count too.
+    The analyzers read their sets when they are created, inside this block."""
+    token = _EXTRA.set(dict(facts or {}))
+    try:
+        yield
+    finally:
+        _EXTRA.reset(token)
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
@@ -53,4 +75,4 @@ def dereferences() -> Dict[str, List[int]]:
             if s.dereferences and _IDENTIFIER.fullmatch(n)}
 
 
-__all__ = ["allocators", "dereferences", "noreturn", "releasers"]
+__all__ = ["active", "allocators", "dereferences", "noreturn", "releasers"]

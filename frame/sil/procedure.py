@@ -14,7 +14,7 @@ The CFG representation enables:
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, List, Dict, Optional, Set, Tuple, Iterator
+from typing import Any, Callable, List, Dict, Optional, Set, Tuple, Iterator
 from enum import Enum, auto
 
 from .types import Ident, PVar, Typ, Location
@@ -661,6 +661,8 @@ class Program:
     constant_tables: Set[str] = field(default_factory=set)
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
+    # C/C++ library facts the applied packs state (`[[function]]`): name -> packs.schema.FunctionFact
+    library_facts: Dict[str, Any] = field(default_factory=dict)
     # Class (full name) -> its declared instance fields, for languages that write a
     # field by its bare name (Java, C#). Not `ClassInfo.fields`, which C# keeps for
     # model-bound members only.

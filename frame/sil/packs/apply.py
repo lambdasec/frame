@@ -442,4 +442,5 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     _apply_rules(program, active)
     _apply_entrypoints(program, active)
     program.packs_applied = [f"{p.language}/{p.name}" for p in active]
+    program.library_facts = {f.name: f for p in active for f in p.functions}   # a later pack wins
     return program

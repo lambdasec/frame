@@ -102,6 +102,9 @@ class SLMemoryAnalyzer:
     FREE_FUNCS = c_facts.releasers('heap')
 
     def __init__(self, verbose: bool = False):
+        # The C library's facts, and those of the packs applied to this file (c_facts.active)
+        self.ALLOC_FUNCS = c_facts.allocators('heap', returning=True)
+        self.FREE_FUNCS = c_facts.releasers('heap')
         self.verbose = verbose
         self.heap: Dict[str, HeapRegion] = {}
         self.vulnerabilities: List[MemoryVuln] = []

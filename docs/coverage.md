@@ -69,6 +69,33 @@ value = true                             # acme.web.serve(trace=True) is reporte
 description = "Tracing server enabled"
 ```
 
+For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:
+
+```toml
+[pack]
+name = "pool"
+language = "c"
+detect = { imports = ["pool.h"] }
+
+[[function]]
+name = "pool_alloc"
+allocates = "heap"                       # heap | stack | mapped | new | new_array (allocates_via = N: through argument N)
+
+[[function]]
+name = "pool_release"
+frees = "heap"                           # the kind it releases
+
+[[function]]
+name = "log_message"
+dereferences = [0]                       # argument positions it reads through; -1 for every one
+
+[[function]]
+name = "fatal"
+noreturn = true
+```
+
+A walkthrough: [examples/c-memory-pack](../examples/c-memory-pack/README.md).
+
 `frame packs check acme.toml` validates it, naming the file and field of any unknown key or kind. A pack refines the built-in knowledge of a call instead of replacing it. `frame packs list` shows the packs a scan would load.
 
 ## What it detects

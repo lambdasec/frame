@@ -43,3 +43,80 @@ def test_the_analyzers_read_the_facts():
 def test_malformed_facts_are_errors(entry, error):
     with pytest.raises(SpecTableError, match=error):
         parse_table({"spec": [entry]}, "t.toml")
+
+
+# --- [[function]]: a C pack states library facts for a project's own functions ---------------
+
+from frame.sil.packs.schema import PackError, parse_pack              # noqa: E402
+
+try:                                                                   # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                                            # pragma: no cover - 3.10
+    import tomli as tomllib
+
+
+def load_pack_text(text, origin):
+    return parse_pack(tomllib.loads(text), origin)
+from frame.sil.scanner import FrameScanner                            # noqa: E402
+
+PACK = '''
+[pack]
+name = "acme-memory"
+language = "c"
+detect = { imports = ["acme.h"] }
+
+[[function]]
+name = "acme_alloc"
+allocates = "heap"
+
+[[function]]
+name = "acme_release"
+frees = "heap"
+
+[[function]]
+name = "acme_log"
+dereferences = [0]
+
+[[function]]
+name = "die"
+noreturn = true
+'''
+
+
+def test_a_pack_states_facts_for_the_files_it_applies_to(tmp_path):
+    (tmp_path / "acme.toml").write_text(PACK)
+    code = ('#include "acme.h"\n'
+            'void f(void)\n{\n    char *p = acme_alloc(10);\n    acme_release(p);\n    acme_log(p);\n}\n')
+    with_pack = FrameScanner(language="c", packs=[str(tmp_path / "acme.toml")]).scan(code, "a.c")
+    assert "CWE-416" in {v.cwe_id for v in with_pack.vulnerabilities}
+    assert "CWE-416" not in {v.cwe_id for v in FrameScanner(language="c").scan(code, "a.c").vulnerabilities}
+    other = code.replace('#include "acme.h"\n', '')                  # the pack is not detected there
+    assert "CWE-416" not in {v.cwe_id for v in
+                             FrameScanner(language="c", packs=[str(tmp_path / "acme.toml")]).scan(other, "a.c")
+                             .vulnerabilities}
+
+
+def test_facts_are_active_only_inside_the_block():
+    from frame.sil.packs.schema import FunctionFact
+    with c_facts.active({"acme_alloc": FunctionFact("acme_alloc", allocates="heap")}):
+        assert "acme_alloc" in c_facts.allocators("heap", returning=True)
+        assert SLMemoryAnalyzer().ALLOC_FUNCS >= {"acme_alloc", "malloc"}
+    assert "acme_alloc" not in c_facts.allocators()
+
+
+@pytest.mark.parametrize("body,error", [
+    ('[[function]]\nname = "f"\n', "states nothing"),
+    ('[[function]]\nname = "f"\nfrees = "stack"\n', "must be one of"),
+    ('[[function]]\nname = "f"\ndereferences = [-2]\n', "argument positions"),
+    ('[[function]]\nname = "f"\nnoreturn = "yes"\n', "true or false"),
+    ('[[function]]\nname = "f"\nnoreturn = true\nreturns = 1\n', "returns"),
+])
+def test_malformed_function_facts_are_errors(body, error):
+    with pytest.raises(PackError, match=error):
+        load_pack_text('[pack]\nname = "x"\nlanguage = "c"\n' + body, "x.toml")
+
+
+def test_function_facts_are_for_c_packs_only():
+    with pytest.raises(PackError, match="C and C\\+\\+"):
+        load_pack_text('[pack]\nname = "x"\nlanguage = "python"\n[[function]]\nname = "f"\nnoreturn = true\n',
+                       "x.toml")

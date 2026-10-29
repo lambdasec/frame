@@ -49,7 +49,8 @@ _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "descri
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
-_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting"}
+_FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "description"}
+_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function"}
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
 SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property")
@@ -115,6 +116,19 @@ class Setting:
 
 
 @dataclass
+class FunctionFact:
+    """What a C or C++ function does with memory and control (`[[function]]`), as the c/cpp spec
+    tables say it for the C library: a project's own allocator, `die()` or logging wrapper."""
+    name: str
+    allocates: str = ""                  # specs.tables.ALLOCATION_KINDS
+    frees: str = ""                      # specs.tables.RELEASE_KINDS
+    allocates_via: Optional[int] = None
+    noreturn: bool = False
+    dereferences: List[int] = field(default_factory=list)   # -1: every argument
+    description: str = ""
+
+
+@dataclass
 class Pack:
     name: str
     language: str
@@ -127,6 +141,7 @@ class Pack:
     entrypoints: List[Entrypoint] = field(default_factory=list)
     rules: List[Rule] = field(default_factory=list)
     settings: List[Setting] = field(default_factory=list)
+    functions: List[FunctionFact] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
     @property
@@ -307,4 +322,31 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if st.at == "subscript" and not st.receiver:
             raise _fail(origin, where, 'at = "subscript" needs receiver')
         pack.settings.append(st)
+
+    from frame.sil.specs.tables import ALLOCATION_KINDS, RELEASE_KINDS
+    for i, t in enumerate(data.get("function", [])):
+        where = f"[[function]] #{i + 1}"
+        _check_keys(origin, where, t, _FUNCTION_KEYS)
+        if language not in ("c", "cpp"):
+            raise _fail(origin, where, "library facts are for C and C++ packs")
+        if not isinstance(t.get("name"), str) or not t["name"]:
+            raise _fail(origin, f"{where}.name", "needs the function's name")
+        for key, kinds in (("allocates", ALLOCATION_KINDS), ("frees", RELEASE_KINDS)):
+            if key in t and t[key] not in kinds:
+                raise _fail(origin, f"{where}.{key}", f"must be one of {sorted(kinds)}")
+        via = t.get("allocates_via")
+        if via is not None and (not isinstance(via, int) or isinstance(via, bool) or via < 0):
+            raise _fail(origin, f"{where}.allocates_via", "must be an argument position")
+        derefs = t.get("dereferences", [])
+        if not isinstance(derefs, list) or not all(isinstance(d, int) and not isinstance(d, bool) and d >= -1
+                                                    for d in derefs):
+            raise _fail(origin, f"{where}.dereferences", "must be argument positions (-1: every one)")
+        if not isinstance(t.get("noreturn", False), bool):
+            raise _fail(origin, f"{where}.noreturn", "must be true or false")
+        fact = FunctionFact(name=t["name"], allocates=t.get("allocates", ""), frees=t.get("frees", ""),
+                            allocates_via=via, noreturn=t.get("noreturn", False), dereferences=list(derefs),
+                            description=str(t.get("description", "")))
+        if not (fact.allocates or fact.frees or fact.noreturn or fact.dereferences):
+            raise _fail(origin, where, "states nothing: set allocates, frees, noreturn or dereferences")
+        pack.functions.append(fact)
     return pack

@@ -77,6 +77,9 @@ class MemorySafetyAnalyzer:
     FREE_FUNCS = c_facts.releasers('heap', 'mapped')
 
     def __init__(self, verbose: bool = False):
+        # The C library's facts, and those of the packs applied to this file (c_facts.active)
+        self.ALLOC_FUNCS = c_facts.allocators('heap', 'stack', 'mapped')
+        self.FREE_FUNCS = c_facts.releasers('heap', 'mapped')
         self.verbose = verbose
         self.memory_regions: Dict[str, MemoryRegion] = {}
         self.vulnerabilities: List[MemoryVulnerability] = []

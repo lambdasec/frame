@@ -113,10 +113,13 @@ class SLSemanticAnalyzer:
     DELETE_OPS = {'delete', 'delete[]'}
 
     # Functions that dereference pointers
-    DEREF_FUNCS = frozenset(c_facts.dereferences()) | {'printLine', 'printIntLine', 'printLongLine',
-                                                       'printHexCharLine', 'printWLine', 'printLongLongLine'}
+    DEREF_FUNCS = frozenset(c_facts.dereferences())
 
     def __init__(self, verbose: bool = False):
+        # The C library's facts, and those of the packs applied to this file (c_facts.active)
+        self.ALLOC_FUNCS = c_facts.allocators('heap', returning=True)
+        self.FREE_FUNCS = c_facts.releasers('heap')
+        self.DEREF_FUNCS = frozenset(c_facts.dereferences())
         self.verbose = verbose
         self.heap: Dict[str, MemoryRegion] = {}
         self.vulnerabilities: List[MemoryVuln] = []

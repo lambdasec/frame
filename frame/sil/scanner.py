@@ -1112,7 +1112,9 @@ class FrameScanner:
             #  literal scanner, and memory analyzer are the only detectors.)
             # Step 4b: Memory safety analysis for C/C++ using separation logic
             if self.language in ('c', 'cpp', 'c++'):
-                memory_vulns = self._analyze_memory_safety(source_code, filename)
+                from frame.sil import c_facts                  # its packs' [[function]] facts count too
+                with c_facts.active(getattr(program, "library_facts", {}) or {}):
+                    memory_vulns = self._analyze_memory_safety(source_code, filename)
                 result.vulnerabilities.extend(memory_vulns)
                 if self.verbose:
                     print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
