@@ -348,3 +348,22 @@ def test_build_reads_the_miners_output_directory(tmp_path):
     (fns / "state.json").write_text("{}")
     with pytest.raises(KBError, match="not an ecosystem"):
         build_advisories([], tmp_path / "out2", "r1", ecosystems=["PyPI"], functions_dir=fns)
+
+
+def test_spilling_entries_to_disk_changes_no_table(tmp_path, monkeypatch):
+    """A build spills each ecosystem's (and GIT shard's) entries to disk while reading, then builds
+    one table at a time, so memory is the largest table's. Flushing every few entries gives the
+    same files, byte for byte, as one flush at the end (the order entries were read is kept)."""
+    import frame.sca.advisories as A
+    git = json.loads((Path(__file__).parent / "fixtures" / "sca" / "osv" / "git_records.json").read_text())
+    raw = tmp_path / "osv"
+    raw.mkdir()
+    (raw / "all.json").write_text(json.dumps(RECORDS + (git if isinstance(git, list) else git.get("records", []))))
+    sums = []
+    for batch in (10 ** 9, 3):
+        monkeypatch.setattr(A._Spill, "BATCH", batch)
+        out = tmp_path / f"out{batch}"
+        build_advisories([raw], out, "r1")
+        manifest = json.loads((out / "manifest.json").read_text())["files"]
+        sums.append({p: m["sha256"] for p, m in manifest.items()})
+    assert sums[0] == sums[1] and any(p.startswith("advisories/GIT/") for p in sums[0])

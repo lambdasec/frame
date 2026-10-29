@@ -13,6 +13,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import tempfile
 import zipfile
 from collections import deque
 from dataclasses import dataclass, field
@@ -105,6 +106,51 @@ def _records(inputs: Sequence[Path]) -> Iterator[dict]:
             yield from _load_json(p.read_bytes(), str(p))
 
 
+class _Spill:
+    """Entries kept on disk by key (an ecosystem, a GIT shard) while records are read: buffered,
+    appended in batches as gzip members (no file stays open, so 350 keys need no 350 handles),
+    read back one key at a time in the order they were added."""
+
+    BATCH = 50_000
+
+    def __init__(self, root: Path):
+        self.root, self.paths = root, {}
+        self.buffered: Dict[tuple, List[str]] = {}
+        self.count = 0
+
+    def keys(self) -> List[tuple]:
+        return list(self.paths)
+
+    def add(self, key: tuple, name: str, entry: dict) -> None:
+        if key not in self.paths:
+            self.paths[key] = self.root / f"{len(self.paths)}.jsonl.gz"
+        self.buffered.setdefault(key, []).append(json.dumps([name, entry], separators=(",", ":")))
+        self.count += 1
+        if self.count >= self.BATCH:
+            self.flush()
+
+    def flush(self) -> None:
+        for key, lines in self.buffered.items():
+            with gzip.open(self.paths[key], "at", compresslevel=1, encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        self.buffered, self.count = {}, 0
+
+    def read(self, key: tuple) -> Dict[str, List[dict]]:
+        """The key's entries by name, in the order added; a summary several entries share (one
+        record naming many packages) is one string again. The file is removed."""
+        out: Dict[str, List[dict]] = {}
+        shared: Dict[str, str] = {}
+        path = self.paths[key]
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for line in f:
+                name, entry = json.loads(line)
+                if isinstance(entry.get("summary"), str):
+                    entry["summary"] = shared.setdefault(entry["summary"], entry["summary"])
+                out.setdefault(name, []).append(entry)
+        path.unlink()
+        return out
+
+
 def _load_json(data: bytes, origin: str) -> Iterator[dict]:
     try:
         doc = json.loads(data)
@@ -137,29 +183,46 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
     wanted = list(ecosystems) if ecosystems else list(ECOSYSTEMS) + [GIT]
     with_git = GIT in wanted
     wanted = [e for e in wanted if e != GIT]
-    by_eco: Dict[str, Dict[str, List[dict]]] = {e: {} for e in wanted if e not in DISTRO_FAMILIES}
-    by_repo: Dict[str, List[dict]] = {}
-    for rec in _records(inputs):                              # one pass; raw records are not kept
-        for eco, name, entry in entries(rec, wanted):
-            by_eco.setdefault(eco, {}).setdefault(name, []).append(entry)
-        if with_git:
-            for repo, entry in git_entries(rec):
-                by_repo.setdefault(repo, []).append(entry)
     out = Path(out)
     files: Dict[str, dict] = {}
-    for eco in sorted(by_eco):                                # distribution releases appear as they are read
-        tbl = table(eco, by_eco.pop(eco))
-        if not tbl["packages"]:
-            continue
-        tbl["revision"] = revision
-        data = _gz_json(hoist_summaries(tbl))
-        rel = table_path(eco)
-        target = out / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-        files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
-                      "kind": "advisories", "name": eco,
-                      "advisories": sum(len(v) for v in tbl["packages"].values())}
+    # One pass over the records, each entry spilled to disk under its ecosystem (or its GIT
+    # repository's shard), then one table at a time: memory is the largest table's, not every
+    # ecosystem's at once (a daily build reads ~100 ecosystems and 256 shards). An ecosystem's
+    # records may come from several inputs (a record naming PyPI and npm is in both exports), so a
+    # table is built only after every input was read.
+    with tempfile.TemporaryDirectory(prefix="frame-advisories-") as spill_dir:
+        spill = _Spill(Path(spill_dir))
+        for rec in _records(inputs):                          # raw records are not kept
+            for eco, name, entry in entries(rec, wanted):
+                spill.add(("eco", eco), name, entry)
+            if with_git:
+                for repo, entry in git_entries(rec):
+                    spill.add(("git", git_shard(repo)), repo, entry)
+        spill.flush()
+        for key in sorted(k for k in spill.keys() if k[0] == "eco"):   # distribution releases as read
+            eco = key[1]
+            tbl = table(eco, spill.read(key))
+            if not tbl["packages"]:
+                continue
+            tbl["revision"] = revision
+            data = _gz_json(hoist_summaries(tbl))
+            rel = table_path(eco)
+            target = out / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
+                          "kind": "advisories", "name": eco,
+                          "advisories": sum(len(v) for v in tbl["packages"].values())}
+        for key in sorted(k for k in spill.keys() if k[0] == "git"):
+            rel = key[1]
+            by_repo = spill.read(key)
+            repos = {repo: table(GIT, {repo: by_repo.pop(repo)})["packages"][repo] for repo in sorted(by_repo)}
+            data = _gz_json({"schema": SCHEMA, "ecosystem": GIT, "revision": revision, "packages": repos})
+            (out / rel).parent.mkdir(parents=True, exist_ok=True)
+            (out / rel).write_bytes(data)
+            files[rel] = {"sha256": _sha256(data), "size": len(data), "language": "git", "kind": "advisories",
+                          "name": rel.rsplit("/", 1)[1].split(".")[0],
+                          "advisories": sum(len(v) for v in repos.values())}
     for f in sorted(Path(functions_dir).glob("*.json")) if functions_dir is not None else []:
         eco = f.stem
         if f.name in MINER_REPORTS:
@@ -188,15 +251,6 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
         (out / rel).write_bytes(data)
         files[rel] = {"sha256": _sha256(data), "size": len(data), "language": eco.lower(),
                       "kind": "mitigations", "name": eco, "advisories": len(mits)}
-    shards: Dict[str, Dict[str, List[dict]]] = {}
-    for repo in sorted(by_repo):
-        shards.setdefault(git_shard(repo), {})[repo] = table(GIT, {repo: by_repo.pop(repo)})["packages"][repo]
-    for rel, repos in sorted(shards.items()):
-        data = _gz_json({"schema": SCHEMA, "ecosystem": GIT, "revision": revision, "packages": repos})
-        (out / rel).parent.mkdir(parents=True, exist_ok=True)
-        (out / rel).write_bytes(data)
-        files[rel] = {"sha256": _sha256(data), "size": len(data), "language": "git", "kind": "advisories",
-                      "name": rel.rsplit("/", 1)[1].split(".")[0], "advisories": sum(len(v) for v in repos.values())}
     manifest = {"schema": KB_SCHEMA, "revision": revision, "files": files}
     out.mkdir(parents=True, exist_ok=True)
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
