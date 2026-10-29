@@ -27,6 +27,7 @@ import os
 import time
 
 from frame.sil.kinds import load as _load_kinds
+from frame.sil.secret_names import load as _load_secret_names
 from frame.sil.llm_client import LLMUnavailableError
 
 import math
@@ -2028,22 +2029,12 @@ class FrameScanner:
     # Credential-named assignment targets whose value is a literal string.
     # Matched against the SIL (the normalized IR), so one rule covers every
     # language and only real `name = "literal"` assignments are flagged -- never
-    # text inside comments or unrelated code.
-    _SECRET_NAME_RULES = [
-        # (regex on target name, cwe, label)
-        (re.compile(r'(?i)(^|[._])(pass(word|wd)?|pwd)([._]|$)'), 'CWE-259', 'Hardcoded password'),
-        (re.compile(r'(?i)(crypt|secret|private|signing)[._]?key'), 'CWE-321', 'Hardcoded cryptographic key'),
-        (re.compile(r'(?i)(^|[._])(api[._]?key|access[._]?key|secret|token|client[._]?secret|auth[._]?token)([._]|$)'),
-         'CWE-798', 'Hardcoded secret'),
-    ]
-    # An embedded credential inside a value, e.g. a connection string
-    # "Server=db;Password=s3cret;". Requires a non-trivial value after '='.
-    _CONNSTR_SECRET = re.compile(r'(?i)(password|pwd)\s*=\s*\S{3,}')
-    # Values that are obviously not real secrets (placeholders / templates).
-    _SECRET_VALUE_PLACEHOLDERS = {
-        '', 'password', 'changeme', 'change_me', 'your_password', 'your_password_here',
-        'xxx', 'xxxx', 'todo', 'none', 'null', 'example', 'test', 'placeholder',
-    }
+    # text inside comments or unrelated code. The names, values and word lists
+    # are data: specs/data/secret-names.toml.
+    _SECRET_NAMES = _load_secret_names()
+    _SECRET_NAME_RULES = _SECRET_NAMES.name_rules            # (regex on target name, cwe, label)
+    _CONNSTR_SECRET = _SECRET_NAMES.connection_string        # "Server=db;Password=s3cret;"
+    _SECRET_VALUE_PLACEHOLDERS = _SECRET_NAMES.placeholders
 
     # Value-shape gate for the name-based rules (Rule A). The target name only
     # says the variable is *about* a credential; constants such as
@@ -2072,75 +2063,29 @@ class FrameScanner:
     # requires positive evidence of a secret.
     # Literal values arrive with escapes unprocessed (a "\n" in source is the
     # two characters backslash + n), so newline matching accepts both forms.
-    _PEM_WITH_BODY = re.compile(
-        r'-----BEGIN [A-Z0-9 ]+-----(?:(?!-----END).){0,512}?[A-Za-z0-9+/]{16,}', re.DOTALL)
-    _KNOWN_CREDENTIAL = re.compile(
-        r'\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[0-9A-Z]{16}\b'   # AWS access key id
-        r'|\bgh[pousr]_[A-Za-z0-9]{36,}'                                 # GitHub token
-        r'|\bgithub_pat_[A-Za-z0-9_]{22,}'                               # GitHub fine-grained PAT
-        r'|\bglpat-[A-Za-z0-9_-]{20,}'                                   # GitLab PAT
-        r'|\bxox[baprs]-[A-Za-z0-9-]{10,}'                               # Slack token
-        r'|\bAIza[0-9A-Za-z_-]{35}'                                      # Google API key
-        r'|\b[sr]k_(?:live|test)_[0-9A-Za-z]{16,}'                       # Stripe secret key
-        r'|\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}'  # JWT
-    )
+    _PEM_WITH_BODY = _SECRET_NAMES.pem_with_body
+    _KNOWN_CREDENTIAL = _SECRET_NAMES.known_credential
     # Credential prefixes at any length: a value carrying one is never
     # suppressed, even when too short to be a full-format token.
-    _CREDENTIAL_PREFIX = re.compile(
-        r'\b(?:[srp]k_(?:live|test)_|gh[pousr]_|github_pat_|glpat-|xox[baprs]-|SG\.)'
-        r'|\b(?:AKIA|ASIA|AIza|eyJ)')
+    _CREDENTIAL_PREFIX = _SECRET_NAMES.credential_prefix
     _HEX_BLOB = re.compile(r'[0-9a-f]{32,}|[0-9A-F]{32,}')
     _TOKEN_CHARS = re.compile(r'[A-Za-z0-9+/=_\-.~]+')
-    _STRICT_NONSECRET_SHAPES = [
-        # PEM block type label ("EC PRIVATE KEY", "CERTIFICATE REQUEST").
-        re.compile(r'(?:[A-Z][A-Z0-9]* )+(?:KEY|CERTIFICATE|REQUEST|CRL|PARAMETERS|PKCS7|CMS|SIGNATURE)'),
-        # PEM armor line with no body ("-----BEGIN RSA PRIVATE KEY-----").
-        re.compile(r'-----(?:BEGIN|END) [A-Z0-9 ]+-----(?:\s|\\[nr])*'),
-        # Key / certificate filename ("sa.key", "tls.crt").
-        re.compile(r'(?i)[\w.-]+\.(?:key|pem|crt|cer|csr|der|p8|p12|pfx|jks|keystore|pub|'
-                   r'kdbx|asc|gpg)'),
-        # Filesystem path ("/etc/kubernetes/pki/sa.key", "./certs", "~/.ssh/id_rsa").
-        re.compile(r'(?:~|\.{1,2})?/[\w.\-/]*'),
-        # Placeholders ("<your-secret-key>", "********", "xxxx", "$SECRET",
-        # "${SECRET}", "$(cat key)").
-        re.compile(r'<[^<>]+>|\*+|(?i:x+)|\$[A-Z_][A-Z0-9_]*|\$\{[^}]*\}|\$\(.*\)'),
-    ]
+    _STRICT_NONSECRET_SHAPES = _SECRET_NAMES.not_secret
     # Identifier-shaped value: lowercase words joined by - _ . , or UPPER_SNAKE.
     _IDENTIFIER_VALUE = re.compile(r'[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+')
-    # Target-name tokens saying the constant describes/locates a secret.
-    # `action` / `permission` name an authorization object ("ABAC action
-    # export-certificate-private-key") but only as the LEADING name token,
-    # exact and singular (Go `ActionX` / `PermissionX`); elsewhere they say
-    # where a credential is used (GITHUB_ACTIONS_TOKEN, DEPLOY_ACTION_TOKEN).
-    # `annotation` is the sibling of `label`.
-    # Deliberately NOT descriptors: role (DB_ROLE_PASSWORD), event
-    # (WEBHOOK_EVENT_SECRET), metric (METRICS_AUTH_TOKEN) -- each commonly
-    # names a real credential; scope/route values are not identifier-shaped
-    # or are already paths; kind is too generic.
-    _NAME_DESCRIPTORS = frozenset({
-        'env', 'var', 'name', 'field', 'header', 'label', 'type', 'file', 'path',
-        'dir', 'prefix', 'suffix', 'param', 'attr', 'column', 'prop',
-        'annotation'})
-    _LEADING_DESCRIPTORS = frozenset({'action', 'permission'})
-    # Head nouns that make a credential-named variable METADATA about the
-    # credential: the last word of a compound name is what it denotes, so
-    # `secretKeyAlgorithm = "DESede"` names an algorithm, not a key.
-    _METADATA_HEADS = frozenset({
-        'algorithm', 'algorithms', 'alg', 'algo', 'cipher', 'transformation',
-        'mode', 'length', 'size', 'bits', 'format', 'provider', 'scheme',
-        'version', 'iterations', 'spec', 'kind'})
+    # Target-name tokens saying the constant describes/locates a secret, head nouns
+    # that make a credential-named variable metadata about it, HTTP auth header and
+    # scheme names, and the structural words a name-echoing value may carry.
+    _NAME_DESCRIPTORS = _SECRET_NAMES.name_descriptors
+    _LEADING_DESCRIPTORS = _SECRET_NAMES.leading_descriptors
+    _METADATA_HEADS = _SECRET_NAMES.metadata_heads
     # Kubernetes qualified key: DNS subdomain (2+ lowercase labels) + '/' +
     # name, e.g. "csi.storage.k8s.io/node-expand-secret-name".
     _QUALIFIED_KEY = re.compile(
         r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)+/(?P<name>[^/]+)')
-    # Standard HTTP auth header / auth-scheme names (lowercased; exact match).
-    _HTTP_AUTH_NAMES = frozenset({
-        'authorization', 'proxy-authorization', 'www-authenticate', 'proxy-authenticate',
-        'cookie', 'set-cookie', 'x-api-key', 'x-auth-token', 'x-access-token',
-        'x-csrf-token', 'x-xsrf-token', 'bearer', 'basic'})
-    _PASSWORD_WORDS = frozenset({'pass', 'password', 'passwd', 'pwd'})
-    # Structural words allowed in a value that otherwise echoes the name.
-    _STRUCTURAL_WORDS = frozenset({'id', 'name', 'field', 'ref', 'data'})
+    _HTTP_AUTH_NAMES = _SECRET_NAMES.http_auth_names
+    _PASSWORD_WORDS = _SECRET_NAMES.password_words
+    _STRUCTURAL_WORDS = _SECRET_NAMES.structural_words
 
     @staticmethod
     def _name_tokens(target: str) -> List[str]:
