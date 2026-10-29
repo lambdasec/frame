@@ -40,6 +40,7 @@ from .instructions import (
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
 from . import c_facts as _c_facts
+from .specs.weak_algorithms import load as _weak_algorithms
 from .kinds import check as _kinds_check, load as _load_kinds
 
 _KINDS = _load_kinds()
@@ -4104,9 +4105,8 @@ class SILTranslator:
                         if len(instr.args) > 0:
                             arg_exp, _ = instr.args[0]
                             arg_str = str(arg_exp).strip("'\"").lower()
-                            # Only flag weak algorithms
-                            weak_algorithms = {'md5', 'sha1', 'sha', 'md4', 'md2'}
-                            if arg_str not in weak_algorithms:
+                            # Only flag weak algorithms (specs/data/weak-algorithms.toml)
+                            if arg_str.upper() not in _weak_algorithms().hashes:
                                 # Strong algorithm like sha256, sha384, sha512 - not vulnerable
                                 pass
                             else:
@@ -4120,11 +4120,9 @@ class SILTranslator:
                         if len(instr.args) > 0:
                             arg_exp, _ = instr.args[0]
                             arg_str = str(arg_exp).strip("'\"").upper()
-                            # Weak hash algorithms - only flag known weak algorithms
-                            weak_hashes = {'MD5', 'MD4', 'MD2', 'SHA-1', 'SHA1', 'SHA'}
-                            # Only flag if we can confirm it's a weak algorithm
-                            # Don't flag variables/dynamic algorithms (too many FPs)
-                            if arg_str in weak_hashes:
+                            # Only flag a known weak algorithm (specs/data/weak-algorithms.toml),
+                            # never a variable/dynamic one (too many FPs)
+                            if arg_str in _weak_algorithms().hashes:
                                 check = self._create_usage_based_check(
                                     instr, state, proc_name, sink_kind
                                 )
@@ -4135,12 +4133,12 @@ class SILTranslator:
                             arg_exp, _ = instr.args[0]
                             arg_str = str(arg_exp).strip("'\"").upper()
                             # Weak encryption algorithms (inherently insecure)
-                            weak_ciphers = ['DES', 'DESEDE', '3DES', 'RC2', 'RC4', 'BLOWFISH']
+                            weak_ciphers = _weak_algorithms().ciphers
                             # ECB mode is always weak (no IV, patterns preserved)
                             # NOPADDING is weak ONLY when NOT using authenticated modes (GCM, CCM)
                             # GCM and CCM provide integrity, so NOPADDING is safe with them
                             is_weak_cipher = any(weak in arg_str for weak in weak_ciphers)
-                            is_ecb = 'ECB' in arg_str
+                            is_ecb = any(m in arg_str for m in _weak_algorithms().cipher_modes)
                             is_nopadding_without_auth = (
                                 'NOPADDING' in arg_str and
                                 'GCM' not in arg_str and

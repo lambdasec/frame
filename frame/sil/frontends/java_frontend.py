@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 # ProcSpec is used for type hints in _lookup_spec
+from frame.sil.specs.weak_algorithms import load as weak_algorithms
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
     JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_LAMBDA_PARAMS)
@@ -2376,8 +2377,7 @@ class JavaFrontend:
 
         # Check for weak hash algorithms
         if 'MessageDigest' in method_name:
-            weak_hash_algos = {'MD5', 'MD2', 'MD4', 'SHA-1', 'SHA1'}
-            if algo in weak_hash_algos:
+            if algo in weak_algorithms().hashes:                # specs/data/weak-algorithms.toml
                 return TaintSink(
                     loc=loc,
                     exp=ExpConst.string(algo),
@@ -2388,8 +2388,8 @@ class JavaFrontend:
         # Check for weak crypto algorithms
         if 'Cipher' in method_name:
             # Weak algorithms or modes
-            weak_crypto_patterns = {'DES', '3DES', 'DESEDE', 'RC2', 'RC4', 'BLOWFISH'}
-            weak_modes = {'ECB'}  # ECB mode is weak for block ciphers
+            weak_crypto_patterns = weak_algorithms().ciphers     # specs/data/weak-algorithms.toml
+            weak_modes = weak_algorithms().cipher_modes          # ECB leaks plaintext patterns
 
             algo_parts = algo.split('/')
             base_algo = algo_parts[0]

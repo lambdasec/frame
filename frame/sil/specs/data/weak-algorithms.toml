@@ -1,0 +1,13 @@
+# Algorithm names that are weak wherever an API takes the algorithm by name (Java's
+# MessageDigest.getInstance / Cipher.getInstance, Python's hashlib.new). Compared without regard to
+# case; how a name is found in the argument (exact, base of "DES/CBC/PKCS5Padding", substring) is
+# the checking code's. Read by frame/sil/specs/weak_algorithms.py.
+
+# Hash functions with practical collisions (CWE-328). "SHA" is the JCA name of SHA-1.
+hashes = ["MD2", "MD4", "MD5", "SHA", "SHA1", "SHA-1"]
+
+# Ciphers too weak to keep data confidential (CWE-327).
+ciphers = ["DES", "DESEDE", "3DES", "RC2", "RC4", "BLOWFISH"]
+
+# Block cipher modes that leak patterns of the plaintext (CWE-327).
+cipher_modes = ["ECB"]
