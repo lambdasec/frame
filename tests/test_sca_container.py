@@ -457,3 +457,42 @@ def test_live_rhel_streams_still_agree(tmp_path):
                 if seen.setdefault(key, ev) != ev:
                     differ.append(key)
     assert len(seen) > 50000 and differ == [], differ[:5]
+
+
+# -- Wolfi (and Chainguard's images, which say ID=wolfi) -----------------------------------------
+
+WOLFI = json.loads((F / "wolfi_osv_expected.json").read_text())
+
+
+@pytest.mark.parametrize("rootfs", ["wolfi-base", "wolfi-python"])
+def test_wolfi_matching_agrees_with_the_osv_api(rootfs):
+    """Wolfi's records (Chainguard's CGA advisories) name each package itself, a subpackage too
+    (`ld-linux-2.44`, not its origin `glibc-2.44`; they differ), so a package is keyed by its own
+    name. OSV's API answer for every installed package at its version, compared at the
+    vulnerability level: CGA records about the same CVE for one package are one advisory
+    (their `upstream` CVE is an alias), so every id OSV gives is in one of Frame's, and each of
+    Frame's holds one OSV gives. The records are OSV's, cut to the installed packages' entries."""
+    from frame.sca.osv import compact
+    records = json.loads(gzip.decompress((F / "wolfi_osv_records.json.gz").read_bytes()))
+    files, warnings = read_rootfs(F / rootfs)
+    assert not warnings and [f.ecosystem for f in files] == ["Wolfi"]
+    db = AdvisoryDB(tables={"Wolfi": compact(records, "Wolfi")["packages"]})
+    groups = {}
+    for f in match(files, db):
+        groups.setdefault(f"{f['package']}@{f['version']}", []).append({f["id"], *f["aliases"]})
+    expected = WOLFI["images"][rootfs]
+    for key, ids in expected.items():
+        for i in ids:
+            assert any(i in g for g in groups.get(key, [])), (key, i)
+    for key, gs in groups.items():
+        for g in gs:
+            assert g & set(expected.get(key, [])), (key, sorted(g))
+    names = {p.name for p in files[0].packages.values()}
+    assert {"ld-linux-2.44", "glibc-2.44"} <= names                     # each package, not its origin
+    assert any(a.startswith("CVE-") for gs in groups.values() for g in gs for a in g)   # the upstream CVE
+
+
+def test_wolfi_release_and_purl():
+    from frame.sca.model import Package
+    assert ecosystem_of(os_release('ID=wolfi\nVERSION_ID="20230201"')) == "Wolfi"
+    assert Package("Wolfi", "glibc-2.44", "2.44-r11").purl == "pkg:apk/wolfi/glibc-2.44@2.44-r11"

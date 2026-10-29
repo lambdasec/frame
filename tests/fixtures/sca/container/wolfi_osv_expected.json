@@ -1,0 +1,121 @@
+{
+ "_about": "OSV API (/v1/querybatch, ecosystem Wolfi) answers for every installed package of the two images, by the package's own name and version; recorded 2026-10-29. Images: cgr.dev/chainguard/wolfi-base@sha256:dbcc3a4a3b1b9e68420a4742940aa6267c97e61811736a5fef0918a06ade1827, cgr.dev/chainguard/python@sha256:01280a9ffd0c9c427d3127540203af6707ebf35cdb0481182aef303c03db239c (latest-dev). The apk databases are the images' own, without their Z:/a:/M: (checksum, attribute) lines.",
+ "images": {
+  "wolfi-base": {
+   "glibc-2.44-locale-posix@2.44-r11": [
+    "CGA-3p64-pj6v-586c",
+    "CGA-5w45-f7wm-grx2",
+    "CGA-6px6-pp92-76hc",
+    "CGA-8wmh-vmch-wfc4",
+    "CGA-p7p9-m5xm-f387"
+   ],
+   "glibc-2.44@2.44-r11": [
+    "CGA-2727-9j94-3x3p",
+    "CGA-4gmv-8mr7-5pxx",
+    "CGA-4mgp-78rw-5337",
+    "CGA-84qm-pxw8-f58f",
+    "CGA-fjmw-f657-w678"
+   ],
+   "ld-linux-2.44@2.44-r11": [
+    "CGA-37wc-rr96-hm3f",
+    "CGA-87j2-rf55-jc3p",
+    "CGA-8h6p-6495-cwhr",
+    "CGA-mppp-qcxg-vfqx",
+    "CGA-p698-26h2-8jh4",
+    "CGA-q52v-g232-2h9m"
+   ],
+   "libcrypt1-2.44@2.44-r11": [
+    "CGA-5273-pf8c-cg4v",
+    "CGA-6cv2-mm79-q3h6",
+    "CGA-jr99-f6q8-945r",
+    "CGA-xqrp-7jh5-56v7"
+   ]
+  },
+  "wolfi-python": {
+   "binutils@2.47-r2": [
+    "CGA-2v63-758j-xjm7",
+    "CGA-2wfw-w4p7-55x5",
+    "CGA-3gg8-98rw-pxh5",
+    "CGA-3x96-2xqq-vjp6",
+    "CGA-4pq8-rj3p-hwfh",
+    "CGA-52cx-9f2g-9fj3",
+    "CGA-59hv-jrxx-977f",
+    "CGA-59px-82vq-wxf5",
+    "CGA-5gv6-97hw-c99g",
+    "CGA-654r-h3j3-cp6j",
+    "CGA-793r-8w27-7cpx",
+    "CGA-7cxq-52mv-wf27",
+    "CGA-84q2-7229-4h7w",
+    "CGA-9c6v-m8x8-j3fw",
+    "CGA-9gj8-gjxv-82qf",
+    "CGA-9rcc-j9xg-72hj",
+    "CGA-fp47-6j6h-hj89",
+    "CGA-fw29-622p-rcr2",
+    "CGA-fxmw-q594-mwr3",
+    "CGA-g89r-r3vh-pg54",
+    "CGA-m742-4p9j-3f58",
+    "CGA-mxhv-p599-37pj",
+    "CGA-qpvq-hw46-jg8f",
+    "CGA-r4h9-8rmm-9h9q",
+    "CGA-rcxm-9cq6-m5fx",
+    "CGA-rfj3-3xpp-75fh",
+    "CGA-rqgg-6xvr-c6q9",
+    "CGA-vm64-rhrg-jq27"
+   ],
+   "glibc-2.44-dev@2.44-r11": [
+    "CGA-85j7-p5fv-48pq",
+    "CGA-9jhh-7whq-9r98",
+    "CGA-pq49-vpwf-9c5h",
+    "CGA-q98f-x5gg-77jq",
+    "CGA-vxj5-vgq2-w95g"
+   ],
+   "glibc-2.44-locale-posix@2.44-r11": [
+    "CGA-3p64-pj6v-586c",
+    "CGA-5w45-f7wm-grx2",
+    "CGA-6px6-pp92-76hc",
+    "CGA-8wmh-vmch-wfc4",
+    "CGA-p7p9-m5xm-f387"
+   ],
+   "glibc-2.44@2.44-r11": [
+    "CGA-2727-9j94-3x3p",
+    "CGA-4gmv-8mr7-5pxx",
+    "CGA-4mgp-78rw-5337",
+    "CGA-84qm-pxw8-f58f",
+    "CGA-fjmw-f657-w678"
+   ],
+   "ld-linux-2.44@2.44-r11": [
+    "CGA-37wc-rr96-hm3f",
+    "CGA-87j2-rf55-jc3p",
+    "CGA-8h6p-6495-cwhr",
+    "CGA-mppp-qcxg-vfqx",
+    "CGA-p698-26h2-8jh4",
+    "CGA-q52v-g232-2h9m"
+   ],
+   "libcrypt1-2.44@2.44-r11": [
+    "CGA-5273-pf8c-cg4v",
+    "CGA-6cv2-mm79-q3h6",
+    "CGA-jr99-f6q8-945r",
+    "CGA-xqrp-7jh5-56v7"
+   ],
+   "libexpat1@2.9.0-r0": [
+    "CGA-6mq2-cc4m-px38",
+    "CGA-gxcg-r99q-jjvj"
+   ],
+   "py3.15-pip-base@26.2.2-r0": [
+    "CGA-38jr-58rj-3cxm",
+    "CGA-3w6v-x4f6-cm25",
+    "CGA-g5gm-hqj7-8799",
+    "CGA-hr7f-52ff-gpw4"
+   ],
+   "uv@0.13.6-r0": [
+    "CGA-hv3q-j74h-9m29",
+    "CGA-rx72-wfwm-8qwm"
+   ],
+   "wget@1.25.0-r20": [
+    "CGA-4r22-ccq9-ch88",
+    "CGA-q3jg-48p9-vppw",
+    "CGA-wcr9-rxgr-hrq5"
+   ]
+  }
+ }
+}

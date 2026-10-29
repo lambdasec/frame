@@ -113,7 +113,11 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
-DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat")
+DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat", "Wolfi")
+# A rolling distribution has no releases: its ecosystem is the family alone. Wolfi's records
+# (Chainguard's CGA advisories) name one package each, keep the CVE they track in `upstream`
+# (not `aliases`), and have no summary.
+ROLLING_DISTROS = ("Wolfi",)
 # Red Hat names a product stream (`Red Hat:enterprise_linux:9::baseos`, `::appstream`, `::crb`),
 # which an rpm database does not record. For RHEL 8 and 9 every advisory gives a package the same
 # range in every stream it is in (checked over OSV's whole Red Hat export), so a release's streams
@@ -145,7 +149,7 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
                 if m is None:
                     continue
                 full = f"Red Hat:enterprise_linux:{m.group(1)}"
-            if (eco not in wanted and full not in wanted) or ":Pro:" in full or full == eco:
+            if (eco not in wanted and full not in wanted) or ":Pro:" in full or (full == eco and eco not in ROLLING_DISTROS):
                 continue
             eco = full
         elif eco not in wanted:
@@ -157,8 +161,11 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
         sev, score, vector = _severity(rec, aff)
         if sev is None and rec["id"].startswith("MAL-"):
             sev = "critical"
+        aliases = set(rec.get("aliases") or [])
+        if eco in ROLLING_DISTROS:
+            aliases |= set(rec.get("upstream") or [])   # the CVE a CGA advisory is about
         yield eco, normalize_name(eco, pkg["name"]), {
-            "id": rec["id"], "aliases": sorted(set(rec.get("aliases") or [])),
+            "id": rec["id"], "aliases": sorted(aliases),
             "summary": summary,
             "severity": sev, "score": score, "cvss": vector,
             "published": rec.get("published"), "modified": rec.get("modified"),

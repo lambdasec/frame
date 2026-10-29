@@ -48,6 +48,7 @@ from frame.sca.rpmdb import RPMDB_PATHS, SQLITE_PATHS, read_rpmdb
 # how each rpm distribution's OSV records name packages: Rocky Linux by source package
 # (RLSA-2024:6783 names `openssl`), AlmaLinux by binary package (`openssl-libs`, `openssl-devel`)
 RPM_BY_SOURCE = ("Rocky Linux",)
+APK_BY_PACKAGE = ("Wolfi",)
 
 OS_RELEASE = ("etc/os-release", "usr/lib/os-release")
 DPKG_STATUS = "var/lib/dpkg/status"
@@ -88,6 +89,8 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
         return f"Alpine:v{major}.{minor}"
     if rid == "rhel" and vid.split(".")[0] in ("8", "9"):
         return f"Red Hat:enterprise_linux:{vid.split('.')[0]}"     # RHEL and UBI: the release's streams merged
+    if rid == "wolfi":
+        return "Wolfi"                     # rolling; Chainguard's images say ID=wolfi too
     rpm_family = {"almalinux": "AlmaLinux", "rocky": "Rocky Linux"}.get(rid)
     if rpm_family and re.fullmatch(r"\d+(\.\d+)*", vid):
         return f"{rpm_family}:{vid.split('.')[0]}"       # advisories are per major release (AlmaLinux:9)
@@ -129,14 +132,17 @@ def parse_dpkg(path: str, text: str, ecosystem: str) -> DependencyFile:
 
 
 def parse_apk(path: str, text: str, ecosystem: str) -> DependencyFile:
-    """Installed packages by origin (the source package Alpine's advisories name)."""
+    """Installed packages by origin (the source package Alpine's advisories name); Wolfi's
+    advisories name each package itself (`ld-linux-2.44`, not its origin `glibc-2.44`), so a
+    Wolfi package is keyed by its own name."""
+    by_origin = ecosystem.split(":", 1)[0] not in APK_BY_PACKAGE
     df = DependencyFile(path, ecosystem, "installed")
     for block in re.split(r"\n\s*\n", text):
         fields: Dict[str, str] = {}
         for line in block.splitlines():
             if len(line) > 2 and line[1] == ":" and line[0] not in fields:
                 fields[line[0]] = line[2:].strip()
-        name, version = fields.get("o") or fields.get("P"), fields.get("V")
+        name, version = (fields.get("o") if by_origin else None) or fields.get("P"), fields.get("V")
         if name and version:
             pkg = df.add(Package(ecosystem, name, version))
             if fields.get("L") and not pkg.license:
@@ -308,7 +314,7 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
         return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
-                    "Linux and RHEL 8 / 9 are read)" + ("" if has_pkgs else "; no package database found")]
+                    "Linux, RHEL 8 / 9 and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))
