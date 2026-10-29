@@ -36,6 +36,85 @@
    ]
   ]
  },
+ "azl-3.0": {
+  "ecosystem": "Azure Linux:3",
+  "image": "mcr.microsoft.com/azurelinux/base/core:3.0@sha256:88fc2b4a425801b3b4d8fe5342e24fb6134669fb718ec970340bdd36dee50c35",
+  "note": "OSV queried with each version without its .azl3 dist tag (Azure Linux's OSV records omit it; see distro_versions.azure_linux_key)",
+  "rpm_qa": [
+   [
+    "azurelinux-release",
+    "3.0-51.azl3"
+   ],
+   [
+    "bash",
+    "5.2.15-3.azl3"
+   ],
+   [
+    "curl",
+    "8.11.1-12.azl3"
+   ],
+   [
+    "curl-libs",
+    "8.11.1-12.azl3"
+   ],
+   [
+    "expat-libs",
+    "2.9.0-1.azl3"
+   ],
+   [
+    "filesystem",
+    "1.1-21.azl3"
+   ],
+   [
+    "glibc",
+    "2.38-21.azl3"
+   ],
+   [
+    "libgcc",
+    "13.2.0-7.azl3"
+   ],
+   [
+    "libpcre2-8-0",
+    "10.48-1.azl3"
+   ],
+   [
+    "libstdc++",
+    "13.2.0-7.azl3"
+   ],
+   [
+    "ncurses-libs",
+    "6.4-3.azl3"
+   ],
+   [
+    "openssl",
+    "3.3.7-7.azl3"
+   ],
+   [
+    "openssl-libs",
+    "3.3.7-7.azl3"
+   ],
+   [
+    "pcre2-tools",
+    "10.48-1.azl3"
+   ],
+   [
+    "rpm",
+    "4.18.2-2.azl3"
+   ],
+   [
+    "rpm-libs",
+    "4.18.2-2.azl3"
+   ],
+   [
+    "sqlite-libs",
+    "3.44.0-4.azl3"
+   ],
+   [
+    "zlib",
+    "1.3.2-1.azl3"
+   ]
+  ]
+ },
  "rocky-9.4": {
   "ecosystem": "Rocky Linux:9",
   "rpm_qa": [

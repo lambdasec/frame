@@ -56,6 +56,67 @@
   "ALSA-2026:58938"
  ],
  "AlmaLinux:8|zlib|1.2.11-25.el8": [],
+ "Azure Linux:3|azurelinux-release|3.0-51.azl3": [],
+ "Azure Linux:3|bash|5.2.15-3.azl3": [],
+ "Azure Linux:3|curl|8.11.1-12.azl3": [],
+ "Azure Linux:3|expat|2.9.0-1.azl3": [],
+ "Azure Linux:3|filesystem|1.1-21.azl3": [],
+ "Azure Linux:3|gcc|13.2.0-7.azl3": [
+  "AZL-107399",
+  "AZL-107402",
+  "AZL-107973",
+  "AZL-107975",
+  "AZL-107979",
+  "AZL-108345",
+  "AZL-108348",
+  "AZL-108351",
+  "AZL-108354",
+  "AZL-108357",
+  "AZL-108360",
+  "AZL-109992",
+  "AZL-56561",
+  "AZL-56567",
+  "AZL-56576",
+  "AZL-79601"
+ ],
+ "Azure Linux:3|glibc|2.38-21.azl3": [
+  "AZL-100019",
+  "AZL-100959",
+  "AZL-100962",
+  "AZL-100965",
+  "AZL-100968",
+  "AZL-101843",
+  "AZL-103413",
+  "AZL-103416",
+  "AZL-104976",
+  "AZL-83087",
+  "AZL-83093",
+  "AZL-84599",
+  "AZL-85004",
+  "AZL-95492",
+  "AZL-95495",
+  "AZL-98042"
+ ],
+ "Azure Linux:3|ncurses|6.4-3.azl3": [
+  "AZL-40988"
+ ],
+ "Azure Linux:3|openssl|3.3.7-7.azl3": [],
+ "Azure Linux:3|pcre2|10.48-1.azl3": [
+  "AZL-105119"
+ ],
+ "Azure Linux:3|rpm|4.18.2-2.azl3": [
+  "AZL-105326",
+  "AZL-105329",
+  "AZL-105810",
+  "AZL-105813",
+  "AZL-99369",
+  "AZL-99372"
+ ],
+ "Azure Linux:3|sqlite|3.44.0-4.azl3": [],
+ "Azure Linux:3|zlib|1.3.2-1.azl3": [
+  "AZL-105345",
+  "AZL-99090"
+ ],
  "Red Hat:enterprise_linux:9|bash|5.1.8-9.el9": [],
  "Red Hat:enterprise_linux:9|curl-minimal|7.76.1-29.el9_4.1": [
   "RHSA-2026:1350",

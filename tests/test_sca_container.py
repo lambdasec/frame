@@ -341,7 +341,7 @@ def test_the_rpm_database_reads_as_rpm_does(rootfs):
     assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0"])
 def test_rpm_matching_agrees_with_the_osv_api(rootfs):
     """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
     binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
@@ -362,7 +362,8 @@ def test_rpm_matching_agrees_with_the_osv_api(rootfs):
         assert set(expected[key]) <= found.get(key, set()), (key, sorted(set(expected[key]) - found.get(key, set())))
         assert bool(expected[key]) == bool(found.get(key)), key
     names = {p.name for p in files[0].packages.values()}
-    assert ("openssl" in names) == eco.startswith("Rocky") and ("openssl-libs" in names) == (not eco.startswith("Rocky"))
+    by_source = eco.split(":")[0] in ("Rocky Linux", "Azure Linux")
+    assert ("openssl" in names) == by_source and ("openssl-libs" in names) == (not by_source)
 
 
 def test_rpm_release_and_purl():
@@ -496,3 +497,23 @@ def test_wolfi_release_and_purl():
     from frame.sca.model import Package
     assert ecosystem_of(os_release('ID=wolfi\nVERSION_ID="20230201"')) == "Wolfi"
     assert Package("Wolfi", "glibc-2.44", "2.44-r11").purl == "pkg:apk/wolfi/glibc-2.44@2.44-r11"
+
+
+def test_azure_linux_versions_are_compared_without_the_dist_tag():
+    """Azure Linux's OSV records omit the `.azl3` every installed package (and Microsoft's own
+    OVAL) carries: the build a record calls last affected is the installed one, and a fixed
+    release one above it is newer. Read with the tag, `21.azl3` would sort after `21`."""
+    from frame.sca.model import Package
+    from frame.sca.osv import is_affected
+    unfixed = {"ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"last_affected": "2.38-21"}]}]}
+    fixed = {"ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.38-21"}]}]}
+    assert is_affected("Azure Linux:3", "2.38-21.azl3", unfixed)
+    assert not is_affected("Azure Linux:3", "2.38-22.azl3", unfixed)
+    assert not is_affected("Azure Linux:3", "2.38-21.azl3", fixed) and is_affected("Azure Linux:3", "2.38-20.azl3", fixed)
+    assert not is_affected("Rocky Linux:9", "2.38-21.el9", unfixed)         # other rpm distributions keep their tags
+    assert ecosystem_of(os_release('ID=azurelinux\nVERSION_ID="3.0"')) == "Azure Linux:3"
+    assert ecosystem_of(os_release('ID=mariner\nVERSION_ID="2.0"')) == "Azure Linux:2"        # CBL-Mariner 2.0
+    assert ecosystem_of(os_release('ID=mariner\nVERSION_ID="1.0"')) is None                    # not in OSV
+    assert is_affected("Azure Linux:2", "2.35-10.cm2", {"ranges": [{"type": "ECOSYSTEM", "events": [
+        {"introduced": "0"}, {"last_affected": "2.35-10"}]}]})
+    assert Package("Azure Linux:3", "glibc", "2.38-21.azl3").purl == "pkg:rpm/azure-linux/glibc@2.38-21.azl3?distro=azure-linux-3"

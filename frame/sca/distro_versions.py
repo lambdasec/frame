@@ -306,3 +306,15 @@ def apk_key(v: str) -> _CmpKey:
 
 def rpm_key(v: str) -> _CmpKey:
     return _CmpKey(v, rpm_compare)
+
+
+_AZL_DIST = re.compile(r"\.(?:azl|cm)\d+$")
+
+
+def azure_linux_key(v: str) -> _CmpKey:
+    """Azure Linux's OSV records give `version-release` without the dist tag Microsoft's own
+    OVAL and every installed package carry (`2.38-21`, installed as `2.38-21.azl3`; 7,041 of the
+    OVAL's fixes equal OSV's once the tag goes). In rpm's order `21.azl3` sorts after `21`, so the
+    build a record calls last affected would look newer than it: the tag is dropped first."""
+    head, sep, release = v.rpartition("-")
+    return rpm_key(head + sep + _AZL_DIST.sub("", release) if sep else v)
