@@ -196,9 +196,9 @@ def test_container_image_walkthrough(tmp_path):
     shutil.copytree(EXAMPLES / "container-image", work)
     env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
     env.pop("FRAME_ADVISORIES_SOURCE", None)
-    assert "13 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+    assert "14 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
                               "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9,"
-                              "Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,Wolfi")
+                              "Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,SUSE:Linux Enterprise 15 SP6,Wolfi")
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "--rootfs", "alpine-3.18.0", "--rootfs", "debian-12.0"),
@@ -225,6 +225,10 @@ def test_container_image_walkthrough(tmp_path):
         (("deps", "--rootfs", "leap-15.6", "--vulns"),
          ["leap-15.6:/usr/lib/sysimage/rpm/Packages.db  (openSUSE:Leap 15.6 installed): 11 packages, direct unknown",
           "31 known vulnerabilities:"]),
+        (("deps", "--rootfs", "sles-15.6", "--vulns"),
+         ["sles-15.6:/usr/lib/sysimage/rpm/Packages.db  (SUSE:Linux Enterprise 15 SP6 installed): 15 packages, direct unknown",
+          "33 known vulnerabilities:",
+          "CRITICAL libopenssl3@3.1.4-150600.5.39.1 (os package) SUSE-SU-2026:0312-1"]),
         (("deps", "--rootfs", "wolfi-python", "--vulns"),
          ["wolfi-python:/lib/apk/db/installed  (Wolfi installed): 77 packages, direct unknown", "39 known vulnerabilities:",
           "binutils@2.47-r2 (os package) CGA-9gj8-gjxv-82qf: CVE-2026-6844, GHSA-p33j-xffm-gxj7, CGA-fp47-6j6h-hj89"]),
@@ -345,3 +349,45 @@ def test_java_allocation_walkthrough(tmp_path):
         out = frame(work, env, *args)
         for line in lines:
             assert line in out and line in readme, (args, line, out[-1500:])
+
+
+def test_npm_backport_walkthrough(tmp_path):
+    work = tmp_path / "npm-backport"
+    shutil.copytree(EXAMPLES / "npm-backport", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT),
+           "FRAME_BACKPORT_CACHE": "offline-cache"}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories", "--project", ".")
+    readme = (work / "README.md").read_text()
+    out = frame(work, env, "deps", "--vulns", "--backport")
+    for line in ["CRITICAL minimist@1.2.5 (direct, imported) GHSA-xvch-5gv4-984h",
+                 "minimist@1.2.5: minimistjs/minimist@c2b981977fa8 applies (GHSA-xvch-5gv4-984h); not applied: "
+                 "minimistjs/minimist@34e20b846111: does not apply to 1.2.5 (error: patch failed: index.js:7)",
+                 "+-            if (key === '__proto__') return;", "++            if (isConstructorOrProto(o, key)) return;",
+                 "+    \"postinstall\": \"patch-package\",",
+                 "manual: install patch-package once: npm install --save-dev patch-package"]:
+        assert line in out and line in readme, (line, out[-2000:])
+    assert not (work / "patches").exists()
+    frame(work, env, "deps", "--vulns", "--backport", "--apply")
+    assert (work / "patches" / "minimist+1.2.5.patch").is_file()
+    assert '"postinstall": "patch-package"' in (work / "package.json").read_text()
+
+
+def test_go_govulncheck_walkthrough(tmp_path):
+    """govulncheck needs Go; the report the README shows is the recorded one
+    (tests/fixtures/sca/govulncheck), put where the README's command writes it."""
+    import gzip
+    work = tmp_path / "upgrade-nuget-go"
+    shutil.copytree(EXAMPLES / "upgrade-nuget-go", work)
+    (work / "go" / "govulncheck.json").write_bytes(
+        gzip.decompress((ROOT / "tests" / "fixtures" / "sca" / "govulncheck" / "shop.json.gz").read_bytes()))
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories", "--ecosystems", "Go")
+    out = frame(work, env, "deps", "go", "--vulns", "--govulncheck", "go/govulncheck.json")
+    readme = (work / "README.md").read_text()
+    for line in ["32 known vulnerabilities:",
+                 "github.com/gin-gonic/gin@1.7.0 (direct, called) GHSA-h395-qcrw-5vmq",
+                 "calls github.com/gin-gonic/gin.(*Engine).Run at main.go:8",
+                 "govulncheck also reports 66 advisory(ies) in the Go standard library of go1.22.12 (33 called)"]:
+        assert line in out and line in readme, (line, out[-1500:])

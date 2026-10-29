@@ -10,6 +10,7 @@ import os
 import shutil
 import tarfile
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ def test_os_release_to_ecosystem():
     assert ecosystem_of(os_release('ID=ubuntu\nVERSION_ID="23.10"\nVERSION="23.10 (Mantic Minotaur)"')) == "Ubuntu:23.10"
     assert ecosystem_of(os_release("ID=alpine\nVERSION_ID=3.18.4")) == "Alpine:v3.18"
     assert ecosystem_of(os_release('ID=debian\nVERSION_ID="12"')) == "Debian:12"
-    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.5"')) is None          # no advisories: said, not guessed
+    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="12.5"')) is None          # no advisories: said, not guessed
 
 
 @pytest.mark.parametrize("ref,rootfs", [("debian:12.0", "debian-12.0"), ("alpine:3.18.0", "alpine-3.18.0")])
@@ -96,9 +97,9 @@ def test_image_layers_apply_in_order_with_whiteouts(tmp_path):
 
 def test_a_distribution_without_advisories_is_said(tmp_path):
     (tmp_path / "etc").mkdir()
-    (tmp_path / "etc/os-release").write_text('ID="sles"\nVERSION_ID="15.5"\nPRETTY_NAME="SUSE Linux Enterprise Server 15 SP5"\n')
+    (tmp_path / "etc/os-release").write_text('ID="sles"\nVERSION_ID="12.5"\nPRETTY_NAME="SUSE Linux Enterprise Server 12 SP5"\n')
     files, warnings = read_rootfs(tmp_path)
-    assert files == [] and "SUSE Linux Enterprise Server 15 SP5 has no advisories in Frame" in warnings[0]
+    assert files == [] and "SUSE Linux Enterprise Server 12 SP5 has no advisories in Frame" in warnings[0]
 
 
 @pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1" or not shutil.which("docker"),
@@ -330,7 +331,7 @@ def test_a_function_vulnerable_on_another_platform_is_not_called():
 RPM = json.loads((F / "rpm_images.json").read_text())
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "sles-15.6"])
 def test_the_rpm_database_reads_as_rpm_does(rootfs):
     """rpm 4.16's sqlite database (Rocky Linux 9.4) and rpm 4.14's Berkeley DB (AlmaLinux 8.9),
     made by rpm itself from the official images: every package equals `rpm -qa`."""
@@ -528,22 +529,97 @@ def test_azure_linux_versions_are_compared_without_the_dist_tag():
 
 def test_suse_releases_and_purl():
     """openSUSE Leap's advisories are per release (`openSUSE:Leap 15.6`) under source package
-    names. SLES files them per module (`SUSE:Linux Enterprise Module for Basesystem 15 SP6`),
-    which an rpm database does not record, so a SLES image is not matched (never guessed)."""
+    names; SLES and BCI images are `SUSE:Linux Enterprise 15 SPn`, read from SUSE's OVAL under
+    binary package names. OSV's own SUSE records are not read: they file each patch under a module
+    the image does not record."""
     from frame.sca.model import Package
     assert ecosystem_of(os_release('ID="opensuse-leap"\nVERSION_ID="15.6"')) == "openSUSE:Leap 15.6"
-    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.6"')) is None
+    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.6"')) == "SUSE:Linux Enterprise 15 SP6"
+    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="12.5"')) is None
     assert ecosystem_of(os_release('ID="opensuse-tumbleweed"\nVERSION_ID="20261020"')) == "openSUSE:Tumbleweed"
     from frame.sca.osv import entries
 
-    def eco_of(name):
+    def eco_of(name, family="openSUSE"):
         rec = {"id": "x", "affected": [{"package": {"name": "opera", "ecosystem": name},
                                         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]}]}
-        return [e for e, _, _ in entries(rec, ["openSUSE"])]
+        return [e for e, _, _ in entries(rec, [family])]
     assert eco_of("openSUSE:Leap 15.6 NonFree") == ["openSUSE:Leap 15.6"]   # the non-OSS repository: same system
     assert eco_of("openSUSE:Leap Micro 5.5") == []                          # a host OS, not an image
+    assert eco_of("SUSE:Linux Enterprise Module for Basesystem 15 SP6", "SUSE") == []
     assert Package("openSUSE:Leap 15.6", "openssl-3", "3.1.4-150600.5.21.1").purl == \
         "pkg:rpm/opensuse/openssl-3@3.1.4-150600.5.21.1?distro=opensuse-leap-15.6"
+    assert Package("SUSE:Linux Enterprise 15 SP6", "libopenssl3", "3.1.4-150600.5.39.1").purl == \
+        "pkg:rpm/suse/libopenssl3@3.1.4-150600.5.39.1?distro=sles-15-sp6"
+
+
+def test_sles_matching_agrees_with_openscap(tmp_path):
+    """A SLES 15 SP6 image (BCI base, trimmed by rpm itself) matched against a table built from
+    SUSE's patch OVAL finds exactly the CVEs OpenSCAP's `oscap oval eval` found true in the image
+    (the OVAL is cut down to the definitions naming its packages, true and false)."""
+    from frame.sca.advisories import build_advisories
+    oval = F / "sles-oval" / "suse.linux.enterprise.15-sp6-patch.xml.gz"
+    build_advisories([oval], tmp_path / "kb", "t", ecosystems=["SUSE"])
+    files, warnings = read_rootfs(F / "sles-15.6")
+    assert not warnings and files[0].ecosystem == "SUSE:Linux Enterprise 15 SP6"
+    assert sorted([p.name, p.version] for p in files[0].packages.values()) == RPM["sles-15.6"]["rpm_qa"]
+    found = match(files, AdvisoryDB.from_dir(tmp_path / "kb", [files[0].ecosystem]))
+    cves = {a for f in found for a in [f["id"], *f["aliases"]] if a.startswith("CVE-")}
+    truth = json.loads((F / "sles-oval" / "oscap_expected.json").read_text())["true"]
+    assert cves == {c for d in truth.values() for c in d["cves"]}
+    ids = {a for f in found for a in [f["id"], *f["aliases"]]}
+    assert {d["advisory"] for d in truth.values() if d["advisory"]} <= ids
+    assert {f["package"] for f in found} >= {"libexpat1", "libopenssl3", "glibc"}      # binary names
+
+
+def test_suse_oval_reader():
+    """A patch definition gives each binary package it tests (`less than` the fixed EVR, epoch 0
+    dropped) an advisory named by its SUSE-SU id, its CVEs as aliases and SUSE's severity; a
+    definition only for another product (SAP, HA, LTSS) is left out; a file not named as SUSE
+    names a service pack's patch OVAL is not read as one."""
+    from frame.sca.suse_oval import ecosystem_of as oval_eco, entries as oval_entries
+    oval = F / "sles-oval" / "suse.linux.enterprise.15-sp6-patch.xml.gz"
+    assert oval_eco(oval) == "SUSE:Linux Enterprise 15 SP6"
+    assert oval_eco(Path("suse.linux.enterprise.15-sp6-affected.xml.gz")) is None
+    rows = [(n, e) for _, n, e in oval_entries(oval)]
+    expat = [e for n, e in rows if n == "libexpat1" and e["id"] == "SUSE-SU-2025:03624-1"]
+    assert expat and expat[0]["aliases"] == ["CVE-2025-59375"] and expat[0]["severity"] == "high"
+    assert expat[0]["ranges"] == [{"type": "ECOSYSTEM", "events": [{"introduced": "0"},
+                                                                   {"fixed": "2.7.1-150400.3.31.1"}]}]
+    assert not any(e["ranges"][0]["events"][1]["fixed"].startswith("0:") for _, e in rows)
+
+
+@pytest.mark.skipif(os.environ.get("FRAME_SCA_REAL") != "1", reason="live: set FRAME_SCA_REAL=1 (needs docker)")
+def test_live_sles_matching_agrees_with_openscap_on_today_s_oval(tmp_path):
+    """SUSE's current SP6 patch OVAL, evaluated by OpenSCAP inside the pinned BCI image and matched
+    by Frame against that image's own rpm database: the same CVEs."""
+    import re
+    import subprocess
+    import urllib.request
+    if shutil.which("docker") is None:
+        pytest.fail("docker is not installed")
+    oval = tmp_path / "suse.linux.enterprise.15-sp6-patch.xml.gz"
+    oval.write_bytes(urllib.request.urlopen("https://ftp.suse.com/pub/projects/security/oval/"
+                                            "suse.linux.enterprise.15-sp6-patch.xml.gz", timeout=300).read())
+    (tmp_path / "p.xml").write_bytes(gzip.decompress(oval.read_bytes()))
+    out = subprocess.run(["docker", "run", "--rm", "-v", f"{tmp_path}:/data", RPM["sles-15.6"]["image"], "sh", "-c",
+                          "zypper -n -q in openscap-utils >/dev/null 2>&1; oscap oval eval /data/p.xml; "
+                          "cp /usr/lib/sysimage/rpm/Packages.db /data/Packages.db"],
+                         capture_output=True, text=True, timeout=1800).stdout
+    true_defs = set(re.findall(r"Definition (oval:\S+): true", out))
+    root = ET.parse(tmp_path / "p.xml").getroot()
+    o = "{http://oval.mitre.org/XMLSchema/oval-definitions-5}"
+    truth = {r.get("ref_id") for d in root.iter(o + "definition") if d.get("id") in true_defs
+             for r in d.iter(o + "reference") if (r.get("ref_id") or "").startswith("CVE-")}
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc" / "os-release").write_text('ID="sles"\nVERSION_ID="15.6"\n')
+    (rootfs / "usr/lib/sysimage/rpm").mkdir(parents=True)
+    shutil.copy(tmp_path / "Packages.db", rootfs / "usr/lib/sysimage/rpm/Packages.db")
+    from frame.sca.advisories import build_advisories
+    build_advisories([oval], tmp_path / "kb", "t", ecosystems=["SUSE"])
+    files, _ = read_rootfs(rootfs)                 # the image has openscap-utils too, as oscap saw it
+    found = match(files, AdvisoryDB.from_dir(tmp_path / "kb", [files[0].ecosystem]))
+    assert {a for f in found for a in [f["id"], *f["aliases"]] if a.startswith("CVE-")} == truth
 
 
 def test_an_ndb_database_is_read_without_rpm():

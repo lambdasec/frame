@@ -1,0 +1,251 @@
+{
+ "tool": "OpenSCAP 1.3.6 (oscap oval eval) in the image",
+ "true": {
+  "oval:org.opensuse.security:def:97088": {
+   "advisory": "SUSE-SU-2026:1040-1",
+   "cves": [
+    "CVE-2026-29111",
+    "CVE-2026-4105"
+   ]
+  },
+  "oval:org.opensuse.security:def:97102": {
+   "advisory": "SUSE-SU-2026:1166-1",
+   "cves": [
+    "CVE-2026-32776",
+    "CVE-2026-32777",
+    "CVE-2026-32778"
+   ]
+  },
+  "oval:org.opensuse.security:def:97109": {
+   "advisory": "SUSE-SU-2026:1215-1",
+   "cves": [
+    "CVE-2026-28387",
+    "CVE-2026-28388",
+    "CVE-2026-28389",
+    "CVE-2026-31789",
+    "CVE-2026-31790"
+   ]
+  },
+  "oval:org.opensuse.security:def:97129": {
+   "advisory": "SUSE-SU-2026:1369-1",
+   "cves": [
+    "CVE-2026-4437",
+    "CVE-2026-4438"
+   ]
+  },
+  "oval:org.opensuse.security:def:97160": {
+   "advisory": "SUSE-SU-2026:1605-1",
+   "cves": [
+    "CVE-2026-28390"
+   ]
+  },
+  "oval:org.opensuse.security:def:97196": {
+   "advisory": "SUSE-SU-2026:1940-1",
+   "cves": [
+    "CVE-2026-1965",
+    "CVE-2026-4873",
+    "CVE-2026-5545",
+    "CVE-2026-6253",
+    "CVE-2026-6276",
+    "CVE-2026-6429"
+   ]
+  },
+  "oval:org.opensuse.security:def:97261": {
+   "advisory": "SUSE-SU-2026:2231-1",
+   "cves": [
+    "CVE-2026-4046",
+    "CVE-2026-5450",
+    "CVE-2026-5928"
+   ]
+  },
+  "oval:org.opensuse.security:def:97289": {
+   "advisory": "SUSE-SU-2026:2393-1",
+   "cves": [
+    "CVE-2026-34180",
+    "CVE-2026-34182",
+    "CVE-2026-42766",
+    "CVE-2026-42770",
+    "CVE-2026-45445",
+    "CVE-2026-45446",
+    "CVE-2026-45447",
+    "CVE-2026-7383",
+    "CVE-2026-9076"
+   ]
+  },
+  "oval:org.opensuse.security:def:97314": {
+   "advisory": "SUSE-SU-2026:2528-1",
+   "cves": [
+    "CVE-2026-11822",
+    "CVE-2026-11824"
+   ]
+  },
+  "oval:org.opensuse.security:def:97370": {
+   "advisory": "SUSE-SU-2026:2848-1",
+   "cves": [
+    "CVE-2026-11850",
+    "CVE-2026-40355",
+    "CVE-2026-40356"
+   ]
+  },
+  "oval:org.opensuse.security:def:97373": {
+   "advisory": "SUSE-SU-2026:2926-1",
+   "cves": [
+    "CVE-2026-10536",
+    "CVE-2026-12064",
+    "CVE-2026-8286",
+    "CVE-2026-8458",
+    "CVE-2026-8924",
+    "CVE-2026-8927",
+    "CVE-2026-9079",
+    "CVE-2026-9080",
+    "CVE-2026-9545",
+    "CVE-2026-9547"
+   ]
+  },
+  "oval:org.opensuse.security:def:97379": {
+   "advisory": "SUSE-SU-2026:3004-1",
+   "cves": [
+    "CVE-2026-42767"
+   ]
+  },
+  "oval:org.opensuse.security:def:97385": {
+   "advisory": "SUSE-SU-2026:3030-1",
+   "cves": [
+    "CVE-2026-5435",
+    "CVE-2026-6238"
+   ]
+  },
+  "oval:org.opensuse.security:def:97405": {
+   "advisory": "SUSE-SU-2026:3096-1",
+   "cves": [
+    "CVE-2026-11979"
+   ]
+  },
+  "oval:org.opensuse.security:def:97411": {
+   "advisory": "SUSE-SU-2026:0312-1",
+   "cves": [
+    "CVE-2025-15467",
+    "CVE-2025-68160",
+    "CVE-2025-69418",
+    "CVE-2025-69419",
+    "CVE-2025-69420",
+    "CVE-2025-69421",
+    "CVE-2026-22795",
+    "CVE-2026-22796"
+   ]
+  },
+  "oval:org.opensuse.security:def:97473": {
+   "advisory": "SUSE-SU-2026:3516-1",
+   "cves": []
+  },
+  "oval:org.opensuse.security:def:97518": {
+   "advisory": "SUSE-SU-2026:0371-1",
+   "cves": [
+    "CVE-2025-15281",
+    "CVE-2026-0861",
+    "CVE-2026-0915"
+   ]
+  },
+  "oval:org.opensuse.security:def:97535": {
+   "advisory": "SUSE-SU-2026:3866-1",
+   "cves": [
+    "CVE-2026-54874",
+    "CVE-2026-63072",
+    "CVE-2026-63074",
+    "CVE-2026-63076",
+    "CVE-2026-75803"
+   ]
+  },
+  "oval:org.opensuse.security:def:97571": {
+   "advisory": "SUSE-SU-2026:4047-1",
+   "cves": [
+    "CVE-2026-13608",
+    "CVE-2026-5773",
+    "CVE-2026-7168",
+    "CVE-2026-80229",
+    "CVE-2026-80230",
+    "CVE-2026-8926"
+   ]
+  },
+  "oval:org.opensuse.security:def:97602": {
+   "advisory": "SUSE-SU-2026:4250-1",
+   "cves": [
+    "CVE-2026-18374",
+    "CVE-2026-19499",
+    "CVE-2026-19542",
+    "CVE-2026-6368",
+    "CVE-2026-6791",
+    "CVE-2026-77117",
+    "CVE-2026-80489"
+   ]
+  },
+  "oval:org.opensuse.security:def:97639": {
+   "advisory": "SUSE-SU-2026:4419-1",
+   "cves": [
+    "CVE-2026-35189",
+    "CVE-2026-54872",
+    "CVE-2026-75805",
+    "CVE-2026-75806",
+    "CVE-2026-77696",
+    "CVE-2026-84782"
+   ]
+  },
+  "oval:org.opensuse.security:def:97659": {
+   "advisory": "SUSE-SU-2026:4623-1",
+   "cves": [
+    "CVE-2016-0718",
+    "CVE-2016-9063",
+    "CVE-2022-43680",
+    "CVE-2023-52425",
+    "CVE-2024-8176",
+    "CVE-2025-59375",
+    "CVE-2026-102633",
+    "CVE-2026-24515",
+    "CVE-2026-25210",
+    "CVE-2026-32776",
+    "CVE-2026-32777",
+    "CVE-2026-32778",
+    "CVE-2026-41080",
+    "CVE-2026-45186",
+    "CVE-2026-50219",
+    "CVE-2026-56131",
+    "CVE-2026-56132",
+    "CVE-2026-56403",
+    "CVE-2026-56404",
+    "CVE-2026-56405",
+    "CVE-2026-56406",
+    "CVE-2026-56407",
+    "CVE-2026-56408",
+    "CVE-2026-56409",
+    "CVE-2026-56410",
+    "CVE-2026-56411",
+    "CVE-2026-56412",
+    "CVE-2026-66046",
+    "CVE-2026-72522",
+    "CVE-2026-76641",
+    "CVE-2026-76956",
+    "CVE-2026-76957",
+    "CVE-2026-77214",
+    "CVE-2026-93990"
+   ]
+  },
+  "oval:org.opensuse.security:def:97667": {
+   "advisory": "SUSE-SU-2026:4656-1",
+   "cves": [
+    "CVE-2026-8674",
+    "CVE-2026-86805",
+    "CVE-2026-89092",
+    "CVE-2026-97399"
+   ]
+  },
+  "oval:org.opensuse.security:def:97750": {
+   "advisory": "SUSE-SU-2026:0885-1",
+   "cves": [
+    "CVE-2026-1965",
+    "CVE-2026-3783",
+    "CVE-2026-3784",
+    "CVE-2026-3805"
+   ]
+  }
+ }
+}

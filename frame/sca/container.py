@@ -47,7 +47,7 @@ from frame.sca.rpmdb import RPMDB_PATHS, SQLITE_PATHS, read_rpmdb
 
 # how each rpm distribution's OSV records name packages: Rocky Linux by source package
 # (RLSA-2024:6783 names `openssl`), AlmaLinux by binary package (`openssl-libs`, `openssl-devel`)
-RPM_BY_SOURCE = ("Rocky Linux", "Azure Linux", "openSUSE")
+RPM_BY_SOURCE = ("Rocky Linux", "Azure Linux", "openSUSE")       # SLES's OVAL names binary packages
 APK_BY_PACKAGE = ("Wolfi",)
 
 OS_RELEASE = ("etc/os-release", "usr/lib/os-release")
@@ -96,7 +96,9 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
     if rid == "mariner" and vid.split(".")[0] == "2":
         return "Azure Linux:2"                        # CBL-Mariner 2.0 is Azure Linux 2 in OSV
     if rid == "opensuse-leap" and re.fullmatch(r"\d+\.\d+", vid):
-        return f"openSUSE:Leap {vid}"                # SLES (ID=sles) files advisories per module: not read
+        return f"openSUSE:Leap {vid}"
+    if rid == "sles" and re.fullmatch(r"15\.[1-9]\d*", vid):
+        return f"SUSE:Linux Enterprise 15 SP{vid.split('.')[1]}"    # SLES and BCI: the service pack's modules
     if rid == "opensuse-tumbleweed":
         return "openSUSE:Tumbleweed"                 # rolling: one table
     if rid == "wolfi":
@@ -324,7 +326,7 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
         return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
-                    "Linux, RHEL 8 / 9 / 10, Azure Linux 3, openSUSE Leap and Tumbleweed, and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
+                    "Linux, RHEL 8 / 9 / 10, Azure Linux 3, SLES 15, openSUSE Leap and Tumbleweed, and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))

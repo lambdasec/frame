@@ -92,8 +92,11 @@ def _gz_json(obj) -> bytes:
 
 def _records(inputs: Sequence[Path]) -> Iterator[dict]:
     """OSV records from `all.zip` exports, directories of `<id>.json` files, or single files."""
+    from frame.sca.suse_oval import FILE as SUSE_OVAL
     for p in inputs:
         p = Path(p)
+        if SUSE_OVAL.search(p.name):
+            continue                                   # SUSE's OVAL, read by build_advisories itself
         if p.is_dir():
             for f in sorted(p.rglob("*.json")):
                 yield from _load_json(f.read_bytes(), str(f))
@@ -198,6 +201,14 @@ def build_advisories(inputs: Sequence[Path], out: Path, revision: str,
             if with_git:
                 for repo, entry in git_entries(rec):
                     spill.add(("git", git_shard(repo)), repo, entry)
+        if "SUSE" in wanted or any(w.startswith("SUSE:") for w in wanted):
+            from frame.sca.suse_oval import FILE as SUSE_OVAL
+            from frame.sca.suse_oval import entries as suse_entries
+            for p in inputs:                                   # SUSE Linux Enterprise from SUSE's OVAL
+                if SUSE_OVAL.search(Path(p).name):
+                    for eco, name, entry in suse_entries(Path(p)):
+                        if "SUSE" in wanted or eco in wanted:
+                            spill.add(("eco", eco), normalize_name(eco, name), entry)
         spill.flush()
         for key in sorted(k for k in spill.keys() if k[0] == "eco"):   # distribution releases as read
             eco = key[1]

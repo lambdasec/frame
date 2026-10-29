@@ -1,0 +1,11 @@
+{
+  "name": "cli-tool",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node cli.js"
+  },
+  "dependencies": {
+    "minimist": "1.2.5"
+  }
+}

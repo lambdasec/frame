@@ -89,12 +89,14 @@ class Package:
             return f"pkg:apk/alpine/{quote(self.name, safe='')}@{v}?distro={release.lstrip('v')}"
         if family == "Wolfi":                                    # rolling: no release (the advisories' purl)
             return f"pkg:apk/wolfi/{quote(self.name, safe='')}@{v}"
-        if family in ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE") and release and self.version:
+        if family in ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE", "SUSE") and release and self.version:
             # purl-spec rpm type: the epoch is a qualifier, not part of the version
             ns = "redhat" if family == "Red Hat" else family.lower().replace(" ", "-")   # azure-linux, as OSV
             if family == "Red Hat":
                 release = release.rsplit(":", 1)[-1]                     # enterprise_linux:9 -> rhel-9
                 ns_distro = f"rhel-{release}"
+            elif family == "SUSE":
+                ns_distro = f"sles-15-{release.rsplit(' ', 1)[-1].lower()}"       # Linux Enterprise 15 SP6 -> sles-15-sp6
             elif family == "openSUSE":
                 ns_distro = f"opensuse-{release.lower().replace(' ', '-')}"     # Leap 15.6 -> opensuse-leap-15.6
             else:

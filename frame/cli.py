@@ -124,6 +124,10 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--apply", action="store_true",
                              help="With --plan: write the manifest edits (without it, --plan shows them as a diff), "
                                   "then re-read the graph and report what is fixed and what remains")
+    deps_parser.add_argument("--backport", action="store_true",
+                             help="With --vulns: for npm packages installed in node_modules, apply each advisory's "
+                                  "upstream fix commit to the installed version as a patch-package patch (fetches "
+                                  "the OSV record and the commit from GitHub), shown as a diff; --apply writes it")
     deps_parser.add_argument("--mitigate", action="store_true",
                              help="With --vulns: write each complete configuration mitigation not yet applied (a "
                                   "properties file the library reads, else the Dockerfile), shown as a diff; with "
@@ -144,6 +148,9 @@ def create_parser() -> argparse.ArgumentParser:
     deps_parser.add_argument("--relock", action="store_true",
                              help="With --apply: re-lock through the package manager (npm, pnpm, yarn, poetry, uv, dotnet, "
                                   "cargo, go); runs the package manager")
+    deps_parser.add_argument("--govulncheck", action="append", default=None, metavar="FILE",
+                             help="With --vulns: a `govulncheck -json` report (source mode) whose call-graph "
+                                  "reachability replaces Frame's own for the Go advisories it decided (repeatable)")
     deps_parser.add_argument("--no-reachability", action="store_true",
                              help="With --vulns: skip reading the project's source for imports and calls of "
                                   "the vulnerable packages and functions")
@@ -624,6 +631,7 @@ def cmd_deps(args) -> int:
         return 0
     findings = None
     mitigation = None
+    backported = None
     not_checked: list = []
     undecided = 0
     undecided_severities: list = []
@@ -637,6 +645,13 @@ def cmd_deps(args) -> int:
             from frame.sca.reachability import Usage, annotate
             annotate(findings, Usage(target.resolve(), excluded), target.resolve(),
                      {df.path: (df.binary_functions, df.binary_platform) for df in report.files if df.binary_functions})
+        if findings is not None and getattr(args, "govulncheck", None):
+            from frame.sca.govulncheck import GovulncheckError, apply, read
+            try:
+                report.warnings.extend(apply(findings, [read(Path(f)) for f in args.govulncheck]))
+            except GovulncheckError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
         exposure = None
         if args.registry and not args.vex:
             from frame.sca.registry import Registries, RegistryError
@@ -675,6 +690,18 @@ def cmd_deps(args) -> int:
                 mitigation["confirmed"] = sorted({f"{f['package']}@{f['version']} {f['id']}" for f in again
                                                   for m in f.get("mitigations", []) if m["applied"]
                                                   and f["id"] in reasons})
+        backported = None
+        if findings and getattr(args, "backport", False):
+            from frame.sca.backport import cache_dir
+            from frame.sca.backport import propose as propose_backports
+            from frame.sca.mine import GitHubSource
+            b_edits, b_manual, b_done = propose_backports(findings, target.resolve(), GitHubSource(cache_dir()))
+            backported = {"edits": b_edits, "manual": b_manual, "patches": b_done}
+            if args.apply:
+                for c in b_edits:
+                    dest = target.resolve() / c.path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(c.after, encoding="utf-8")
         plans = None
         outcome = None
         verified = None
@@ -699,7 +726,7 @@ def cmd_deps(args) -> int:
             else:
                 print(text)
             return 1 if any(s.conflict for s in stmts) else 0
-        if args.plan or (args.apply and not args.mitigate):      # --apply writes what was asked for
+        if args.plan or (args.apply and not args.mitigate and not getattr(args, "backport", False)):
             from frame.sca.apply import apply_plan
             from frame.sca.plan import plan
             registry = None
@@ -742,6 +769,13 @@ def cmd_deps(args) -> int:
                 findings = after
     if args.format == "json":
         data = report.to_dict()
+        if backported is not None:
+            data["backport"] = {"edits": [{"path": c.path, "reason": c.reason, "diff": c.diff()}
+                                          for c in backported["edits"]],
+                                "manual": backported["manual"],
+                                "patches": [{"package": b.package, "version": b.version, "advisories": b.advisories,
+                                             "commits": b.commits, "skipped": b.skipped}
+                                            for b in backported["patches"]]}
         if mitigation is not None:
             data["mitigation"] = {"edits": [{"path": c.path, "reason": c.reason, "diff": c.diff()}
                                             for c in mitigation["edits"]],
@@ -773,6 +807,18 @@ def cmd_deps(args) -> int:
             if exposure:
                 from frame.sca.solve import format_exposure
                 out += format_exposure(exposure)
+            if backported is not None:
+                out += "\n\nBackported fixes" + ("" if args.apply else " (dry run; --apply writes them)") + ":"
+                for b in backported["patches"]:
+                    out += (f"\n  {b.package}@{b.version}: {', '.join(b.commits)} applies ({', '.join(b.advisories)})"
+                            + (f"; not applied: {'; '.join(b.skipped)}" if b.skipped else ""))
+                for c in backported["edits"]:
+                    out += "\n" + c.diff()
+                for m in backported["manual"]:
+                    out += f"\nmanual: {m}"
+                if backported["patches"]:
+                    out += ("\nA patch that applies fits this version; it is not proof that it fixes it. Run the "
+                            "project's tests, and prefer the upgrade when one exists.")
             if mitigation is not None:
                 out += "\n\nConfiguration mitigations" + ("" if args.apply else " (dry run; --apply writes them)") + ":"
                 for c in mitigation["edits"]:

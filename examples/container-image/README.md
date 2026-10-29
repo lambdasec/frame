@@ -4,7 +4,7 @@
 
 ```bash
 cd examples/container-image
-frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9,Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,Wolfi"
+frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9,Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,SUSE:Linux Enterprise 15 SP6,Wolfi"
 ```
 
 ## The packages
@@ -77,9 +77,9 @@ Red Hat:enterprise_linux:9: 9 distinct packages (0 direct, 0 dev only)
 
 Red Hat files its advisories under product streams (`baseos`, `appstream`, `crb`), and an image does not record which stream a package came from. Across OSV's whole Red Hat export, no advisory gives a RHEL 8 or 9 package different ranges in two streams, so Frame reads a release's streams as one table, `Red Hat:enterprise_linux:9`, without guessing a stream. The 46 are the union of OSV's answers over every RHEL 9 stream.
 
-## RHEL 10, Azure Linux, openSUSE and Wolfi
+## RHEL 10, Azure Linux, openSUSE, SLES and Wolfi
 
-Four more root filesystems, each made from the official image (by digest) with rpm or apk's own database, trimmed by rpm itself where it is rpm:
+Five more root filesystems, each made from the official image (by digest) with rpm or apk's own database, trimmed by rpm itself where it is rpm:
 
 ```console
 $ frame deps --rootfs ubi-10.0 --vulns
@@ -100,6 +100,12 @@ $ frame deps --rootfs leap-15.6 --vulns
   UNKNOWN  curl@8.6.0-150600.4.18.1 (os package) SUSE-SU-2025:03198-1: Security update for curl; fixed in 8.14.1-150600.4.28.1  [leap-15.6:/usr/lib/sysimage/rpm/Packages.db]
   ...
 
+$ frame deps --rootfs sles-15.6 --vulns
+  sles-15.6:/usr/lib/sysimage/rpm/Packages.db  (SUSE:Linux Enterprise 15 SP6 installed): 15 packages, direct unknown
+33 known vulnerabilities:
+  CRITICAL libopenssl3@3.1.4-150600.5.39.1 (os package) SUSE-SU-2026:0312-1: This update for openssl-3 fixes the following issues: - CVE-2025-15467: Stack bu; fixed in 3.1.4-150600.5.42.1  [sles-15.6:/usr/lib/sysimage/rpm/Packages.db]
+  ...
+
 $ frame deps --rootfs wolfi-python --vulns
   wolfi-python:/lib/apk/db/installed  (Wolfi installed): 77 packages, direct unknown
 39 known vulnerabilities:
@@ -109,10 +115,11 @@ $ frame deps --rootfs wolfi-python --vulns
 
 - **`ubi-10.0`** is the last UBI 10.0 image. RHEL 10 files its advisories per minor release, and this image is patched within 10.0, so OSV's 10.0 answer for it is empty. The minors are one update line, though: the 58 are fixes filed under 10.1 and 10.2 that this system lacks (the union of OSV's answers over 10.0, 10.1 and 10.2).
 - **`azl-3.0`** is `mcr.microsoft.com/azurelinux/base/core:3.0`. Azure Linux's advisories omit the `.azl3` every installed version carries, so OSV's own API answers nothing for `6.4-3.azl3`; Frame compares `6.4-3`, checked against Microsoft's OVAL. Packages are its source packages (`gcc`, not `libgcc`).
-- **`leap-15.6`** is openSUSE Leap 15.6, whose rpm database is SUSE's NDB format (`Packages.db`), read without rpm. SLES images are read too but not matched: their advisories are filed per module, which the image does not record.
+- **`leap-15.6`** is openSUSE Leap 15.6, whose rpm database is SUSE's NDB format (`Packages.db`), read without rpm.
+- **`sles-15.6`** is SUSE's BCI base image for SLES 15 SP6 (by digest, trimmed by rpm itself). Its advisories come from SUSE's own patch OVAL for the service pack (CC-BY 4.0), not OSV: OSV files each SUSE patch under a module (Basesystem, Server Applications, ...) that the image does not record. Packages are binary packages, as the OVAL names them (`libopenssl3` and `openssl-3` both). The 123 CVEs found are exactly those OpenSCAP's `oscap oval eval` finds true in the image.
 - **`wolfi-python`** is Chainguard's `python:latest-dev` (Chainguard's images are Wolfi). Wolfi's advisories name each package itself, `ld-linux-2.44` as well as `glibc-2.44`, so each is matched by its own name. Their records have no summary, so the CVE they track is shown.
 
-Each count is what OSV's API answers for every package (`tests/test_sca_container.py` checks them offline).
+Each count is what OSV's API answers for every package, and for SLES what OpenSCAP finds (`tests/test_sca_container.py` checks them offline).
 
 ## Language packages in an image
 

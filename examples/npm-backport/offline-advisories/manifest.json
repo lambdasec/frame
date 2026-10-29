@@ -1,0 +1,14 @@
+{
+  "files": {
+    "advisories/npm.json.gz": {
+      "advisories": 2,
+      "kind": "advisories",
+      "language": "npm",
+      "name": "npm",
+      "sha256": "0b5912763e43988b8d069a0f151941b5cf74dd945ce313e80de7ef8db48e6aec",
+      "size": 461
+    }
+  },
+  "revision": "example-2026.10.29-f6968f5",
+  "schema": 1
+}

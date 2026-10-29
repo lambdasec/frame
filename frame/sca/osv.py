@@ -114,7 +114,7 @@ def _functions(affected: dict) -> List[dict]:
 
 
 DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat", "Wolfi", "Azure Linux",
-                   "openSUSE")
+                   "openSUSE", "SUSE")
 # A rolling distribution has no releases: its ecosystem is the family alone. Wolfi's records
 # (Chainguard's CGA advisories) name one package each, keep the CVE they track in `upstream`
 # (not `aliases`), and have no summary.
@@ -129,7 +129,9 @@ _RHEL_STREAM = re.compile(r"Red Hat:enterprise_linux:(8|9)::\w+")
 # minors are one update line (10.0 -> 10.1 -> 10.2), and a fix filed under 10.2 is one a 10.0 system
 # still lacks, so the minors are one table (`Red Hat:enterprise_linux:10`), affected if any says so.
 _RHEL_MINOR = re.compile(r"Red Hat:enterprise_linux:(10)\.\d+")
-RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE")   # versions epoch:version-release
+RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE", "SUSE")
+# SUSE Linux Enterprise is read from SUSE's own OVAL (suse_oval.py): OSV's SUSE records file each
+# patch under a module the image does not record, and leave out the cumulative history.   # versions epoch:version-release
 
 
 def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:
@@ -155,6 +157,8 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
                 if m is None:
                     continue
                 full = f"Red Hat:enterprise_linux:{m.group(1)}"
+            if eco == "SUSE":
+                continue              # SLES comes from SUSE's own OVAL (suse_oval.py), not OSV's records
             if eco == "openSUSE":
                 if full.startswith("openSUSE:Leap Micro"):
                     continue                  # a host OS, not a container base image

@@ -72,6 +72,14 @@
       "sha256": "04ba4160d3dce9dd871f0a1bd52b45c86fc9d8c7f80fd0afde0d3aa0cbec3ee3",
       "size": 2889
     },
+    "advisories/SUSE_Linux_Enterprise_15_SP6.json.gz": {
+      "advisories": 95,
+      "kind": "advisories",
+      "language": "suse:linux enterprise 15 sp6",
+      "name": "SUSE:Linux Enterprise 15 SP6",
+      "sha256": "bc9dfbf59c10d55f6fe9932e5b72589a5cfe7698692d2836f77581a5ab1d7f8f",
+      "size": 9010
+    },
     "advisories/Wolfi.json.gz": {
       "advisories": 312,
       "kind": "advisories",

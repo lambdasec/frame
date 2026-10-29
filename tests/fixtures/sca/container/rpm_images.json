@@ -219,6 +219,73 @@
    ]
   ]
  },
+ "sles-15.6": {
+  "ecosystem": "SUSE:Linux Enterprise 15 SP6",
+  "image": "registry.suse.com/bci/bci-base:15.6@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+  "note": "NDB Packages.db; packages removed with rpm --dbpath -e --justdb, then rpm --rebuilddb",
+  "rpm_qa": [
+   [
+    "bash",
+    "4.4-150400.27.6.1"
+   ],
+   [
+    "curl",
+    "8.14.1-150600.4.31.1"
+   ],
+   [
+    "glibc",
+    "2.38-150600.14.37.1"
+   ],
+   [
+    "krb5",
+    "1.20.1-150600.11.14.1"
+   ],
+   [
+    "libcurl4",
+    "8.14.1-150600.4.31.1"
+   ],
+   [
+    "libexpat1",
+    "2.7.1-150400.3.31.1"
+   ],
+   [
+    "libgcrypt20",
+    "1.10.3-150600.3.9.1"
+   ],
+   [
+    "libopenssl3",
+    "3.1.4-150600.5.39.1"
+   ],
+   [
+    "libsqlite3-0",
+    "3.50.2-150000.3.33.1"
+   ],
+   [
+    "libsystemd0",
+    "254.27-150600.4.46.2"
+   ],
+   [
+    "libxml2-2",
+    "2.10.3-150500.5.32.1"
+   ],
+   [
+    "libz1",
+    "1.2.13-150500.4.3.1"
+   ],
+   [
+    "libzstd1",
+    "1.5.5-150600.1.3"
+   ],
+   [
+    "openssl-3",
+    "3.1.4-150600.5.39.1"
+   ],
+   [
+    "sles-release",
+    "15.6-150600.64.12.1"
+   ]
+  ]
+ },
  "tumbleweed": {
   "ecosystem": "openSUSE:Tumbleweed",
   "image": "opensuse/tumbleweed@sha256:8fc21066f5ddf16da1b6d388bd1da2ca5e98ae0e009a389faf5848e4ea6d4496 (2026-10-29)",

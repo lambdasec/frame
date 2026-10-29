@@ -310,6 +310,8 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--rootfs DIR` | the same for an unpacked root filesystem (repeatable) |
 | `--vulns` | match against the cached advisories |
 | `--no-reachability` | with `--vulns`: do not read the source for imports and calls |
+| `--backport` | with `--vulns`: apply each npm advisory's upstream fix commit to the installed version as a `patch-package` patch (shown as a diff; `--apply` writes it and the `postinstall`); fetches the OSV record and the commits ([dependencies.md](dependencies.md#backported-fixes)) |
+| `--govulncheck FILE` | with `--vulns`: a `govulncheck -json ./...` report (source mode) whose call-graph reachability replaces Frame's for the Go advisories it decided (repeatable; [dependencies.md](dependencies.md#is-it-reachable)) |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | with `--vulns`: exit 1 at or above this severity; exit 2 if advisories are missing or one at or above it could not be decided (an untagged submodule commit; default none) |
 | `--plan` | with `--vulns`: the smallest safe upgrades and the edits, as a diff |
 | `--registry` | with `--licenses` / `--sbom`: fill unknown licences from the registries (npm, PyPI, RubyGems, crates.io, NuGet, Maven Central); with `--vulns`: also list the project's declared ranges that admit vulnerable releases; with `--plan`: fetch release metadata (npm, PyPI, crates.io, NuGet) and solve the upgrades of all packages together with Z3, so upgrading a package in between replaces an override, and for Go read each fix's `go` directive from the module proxy to name fixes that need a newer Go (network; cached) |
@@ -361,7 +363,7 @@ Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs a
 | `pull` | download into the cache: `--project DIR`, `--languages a,b`, `--all`, `--revision R`, `--source S`, `--lock` (write `.frame/kb.lock`), `--advisories` (advisories instead of packs), `--ecosystems a,b` (with `--advisories`: these instead of the project's, e.g. `Debian:12` for an image) |
 | `status` | which revisions a scan of the project uses: `--project DIR`, `-f text|json` |
 | `build PACKS_DIR OUT` | lay out a packs revision for a mirror: `--revision R`, `--specs DIR` (spec tables to include) |
-| `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports: `--revision R`, `--ecosystems a,b`, `--functions DIR` (vulnerable functions), `--mitigations DIR` (curated configuration mitigations) |
+| `build-advisories INPUTS... OUT` | for dataset maintainers: an advisories revision from OSV exports (and SUSE's patch OVAL files, `suse.linux.enterprise.15-spN-patch.xml.gz`, for SLES with `--ecosystems SUSE`): `--revision R`, `--ecosystems a,b`, `--functions DIR` (vulnerable functions), `--mitigations DIR` (curated configuration mitigations) |
 | `mine-functions INPUTS...` | for dataset maintainers: vulnerable functions from advisories' fix commits: `--out DIR`, `--existing DIR` (curated entries, which win), `--ecosystems a,b`, `--limit N`, `--cache DIR`, `--recorded DIR` (commits on disk instead of GitHub), `--since TIMESTAMP` (resume after the last run's `resume_after`), `--only IDS` (only these advisories: a comma list, a file of ids, or a `needs-curation.json`); uses `GITHUB_TOKEN` when set |
 
 ### `frame solve`, `check`, `parse`, `repl`
@@ -394,6 +396,7 @@ The separation logic engine; flags in [engine.md](engine.md).
 | `FRAME_KB_CACHE` | `~/.cache/frame/kb` | where packs and advisories are cached |
 | `FRAME_KB_SOURCE` | `hf:lambdasec/frame-kb` | where `kb pull` gets packs |
 | `FRAME_REGISTRY_CACHE` | beside `FRAME_KB_CACHE` (`~/.cache/frame/registry`) | registry metadata for `--plan --registry` |
+| `FRAME_BACKPORT_CACHE` | `~/.cache/frame/backport` | OSV records and GitHub fix commits for `--backport` (a recorded directory works air-gapped) |
 | `FRAME_ADVISORIES_SOURCE` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
 | `FRAME_GENERATED_LINE_THRESHOLD` | 2000 | a file with lines this long is treated as minified or generated |
 | `FRAME_AGGRESSIVE_DETECTORS` | off | Java context-dependent detectors (CSRF disabled, field-initializer secrets); use only with LLM triage |

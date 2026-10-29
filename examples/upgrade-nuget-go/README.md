@@ -64,3 +64,21 @@ Upgrade plan (3 packages):
 - `x/crypto` v0.56.0 fixes 26 advisories but its `go.mod` says `go 1.26.0`; `go mod tidy` with Go 1.22 or 1.25 refuses it. The newest fix Go 1.21 builds is v0.31.0, which fixes 6 of them. You choose: move the module to a newer Go, or take the partial fix.
 - GO-2026-5932 (`x/crypto/openpgp` is unmaintained) has no fixed version. It stays listed as open, and does not stop the upgrades that fix the other 26.
 - Without `--registry`, the plan is the same minus the toolchain notes (they come from the module proxy).
+
+## Go: which advisories the program reaches
+
+Frame does not analyse Go source; `govulncheck` does, on the compiler's call graph, and Frame imports its answer. In `go/`, run govulncheck (it needs Go) and pass its report:
+
+```console
+$ (cd go && govulncheck -json ./... > govulncheck.json)
+$ frame deps go --vulns --govulncheck go/govulncheck.json
+warning: go/govulncheck.json: govulncheck also reports 66 advisory(ies) in the Go standard library of go1.22.12 (33 called): they depend on the Go that builds the program, which go.mod does not pin
+32 known vulnerabilities:
+  HIGH     github.com/gin-gonic/gin@1.7.0 (direct, called) GHSA-h395-qcrw-5vmq: Inconsistent Interpretation of HTTP Requests in github.com/gin-gonic/gin; fixed in 1.7.7  [go.mod]
+           calls github.com/gin-gonic/gin.(*Engine).Run at main.go:8
+  MEDIUM   github.com/gin-gonic/gin@1.7.0 (direct, imported) GHSA-2c4m-59x9-fr2g: Gin Web Framework does not properly sanitize filename parameter of Context.FileA; fixed in 1.9.1  [go.mod]
+  MEDIUM   golang.org/x/sys@0.0.0-20200116001909-b77594299b42 (transitive, imported) GHSA-p782-xgp4-8hr8: golang.org/x/sys/unix has Incorrect privilege reporting in syscall; fixed in 0.0.0-20220412211240-33da011f77ad  [go.mod]
+  ...
+```
+
+Of the 32, one is called (`r.Run()` in `main.go` reaches gin's vulnerable `Engine.Run`), two are imported, and the 26 in `golang.org/x/crypto` are only installed: gin never reaches the vulnerable code. The output above is from govulncheck v1.1.4 with Go 1.22.12 (a newer database or toolchain changes the standard-library count).

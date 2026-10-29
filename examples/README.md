@@ -51,6 +51,11 @@ A script writes a small app with credentials where people really leave them: pas
 Three Apache Kafka methods (CVE-2026-114349, CVE-2026-111551), reduced from the commits before and after their fixes: a length or count read off the wire sizes a buffer or a list with nothing bounding it, so a tiny message makes the JVM allocate gigabytes. Frame finds all three before the fixes and nothing after; the record reader's size comes from Kafka's own `ByteUtils`, which the `kafka-protocol` pack teaches.
 *Runs offline.*
 
+### [npm-backport](npm-backport/README.md): a fix you cannot upgrade to
+
+minimist 1.2.5 with its critical prototype pollution: `--backport` applies the advisory's own fix commit to the installed version as a patch-package patch (of the four commits the advisory links, only the one for the 1.x line applies). The advisory's proof of concept pollutes before and not after.
+*Runs offline (the OSV record and commits are recorded); the proof needs npm.*
+
 ### [ai-apps](ai-apps/README.md): LLM apps and MCP servers
 
 Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each beside a safe twin. Shows untrusted input reaching a model's system prompt (prompt injection), model output run as a shell command or code, and MCP tool arguments reaching a shell or SQL.
