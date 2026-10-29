@@ -155,6 +155,11 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
                 if m is None:
                     continue
                 full = f"Red Hat:enterprise_linux:{m.group(1)}"
+            if eco == "openSUSE":
+                if full.startswith("openSUSE:Leap Micro"):
+                    continue                  # a host OS, not a container base image
+                if full.endswith(" NonFree"):
+                    full = full[:-len(" NonFree")]   # the release's non-OSS repository: same system
             if (eco not in wanted and full not in wanted) or ":Pro:" in full or (full == eco and eco not in ROLLING_DISTROS):
                 continue
             eco = full

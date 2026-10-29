@@ -365,5 +365,16 @@
  "openSUSE:Leap 15.6|zlib|1.2.13-150500.4.3.1": [
   "SUSE-SU-2026:0783-1"
  ],
- "openSUSE:Leap 15.6|zstd|1.5.5-150600.1.3": []
+ "openSUSE:Leap 15.6|zstd|1.5.5-150600.1.3": [],
+ "openSUSE:Tumbleweed|bash|5.3.20-10.1": [
+  "openSUSE-SU-2024:10106-1"
+ ],
+ "openSUSE:Tumbleweed|ca-certificates-mozilla|2.90-1.1": [
+  "openSUSE-SU-2026:12233-1"
+ ],
+ "openSUSE:Tumbleweed|glibc|2.44-3.1": [],
+ "openSUSE:Tumbleweed|openssl-3|3.5.3-9.1": [],
+ "openSUSE:Tumbleweed|sqlite3|3.53.2-3.2": [],
+ "openSUSE:Tumbleweed|zlib|1.3.1-3.3": [],
+ "openSUSE:Tumbleweed|zstd|1.5.7-6.1": []
 }

@@ -341,7 +341,8 @@ def test_the_rpm_database_reads_as_rpm_does(rootfs):
     assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0", "leap-15.6", "ubi-10.0"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0", "leap-15.6", "ubi-10.0",
+                                    "tumbleweed"])
 def test_rpm_matching_agrees_with_the_osv_api(rootfs):
     """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
     binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
@@ -532,6 +533,15 @@ def test_suse_releases_and_purl():
     from frame.sca.model import Package
     assert ecosystem_of(os_release('ID="opensuse-leap"\nVERSION_ID="15.6"')) == "openSUSE:Leap 15.6"
     assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.6"')) is None
+    assert ecosystem_of(os_release('ID="opensuse-tumbleweed"\nVERSION_ID="20261020"')) == "openSUSE:Tumbleweed"
+    from frame.sca.osv import entries
+
+    def eco_of(name):
+        rec = {"id": "x", "affected": [{"package": {"name": "opera", "ecosystem": name},
+                                        "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]}]}
+        return [e for e, _, _ in entries(rec, ["openSUSE"])]
+    assert eco_of("openSUSE:Leap 15.6 NonFree") == ["openSUSE:Leap 15.6"]   # the non-OSS repository: same system
+    assert eco_of("openSUSE:Leap Micro 5.5") == []                          # a host OS, not an image
     assert Package("openSUSE:Leap 15.6", "openssl-3", "3.1.4-150600.5.21.1").purl == \
         "pkg:rpm/opensuse/openssl-3@3.1.4-150600.5.21.1?distro=opensuse-leap-15.6"
 

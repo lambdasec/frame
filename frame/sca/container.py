@@ -97,6 +97,8 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
         return "Azure Linux:2"                        # CBL-Mariner 2.0 is Azure Linux 2 in OSV
     if rid == "opensuse-leap" and re.fullmatch(r"\d+\.\d+", vid):
         return f"openSUSE:Leap {vid}"                # SLES (ID=sles) files advisories per module: not read
+    if rid == "opensuse-tumbleweed":
+        return "openSUSE:Tumbleweed"                 # rolling: one table
     if rid == "wolfi":
         return "Wolfi"                     # rolling; Chainguard's images say ID=wolfi too
     rpm_family = {"almalinux": "AlmaLinux", "rocky": "Rocky Linux"}.get(rid)
@@ -322,7 +324,7 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
         return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
-                    "Linux, RHEL 8 / 9 / 10, Azure Linux 3, openSUSE Leap and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
+                    "Linux, RHEL 8 / 9 / 10, Azure Linux 3, openSUSE Leap and Tumbleweed, and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))

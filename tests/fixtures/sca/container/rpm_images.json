@@ -219,6 +219,49 @@
    ]
   ]
  },
+ "tumbleweed": {
+  "ecosystem": "openSUSE:Tumbleweed",
+  "image": "opensuse/tumbleweed@sha256:8fc21066f5ddf16da1b6d388bd1da2ca5e98ae0e009a389faf5848e4ea6d4496 (2026-10-29)",
+  "note": "NDB; packages removed with rpm -e --justdb on a copy, then rpm --rebuilddb",
+  "rpm_qa": [
+   [
+    "bash",
+    "5.3.20-10.1"
+   ],
+   [
+    "bash-sh",
+    "5.3.20-10.1"
+   ],
+   [
+    "ca-certificates-mozilla",
+    "2.90-1.1"
+   ],
+   [
+    "glibc",
+    "2.44-3.1"
+   ],
+   [
+    "libopenssl3",
+    "3.5.3-9.1"
+   ],
+   [
+    "libsqlite3-0",
+    "3.53.2-3.2"
+   ],
+   [
+    "libz1",
+    "1.3.1-3.3"
+   ],
+   [
+    "libzstd1",
+    "1.5.7-6.1"
+   ],
+   [
+    "openssl-3",
+    "3.5.3-9.1"
+   ]
+  ]
+ },
  "ubi-10.0": {
   "ecosystem": "Red Hat:enterprise_linux:10",
   "image": "registry.access.redhat.com/ubi10/ubi:10.0@sha256:27251e29658cf10b31914ab9f2630d3f5b0d17d2996ee2dd7d6e2c091a84ab1b",
