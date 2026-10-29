@@ -1,0 +1,10 @@
+# Programs that parse a command string, and the flags that hand them one. An argument vector that
+# starts with a shell and a command flag (`{"/bin/sh", "-c", cmd}`) is one command line, so the
+# command carries injection; `spawn("bash", [...])` is a shell however its options are written.
+# Programs are compared by the last part of a path, without regard to case (`/usr/bin/bash`).
+# Read by frame/sil/specs/shells.py (the Java and JavaScript frontends).
+
+programs = ["sh", "bash", "zsh", "dash", "ksh", "csh", "fish", "cmd", "cmd.exe",
+            "powershell", "powershell.exe", "pwsh", "pwsh.exe"]
+
+command_flags = ["-c", "/c", "-command", "/k"]

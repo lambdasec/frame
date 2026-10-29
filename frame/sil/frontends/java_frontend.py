@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 # ProcSpec is used for type hints in _lookup_spec
+from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.specs.weak_algorithms import load as weak_algorithms
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
@@ -2965,9 +2966,6 @@ class JavaFrontend:
         (the exception object is not what the method returns)."""
         self._add_instr(Return(loc=self._get_location(node), value=None))
 
-    _SHELL_BINARIES = frozenset({"sh", "/bin/sh", "bash", "/bin/bash", "zsh", "/bin/zsh", "dash", "ksh",
-                                 "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh"})
-
     def _shell_command_array(self, node: TSNode) -> Optional[Exp]:
         """`new String[] {"/bin/sh", "-c", cmd}`: an argument vector that hands `cmd` to a shell is
         one command string (the elements joined), not separate arguments, so it carries `cmd`'s
@@ -2978,8 +2976,8 @@ class JavaFrontend:
         items = [c for c in init.named_children if c.type not in ("line_comment", "block_comment")]
         if len(items) < 3 or items[0].type != "string_literal" or items[1].type != "string_literal":
             return None
-        if self._get_text(items[0])[1:-1].lower() not in self._SHELL_BINARIES \
-                or self._get_text(items[1])[1:-1].lower() not in ("-c", "/c", "-command", "/k"):
+        if not is_shell(self._get_text(items[0])[1:-1]) \
+                or self._get_text(items[1])[1:-1].lower() not in shells().command_flags:   # specs/data/shells.toml
             return None
         return ExpStringConcat([self._translate_expression(i) for i in items[2:]])
 

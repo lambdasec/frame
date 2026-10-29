@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
 
@@ -2649,15 +2650,12 @@ class JavaScriptFrontend:
             return False
         return not (len(args) > 2 and self._SHELL_OPTION.search(self._get_text(args[2])))
 
-    _SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "csh", "fish", "cmd", "cmd.exe",
-                                 "powershell", "powershell.exe", "pwsh", "pwsh.exe"})
-
     def _is_shell_program(self, node: TSNode) -> bool:
         """Is a spawn's program argument a literal naming a shell? A program that is not a literal
         stays a shell candidate (it may be `process.env.SHELL`, a variable...)."""
         if node.type == "string":
             text = self._get_text(node).strip("'\"")
-            return text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower() in self._SHELL_PROGRAMS
+            return is_shell(text)                                     # specs/data/shells.toml
         return node.type != "template_string"
 
     def _sink_arg_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> List[Exp]:
