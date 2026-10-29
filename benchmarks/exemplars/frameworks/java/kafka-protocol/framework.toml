@@ -1,0 +1,4 @@
+language = "java"
+packs = ["java/kafka-protocol"]
+requires_pack = true
+description = "A record decoder on Kafka's ByteUtils (3.x package): sizes read as varints size the buffers they allocate (CWE-770), as in Kafka's DefaultRecord before 4d781f5; the safe twin bounds each size first"

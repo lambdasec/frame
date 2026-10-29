@@ -275,3 +275,24 @@ def test_vendored_c_walkthrough(tmp_path):
                  "affect some of the 3 releases these files are in: CVE-2026-76844", "5 known vulnerabilities:",
                  "NOT DECIDED: 1 advisory(ies) (see the warnings above)"]:
         assert line in out and line in readme, (line, out)
+
+
+def test_java_allocation_walkthrough(tmp_path):
+    work = tmp_path / "java-allocation"
+    shutil.copytree(EXAMPLES / "java-allocation", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("scan", "before", "--root", "."),
+         ["Location: before/src/main/java/org/apache/kafka/common/record/internal/DefaultRecord.java:17:19",
+          "Function: DefaultRecord.readFrom",
+          "Location: before/src/main/java/org/apache/kafka/common/serialization/ListDeserializer.java:14:54",
+          "Location: before/src/main/java/org/apache/kafka/streams/processor/internals/assignment/AssignmentInfo.java:15:43",
+          "Scanned 3 files: 3 findings (3 medium)"]),
+        (("scan", "before", "--root", ".", "--no-packs"), ["Scanned 3 files: 2 findings (2 medium)"]),
+        (("scan", "after", "--root", "."), ["Scanned 3 files: 0 findings (none)"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out and line in readme, (args, line, out[-1500:])

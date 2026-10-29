@@ -1,0 +1,28 @@
+[pack]
+name = "kafka-protocol"
+language = "java"
+description = "Apache Kafka's wire readers: a length or count read off a record batch or a protocol message is what the peer sent"
+detect = { imports = ["org.apache.kafka.common.utils.ByteUtils", "org.apache.kafka.common.utils.internals.ByteUtils"] }
+references = ["https://github.com/apache/kafka/blob/trunk/clients/src/main/java/org/apache/kafka/common/utils/internals/ByteUtils.java",
+              "https://github.com/apache/kafka/commit/4d781f506a777c43eb93b359ed8a171e032d2df4"]
+
+# ByteUtils (org.apache.kafka.common.utils up to 3.x, common.utils.internals since) reads Kafka's
+# varints and fixed-width integers from an InputStream, a ByteBuffer or a byte array. Inside a
+# broker or client those bytes came from the network (a fetched or produced batch, decompressed),
+# so the number is a size the peer chose: it matters where it sizes an allocation (CWE-770;
+# DefaultRecord.readFrom(InputStream) allocated it unchecked until 4d781f5).
+[[source]]
+call = ["org.apache.kafka.common.utils.ByteUtils.readVarint",
+        "org.apache.kafka.common.utils.ByteUtils.readVarlong",
+        "org.apache.kafka.common.utils.ByteUtils.readUnsignedVarint",
+        "org.apache.kafka.common.utils.ByteUtils.readUnsignedInt",
+        "org.apache.kafka.common.utils.ByteUtils.readUnsignedIntLE",
+        "org.apache.kafka.common.utils.ByteUtils.readIntBE",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readVarint",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readVarlong",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readUnsignedVarint",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readUnsignedInt",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readUnsignedIntLE",
+        "org.apache.kafka.common.utils.internals.ByteUtils.readIntBE"]
+kind = "wire_size"
+description = "A number Kafka's ByteUtils read off a batch or message"

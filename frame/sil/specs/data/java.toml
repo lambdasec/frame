@@ -2265,6 +2265,206 @@ is_sink = "redos"
 description = "String split (potential ReDoS)"
 
 [[spec]]
+name = "DataInputStream.readInt"
+is_source = "wire_size"
+description = "DataInputStream.readInt (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readLong"
+is_source = "wire_size"
+description = "DataInputStream.readLong (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readShort"
+is_source = "wire_size"
+description = "DataInputStream.readShort (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readUnsignedShort"
+is_source = "wire_size"
+description = "DataInputStream.readUnsignedShort (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readByte"
+is_source = "wire_size"
+description = "DataInputStream.readByte (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readUnsignedByte"
+is_source = "wire_size"
+description = "DataInputStream.readUnsignedByte (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInputStream.readChar"
+is_source = "wire_size"
+description = "DataInputStream.readChar (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readInt"
+is_source = "wire_size"
+description = "DataInput.readInt (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readLong"
+is_source = "wire_size"
+description = "DataInput.readLong (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readShort"
+is_source = "wire_size"
+description = "DataInput.readShort (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readUnsignedShort"
+is_source = "wire_size"
+description = "DataInput.readUnsignedShort (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readByte"
+is_source = "wire_size"
+description = "DataInput.readByte (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readUnsignedByte"
+is_source = "wire_size"
+description = "DataInput.readUnsignedByte (a number read off a binary stream)"
+
+[[spec]]
+name = "DataInput.readChar"
+is_source = "wire_size"
+description = "DataInput.readChar (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readInt"
+is_source = "wire_size"
+description = "ObjectInputStream.readInt (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readLong"
+is_source = "wire_size"
+description = "ObjectInputStream.readLong (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readShort"
+is_source = "wire_size"
+description = "ObjectInputStream.readShort (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readUnsignedShort"
+is_source = "wire_size"
+description = "ObjectInputStream.readUnsignedShort (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readByte"
+is_source = "wire_size"
+description = "ObjectInputStream.readByte (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readUnsignedByte"
+is_source = "wire_size"
+description = "ObjectInputStream.readUnsignedByte (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInputStream.readChar"
+is_source = "wire_size"
+description = "ObjectInputStream.readChar (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readInt"
+is_source = "wire_size"
+description = "ObjectInput.readInt (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readLong"
+is_source = "wire_size"
+description = "ObjectInput.readLong (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readShort"
+is_source = "wire_size"
+description = "ObjectInput.readShort (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readUnsignedShort"
+is_source = "wire_size"
+description = "ObjectInput.readUnsignedShort (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readByte"
+is_source = "wire_size"
+description = "ObjectInput.readByte (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readUnsignedByte"
+is_source = "wire_size"
+description = "ObjectInput.readUnsignedByte (a number read off a binary stream)"
+
+[[spec]]
+name = "ObjectInput.readChar"
+is_source = "wire_size"
+description = "ObjectInput.readChar (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readInt"
+is_source = "wire_size"
+description = "RandomAccessFile.readInt (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readLong"
+is_source = "wire_size"
+description = "RandomAccessFile.readLong (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readShort"
+is_source = "wire_size"
+description = "RandomAccessFile.readShort (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readUnsignedShort"
+is_source = "wire_size"
+description = "RandomAccessFile.readUnsignedShort (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readByte"
+is_source = "wire_size"
+description = "RandomAccessFile.readByte (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readUnsignedByte"
+is_source = "wire_size"
+description = "RandomAccessFile.readUnsignedByte (a number read off a binary stream)"
+
+[[spec]]
+name = "RandomAccessFile.readChar"
+is_source = "wire_size"
+description = "RandomAccessFile.readChar (a number read off a binary stream)"
+
+[[spec]]
+name = "ByteBuffer.getInt"
+is_source = "wire_size"
+description = "ByteBuffer.getInt (a number read off a binary buffer)"
+
+[[spec]]
+name = "ByteBuffer.getLong"
+is_source = "wire_size"
+description = "ByteBuffer.getLong (a number read off a binary buffer)"
+
+[[spec]]
+name = "ByteBuffer.getShort"
+is_source = "wire_size"
+description = "ByteBuffer.getShort (a number read off a binary buffer)"
+
+[[spec]]
+name = "ByteBuffer.getChar"
+is_source = "wire_size"
+description = "ByteBuffer.getChar (a number read off a binary buffer)"
+
+[[spec]]
+name = "Math.min"
+is_sanitizer = ["alloc_size"]
+description = "Math.min (a size capped by another value)"
+
+[[spec]]
 name = "ByteBuffer.allocate"
 is_sink = "alloc_size"
 description = "ByteBuffer.allocate(capacity)"

@@ -5805,6 +5805,10 @@ class SILTranslator:
         weak = taint_info is not None and taint_info.source_kind == TaintKind.WEAK_RANDOM
         if weak != (sink_kind == SinkKind.UNPREDICTABLE):
             check.kind_mismatch = True
+        # A number read off the wire is a size, not text: it matters only where it sizes an allocation.
+        if taint_info is not None and taint_info.source_kind == TaintKind.WIRE_SIZE \
+                and sink_kind != SinkKind.ALLOC_SIZE:
+            check.kind_mismatch = True
         # Model output is attacker-steerable, not confidential: it matters at injection sinks,
         # not where a secret or personal data would leak (logs, error pages, responses).
         if taint_info is not None and taint_info.source_kind == TaintKind.LLM_OUTPUT \

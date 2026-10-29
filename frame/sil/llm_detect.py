@@ -81,6 +81,7 @@ _CWE_SINK_KINDS = {
     "CWE-502": {"deserialize", "deserialize_unsafe"}, "CWE-611": {"xml"},
     "CWE-90": {"ldap"}, "CWE-643": {"xpath"}, "CWE-601": {"redirect"},
     "CWE-113": {"header"}, "CWE-117": {"log"}, "CWE-1336": {"template"},
+    "CWE-770": {"alloc_size"}, "CWE-789": {"alloc_size"},
 }
 
 

@@ -1145,8 +1145,46 @@ class JavaFrontend:
             if child.type not in ("{", "}"):
                 self._translate_statement(child)
 
+    # Constructors whose single int argument is a capacity: an attacker-chosen one makes the JVM
+    # allocate that much up front (CWE-770). With any other argument (a collection, a String)
+    # they copy, so the sink applies only when the argument is known to be integral.
+    _CAPACITY_TYPES = frozenset({
+        "ArrayList", "Vector", "ArrayDeque", "PriorityQueue", "HashMap", "LinkedHashMap", "HashSet",
+        "LinkedHashSet", "Hashtable", "ConcurrentHashMap", "WeakHashMap", "IdentityHashMap",
+        "StringBuilder", "StringBuffer", "ByteArrayOutputStream", "CharArrayWriter",
+        "ArrayBlockingQueue", "LinkedBlockingQueue", "LinkedBlockingDeque"})
+    _INTEGRAL = frozenset({"int", "long", "short", "byte", "char", "Integer", "Long", "Short", "Byte", "Character"})
+
+    def _allocation_size_sinks(self, node: TSNode) -> List[Instr]:
+        """A TaintSink (alloc_size) for each size an array creation or a capacity constructor in
+        this statement takes from a non-constant expression (nested classes and lambdas are their
+        own procedures)."""
+        out: List[Instr] = []
+        for n in self._descendants(node, stop=("class_body", "lambda_expression")):
+            sizes: List[TSNode] = []
+            if n.type == "array_creation_expression":
+                sizes = [d.named_children[0] for d in n.named_children
+                         if d.type == "dimensions_expr" and d.named_children]
+            elif n.type == "object_creation_expression":
+                typ = n.child_by_field_name("type")
+                name = self._get_text(typ).split("<", 1)[0].rsplit(".", 1)[-1] if typ is not None else ""
+                args = n.child_by_field_name("arguments")
+                first = args.named_children if args is not None else []
+                if name in self._CAPACITY_TYPES and first and self._arg_type(first[0]) in self._INTEGRAL:
+                    sizes = [first[0]]
+            for size in sizes:
+                if size.type in ("decimal_integer_literal", "hex_integer_literal", "octal_integer_literal",
+                                 "binary_integer_literal", "character_literal"):
+                    continue
+                out.append(TaintSink(loc=self._get_location(size), exp=self._hoisted_expression(size),
+                                     kind=SinkKind.ALLOC_SIZE,
+                                     description="Allocation sized by a non-constant value (CWE-770)"))
+        return out
+
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a statement"""
+        if node.type in ("expression_statement", "local_variable_declaration", "return_statement"):
+            self._add_instrs(self._allocation_size_sinks(node))
         if node.type == "expression_statement":
             self._translate_expression_statement(node)
         elif node.type == "local_variable_declaration":

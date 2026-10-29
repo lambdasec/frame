@@ -69,6 +69,10 @@ class TaintKind(Enum):
     # by a prompt injection anywhere in what the model read, so it is attacker data for every
     # sink; findings from it are in the `ai` category.
     LLM_OUTPUT = "llm"
+    # A number read off a binary stream or buffer (DataInputStream.readInt, ByteBuffer.getInt):
+    # a length or count a peer sent. It is not text, so it matters only as the size of an
+    # allocation (SinkKind.ALLOC_SIZE), and only there.
+    WIRE_SIZE = "wire_size"
 
     def __str__(self) -> str:
         return self.value

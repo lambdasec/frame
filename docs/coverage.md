@@ -22,7 +22,7 @@ Frame knows what makes data safe (parameterised queries, `shlex.quote`, `basenam
 |---|---|
 | **Python** | Flask, Django, DRF, FastAPI, Starlette, Tornado, aiohttp, Sanic, Bottle, Falcon, Pyramid, CherryPy, Jinja2/Mako, SQLAlchemy, peewee, pymongo, requests/httpx |
 | **JavaScript / TypeScript** | Express, Koa, Fastify, Hapi, Restify, NestJS, Next.js, Sails, Apollo, Socket.IO, AWS Lambda, Electron, React, Angular, Mongoose, Prisma, Knex, TypeORM |
-| **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ |
+| **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ, Kafka's wire readers |
 | **C#** | ASP.NET Core MVC and Web API, Minimal APIs, Razor Pages, Blazor, SignalR, Azure Functions, WebForms, WCF/gRPC, EF Core/EF6, Dapper, NHibernate |
 | **C / C++** | CGI/FastCGI, POSIX sockets, libmicrohttpd, civetweb/Mongoose, cpp-httplib, Crow, Qt, Boost.Beast, gRPC, libcurl, OpenSSL, libxml2, libarchive, SQLite/libpq/MySQL |
 | **AI apps** | OpenAI, Anthropic, LangChain and LlamaIndex SDKs (Python; OpenAI, Anthropic and LangChain in JS/TS), MCP servers (FastMCP, the TypeScript SDK) |
@@ -83,10 +83,13 @@ description = "Tracing server enabled"
 | Template (SSTI) | Broken authentication | XXE (CWE-611) | Null dereference |
 | LDAP / XPath / XML | Session fixation | Secrets, unsafe deserialization | Integer overflow |
 | Header and log | CSRF (CWE-352) | Weak crypto, hashing, random | Format string |
+| | | | Allocation sized by a peer (CWE-770) |
 
 Hardcoded secrets are found two ways. A credential-named variable (`password`, `API_KEY`, `client_secret`) bound to a literal is reported unless the value is plainly not a secret (a field name, a filename, a placeholder). Separately, any string literal containing a provider's credential format is reported whatever holds it: an argument, a dict value, a header. That covers AWS, GitHub, GitLab, Slack, Google, Stripe (live keys), OpenAI, Anthropic, SendGrid, npm, PyPI, Hugging Face, DigitalOcean, Shopify and PEM private keys. The formats are data (`frame/sil/specs/data/secret-formats.toml`, each with the provider's documentation). Literals come from the syntax tree, so a token in a comment is not reported, and the providers' own published example keys are ignored.
 
 A credential removed from the code is still in every clone's history. `frame history` reads every line the git history added, in any file, comments included, and reports each credential once at the commit that added it, saying whether the current tree still has it (rotate it either way). On a test repository it finds every credential gitleaks finds, at the same commit, file and line, and also Hugging Face and Anthropic keys gitleaks 8.21 has no rule for (`tests/test_secret_history.py`).
+
+An allocation sized by attacker data with nothing on the path bounding it is CWE-770 (Python, JS/TS, Java): in Java an array dimension, `ByteBuffer.allocate`, or a capacity constructor (`new ArrayList<>(n)`, `new HashMap<>(n)`, `new StringBuilder(n)`, only when the argument is an integer; with a collection or a String they copy). Besides request data, a number read off a binary stream or buffer is a source of its own (`wire_size`: `DataInputStream`/`DataInput`/`ObjectInputStream`/`RandomAccessFile` `readInt`, `readLong`, `readShort`, ..., `ByteBuffer.getInt`, ...; Kafka's `ByteUtils` through the `kafka-protocol` pack). It is a number, not text, so it is reported only as an allocation size, never at an injection sink. Any branch condition mentioning the size on the path counts as a bound, and so does `Math.min`. Walkthrough on three Apache Kafka bugs (CVE-2026-114349, CVE-2026-111551), before and after their fixes: [examples/java-allocation](../examples/java-allocation/README.md).
 
 AI applications (category `ai`; walkthrough with real output in [examples/ai-apps](../examples/ai-apps/README.md)):
 

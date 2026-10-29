@@ -46,6 +46,11 @@ A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere
 A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments. With `--history`, a key deleted from the code is still found in the git history.
 *Runs offline.*
 
+### [java-allocation](java-allocation/README.md): sizes a peer chose
+
+Three Apache Kafka methods (CVE-2026-114349, CVE-2026-111551), reduced from the commits before and after their fixes: a length or count read off the wire sizes a buffer or a list with nothing bounding it, so a tiny message makes the JVM allocate gigabytes. Frame finds all three before the fixes and nothing after; the record reader's size comes from Kafka's own `ByteUtils`, which the `kafka-protocol` pack teaches.
+*Runs offline.*
+
 ### [ai-apps](ai-apps/README.md): LLM apps and MCP servers
 
 Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each beside a safe twin. Shows untrusted input reaching a model's system prompt (prompt injection), model output run as a shell command or code, and MCP tool arguments reaching a shell or SQL.
