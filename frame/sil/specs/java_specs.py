@@ -61,6 +61,17 @@ JAVA_FACTORY_RETURN_TYPES = {
 # next link a receiver type, so it resolves to a canonical callee (framework packs match on it)
 # instead of staying an unknown `$chain.method`.
 JAVA_RETURN_TYPES = {
+    # JDK conversions documented to return a String: the next call of a chain
+    # (`Float.toString(r).substring(2)`) is made on that String
+    **{f"{t}.{m}": "java.lang.String" for t in ("Integer", "Long", "Short", "Byte", "Float", "Double",
+                                                "Boolean", "Character") for m in ("toString",)},
+    **{f"{t}.{m}": "java.lang.String" for t in ("Integer", "Long")
+       for m in ("toHexString", "toBinaryString", "toOctalString")},
+    "String.valueOf": "java.lang.String",
+    "String.format": "java.lang.String",
+    "String.join": "java.lang.String",
+    "Objects.toString": "java.lang.String",
+    "Arrays.toString": "java.lang.String",
     # Struts 2
     "ActionContext.getContext": "com.opensymphony.xwork2.ActionContext",
     "ActionContext.getValueStack": "com.opensymphony.xwork2.util.ValueStack",

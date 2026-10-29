@@ -1413,117 +1413,99 @@ description = "SHA1 hash (CWE-328)"
 
 [[spec]]
 name = "random.random"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.randint"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.choice"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.randrange"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.uniform"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.triangular"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.gauss"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.normalvariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.lognormvariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.expovariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.betavariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.gammavariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.paretovariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.weibullvariate"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.sample"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.shuffle"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+taint_out_args = [0]
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.getrandbits"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.randbytes"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "random.choices"
-is_sink = "insecure_random"
-sink_args = []
-description = "Non-cryptographic random (CWE-330)"
+is_source = "weak_random"
+description = "Non-cryptographic random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Crypto.Cipher.AES.new"

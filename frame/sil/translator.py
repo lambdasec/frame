@@ -38,6 +38,7 @@ from .instructions import (
     TaintKind, SinkKind, resolve_sink_kind, _SINK_KIND_ALIASES
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
+from .specs.unpredictable import arguments_for
 
 # A plain local variable name: no field, element or call in it.
 _PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
@@ -722,14 +723,26 @@ class SymbolicState:
         """Check if pointer is allocated"""
         return self.allocated.get(var, False)
 
+    def _keeps_attacker_taint(self, var: str, kind: TaintKind) -> bool:
+        """A value that carries attacker data and a weak random number (`'v' + Math.random() + req.q`)
+        is attacker data: weak-random taint never replaces it (a strong update has already cleared
+        what an assignment overwrites)."""
+        cur = self.tainted.get(var)
+        return (kind == TaintKind.WEAK_RANDOM and cur is not None and cur.source_kind != TaintKind.WEAK_RANDOM
+                and not cur.source_var.startswith("@param:"))      # a summary's parameter seed is not data
+
     def add_taint(self, var: str, info: TaintInfo) -> None:
         """Mark variable as tainted"""
+        if self._keeps_attacker_taint(var, info.source_kind):
+            return
         self.tainted[var] = info
 
     def propagate_taint(self, from_var: str, to_var: str) -> None:
         """Propagate taint from one variable to another"""
         if from_var in self.tainted:
             info = self.tainted[from_var]
+            if self._keeps_attacker_taint(to_var, info.source_kind):
+                return
             new_path = info.propagation_path + [to_var]
             self.tainted[to_var] = TaintInfo(
                 info.source_kind, info.source_var, info.source_location, new_path
@@ -2125,6 +2138,13 @@ class SILTranslator:
 
     def _arg_taint_leaves(self, exp: Exp, state: SymbolicState,
                           wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
+        """`_arg_taint_leaves_any`, attacker data first: callers that keep one leaf keep it, not a
+        weak random number concatenated before it (`key + "=" + code`)."""
+        return sorted(self._arg_taint_leaves_any(exp, state, wrap),
+                      key=lambda leaf: leaf[0].source_kind == TaintKind.WEAK_RANDOM)
+
+    def _arg_taint_leaves_any(self, exp: Exp, state: SymbolicState,
+                              wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
         """Each piece of attacker data an expression carries, with the sink
         kinds it is sanitized for: tainted variables (with their sanitization),
         inline request reads and source calls, and what a same-file callee's
@@ -3292,6 +3312,7 @@ class SILTranslator:
         numeric_checks += self._tainted_index_checks(instr, state, proc_name)
         numeric_checks += self._tainted_format_overflow_checks(instr, state, proc_name)
         numeric_checks += self._cookie_header_checks(instr, state, proc_name)
+        numeric_checks += self._unpredictable_arg_checks(instr, state, proc_name)
         # A copy/fill of a compile-time-constant size into a buffer whose capacity
         # is also a compile-time constant: provably out of bounds, taint-free.
         numeric_checks += self._constant_copy_overflow_checks(instr, proc_name)
@@ -3447,7 +3468,8 @@ class SILTranslator:
                 else [instr.exp.true_exp, instr.exp.false_exp]
             if len(branches) == 1:
                 return self._exec_assign(Assign(loc=instr.loc, id=instr.id, exp=branches[0]), state, proc_name)
-            leaves = [v for b in branches for v in self._get_exp_vars(b) if state.is_tainted(v)]
+            leaves = sorted((v for b in branches for v in self._get_exp_vars(b) if state.is_tainted(v)),
+                            key=lambda v: state.tainted[v].source_kind == TaintKind.WEAK_RANDOM)
             if leaves:
                 state.propagate_taint(leaves[0], target)
                 common = set.intersection(*(set(state.sanitized.get(v, [])) for v in leaves))
@@ -3577,10 +3599,10 @@ class SILTranslator:
         # allocator (malloc/calloc/alloca) returns is fresh memory, not data derived
         # from its size argument, so it does not inherit that argument's taint.
         if not self._is_size_only_alloc(instr.exp):
-            for src_var in source_vars:
-                if state.is_tainted(src_var):
-                    state.propagate_taint(src_var, target)
-                    break  # Only need one taint source
+            tainted_srcs = [v for v in source_vars if state.is_tainted(v)]
+            if tainted_srcs:                   # one source; attacker data before a weak random number
+                state.propagate_taint(min(tainted_srcs, key=lambda v: state.tainted[v].source_kind
+                                          == TaintKind.WEAK_RANDOM), target)
 
         # After the receiver's own taint: a request attribute a Filter stored.
         if self._ipa_on and isinstance(instr.exp, ExpCall):
@@ -3737,6 +3759,8 @@ class SILTranslator:
                 # Check for embedded taint source calls in the expression
                 embedded_sources = self._get_embedded_source_calls(instr.exp)
                 for func_name, source_kind_str in embedded_sources:
+                    if self._inline_kind_mismatch(source_kind_str, sink_kind_str):
+                        continue
                     check = VulnerabilityCheck(
                         formula=And(
                             Source(Var(func_name), source_kind_str),
@@ -4101,7 +4125,10 @@ class SILTranslator:
         # C/C++ input functions fill a buffer / out-parameter with attacker data
         # (fgets(buf,...), scanf("%d",&n), read(fd,buf,...)); taint the variable
         # each named argument designates (`buf` or `&n`, through casts).
-        if spec and spec.taint_out_args and self._is_c_lang:
+        # A non-cryptographic PRNG filling a buffer (`Random.nextBytes(b)`, `random.shuffle(xs)`) in
+        # any language: the buffer holds weak-random data.
+        weak_fill = bool(spec and spec.taint_out_args and spec.is_source == TaintKind.WEAK_RANDOM.value)
+        if spec and spec.taint_out_args and (self._is_c_lang or weak_fill):
             for idx in spec.taint_out_args:
                 if idx >= len(instr.args):
                     continue
@@ -4111,7 +4138,7 @@ class SILTranslator:
                 out_var = self._sole_var(inner)
                 if out_var is not None:
                     state.add_taint(out_var, TaintInfo(
-                        source_kind=TaintKind.USER_INPUT,
+                        source_kind=TaintKind.WEAK_RANDOM if weak_fill else TaintKind.USER_INPUT,
                         source_var=out_var,
                         source_location=instr.loc,
                     ))
@@ -4427,6 +4454,8 @@ class SILTranslator:
                                 # for this sink.
                                 for src_func, src_kind in self._get_embedded_source_calls(
                                         arg_exp, sink_kind):
+                                    if self._inline_kind_mismatch(src_kind, spec.is_sink):
+                                        continue
                                     checks.append(VulnerabilityCheck(
                                         formula=And(Source(Var(src_func), src_kind),
                                                     Sink(Var(src_func), spec.is_sink)),
@@ -5029,6 +5058,23 @@ class SILTranslator:
                         if self.verbose:
                             print(f"[IPA] DOUBLE-FREE in destructor: {member_var}")
 
+        # A source call written inside the arguments (JS keeps `String(Math.random())` nested; Python
+        # and Java hoist theirs): its taint reaches the result by the call's own propagation rules.
+        if instr.ret and not state.is_tainted(str(instr.ret[0])):
+            sanitizer = bool(spec and spec.is_taint_sanitizer())       # passes its input on, sanitized
+            idxs = [0] if sanitizer else range(len(instr.args)) if spec is None else (
+                spec.taint_propagates if spec.propagates_taint() else [])
+            for i in idxs:
+                found = self._get_embedded_source_calls(instr.args[i][0]) if i < len(instr.args) else []
+                if found:
+                    src, kind = found[0]
+                    state.add_taint(str(instr.ret[0]), TaintInfo(
+                        source_kind=TaintKind(kind) if kind in {t.value for t in TaintKind} else TaintKind.USER_INPUT,
+                        source_var=src, source_location=instr.loc))
+                    if sanitizer:
+                        state.add_sanitization(str(instr.ret[0]), spec.is_sanitizer)
+                    break
+
         # Default: store return value
         if instr.ret:
             ret_var = str(instr.ret[0])
@@ -5452,6 +5498,8 @@ class SILTranslator:
         # flowing directly to the sink without going through a variable
         embedded_sources = self._get_embedded_source_calls(instr.exp, instr.kind)
         for func_name, source_kind_str in embedded_sources:
+            if self._inline_kind_mismatch(source_kind_str, instr.kind.value):
+                continue
             # This is a direct taint source -> sink flow
             # Create vulnerability check for this direct flow
             check = VulnerabilityCheck(
@@ -7944,6 +7992,66 @@ class SILTranslator:
                     checks.append(self._create_taint_check(instr, state, proc_name, var, SinkKind.UNPREDICTABLE))
                     break
         return checks
+
+    @staticmethod
+    def _inline_kind_mismatch(source_kind: object, sink_kind: object) -> bool:
+        """A source call written inside a sink's argument whose kind does not fit the sink, as
+        `_create_taint_check` decides for variables: weak-random output matters only where a value
+        must be unpredictable, and only weak-random output does there."""
+        weak = str(source_kind) == TaintKind.WEAK_RANDOM.value
+        return weak != (str(getattr(sink_kind, "value", sink_kind)) == SinkKind.UNPREDICTABLE.value)
+
+    def _unpredictable_arg_checks(self, instr: Instr, state: SymbolicState,
+                                  proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-338: weak-random data (`weak_random`) in an argument that must be unpredictable, a
+        cookie's value or a key / IV / salt (specs/data/unpredictable.toml), also for a call
+        written inside another's arguments (`resp.addCookie(new Cookie(n, token))`); the C/C++
+        ones are in c_specs and `_cookie_header_checks`."""
+        if self._is_c_lang or not isinstance(instr, Call):
+            return []
+        func = instr.func
+        name = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"')
+        calls = [(instr.canonical, name, [a for a, _ in instr.args], list(getattr(instr, "kwarg_names", None) or []))]
+        stack = [a for a, _ in instr.args]
+        while stack:                                       # calls nested in the arguments
+            exp = stack.pop()
+            if isinstance(exp, ExpCall):
+                calls.append((None, self._call_exp_name(exp), list(exp.args), []))
+                stack.extend(exp.args)
+            elif isinstance(exp, ExpBinOp):
+                stack.extend([exp.left, exp.right])
+            elif isinstance(exp, ExpStringConcat):
+                stack.extend(exp.parts)
+        checks: List[VulnerabilityCheck] = []
+        for canonical, call_name, args, kwnames in calls:
+            want = arguments_for(self.program.language, canonical, call_name or "")
+            if want is None:
+                continue
+            positions, keywords = want
+            for i, arg in enumerate(args):
+                kw = kwnames[i] if i < len(kwnames) else None
+                if (kw is None and i in positions) or (kw is not None and kw in keywords):
+                    check = self._weak_random_in(arg, instr, state, proc_name)
+                    if check is not None:
+                        checks.append(check)
+        return checks
+
+    def _weak_random_in(self, arg: Exp, instr: Instr, state: SymbolicState,
+                        proc_name: str) -> Optional[VulnerabilityCheck]:
+        for var in self._get_exp_vars(arg):
+            info = state.get_taint_info(var) if state.is_tainted(var) else None
+            if info is not None and info.source_kind == TaintKind.WEAK_RANDOM:
+                return self._create_taint_check(instr, state, proc_name, var, SinkKind.UNPREDICTABLE)
+        for src, kind in self._get_embedded_source_calls(arg, SinkKind.UNPREDICTABLE):   # `hmac.new(random.randbytes(16))`
+            if kind == TaintKind.WEAK_RANDOM.value:
+                return VulnerabilityCheck(
+                    formula=And(Source(Var(src), kind), Sink(Var(src), SinkKind.UNPREDICTABLE.value)),
+                    vuln_type=VulnType.from_sink_kind(SinkKind.UNPREDICTABLE),
+                    location=instr.loc or Location.unknown(),
+                    description=f"Weak random value from '{src}' flows to unpredictable sink",
+                    source_var=src, source_location=instr.loc or Location.unknown(),
+                    sink_type=SinkKind.UNPREDICTABLE.value, procedure_name=proc_name)
+        return None
 
     # Widest output of a numeric conversion (sign included), by conversion letter.
     _NUMERIC_WIDTH = {"d": 11, "i": 11, "u": 10, "x": 8, "X": 8, "o": 11, "c": 1, "p": 18}

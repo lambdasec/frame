@@ -1228,8 +1228,8 @@ description = "AES ECB mode (CWE-327)"
 
 [[spec]]
 name = "Math.random"
-is_sink = "insecure_random"
-description = "Math.random not cryptographic (CWE-330)"
+is_source = "weak_random"
+description = "Math.random not cryptographic (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "crypto.randomBytes"

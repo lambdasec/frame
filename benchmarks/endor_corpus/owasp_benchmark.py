@@ -45,7 +45,7 @@ TESTCODE_REL = "src/main/java/org/owasp/benchmark/testcode"
 # tool tags e.g. weak crypto as CWE-326 instead of CWE-327.
 CWE_CATEGORY = {
     22: "pathtraver", 78: "cmdi", 79: "xss", 89: "sqli", 90: "ldapi",
-    327: "crypto", 328: "hash", 330: "weakrand", 501: "trustbound",
+    327: "crypto", 328: "hash", 330: "weakrand", 338: "weakrand", 501: "trustbound",
     614: "securecookie", 643: "xpathi",
     # aliases (sibling CWEs for the same category):
     326: "crypto",   # Inadequate Encryption Strength (Semgrep uses this for crypto)

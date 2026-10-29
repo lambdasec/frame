@@ -208,6 +208,8 @@ size of Frame's recall lead is one-sided. The
 
 ## SAST Security Benchmarks
 
+**Suite packs.** A test suite's own helper code is taught to Frame the way any project's is, with a pack: `benchmarks/packs/` holds them (the OWASP Benchmark for Python keeps its remember-me tokens in its own `helpers.utils.mysession`, a session store). `run_frame_scanner` passes the directory to every suite, and each pack's `detect` limits it to the suite that imports its module. These packs are never part of Frame's built-in packs, so a scan outside the harness never sees them.
+
 ### Python (OWASP Benchmark)
 
 **Dataset:** 500 tests, 194 true vulnerabilities across 11 categories

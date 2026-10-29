@@ -5,6 +5,12 @@ from typing import Optional, List, Dict, Set
 from enum import Enum
 
 
+# MITRE's ChildOf relation, where a scanner reports the more specific weakness a suite labels by
+# its parent: CWE-338 (cryptographically weak PRNG) is a child of CWE-330 (insufficiently random
+# values), which OWASP Benchmark labels its weak-randomness cases with.
+CWE_CHILDREN = {"330": frozenset({"338"})}
+
+
 class VulnerabilityCategory(Enum):
     """Common vulnerability categories across benchmarks"""
     SQL_INJECTION = "sql_injection"
@@ -137,7 +143,7 @@ class SASTBenchmarkResult:
                     # Normalize CWE IDs (e.g., "CWE-89" == "89" == "cwe89")
                     exp_cwe = expected.cwe_id.upper().replace("CWE-", "").replace("CWE", "")
                     det_cwe = detected.cwe_id.upper().replace("CWE-", "").replace("CWE", "")
-                    cwe_match = exp_cwe == det_cwe
+                    cwe_match = exp_cwe == det_cwe or det_cwe in CWE_CHILDREN.get(exp_cwe, ())
 
                 # Category match (fallback if no CWE)
                 category_match = False

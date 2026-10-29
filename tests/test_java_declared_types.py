@@ -160,16 +160,18 @@ def test_random_declared_type_holding_securerandom_is_not_weak_random():
             "    generator.nextBytes(barray);\n"
             "  }\n"
             "}\n")
-    assert "CWE-330" not in cwes(code)
+    assert not {"CWE-330", "CWE-338"} & cwes(code)
 
 
-def test_new_random_is_still_weak_random():
-    code = ("class R {\n"
-            "  int f() {\n"
-            "    return new java.util.Random().nextInt();\n"
-            "  }\n"
-            "}\n")
-    assert "CWE-330" in cwes(code)
+def test_new_random_is_weak_random_where_a_value_must_be_unpredictable():
+    """`new Random().nextInt()`: its runtime class is exactly Random. A number on its own is not a
+    finding; set as a cookie's value it is CWE-338."""
+    returned = "class R {\n  int f() {\n    return new java.util.Random().nextInt();\n  }\n}\n"
+    assert not {"CWE-330", "CWE-338"} & cwes(returned)
+    cookie = ("import javax.servlet.http.*;\nclass R {\n  void f(HttpServletResponse resp) {\n"
+              "    String t = Integer.toString(new java.util.Random().nextInt());\n"
+              "    resp.addCookie(new Cookie(\"remember\", t));\n  }\n}\n")
+    assert "CWE-338" in cwes(cookie)
 
 
 # ---- a call in a return expression is analysed like any other call -------
@@ -207,8 +209,8 @@ def test_constant_query_in_return_is_clean():
     ("    java.util.Scanner sc = new java.util.Scanner(System.in);\n    return sc.nextInt();\n", False),
 ])
 def test_weak_random_needs_the_runtime_class(body, weak):
-    # Asserted on spec resolution for the nextInt call itself: constructing a
-    # Random is reported on its own, and findings are deduplicated per method.
+    # Asserted on spec resolution for the nextInt call itself: the weak_random source applies
+    # only where the runtime class is known to be Random.
     from frame.sil.instructions import Call
     code = "class R {\n  int f() {\n" + body + "  }\n}\n"
     program = JavaFrontend().translate(code, "R.java")
@@ -216,7 +218,7 @@ def test_weak_random_needs_the_runtime_class(body, weak):
              for i in n.instrs if isinstance(i, Call) and i.get_full_name().endswith(".nextInt")]
     assert len(calls) == 1
     spec = program.spec_for_call(calls[0])
-    assert (spec is not None and spec.is_sink == "insecure_random") == weak
+    assert (spec is not None and spec.is_source == "weak_random") == weak
 
 
 # ---- own-class calls, attributes ------------------------------------------

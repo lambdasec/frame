@@ -1636,6 +1636,10 @@ class JavaFrontend:
 
     def _receiver_exact(self, call_node: Optional[TSNode]) -> bool:
         obj = call_node.child_by_field_name("object") if call_node is not None else None
+        while obj is not None and obj.type == "parenthesized_expression" and obj.named_children:
+            obj = obj.named_children[0]
+        if obj is not None and obj.type == "object_creation_expression":
+            return True                                   # `new T().m()`: its class is exactly T
         return obj is not None and obj.type == "identifier" and self._get_text(obj) in self._exact_vars
 
     def _lookup_spec(self, method_name: str, call_node: Optional[TSNode] = None) -> Optional[ProcSpec]:

@@ -1,0 +1,90 @@
+# Arguments whose value must be unpredictable: a session or remember-me token set as a cookie, a
+# cryptographic key, IV, nonce or salt. Output of a non-cryptographic PRNG (`weak_random`:
+# java.util.Random, Python's `random`, JS `Math.random`) reaching one is CWE-338; anywhere else a
+# random number is not a finding. C/C++ declare theirs in c_specs (`EVP_*Init*`, HMAC, PBKDF2,
+# `Set-Cookie` headers). Matched by canonical id, else by the trailing names of the call
+# (`set_cookie` matches `resp.set_cookie`). Fields: language, call (canonical ids), names, args
+# (positions), kwargs (keyword names), description.
+
+[[call]]
+language = "java"
+call = ["javax.servlet.http.Cookie.<init>", "jakarta.servlet.http.Cookie.<init>"]
+names = ["new javax.servlet.http.Cookie", "new jakarta.servlet.http.Cookie", "new Cookie"]
+args = [1]
+description = "a cookie's value"
+
+[[call]]
+language = "java"
+names = ["new SecretKeySpec", "new javax.crypto.spec.SecretKeySpec"]
+args = [0]
+description = "a secret key's bytes"
+
+[[call]]
+language = "java"
+names = ["new IvParameterSpec", "new javax.crypto.spec.IvParameterSpec"]
+args = [0]
+description = "a cipher IV"
+
+[[call]]
+language = "java"
+names = ["new GCMParameterSpec", "new javax.crypto.spec.GCMParameterSpec"]
+args = [1]
+description = "a GCM nonce"
+
+[[call]]
+language = "java"
+names = ["new PBEKeySpec", "new javax.crypto.spec.PBEKeySpec"]
+args = [1]
+description = "a password-hashing salt"
+
+[[call]]
+language = "python"
+names = ["set_cookie"]
+args = [1]
+kwargs = ["value"]
+description = "a cookie's value"
+
+[[call]]
+language = "python"
+call = ["hmac.new"]
+args = [0]
+kwargs = ["key"]
+description = "an HMAC key"
+
+[[call]]
+language = "python"
+call = ["hashlib.pbkdf2_hmac"]
+args = [2]
+kwargs = ["salt"]
+description = "a password-hashing salt"
+
+[[call]]
+language = "python"
+call = ["Crypto.Cipher.AES.new", "Cryptodome.Cipher.AES.new"]
+args = [0]
+kwargs = ["key", "iv", "nonce"]
+description = "a cipher key, IV or nonce"
+
+[[call]]
+language = "javascript"
+names = ["res.cookie", "response.cookie", "reply.setCookie", "ctx.cookies.set"]
+args = [1]
+description = "a cookie's value"
+
+[[call]]
+language = "javascript"
+call = ["crypto.createHmac"]
+args = [1]
+description = "an HMAC key"
+
+[[call]]
+language = "javascript"
+call = ["crypto.createCipheriv", "crypto.createDecipheriv"]
+args = [1, 2]
+description = "a cipher key or IV"
+
+[[call]]
+language = "javascript"
+call = ["crypto.pbkdf2", "crypto.pbkdf2Sync", "crypto.scrypt", "crypto.scryptSync"]
+args = [1]
+description = "a password-hashing salt"

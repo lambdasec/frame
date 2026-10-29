@@ -1965,101 +1965,52 @@ sink_args = []
 description = "Cipher (algorithm check required)"
 
 [[spec]]
-name = "java.util.Random"
-is_sink = "insecure_random"
-sink_args = []
-description = "Insecure random (CWE-330)"
-
-[[spec]]
 name = "Math.random"
-is_sink = "insecure_random"
-sink_args = []
-description = "Math.random (CWE-330)"
+is_source = "weak_random"
+description = "Math.random (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextFloat"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextFloat (CWE-330)"
+description = "Random.nextFloat (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextDouble"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextDouble (CWE-330)"
+description = "Random.nextDouble (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextInt"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextInt (CWE-330)"
+description = "Random.nextInt (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextLong"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextLong (CWE-330)"
+description = "Random.nextLong (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextBoolean"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextBoolean (CWE-330)"
+description = "Random.nextBoolean (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextGaussian"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
 exact_class = true
-description = "Random.nextGaussian (CWE-330)"
+description = "Random.nextGaussian (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "Random.nextBytes"
-is_sink = "insecure_random"
-sink_args = []
+is_source = "weak_random"
+taint_out_args = [0]
 exact_class = true
-description = "Random.nextBytes (CWE-330)"
-
-[[spec]]
-name = "new java.util.Random"
-is_sink = "insecure_random"
-sink_args = []
-description = "new Random() (CWE-330)"
-
-[[spec]]
-name = "nextFloat"
-is_sink = "insecure_random"
-sink_args = []
-description = "Random.nextFloat (CWE-330)"
-
-[[spec]]
-name = "nextDouble"
-is_sink = "insecure_random"
-sink_args = []
-description = "Random.nextDouble (CWE-330)"
-
-[[spec]]
-name = "nextInt"
-is_sink = "insecure_random"
-sink_args = []
-description = "Random.nextInt (CWE-330)"
-
-[[spec]]
-name = "nextLong"
-is_sink = "insecure_random"
-sink_args = []
-description = "Random.nextLong (CWE-330)"
-
-[[spec]]
-name = "nextGaussian"
-is_sink = "insecure_random"
-sink_args = []
-description = "Random.nextGaussian (CWE-330)"
+description = "Random.nextBytes (weak_random: CWE-338 where a value must be unpredictable)"
 
 [[spec]]
 name = "SecureRandom"

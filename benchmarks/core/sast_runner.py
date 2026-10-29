@@ -37,6 +37,7 @@ CWE_TO_CATEGORY = {
     "327": VulnerabilityCategory.WEAK_CRYPTO,
     "328": VulnerabilityCategory.WEAK_HASH,
     "330": VulnerabilityCategory.WEAK_CRYPTO,  # Weak random
+    "338": VulnerabilityCategory.WEAK_CRYPTO,  # Weak PRNG where a value must be unpredictable (a CWE-330 child)
     "798": VulnerabilityCategory.HARDCODED_SECRET,
 
     # Memory safety (C/C++)
@@ -65,6 +66,9 @@ def cwe_to_category(cwe_id: str) -> VulnerabilityCategory:
     return CWE_TO_CATEGORY.get(normalized, VulnerabilityCategory.OTHER)
 
 
+BENCHMARK_PACKS = Path(__file__).resolve().parent.parent / "packs"
+
+
 def run_frame_scanner(
     filepath: str,
     language: str = "python",
@@ -81,7 +85,9 @@ def run_frame_scanner(
         from frame.sil import FrameScanner
         from frame.sil.scanner import collapse_per_file_cwe
 
-        scanner = FrameScanner(language=language, verify=verify)
+        # The suites' own helper libraries, taught to Frame as any project would (benchmarks/packs;
+        # each pack's `detect` keeps it to its suite). Never part of Frame's built-in packs.
+        scanner = FrameScanner(language=language, verify=verify, packs=[str(BENCHMARK_PACKS)])
         result = scanner.scan_file(filepath)
 
         # These suites label a whole file with one CWE and count every other

@@ -1,0 +1,14 @@
+[pack]
+name = "owasp-benchmark-python"
+language = "python"
+description = "The OWASP Benchmark for Python's own helper library (helpers/utils.py): `mysession` is its session store, where the remember-me test cases keep the token they hand out. Passed to the scanner by the benchmark harness only, as any project teaches Frame its own code (.frame/packs or --pack); never shipped with Frame."
+detect = { imports = ["helpers.utils"] }
+references = ["https://github.com/OWASP-Benchmark/BenchmarkPython (helpers/utils.py)"]
+
+# A value stored in the session store is a session token: it must be unpredictable, so weak-random
+# data there is CWE-338 (the test cases' remember-me key).
+[[sink]]
+call = ["helpers.utils.mysession.__setitem__"]
+kind = "unpredictable"
+args = [1]
+description = "a value kept in the Benchmark's session store (a remember-me token)"
