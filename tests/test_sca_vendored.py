@@ -34,7 +34,7 @@ def _lay_out(root: Path, name: str, with_companions: bool = True) -> Path:
 
 
 def test_every_curated_library_has_a_recorded_release():
-    assert set(HEADERS) == set(LIBS) and len(LIBS) >= 14
+    assert set(HEADERS) == set(LIBS) and len(LIBS) >= 29
     for lib in LIBS.values():
         assert lib.reference.startswith("https://") and lib.companions
 
@@ -114,7 +114,8 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
     lib, h = LIBS[name], HEADERS[name]
     special = {"sqlite": "https://www.sqlite.org/2022/sqlite-amalgamation-3390400.zip",
                "libxml2": "https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz",
-               "curl": "https://curl.se/download/curl-8.6.0.tar.gz"}
+               "curl": "https://curl.se/download/curl-8.6.0.tar.gz",
+               "libtiff": "https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz"}   # tiffvers.h is generated
     url = special.get(name) or f"https://codeload.github.com/{lib.repo.split('/', 1)[1]}/tar.gz/refs/tags/{h['tag']}"
     data = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "frame"}), timeout=300).read()
     want = {h["header"], *h["companions"]}
@@ -130,7 +131,7 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
                 if m.name in want and m.isfile():
                     (tmp_path / m.name).parent.mkdir(parents=True, exist_ok=True)
                     (tmp_path / m.name).write_bytes(t.extractfile(m).read())
-    assert (tmp_path / h["header"]).read_text(errors="replace") == h["text"]
+    assert (tmp_path / h["header"]).read_bytes().decode("utf-8", "replace") == h["text"]   # tinyxml2 has CRLF
     files, _ = find_vendored(tmp_path)
     [pkg] = [p for f in files for p in f.packages.values()]
     assert pkg.version == h["version"] and h["tag"] in tags_for(lib, pkg.version)
@@ -143,8 +144,9 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
     # generated, so its repository has no sqlite3.c to fingerprint)
     if name != "sqlite":
         (tmp_path / h["header"]).unlink()
-        from frame.sca.vendored import identify_by_fingerprint
-        files, _ = identify_by_fingerprint(list(tmp_path.rglob("*.c")), tmp_path)
+        from frame.sca.vendored import SOURCE_SUFFIXES, identify_by_fingerprint
+        sources = [p for p in tmp_path.rglob("*") if p.suffix in SOURCE_SUFFIXES]
+        files, _ = identify_by_fingerprint(sources, tmp_path)
         [pkg] = [p for f in files for p in f.packages.values()]
         assert pkg.version == h["version"] or any(h["tag"] in a for a in pkg.alternatives)
 
@@ -255,3 +257,50 @@ def test_files_of_different_releases_are_said_not_matched(tmp_path, monkeypatch)
     monkeypatch.setattr(V, "fingerprints", lambda: fake)
     files, warnings = V.identify_by_fingerprint([tmp_path / "inflate.c", tmp_path / "deflate.c"], tmp_path)
     assert files == [] and "different releases" in warnings[0]
+
+
+@pytest.fixture
+def two_dir_library(monkeypatch):
+    """A library whose sources live in two upstream directories (as zstd's `lib/compress` and
+    `lib/common`), one release; a header-identified copy names it too."""
+    import frame.sca.vendored as V
+    blobs = {"lib/compress/zstd_compress.c": b"compress", "lib/common/zstd_common.c": b"common"}
+    fake = {"zstd": {"releases": ["1.5.6"],
+                     "files": {p: {V.blob_id(b)[:16]: "0"} for p, b in blobs.items()}}}
+    monkeypatch.setattr(V, "fingerprints", lambda: fake)
+    V._by_basename.cache_clear()
+    yield V, blobs
+    V._by_basename.cache_clear()
+
+
+def _write(root, files):
+    for rel, data in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(data)
+    return [root / rel for rel in files]
+
+
+@pytest.mark.parametrize("layout,copies", [
+    ({"third_party/zstd/compress/zstd_compress.c": b"compress", "third_party/zstd/common/zstd_common.c": b"common"},
+     ["third_party/zstd"]),                                               # the copy keeps upstream's folders
+    ({"third_party/zstd/lib/compress/zstd_compress.c": b"compress",
+      "third_party/zstd/lib/common/zstd_common.c": b"common"}, ["third_party/zstd"]),
+    ({"src/zstd/zstd_compress.c": b"compress", "src/zstd/zstd_common.c": b"common"}, ["src/zstd"]),   # flattened
+    ({"a/zstd/compress/zstd_compress.c": b"compress", "b/zstd/compress/zstd_compress.c": b"compress"},
+     ["a/zstd", "b/zstd"]),                                               # two copies stay two
+])
+def test_a_copy_spanning_folders_is_one_copy(tmp_path, two_dir_library, layout, copies):
+    V, _ = two_dir_library
+    files, warnings = V.identify_by_fingerprint(_write(tmp_path, layout), tmp_path)
+    assert [f.path for f in files] == copies and not warnings
+    assert all(p.version == "1.5.6" for f in files for p in f.packages.values())
+
+
+def test_a_copy_whose_header_was_read_is_not_reported_again(tmp_path, two_dir_library):
+    from frame.sca.model import GIT, DependencyFile, Package
+    V, _ = two_dir_library
+    sources = _write(tmp_path, {"third_party/zstd/lib/compress/zstd_compress.c": b"compress",
+                                "third_party/zstd/lib/common/zstd_common.c": b"common"})
+    header = DependencyFile("third_party/zstd/lib/zstd.h", GIT, "vendored")
+    header.add(Package(GIT, LIBS["zstd"].repo, "1.5.6", direct=True, repo=LIBS["zstd"].repo))
+    assert V.identify_by_fingerprint(sources, tmp_path, [header]) == ([], [])
