@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.request_objects import load as _request_objects
 from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
@@ -1477,10 +1478,6 @@ class JavaScriptFrontend:
             stack.extend(cur.children)
         return refs
 
-    # Express Request properties that carry attacker-controlled data.
-    _REQUEST_PROPS = {"body", "params", "query", "cookies", "headers", "file",
-                      "files", "param", "session", "signedCookies"}
-
     def _express_request_source_names(self, node: TSNode) -> set:
         """Names bound by destructuring an Express Request handler parameter.
 
@@ -1528,7 +1525,7 @@ class JavaScriptFrontend:
                     v = c.child_by_field_name("value")
                     if v is not None:
                         nm = self._get_text(v)
-                if nm and nm in self._REQUEST_PROPS:
+                if nm and nm in _request_objects().client_properties:     # specs/data/request-objects.toml
                     names.add(nm)
         return names
 

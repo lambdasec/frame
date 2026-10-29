@@ -41,6 +41,7 @@ from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
 from . import c_facts as _c_facts
 from .specs.parser_hardening import load as _parser_hardening
+from .specs.request_objects import load as _request_objects
 from .specs.weak_algorithms import load as _weak_algorithms
 from .specs.principals import load as _principals
 from .kinds import check as _kinds_check, load as _load_kinds
@@ -8504,15 +8505,11 @@ class SILTranslator:
             return f"{self._exp_to_str(exp.base)}[{self._exp_to_str(exp.index)}]"
         return str(exp)
 
-    # Attributes of a Python web request that the server sets, not the client:
-    # the authenticated user (Django/DRF), the server-side session, the auth
-    # token object. A Django handler's `request` parameter is tainted as a
-    # whole, so without this `request.user.username` reached sinks as input.
-    _REQUEST_SERVER_STATE_ATTRS = frozenset({"user", "session", "auth"})
-
     def _is_request_server_state(self, exp: ExpFieldAccess) -> bool:
         """Is `exp` a read of `request.user...` / `request.session...` /
-        `request.auth...` in Python?"""
+        `request.auth...` in Python? (`server_state` in `specs/data/request-objects.toml`: a
+        handler's `request` is tainted as a whole, so without this `request.user.username`
+        reached sinks as input.)"""
         if (getattr(self.program, "language", "") or "").lower() != "python":
             return False
         cur = exp
@@ -8520,7 +8517,7 @@ class SILTranslator:
             cur = cur.base
         return (isinstance(cur.base, ExpVar)
                 and self._get_var_name(cur.base.var) == "request"
-                and cur.field_name in self._REQUEST_SERVER_STATE_ATTRS)
+                and cur.field_name in _request_objects().server_state)
 
     def _field_path(self, exp: Exp) -> Optional[str]:
         """`a.b.c` for a chain of field reads on a plain variable, else None."""

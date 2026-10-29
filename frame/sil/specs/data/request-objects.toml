@@ -1,0 +1,12 @@
+# Which parts of a web request object the client chose and which the server set. Read by
+# frame/sil/specs/request_objects.py (strictly).
+
+# Properties of an Express-style request (`req`) holding data the client sent: a handler that
+# destructures its request parameter (`({ body, query }, res) => ...`) receives these as attacker
+# data. `session` is not one: it is what the server stored.
+client_properties = ["body", "params", "query", "cookies", "headers", "file", "files", "param", "signedCookies"]
+
+# Attributes of a Python web request that the server sets, not the client: the authenticated user
+# (Django / DRF), the server-side session, the auth token object. A handler's `request` parameter is
+# tainted as a whole, so a read of `request.<one of these>...` is not attacker data.
+server_state = ["user", "session", "auth"]
