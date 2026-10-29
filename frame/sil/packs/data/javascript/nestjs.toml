@@ -1,0 +1,16 @@
+# NestJS (https://docs.nestjs.com/controllers#request-object): a controller method's parameters
+# decorated with @Query, @Body, @Param, @Headers, @Cookies, @UploadedFile(s), @HostParam or @Ip are
+# filled from the request.
+[pack]
+name = "nestjs"
+language = "javascript"
+description = "NestJS controllers: request-bound handler parameters"
+detect = { imports = ["@nestjs/common"] }
+
+[[entrypoint]]
+id = "controller-request-params"
+class_decorator = ["Controller"]
+params = "annotated"
+param_annotation = ["Query", "Body", "Param", "Headers", "Header", "Cookies", "UploadedFile",
+                    "UploadedFiles", "HostParam", "Ip"]
+description = "a request-bound parameter of a @Controller method"

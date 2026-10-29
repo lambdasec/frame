@@ -1481,25 +1481,6 @@ class JavaScriptFrontend:
     _REQUEST_PROPS = {"body", "params", "query", "cookies", "headers", "file",
                       "files", "param", "session", "signedCookies"}
 
-    # NestJS binds request data to parameters with decorators.
-    _NEST_SOURCE_DECORATORS = ("Query", "Body", "Param", "Headers", "Header", "Cookies", "UploadedFile",
-                               "UploadedFiles", "HostParam", "Ip")
-
-    def _nest_decorated_param_names(self, param_children: List[TSNode]) -> set:
-        """Parameters such as `@Query('q') q: string` / `@Body() dto: Dto`: Nest
-        fills them from the request, so they are untrusted input."""
-        names: set = set()
-        for ch in param_children:
-            if ch.type not in ("required_parameter", "optional_parameter"):
-                continue
-            decorators = [self._get_text(d) for d in ch.children if d.type == "decorator"]
-            if not any(re.match(r"@(?:" + "|".join(self._NEST_SOURCE_DECORATORS) + r")\b", d) for d in decorators):
-                continue
-            pat = ch.child_by_field_name("pattern")
-            if pat is not None and pat.type == "identifier":
-                names.add(self._get_text(pat))
-        return names
-
     def _express_request_source_names(self, node: TSNode) -> set:
         """Names bound by destructuring an Express Request handler parameter.
 
@@ -1535,7 +1516,7 @@ class JavaScriptFrontend:
             elif ch.type == "object_pattern":
                 destructured.append(ch)
 
-        names: set = self._nest_decorated_param_names(param_children)
+        names: set = set()
         if not is_handler:
             return names
         for pat in destructured:

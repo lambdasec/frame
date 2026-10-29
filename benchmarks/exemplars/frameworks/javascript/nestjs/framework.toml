@@ -1,4 +1,4 @@
 language = "typescript"
-packs = ["javascript/typeorm"]
+packs = ["javascript/typeorm", "javascript/nestjs"]
 requires_pack = true
 description = "NestJS controller -> service -> TypeORM repository across files"
