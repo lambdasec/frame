@@ -109,6 +109,10 @@ def add_pack_args(scan_parser) -> None:
         "--no-packs", action="store_true",
         help="Do not load the built-in framework packs (project and --pack packs still load).")
     scan_parser.add_argument(
+        "--verify-secrets", action="store_true",
+        help="Ask each provider-format credential's provider whether it still works (a read-only request to "
+             "the provider's own API, e.g. GitHub's /user; off by default, see docs/usage.md#verifying-secrets)")
+    scan_parser.add_argument(
         "--vex", choices=["openvex", "cyclonedx"],
         help="With --sca: also write a VEX document for the dependency findings to --vex-out (attacker data "
              "reaching a vulnerable function is stated exploitable)")
@@ -311,6 +315,8 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
                          + ("  (test code)" if getattr(vuln, "context", "") == "test" else ""))
             lines.append(f"   Function: {vuln.procedure}")
             lines.append(f"   Description: {vuln.description}")
+            if getattr(vuln, "validity", ""):
+                lines.append(f"   Verified: {vuln.validity_detail}")
 
             if vuln.cwe_id:
                 lines.append(f"   CWE: {vuln.cwe_id}")
@@ -532,6 +538,7 @@ def cmd_scan(args) -> int:
             disabled_rules=disabled_rules,
             packs=pack_paths,
             use_builtin_packs=not getattr(args, "no_packs", False),
+            verify_secrets=getattr(args, "verify_secrets", False),
         )
     except PackError as e:
         print(f"Error: {e}", file=sys.stderr)

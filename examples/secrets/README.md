@@ -43,4 +43,23 @@ $ python make_demo.py --history && frame history demo
 
 `frame scan` no longer reports the Stripe key, since the code does not have it; the history still does, so it must be rotated. The values are never printed: the first four characters, the length, and in `-f json` a SHA-256 fingerprint. The rotated GitHub token in the comment is the same credential as on line 6, so it is reported once. In history, comments count: a real key in a comment is as leaked as one in a string. `--range origin/main..HEAD` reads only what a branch adds, for a pre-merge check.
 
+## Checking them with the providers
+
+`--verify-secrets` (and `frame history --verify`) asks each credential's provider whether it still works: a read-only request to the provider's own API, such as GitHub's `/user`. It is off by default, since it sends each credential to its provider. These tokens are fake, so the providers reject them, and a rejected credential drops to low. AWS has no check (a key ID alone cannot be checked), so that finding keeps its severity:
+
+```console
+$ frame scan demo --verify-secrets
+   Location: demo/billing.js:3:22
+   Verified: rejected by api.stripe.com (revoked or expired)
+   Location: demo/deploy.py:6:12
+   Verified: rejected by api.github.com (revoked or expired)
+   Location: demo/deploy.py:11:44
+   Verified: rejected by api.openai.com (revoked or expired)
+   Location: demo/deploy.py:14:42
+   Verified: not verified (no check for this format)
+Scanned 3 files: 5 findings (1 critical, 4 low)
+```
+
+A live key would say `verified valid at api.github.com: it works now, rotate it` and be critical. What is sent, the providers checked, and how to try it with a token of your own: [docs/usage.md](../../docs/usage.md#verifying-secrets).
+
 The formats are data, each with its provider's documentation: [`frame/sil/specs/data/secret-formats.toml`](../../frame/sil/specs/data/secret-formats.toml). It covers AWS, GitHub, GitLab, Slack, Google, Stripe, OpenAI, Anthropic, SendGrid, npm, PyPI, Hugging Face, DigitalOcean, Shopify and PEM private keys. Credential-named variables (`password = "..."`, `API_KEY = "..."`) are reported separately, by name, whatever the value's format. See [docs/coverage.md](../../docs/coverage.md#what-it-detects).

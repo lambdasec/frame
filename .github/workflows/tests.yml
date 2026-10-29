@@ -111,7 +111,7 @@ jobs:
         if [ "${{ github.event_name }}" != "pull_request" ]; then
           echo "run=true" >> "$GITHUB_OUTPUT"
         elif git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-            | grep -qE '^(frame/sca/|tests/sca_real/|tests/fixtures/sca/|tests/test_sca_)'; then
+            | grep -qE '^(frame/sca/|tests/sca_real/|tests/fixtures/sca/|tests/test_sca_|frame/sil/secret_|frame/sil/specs/data/secret-formats.toml|tests/test_secret_)'; then
           echo "run=true" >> "$GITHUB_OUTPUT"
         else
           echo "run=false" >> "$GITHUB_OUTPUT"
@@ -182,6 +182,11 @@ jobs:
         COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       run: python -m pytest tests/test_sca_real_tools.py tests/test_sca_apply.py tests/test_sca_solve.py tests/test_sca_licenses.py tests/test_sca_licreg.py tests/test_sca_container.py tests/test_distro_versions.py tests/test_sca_gitrange.py tests/test_sca_vendored.py tests/test_secret_history.py -v --tb=short
+    - name: Secret checks against the real providers
+      if: steps.scope.outputs.run == 'true'
+      env:
+        FRAME_SECRETS_LIVE: '1'   # a fake token of every checked format must be rejected by its provider
+      run: python -m pytest tests/test_secret_verify.py tests/test_examples.py -k 'verif' -v --tb=short
 
   benchmarks:
     # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).

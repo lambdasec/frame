@@ -44,6 +44,8 @@ class Leak:
     fingerprint: str               # sha256 of the value
     in_head: bool = False          # the current tree still has it
     commits: int = 1               # how many commits added it
+    validity: str = ""             # with --verify: valid / invalid / unverified (secret_verify.py)
+    validity_detail: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -118,7 +120,7 @@ def _head_has(repo: Path, value: str) -> bool:
     return r.returncode == 0
 
 
-def scan_history(repo: Path, rev: Optional[str] = None) -> List[Leak]:
+def scan_history(repo: Path, rev: Optional[str] = None, verifier=None) -> List[Leak]:
     """Each distinct credential the history added, at its first commit (oldest first)."""
     repo = Path(repo)
     if subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-dir"], capture_output=True).returncode != 0:
@@ -141,8 +143,13 @@ def scan_history(repo: Path, rev: Optional[str] = None) -> List[Leak]:
                              redact(value), fp)
     has_head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "-q", "HEAD"],
                               capture_output=True).returncode == 0
+    by_id = {f.id: f for f in formats()}
     for fp, leak in found.items():
         leak.in_head = has_head and _head_has(repo, values[fp])
+        if verifier is not None:                     # opt-in: ask the provider (secret_verify.py)
+            from frame.sil.secret_verify import describe
+            state, host = verifier.check(by_id[leak.format], values[fp])
+            leak.validity, leak.validity_detail = state, describe(state, host)
     return [found[fp] for fp in sorted(found, key=order.__getitem__)]   # as git added them, oldest first
 
 
@@ -154,5 +161,5 @@ def format_text(leaks: List[Leak]) -> str:
     for x in leaks:
         where = "still in the current tree" if x.in_head else "not in the current tree, still in the history"
         lines.append(f"  {x.provider} {x.description}: {x.redacted} added in {x.commit[:12]} {x.path}:{x.line} "
-                     f"({where})")
+                     f"({where})" + (f"; {x.validity_detail}" if x.validity else ""))
     return "\n".join(lines)

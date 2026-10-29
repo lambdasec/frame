@@ -77,6 +77,9 @@ def create_parser() -> argparse.ArgumentParser:
                              help="A revision or range to read instead of every ref (e.g. main, origin/main..HEAD)")
     hist_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
                              help="Output format (default: text)")
+    hist_parser.add_argument("--verify", action="store_true",
+                             help="Ask each credential's provider whether it still works (a read-only request to "
+                                  "the provider's own API; off by default, see docs/usage.md#verifying-secrets)")
 
     # === DEPS command ===
     deps_parser = subparsers.add_parser(
@@ -522,7 +525,11 @@ def cmd_history(args) -> int:
     import json
     from frame.sil.secret_history import HistoryError, format_text, scan_history
     try:
-        leaks = scan_history(Path(args.target), args.rev_range)
+        verifier = None
+        if args.verify:
+            from frame.sil.secret_verify import Verifier
+            verifier = Verifier()
+        leaks = scan_history(Path(args.target), args.rev_range, verifier=verifier)
     except HistoryError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2

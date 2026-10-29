@@ -126,6 +126,23 @@ def test_secrets_walkthrough(tmp_path):
         assert line in out and line in readme, (line, out)
 
 
+@pytest.mark.skipif(os.environ.get("FRAME_SECRETS_LIVE") != "1",
+                    reason="live: set FRAME_SECRETS_LIVE=1 (sends the demo's fake tokens to their providers)")
+def test_secrets_verified_with_the_providers(tmp_path):
+    work = tmp_path / "secrets"
+    shutil.copytree(EXAMPLES / "secrets", work, ignore=shutil.ignore_patterns("demo"))
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    subprocess.run([sys.executable, "make_demo.py"], cwd=work, check=True, capture_output=True)
+    out = frame(work, env, "scan", "demo", "--verify-secrets")
+    readme = (work / "README.md").read_text()
+    for line in ["Verified: rejected by api.stripe.com (revoked or expired)",
+                 "Verified: rejected by api.github.com (revoked or expired)",
+                 "Verified: rejected by api.openai.com (revoked or expired)",
+                 "Verified: not verified (no check for this format)",
+                 "Scanned 3 files: 5 findings (1 critical, 4 low)"]:
+        assert line in out and line in readme, (line, out)
+
+
 def test_the_repository_holds_no_token_shaped_string():
     """The secrets example assembles its tokens at run time; nothing committed may hold one."""
     from frame.sil.secret_formats import find

@@ -250,6 +250,10 @@ class Vulnerability:
     source_evidence: str = ""
     # "test" when the file is test code by its program (frame/sil/test_code.py): a tag, not a filter.
     context: str = ""
+    # With --verify-secrets: what the provider said of a provider-format credential
+    # (valid / invalid / unverified, frame/sil/secret_verify.py) and in words.
+    validity: str = ""
+    validity_detail: str = ""
     # "hardening" for configuration that switches a protection off (debug mode, a cookie
     # declared insecure); empty for ordinary findings. Never mixed into taint results.
     category: str = ""
@@ -279,6 +283,9 @@ class Vulnerability:
             d["source_evidence"] = self.source_evidence
         if self.context:
             d["context"] = self.context
+        if self.validity:
+            d["validity"] = self.validity
+            d["validity_detail"] = self.validity_detail
         d["category"] = category_of(self.type.value, self.category)
         d["evidence"] = self.evidence
         if self.fingerprint:
@@ -395,6 +402,8 @@ class ScanResult:
                                     "evidence": vuln.evidence}
             if vuln.context:
                 result["properties"]["context"] = vuln.context
+            if vuln.validity:
+                result["properties"]["validity"] = vuln.validity
             if cwe:
                 result["properties"]["cwe"] = cwe
             if vuln.witness:
@@ -995,6 +1004,7 @@ class FrameScanner:
         disabled_rules: Optional[Iterable[str]] = None,
         packs: Optional[Iterable[str]] = None,
         use_builtin_packs: bool = True,
+        verify_secrets: bool = False,
     ):
         """
         Initialize the scanner.
@@ -1015,6 +1025,8 @@ class FrameScanner:
             packs: extra framework pack files / directories (see frame/sil/packs),
                 loaded on top of the built-in ones and the project's .frame/packs.
             use_builtin_packs: load the packs that ship with Frame.
+            verify_secrets: ask each provider-format credential's provider whether it works
+                (frame/sil/secret_verify.py; network, opt-in).
         """
         from frame.sil.packs import PackSet
         self._pack_paths = list(packs or [])
@@ -1039,6 +1051,10 @@ class FrameScanner:
         self._llm_config = llm_config
         self._llm_client = None
         self.library_mode = library_mode
+        self.secret_verifier: Any = None
+        if verify_secrets:
+            from frame.sil.secret_verify import Verifier
+            self.secret_verifier = Verifier()
 
         # Initialize frontend
         self.frontend = self._get_frontend(language)
@@ -2377,16 +2393,30 @@ class FrameScanner:
                 line = n.start_point[0] + 1
                 if hit and line not in seen_lines:
                     seen_lines.add(line)
-                    fmt, _ = hit
-                    out.append(Vulnerability(
+                    fmt, value = hit
+                    v = Vulnerability(
                         type=VulnType.HARDCODED_SECRET,
                         severity=self.SEVERITY_MAP.get(VulnType.HARDCODED_SECRET, Severity.HIGH),
                         location=filename, line=line, column=n.start_point[1],
                         description=f"Hardcoded {fmt.description} ({fmt.provider} format: {fmt.id})",
-                        procedure="<literal>", sink_type="hardcoded_secret", confidence=0.95, cwe_id="CWE-798"))
+                        procedure="<literal>", sink_type="hardcoded_secret", confidence=0.95, cwe_id="CWE-798")
+                    if self.secret_verifier is not None:
+                        self._apply_validity(v, *self.secret_verifier.check(fmt, value))
+                    out.append(v)
                 continue                                       # a string's parts are not separate literals
             stack.extend(n.children)
         return out
+
+    @staticmethod
+    def _apply_validity(v: Vulnerability, state: str, host: str) -> None:
+        """A credential its provider accepts is critical; one it rejects is low (still in the
+        code, and it may come back); no clear answer leaves the severity as it was."""
+        from frame.sil.secret_verify import INVALID, VALID, describe
+        v.validity, v.validity_detail = state, describe(state, host)
+        if state == VALID:
+            v.severity = Severity.CRITICAL
+        elif state == INVALID:
+            v.severity = Severity.LOW
 
     def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
         """Tier-2 structural scan over the SIL for hardcoded secrets (CWE-798/
