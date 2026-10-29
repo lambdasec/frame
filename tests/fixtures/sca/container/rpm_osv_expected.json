@@ -117,6 +117,86 @@
   "AZL-105345",
   "AZL-99090"
  ],
+ "Red Hat:enterprise_linux:10|bash|5.2.26-6.el10": [],
+ "Red Hat:enterprise_linux:10|expat|2.7.1-1.el10_0.3": [
+  "RHSA-2025:21030",
+  "RHSA-2026:22715",
+  "RHSA-2026:64810",
+  "RHSA-2026:74001"
+ ],
+ "Red Hat:enterprise_linux:10|glibc-common|2.39-46.el10_0": [
+  "RHSA-2026:1334",
+  "RHSA-2026:18139",
+  "RHSA-2026:19061",
+  "RHSA-2026:20594",
+  "RHSA-2026:33092",
+  "RHSA-2026:42694",
+  "RHSA-2026:76781",
+  "RHSA-2026:84753"
+ ],
+ "Red Hat:enterprise_linux:10|glibc|2.39-46.el10_0": [
+  "RHSA-2026:1334",
+  "RHSA-2026:18139",
+  "RHSA-2026:19061",
+  "RHSA-2026:20594",
+  "RHSA-2026:33092",
+  "RHSA-2026:42694",
+  "RHSA-2026:76781",
+  "RHSA-2026:84753"
+ ],
+ "Red Hat:enterprise_linux:10|libcurl-minimal|8.9.1-5.el10": [
+  "RHSA-2026:1825",
+  "RHSA-2026:55432",
+  "RHSA-2026:55450",
+  "RHSA-2026:69125",
+  "RHSA-2026:80512"
+ ],
+ "Red Hat:enterprise_linux:10|libxml2|2.12.5-9.el10_0": [
+  "RHSA-2026:28234",
+  "RHSA-2026:39304",
+  "RHSA-2026:60394",
+  "RHSA-2026:71586"
+ ],
+ "Red Hat:enterprise_linux:10|openssl-libs|1:3.2.2-16.el10_0.4": [
+  "RHSA-2025:21248",
+  "RHSA-2026:1472",
+  "RHSA-2026:19066",
+  "RHSA-2026:22314",
+  "RHSA-2026:25237",
+  "RHSA-2026:67154",
+  "RHSA-2026:76918"
+ ],
+ "Red Hat:enterprise_linux:10|python3-libs|3.12.9-2.el10_0.3": [
+  "RHSA-2025:23940",
+  "RHSA-2026:10711",
+  "RHSA-2026:1828",
+  "RHSA-2026:19064",
+  "RHSA-2026:39183",
+  "RHSA-2026:4713",
+  "RHSA-2026:58902",
+  "RHSA-2026:6256",
+  "RHSA-2026:77020"
+ ],
+ "Red Hat:enterprise_linux:10|python3|3.12.9-2.el10_0.3": [
+  "RHSA-2025:23940",
+  "RHSA-2026:10711",
+  "RHSA-2026:1828",
+  "RHSA-2026:19064",
+  "RHSA-2026:39183",
+  "RHSA-2026:4713",
+  "RHSA-2026:58902",
+  "RHSA-2026:6256",
+  "RHSA-2026:77020"
+ ],
+ "Red Hat:enterprise_linux:10|sqlite-libs|3.46.1-5.el10_0": [
+  "RHSA-2026:58927"
+ ],
+ "Red Hat:enterprise_linux:10|systemd-libs|257-9.el10_0.1": [
+  "RHSA-2026:13651",
+  "RHSA-2026:18153",
+  "RHSA-2026:19068"
+ ],
+ "Red Hat:enterprise_linux:10|zlib-ng-compat|2.2.3-1.el10": [],
  "Red Hat:enterprise_linux:9|bash|5.1.8-9.el9": [],
  "Red Hat:enterprise_linux:9|curl-minimal|7.76.1-29.el9_4.1": [
   "RHSA-2026:1350",

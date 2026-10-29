@@ -89,6 +89,8 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
         return f"Alpine:v{major}.{minor}"
     if rid == "rhel" and vid.split(".")[0] in ("8", "9"):
         return f"Red Hat:enterprise_linux:{vid.split('.')[0]}"     # RHEL and UBI: the release's streams merged
+    if rid == "rhel" and re.fullmatch(r"10(\.\d+)?", vid):
+        return "Red Hat:enterprise_linux:10"                       # RHEL 10: its minor releases merged
     if rid == "azurelinux" and re.fullmatch(r"\d+(\.\d+)*", vid):
         return f"Azure Linux:{vid.split('.')[0]}"     # Azure Linux 3.0 -> Azure Linux:3
     if rid == "mariner" and vid.split(".")[0] == "2":
@@ -320,7 +322,7 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
         return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
-                    "Linux, RHEL 8 / 9, Azure Linux 3, openSUSE Leap and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
+                    "Linux, RHEL 8 / 9 / 10, Azure Linux 3, openSUSE Leap and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))

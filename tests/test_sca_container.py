@@ -341,7 +341,7 @@ def test_the_rpm_database_reads_as_rpm_does(rootfs):
     assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0", "leap-15.6"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0", "leap-15.6", "ubi-10.0"])
 def test_rpm_matching_agrees_with_the_osv_api(rootfs):
     """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
     binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
@@ -375,6 +375,9 @@ def test_rpm_release_and_purl():
     assert ecosystem_of(os_release('ID="almalinux"\nVERSION_ID="8.9"')) == "AlmaLinux:8"
     assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="9.4"')) == "Red Hat:enterprise_linux:9"   # RHEL, UBI
     assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="7.9"')) is None              # streams disagree: not read
+    # RHEL 10 is filed per minor release; the minors are one update line, so one table
+    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="10.0"')) == "Red Hat:enterprise_linux:10"
+    assert ecosystem_of(os_release('ID="rhel"\nVERSION_ID="10.2"')) == "Red Hat:enterprise_linux:10"
     assert Package("Red Hat:enterprise_linux:9", "openssl-libs", "1:3.0.7-28.el9_4").purl == \
         "pkg:rpm/redhat/openssl-libs@3.0.7-28.el9_4?distro=rhel-9&epoch=1"
     assert Package("Rocky Linux:9", "openssl", "1:3.0.7-27.el9").purl == \
@@ -544,3 +547,18 @@ def test_an_ndb_database_is_read_without_rpm():
     bad = bytearray(db)
     bad[32:36] = b"XXXX"                                  # a corrupt slot is said, never read past
     assert "bad NDB slot" in read_rpmdb({"usr/lib/sysimage/rpm/Packages.db": bytes(bad)}, set())[2][0]
+
+
+def test_rhel_10_minor_releases_are_one_table():
+    """A fix filed under RHEL 10.2 is one a 10.0 system still lacks: the minors' records are one
+    table, so the last UBI 10.0 image (patched within 10.0, nothing in OSV's 10.0 answer) has the
+    advisories filed for 10.1 and 10.2 (the union of OSV's answers, in the rpm test above)."""
+    from frame.sca.osv import entries
+    rec = {"id": "RHSA-X", "affected": [
+        {"package": {"name": "glibc", "ecosystem": "Red Hat:enterprise_linux:10.2"},
+         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0:2.39-58.el10_2"}]}]},
+        {"package": {"name": "glibc", "ecosystem": "Red Hat:enterprise_linux_eus:10.0"},
+         "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0:2.39-46.el10_0.2"}]}]}]}
+    assert [e for e, _, _ in entries(rec, ["Red Hat"])] == ["Red Hat:enterprise_linux:10"]   # EUS is not read
+    expected = json.loads((F / "rpm_osv_expected.json").read_text())
+    assert expected["Red Hat:enterprise_linux:10|glibc|2.39-46.el10_0"]

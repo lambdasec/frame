@@ -125,6 +125,10 @@ ROLLING_DISTROS = ("Wolfi",)
 # are one table: `Red Hat:enterprise_linux:9`. RHEL 7's differ (its `ael7b` builds), and the
 # extended-support products (rhel_eus, aus, e4s, tus) are not images: neither is read.
 _RHEL_STREAM = re.compile(r"Red Hat:enterprise_linux:(8|9)::\w+")
+# RHEL 10 is named per minor release, with no stream (`Red Hat:enterprise_linux:10.0`, `10.2`). The
+# minors are one update line (10.0 -> 10.1 -> 10.2), and a fix filed under 10.2 is one a 10.0 system
+# still lacks, so the minors are one table (`Red Hat:enterprise_linux:10`), affected if any says so.
+_RHEL_MINOR = re.compile(r"Red Hat:enterprise_linux:(10)\.\d+")
 RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE")   # versions epoch:version-release
 
 
@@ -147,6 +151,7 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
             # (Debian:12, Ubuntu:22.04:LTS, Alpine:v3.18); Ubuntu Pro streams are not public images
             if eco == "Red Hat":
                 m = _RHEL_STREAM.fullmatch(full)
+                m = m or _RHEL_MINOR.fullmatch(full)
                 if m is None:
                     continue
                 full = f"Red Hat:enterprise_linux:{m.group(1)}"
