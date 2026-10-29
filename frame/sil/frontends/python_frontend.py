@@ -38,6 +38,7 @@ from frame.sil.frontends._python_types import infer_canonicals
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.principals import load as _principals
 from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
@@ -562,11 +563,7 @@ class PythonFrontend:
 
     # Header names that carry a caller's own credential rather than a
     # free-form request value. A read of one of these is PRINCIPAL-typed.
-    _AUTH_HEADER_NAMES = (
-        "authorization", "cookie", "x-api-key", "api-key", "apikey",
-        "x-auth-token", "x-access-token", "x-authentication-token",
-        "proxy-authorization", "authentication",
-    )
+    _AUTH_HEADER_NAMES = _principals().credential_headers          # specs/data/principals.toml
 
     @classmethod
     def _is_auth_credential_source(cls, func_name: str, arg_texts: List[str]) -> bool:

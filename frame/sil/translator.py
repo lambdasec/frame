@@ -41,6 +41,7 @@ from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
 from . import c_facts as _c_facts
 from .specs.weak_algorithms import load as _weak_algorithms
+from .specs.principals import load as _principals
 from .kinds import check as _kinds_check, load as _load_kinds
 
 _KINDS = _load_kinds()
@@ -5624,11 +5625,9 @@ class SILTranslator:
     # Authenticated-principal identifiers (an ownership binding when they scope a
     # resource-selection query). A catalog of framework principals, like the
     # source/sink name catalogs -- not a source-text pattern rule.
-    _PRINCIPAL_TOKENS = ("current_user", "get_jwt_identity", "current_identity",
-                         "g.user", "request.user")
+    _PRINCIPAL_TOKENS = _principals().principal_tokens             # specs/data/principals.toml
 
-    _AUTH_HEADER_NAMES = ("authorization", "cookie", "x-api-key", "x-auth-token",
-                          "x-access-token", "x-session-token")
+    _AUTH_HEADER_NAMES = _principals().credential_headers
 
     def _is_auth_credential_access(self, func_name, instr) -> bool:
         """True if a call reads an HTTP authentication credential header
