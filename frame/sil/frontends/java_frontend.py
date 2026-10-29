@@ -882,9 +882,6 @@ class JavaFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
-        # Mark annotated parameters as taint sources
-        self._process_param_annotations(node, params, proc)
-
         # Translate body
         body = node.child_by_field_name("body")
         if body:
@@ -951,50 +948,14 @@ class JavaFrontend:
                         annotations.append(self._get_text(mod))
         return annotations
 
-    # Spring MVC request-binding annotations. These live on the *parameter*
-    # (e.g. `login(@RequestParam String user)`), NOT on the method, so they mark
-    # the untrusted attack surface of a controller endpoint. Modern Spring apps
-    # (and most real-world Java web code) receive untrusted input this way rather
-    # than through raw Servlet `request.getParameter()` calls.
+    # Spring MVC request-binding annotations (on the parameter: `login(@RequestParam String user)`).
+    # The `java/spring` pack's entry points make such parameters attacker data; this list only
+    # feeds the name-based one-hop propagation into same-file helpers, which runs on the syntax tree
+    # before packs apply.
     _REQUEST_BINDING_ANNOTATIONS = (
         "RequestParam", "PathVariable", "RequestBody", "RequestHeader",
         "CookieValue", "ModelAttribute", "MatrixVariable", "RequestPart",
     )
-
-    def _process_param_annotations(
-        self,
-        method_node: TSNode,
-        params: List[Tuple[PVar, Typ]],
-        proc: Procedure
-    ) -> None:
-        """Mark Spring request-bound controller parameters as taint sources.
-
-        The binding annotation is attached to each formal parameter, so we read
-        every parameter's own annotations (not the method's) and taint the ones
-        bound to request data.
-        """
-        params_node = method_node.child_by_field_name("parameters")
-        if params_node is None:
-            return
-        by_name = {p.name: p for p, _ in params}
-        for child in params_node.children:
-            if child.type not in ("formal_parameter", "spread_parameter"):
-                continue
-            anns = self._get_annotations(child)
-            if not any(rb in a for a in anns for rb in self._REQUEST_BINDING_ANNOTATIONS):
-                continue
-            name_node = child.child_by_field_name("name")
-            if name_node is None:
-                continue
-            pv = by_name.get(self._get_text(name_node))
-            if pv is None:
-                continue
-            self._add_instr(TaintSource(
-                loc=self._get_location(child),
-                var=pv,
-                kind=TaintKind.USER_INPUT,
-                description="Spring request parameter (annotated)",
-            ))
 
     def _param_type_names(self, node: TSNode) -> List[Optional[str]]:
         """Static parameter types (overload resolution); a varargs parameter
