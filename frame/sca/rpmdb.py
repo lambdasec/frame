@@ -1,13 +1,15 @@
-"""Installed packages from an rpm database, for AlmaLinux and Rocky Linux images.
+"""Installed packages from an rpm database (AlmaLinux, Rocky Linux, RHEL, Azure Linux, openSUSE).
 
     var/lib/rpm/rpmdb.sqlite            rpm 4.16+ (EL 9): a `Packages` table of header blobs
     var/lib/rpm/Packages                Berkeley DB hash (EL 8 and older): header blobs on
                                         overflow pages, read as go-rpmdb (Trivy, Syft) reads them
     usr/lib/sysimage/rpm/rpmdb.sqlite   the newer location (Fedora, EL 10)
+    usr/lib/sysimage/rpm/Packages.db    NDB (SUSE, openSUSE): rpm's own format (lib/backend/ndb),
+                                        slots pointing at blobs, read as go-rpmdb reads it
 
 Each record is an rpm header (an index of tagged entries over a data store); the name, epoch,
 version, release and licence are read from it. The `gpg-pubkey` pseudo-packages rpm keeps for
-imported signing keys are not packages. NDB (`Packages.db`, SUSE) is not read.
+imported signing keys are not packages.
 """
 
 from __future__ import annotations
@@ -127,6 +129,35 @@ def _bdb_blobs(db: bytes) -> Iterator[bytes]:
                 yield blob[:tlen]
 
 
+# NDB (rpm's lib/backend/ndb/rpmpkg.c): a 32-byte header ("RpmP", version 0, generation, the
+# number of slot pages), then 16-byte slots ("Slot", package index, block offset, block count)
+# filling the slot pages, each pointing at a blob ("BlbS", package index, checksum, length) in
+# 16-byte blocks; the blob's body is the package's header. Little-endian.
+_NDB_HEAD, _NDB_SLOT, _NDB_BLOB = b"RpmP", b"Slot", b"BlbS"
+_NDB_PAGE, _NDB_BLOCK = 4096, 16
+
+
+def _ndb_blobs(db: bytes) -> Iterator[bytes]:
+    if db[:4] != _NDB_HEAD:
+        raise RpmDBError("not an NDB package database")
+    version, _generation, slot_pages = struct.unpack_from("<III", db, 4)
+    if version != 0:
+        raise RpmDBError(f"NDB version {version}")
+    slots = slot_pages * (_NDB_PAGE // 16) - 2           # the header takes the first two slots
+    for i in range(slots):
+        off = 32 + 16 * i
+        magic, index, block, count = struct.unpack_from("<4sIII", db, off)
+        if magic != _NDB_SLOT:
+            raise RpmDBError(f"bad NDB slot {i}")
+        if index == 0:                                     # a free slot
+            continue
+        start = block * _NDB_BLOCK
+        bmagic, bindex, _cksum, length = struct.unpack_from("<4sIII", db, start)
+        if bmagic != _NDB_BLOB or bindex != index or start + 16 + length > len(db):
+            raise RpmDBError(f"bad NDB blob for package {index}")
+        yield db[start + 16:start + 16 + length]
+
+
 def source_name(sourcerpm: str) -> str:
     """`openssl-3.0.7-27.el9.src.rpm` -> `openssl` (name-version-release.src.rpm)."""
     stem = sourcerpm[:-len(".src.rpm")] if sourcerpm.endswith(".src.rpm") else sourcerpm
@@ -138,13 +169,13 @@ def read_rpmdb(files: Dict[str, object], owned: Optional[set] = None
                ) -> Tuple[Optional[str], List[Tuple[str, str, str, str]], List[str]]:
     """(the database's path, [(name, source package name, epoch:version-release, licence)],
     warnings). With `owned`, every file a package installed is added to it (relative, no /)."""
-    for path in SQLITE_PATHS + BDB_PATHS:
+    for path in SQLITE_PATHS + BDB_PATHS + NDB_PATHS:
         db = files.get(path)
         if not isinstance(db, bytes):
             continue
         try:
             blobs = (_sqlite_blobs(db, files.get(path + "-wal")) if path.endswith(".sqlite")   # type: ignore[arg-type]
-                     else _bdb_blobs(db))
+                     else _ndb_blobs(db) if path.endswith(".db") else _bdb_blobs(db))
             out = []
             for blob in blobs:
                 h = parse_header(blob)
@@ -163,7 +194,4 @@ def read_rpmdb(files: Dict[str, object], owned: Optional[set] = None
             return path, out, []
         except (RpmDBError, struct.error, ValueError) as e:
             return path, [], [f"/{path}: {e}"]
-    ndb = next((p for p in NDB_PATHS if p in files), None)
-    if ndb:
-        return ndb, [], [f"/{ndb}: rpm's NDB format (SUSE) is not read"]
     return None, [], []

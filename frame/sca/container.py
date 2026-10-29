@@ -47,7 +47,7 @@ from frame.sca.rpmdb import RPMDB_PATHS, SQLITE_PATHS, read_rpmdb
 
 # how each rpm distribution's OSV records name packages: Rocky Linux by source package
 # (RLSA-2024:6783 names `openssl`), AlmaLinux by binary package (`openssl-libs`, `openssl-devel`)
-RPM_BY_SOURCE = ("Rocky Linux", "Azure Linux")
+RPM_BY_SOURCE = ("Rocky Linux", "Azure Linux", "openSUSE")
 APK_BY_PACKAGE = ("Wolfi",)
 
 OS_RELEASE = ("etc/os-release", "usr/lib/os-release")
@@ -93,6 +93,8 @@ def ecosystem_of(release: Dict[str, str]) -> Optional[str]:
         return f"Azure Linux:{vid.split('.')[0]}"     # Azure Linux 3.0 -> Azure Linux:3
     if rid == "mariner" and vid.split(".")[0] == "2":
         return "Azure Linux:2"                        # CBL-Mariner 2.0 is Azure Linux 2 in OSV
+    if rid == "opensuse-leap" and re.fullmatch(r"\d+\.\d+", vid):
+        return f"openSUSE:Leap {vid}"                # SLES (ID=sles) files advisories per module: not read
     if rid == "wolfi":
         return "Wolfi"                     # rolling; Chainguard's images say ID=wolfi too
     rpm_family = {"almalinux": "AlmaLinux", "rocky": "Rocky Linux"}.get(rid)
@@ -318,7 +320,7 @@ def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFi
                 or any(p in files for p in RPMDB_PATHS))
     if eco is None:
         return [], [f"{origin}: {pretty} has no advisories in Frame (Debian, Ubuntu, Alpine, AlmaLinux, Rocky "
-                    "Linux, RHEL 8 / 9, Azure Linux 3 and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
+                    "Linux, RHEL 8 / 9, Azure Linux 3, openSUSE Leap and Wolfi are read)" + ("" if has_pkgs else "; no package database found")]
     out: List[DependencyFile] = []
     if DPKG_STATUS in files:
         out.append(parse_dpkg(f"{origin}:/{DPKG_STATUS}", files[DPKG_STATUS], eco))

@@ -113,7 +113,8 @@ def _functions(affected: dict) -> List[dict]:
     return out
 
 
-DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat", "Wolfi", "Azure Linux")
+DISTRO_FAMILIES = ("Debian", "Ubuntu", "Alpine", "AlmaLinux", "Rocky Linux", "Red Hat", "Wolfi", "Azure Linux",
+                   "openSUSE")
 # A rolling distribution has no releases: its ecosystem is the family alone. Wolfi's records
 # (Chainguard's CGA advisories) name one package each, keep the CVE they track in `upstream`
 # (not `aliases`), and have no summary.
@@ -124,7 +125,7 @@ ROLLING_DISTROS = ("Wolfi",)
 # are one table: `Red Hat:enterprise_linux:9`. RHEL 7's differ (its `ael7b` builds), and the
 # extended-support products (rhel_eus, aus, e4s, tus) are not images: neither is read.
 _RHEL_STREAM = re.compile(r"Red Hat:enterprise_linux:(8|9)::\w+")
-RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux")   # versions epoch:version-release
+RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE")   # versions epoch:version-release
 
 
 def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:

@@ -341,7 +341,7 @@ def test_the_rpm_database_reads_as_rpm_does(rootfs):
     assert sorted([n, evr] for n, _, evr, _ in rpms) == RPM[rootfs]["rpm_qa"]
 
 
-@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0"])
+@pytest.mark.parametrize("rootfs", ["rocky-9.4", "alma-8.9", "ubi-9.4", "azl-3.0", "leap-15.6"])
 def test_rpm_matching_agrees_with_the_osv_api(rootfs):
     """Rocky Linux's records name source packages (RLSA-2024:6783: `openssl`), AlmaLinux's
     binary ones (`openssl-libs`): each package is named as its distribution's advisories name it,
@@ -362,8 +362,11 @@ def test_rpm_matching_agrees_with_the_osv_api(rootfs):
         assert set(expected[key]) <= found.get(key, set()), (key, sorted(set(expected[key]) - found.get(key, set())))
         assert bool(expected[key]) == bool(found.get(key)), key
     names = {p.name for p in files[0].packages.values()}
-    by_source = eco.split(":")[0] in ("Rocky Linux", "Azure Linux")
-    assert ("openssl" in names) == by_source and ("openssl-libs" in names) == (not by_source)
+    if eco.startswith("openSUSE"):                  # NDB; libopenssl3 is built from openssl-3
+        assert "openssl-3" in names and "libopenssl3" not in names
+    else:
+        by_source = eco.split(":")[0] in ("Rocky Linux", "Azure Linux")
+        assert ("openssl" in names) == by_source and ("openssl-libs" in names) == (not by_source)
 
 
 def test_rpm_release_and_purl():
@@ -517,3 +520,27 @@ def test_azure_linux_versions_are_compared_without_the_dist_tag():
     assert is_affected("Azure Linux:2", "2.35-10.cm2", {"ranges": [{"type": "ECOSYSTEM", "events": [
         {"introduced": "0"}, {"last_affected": "2.35-10"}]}]})
     assert Package("Azure Linux:3", "glibc", "2.38-21.azl3").purl == "pkg:rpm/azure-linux/glibc@2.38-21.azl3?distro=azure-linux-3"
+
+
+def test_suse_releases_and_purl():
+    """openSUSE Leap's advisories are per release (`openSUSE:Leap 15.6`) under source package
+    names. SLES files them per module (`SUSE:Linux Enterprise Module for Basesystem 15 SP6`),
+    which an rpm database does not record, so a SLES image is not matched (never guessed)."""
+    from frame.sca.model import Package
+    assert ecosystem_of(os_release('ID="opensuse-leap"\nVERSION_ID="15.6"')) == "openSUSE:Leap 15.6"
+    assert ecosystem_of(os_release('ID="sles"\nVERSION_ID="15.6"')) is None
+    assert Package("openSUSE:Leap 15.6", "openssl-3", "3.1.4-150600.5.21.1").purl == \
+        "pkg:rpm/opensuse/openssl-3@3.1.4-150600.5.21.1?distro=opensuse-leap-15.6"
+
+
+def test_an_ndb_database_is_read_without_rpm():
+    """SUSE's NDB `Packages.db` (rpm's lib/backend/ndb): the fixture was trimmed by rpm itself,
+    and the packages equal its `rpm -qa` (signing keys are not packages)."""
+    from frame.sca.rpmdb import read_rpmdb
+    db = (F / "leap-15.6" / "usr/lib/sysimage/rpm/Packages.db").read_bytes()
+    path, rows, warnings = read_rpmdb({"usr/lib/sysimage/rpm/Packages.db": db}, set())
+    assert not warnings and sorted([n, evr] for n, _, evr, _ in rows) == RPM["leap-15.6"]["rpm_qa"]
+    assert ("libopenssl3", "openssl-3") in {(n, s) for n, s, _, _ in rows}
+    bad = bytearray(db)
+    bad[32:36] = b"XXXX"                                  # a corrupt slot is said, never read past
+    assert "bad NDB slot" in read_rpmdb({"usr/lib/sysimage/rpm/Packages.db": bytes(bad)}, set())[2][0]

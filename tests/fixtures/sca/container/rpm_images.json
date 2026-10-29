@@ -115,6 +115,69 @@
    ]
   ]
  },
+ "leap-15.6": {
+  "ecosystem": "openSUSE:Leap 15.6",
+  "image": "registry.opensuse.org/opensuse/leap:15.6.6.34@sha256:ceb5eb8745b61dab6bdd8ea06c5296cdcc71ea5ffbc4ebbf2f4c6cd86baa7381",
+  "note": "NDB Packages.db; packages removed with rpm -e --justdb, then rpm --rebuilddb",
+  "rpm_qa": [
+   [
+    "bash",
+    "4.4-150400.27.3.2"
+   ],
+   [
+    "curl",
+    "8.6.0-150600.4.18.1"
+   ],
+   [
+    "glibc",
+    "2.38-150600.14.20.3"
+   ],
+   [
+    "libcurl4",
+    "8.6.0-150600.4.18.1"
+   ],
+   [
+    "libgcrypt20",
+    "1.10.3-150600.1.23"
+   ],
+   [
+    "libncurses6",
+    "6.1-150000.5.27.1"
+   ],
+   [
+    "libopenssl3",
+    "3.1.4-150600.5.21.1"
+   ],
+   [
+    "libsqlite3-0",
+    "3.44.0-150000.3.23.1"
+   ],
+   [
+    "libsystemd0",
+    "254.21-150600.4.21.1"
+   ],
+   [
+    "libxml2-2",
+    "2.10.3-150500.5.17.1"
+   ],
+   [
+    "libz1",
+    "1.2.13-150500.4.3.1"
+   ],
+   [
+    "libzstd1",
+    "1.5.5-150600.1.3"
+   ],
+   [
+    "ncurses-utils",
+    "6.1-150000.5.27.1"
+   ],
+   [
+    "openssl-3",
+    "3.1.4-150600.5.21.1"
+   ]
+  ]
+ },
  "rocky-9.4": {
   "ecosystem": "Rocky Linux:9",
   "rpm_qa": [
