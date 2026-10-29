@@ -38,6 +38,7 @@ from frame.sil.frontends._python_types import infer_canonicals
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.parser_hardening import load as _parser_hardening
 from frame.sil.specs.principals import load as _principals
 from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
@@ -2260,16 +2261,20 @@ class PythonFrontend:
             return name[:-len(".delay")]
         if name in self._HTML_RESPONSE_CALLS and self._has_non_html_content_type(call_node):
             return name + self._NON_HTML_RESPONSE_SUFFIX
-        if name.rsplit(".", 1)[-1] in self._LXML_PARSE_FUNCS and self._uses_hardened_xml_parser(call_node):
+        if name.rsplit(".", 1)[-1] in _parser_hardening().lxml_parse_functions and self._uses_hardened_xml_parser(call_node):
             return name + self._HARDENED_PARSER_SUFFIX
         return name
 
     # lxml parse functions take the parser as their second argument (or `parser=`). A parser
     # built with `resolve_entities=False` does not expand external entities: the call is renamed
     # so the XXE sink spec does not match it (the same device as the non-HTML response above).
-    _LXML_PARSE_FUNCS = frozenset({"fromstring", "XML", "parse", "fromstringlist", "iterparse"})
+    # The names are `specs/data/parser-hardening.toml` `[lxml]`.
     _HARDENED_PARSER_SUFFIX = "<hardened-parser>"
-    _SAFE_ENTITIES = re.compile(r"resolve_entities\s*=\s*(False|0)\b")
+
+    @staticmethod
+    def _safe_entities(text: str) -> bool:
+        kw = re.escape(_parser_hardening().lxml_safe_keyword)
+        return bool(re.search(kw + r"\s*=\s*(False|0)\b", text))
 
     def _uses_hardened_xml_parser(self, call_node: TSNode) -> bool:
         args = [c for c in (call_node.child_by_field_name("arguments").children
@@ -2286,7 +2291,7 @@ class PythonFrontend:
         if parser is None:
             return False
         if parser.type == "call":
-            return bool(self._SAFE_ENTITIES.search(self._get_text(parser)))
+            return self._safe_entities(self._get_text(parser))
         if parser.type != "identifier":
             return False
         var = self._get_text(parser)
@@ -2301,8 +2306,8 @@ class PythonFrontend:
                 left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
                 if left is not None and right is not None and left.type == "identifier" \
                         and self._get_text(left) == var:
-                    verdicts.append(right.type == "call" and "XMLParser" in self._get_text(right)
-                                    and bool(self._SAFE_ENTITIES.search(self._get_text(right))))
+                    verdicts.append(right.type == "call" and _parser_hardening().lxml_parser in self._get_text(right)
+                                    and self._safe_entities(self._get_text(right)))
             if n is scope or n.type not in ("function_definition", "class_definition"):
                 stack.extend(n.children)
         return bool(verdicts) and all(verdicts)

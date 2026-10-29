@@ -1,0 +1,42 @@
+# Configuration that makes a parser or deserializer safe (or unsafe) for untrusted input. Read by
+# frame/sil/specs/parser_hardening.py (strictly: an unknown or missing key is an error). Which code
+# reads which list: the translator's XXE tracking (`[xxe]`), the Python frontend's lxml parsers
+# (`[lxml]`), the Java frontend's deserializers (`[deserialization]`).
+
+# JAXP parser configuration that stops external-entity resolution (CWE-611), per the OWASP XXE
+# prevention cheat sheet. `setExpandEntityReferences(false)` and secure processing alone do not
+# stop XXE, so they are deliberately absent.
+[xxe]
+# setFeature(<URI ending in the key>, <value>) with this value hardens the parser.
+features = { "disallow-doctype-decl" = "true", "external-general-entities" = "false", "load-external-dtd" = "false" }
+# setAttribute / setProperty(<name ending in one of these>, "") forbids external DTD access.
+access_attributes = ["ACCESS_EXTERNAL_DTD", "accessExternalDTD"]
+# Factory methods whose product inherits the factory's configuration.
+parser_products = ["newDocumentBuilder", "newSAXParser", "getXMLReader", "newTransformer"]
+
+# lxml: the parse functions take the parser second (or as `parser=`); a parser built with
+# `<safe_keyword>=False` does not expand external entities.
+[lxml]
+parse_functions = ["fromstring", "XML", "parse", "fromstringlist", "iterparse"]
+parser = "XMLParser"
+safe_keyword = "resolve_entities"
+
+# Java deserializers.
+[deserialization]
+# Constructing one is the deserialization point: no safe mode for untrusted data.
+unsafe_types = ["ObjectInputStream", "XMLDecoder"]
+
+# An XStream with a type allow-list (any of these called on it, or given it) is hardened.
+[deserialization.xstream]
+type = "XStream"
+hardening = ["allowTypes", "allowTypesByWildcard", "allowTypesByRegExp", "addPermission", "setupDefaultSecurity"]
+
+# A Jackson ObjectMapper with default typing switched on deserializes attacker-named classes.
+[deserialization.jackson]
+type = "ObjectMapper"
+polymorphic = ["enableDefaultTyping", "activateDefaultTyping", "enableDefaultTypingAsProperty"]
+
+# A SnakeYAML Yaml built with one of these constructors creates no arbitrary objects.
+[deserialization.snakeyaml]
+type = "Yaml"
+safe_constructors = ["SafeConstructor"]

@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import annotation_marks_entry, entry_annotation_patterns, finish_program
 # ProcSpec is used for type hints in _lookup_spec
+from frame.sil.specs.parser_hardening import load as parser_hardening
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.specs.weak_algorithms import load as weak_algorithms
 from frame.sil.specs.java_specs import (
@@ -755,9 +756,6 @@ class JavaFrontend:
         self._emit_findings_proc(program, "<cookie-secure>",
                                  "__cookie_no_secure__", hits_secure)
 
-    # Deserializers that cannot safely handle untrusted data (unsafe by design).
-    _UNSAFE_DESERIALIZERS = {"ObjectInputStream", "XMLDecoder"}
-
     def _scan_deserialization(self, root: TSNode, program: Program) -> None:
         """Flag construction of an inherently-unsafe deserializer (CWE-502).
 
@@ -773,7 +771,7 @@ class JavaFrontend:
             if n.type == "object_creation_expression":
                 typ = n.child_by_field_name("type")
                 if typ is not None and \
-                        self._get_text(typ).split(".")[-1] in self._UNSAFE_DESERIALIZERS:
+                        self._get_text(typ).split(".")[-1] in parser_hardening().unsafe_deserializers:
                     hits.append(self._get_location(n))
             stack.extend(n.children)
         self._emit_findings_proc(program, "<unsafe-deserialize>",
@@ -1685,11 +1683,6 @@ class JavaFrontend:
 
     # -- configured receivers (hardened / polymorphic deserialisers) ----------------------------
 
-    _XSTREAM_HARDENING = frozenset({"allowTypes", "allowTypesByWildcard", "allowTypesByRegExp",
-                                    "addPermission", "setupDefaultSecurity"})
-    _JACKSON_POLYMORPHIC = frozenset({"enableDefaultTyping", "activateDefaultTyping",
-                                      "enableDefaultTypingAsProperty"})
-
     def _collect_receiver_facts(self, root: TSNode) -> Dict[str, set]:
         """Per variable name: the methods called on it and the text it was initialised with, over the
         whole file, so `xstream.allowTypes(...)` anywhere marks that XStream as configured."""
@@ -1713,7 +1706,7 @@ class JavaFrontend:
                     if obj is not None and obj.type in ("identifier", "field_access"):
                         facts.setdefault(self._get_text(obj).replace("this.", ""), set()).add("call:" + method)
                     # `XStream.setupDefaultSecurity(x)`: the argument is configured
-                    if method in self._XSTREAM_HARDENING:
+                    if method in parser_hardening().xstream_hardening:
                         for a in self._get_method_args(n):
                             if a.type == "identifier":
                                 facts.setdefault(self._get_text(a), set()).add("call:" + method)
@@ -1722,7 +1715,8 @@ class JavaFrontend:
 
     def _receiver_tag(self, call_node: Optional[TSNode]) -> Optional[str]:
         """`hardened` for an XStream with a type allow-list / a SnakeYAML `Yaml(new SafeConstructor())`,
-        `polymorphic` for a Jackson ObjectMapper with default typing; else None."""
+        `polymorphic` for a Jackson ObjectMapper with default typing; else None. The types and
+        methods are `specs/data/parser-hardening.toml` `[deserialization]`."""
         if call_node is None:
             return None
         obj = call_node.child_by_field_name("object")
@@ -1731,16 +1725,15 @@ class JavaFrontend:
         name = self._get_text(obj).replace("this.", "")
         facts = self._receiver_facts.get(name, set())
         typ = self._receiver_type(call_node)
-        if typ == "XStream" and any(f.startswith("call:") and f[5:] in self._XSTREAM_HARDENING for f in facts):
+        h = parser_hardening()
+        if typ == h.xstream_type and any(m in f for m in h.xstream_hardening for f in facts):
             return "hardened"
-        if typ == "XStream" and any("setupDefaultSecurity" in f or "allowTypes" in f or "addPermission" in f
-                                    for f in facts):
+        if typ == h.yaml_type and any(f.startswith("init:") and any(c in f for c in h.yaml_safe_constructors)
+                                      for f in facts):
             return "hardened"
-        if typ == "Yaml" and any(f.startswith("init:") and "SafeConstructor" in f for f in facts):
-            return "hardened"
-        if typ == "ObjectMapper" and any(
-                (f.startswith("call:") and f[5:] in self._JACKSON_POLYMORPHIC)
-                or (f.startswith("init:") and any(m in f for m in self._JACKSON_POLYMORPHIC)) for f in facts):
+        if typ == h.jackson_type and any(
+                (f.startswith("call:") and f[5:] in h.jackson_polymorphic)
+                or (f.startswith("init:") and any(m in f for m in h.jackson_polymorphic)) for f in facts):
             return "polymorphic"
         return None
 

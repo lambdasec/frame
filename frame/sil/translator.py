@@ -40,6 +40,7 @@ from .instructions import (
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
 from . import c_facts as _c_facts
+from .specs.parser_hardening import load as _parser_hardening
 from .specs.weak_algorithms import load as _weak_algorithms
 from .specs.principals import load as _principals
 from .kinds import check as _kinds_check, load as _load_kinds
@@ -5492,26 +5493,12 @@ class SILTranslator:
             state.asserted_safe[var] = [s.value for s in instr.for_sinks] if instr.for_sinks else []
         return state
 
-    # Parser configuration that stops external-entity resolution (CWE-611),
-    # per the OWASP XXE prevention cheat sheet: feature URI suffix -> the value
-    # that hardens; attributes/properties that, set to "", forbid external
-    # DTD access. `setExpandEntityReferences(false)` and secure-processing alone
-    # do not stop XXE, so they are deliberately absent.
-    _XXE_HARDENING_FEATURES = {
-        "disallow-doctype-decl": "true",
-        "external-general-entities": "false",
-        "load-external-dtd": "false",
-    }
-    _XXE_ACCESS_ATTRIBUTES = ("ACCESS_EXTERNAL_DTD", "accessExternalDTD")
-    # Factory methods whose product inherits the factory's configuration.
-    _XML_PARSER_PRODUCTS = frozenset({
-        "newDocumentBuilder", "newSAXParser", "getXMLReader", "newTransformer"})
-
     def _xml_hardening_receiver(self, func_name: str, args) -> Optional[str]:
         """The object a call hardens against XXE, if it does: a factory/parser
         `setFeature`, `setAttribute`/`setProperty` with a hardening value, or
         `setEntityResolver` with a non-null resolver (which then decides every
-        external entity, as Tomcat's WebdavResolver does)."""
+        external entity, as Tomcat's WebdavResolver does). The features and attributes are
+        `specs/data/parser-hardening.toml` `[xxe]`."""
         if '.' not in func_name:
             return None
         recv, method = func_name.rsplit('.', 1)
@@ -5520,10 +5507,10 @@ class SILTranslator:
             uri = vals[0].strip('"\'')
             return recv if any(
                 uri.endswith(feature) and vals[1].lower() == value
-                for feature, value in self._XXE_HARDENING_FEATURES.items()) else None
+                for feature, value in _parser_hardening().xxe_features.items()) else None
         if method in ("setAttribute", "setProperty") and len(vals) >= 2:
             name = vals[0].strip('"\'')
-            return recv if (name.endswith(self._XXE_ACCESS_ATTRIBUTES)
+            return recv if (name.endswith(_parser_hardening().xxe_access_attributes)
                             and vals[1] in ('""', "''")) else None
         if method == "setEntityResolver" and vals:
             return recv if vals[0].lower() not in ("null", "none") else None
@@ -5541,7 +5528,7 @@ class SILTranslator:
         ret_var = str(instr.ret[0])
         if '.' in func_name:
             recv, method = func_name.rsplit('.', 1)
-            if method in self._XML_PARSER_PRODUCTS and recv in state.secure_parsers:
+            if method in _parser_hardening().xml_parser_products and recv in state.secure_parsers:
                 state.secure_parsers.add(ret_var)
                 return
         callee = self._same_class_callee(func_name, len(instr.args), instr.arg_types)
