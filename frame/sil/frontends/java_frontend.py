@@ -50,7 +50,7 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
-from frame.sil.packs import finish_program
+from frame.sil.packs import annotation_marks_entry, entry_annotation_patterns, finish_program
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.specs.weak_algorithms import load as weak_algorithms
@@ -2507,15 +2507,21 @@ class JavaFrontend:
 
         self._add_instr(Return(loc=loc, value=value_exp))
 
-    _HANDLER_ANNOTATIONS = ("Mapping", "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path",
-                            "Get", "Post", "Put", "Delete", "Patch", "Head", "Options", "Trace")
     _HTML_LITERAL = re.compile(r"<\s*[A-Za-z/!]")
 
     def _is_web_handler(self) -> bool:
+        """A lambda registered as a route, or a method carrying an annotation some Java pack's
+        entry point names (`@GetMapping`, JAX-RS `@GET`, Micronaut `@Get`)."""
         proc = self._current_proc
-        return proc is not None and (
-            proc.name in self._handler_lambdas or any(
-                a.name.endswith("Mapping") or a.name in self._HANDLER_ANNOTATIONS for a in proc.annotations))
+        if proc is None:
+            return False
+        if proc.name in self._handler_lambdas:
+            return True
+        cached = getattr(self, "_entry_patterns", None)
+        if cached is None or cached[0] is not self.packs:
+            cached = self._entry_patterns = (self.packs, entry_annotation_patterns(self.packs, "java"))
+        patterns = cached[1]
+        return any(annotation_marks_entry(patterns, a.name, a.canonical) for a in proc.annotations)
 
     def _handler_return_sinks(self, expr: TSNode, loc: Location) -> List[Instr]:
         """Sinks that are the VALUE a web handler returns (no call to hang a spec on):

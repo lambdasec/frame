@@ -96,6 +96,23 @@ def test_handler_return_sinks():
     assert not cwes(safe)
 
 
+def test_handler_annotations_come_from_the_packs(tmp_path):
+    """What marks a handler is the entry points' annotations in the Java packs (built-in and the
+    project's own), not a list in the frontend."""
+    code = ('import acme.web.*;\nclass R {\n'
+            '  @Route("/a") public String a(String n) { return "<p>" + n + "</p>"; }\n}\n')
+    pack = tmp_path / "acme.toml"
+    pack.write_text('[pack]\nname = "acme-web"\nlanguage = "java"\ndetect = { imports = ["acme.web"] }\n'
+                    '[[entrypoint]]\nannotation = ["Route"]\nparams = "all"\n')
+    by_method = tmp_path / "by_method.toml"
+    by_method.write_text(pack.read_text().replace('annotation = ["Route"]', 'method = ["a"]'))
+
+    def found(p):
+        return {v.cwe_id for v in FrameScanner(language="java", packs=[str(p)]).scan(code, "R.java").vulnerabilities}
+    assert "CWE-79" in found(pack)
+    assert "CWE-79" not in found(by_method)          # `n` is tainted, but nothing says `a` is a handler
+
+
 def test_mybatis_dollar_substitution(tmp_path):
     (tmp_path / "M.java").write_text(
         "package p;\nimport org.apache.ibatis.annotations.*;\n"

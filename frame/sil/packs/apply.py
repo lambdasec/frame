@@ -397,6 +397,17 @@ def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: Impor
     return out
 
 
+def entry_annotation_patterns(packs: Optional[PackSet], language: str) -> Tuple[str, ...]:
+    """Every decorator/annotation pattern an entry point of a `language` pack names, whether or
+    not the pack is detected in a file: what marks a framework's handler methods."""
+    packs = packs if packs is not None else default_packs()
+    return tuple(d for p in packs.for_language(language) for e in p.entrypoints for d in e.decorator)
+
+
+def annotation_marks_entry(patterns: Sequence[str], name: str, canonical: Optional[str] = None) -> bool:
+    return _glob(patterns, name, canonical)
+
+
 def _entry_fields(e: Entrypoint, cls: ClassInfo) -> List[str]:
     if e.fields == "settable":
         return list(cls.settable_fields)
