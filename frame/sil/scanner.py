@@ -1119,13 +1119,6 @@ class FrameScanner:
                 if self.verbose:
                     print(f"[Scanner] Memory safety analysis found {len(memory_vulns)} vulnerabilities")
 
-            # Step 4c: Interprocedural taint analysis for C#
-            if self.language == 'csharp':
-                ipa_vulns = self._analyze_csharp_interprocedural(source_code, filename)
-                result.vulnerabilities.extend(ipa_vulns)
-                if self.verbose:
-                    print(f"[Scanner] C# interprocedural analysis found {len(ipa_vulns)} vulnerabilities")
-
             # Step 5: Deduplicate vulnerabilities
             result.vulnerabilities = self._deduplicate_vulnerabilities(result.vulnerabilities)
 
@@ -2506,106 +2499,6 @@ class FrameScanner:
         # To enable, uncomment the blocks below.
 
         return vulnerabilities
-
-    def _analyze_csharp_interprocedural(self, source_code: str, filename: str) -> List[Vulnerability]:
-        """
-        Analyze C# source code for cross-method taint vulnerabilities.
-
-        Uses interprocedural taint analysis to track user input from ASP.NET
-        controller actions through helper methods to dangerous sinks.
-
-        Args:
-            source_code: Source code string
-            filename: Filename for reporting
-
-        Returns:
-            List of taint flow vulnerabilities
-        """
-        try:
-            from frame.sil.analyzers.csharp_interprocedural_taint import analyze_csharp_taint
-        except ImportError:
-            if self.verbose:
-                print("[Scanner] C# interprocedural taint analyzer not available")
-            return []
-
-        vulnerabilities = []
-        seen_locations = set()
-
-        try:
-            ipa_vulns = analyze_csharp_taint(source_code, filename, verbose=self.verbose)
-
-            for vuln_info in ipa_vulns:
-                location = vuln_info.get('location')
-                if not location:
-                    continue
-
-                key = (location.line, vuln_info.get('sink_kind', ''))
-                if key in seen_locations:
-                    continue
-                seen_locations.add(key)
-
-                # Map sink kind to vulnerability type
-                sink_kind = vuln_info.get('sink_kind', '')
-                vuln_type = self._map_sink_to_vuln_type(sink_kind)
-                cwe_id = self._get_cwe_for_sink(sink_kind)
-
-                vuln = Vulnerability(
-                    type=vuln_type,
-                    severity=Severity.HIGH,
-                    location=filename,
-                    line=location.line,
-                    column=location.column,
-                    description=vuln_info.get('description', f"Cross-method taint flow to {sink_kind}"),
-                    procedure=vuln_info.get('caller', '<unknown>'),
-                    source_var=vuln_info.get('argument', ''),
-                    source_location=vuln_info.get('caller', ''),
-                    sink_type=sink_kind,
-                    data_flow=[vuln_info.get('caller', ''), vuln_info.get('callee', '')],
-                    witness=None,
-                    confidence=0.85,
-                    cwe_id=cwe_id,
-                )
-                vulnerabilities.append(vuln)
-
-        except Exception as e:
-            if self.verbose:
-                print(f"[Scanner] C# interprocedural analysis error: {e}")
-                import traceback
-                traceback.print_exc()
-
-        return vulnerabilities
-
-    def _map_sink_to_vuln_type(self, sink_kind: str) -> VulnType:
-        """Map sink kind to VulnType."""
-        sink_map = {
-            'sql_query': VulnType.SQL_INJECTION,
-            'command_exec': VulnType.COMMAND_INJECTION,
-            'file_path': VulnType.PATH_TRAVERSAL,
-            'deserialization': VulnType.DESERIALIZATION,
-            'xxe': VulnType.XXE,
-            'ssrf': VulnType.SSRF,
-            'code_injection': VulnType.CODE_INJECTION,
-            'ldap_query': VulnType.LDAP_INJECTION,
-            'xpath_query': VulnType.XPATH_INJECTION,
-            'log_injection': VulnType.LOG_INJECTION,
-        }
-        return sink_map.get(sink_kind, VulnType.TAINT_FLOW)
-
-    def _get_cwe_for_sink(self, sink_kind: str) -> str:
-        """Get CWE ID for sink kind."""
-        cwe_map = {
-            'sql_query': 'CWE-89',
-            'command_exec': 'CWE-78',
-            'file_path': 'CWE-22',
-            'deserialization': 'CWE-502',
-            'xxe': 'CWE-611',
-            'ssrf': 'CWE-918',
-            'code_injection': 'CWE-94',
-            'ldap_query': 'CWE-90',
-            'xpath_query': 'CWE-643',
-            'log_injection': 'CWE-117',
-        }
-        return cwe_map.get(sink_kind, 'CWE-20')
 
 
 def scan_code(source_code: str, language: str = "python", filename: str = "<unknown>") -> ScanResult:
