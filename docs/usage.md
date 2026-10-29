@@ -14,7 +14,7 @@ Text output lists the files with findings and a summary line; `-f json` and `-f 
 
 Every finding has a `category` (`taint`, `memory`, `crypto`, `secret`, `access-control`, `hardening`, `dependency`, `ai`) and an `evidence` level saying how strongly it is proven, weakest first: `matched` (a usage or pattern), `llm-detected`, `llm-verified`, `data-flow` (a source-to-sink path), `solver-verified` (the solver proved the path reachable), `exploit-confirmed`. In SARIF both are result properties. A finding in test code has `context: "test"` (`(test code)` in the text): the file imports a test framework, declares tests the way its framework finds them (`[Fact]`, a JUnit `@Test`, an asserting pytest `test_*` function) or registers callbacks with `describe` / `it` / `test`, whatever the file is called. It is a tag, not a filter; only a credential found by its variable's name drops to `low` there.
 
-`frame inventory [dir]` reports what a repository contains without analysing it: languages, the frameworks Frame has packs for, dependency manifests and lockfiles, infrastructure-as-code, Dockerfiles, LLM SDKs and MCP servers (`-f json` for every path).
+`frame inventory [dir]` reports what a repository contains without analysing it: languages, the frameworks Frame has packs for, dependency manifests and lockfiles, infrastructure-as-code, Dockerfiles, LLM SDKs and MCP servers, and each MCP tool with what its handler can do (shell, code execution, files, network, database, deserialization) (`-f json` for every path).
 
 `frame deps` covers dependencies: the graph from every lockfile and manifest, known vulnerabilities and whether your code reaches them, upgrade plans that it can apply and verify, licence policy, SBOM and VEX. `frame scan . --sca` adds vulnerable dependencies to the source scan, with attacker data reaching a vulnerable function reported at the call site. Both are covered step by step in [dependencies.md](dependencies.md).
 
@@ -348,7 +348,7 @@ Provider credentials anywhere in the git history: every line each commit added (
 
 ### `frame inventory [dir]`
 
-Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).
+Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything. Each MCP tool is listed with its capabilities: the kinds of sink its handler and the file's functions it calls reach, whatever the arguments (`ai.mcp_tools` in JSON), so a tool that can run a shell or write files is visible before anyone reads its code: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).
 
 ### `frame packs list | check`
 

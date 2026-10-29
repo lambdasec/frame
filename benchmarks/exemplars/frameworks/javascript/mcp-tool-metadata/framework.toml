@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/mcp-servers"]
+requires_pack = true
+description = "What an MCP server (TypeScript SDK) tells the model about its tools: a parameter description hiding an instruction in Unicode tag characters, and a description from the environment (CWE-1427); the safe twin's metadata is plain and fixed"

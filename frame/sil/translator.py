@@ -96,6 +96,8 @@ class VulnType(Enum):
     CODE_INJECTION = "code_injection"           # CWE-94
     TEMPLATE_INJECTION = "template_injection"   # CWE-1336
     PROMPT_INJECTION = "prompt_injection"       # CWE-1427
+    MCP_HIDDEN_INSTRUCTIONS = "mcp_hidden_instructions"      # CWE-1427: invisible text in MCP tool metadata
+    MCP_DYNAMIC_TOOL_METADATA = "mcp_dynamic_tool_metadata"  # CWE-1427: a tool description set at run time
     NOSQL_INJECTION = "nosql_injection"         # CWE-943
     XXE = "xxe"                                 # CWE-611
     REGEX_DOS = "regex_dos"                     # CWE-1333

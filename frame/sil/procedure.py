@@ -420,6 +420,8 @@ class Procedure:
     # The same, with the argument position: ("withName", 1) for `withName(req, (name) => ...)`.
     # Lets a call to a callback PARAMETER inside `withName` resolve to the function passed in.
     passed_as: List[Tuple[str, int]] = field(default_factory=list)
+    # Pack entry points this procedure is (`"mcp-servers:tool"`), set by packs.apply.
+    entry_kinds: List[str] = field(default_factory=list)
     # Python: the body has an `assert` statement of its own (pytest's tests; frame/sil/test_code.py).
     asserts: bool = False
     parent: Optional[str] = None

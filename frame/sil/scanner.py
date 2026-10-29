@@ -775,6 +775,8 @@ class FrameScanner:
         VulnType.CODE_INJECTION: Severity.CRITICAL,
         VulnType.TEMPLATE_INJECTION: Severity.HIGH,
         VulnType.PROMPT_INJECTION: Severity.MEDIUM,
+        VulnType.MCP_HIDDEN_INSTRUCTIONS: Severity.HIGH,
+        VulnType.MCP_DYNAMIC_TOOL_METADATA: Severity.MEDIUM,
         VulnType.NOSQL_INJECTION: Severity.HIGH,
         VulnType.XXE: Severity.HIGH,
         VulnType.REGEX_DOS: Severity.MEDIUM,
@@ -903,6 +905,8 @@ class FrameScanner:
         VulnType.CODE_INJECTION: "CWE-94",
         VulnType.TEMPLATE_INJECTION: "CWE-1336",
         VulnType.PROMPT_INJECTION: "CWE-1427",
+        VulnType.MCP_HIDDEN_INSTRUCTIONS: "CWE-1427",
+        VulnType.MCP_DYNAMIC_TOOL_METADATA: "CWE-1427",
         VulnType.NOSQL_INJECTION: "CWE-943",
         VulnType.XXE: "CWE-611",
         VulnType.REGEX_DOS: "CWE-1333",
@@ -1227,6 +1231,7 @@ class FrameScanner:
             # Step 3c: hardening -- explicit off switches (debug mode, insecure cookie flags).
             hardening_vulns = self._scan_hardening(source_code, filename, program)
             result.vulnerabilities.extend(hardening_vulns)
+            result.vulnerabilities.extend(self._scan_mcp_metadata(source_code, filename, program))
 
             # (Regex pattern layer removed -- the SL taint engine, Tier-2
             #  literal scanner, and memory analyzer are the only detectors.)
@@ -2355,6 +2360,28 @@ class FrameScanner:
                 type=vt, severity=self.SEVERITY_MAP.get(vt, Severity.MEDIUM), location=filename,
                 line=f.line, column=f.column, description=f.description, procedure="<module>",
                 sink_type=f.kind, confidence=0.95, cwe_id=self.CWE_MAP.get(vt), category=hardening.CATEGORY))
+        return out
+
+    def _scan_mcp_metadata(self, source_code: str, filename: str, program: Program) -> List[Vulnerability]:
+        """What an MCP server tells the model about its tools: hidden characters, and descriptions
+        computed at run time (`mcp_metadata.py`). Only where the mcp-servers pack applies."""
+        lang = "python" if self.language == "python" else self.language
+        if lang not in ("python", "javascript", "typescript") or \
+                not any(p.endswith("/mcp-servers") for p in program.packs_applied):
+            return []
+        from frame.sil import mcp_metadata
+        try:
+            root = self._get_frontend(lang).parser.parse(source_code.encode("utf-8")).root_node
+            found = (mcp_metadata.scan_python if lang == "python" else mcp_metadata.scan_javascript)(root)
+        except Exception:
+            return []
+        out = []
+        for f in found:
+            vt = VulnType.MCP_HIDDEN_INSTRUCTIONS if f.kind == mcp_metadata.HIDDEN else VulnType.MCP_DYNAMIC_TOOL_METADATA
+            out.append(Vulnerability(
+                type=vt, severity=self.SEVERITY_MAP.get(vt, Severity.MEDIUM), location=filename, line=f.line,
+                column=f.column, description=f.description, procedure=f.tool, sink_type="mcp_tool_metadata",
+                confidence=0.95, cwe_id=self.CWE_MAP.get(vt), category="ai"))
         return out
 
     _STRING_NODES = frozenset({"string", "string_literal", "verbatim_string_literal", "raw_string_literal",

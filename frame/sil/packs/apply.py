@@ -413,6 +413,8 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
         for pack, e in entries:
             if not _entry_matches(e, proc, program):
                 continue
+            if f"{pack.name}:{e.id}" not in proc.entry_kinds:
+                proc.entry_kinds.append(f"{pack.name}:{e.id}")
             for n in _entry_params(e, proc, program, table):
                 tainted.setdefault(n, (pack, e))
             if e.fields and cls is not None:

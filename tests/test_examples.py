@@ -166,13 +166,18 @@ def test_ai_apps_walkthrough():
                          ("python/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)"),
                          ("javascript/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)"),
                          ("python/llm-context/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)"),
-                         ("javascript/llm-context/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)")]:
+                         ("javascript/llm-context/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)"),
+                         ("python/mcp-tool-metadata/vulnerable", "Scanned 1 file: 2 findings (1 high, 1 medium)"),
+                         ("javascript/mcp-tool-metadata/vulnerable", "Scanned 1 file: 2 findings (1 high, 1 medium)")]:
         out = frame(frameworks, env, "scan", app, "--root", ".")
         assert summary in out and summary in readme, (app, out[-600:])
         for line in [ln.strip() for ln in out.splitlines() if ln.strip().startswith(("Location:", "Description:"))]:
             assert line.replace(str(frameworks) + "/", "") in readme or "Description" in line, line
         safe = frame(frameworks, env, "scan", app.replace("vulnerable", "safe"), "--root", ".")
         assert "0 findings" in safe, (app, safe[-400:])
+    out = frame(frameworks, env, "inventory", "python/mcp-servers")
+    for line in ["tool disk_usage (vulnerable/server.py:11): shell", "tool find_ticket (vulnerable/server.py:16): database"]:
+        assert line in out and line in readme, (line, out)
 
 
 def test_container_image_walkthrough(tmp_path):

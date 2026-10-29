@@ -16,7 +16,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS, FrameScanner, language_for_file
 
@@ -63,6 +63,8 @@ class Inventory:
     containers: List[Dict[str, str]] = field(default_factory=list)   # {path, kind}
     llm_sdks: Dict[str, List[str]] = field(default_factory=dict)     # sdk -> files
     mcp_servers: List[str] = field(default_factory=list)             # files
+    # each MCP tool a server defines and what its handler can do (mcp_metadata.capabilities)
+    mcp_tools: List[Dict[str, Any]] = field(default_factory=list)
     truncated: bool = False                                          # frameworks/AI read a prefix only
 
     @property
@@ -73,7 +75,7 @@ class Inventory:
         return {"root": self.root, "languages": self.languages, "frameworks": self.frameworks,
                 "ecosystems": self.ecosystems, "manifests": self.manifests, "iac": self.iac,
                 "containers": self.containers,
-                "ai": {"llm_sdks": self.llm_sdks, "mcp_servers": self.mcp_servers},
+                "ai": {"llm_sdks": self.llm_sdks, "mcp_servers": self.mcp_servers, "mcp_tools": self.mcp_tools},
                 "truncated": self.truncated}
 
 
@@ -192,11 +194,30 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
                     llm.setdefault(sdk, set()).add(rel)
                 if _prefix_hit(module, MCP_SERVER_SDKS):
                     mcp.add(rel)
+            if any(p.endswith("/mcp-servers") for p in getattr(program, "packs_applied", []) or []):
+                inv.mcp_tools.extend(_mcp_tools(scanner, program, text, lang, rel))
         inv.llm_sdks = {k: sorted(v) for k, v in sorted(llm.items())}
         inv.mcp_servers = sorted(mcp)
     inv.languages = dict(sorted(inv.languages.items()))
     inv.frameworks = dict(sorted(inv.frameworks.items()))
     return inv
+
+
+def _mcp_tools(scanner, program, text: str, lang: str, rel: str) -> List[Dict[str, Any]]:
+    """The file's MCP tools (pack entry points `mcp-servers:tool`) and their capabilities."""
+    from frame.sil.mcp_metadata import capabilities, tool_names
+    try:
+        names = tool_names(scanner._get_frontend(lang).parser.parse(text.encode("utf-8")).root_node, lang)
+    except Exception:
+        names = {}
+    out = []
+    for proc in program.procedures.values():
+        if "mcp-servers:tool" not in proc.entry_kinds:
+            continue
+        line = proc.loc.line if proc.loc else 0
+        out.append({"path": rel, "tool": names.get(line, proc.name), "line": line,
+                    "capabilities": capabilities(program, proc)})
+    return sorted(out, key=lambda t: t["line"])
 
 
 def _few(items: List[str], n: int = 4) -> str:
@@ -219,6 +240,9 @@ def format_text(inv: Inventory) -> str:
     lines.append("Containers:  " + (_few([m["path"] for m in inv.containers]) or "none"))
     lines.append("LLM SDKs:    " + (", ".join(f"{k} ({len(v)} files)" for k, v in inv.llm_sdks.items()) or "none"))
     lines.append("MCP servers: " + (_few(inv.mcp_servers) or "none"))
+    for t in inv.mcp_tools:
+        lines.append(f"  tool {t['tool']} ({t['path']}:{t['line']}): " + (", ".join(t["capabilities"]) or "no shell, "
+                     "code, file, network or database access found"))
     if inv.truncated:
         lines.append("(frameworks and AI imports read from the first files only; raise --file-limit)")
     return "\n".join(lines)
