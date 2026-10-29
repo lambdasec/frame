@@ -1083,6 +1083,108 @@ sink_args = [0, 1, 2]
 description = "fchown (CWE-732)"
 
 [[spec]]
+name = "SetComputerNameA"
+is_sink = "system_config"
+sink_args = [0]
+description = "SetComputerNameA(lpComputerName): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetComputerNameW"
+is_sink = "system_config"
+sink_args = [0]
+description = "SetComputerNameW(lpComputerName): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetComputerNameExA"
+is_sink = "system_config"
+sink_args = [1]
+description = "SetComputerNameExA(NameType, lpBuffer): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetComputerNameExW"
+is_sink = "system_config"
+sink_args = [1]
+description = "SetComputerNameExW(NameType, lpBuffer): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetEnvironmentVariableA"
+is_sink = "system_config"
+sink_args = [0, 1]
+description = "SetEnvironmentVariableA(lpName, lpValue): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetEnvironmentVariableW"
+is_sink = "system_config"
+sink_args = [0, 1]
+description = "SetEnvironmentVariableW(lpName, lpValue): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetCurrentDirectoryA"
+is_sink = "system_config"
+sink_args = [0]
+description = "SetCurrentDirectoryA(lpPathName): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetCurrentDirectoryW"
+is_sink = "system_config"
+sink_args = [0]
+description = "SetCurrentDirectoryW(lpPathName): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetValueA"
+is_sink = "system_config"
+sink_args = [1, 3]
+description = "RegSetValueA(hKey, lpSubKey, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetValueW"
+is_sink = "system_config"
+sink_args = [1, 3]
+description = "RegSetValueW(hKey, lpSubKey, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetValueExA"
+is_sink = "system_config"
+sink_args = [1, 4]
+description = "RegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetValueExW"
+is_sink = "system_config"
+sink_args = [1, 4]
+description = "RegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetKeyValueA"
+is_sink = "system_config"
+sink_args = [1, 2, 4]
+description = "RegSetKeyValueA(hKey, lpSubKey, lpValueName, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "RegSetKeyValueW"
+is_sink = "system_config"
+sink_args = [1, 2, 4]
+description = "RegSetKeyValueW(hKey, lpSubKey, lpValueName, dwType, lpData, cbData): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetLocaleInfoA"
+is_sink = "system_config"
+sink_args = [2]
+description = "SetLocaleInfoA(Locale, LCType, lpLCData): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetLocaleInfoW"
+is_sink = "system_config"
+sink_args = [2]
+description = "SetLocaleInfoW(Locale, LCType, lpLCData): a system setting (CWE-15)"
+
+[[spec]]
+name = "SetTimeZoneInformation"
+is_sink = "system_config"
+sink_args = [0]
+description = "SetTimeZoneInformation(lpTimeZoneInformation): a system setting (CWE-15)"
+
+[[spec]]
 name = "chroot"
 is_sink = "privilege"
 return_must_be_checked = true

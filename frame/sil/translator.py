@@ -1478,6 +1478,7 @@ class SILTranslator:
         self._literal_tables: Set[str] = set()
         self._null_candidates = []
         self._uninit_candidates = []
+        self._overflow_candidates = []
         self._branch_node_clean = False
 
         # Initialize state with parameters potentially tainted
@@ -1637,7 +1638,7 @@ class SILTranslator:
         # (_path_fact_fixpoint): the walk above does not re-analyse a node when
         # only its path condition changes, so a verdict taken during the walk
         # could rest on one branch's facts alone.
-        if self._null_candidates or self._uninit_candidates:
+        if self._null_candidates or self._uninit_candidates or self._overflow_candidates:
             checks.extend(self._confirm_path_candidates(proc))
 
         # (A handler with another finding used to lose its XSS checks here so
@@ -3309,6 +3310,8 @@ class SILTranslator:
         target = self._get_var_name(instr.id)
         source_vars = self._get_exp_vars(instr.exp)
 
+        if self._is_c_lang:
+            self._note_overflow_candidates(instr, state, proc_name)
         if self._is_c_lang and _PLAIN_LOCAL.match(target):
             if _LITERAL_BRACE_LIST.match(str(instr.exp).strip()):
                 self._literal_tables.add(target)
@@ -7079,9 +7082,120 @@ class SILTranslator:
                                                for v in g.free_vars())]
             out.append(check)
 
+        for pos, check, formula, bounds, limit in self._overflow_candidates:
+            key = ("overflow", pos, str(formula))
+            if pos is None or key in seen:
+                continue
+            seen.add(key)
+            pc = facts_at(pos)
+            if pc is None or not self._exceeds_type_range(formula, bounds, limit, pc):
+                continue
+            check.path_condition = [g for g in pc if g.free_vars() & formula.free_vars()]
+            out.append(check)
+
         self._null_candidates = []
         self._uninit_candidates = []
+        self._overflow_candidates = []
         return out
+
+    # ---- CWE-190: attacker data driving integer arithmetic past its type's maximum -----------
+    #
+    # C/C++ only. A `*`, `+` or constant `<<` whose operands are plain variables of a known
+    # declared integer type or literals, with attacker data in one of them, is a candidate; it is
+    # reported when the path facts, each operand's range and `result > MAX` (MAX of the type the
+    # usual arithmetic conversions give) are satisfiable together. A guard that keeps the result
+    # in range (`if (d < 1000)` before `d * 2`) makes that unsatisfiable. A type whose width
+    # depends on the platform (`long`, `size_t`) is not guessed: such arithmetic is not checked.
+
+    _INT_TYPES = {
+        "char": (8, True), "signed char": (8, True), "int8_t": (8, True),
+        "unsigned char": (8, False), "uint8_t": (8, False),
+        "short": (16, True), "short int": (16, True), "signed short": (16, True), "int16_t": (16, True),
+        "unsigned short": (16, False), "unsigned short int": (16, False), "uint16_t": (16, False),
+        "int": (32, True), "signed": (32, True), "signed int": (32, True), "int32_t": (32, True),
+        "unsigned": (32, False), "unsigned int": (32, False), "uint32_t": (32, False),
+        "long long": (64, True), "long long int": (64, True), "signed long long": (64, True),
+        "int64_t": (64, True),
+        "unsigned long long": (64, False), "unsigned long long int": (64, False), "uint64_t": (64, False),
+    }
+
+    @staticmethod
+    def _int_range(bits: int, signed: bool) -> Tuple[int, int]:
+        return (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
+
+    def _operand_int_type(self, exp: Exp) -> Optional[Tuple[int, bool]]:
+        """(bits, signed) after integer promotion, or None when not known."""
+        if isinstance(exp, ExpConst) and isinstance(exp.value, int) and not isinstance(exp.value, bool):
+            return (32, True) if -(1 << 31) <= exp.value < (1 << 31) else None
+        if isinstance(exp, ExpVar):
+            declared = (getattr(self._cur_proc, "scalar_types", None) or {}).get(self._get_var_name(exp.var))
+            t = self._INT_TYPES.get(declared or "")
+            if t is None:
+                return None
+            return (32, True) if t[0] < 32 else t
+        return None
+
+    def _attacker_tainted(self, var: str, state: SymbolicState) -> bool:
+        info = state.get_taint_info(var)
+        return (state.is_tainted(var) and info is not None
+                and info.source_kind not in (TaintKind.WEAK_RANDOM,)
+                and not info.source_var.startswith(self._SEED_PREFIX))
+
+    def _note_overflow_candidates(self, instr: Assign, state: SymbolicState, proc_name: str) -> None:
+        stack = [instr.exp]
+        while stack:
+            e = stack.pop()
+            if isinstance(e, ExpCast):
+                stack.append(e.exp)
+                continue
+            if not isinstance(e, ExpBinOp):
+                continue
+            stack.extend((e.left, e.right))
+            left = e.left.exp if isinstance(e.left, ExpCast) else e.left
+            right = e.right.exp if isinstance(e.right, ExpCast) else e.right
+            if e.op not in ("*", "+", "<<"):
+                continue
+            lt, rt = self._operand_int_type(left), self._operand_int_type(right)
+            if lt is None or rt is None:
+                continue
+            tainted = [self._get_var_name(x.var) for x in (left, right)
+                       if isinstance(x, ExpVar) and self._attacker_tainted(self._get_var_name(x.var), state)]
+            if not tainted:
+                continue
+            if e.op == "<<":
+                if not (isinstance(right, ExpConst) and isinstance(right.value, int) and 0 <= right.value < 64):
+                    continue
+                formula = ArithExpr("*", self._exp_to_formula(left), Const(1 << right.value))
+                bits, signed = lt
+            else:
+                formula = self._exp_to_formula(ExpBinOp(e.op, left, right))
+                bits = max(lt[0], rt[0])
+                signed = all(t[1] for t in (lt, rt) if t[0] == bits)
+            if not isinstance(formula, ArithExpr):
+                continue
+            bounds = []
+            for x in (left, right):
+                if isinstance(x, ExpVar):
+                    declared = self._cur_proc.scalar_types.get(self._get_var_name(x.var), "")
+                    lo, hi = self._int_range(*self._INT_TYPES[declared])
+                    v = Var(self._get_var_name(x.var))
+                    bounds += [Ge(v, Const(lo)), Le(v, Const(hi))]
+            limit = self._int_range(bits, signed)[1]
+            check = self._create_taint_check(instr, state, proc_name, tainted[0], SinkKind.INTEGER_OVERFLOW)
+            check.description = (f"Integer overflow: attacker data in '{tainted[0]}' can take "
+                                 f"{e.op} past the maximum of its type ({limit})")
+            self._overflow_candidates.append(
+                (getattr(self, "_cur_pos", None), check, formula, bounds, limit))
+
+    def _exceeds_type_range(self, formula, bounds, limit: int, pc: List[Formula]) -> bool:
+        """Is `formula > limit` possible on this path? Undecided (solver error or timeout) keeps
+        the candidate, as `_maybe_uninitialized` does."""
+        key = (str(formula), limit, tuple(str(g) for g in pc))
+        cache = self.__dict__.setdefault("_overflow_query_cache", {})
+        if key not in cache:
+            cache[key] = self._feasibility_sat(
+                self._build_conjunction(list(pc) + list(bounds) + [Gt(formula, Const(limit))]))
+        return cache[key]
 
     def _maybe_uninitialized(self, var: str, pc: List[Formula]) -> bool:
         """Is there a feasible path here on which `var` has no value yet? The

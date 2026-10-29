@@ -371,6 +371,7 @@ class CFrontend:
         )
 
         proc.param_types = param_types
+        proc.scalar_types = dict(getattr(self, "_last_scalar_param_types", {}))
         proc.has_parse_errors = bool(node.has_error)
         fdecl = declarator
         while fdecl is not None and fdecl.type != "function_declarator":
@@ -476,6 +477,7 @@ class CFrontend:
         of each is left in `self._last_param_types` (name -> `httplib::Request`)."""
         params: List[Tuple[PVar, Typ]] = []
         self._last_param_types = {}
+        self._last_scalar_param_types = {}
         if not params_node:
             return params
         for child in params_node.children:
@@ -496,6 +498,8 @@ class CFrontend:
                     params.append((PVar(param_name), param_type))
                     if type_node is not None:
                         self._last_param_types[param_name] = self._get_text(type_node)
+                        if decl_node.type == "identifier":
+                            self._last_scalar_param_types[param_name] = self._get_text(type_node)
 
         return params
 
@@ -633,6 +637,7 @@ class CFrontend:
                 self._record_array_from_string_init(decl, child.child_by_field_name("value"))
                 self._record_local(self._extract_identifier(decl))
                 self._note_var_type(self._extract_identifier(decl), type_node)
+                self._note_scalar_type(decl, type_node)
                 self._translate_init_declarator(child, type_node)
             elif child.type == "function_declarator" and self._translate_vexing_constructor(child, type_node):
                 continue
@@ -643,6 +648,7 @@ class CFrontend:
                 var_name = self._extract_identifier(child)
                 self._record_local(var_name)
                 self._note_var_type(var_name, type_node)
+                self._note_scalar_type(child, type_node)
                 if var_name:
                     loc = self._get_location(child)
                     self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null(),
@@ -809,6 +815,15 @@ class CFrontend:
             text = self._get_text(type_node)
             if text and text not in ("auto", "var"):
                 self._var_types.setdefault(id(self._current_proc), {})[name] = text
+
+    def _note_scalar_type(self, declarator: Optional[TSNode], type_node: Optional[TSNode]) -> None:
+        """`Procedure.scalar_types`: a plain variable's declared type (not a pointer or array)."""
+        if declarator is None or type_node is None or declarator.type != "identifier" \
+                or self._current_proc is None:
+            return
+        name, text = self._get_text(declarator), " ".join(self._get_text(type_node).split())
+        known = self._current_proc.scalar_types
+        known[name] = text if known.get(name, text) == text else ""
 
     def _translate_init_declarator(self, node: TSNode, type_node: Optional[TSNode] = None) -> None:
         """Translate init_declarator (var = value)"""
@@ -1919,6 +1934,7 @@ class CFrontend:
         proc = Procedure(name=name, params=params, ret_type=Typ.unknown_type(),
                          loc=self._get_location(node), is_method=False)
         proc.param_types = dict(getattr(self, "_last_param_types", {}))
+        proc.scalar_types = dict(getattr(self, "_last_scalar_param_types", {}))
         if via:
             proc.registered_via.append(via)
         proc.has_parse_errors = bool(node.has_error)

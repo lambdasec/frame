@@ -274,6 +274,10 @@ aliases = ["network"]
 kind = "privilege"
 vuln = "privilege_management"
 
+[[sink]]
+kind = "system_config"
+vuln = "config_injection"
+
 [[vuln]]
 type = "path_traversal"
 cwe = "CWE-22"
@@ -671,6 +675,7 @@ category = "memory"
 
 [[vuln]]
 type = "config_injection"
+cwe = "CWE-15"
 category = "taint"
 
 [[vuln]]

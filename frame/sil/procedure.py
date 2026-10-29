@@ -427,6 +427,10 @@ class Procedure:
     # receivers (`_repo` -> "UserRepository"), as the frontend can read them; lets a call
     # `_repo.Find(x)` resolve to the method of a class the program defines.
     var_types: Dict[str, str] = field(default_factory=dict)
+    # C/C++: the declared type of each local and parameter declared as a plain variable (no
+    # pointer or array declarator), as written (`unsigned`, `int64_t`); "" where a name is
+    # declared twice with different types. Read by the integer-range checks (CWE-190/191).
+    scalar_types: Dict[str, str] = field(default_factory=dict)
     # Callees this function is passed to as an argument (`app.get('/x', handler)`
     # -> ["app.get"]), by their textual names; set by the JS frontend.
     registered_via: List[str] = field(default_factory=list)
