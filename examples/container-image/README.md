@@ -4,7 +4,7 @@
 
 ```bash
 cd examples/container-image
-frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9"
+frame kb pull --advisories --source offline-advisories --ecosystems "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9,Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,Wolfi"
 ```
 
 ## The packages
@@ -76,6 +76,43 @@ Red Hat:enterprise_linux:9: 9 distinct packages (0 direct, 0 dev only)
 ```
 
 Red Hat files its advisories under product streams (`baseos`, `appstream`, `crb`), and an image does not record which stream a package came from. Across OSV's whole Red Hat export, no advisory gives a RHEL 8 or 9 package different ranges in two streams, so Frame reads a release's streams as one table, `Red Hat:enterprise_linux:9`, without guessing a stream. The 46 are the union of OSV's answers over every RHEL 9 stream.
+
+## RHEL 10, Azure Linux, openSUSE and Wolfi
+
+Four more root filesystems, each made from the official image (by digest) with rpm or apk's own database, trimmed by rpm itself where it is rpm:
+
+```console
+$ frame deps --rootfs ubi-10.0 --vulns
+  ubi-10.0:/usr/lib/sysimage/rpm/rpmdb.sqlite  (Red Hat:enterprise_linux:10 installed): 12 packages, direct unknown
+58 known vulnerabilities:
+  CRITICAL openssl-libs@1:3.2.2-16.el10_0.4 (os package) RHSA-2026:1472: Red Hat Security Advisory: openssl security update; fixed in 1:3.5.1-7.el10_1  [ubi-10.0:/usr/lib/sysimage/rpm/rpmdb.sqlite]
+  ...
+
+$ frame deps --rootfs azl-3.0 --vulns
+  azl-3.0:/var/lib/rpm/rpmdb.sqlite  (Azure Linux:3 installed): 13 packages, direct unknown
+42 known vulnerabilities:
+  MEDIUM   ncurses@6.4-3.azl3 (os package) AZL-40988: CVE-2018-19217 affecting package ncurses 6.4-3; no fixed version  [azl-3.0:/var/lib/rpm/rpmdb.sqlite]
+  ...
+
+$ frame deps --rootfs leap-15.6 --vulns
+  leap-15.6:/usr/lib/sysimage/rpm/Packages.db  (openSUSE:Leap 15.6 installed): 11 packages, direct unknown
+31 known vulnerabilities:
+  UNKNOWN  curl@8.6.0-150600.4.18.1 (os package) SUSE-SU-2025:03198-1: Security update for curl; fixed in 8.14.1-150600.4.28.1  [leap-15.6:/usr/lib/sysimage/rpm/Packages.db]
+  ...
+
+$ frame deps --rootfs wolfi-python --vulns
+  wolfi-python:/lib/apk/db/installed  (Wolfi installed): 77 packages, direct unknown
+39 known vulnerabilities:
+  MEDIUM   binutils@2.47-r2 (os package) CGA-9gj8-gjxv-82qf: CVE-2026-6844, GHSA-p33j-xffm-gxj7, CGA-fp47-6j6h-hj89; no fixed version  [wolfi-python:/lib/apk/db/installed]
+  ...
+```
+
+- **`ubi-10.0`** is the last UBI 10.0 image. RHEL 10 files its advisories per minor release, and this image is patched within 10.0, so OSV's 10.0 answer for it is empty. The minors are one update line, though: the 58 are fixes filed under 10.1 and 10.2 that this system lacks (the union of OSV's answers over 10.0, 10.1 and 10.2).
+- **`azl-3.0`** is `mcr.microsoft.com/azurelinux/base/core:3.0`. Azure Linux's advisories omit the `.azl3` every installed version carries, so OSV's own API answers nothing for `6.4-3.azl3`; Frame compares `6.4-3`, checked against Microsoft's OVAL. Packages are its source packages (`gcc`, not `libgcc`).
+- **`leap-15.6`** is openSUSE Leap 15.6, whose rpm database is SUSE's NDB format (`Packages.db`), read without rpm. SLES images are read too but not matched: their advisories are filed per module, which the image does not record.
+- **`wolfi-python`** is Chainguard's `python:latest-dev` (Chainguard's images are Wolfi). Wolfi's advisories name each package itself, `ld-linux-2.44` as well as `glibc-2.44`, so each is matched by its own name. Their records have no summary, so the CVE they track is shown.
+
+Each count is what OSV's API answers for every package (`tests/test_sca_container.py` checks them offline).
 
 ## Language packages in an image
 

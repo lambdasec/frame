@@ -185,8 +185,9 @@ def test_container_image_walkthrough(tmp_path):
     shutil.copytree(EXAMPLES / "container-image", work)
     env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
     env.pop("FRAME_ADVISORIES_SOURCE", None)
-    assert "9 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
-                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9")
+    assert "13 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "Debian:12,Alpine:v3.18,PyPI,npm,Maven,Go,crates.io,Rocky Linux:9,Red Hat:enterprise_linux:9,"
+                              "Red Hat:enterprise_linux:10,Azure Linux:3,openSUSE:Leap 15.6,Wolfi")
     readme = (work / "README.md").read_text()
     shown = [
         (("deps", "--rootfs", "alpine-3.18.0", "--rootfs", "debian-12.0"),
@@ -204,6 +205,18 @@ def test_container_image_walkthrough(tmp_path):
         (("deps", "--rootfs", "ubi-9.4", "--vulns"),
          ["ubi-9.4:/var/lib/rpm/rpmdb.sqlite  (Red Hat:enterprise_linux:9 installed): 9 packages, direct unknown",
           "46 known vulnerabilities:"]),
+        (("deps", "--rootfs", "ubi-10.0", "--vulns"),
+         ["ubi-10.0:/usr/lib/sysimage/rpm/rpmdb.sqlite  (Red Hat:enterprise_linux:10 installed): 12 packages, direct unknown",
+          "58 known vulnerabilities:"]),
+        (("deps", "--rootfs", "azl-3.0", "--vulns"),
+         ["azl-3.0:/var/lib/rpm/rpmdb.sqlite  (Azure Linux:3 installed): 13 packages, direct unknown",
+          "42 known vulnerabilities:"]),
+        (("deps", "--rootfs", "leap-15.6", "--vulns"),
+         ["leap-15.6:/usr/lib/sysimage/rpm/Packages.db  (openSUSE:Leap 15.6 installed): 11 packages, direct unknown",
+          "31 known vulnerabilities:"]),
+        (("deps", "--rootfs", "wolfi-python", "--vulns"),
+         ["wolfi-python:/lib/apk/db/installed  (Wolfi installed): 77 packages, direct unknown", "39 known vulnerabilities:",
+          "binutils@2.47-r2 (os package) CGA-9gj8-gjxv-82qf: CVE-2026-6844, GHSA-p33j-xffm-gxj7, CGA-fp47-6j6h-hj89"]),
         (("deps", "--rootfs", "app-image", "--vulns"),
          ["app-image:/usr/local/lib/python3.12/site-packages  (PyPI image): 7 packages, direct unknown",
           "app-image:/app/node_modules  (npm image): 51 packages, direct unknown",

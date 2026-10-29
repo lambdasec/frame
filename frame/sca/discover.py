@@ -322,6 +322,14 @@ def _pull_hint(missing: Sequence[str]) -> str:
     return pull_hint(missing)
 
 
+def _about(f: dict) -> str:
+    """The finding's summary, or the ids it is known by when the advisory has none (a Wolfi CGA
+    record names only the CVE it tracks)."""
+    text = ' '.join((f.get('summary') or '').split())[:80]
+    ids = sorted(f.get('aliases') or [], key=lambda a: (not a.startswith('CVE-'), not a.startswith('GHSA-'), a))
+    return text or ', '.join(ids)[:80]
+
+
 def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: int = 0) -> str:
     """`missing`: ecosystems with no advisories cached; `undecided`: advisories matching could
     not decide (an untagged commit, see the warnings). Neither is ever called "no known
@@ -342,7 +350,7 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: i
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
         lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{level}) "
-                     f"{f['id']}: {' '.join(f['summary'].split())[:80]}; {fix}  [{f['path']}]")
+                     f"{f['id']}: {_about(f)}; {fix}  [{f['path']}]")
         if len(f["via"]) > 1:
             lines.append(f"           via {' -> '.join(f['via'])}")
         for c in reach.get("calls", [])[:3]:

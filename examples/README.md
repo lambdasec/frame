@@ -28,7 +28,7 @@ A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two fun
 
 ### [container-image](container-image/README.md): what is inside a Docker image
 
-The package lists of the official `debian:12.0`, `alpine:3.18.0`, `rockylinux:9.4` and `ubi9/ubi:9.4` images, and an application image with pip packages, an npm tree, a jar, and Go and Rust binaries. It shows their known vulnerabilities (OS packages: the same ones OSV's API reports), why Debian's own Python packages are left to Debian's advisories, the fix for each, a CI gate, and an SBOM.
+The package lists of the official `debian:12.0`, `alpine:3.18.0`, `rockylinux:9.4`, `ubi9/ubi:9.4`, `ubi10/ubi:10.0`, Azure Linux 3, openSUSE Leap 15.6 and Chainguard (Wolfi) images, and an application image with pip packages, an npm tree, a jar, and Go and Rust binaries. It shows their known vulnerabilities (OS packages: the same ones OSV's API reports), why Debian's own Python packages are left to Debian's advisories, the fix for each, a CI gate, and an SBOM.
 *Runs offline; `--image` on a real image needs Docker.*
 
 ### [upgrade-nuget-go](upgrade-nuget-go/README.md): .NET and Go upgrades

@@ -5,31 +5,39 @@
       "kind": "advisories",
       "language": "alpine:v3.18",
       "name": "Alpine:v3.18",
-      "sha256": "0aa53e938f567314d8e6332c8ea820ca438d2b3b81e269f0635fc9ea4e2657a5",
-      "size": 11041
+      "sha256": "0225e8f907e0e0f5916a1f47b331ff253d8eb3e8c8cc387773002dd6184050fb",
+      "size": 11042
+    },
+    "advisories/Azure_Linux_3.json.gz": {
+      "advisories": 235,
+      "kind": "advisories",
+      "language": "azure linux:3",
+      "name": "Azure Linux:3",
+      "sha256": "9009ce2b759898cb822a4df7cf1f8a8dc97e1fab320972acc3ea69cafe93a881",
+      "size": 5191
     },
     "advisories/Debian_12.json.gz": {
       "advisories": 1368,
       "kind": "advisories",
       "language": "debian:12",
       "name": "Debian:12",
-      "sha256": "b15e0da276067182579b3e483f6c6e13a93b0a155896babe03157b2981d38dba",
-      "size": 151535
+      "sha256": "348f8bfdf405e3a781d54ea719e7548f024171a67766db516e33b8c106d15ac0",
+      "size": 151537
     },
     "advisories/Go.json.gz": {
       "advisories": 184,
       "kind": "advisories",
       "language": "go",
       "name": "Go",
-      "sha256": "dca5335e6f7dd7de1391588bf10150a3b2bc9391368ab6c39bb80b520cdf2a98",
-      "size": 21667
+      "sha256": "b4e8ff3bd6243b01290618a21be8c3bd2efa3fb51706e1da025a922fa9ac5281",
+      "size": 21669
     },
     "advisories/Maven.json.gz": {
       "advisories": 1,
       "kind": "advisories",
       "language": "maven",
       "name": "Maven",
-      "sha256": "026b197d39ed34f3c2657b560a7baacc9392f33bb3dd1c6172f48bd0e394aba7",
+      "sha256": "b977a5b3ba5fa1ff83750f240eafe90bd34a2d8b976c278673adca94abd4d00c",
       "size": 386
     },
     "advisories/PyPI.json.gz": {
@@ -37,31 +45,47 @@
       "kind": "advisories",
       "language": "pypi",
       "name": "PyPI",
-      "sha256": "b39073d094b7cb8ccec7cd17a9d4af50bc97a1f3e5c309d4dfb97f46b20c0c0b",
+      "sha256": "844b410e64c22e31c1c2a39c049956477203db314d64388fc2ca3cb0a8fe352d",
       "size": 6212
+    },
+    "advisories/Red_Hat_enterprise_linux_10.json.gz": {
+      "advisories": 76,
+      "kind": "advisories",
+      "language": "red hat:enterprise_linux:10",
+      "name": "Red Hat:enterprise_linux:10",
+      "sha256": "a6112ce197580e56c35a2047466d8a6bc80b5c939009f469e8fa06d3e171782b",
+      "size": 2345
     },
     "advisories/Red_Hat_enterprise_linux_9.json.gz": {
       "advisories": 101,
       "kind": "advisories",
       "language": "red hat:enterprise_linux:9",
       "name": "Red Hat:enterprise_linux:9",
-      "sha256": "fbf2fd17a96e9974e7de0dba097867ccdfd658ee02b9f72658c1b99f4516d000",
-      "size": 3194
+      "sha256": "049aa5c992ebea610e24e4601e43a7ee9efdc6ab28d1adc2898ba7df6ebd2b06",
+      "size": 3195
     },
     "advisories/Rocky_Linux_9.json.gz": {
       "advisories": 58,
       "kind": "advisories",
       "language": "rocky linux:9",
       "name": "Rocky Linux:9",
-      "sha256": "11c1bff7bf37c7be8194ceee37a40ac597c629fbe4b02d928e82fcb3f756673d",
-      "size": 2888
+      "sha256": "04ba4160d3dce9dd871f0a1bd52b45c86fc9d8c7f80fd0afde0d3aa0cbec3ee3",
+      "size": 2889
+    },
+    "advisories/Wolfi.json.gz": {
+      "advisories": 312,
+      "kind": "advisories",
+      "language": "wolfi",
+      "name": "Wolfi",
+      "sha256": "185adad211cbea64222fe4835a7d1193950f4814abde018bd0b8fb865a08880a",
+      "size": 17927
     },
     "advisories/crates.io.json.gz": {
       "advisories": 5,
       "kind": "advisories",
       "language": "crates.io",
       "name": "crates.io",
-      "sha256": "35ecd5e1a6701baecfbc0c7484cf1608eb9d49824637cabaadaf32d0cacd054b",
+      "sha256": "8a016abb40f0dc3896fdacbcffcb2d70d38700666931e18558bb356b5243ece5",
       "size": 771
     },
     "advisories/npm.json.gz": {
@@ -69,10 +93,18 @@
       "kind": "advisories",
       "language": "npm",
       "name": "npm",
-      "sha256": "2bbfdc1e6067fb2835dade7f49e81c4b16d07bebfa07cd4fca4d74fdf5dbafcb",
-      "size": 4557
+      "sha256": "4f5fd57bd2680dc4c61fb9a1f3fa1168855b5c72178883c582494a6187462d2e",
+      "size": 4558
+    },
+    "advisories/openSUSE_Leap_15.6.json.gz": {
+      "advisories": 41,
+      "kind": "advisories",
+      "language": "opensuse:leap 15.6",
+      "name": "openSUSE:Leap 15.6",
+      "sha256": "e23458a1041e9287b0d9fd79824c68fe99b848a7ef881de47dea867f4bb43eb8",
+      "size": 1639
     }
   },
-  "revision": "example-2026.10.28-e352943",
+  "revision": "example-2026.10.29-f6968f5",
   "schema": 1
 }
