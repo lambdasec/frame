@@ -5811,7 +5811,7 @@ class SILTranslator:
             check.kind_mismatch = True
         # Model output is attacker-steerable, not confidential: it matters at injection sinks,
         # not where a secret or personal data would leak (logs, error pages, responses).
-        if taint_info is not None and taint_info.source_kind == TaintKind.LLM_OUTPUT \
+        if taint_info is not None and taint_info.source_kind in (TaintKind.LLM_OUTPUT, TaintKind.RETRIEVED) \
                 and sink_kind in self._CONFIDENTIALITY_SINKS:
             check.kind_mismatch = True
         if isinstance(instr, Call):

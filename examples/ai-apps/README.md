@@ -1,6 +1,6 @@
 # AI applications: prompt injection, model output, MCP tools
 
-Four small apps, each beside a safe twin that does the same job correctly. They live with Frame's framework exemplars, which CI scans on every change:
+Six small apps, each beside a safe twin that does the same job correctly. They live with Frame's framework exemplars, which CI scans on every change:
 
 | App | Vulnerable | Safe twin |
 |---|---|---|
@@ -8,6 +8,8 @@ Four small apps, each beside a safe twin that does the same job correctly. They 
 | Express app using Anthropic and OpenAI | [javascript/llm-sdks/vulnerable/app.js](../../benchmarks/exemplars/frameworks/javascript/llm-sdks/vulnerable/app.js) | [safe/app.js](../../benchmarks/exemplars/frameworks/javascript/llm-sdks/safe/app.js) |
 | MCP server (Python, FastMCP) | [python/mcp-servers/vulnerable/server.py](../../benchmarks/exemplars/frameworks/python/mcp-servers/vulnerable/server.py) | [safe/server.py](../../benchmarks/exemplars/frameworks/python/mcp-servers/safe/server.py) |
 | MCP server (TypeScript SDK) | [javascript/mcp-servers/vulnerable/server.ts](../../benchmarks/exemplars/frameworks/javascript/mcp-servers/vulnerable/server.ts) | [safe/server.ts](../../benchmarks/exemplars/frameworks/javascript/mcp-servers/safe/server.ts) |
+| RAG answerer and MCP client (Python: LangChain, Anthropic, `mcp`) | [python/llm-context/vulnerable/app.py](../../benchmarks/exemplars/frameworks/python/llm-context/vulnerable/app.py) | [safe/app.py](../../benchmarks/exemplars/frameworks/python/llm-context/safe/app.py) |
+| RAG answerer and MCP client (JS: LangChain.js, Anthropic, MCP SDK) | [javascript/llm-context/vulnerable/app.mjs](../../benchmarks/exemplars/frameworks/javascript/llm-context/vulnerable/app.mjs) | [safe/app.mjs](../../benchmarks/exemplars/frameworks/javascript/llm-context/safe/app.mjs) |
 
 ```bash
 cd benchmarks/exemplars/frameworks
@@ -82,5 +84,38 @@ Scanned 1 file: 2 findings (2 critical)
 ```
 
 The safe servers pass the argument as a separate argument (`["du", "-sh", "--", path]`) and use a parameterised query, and report nothing. In TypeScript, the handler's destructured parameter (`async ({ path }) => ...`) is what carries the model's input.
+
+## Retrieved documents and tool results (indirect prompt injection)
+
+An app also feeds its model text nobody in the conversation wrote: documents a vector store returns, an MCP server's tool result. Whoever wrote that text (a web page, a support ticket, a tool server) can put instructions in it:
+
+```console
+$ frame scan python/llm-context/vulnerable --root .
+1. [MEDIUM] 🟡 prompt_injection
+   Location: python/llm-context/vulnerable/app.py:17:4
+   Description: Tainted data from '$docs' flows to prompt sink
+2. [MEDIUM] 🟡 prompt_injection
+   Location: python/llm-context/vulnerable/app.py:26:16
+   Description: Tainted data from 'docs' flows to prompt sink
+3. [CRITICAL] 🔴 command_injection
+   Location: python/llm-context/vulnerable/app.py:34:4
+   Description: Tainted data from 'result' flows to command sink
+Scanned 1 file: 3 findings (1 critical, 2 medium)
+
+$ frame scan javascript/llm-context/vulnerable --root .
+1. [MEDIUM] 🟡 prompt_injection
+   Location: javascript/llm-context/vulnerable/app.mjs:14:9
+2. [MEDIUM] 🟡 prompt_injection
+   Location: javascript/llm-context/vulnerable/app.mjs:25:9
+3. [CRITICAL] 🔴 command_injection
+   Location: javascript/llm-context/vulnerable/app.mjs:31:2
+Scanned 1 file: 3 findings (1 critical, 2 medium)
+```
+
+- **Line 17:** what `store.similarity_search(...)` returned goes into Claude's `system=`, so a planted ticket can rewrite the instructions.
+- **Line 26:** documents from `retriever.invoke(...)` go into a LangChain `SystemMessage`.
+- **Line 34:** an MCP tool's result (`session.call_tool(...)`) is run in a shell.
+
+The safe twins give the documents to the model in the user turn, with a system prompt saying they are data, and pass the tool's answer to `tar` as an argument list: 0 findings. Retrieved content in a user turn is how retrieval works and is not a finding. The `llm-context` packs name the sources: LangChain's vector-store search methods and retrievers (`retriever.invoke` by the conventional name), and an MCP client's `call_tool` / `read_resource` / `get_prompt` (`callTool`, `readResource`, `getPrompt` in JS). Findings from them have category `ai`.
 
 What is covered, and what is not yet: [docs/coverage.md](../../docs/coverage.md#what-it-detects).

@@ -1,0 +1,4 @@
+language = "javascript"
+packs = ["javascript/llm-context", "javascript/llm-sdks"]
+requires_pack = true
+description = "A RAG answerer and an MCP client in JS: retrieved documents and a tool's result in the system prompt (indirect prompt injection, CWE-1427) or a shell (CWE-78); the safe twin puts them in the user turn and runs the tool's answer with execFile"

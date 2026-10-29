@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/llm-context", "python/llm-sdks"]
+requires_pack = true
+description = "A RAG answerer and an MCP client: retrieved documents and a tool's result in the system prompt (indirect prompt injection, CWE-1427) or a shell (CWE-78); the safe twin puts them in the user turn and runs the tool's answer as an argument list"

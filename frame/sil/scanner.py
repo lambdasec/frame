@@ -1874,7 +1874,7 @@ class FrameScanner:
             cwe_id=cwe_id,
             evidence=evidence_of_check(verified, bool(check.source_var and check.sink_type)),
             sink_call=getattr(check, "sink_call", ""),
-            category="ai" if getattr(check, "source_kind", "") == "llm" else "",
+            category="ai" if getattr(check, "source_kind", "") in ("llm", "retrieved") else "",
         )
 
     def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:

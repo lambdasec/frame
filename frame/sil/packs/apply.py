@@ -245,9 +245,11 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
                         written = local + canon[len(qualified):]
                         if written in program.procedures:
                             continue
-                        spec = _merge_spec(program.library_specs.get(written), [(pack, rule)], None)
-                        if spec is not None:
-                            program.library_specs[written] = spec
+                        # a constructor is written `new SystemMessage(...)` (JS/TS, Java, C#)
+                        for name in (written, f"new {written}") if written[:1].isupper() or "." in written else (written,):
+                            spec = _merge_spec(program.library_specs.get(name), [(pack, rule)], None)
+                            if spec is not None:
+                                program.library_specs[name] = spec
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for instr in node.instrs:

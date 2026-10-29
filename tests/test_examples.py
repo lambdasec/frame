@@ -164,7 +164,9 @@ def test_ai_apps_walkthrough():
     for app, summary in [("python/llm-sdks/vulnerable", "Scanned 1 file: 5 findings (2 critical, 3 medium)"),
                          ("javascript/llm-sdks/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)"),
                          ("python/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)"),
-                         ("javascript/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)")]:
+                         ("javascript/mcp-servers/vulnerable", "Scanned 1 file: 2 findings (2 critical)"),
+                         ("python/llm-context/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)"),
+                         ("javascript/llm-context/vulnerable", "Scanned 1 file: 3 findings (1 critical, 2 medium)")]:
         out = frame(frameworks, env, "scan", app, "--root", ".")
         assert summary in out and summary in readme, (app, out[-600:])
         for line in [ln.strip() for ln in out.splitlines() if ln.strip().startswith(("Location:", "Description:"))]:

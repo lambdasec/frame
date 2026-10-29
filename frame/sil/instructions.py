@@ -69,6 +69,10 @@ class TaintKind(Enum):
     # by a prompt injection anywhere in what the model read, so it is attacker data for every
     # sink; findings from it are in the `ai` category.
     LLM_OUTPUT = "llm"
+    # What an LLM app feeds its model from outside: a retrieved document, an MCP tool's result
+    # or resource. Whoever wrote it can put instructions in it (indirect prompt injection), so it
+    # is attacker data at every injection sink, in the `ai` category, and not confidential.
+    RETRIEVED = "retrieved"
     # A number read off a binary stream or buffer (DataInputStream.readInt, ByteBuffer.getInt):
     # a length or count a peer sent. It is not text, so it matters only as the size of an
     # allocation (SinkKind.ALLOC_SIZE), and only there.

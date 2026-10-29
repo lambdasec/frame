@@ -1,0 +1,33 @@
+[pack]
+name = "llm-context"
+language = "python"
+description = "What an LLM app feeds its model from outside: retrieved documents (LangChain vector stores and retrievers) and MCP tool results and resources. Anyone who can write a document or run a tool server can put instructions in it (indirect prompt injection, OWASP LLM01)"
+detect = { imports = ["langchain", "langchain_core", "langchain_community", "langchain_chroma", "langchain_pinecone",
+                      "langchain_postgres", "langchain_qdrant", "langchain_openai", "mcp.ClientSession", "mcp.client"] }
+references = ["https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
+              "https://github.com/langchain-ai/langchain/blob/master/libs/core/langchain_core/vectorstores/base.py",
+              "https://github.com/modelcontextprotocol/python-sdk/blob/main/src/mcp/client/session.py"]
+
+# Documents a vector store or retriever returns: text someone else wrote (a web page, a ticket, an
+# uploaded file). In the model's system instructions they can rewrite what the model does; at a
+# shell, SQL or exec they are attacker data like any other. Method names from
+# langchain_core.vectorstores.VectorStore and BaseRetriever; `retriever.invoke` is matched by the
+# conventional name of the `as_retriever()` value (an untyped `.invoke` is any Runnable).
+[[source]]
+name = ["similarity_search", "similarity_search_with_score", "similarity_search_with_relevance_scores",
+        "similarity_search_by_vector", "max_marginal_relevance_search", "max_marginal_relevance_search_by_vector",
+        "asimilarity_search", "asimilarity_search_with_score", "asimilarity_search_with_relevance_scores",
+        "amax_marginal_relevance_search", "get_relevant_documents", "aget_relevant_documents",
+        "retriever.invoke", "retriever.ainvoke"]
+kind = "retrieved"
+description = "retrieved documents"
+
+# An MCP client's view of a server: a tool's result, a resource's contents, a prompt the server
+# supplies. The server (or whatever it read) chose that text.
+[[source]]
+call = ["mcp.ClientSession.call_tool", "mcp.ClientSession.read_resource", "mcp.ClientSession.get_prompt",
+        "mcp.client.session.ClientSession.call_tool", "mcp.client.session.ClientSession.read_resource",
+        "mcp.client.session.ClientSession.get_prompt"]
+name = ["session.call_tool", "session.read_resource", "session.get_prompt"]
+kind = "retrieved"
+description = "an MCP tool result or resource"

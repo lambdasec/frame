@@ -25,7 +25,7 @@ Frame knows what makes data safe (parameterised queries, `shlex.quote`, `basenam
 | **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ, Kafka's wire readers |
 | **C#** | ASP.NET Core MVC and Web API, Minimal APIs, Razor Pages, Blazor, SignalR, Azure Functions, WebForms, WCF/gRPC, EF Core/EF6, Dapper, NHibernate |
 | **C / C++** | CGI/FastCGI, POSIX sockets, libmicrohttpd, civetweb/Mongoose, cpp-httplib, Crow, Qt, Boost.Beast, gRPC, libcurl, OpenSSL, libxml2, libarchive, SQLite/libpq/MySQL |
-| **AI apps** | OpenAI, Anthropic, LangChain and LlamaIndex SDKs (Python; OpenAI, Anthropic and LangChain in JS/TS), MCP servers (FastMCP, the TypeScript SDK) |
+| **AI apps** | OpenAI, Anthropic, LangChain and LlamaIndex SDKs (Python; OpenAI, Anthropic and LangChain in JS/TS), MCP servers (FastMCP, the TypeScript SDK), LangChain vector stores and retrievers, MCP clients |
 
 Every pack is proven by a vulnerable app and its safe twin, scanned through the real CLI in the test suite: 80+ apps and 400+ labelled flaws in [`benchmarks/exemplars/frameworks/`](../benchmarks/exemplars/frameworks).
 
@@ -102,6 +102,7 @@ AI applications (category `ai`; walkthrough with real output in [examples/ai-app
 | Prompt injection (CWE-1427, OWASP LLM01) | Untrusted data in a model's system instructions: Anthropic `system=`, OpenAI `instructions=`, LangChain `SystemMessage`, and a role/content chat message whose role is `system` or `developer` (`{"role": "system", "content": ...}`, the OpenAI chat format, wherever the messages list is built; Python and JS/TS). Untrusted data in a user turn is how a chat works and is not reported. |
 | Model output reaching a sink (OWASP LLM05) | What a model returns (OpenAI, Anthropic, LangChain, LlamaIndex) can be steered by a prompt injection anywhere in what it read, so it is attacker data at every injection sink: a shell, `exec`, SQL, HTML. It is not treated as confidential, so logging it is not a finding. |
 | MCP tools | A tool's arguments are model output, so a shell or SQL sink in a tool handler (`@mcp.tool()`, `server.tool(...)` / `server.registerTool(...)`) is a finding. |
+| Indirect prompt injection (CWE-1427, OWASP LLM01) | Text the app feeds its model from outside: documents a LangChain vector store or retriever returns (Python and JS), and an MCP client's tool results, resources and prompts. In the system instructions it is prompt injection; at a shell, SQL or `exec` it is attacker data like any other. In a user turn it is how retrieval works and is not reported. |
 
 Not covered yet: OpenAI chat requests that put untrusted data in a `{"role": "system"}` message, since a dict inside a list is not yet followed by the Python frontend.
 
