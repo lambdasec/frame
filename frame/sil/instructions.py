@@ -190,28 +190,12 @@ class SinkKind(Enum):
         return self.value
 
 
-# Spec sink-kind strings that don't equal a SinkKind value but mean a specific
-# kind. Without this map they silently fell back to SQL_QUERY (spurious CWE-89).
-_SINK_KIND_ALIASES = {
-    "code": "eval",                  # code injection
-    "xxe": "xml",                    # XML external entity
-    "info_disclosure": "debug",
-    "exception": "error_disclosure",
-    "hardcoded_cred": "credential",
-    "auth": "authz",
-    "header_injection": "header",
-    "ssl": "weak_crypto",
-    "config": "secret",
-    "weak_password_hash": "weak_hash",
-    "path": "filesystem",
-    "shell_command": "shell",
-    "html_output": "html",
-    "redos": "regex",
-    "buffer": "buffer_overflow",
-    "network": "sensitive_exposure",   # data sent out over a socket (CWE-200)
-    "prompt_injection": "prompt",
-    "llm_prompt": "prompt",
-}
+# Spec sink-kind strings that don't equal a SinkKind value but mean a specific kind
+# (`aliases` in specs/data/kinds.toml). Without them they silently fell back to SQL_QUERY
+# (spurious CWE-89).
+from frame.sil.kinds import load as _load_kinds  # noqa: E402
+
+_SINK_KIND_ALIASES = _load_kinds().aliases
 
 
 def resolve_sink_kind(kind_str, default: "SinkKind" = None) -> "SinkKind":

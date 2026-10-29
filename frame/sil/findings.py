@@ -19,44 +19,14 @@ from __future__ import annotations
 
 EVIDENCE_LEVELS = ("matched", "llm-detected", "llm-verified", "data-flow", "solver-verified",
                    "exploit-confirmed")
-CATEGORIES = ("taint", "memory", "crypto", "secret", "access-control", "hardening",
-              "dependency", "iac", "container", "ai")
+from frame.sil.kinds import CATEGORIES, load as _load_kinds
 
-_GROUPS = {
-    "memory": {
-        "null_dereference", "use_after_free", "buffer_overflow", "buffer_underflow", "double_free",
-        "memory_leak", "mismatched_free", "return_stack_address", "invalid_free", "resource_leak",
-        "format_string", "integer_overflow", "integer_underflow", "uninitialized_var",
-        "divide_by_zero", "type_confusion", "sign_extension", "oob_write", "oob_read",
-        "oob_underwrite", "oob_underread", "unbounded_allocation", "excessive_allocation",
-        "uncontrolled_recursion", "infinite_loop", "dead_store", "improper_lock", "unchecked_loop",
-        "data_sentinel", "unicode_handling", "assertion_failure", "incomplete_cleanup",
-        "improper_init", "dangerous_function", "unchecked_return"},
-    "crypto": {
-        "weak_crypto", "insecure_random", "predictable_value", "weak_hash", "improper_cert_validation",
-        "insufficient_key_size", "weak_rsa_padding", "missing_encryption",
-        "insufficient_credential_protection", "insecure_cookie", "insecure_cookie_httponly"},
-    "secret": {
-        "hardcoded_secret", "secret_exposure", "sensitive_data_exposure", "sensitive_data_logged",
-        "weak_password"},
-    "access-control": {
-        "authorization_bypass", "idor", "mass_assignment", "csrf", "session_fixation",
-        "broken_authentication", "credential_stuffing", "business_logic_flaw", "race_condition",
-        "privilege_management", "incorrect_permissions", "trust_boundary_violation",
-        "cors_misconfiguration"},
-    "dependency": {"vulnerable_dependency"},
-    "ai": {"prompt_injection", "mcp_hidden_instructions", "mcp_dynamic_tool_metadata"},
-    "hardening": {
-        "debug_enabled", "security_misconfiguration", "error_disclosure", "ci_cd_vulnerability",
-        "code_integrity", "insufficient_logging", "unhandled_exception", "improper_error_handling",
-        "insecure_temp_file", "untrusted_path"},
-}
-_CATEGORY_OF = {t: c for c, types in _GROUPS.items() for t in types}
+_CATEGORY_OF = _load_kinds().category             # finding type -> category (specs/data/kinds.toml)
 
 
 def category_of(vuln_type: str, explicit: str = "") -> str:
     """The finding's category: an explicit one (set by a domain, e.g. ``hardening``), else
-    the group of its type, else ``taint``."""
+    its type's (`specs/data/kinds.toml`), else ``taint``."""
     return explicit or _CATEGORY_OF.get(vuln_type, "taint")
 
 

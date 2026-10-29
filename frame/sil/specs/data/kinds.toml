@@ -1,0 +1,765 @@
+# Sink kinds and finding types: what each sink kind reports and what each finding type is.
+#
+# [[sink]]: one per SinkKind value (frame/sil/instructions.py). `vuln` is the finding type a
+# flow into it reports (none: a generic taint flow); `aliases` are other spellings spec tables
+# and packs may use for it.
+# [[vuln]]: one per VulnType value (frame/sil/translator.py), with its CWE (where it has one)
+# and its category (findings.CATEGORIES).
+#
+# Loaded strictly by frame/sil/kinds.py: an unknown key, a kind or type listed twice or missing,
+# an alias that is itself a kind, or an unknown category is an error.
+
+[[sink]]
+kind = "sql"
+vuln = "sql_injection"
+
+[[sink]]
+kind = "html"
+vuln = "xss"
+aliases = ["html_output"]
+
+[[sink]]
+kind = "shell"
+vuln = "command_injection"
+aliases = ["shell_command"]
+
+[[sink]]
+kind = "ldap"
+vuln = "ldap_injection"
+
+[[sink]]
+kind = "xpath"
+vuln = "xpath_injection"
+
+[[sink]]
+kind = "xml_injection"
+vuln = "xml_injection"
+
+[[sink]]
+kind = "eval"
+vuln = "code_injection"
+aliases = ["code"]
+
+[[sink]]
+kind = "template"
+vuln = "template_injection"
+
+[[sink]]
+kind = "prompt"
+vuln = "prompt_injection"
+aliases = ["llm_prompt", "prompt_injection"]
+
+[[sink]]
+kind = "nosql"
+vuln = "nosql_injection"
+
+[[sink]]
+kind = "xml"
+vuln = "xxe"
+aliases = ["xxe"]
+
+[[sink]]
+kind = "regex"
+vuln = "regex_dos"
+aliases = ["redos"]
+
+[[sink]]
+kind = "orm"
+vuln = "orm_injection"
+
+[[sink]]
+kind = "el"
+vuln = "el_injection"
+
+[[sink]]
+kind = "filesystem"
+vuln = "path_traversal"
+aliases = ["file", "path"]
+
+[[sink]]
+kind = "redirect"
+vuln = "open_redirect"
+
+[[sink]]
+kind = "ssrf"
+vuln = "ssrf"
+
+[[sink]]
+kind = "authz"
+vuln = "authorization_bypass"
+aliases = ["auth"]
+
+[[sink]]
+kind = "resource_select"
+vuln = "idor"
+
+[[sink]]
+kind = "cors"
+vuln = "cors_misconfiguration"
+
+[[sink]]
+kind = "alloc_size"
+vuln = "unbounded_allocation"
+
+[[sink]]
+kind = "header"
+vuln = "header_injection"
+aliases = ["header_injection"]
+
+[[sink]]
+kind = "secret"
+vuln = "secret_exposure"
+aliases = ["config"]
+
+[[sink]]
+kind = "debug"
+vuln = "debug_enabled"
+aliases = ["info_disclosure"]
+
+[[sink]]
+kind = "weak_crypto"
+vuln = "weak_crypto"
+aliases = ["ssl"]
+
+[[sink]]
+kind = "hardcoded_secret"
+vuln = "hardcoded_secret"
+
+[[sink]]
+kind = "insecure_random"
+vuln = "insecure_random"
+
+[[sink]]
+kind = "unpredictable"
+vuln = "predictable_value"
+
+[[sink]]
+kind = "vulnerable_dependency"
+vuln = "vulnerable_dependency"
+
+[[sink]]
+kind = "weak_hash"
+vuln = "weak_hash"
+aliases = ["weak_password_hash"]
+
+[[sink]]
+kind = "insecure_temp_file"
+vuln = "insecure_temp_file"
+
+[[sink]]
+kind = "cert_validation"
+vuln = "improper_cert_validation"
+
+[[sink]]
+kind = "weak_key_size"
+vuln = "insufficient_key_size"
+
+[[sink]]
+kind = "weak_rsa_padding"
+vuln = "weak_rsa_padding"
+
+[[sink]]
+kind = "credential"
+vuln = "broken_authentication"
+aliases = ["hardcoded_cred"]
+
+[[sink]]
+kind = "insecure_auth"
+vuln = "insufficient_credential_protection"
+
+[[sink]]
+kind = "session"
+vuln = "session_fixation"
+
+[[sink]]
+kind = "password"
+vuln = "weak_password"
+
+[[sink]]
+kind = "trust_boundary"
+vuln = "trust_boundary_violation"
+
+[[sink]]
+kind = "insecure_cookie"
+vuln = "insecure_cookie"
+
+[[sink]]
+kind = "insecure_cookie_httponly"
+vuln = "insecure_cookie_httponly"
+
+[[sink]]
+kind = "deserialize"
+vuln = "deserialization"
+
+[[sink]]
+kind = "deserialize_unsafe"
+vuln = "deserialization"
+
+[[sink]]
+kind = "csrf_disabled"
+vuln = "csrf"
+
+[[sink]]
+kind = "log"
+vuln = "log_injection"
+aliases = ["log_injection"]
+
+[[sink]]
+kind = "sensitive_log"
+vuln = "sensitive_data_logged"
+
+[[sink]]
+kind = "error_disclosure"
+vuln = "error_disclosure"
+aliases = ["exception"]
+
+[[sink]]
+kind = "xss"
+vuln = "xss"
+
+[[sink]]
+kind = "command"
+vuln = "command_injection"
+
+[[sink]]
+kind = "format_string"
+vuln = "format_string"
+
+[[sink]]
+kind = "format"
+vuln = "format_string"
+
+[[sink]]
+kind = "memory"
+
+[[sink]]
+kind = "buffer_overflow"
+vuln = "buffer_overflow"
+aliases = ["buffer"]
+
+[[sink]]
+kind = "integer_overflow"
+vuln = "integer_overflow"
+
+[[sink]]
+kind = "null_deref"
+vuln = "null_dereference"
+
+[[sink]]
+kind = "divide_by_zero"
+vuln = "divide_by_zero"
+
+[[sink]]
+kind = "dangerous_function"
+vuln = "dangerous_function"
+
+[[sink]]
+kind = "prototype_pollution"
+vuln = "prototype_pollution"
+
+[[sink]]
+kind = "assertion"
+vuln = "assertion_failure"
+
+[[sink]]
+kind = "race"
+vuln = "race_condition"
+
+[[sink]]
+kind = "sensitive_exposure"
+vuln = "sensitive_data_exposure"
+aliases = ["network"]
+
+[[sink]]
+kind = "privilege"
+vuln = "privilege_management"
+
+[[vuln]]
+type = "path_traversal"
+cwe = "CWE-22"
+category = "taint"
+
+[[vuln]]
+type = "open_redirect"
+cwe = "CWE-601"
+category = "taint"
+
+[[vuln]]
+type = "ssrf"
+cwe = "CWE-918"
+category = "taint"
+
+[[vuln]]
+type = "authorization_bypass"
+cwe = "CWE-863"
+category = "access-control"
+
+[[vuln]]
+type = "cors_misconfiguration"
+cwe = "CWE-942"
+category = "access-control"
+
+[[vuln]]
+type = "idor"
+cwe = "CWE-639"
+category = "access-control"
+
+[[vuln]]
+type = "header_injection"
+cwe = "CWE-113"
+category = "taint"
+
+[[vuln]]
+type = "secret_exposure"
+cwe = "CWE-200"
+category = "secret"
+
+[[vuln]]
+type = "debug_enabled"
+cwe = "CWE-215"
+category = "hardening"
+
+[[vuln]]
+type = "security_misconfiguration"
+cwe = "CWE-16"
+category = "hardening"
+
+[[vuln]]
+type = "weak_crypto"
+cwe = "CWE-327"
+category = "crypto"
+
+[[vuln]]
+type = "hardcoded_secret"
+cwe = "CWE-798"
+category = "secret"
+
+[[vuln]]
+type = "insecure_random"
+cwe = "CWE-330"
+category = "crypto"
+
+[[vuln]]
+type = "predictable_value"
+cwe = "CWE-338"
+category = "crypto"
+
+[[vuln]]
+type = "vulnerable_dependency"
+cwe = "CWE-1395"
+category = "dependency"
+
+[[vuln]]
+type = "weak_hash"
+cwe = "CWE-328"
+category = "crypto"
+
+[[vuln]]
+type = "improper_cert_validation"
+cwe = "CWE-295"
+category = "crypto"
+
+[[vuln]]
+type = "insufficient_key_size"
+cwe = "CWE-326"
+category = "crypto"
+
+[[vuln]]
+type = "weak_rsa_padding"
+cwe = "CWE-780"
+category = "crypto"
+
+[[vuln]]
+type = "insufficient_credential_protection"
+cwe = "CWE-522"
+category = "crypto"
+
+[[vuln]]
+type = "missing_encryption"
+cwe = "CWE-311"
+category = "crypto"
+
+[[vuln]]
+type = "sensitive_data_exposure"
+cwe = "CWE-200"
+category = "secret"
+
+[[vuln]]
+type = "sql_injection"
+cwe = "CWE-89"
+category = "taint"
+
+[[vuln]]
+type = "xss"
+cwe = "CWE-79"
+category = "taint"
+
+[[vuln]]
+type = "command_injection"
+cwe = "CWE-78"
+category = "taint"
+
+[[vuln]]
+type = "ldap_injection"
+cwe = "CWE-90"
+category = "taint"
+
+[[vuln]]
+type = "xpath_injection"
+cwe = "CWE-643"
+category = "taint"
+
+[[vuln]]
+type = "xml_injection"
+cwe = "CWE-91"
+category = "taint"
+
+[[vuln]]
+type = "code_injection"
+cwe = "CWE-94"
+category = "taint"
+
+[[vuln]]
+type = "template_injection"
+cwe = "CWE-1336"
+category = "taint"
+
+[[vuln]]
+type = "prompt_injection"
+cwe = "CWE-1427"
+category = "ai"
+
+[[vuln]]
+type = "mcp_hidden_instructions"
+cwe = "CWE-1427"
+category = "ai"
+
+[[vuln]]
+type = "mcp_dynamic_tool_metadata"
+cwe = "CWE-1427"
+category = "ai"
+
+[[vuln]]
+type = "nosql_injection"
+cwe = "CWE-943"
+category = "taint"
+
+[[vuln]]
+type = "xxe"
+cwe = "CWE-611"
+category = "taint"
+
+[[vuln]]
+type = "regex_dos"
+cwe = "CWE-1333"
+category = "taint"
+
+[[vuln]]
+type = "orm_injection"
+cwe = "CWE-89"
+category = "taint"
+
+[[vuln]]
+type = "el_injection"
+cwe = "CWE-917"
+category = "taint"
+
+[[vuln]]
+type = "mass_assignment"
+cwe = "CWE-915"
+category = "access-control"
+
+[[vuln]]
+type = "prototype_pollution"
+cwe = "CWE-1321"
+category = "taint"
+
+[[vuln]]
+type = "business_logic_flaw"
+cwe = "CWE-840"
+category = "access-control"
+
+[[vuln]]
+type = "race_condition"
+cwe = "CWE-362"
+category = "access-control"
+
+[[vuln]]
+type = "broken_authentication"
+cwe = "CWE-287"
+category = "access-control"
+
+[[vuln]]
+type = "credential_stuffing"
+cwe = "CWE-307"
+category = "access-control"
+
+[[vuln]]
+type = "session_fixation"
+cwe = "CWE-384"
+category = "access-control"
+
+[[vuln]]
+type = "weak_password"
+cwe = "CWE-521"
+category = "secret"
+
+[[vuln]]
+type = "trust_boundary_violation"
+cwe = "CWE-501"
+category = "access-control"
+
+[[vuln]]
+type = "insecure_cookie"
+cwe = "CWE-614"
+category = "crypto"
+
+[[vuln]]
+type = "insecure_cookie_httponly"
+cwe = "CWE-1004"
+category = "crypto"
+
+[[vuln]]
+type = "csrf"
+cwe = "CWE-352"
+category = "access-control"
+
+[[vuln]]
+type = "deserialization"
+cwe = "CWE-502"
+category = "taint"
+
+[[vuln]]
+type = "code_integrity"
+cwe = "CWE-494"
+category = "hardening"
+
+[[vuln]]
+type = "ci_cd_vulnerability"
+cwe = "CWE-1395"
+category = "hardening"
+
+[[vuln]]
+type = "log_injection"
+cwe = "CWE-117"
+category = "taint"
+
+[[vuln]]
+type = "sensitive_data_logged"
+cwe = "CWE-532"
+category = "secret"
+
+[[vuln]]
+type = "insufficient_logging"
+cwe = "CWE-778"
+category = "hardening"
+
+[[vuln]]
+type = "error_disclosure"
+cwe = "CWE-209"
+category = "hardening"
+
+[[vuln]]
+type = "unhandled_exception"
+cwe = "CWE-755"
+category = "hardening"
+
+[[vuln]]
+type = "improper_error_handling"
+cwe = "CWE-388"
+category = "hardening"
+
+[[vuln]]
+type = "null_dereference"
+cwe = "CWE-476"
+category = "memory"
+
+[[vuln]]
+type = "use_after_free"
+cwe = "CWE-416"
+category = "memory"
+
+[[vuln]]
+type = "buffer_overflow"
+cwe = "CWE-120"
+category = "memory"
+
+[[vuln]]
+type = "buffer_underflow"
+category = "memory"
+
+[[vuln]]
+type = "double_free"
+cwe = "CWE-415"
+category = "memory"
+
+[[vuln]]
+type = "memory_leak"
+cwe = "CWE-401"
+category = "memory"
+
+[[vuln]]
+type = "mismatched_free"
+cwe = "CWE-762"
+category = "memory"
+
+[[vuln]]
+type = "return_stack_address"
+cwe = "CWE-562"
+category = "memory"
+
+[[vuln]]
+type = "invalid_free"
+cwe = "CWE-590"
+category = "memory"
+
+[[vuln]]
+type = "resource_leak"
+category = "memory"
+
+[[vuln]]
+type = "format_string"
+cwe = "CWE-134"
+category = "memory"
+
+[[vuln]]
+type = "integer_overflow"
+cwe = "CWE-190"
+category = "memory"
+
+[[vuln]]
+type = "integer_underflow"
+category = "memory"
+
+[[vuln]]
+type = "uninitialized_var"
+cwe = "CWE-457"
+category = "memory"
+
+[[vuln]]
+type = "dangerous_function"
+cwe = "CWE-676"
+category = "memory"
+
+[[vuln]]
+type = "divide_by_zero"
+cwe = "CWE-369"
+category = "memory"
+
+[[vuln]]
+type = "type_confusion"
+cwe = "CWE-843"
+category = "memory"
+
+[[vuln]]
+type = "assertion_failure"
+cwe = "CWE-617"
+category = "memory"
+
+[[vuln]]
+type = "privilege_management"
+cwe = "CWE-269"
+category = "access-control"
+
+[[vuln]]
+type = "sign_extension"
+category = "memory"
+
+[[vuln]]
+type = "unicode_handling"
+category = "memory"
+
+[[vuln]]
+type = "config_injection"
+category = "taint"
+
+[[vuln]]
+type = "resource_exhaustion"
+category = "taint"
+
+[[vuln]]
+type = "unchecked_return"
+cwe = "CWE-252"
+category = "memory"
+
+[[vuln]]
+type = "insecure_temp_file"
+cwe = "CWE-377"
+category = "hardening"
+
+[[vuln]]
+type = "incomplete_cleanup"
+category = "memory"
+
+[[vuln]]
+type = "dead_store"
+category = "memory"
+
+[[vuln]]
+type = "improper_lock"
+category = "memory"
+
+[[vuln]]
+type = "unchecked_loop"
+category = "memory"
+
+[[vuln]]
+type = "improper_init"
+category = "memory"
+
+[[vuln]]
+type = "untrusted_path"
+category = "hardening"
+
+[[vuln]]
+type = "data_sentinel"
+category = "memory"
+
+[[vuln]]
+type = "unbounded_allocation"
+cwe = "CWE-770"
+category = "memory"
+
+[[vuln]]
+type = "uncontrolled_recursion"
+cwe = "CWE-674"
+category = "memory"
+
+[[vuln]]
+type = "infinite_loop"
+cwe = "CWE-835"
+category = "memory"
+
+[[vuln]]
+type = "oob_write"
+cwe = "CWE-787"
+category = "memory"
+
+[[vuln]]
+type = "oob_read"
+cwe = "CWE-125"
+category = "memory"
+
+[[vuln]]
+type = "oob_underwrite"
+cwe = "CWE-124"
+category = "memory"
+
+[[vuln]]
+type = "oob_underread"
+cwe = "CWE-127"
+category = "memory"
+
+[[vuln]]
+type = "excessive_allocation"
+cwe = "CWE-789"
+category = "memory"
+
+[[vuln]]
+type = "incorrect_permissions"
+cwe = "CWE-732"
+category = "access-control"
+
+[[vuln]]
+type = "taint_flow"
+category = "taint"

@@ -26,6 +26,7 @@ import json
 import os
 import time
 
+from frame.sil.kinds import load as _load_kinds
 from frame.sil.llm_client import LLMUnavailableError
 
 import math
@@ -863,135 +864,8 @@ class FrameScanner:
     }
 
     # CWE mapping for all vulnerability types
-    CWE_MAP = {
-        # A01: Broken Access Control
-        VulnType.PATH_TRAVERSAL: "CWE-22",
-        VulnType.OPEN_REDIRECT: "CWE-601",
-        VulnType.SSRF: "CWE-918",
-        VulnType.AUTHORIZATION_BYPASS: "CWE-863",
-        VulnType.CORS_MISCONFIGURATION: "CWE-942",
-        VulnType.IDOR: "CWE-639",
-
-        # A02: Security Misconfiguration
-        VulnType.HEADER_INJECTION: "CWE-113",
-        VulnType.SECRET_EXPOSURE: "CWE-200",
-        VulnType.DEBUG_ENABLED: "CWE-215",
-        VulnType.SECURITY_MISCONFIGURATION: "CWE-16",
-
-        # A03: Software Supply Chain Failures
-        # Note: Requires SCA tools, out of scope for SAST/taint analysis
-
-        # A04: Cryptographic Failures
-        VulnType.WEAK_CRYPTOGRAPHY: "CWE-327",
-        VulnType.HARDCODED_SECRET: "CWE-798",
-        VulnType.INSECURE_RANDOM: "CWE-330",
-        VulnType.PREDICTABLE_VALUE: "CWE-338",
-        VulnType.VULNERABLE_DEPENDENCY: "CWE-1395",
-        VulnType.WEAK_HASH: "CWE-328",
-        VulnType.IMPROPER_CERT_VALIDATION: "CWE-295",
-        VulnType.INSUFFICIENT_KEY_SIZE: "CWE-326",
-        VulnType.WEAK_RSA_PADDING: "CWE-780",
-        VulnType.INSUFFICIENT_CREDENTIAL_PROTECTION: "CWE-522",
-        VulnType.MISSING_ENCRYPTION: "CWE-311",
-        VulnType.SENSITIVE_DATA_EXPOSURE: "CWE-200",
-
-        # A05: Injection
-        VulnType.SQL_INJECTION: "CWE-89",
-        VulnType.XSS: "CWE-79",
-        VulnType.COMMAND_INJECTION: "CWE-78",
-        VulnType.LDAP_INJECTION: "CWE-90",
-        VulnType.XPATH_INJECTION: "CWE-643",
-        VulnType.XML_INJECTION: "CWE-91",
-        VulnType.CODE_INJECTION: "CWE-94",
-        VulnType.TEMPLATE_INJECTION: "CWE-1336",
-        VulnType.PROMPT_INJECTION: "CWE-1427",
-        VulnType.MCP_HIDDEN_INSTRUCTIONS: "CWE-1427",
-        VulnType.MCP_DYNAMIC_TOOL_METADATA: "CWE-1427",
-        VulnType.NOSQL_INJECTION: "CWE-943",
-        VulnType.XXE: "CWE-611",
-        VulnType.REGEX_DOS: "CWE-1333",
-        VulnType.ORM_INJECTION: "CWE-89",
-        VulnType.EL_INJECTION: "CWE-917",
-
-        # A06: Insecure Design
-        VulnType.MASS_ASSIGNMENT: "CWE-915",
-        VulnType.PROTOTYPE_POLLUTION: "CWE-1321",
-        VulnType.BUSINESS_LOGIC_FLAW: "CWE-840",
-        VulnType.RACE_CONDITION: "CWE-362",
-        VulnType.INSECURE_TEMP_FILE: "CWE-377",
-
-        # A07: Authentication Failures
-        VulnType.BROKEN_AUTHENTICATION: "CWE-287",
-        VulnType.CREDENTIAL_STUFFING: "CWE-307",
-        VulnType.SESSION_FIXATION: "CWE-384",
-        VulnType.WEAK_PASSWORD: "CWE-521",
-        VulnType.TRUST_BOUNDARY_VIOLATION: "CWE-501",
-        VulnType.INSECURE_COOKIE: "CWE-614",
-        VulnType.INSECURE_COOKIE_HTTPONLY: "CWE-1004",
-        VulnType.CSRF: "CWE-352",
-
-        # A08: Software/Data Integrity Failures
-        VulnType.DESERIALIZATION: "CWE-502",
-        VulnType.CODE_INTEGRITY: "CWE-494",
-        VulnType.CI_CD_VULNERABILITY: "CWE-1395",
-
-        # A09: Logging & Alerting Failures
-        VulnType.LOG_INJECTION: "CWE-117",
-        VulnType.SENSITIVE_DATA_LOGGED: "CWE-532",
-        VulnType.INSUFFICIENT_LOGGING: "CWE-778",
-
-        # A10: Mishandling of Exceptional Conditions
-        VulnType.ERROR_DISCLOSURE: "CWE-209",
-        VulnType.UNHANDLED_EXCEPTION: "CWE-755",
-        VulnType.IMPROPER_ERROR_HANDLING: "CWE-388",
-
-        # Memory Safety
-        VulnType.NULL_DEREFERENCE: "CWE-476",
-        VulnType.USE_AFTER_FREE: "CWE-416",
-        VulnType.BUFFER_OVERFLOW: "CWE-120",
-        VulnType.DOUBLE_FREE: "CWE-415",
-        VulnType.INVALID_FREE: "CWE-590",
-        VulnType.MEMORY_LEAK: "CWE-401",
-        VulnType.MISMATCHED_FREE: "CWE-762",
-        VulnType.RETURN_STACK_ADDRESS: "CWE-562",
-        VulnType.FORMAT_STRING: "CWE-134",
-        VulnType.INTEGER_OVERFLOW: "CWE-190",
-        VulnType.UNINITIALIZED_VAR: "CWE-457",
-        VulnType.DANGEROUS_FUNCTION: "CWE-676",
-        VulnType.DIVIDE_BY_ZERO: "CWE-369",
-        VulnType.TYPE_CONFUSION: "CWE-843",
-        VulnType.ASSERTION_FAILURE: "CWE-617",
-        VulnType.PRIVILEGE_MANAGEMENT: "CWE-269",
-
-        # Resource exhaustion. Always the specific child weakness: a query for
-        # the CWE-400 parent is satisfied through `cwe_taxonomy.is_a`.
-        VulnType.UNBOUNDED_ALLOCATION: "CWE-770",
-        VulnType.UNCONTROLLED_RECURSION: "CWE-674",
-        VulnType.INFINITE_LOOP: "CWE-835",
-
-        # Directional memory safety. CWE-120 remains the answer wherever the
-        # direction is not established; these are used only where the IR settles
-        # it, and both are children of CWE-119 so either still answers a query
-        # for the broader class.
-        VulnType.OOB_WRITE: "CWE-787",
-        VulnType.OOB_READ: "CWE-125",
-
-        # Directional memory safety, the below-the-start siblings. Each is a child
-        # of the same CWE-119 family through `cwe_taxonomy.is_a`, so a query for
-        # the broader class still resolves.
-        VulnType.OOB_UNDERWRITE: "CWE-124",
-        VulnType.OOB_UNDERREAD: "CWE-127",
-
-        # Excessive constant allocation, the sibling of CWE-770.
-        VulnType.EXCESSIVE_ALLOCATION: "CWE-789",
-
-        # Permission assignment, and the dropped privilege-drop result. Frame
-        # reports the specific CWE-252; a query for its CWE-754 parent is
-        # answered through `cwe_taxonomy.is_a`, so CWE-754 is not a detector of
-        # its own any more than CWE-400 is.
-        VulnType.INCORRECT_PERMISSIONS: "CWE-732",
-        VulnType.UNCHECKED_RETURN: "CWE-252",
-    }
+    # finding type -> CWE (specs/data/kinds.toml)
+    CWE_MAP = {VulnType(t): c for t, c in _load_kinds().cwe.items()}
 
     def __init__(
         self,

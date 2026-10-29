@@ -39,6 +39,9 @@ from .instructions import (
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
+from .kinds import check as _kinds_check, load as _load_kinds
+
+_KINDS = _load_kinds()
 
 # A plain local variable name: no field, element or call in it.
 _PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
@@ -206,89 +209,18 @@ class VulnType(Enum):
 
     @classmethod
     def from_sink_kind(cls, sink_kind: SinkKind) -> 'VulnType':
-        """Map sink kind to vulnerability type"""
-        mapping = {
-            # A05: Injection
-            SinkKind.SQL_QUERY: cls.SQL_INJECTION,
-            SinkKind.HTML_OUTPUT: cls.XSS,
-            SinkKind.SHELL_COMMAND: cls.COMMAND_INJECTION,
-            SinkKind.LDAP_QUERY: cls.LDAP_INJECTION,
-            SinkKind.XPATH_QUERY: cls.XPATH_INJECTION,
-            SinkKind.XML_INJECTION: cls.XML_INJECTION,
-            SinkKind.EVAL: cls.CODE_INJECTION,
-            SinkKind.TEMPLATE: cls.TEMPLATE_INJECTION,
-            SinkKind.PROMPT: cls.PROMPT_INJECTION,
-            SinkKind.NOSQL_QUERY: cls.NOSQL_INJECTION,
-            SinkKind.XML_PARSE: cls.XXE,
-            SinkKind.REGEX: cls.REGEX_DOS,
-            SinkKind.ORM_QUERY: cls.ORM_INJECTION,
-            SinkKind.EXPRESSION_LANG: cls.EL_INJECTION,
-            # A01: Broken Access Control
-            SinkKind.FILE_PATH: cls.PATH_TRAVERSAL,
-            SinkKind.REDIRECT: cls.OPEN_REDIRECT,
-            SinkKind.SSRF: cls.SSRF,
-            SinkKind.AUTHZ_CHECK: cls.AUTHORIZATION_BYPASS,
-            SinkKind.RESOURCE_SELECT: cls.IDOR,
-            SinkKind.CORS: cls.CORS_MISCONFIGURATION,
-            # A02: Security Misconfiguration
-            SinkKind.HEADER: cls.HEADER_INJECTION,
-            SinkKind.SECRET_EXPOSURE: cls.SECRET_EXPOSURE,
-            SinkKind.DEBUG_INFO: cls.DEBUG_ENABLED,
-            # A04: Cryptographic Failures
-            SinkKind.WEAK_CRYPTO: cls.WEAK_CRYPTOGRAPHY,
-            SinkKind.HARDCODED_SECRET: cls.HARDCODED_SECRET,
-            SinkKind.INSECURE_RANDOM: cls.INSECURE_RANDOM,
-            SinkKind.UNPREDICTABLE: cls.PREDICTABLE_VALUE,
-            SinkKind.VULNERABLE_DEPENDENCY: cls.VULNERABLE_DEPENDENCY,
-            SinkKind.WEAK_HASH: cls.WEAK_HASH,
-            SinkKind.CERT_VALIDATION: cls.IMPROPER_CERT_VALIDATION,
-            SinkKind.WEAK_KEY_SIZE: cls.INSUFFICIENT_KEY_SIZE,
-            SinkKind.WEAK_RSA_PADDING: cls.WEAK_RSA_PADDING,
-            SinkKind.INSECURE_AUTH: cls.INSUFFICIENT_CREDENTIAL_PROTECTION,
-            SinkKind.INSECURE_TEMP_FILE: cls.INSECURE_TEMP_FILE,
-            SinkKind.PROTOTYPE_POLLUTION: cls.PROTOTYPE_POLLUTION,
-            # Resource exhaustion
-            SinkKind.ALLOC_SIZE: cls.UNBOUNDED_ALLOCATION,
-            # A07: Authentication Failures
-            SinkKind.CREDENTIAL: cls.BROKEN_AUTHENTICATION,
-            SinkKind.SESSION: cls.SESSION_FIXATION,
-            SinkKind.PASSWORD_STORE: cls.WEAK_PASSWORD,
-            SinkKind.TRUST_BOUNDARY: cls.TRUST_BOUNDARY_VIOLATION,
-            SinkKind.INSECURE_COOKIE: cls.INSECURE_COOKIE,
-            SinkKind.INSECURE_COOKIE_HTTPONLY: cls.INSECURE_COOKIE_HTTPONLY,
-            SinkKind.CSRF_DISABLED: cls.CSRF,
-            # A08: Software/Data Integrity Failures
-            SinkKind.DESERIALIZATION: cls.DESERIALIZATION,
-            SinkKind.DESERIALIZE_UNSAFE: cls.DESERIALIZATION,
-            # A09: Logging Failures
-            SinkKind.LOG: cls.LOG_INJECTION,
-            SinkKind.SENSITIVE_LOG: cls.SENSITIVE_DATA_LOGGED,
-            # A10: Error Handling
-            SinkKind.ERROR_DISCLOSURE: cls.ERROR_DISCLOSURE,
-            # Aliases for flexibility
-            SinkKind.XSS: cls.XSS,
-            SinkKind.COMMAND: cls.COMMAND_INJECTION,
-            SinkKind.FORMAT_STRING: cls.FORMAT_STRING,
-            SinkKind.FORMAT: cls.FORMAT_STRING,
-            # Memory safety
-            SinkKind.BUFFER_OVERFLOW: cls.BUFFER_OVERFLOW,
-            SinkKind.DANGEROUS_FUNCTION: cls.DANGEROUS_FUNCTION,
-            SinkKind.INTEGER_OVERFLOW: cls.INTEGER_OVERFLOW,
-            SinkKind.NULL_DEREF: cls.NULL_DEREFERENCE,
-            SinkKind.DIVIDE_BY_ZERO: cls.DIVIDE_BY_ZERO,
-        }
-        mapping.update({
-            SinkKind.ASSERTION: cls.ASSERTION_FAILURE,
-            SinkKind.RACE: cls.RACE_CONDITION,
-            SinkKind.SENSITIVE_EXPOSURE: cls.SENSITIVE_DATA_EXPOSURE,
-            SinkKind.PRIVILEGE: cls.PRIVILEGE_MANAGEMENT,
-        })
-        return mapping.get(sink_kind, cls.TAINT_FLOW)
+        """The finding type a flow into this sink kind reports (`specs/data/kinds.toml`)."""
+        vt = _KINDS.sink_vuln.get(sink_kind.value)
+        return cls(vt) if vt else cls.TAINT_FLOW
+
+
+_kinds_check([s.value for s in SinkKind], [v.value for v in VulnType], _KINDS)    # a broken table fails every scan
 
 
 # =============================================================================
 # Vulnerability Check
 # =============================================================================
+
 
 def _display_name(var: str) -> str:
     """A frontend temporary (`$reply_4`, the value of `reply = ...`) as the program names it."""

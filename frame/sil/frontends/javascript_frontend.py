@@ -55,72 +55,8 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 
 
-# Mapping from spec sink type strings to SinkKind enum
-# Available SinkKind values: SQL_QUERY, HTML_OUTPUT, SHELL_COMMAND, LDAP_QUERY,
-# XPATH_QUERY, EVAL, TEMPLATE, NOSQL_QUERY, XML_PARSE, REGEX, ORM_QUERY,
-# EXPRESSION_LANG, FILE_PATH, REDIRECT, SSRF, AUTHZ_CHECK, CORS, HEADER,
-# SECRET_EXPOSURE, DEBUG_INFO, WEAK_CRYPTO, HARDCODED_SECRET, INSECURE_RANDOM,
-# WEAK_HASH, CREDENTIAL, SESSION, PASSWORD_STORE, TRUST_BOUNDARY, INSECURE_COOKIE,
-# DESERIALIZATION, LOG, SENSITIVE_LOG, ERROR_DISCLOSURE, XSS, COMMAND, MEMORY
-SINK_TYPE_MAP = {
-    # Direct matches
-    "sql": SinkKind.SQL_QUERY,
-    "html": SinkKind.HTML_OUTPUT,
-    "xss": SinkKind.XSS,
-    "command": SinkKind.COMMAND,
-    "shell": SinkKind.SHELL_COMMAND,
-    "ldap": SinkKind.LDAP_QUERY,
-    "xpath": SinkKind.XPATH_QUERY,
-    "eval": SinkKind.EVAL,
-    "template": SinkKind.TEMPLATE,
-    "redirect": SinkKind.REDIRECT,
-    "ssrf": SinkKind.SSRF,
-    "deserialize": SinkKind.DESERIALIZATION,
-
-    # Path/filesystem
-    "path": SinkKind.FILE_PATH,
-    "filesystem": SinkKind.FILE_PATH,
-    "file": SinkKind.FILE_PATH,
-
-    # NoSQL
-    "nosql": SinkKind.NOSQL_QUERY,
-
-    # Crypto
-    "weak_crypto": SinkKind.WEAK_CRYPTO,
-    "weak_hash": SinkKind.WEAK_HASH,
-    "hardcoded_secret": SinkKind.HARDCODED_SECRET,
-    "hardcoded_cred": SinkKind.CREDENTIAL,
-    "insecure_random": SinkKind.INSECURE_RANDOM,
-
-    # Auth/session
-    "auth": SinkKind.AUTHZ_CHECK,
-    "session": SinkKind.SESSION,
-
-    # Headers
-    "header": SinkKind.HEADER,
-    "header_injection": SinkKind.HEADER,
-
-    # Logging
-    "sensitive_log": SinkKind.SENSITIVE_LOG,
-    "log_injection": SinkKind.LOG,
-
-    # Misc
-    "code": SinkKind.EVAL,
-    "config": SinkKind.SECRET_EXPOSURE,
-    "cors": SinkKind.CORS,
-    "ssl": SinkKind.WEAK_CRYPTO,
-    "exception": SinkKind.ERROR_DISCLOSURE,
-    "info_disclosure": SinkKind.DEBUG_INFO,
-    "prototype_pollution": SinkKind.PROTOTYPE_POLLUTION,
-    "redos": SinkKind.REGEX,
-}
-
-
 def _get_sink_kind(spec_type: str) -> SinkKind:
-    """Convert spec sink type string to SinkKind enum"""
-    if spec_type in SINK_TYPE_MAP:
-        return SINK_TYPE_MAP[spec_type]
-    # Shared resolver (aliases, then SinkKind values).
+    """A spec's sink-kind string as a SinkKind (aliases from specs/data/kinds.toml)."""
     return resolve_sink_kind(spec_type)
 
 
