@@ -1,0 +1,17 @@
+# Calls that hand back (a re-encoding of, or a part of) their input. Read by
+# frame/sil/specs/passthrough.py (strictly).
+
+# JavaScript functions that only re-encode their argument: `decodeURIComponent(location.hash)`,
+# `JSON.parse(req.body.data)` return request data when an argument is an inline request read.
+# Matched against the call's textual name (after module renaming: `qs.parse`, `lodash.trim`).
+[javascript]
+calls = ["decodeURIComponent", "decodeURI", "unescape", "atob", "btoa", "JSON.parse", "String", "Buffer.from",
+         "querystring.parse", "qs.parse", "url.parse", "URL.parse", "Object.assign", "structuredClone",
+         "querystring.unescape", "lodash.trim", "lodash.toString", "lodash.cloneDeep", "lodash.clone"]
+
+# C# methods that hand back (a part of) the same text: `Request.Query["a"].ToString()` and
+# `Request.Query["a"].FirstOrDefault()` are still the query parameter.
+[csharp]
+methods = ["ToString", "Trim", "TrimStart", "TrimEnd", "ToLower", "ToLowerInvariant", "ToUpper", "ToUpperInvariant",
+           "FirstOrDefault", "First", "Single", "SingleOrDefault", "LastOrDefault", "Last", "ElementAt",
+           "ElementAtOrDefault", "Substring", "Normalize", "GetValueOrDefault", "ToArray"]

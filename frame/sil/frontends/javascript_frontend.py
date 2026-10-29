@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.passthrough import load as _passthrough
 from frame.sil.specs.request_objects import load as _request_objects
 from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
@@ -2275,11 +2276,6 @@ class JavaScriptFrontend:
     # (`exports.md5 = md5`) is not a call and must not match.
     _CALL_ONLY_SINK_KINDS = frozenset({"weak_hash", "weak_crypto", "insecure_random"})
 
-    _PASSTHROUGH_CALLS = frozenset({
-        "decodeURIComponent", "decodeURI", "unescape", "atob", "btoa", "JSON.parse", "String", "Buffer.from",
-        "querystring.parse", "qs.parse", "url.parse", "URL.parse", "Object.assign", "structuredClone",
-        "querystring.unescape", "lodash.trim", "lodash.toString", "lodash.cloneDeep", "lodash.clone"})
-
     def _translate_call_assignment(
         self,
         target: str,
@@ -2353,7 +2349,8 @@ class JavaScriptFrontend:
 
         # `decodeURIComponent(location.hash.slice(1))`, `JSON.parse(req.body.data)`: functions that
         # only re-encode their argument return request data when the argument is request data
-        if func_name in self._PASSTHROUGH_CALLS:
+        # (specs/data/passthrough.toml)
+        if func_name in _passthrough().javascript_calls:
             for arg in args:
                 found = self._check_expression_for_taint_source(arg, target, loc)
                 if found:
@@ -2366,7 +2363,7 @@ class JavaScriptFrontend:
         prop_spec = self._lookup_call_spec(func_name, call_node)
         if (prop_spec is not None and prop_spec.taint_propagates and not prop_spec.is_taint_sink()
                 and not prop_spec.is_taint_source() and not prop_spec.is_taint_sanitizer()
-                and func_name not in self._PASSTHROUGH_CALLS):
+                and func_name not in _passthrough().javascript_calls):
             for idx in prop_spec.taint_propagates:
                 if 0 <= idx < len(args):
                     instrs.extend(self._check_expression_for_taint_source(args[idx], target, loc))

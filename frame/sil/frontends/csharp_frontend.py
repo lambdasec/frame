@@ -44,6 +44,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
+from frame.sil.specs.passthrough import load as _passthrough
 
 
 class CSharpFrontend:
@@ -1119,16 +1120,10 @@ class CSharpFrontend:
                 return f"Request.{rest}"
         return chain
 
-    # Methods that hand back (a part of) the same text: `Request.Query["a"].ToString()` is still the
-    # query parameter, `Request.Query["a"].FirstOrDefault()` too.
-    _PASSTHROUGH_METHODS = frozenset({
-        "ToString", "Trim", "TrimStart", "TrimEnd", "ToLower", "ToLowerInvariant", "ToUpper", "ToUpperInvariant",
-        "FirstOrDefault", "First", "Single", "SingleOrDefault", "LastOrDefault", "Last", "ElementAt",
-        "ElementAtOrDefault", "Substring", "Normalize", "GetValueOrDefault", "ToArray"})
-
     def _source_accesses(self, node: Optional[TSNode]):
         """Property / indexer accesses a value expression is made of, looking through casts, parentheses,
-        `a ?? b`, `c ? a : b`, `x + y` and pass-through methods (`.ToString()`, `.Trim()`...)."""
+        `a ?? b`, `c ? a : b`, `x + y` and pass-through methods (`.ToString()`, `.Trim()`...;
+        `specs/data/passthrough.toml`)."""
         if node is None:
             return
         t = node.type
@@ -1158,7 +1153,7 @@ class CSharpFrontend:
             fn = node.child_by_field_name("function")
             if fn is not None and fn.type == "member_access_expression":
                 name = fn.child_by_field_name("name")
-                if name is not None and self._get_text(name) in self._PASSTHROUGH_METHODS:
+                if name is not None and self._get_text(name) in _passthrough().csharp_methods:
                     yield from self._source_accesses(fn.child_by_field_name("expression"))
 
     def _member_source_spec(self, node: TSNode) -> Optional[ProcSpec]:
@@ -2232,7 +2227,7 @@ class CSharpFrontend:
             if fn is not None and fn.type == "member_access_expression":
                 name = fn.child_by_field_name("name")
                 recv = fn.child_by_field_name("expression")
-                if (name is not None and self._get_text(name) in self._PASSTHROUGH_METHODS
+                if (name is not None and self._get_text(name) in _passthrough().csharp_methods
                         and self._source_in(recv) is not None):
                     return self._translate_expression(recv)   # Request.Query["a"].ToString() reads like Request.Query["a"]
             local = self._local_url_exp(node)
