@@ -248,6 +248,8 @@ class Vulnerability:
     # "naming-convention" when the source is a JS/TS `req.*` name and neither the
     # file nor the project shows a web framework (see framework_evidence.py).
     source_evidence: str = ""
+    # "test" when the file is test code by its program (frame/sil/test_code.py): a tag, not a filter.
+    context: str = ""
     # "hardening" for configuration that switches a protection off (debug mode, a cookie
     # declared insecure); empty for ordinary findings. Never mixed into taint results.
     category: str = ""
@@ -275,6 +277,8 @@ class Vulnerability:
         }
         if self.source_evidence:
             d["source_evidence"] = self.source_evidence
+        if self.context:
+            d["context"] = self.context
         d["category"] = category_of(self.type.value, self.category)
         d["evidence"] = self.evidence
         if self.fingerprint:
@@ -389,6 +393,8 @@ class ScanResult:
 
             result["properties"] = {"category": category_of(vuln.type.value, vuln.category),
                                     "evidence": vuln.evidence}
+            if vuln.context:
+                result["properties"]["context"] = vuln.context
             if cwe:
                 result["properties"]["cwe"] = cwe
             if vuln.witness:
@@ -1231,6 +1237,7 @@ class FrameScanner:
             # Step 6: Apply confidence-based filtering
             result.vulnerabilities = self._filter_by_confidence(result.vulnerabilities, source_code)
             self._tag_source_evidence(result.vulnerabilities, source_code)
+            self._tag_test_code(result.vulnerabilities, program)
 
             if self.verbose:
                 print(f"[Scanner] After confidence filter: {len(result.vulnerabilities)} vulnerabilities")
@@ -1962,6 +1969,20 @@ class FrameScanner:
         deduplicated.extend(sorted(secret_seen.values(), key=lambda v: (v.location, v.line)))
 
         return deduplicated
+
+    def _tag_test_code(self, vulns: List[Vulnerability], program: Program) -> None:
+        """Findings in test code (by the program, `test_code.py`) get `context: "test"`; a
+        credential found only by its variable's name drops to low there (a test's password is a
+        fixture). A provider-format credential keeps its severity: it may be real."""
+        if not vulns:
+            return
+        from frame.sil.test_code import test_framework
+        if test_framework(program, self.language) is None:
+            return
+        for v in vulns:
+            v.context = "test"
+            if v.type == VulnType.HARDCODED_SECRET and v.procedure != "<literal>":
+                v.severity = Severity.LOW
 
     def _tag_source_evidence(self, vulns: List[Vulnerability], source_code: str) -> None:
         """Mark JS/TS findings whose source is the guessed `req.*` name with no

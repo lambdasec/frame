@@ -111,7 +111,8 @@ def test_secrets_walkthrough(tmp_path):
     for line in ["demo/billing.js:3:22", "Hardcoded Stripe live secret or restricted key (Stripe format: stripe-live-key)",
                  "demo/deploy.py:6:12", "Hardcoded GitHub token", "demo/deploy.py:11:44",
                  "Hardcoded OpenAI API key (OpenAI format: openai-api-key)", "demo/deploy.py:14:42",
-                 "Hardcoded AWS access key ID (AWS format: aws-access-key-id)", "Scanned 2 files: 4 findings (4 critical)"]:
+                 "Hardcoded AWS access key ID (AWS format: aws-access-key-id)", "Location: demo/checks.py:9:4  (test code)",
+                 "Scanned 3 files: 5 findings (4 critical, 1 low)"]:
         assert line in out and line in readme, line
     demo = (work / "demo" / "deploy.py").read_text().splitlines()
     assert "IOSFODNN7EXAMPLE" in demo[16] and demo[18].startswith("# A rotated token")   # the README's lines 17, 19
@@ -119,9 +120,9 @@ def test_secrets_walkthrough(tmp_path):
     subprocess.run([sys.executable, "make_demo.py", "--history"], cwd=work, check=True, capture_output=True)
     out = frame(work, env, "history", "demo")
     for line in ["4 credential(s) in the history",
-                 "Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in e325fd7f4e58 billing.js:3 "
+                 "Stripe Stripe live secret or restricted key: sk_l... (32 characters) added in 4996bdfefbcd billing.js:3 "
                  "(not in the current tree, still in the history)",
-                 "AWS AWS access key ID: AKIA... (20 characters) added in e325fd7f4e58 deploy.py:14 (still in the current tree)"]:
+                 "AWS AWS access key ID: AKIA... (20 characters) added in 4996bdfefbcd deploy.py:14 (still in the current tree)"]:
         assert line in out and line in readme, (line, out)
 
 

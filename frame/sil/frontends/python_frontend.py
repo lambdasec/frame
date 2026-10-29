@@ -438,6 +438,13 @@ class PythonFrontend:
             loc=self._get_location(node),
             is_method=is_method,
         )
+        body = node.child_by_field_name("body")
+        stack = list(body.named_children) if body is not None else []
+        while stack and not proc.asserts:
+            n = stack.pop()
+            proc.asserts = n.type == "assert_statement"
+            if n.type not in ("function_definition", "class_definition", "lambda"):
+                stack.extend(n.named_children)
 
         # Inspect decorators (both methods and module-level route handlers).
         decorator_texts: List[str] = []

@@ -41,6 +41,19 @@ DOCS_EXAMPLE = "AKIA" "IOSFODNN7EXAMPLE"
 
 # A rotated token mentioned in a comment is not a literal: {GITHUB}
 ''',
+    # A test file (not named test_*: it is test code because it imports pytest and asserts).
+    "checks.py": '''import pytest
+
+from deploy import notify
+
+
+def test_notify_posts(monkeypatch):
+    sent = []
+    monkeypatch.setattr("requests.post", lambda url, **kw: sent.append(url))
+    admin_password = "correct-horse-battery"
+    notify(f"login with {admin_password}")
+    assert sent == ["https://api.example.com/notify"]
+''',
     "billing.js": f'''const Stripe = require("stripe");
 
 const stripe = Stripe("{STRIPE}");

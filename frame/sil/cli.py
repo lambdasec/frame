@@ -307,7 +307,8 @@ def format_text_result(result: ScanResult, min_severity: Severity) -> str:
             }.get(vuln.severity, "⚫")
 
             lines.append(f"\n{i}. [{vuln.severity.value.upper()}] {severity_icon} {vuln.type.value}")
-            lines.append(f"   Location: {vuln.location}:{vuln.line}:{vuln.column}")
+            lines.append(f"   Location: {vuln.location}:{vuln.line}:{vuln.column}"
+                         + ("  (test code)" if getattr(vuln, "context", "") == "test" else ""))
             lines.append(f"   Function: {vuln.procedure}")
             lines.append(f"   Description: {vuln.description}")
 
