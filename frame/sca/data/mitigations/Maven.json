@@ -147,5 +147,46 @@
     "spring-projects/spring-boot@v3.1.5: MetricsProperties (prefix management.metrics) has the Map<String, Boolean> enable"
    ]
   }
+ ],
+ "GHSA-crf3-v9rr-v7hj": [
+  {
+   "package": "com.alibaba:fastjson",
+   "versions": "[1.2.68,)",
+   "complete": true,
+   "summary": "enable fastjson safeMode, which disables autoType completely",
+   "ways": [
+    {
+     "kind": "jvm-property",
+     "key": "fastjson.parser.safeMode",
+     "value": "true"
+    },
+    {
+     "kind": "properties-file",
+     "file": "fastjson.properties",
+     "key": "fastjson.parser.safeMode",
+     "value": "true"
+    },
+    {
+     "kind": "java-call",
+     "receiver": "ParserConfig.getGlobalInstance()",
+     "method": "setSafeMode",
+     "args": [
+      "true"
+     ]
+    },
+    {
+     "kind": "java-call",
+     "receiver": "com.alibaba.fastjson.parser.ParserConfig.getGlobalInstance()",
+     "method": "setSafeMode",
+     "args": [
+      "true"
+     ]
+    }
+   ],
+   "references": [
+    "https://github.com/alibaba/fastjson2/wiki/Security-Advisory:-Remote-Code-Execution-in-fastjson-1.2.68%E2%80%931.2.83 (CVE-2026-16723; \"Not affected: SafeMode = true, rejects all @type before the vulnerable path is reached\"; remediation: \"Or enable SafeMode\": -Dfastjson.parser.safeMode=true, ParserConfig.getGlobalInstance().setSafeMode(true), or fastjson.properties)",
+    "https://github.com/alibaba/fastjson/wiki/fastjson_safemode (since 1.2.68; the three ways)"
+   ]
+  }
  ]
 }

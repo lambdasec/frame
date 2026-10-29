@@ -281,11 +281,12 @@ Some vulnerabilities can be switched off by a setting while you wait for an upgr
 ```console
 $ frame deps --vulns
   CRITICAL com.alibaba:fastjson@1.2.80 (direct) GHSA-crf3-v9rr-v7hj: fastjson has a remote code execution (RCE) vulnerability; no fixed version  [pom.xml]
+           mitigation (complete): enable fastjson safeMode, which disables autoType completely: APPLIED at Dockerfile:2 (JAVA_TOOL_OPTIONS)
   HIGH     com.alibaba:fastjson@1.2.80 (direct) GHSA-pv7h-hx5h-mgfj: Unsafe deserialization in com.alibaba:fastjson; fixed in 1.2.83  [pom.xml]
            mitigation (complete): enable fastjson safeMode, which disables autoType completely: APPLIED at Dockerfile:2 (JAVA_TOOL_OPTIONS)
 ```
 
-A mitigation belongs to an advisory, not a package: nothing says safeMode stops the newer GHSA-crf3-v9rr-v7hj, so none is shown for it.
+A mitigation belongs to an advisory, not a package: each entry cites that advisory's own evidence. safeMode is shown for GHSA-crf3-v9rr-v7hj too because fastjson's own advisory for it (CVE-2026-16723) lists "SafeMode = true" as not affected; a setting no source ties to an advisory is never shown for it.
 
 A mitigation is `complete` only when the advisory or the library says it stops that vulnerability; otherwise it is `partial` and comes with the caveat. Log4Shell's `log4j2.formatMsgNoLookups=true`, for instance, does not stop CVE-2021-45046, and Apache withdrew that advice. Each one applies only to the versions where the setting exists.
 

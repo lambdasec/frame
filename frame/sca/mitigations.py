@@ -528,6 +528,18 @@ def _final_stage_insert(text: str, line: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _append_setting(edits: Dict[str, "Change"], root: Path, rel: str, line: str, why: str) -> None:
+    """`line` at the end of a properties file, once (two advisories may share one setting)."""
+    from frame.sca.apply import Change
+    cur = edits[rel].after if rel in edits else (root / rel).read_text() if (root / rel).is_file() else ""
+    if line in cur.splitlines():
+        if rel in edits:
+            edits[rel] = Change(rel, edits[rel].before, cur, f"{edits[rel].reason}; {why}")
+        return
+    new = cur + ("" if not cur or cur.endswith("\n") else "\n") + line + "\n"
+    edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, new, f"{edits[rel].reason}; {why}" if rel in edits else why)
+
+
 def propose(findings: List[dict], root: Path) -> Tuple[List["Change"], List[str]]:
     """Edits that apply a complete, not yet applied mitigation, one per advisory: a properties
     file the library reads from the classpath (inside the artifact, whatever runs it), else the
@@ -556,16 +568,12 @@ def propose(findings: List[dict], root: Path) -> Tuple[List["Change"], List[str]
             if "spring-property" in ways and res is not None:      # the application's own configuration
                 w = ways["spring-property"]
                 rel = (res / "application.properties").relative_to(root).as_posix()
-                cur = edits[rel].after if rel in edits else (root / rel).read_text() if (root / rel).is_file() else ""
-                new = cur + ("" if not cur or cur.endswith("\n") else "\n") + f"{w['key']}={w['value']}\n"
-                edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, new, f"{label}: {m['summary']}")
+                _append_setting(edits, root, rel, f"{w['key']}={w['value']}", f"{label}: {m['summary']}")
                 continue
             if "properties-file" in ways and res is not None:
                 w = ways["properties-file"]
                 rel = (res / w["file"]).relative_to(root).as_posix()
-                cur = edits[rel].after if rel in edits else (root / rel).read_text() if (root / rel).is_file() else ""
-                new = cur + ("" if not cur or cur.endswith("\n") else "\n") + f"{w['key']}={w['value']}\n"
-                edits[rel] = Change(rel, edits[rel].before if rel in edits else cur, new, f"{label}: {m['summary']}")
+                _append_setting(edits, root, rel, f"{w['key']}={w['value']}", f"{label}: {m['summary']}")
                 continue
             if dockerfiles and ("jvm-property" in ways or "env" in ways):
                 rel = dockerfiles[0].relative_to(root).as_posix()

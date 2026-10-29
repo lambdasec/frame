@@ -91,8 +91,11 @@ def test_java_mitigation_walkthrough(tmp_path):
         assert line in gateway and line in readme, (line, gateway)
     dry = frame(work, env, "deps", "--vulns", "--mitigate")
     assert "+fastjson.parser.safeMode=true" in dry and not (work / "src/main/resources/fastjson.properties").exists()
+    assert dry.count("+fastjson.parser.safeMode=true") == 1          # two advisories, one setting, written once
     applied = frame(work, env, "deps", "--vulns", "--mitigate", "--apply")
-    line = "Applied and confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj"
+    line = ("Applied and confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-crf3-v9rr-v7hj, "
+            "com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj, "
+            "org.springframework.boot:spring-boot-actuator-autoconfigure@2.6.3 GHSA-g5h3-w546-pj7f")
     assert line in applied and line in readme
     assert (work / "pom.xml").read_text() == (EXAMPLES / "java-mitigation" / "pom.xml").read_text()   # no upgrade
 

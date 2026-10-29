@@ -32,18 +32,23 @@ The curated entries cite their evidence: `frame/sca/data/mitigations/Maven.json`
 ```console
 $ frame deps --vulns --mitigate
 Configuration mitigations (dry run; --apply writes them):
+--- a/gateway/src/main/resources/application.properties
++++ b/gateway/src/main/resources/application.properties
+@@ -0,0 +1 @@
++management.cloudfoundry.enabled=false
+
 --- a/src/main/resources/fastjson.properties
 +++ b/src/main/resources/fastjson.properties
 @@ -0,0 +1 @@
 +fastjson.parser.safeMode=true
 
 $ frame deps --vulns --mitigate --apply
-Applied and confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj
+Applied and confirmed by re-reading the project: com.alibaba:fastjson@1.2.80 GHSA-crf3-v9rr-v7hj, com.alibaba:fastjson@1.2.80 GHSA-pv7h-hx5h-mgfj, org.springframework.boot:spring-boot-actuator-autoconfigure@2.6.3 GHSA-g5h3-w546-pj7f
 ```
 
 It is written to a properties file fastjson reads from the classpath, so it travels inside the jar whatever runs it. Without a `src/main/resources`, it would go into the Dockerfile's last stage as `ENV JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS} -Dfastjson.parser.safeMode=true"`. A partial mitigation is never written for you.
 
-Nothing here changes a version. `--plan` shows the upgrades, and fastjson's newer GHSA-crf3-v9rr-v7hj has no fixed version and no curated mitigation, so it stays open either way.
+Nothing here changes a version. `--plan` shows the upgrades. fastjson's newer GHSA-crf3-v9rr-v7hj (CVE-2026-16723) has no fixed version in OSV's record, but fastjson's own advisory for it lists safeMode as a complete mitigation, so the same one line covers both advisories (it is written once).
 
 A mitigation found is evidence, not a verdict: a VEX document from `frame deps --vex openvex` keeps the advisory `affected`, with the mitigation in its notes, until you record `inline_mitigations_already_exist` in `.frame/vex.toml`.
 

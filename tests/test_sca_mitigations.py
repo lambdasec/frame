@@ -328,3 +328,16 @@ def test_propose_writes_a_spring_property_into_the_application_s_own_configurati
     changes, manual = propose(fs, tmp_path)
     assert not manual and [(c.path, c.after) for c in changes] == [
         ("src/main/resources/application.properties", "server.port=8080\nmanagement.cloudfoundry.enabled=false\n")]
+
+
+def test_two_advisories_one_setting_is_written_once(tmp_path):
+    """fastjson's GHSA-pv7h-hx5h-mgfj and GHSA-crf3-v9rr-v7hj share safeMode: one line."""
+    from frame.sca.mitigations import propose
+    write(tmp_path, {"pom.xml": "<project/>\n", "src/main/resources/.keep": ""})
+    fs = [{**finding(FASTJSON, "com.alibaba:fastjson", "1.2.80"), "path": "pom.xml"},
+          {**finding("GHSA-crf3-v9rr-v7hj", "com.alibaba:fastjson", "1.2.80"), "path": "pom.xml"}]
+    annotate(fs, tmp_path, None)
+    assert all(f["mitigations"][0]["complete"] for f in fs)
+    changes, manual = propose(fs, tmp_path)
+    assert not manual and [(c.path, c.after) for c in changes] == [
+        ("src/main/resources/fastjson.properties", "fastjson.parser.safeMode=true\n")]
