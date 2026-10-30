@@ -93,7 +93,7 @@ include = ["frame*"]
 [tool.setuptools.package-data]
 # the built-in framework packs and library spec tables are data files; without them an
 # installed Frame has no packs and no specs
-frame = ["sil/packs/data/**/*.toml", "sil/specs/data/*.toml", "sca/data/*.txt", "sca/data/*.json", "sca/data/*.json.gz", "sca/data/mitigations/*.json"]
+frame = ["sil/packs/data/**/*.toml", "sil/specs/data/*.toml", "iac/data/*.toml", "sca/data/*.txt", "sca/data/*.json", "sca/data/*.json.gz", "sca/data/mitigations/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "frame.__version__"}

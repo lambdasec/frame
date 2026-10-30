@@ -1,0 +1,52 @@
+kubernetes-goat/scenarios/batch-check/job.yaml	Job/batch-check-job	baseline	
+kubernetes-goat/scenarios/batch-check/job.yaml	Job/batch-check-job	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/build-code/deployment.yaml	Deployment/default/build-code-deployment	baseline	
+kubernetes-goat/scenarios/build-code/deployment.yaml	Deployment/default/build-code-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/cache-store/deployment.yaml	Deployment/secure-middleware/cache-store-deployment	baseline	
+kubernetes-goat/scenarios/cache-store/deployment.yaml	Deployment/secure-middleware/cache-store-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/docker-bench-security/deployment.yaml	DaemonSet/docker-bench-security	baseline	non-default capabilities|host namespaces|hostPath volumes|privileged
+kubernetes-goat/scenarios/docker-bench-security/deployment.yaml	DaemonSet/docker-bench-security	restricted	host namespaces|privileged|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|runAsUser=0|seccompProfile
+kubernetes-goat/scenarios/health-check/deployment-simple-alternative.yaml	Deployment/health-check-deployment-simple	baseline	hostPath volumes|privileged
+kubernetes-goat/scenarios/health-check/deployment-simple-alternative.yaml	Deployment/health-check-deployment-simple	restricted	privileged|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/health-check/deployment.yaml	Deployment/health-check-deployment	baseline	hostPath volumes|privileged
+kubernetes-goat/scenarios/health-check/deployment.yaml	Deployment/health-check-deployment	restricted	privileged|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/hidden-in-layers/deployment.yaml	Job/hidden-in-layers	baseline	
+kubernetes-goat/scenarios/hidden-in-layers/deployment.yaml	Job/hidden-in-layers	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/hunger-check/deployment.yaml	Deployment/big-monolith/hunger-check-deployment	baseline	
+kubernetes-goat/scenarios/hunger-check/deployment.yaml	Deployment/big-monolith/hunger-check-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/internal-proxy/deployment.yaml	Deployment/default/internal-proxy-deployment	baseline	
+kubernetes-goat/scenarios/internal-proxy/deployment.yaml	Deployment/default/internal-proxy-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/kube-bench-security/master-job.yaml	Job/kube-bench-master	baseline	host namespaces|hostPath volumes
+kubernetes-goat/scenarios/kube-bench-security/master-job.yaml	Job/kube-bench-master	restricted	host namespaces|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/kube-bench-security/node-job.yaml	Job/kube-bench-node	baseline	host namespaces|hostPath volumes
+kubernetes-goat/scenarios/kube-bench-security/node-job.yaml	Job/kube-bench-node	restricted	host namespaces|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/kubernetes-goat-home/deployment.yaml	Deployment/default/kubernetes-goat-home-deployment	baseline	
+kubernetes-goat/scenarios/kubernetes-goat-home/deployment.yaml	Deployment/default/kubernetes-goat-home-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/poor-registry/deployment.yaml	Deployment/default/poor-registry-deployment	baseline	
+kubernetes-goat/scenarios/poor-registry/deployment.yaml	Deployment/default/poor-registry-deployment	restricted	allowPrivilegeEscalation != false|unrestricted capabilities|runAsNonRoot != true|seccompProfile
+kubernetes-goat/scenarios/system-monitor/deployment.yaml	Deployment/default/system-monitor-deployment	baseline	host namespaces|hostPath volumes|privileged
+kubernetes-goat/scenarios/system-monitor/deployment.yaml	Deployment/default/system-monitor-deployment	restricted	host namespaces|privileged|allowPrivilegeEscalation != false|unrestricted capabilities|restricted volume types|runAsNonRoot != true|seccompProfile
+microservices-demo/kubernetes-manifests/adservice.yaml	Deployment/adservice	baseline	
+microservices-demo/kubernetes-manifests/adservice.yaml	Deployment/adservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/cartservice.yaml	Deployment/cartservice	baseline	
+microservices-demo/kubernetes-manifests/cartservice.yaml	Deployment/cartservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/cartservice.yaml	Deployment/redis-cart	baseline	
+microservices-demo/kubernetes-manifests/cartservice.yaml	Deployment/redis-cart	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/checkoutservice.yaml	Deployment/checkoutservice	baseline	
+microservices-demo/kubernetes-manifests/checkoutservice.yaml	Deployment/checkoutservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/currencyservice.yaml	Deployment/currencyservice	baseline	
+microservices-demo/kubernetes-manifests/currencyservice.yaml	Deployment/currencyservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/emailservice.yaml	Deployment/emailservice	baseline	
+microservices-demo/kubernetes-manifests/emailservice.yaml	Deployment/emailservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/frontend.yaml	Deployment/frontend	baseline	
+microservices-demo/kubernetes-manifests/frontend.yaml	Deployment/frontend	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/loadgenerator.yaml	Deployment/loadgenerator	baseline	
+microservices-demo/kubernetes-manifests/loadgenerator.yaml	Deployment/loadgenerator	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/paymentservice.yaml	Deployment/paymentservice	baseline	
+microservices-demo/kubernetes-manifests/paymentservice.yaml	Deployment/paymentservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/productcatalogservice.yaml	Deployment/productcatalogservice	baseline	
+microservices-demo/kubernetes-manifests/productcatalogservice.yaml	Deployment/productcatalogservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/recommendationservice.yaml	Deployment/recommendationservice	baseline	
+microservices-demo/kubernetes-manifests/recommendationservice.yaml	Deployment/recommendationservice	restricted	seccompProfile
+microservices-demo/kubernetes-manifests/shippingservice.yaml	Deployment/shippingservice	baseline	
+microservices-demo/kubernetes-manifests/shippingservice.yaml	Deployment/shippingservice	restricted	seccompProfile

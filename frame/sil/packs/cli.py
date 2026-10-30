@@ -42,7 +42,8 @@ def cmd_packs(args) -> int:
                 print(f"ok   {f}: {pack.language}/{pack.name} "
                       f"({len(pack.entrypoints)} entry points, {len(pack.rules)} rules"
                       + (f", {len(pack.functions)} function facts" if pack.functions else "")
-                      + (f", {len(pack.lambda_handlers)} lambda handlers" if pack.lambda_handlers else "") + ")")
+                      + (f", {len(pack.lambda_handlers)} lambda handlers" if pack.lambda_handlers else "")
+                      + (f", {len(pack.policies)} policies" if pack.policies else "") + ")")
         return 1 if bad else 0
     if args.packs_command == "list":
         try:
@@ -53,8 +54,11 @@ def cmd_packs(args) -> int:
         shown = [p for p in packs if not args.language or p.applies_to_language(args.language)]
         for pack in sorted(shown, key=lambda p: (p.language, p.name)):
             where = "built-in" if pack.origin.startswith("builtin:") else pack.origin
-            print(f"{pack.language:<11} {pack.name:<22} {len(pack.entrypoints):>2} entry  "
-                  f"{len(pack.rules):>3} rules  {where}")
+            if pack.policies:
+                print(f"{pack.language:<11} {pack.name:<22} {len(pack.policies):>3} policies       {where}")
+            else:
+                print(f"{pack.language:<11} {pack.name:<22} {len(pack.entrypoints):>2} entry  "
+                      f"{len(pack.rules):>3} rules  {where}")
         print(f"{len(shown)} packs", file=sys.stderr)
         return 0
     print("usage: frame packs {list,check}", file=sys.stderr)

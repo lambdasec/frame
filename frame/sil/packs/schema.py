@@ -34,7 +34,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..instructions import SinkKind, TaintKind, _SINK_KIND_ALIASES
 
-LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "c", "cpp")
+CODE_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "c", "cpp")
+# Infrastructure formats: their packs hold only [[policy]] entries (frame/iac).
+IAC_LANGUAGES = ("kubernetes", "terraform", "cloudformation", "dockerfile")
+LANGUAGES = CODE_LANGUAGES + IAC_LANGUAGES
 
 _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "file_input"}
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
@@ -51,8 +54,11 @@ _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
 _FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "description"}
 _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "description"}
+_POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
+                "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
-             "lambda_handler"}
+             "lambda_handler", "policy"}
+POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
 SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property")
@@ -145,6 +151,26 @@ class LambdaHandler:
 
 
 @dataclass
+class Policy:
+    """An infrastructure misconfiguration (`[[policy]]`, IaC packs only): `when` is a formula in
+    the policy language (frame/iac/policy.py) over a resource's views; a resource of one of
+    `resources` (type globs; empty: every resource that has the views the formula names) that
+    the configuration makes satisfy it is a finding. `overrides`: policies this one replaces on a
+    resource where both hold (a stricter version of the same rule)."""
+    id: str
+    title: str
+    severity: str
+    cwe: str
+    when: str
+    expr: Any = None                     # the parsed formula
+    resources: List[str] = field(default_factory=list)
+    overrides: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+    references: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
 class Pack:
     name: str
     language: str
@@ -159,6 +185,7 @@ class Pack:
     settings: List[Setting] = field(default_factory=list)
     functions: List[FunctionFact] = field(default_factory=list)
     lambda_handlers: List[LambdaHandler] = field(default_factory=list)
+    policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
     @property
@@ -398,4 +425,43 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (handler.imports or pack.detect_imports):
             raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
         pack.lambda_handlers.append(handler)
+
+    code_tables = [t for t in _TOP_KEYS - {"pack", "policy"} if data.get(t)]
+    if language in IAC_LANGUAGES and code_tables:
+        raise _fail(origin, f"[[{sorted(code_tables)[0]}]]", f"a {language} pack holds only [[policy]] entries")
+    if language not in IAC_LANGUAGES and data.get("policy"):
+        raise _fail(origin, "[[policy]]", f"policies are for infrastructure packs ({list(IAC_LANGUAGES)})")
+    from frame.iac.policy import PolicyError, parse as parse_policy
+    seen = set()
+    for i, t in enumerate(data.get("policy", [])):
+        where = f"[[policy]] #{i + 1}"
+        _check_keys(origin, where, t, _POLICY_KEYS)
+        for key in ("id", "title", "severity", "cwe", "when"):
+            if not isinstance(t.get(key), str) or not t[key].strip():
+                raise _fail(origin, f"{where}.{key}", "required (a string)")
+        if t["id"] in seen:
+            raise _fail(origin, f"{where}.id", f"{t['id']!r} listed twice")
+        seen.add(t["id"])
+        if t["severity"] not in POLICY_SEVERITIES:
+            raise _fail(origin, f"{where}.severity", f"must be one of {list(POLICY_SEVERITIES)}")
+        cwe = t["cwe"]
+        if not (cwe.startswith("CWE-") and cwe[4:].isdigit()):
+            raise _fail(origin, f"{where}.cwe", "must be CWE-<number>")
+        try:
+            expr = parse_policy(t["when"])
+        except PolicyError as e:
+            raise _fail(origin, f"{where}.when ({t['id']})", str(e)) from None
+        from frame.iac.formats import view_names
+        from frame.iac.policy import roots
+        unknown = roots(expr) - view_names(language)
+        if unknown:
+            raise _fail(origin, f"{where}.when ({t['id']})",
+                        f"unknown name(s) {sorted(unknown)}; a {language} resource has {sorted(view_names(language))}")
+        pack.policies.append(Policy(
+            id=t["id"], title=t["title"], severity=t["severity"], cwe=cwe, when=t["when"], expr=expr,
+            resources=_strings(origin, f"{where}.resources", t.get("resources", [])),
+            overrides=_strings(origin, f"{where}.overrides", t.get("overrides", [])),
+            tags=_strings(origin, f"{where}.tags", t.get("tags", [])),
+            references=_strings(origin, f"{where}.references", t.get("references", [])),
+            description=str(t.get("description", ""))))
     return pack

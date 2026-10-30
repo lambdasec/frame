@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: web}
+  template:
+    metadata:
+      labels: {app: web}
+    spec:
+      containers:
+      - name: web
+        image: ghcr.io/acme/shop-web:2.4.1
+        ports:
+        - containerPort: 8080
+        resources:
+          limits: {cpu: 500m, memory: 256Mi}

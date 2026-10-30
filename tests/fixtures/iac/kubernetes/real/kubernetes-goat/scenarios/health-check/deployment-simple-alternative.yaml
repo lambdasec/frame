@@ -1,0 +1,74 @@
+# Simple Multi-Runtime Socket Approach (Alternative)
+# Use this if you prefer not to use init containers
+# Simply mount multiple socket locations and let your app try them
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-check-deployment-simple
+  annotations:
+    description: "Simple version without init container - mounts multiple socket paths"
+spec:
+  selector:
+    matchLabels:
+      app: health-check
+  template:
+    metadata:
+      labels:
+        app: health-check
+    spec:
+      containers:
+      - name: health-check
+        image: madhuakula/k8s-goat-health-check
+        resources:
+          limits:
+            memory: "100Mi"
+            cpu: "30m"
+        ports:
+        - containerPort: 80
+        securityContext:
+          privileged: true
+        volumeMounts:
+          # Primary: Try containerd first (most common in managed K8s)
+          - mountPath: /run/containerd/containerd.sock
+            name: containerd-sock
+            readOnly: true
+          # Secondary: Fallback to Docker socket (common path)
+          - mountPath: /var/run/docker.sock
+            name: docker-sock
+            readOnly: true
+          # Tertiary: Alternative Docker socket path
+          - mountPath: /run/docker.sock
+            name: docker-sock-alt
+            readOnly: true
+      volumes:
+        # Containerd socket (EKS, GKE, KinD, Minikube with Containerd)
+        - name: containerd-sock
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: DirectoryOrCreate  # Won't fail if socket doesn't exist
+        
+        # Docker socket primary path (Docker Desktop, some K8s installations)
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: DirectoryOrCreate
+        
+        # Docker socket alternative path (some Minikube configurations)
+        - name: docker-sock-alt
+          hostPath:
+            path: /run/docker.sock
+            type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-check-service
+spec:
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  selector:
+    app: health-check

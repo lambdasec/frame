@@ -1,0 +1,67 @@
+# Kubernetes: where each workload keeps the pod it runs, as the API defines its fields
+# (k8s.io/api core/v1, apps/v1, batch/v1; the deprecated extensions/v1beta1 and apps/v1beta*
+# versions keep the same paths). A resource of one of these kinds, in one of these API groups
+# ("" is the core group, apiVersion "v1"), has the views `pod` (its PodSpec) and `podmeta` (the
+# pod's ObjectMeta), and so the collection `containers`. Policies that name `pod`, `podmeta` or
+# `containers` apply to exactly these resources. Every resource also has `self` (the document).
+#
+# Loaded by frame/iac/kubernetes.py; an unknown key is an error.
+
+[[workload]]
+kind = "Pod"
+groups = [""]
+pod = "spec"
+podmeta = "metadata"
+
+[[workload]]
+kind = "PodTemplate"
+groups = [""]
+pod = "template.spec"
+podmeta = "template.metadata"
+
+[[workload]]
+kind = "ReplicationController"
+groups = [""]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "Deployment"
+groups = ["apps", "extensions"]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "ReplicaSet"
+groups = ["apps", "extensions"]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "DaemonSet"
+groups = ["apps", "extensions"]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "StatefulSet"
+groups = ["apps"]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "Job"
+groups = ["batch"]
+pod = "spec.template.spec"
+podmeta = "spec.template.metadata"
+
+[[workload]]
+kind = "CronJob"
+groups = ["batch"]
+pod = "spec.jobTemplate.spec.template.spec"
+podmeta = "spec.jobTemplate.spec.template.metadata"
+
+# A collection is the concatenation of lists: every container of a pod, in the order the
+# Pod Security admission controller visits them (init, regular, ephemeral).
+[collections]
+containers = ["pod.initContainers", "pod.containers", "pod.ephemeralContainers"]

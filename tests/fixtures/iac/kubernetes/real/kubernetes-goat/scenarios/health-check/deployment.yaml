@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-check-deployment
+spec:
+  selector:
+    matchLabels:
+      app: health-check
+  template:
+    metadata:
+      labels:
+        app: health-check
+    spec:
+      # Init container to detect and link the correct container runtime socket
+      initContainers:
+      - name: detect-runtime-socket
+        image: busybox:latest
+        command: 
+        - sh
+        - -c
+        - |
+          echo "Detecting container runtime socket..."
+          if [ -S /host-root/run/containerd/containerd.sock ]; then
+            echo "✓ Found containerd socket at /run/containerd/containerd.sock"
+            mkdir -p /socket-link
+            ln -sf /host-root/run/containerd/containerd.sock /socket-link/container.sock
+          elif [ -S /host-root/var/run/docker.sock ]; then
+            echo "✓ Found docker socket at /var/run/docker.sock"
+            mkdir -p /socket-link
+            ln -sf /host-root/var/run/docker.sock /socket-link/container.sock
+          elif [ -S /host-root/run/docker.sock ]; then
+            echo "✓ Found docker socket at /run/docker.sock"
+            mkdir -p /socket-link
+            ln -sf /host-root/run/docker.sock /socket-link/container.sock
+          else
+            echo "⚠ Warning: No container runtime socket found!"
+            echo "  Checked paths:"
+            echo "  - /run/containerd/containerd.sock"
+            echo "  - /var/run/docker.sock"
+            echo "  - /run/docker.sock"
+            echo "  Application may fail if it requires socket access"
+            mkdir -p /socket-link
+          fi
+          echo "Socket detection completed"
+        volumeMounts:
+        - name: host-root
+          mountPath: /host-root
+          readOnly: true
+        - name: socket-link
+          mountPath: /socket-link
+        securityContext:
+          privileged: true
+      containers:
+      - name: health-check
+        image: madhuakula/k8s-goat-health-check
+        resources:
+          limits:
+            memory: "100Mi"
+            cpu: "30m"
+        ports:
+        - containerPort: 80
+      # Custom Stuff
+        securityContext:
+          privileged: true
+        volumeMounts:
+          # Legacy mount path for backward compatibility
+          - mountPath: /custom/containerd/containerd.sock
+            name: container-socket-unified
+            subPath: container.sock
+          # Alternative mount path
+          - mountPath: /var/run/docker.sock
+            name: container-socket-unified
+            subPath: container.sock
+          # Standard path used by most tools
+          - mountPath: /run/docker.sock
+            name: container-socket-unified
+            subPath: container.sock
+      volumes:
+        # Host mount for init container detection
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        # Symlinks to the host systems container management sockets
+        - name: socket-link
+          emptyDir: {}
+        # Unified socket volume created by init container
+        - name: container-socket-unified
+          emptyDir: {}
+        # Fallback direct mounts (if init container can't be used or for direct access)
+        - name: containerd-sock-volume-fallback
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: DirectoryOrCreate
+        - name: docker-sock-volume-fallback
+          hostPath:
+            path: /var/run/docker.sock
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-check-service
+spec:
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  selector:
+    app: health-check

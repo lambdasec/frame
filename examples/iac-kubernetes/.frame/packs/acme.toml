@@ -1,0 +1,13 @@
+# An organisation's own rule, next to the built-in Pod Security Standards.
+[pack]
+name = "acme"
+language = "kubernetes"
+description = "ACME platform rules"
+
+[[policy]]
+id = "acme-memory-limit"
+title = "Container has no memory limit"
+severity = "medium"
+cwe = "CWE-770"
+when = '''some c in containers: absent(c.resources.limits.memory)'''
+references = ["https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"]

@@ -1,0 +1,279 @@
+# The Kubernetes Pod Security Standards, Baseline and Restricted, as the Pod Security admission
+# controller checks them (k8s.io/pod-security-admission/policy, newest version of each check,
+# Kubernetes v1.38). Each policy is one admission check; `overrides` is the check the controller
+# replaces with this one at the Restricted level. A missing field takes the value the API gives it
+# (Go's zero value), written with default(...).
+#
+# Ground truth: tests/fixtures/iac/pss (the controller's own pass/fail fixtures for v1.38),
+# tests/test_iac_kubernetes.py.
+
+[pack]
+name = "pod-security"
+language = "kubernetes"
+description = "Pod Security Standards (Baseline and Restricted) for pods and every workload's pod template"
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/"]
+
+# --- Baseline ---------------------------------------------------------------------------------
+
+[[policy]]
+id = "k8s-host-namespaces"
+title = "Pod shares the host's network, PID or IPC namespace"
+severity = "high"
+cwe = "CWE-668"
+tags = ["pss:baseline", "psa:hostNamespaces"]
+when = '''pod.hostNetwork == true or pod.hostPID == true or pod.hostIPC == true'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-privileged"
+title = "Container runs privileged"
+severity = "high"
+cwe = "CWE-250"
+tags = ["pss:baseline", "psa:privileged"]
+when = '''some c in containers: c.securityContext.privileged == true'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-capabilities-baseline"
+title = "Container adds a capability outside the runtime's default set"
+severity = "high"
+cwe = "CWE-250"
+tags = ["pss:baseline", "psa:capabilities_baseline"]
+when = '''
+some c in containers: some cap in c.securityContext.capabilities.add:
+    cap not in ["AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD",
+                "NET_BIND_SERVICE", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT"]
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-host-path-volumes"
+title = "Pod mounts a hostPath volume"
+severity = "high"
+cwe = "CWE-668"
+tags = ["pss:baseline", "psa:hostPathVolumes"]
+when = '''some v in pod.volumes: present(v.hostPath)'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-host-ports"
+title = "Container binds a host port"
+severity = "medium"
+cwe = "CWE-668"
+tags = ["pss:baseline", "psa:hostPorts"]
+when = '''some c in containers: some p in c.ports: default(p.hostPort, 0) != 0'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-apparmor"
+title = "AppArmor profile overridden or disabled"
+severity = "medium"
+cwe = "CWE-693"
+tags = ["pss:baseline", "psa:appArmorProfile"]
+when = '''
+(present(pod.securityContext.appArmorProfile)
+    and default(pod.securityContext.appArmorProfile.type, "") not in ["RuntimeDefault", "Localhost"])
+or (some c in containers: present(c.securityContext.appArmorProfile)
+    and default(c.securityContext.appArmorProfile.type, "") not in ["RuntimeDefault", "Localhost"])
+or (some (k, v) in podmeta.annotations:
+    starts_with(k, "container.apparmor.security.beta.kubernetes.io/")
+    and not (v == "" or v == "runtime/default" or starts_with(v, "localhost/")))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-selinux"
+title = "SELinux type, user or role set to a non-container value"
+severity = "medium"
+cwe = "CWE-693"
+tags = ["pss:baseline", "psa:seLinuxOptions"]
+when = '''
+(present(pod.securityContext.seLinuxOptions) and (
+    default(pod.securityContext.seLinuxOptions.type, "")
+        not in ["", "container_t", "container_init_t", "container_kvm_t", "container_engine_t"]
+    or default(pod.securityContext.seLinuxOptions.user, "") != ""
+    or default(pod.securityContext.seLinuxOptions.role, "") != ""))
+or (some c in containers: present(c.securityContext.seLinuxOptions) and (
+    default(c.securityContext.seLinuxOptions.type, "")
+        not in ["", "container_t", "container_init_t", "container_kvm_t", "container_engine_t"]
+    or default(c.securityContext.seLinuxOptions.user, "") != ""
+    or default(c.securityContext.seLinuxOptions.role, "") != ""))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-proc-mount"
+title = "Container unmasks /proc"
+severity = "medium"
+cwe = "CWE-668"
+tags = ["pss:baseline", "psa:procMount"]
+# a pod in its own user namespace (hostUsers: false) may (Kubernetes 1.35+)
+when = '''
+not (pod.hostUsers == false)
+and (some c in containers: present(c.securityContext.procMount) and c.securityContext.procMount != "Default")
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-seccomp-baseline"
+title = "Seccomp explicitly set to Unconfined"
+severity = "medium"
+cwe = "CWE-693"
+tags = ["pss:baseline", "psa:seccompProfile_baseline"]
+when = '''
+(present(pod.securityContext.seccompProfile)
+    and default(pod.securityContext.seccompProfile.type, "") not in ["Localhost", "RuntimeDefault"])
+or (some c in containers: present(c.securityContext.seccompProfile)
+    and default(c.securityContext.seccompProfile.type, "") not in ["Localhost", "RuntimeDefault"])
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-sysctls"
+title = "Pod sets a sysctl outside the safe set"
+severity = "medium"
+cwe = "CWE-250"
+tags = ["pss:baseline", "psa:sysctls"]
+when = '''
+some s in pod.securityContext.sysctls: default(s.name, "") not in [
+    "kernel.shm_rmid_forced", "net.ipv4.ip_local_port_range", "net.ipv4.tcp_syncookies",
+    "net.ipv4.ping_group_range", "net.ipv4.ip_unprivileged_port_start",
+    "net.ipv4.ip_local_reserved_ports", "net.ipv4.tcp_keepalive_time", "net.ipv4.tcp_fin_timeout",
+    "net.ipv4.tcp_keepalive_intvl", "net.ipv4.tcp_keepalive_probes", "net.ipv4.tcp_rmem",
+    "net.ipv4.tcp_wmem", "net.ipv4.tcp_slow_start_after_idle", "net.ipv4.tcp_notsent_lowat"]
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-windows-host-process"
+title = "Windows HostProcess container"
+severity = "high"
+cwe = "CWE-250"
+tags = ["pss:baseline", "psa:windowsHostProcess"]
+when = '''
+pod.securityContext.windowsOptions.hostProcess == true
+or (some c in containers: c.securityContext.windowsOptions.hostProcess == true)
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+[[policy]]
+id = "k8s-host-probes"
+title = "Probe or lifecycle hook targets a host other than the pod"
+severity = "medium"
+cwe = "CWE-918"
+tags = ["pss:baseline", "psa:hostProbesAndHostLifecycle"]
+when = '''
+some c in containers:
+    default(c.livenessProbe.httpGet.host, "") != "" or default(c.livenessProbe.tcpSocket.host, "") != ""
+    or default(c.readinessProbe.httpGet.host, "") != "" or default(c.readinessProbe.tcpSocket.host, "") != ""
+    or default(c.startupProbe.httpGet.host, "") != "" or default(c.startupProbe.tcpSocket.host, "") != ""
+    or default(c.lifecycle.postStart.httpGet.host, "") != "" or default(c.lifecycle.postStart.tcpSocket.host, "") != ""
+    or default(c.lifecycle.preStop.httpGet.host, "") != "" or default(c.lifecycle.preStop.tcpSocket.host, "") != ""
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline"]
+
+# --- Restricted -------------------------------------------------------------------------------
+
+[[policy]]
+id = "k8s-host-volume-types"
+title = "Pod mounts a volume type outside the restricted set"
+severity = "low"
+cwe = "CWE-668"
+tags = ["pss:restricted", "psa:restrictedVolumes"]
+overrides = ["k8s-host-path-volumes"]
+# The API server defaults a volume with no source to emptyDir and drops fields it does not know,
+# so a volume is outside the set exactly when it has one of core/v1 VolumeSource's other fields.
+when = '''
+some v in pod.volumes:
+    present(v.hostPath) or present(v.gcePersistentDisk) or present(v.awsElasticBlockStore)
+    or present(v.gitRepo) or present(v.nfs) or present(v.iscsi) or present(v.glusterfs)
+    or present(v.rbd) or present(v.flexVolume) or present(v.cinder) or present(v.cephfs)
+    or present(v.flocker) or present(v.fc) or present(v.azureFile) or present(v.vsphereVolume)
+    or present(v.quobyte) or present(v.azureDisk) or present(v.photonPersistentDisk)
+    or present(v.portworxVolume) or present(v.scaleIO) or present(v.storageos)
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-allow-privilege-escalation"
+title = "Container may gain more privileges than its parent process"
+severity = "medium"
+cwe = "CWE-269"
+tags = ["pss:restricted", "psa:allowPrivilegeEscalation"]
+when = '''
+not (pod.os.name == "windows")
+and (some c in containers: default(c.securityContext.allowPrivilegeEscalation, true) == true)
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-run-as-non-root"
+title = "Container may run as root"
+severity = "medium"
+cwe = "CWE-250"
+tags = ["pss:restricted", "psa:runAsNonRoot"]
+when = '''
+not (pod.hostUsers == false) and (
+    pod.securityContext.runAsNonRoot == false
+    or (some c in containers: c.securityContext.runAsNonRoot == false)
+    or (some c in containers: absent(c.securityContext.runAsNonRoot)
+            and not (pod.securityContext.runAsNonRoot == true)))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-run-as-user-root"
+title = "Container runs as user 0"
+severity = "medium"
+cwe = "CWE-250"
+tags = ["pss:restricted", "psa:runAsUser"]
+when = '''
+not (pod.hostUsers == false) and (
+    pod.securityContext.runAsUser == 0
+    or (some c in containers: c.securityContext.runAsUser == 0))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-seccomp-restricted"
+title = "Seccomp profile not set to RuntimeDefault or Localhost"
+severity = "low"
+cwe = "CWE-693"
+tags = ["pss:restricted", "psa:seccompProfile_restricted"]
+overrides = ["k8s-seccomp-baseline"]
+when = '''
+not (pod.os.name == "windows") and (
+    (present(pod.securityContext.seccompProfile)
+        and default(pod.securityContext.seccompProfile.type, "") not in ["Localhost", "RuntimeDefault"])
+    or (some c in containers: present(c.securityContext.seccompProfile)
+        and default(c.securityContext.seccompProfile.type, "") not in ["Localhost", "RuntimeDefault"])
+    or (some c in containers: absent(c.securityContext.seccompProfile)
+        and not (present(pod.securityContext.seccompProfile)
+                 and default(pod.securityContext.seccompProfile.type, "") in ["Localhost", "RuntimeDefault"])))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-capabilities-restricted"
+title = "Container does not drop ALL capabilities, or adds one other than NET_BIND_SERVICE"
+severity = "low"
+cwe = "CWE-250"
+tags = ["pss:restricted", "psa:capabilities_restricted"]
+overrides = ["k8s-capabilities-baseline"]
+when = '''
+not (pod.os.name == "windows") and (some c in containers:
+    absent(c.securityContext.capabilities)
+    or not (some d in c.securityContext.capabilities.drop: d == "ALL")
+    or (some a in c.securityContext.capabilities.add: a != "NET_BIND_SERVICE"))
+'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]
+
+[[policy]]
+id = "k8s-proc-mount-restricted"
+title = "Container unmasks /proc"
+severity = "medium"
+cwe = "CWE-668"
+tags = ["pss:restricted", "psa:procMount_restricted"]
+overrides = ["k8s-proc-mount"]
+when = '''some c in containers: present(c.securityContext.procMount) and c.securityContext.procMount != "Default"'''
+references = ["https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted"]

@@ -64,6 +64,30 @@ def create_parser() -> argparse.ArgumentParser:
     inv_parser.add_argument("--file-limit", type=int, default=5000,
                             help="Most source files read for frameworks and AI imports (default: 5000)")
 
+    # === IAC command ===
+    iac_parser = subparsers.add_parser(
+        "iac",
+        help="Check infrastructure files (Kubernetes manifests) against the policy packs",
+        description="Read the infrastructure files under a directory (or one file) and decide each "
+                    "policy of the packs on each resource with Z3: Kubernetes objects against the Pod "
+                    "Security Standards. A violation that depends on values the files do not give is "
+                    "listed as undecided, never as a finding."
+    )
+    iac_parser.add_argument("target", nargs="?", default=".", help="Directory or file (default: .)")
+    iac_parser.add_argument("-f", "--format", default="text", choices=["text", "json", "sarif"],
+                            help="Output format (default: text)")
+    iac_parser.add_argument("-o", "--output", help="Write the report to a file")
+    iac_parser.add_argument("--pack", action="append", default=None, metavar="PATH",
+                            help="Load an extra policy pack (a .toml file or a directory of them). Repeatable.")
+    iac_parser.add_argument("--no-packs", action="store_true",
+                            help="Do not load the built-in packs (project and --pack packs still load).")
+    iac_parser.add_argument("--min-severity", choices=["critical", "high", "medium", "low", "info"],
+                            default=None, help="Report findings at or above this severity (default: low)")
+    iac_parser.add_argument("--fail-on", choices=["critical", "high", "medium", "low", "any", "none"],
+                            default=None, help="Exit 1 when a finding reaches this severity (default: high)")
+    iac_parser.add_argument("--no-config", action="store_true",
+                            help="Ignore .frame.toml / [tool.frame] (exclude, disable, packs, severities)")
+
     # === HISTORY command ===
     hist_parser = subparsers.add_parser(
         "history",
@@ -545,6 +569,48 @@ def cmd_history(args) -> int:
     else:
         print(format_text(leaks))
     return 1 if leaks else 0
+
+
+def cmd_iac(args) -> int:
+    """Execute iac command."""
+    import json
+    from frame.iac.scan import at_least, fails, format_text, sarif, scan
+    from frame.sil.packs import PackError, PackSet
+    from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+    from frame.sil.suppressions import ConfigError, ScanConfig, find_config, matches_rules
+    target = Path(args.target)
+    if not target.exists():
+        print(f"Error: no such file or directory: {args.target}", file=sys.stderr)
+        return 2
+    config = ScanConfig()
+    if not args.no_config:
+        try:
+            config = find_config(target) or ScanConfig()
+        except ConfigError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+    extra = [str(Path(config.source).parent / p) if config.source and not Path(p).is_absolute() else p
+             for p in config.packs] + list(args.pack or [])
+    try:
+        packs = PackSet.build(extra, builtin=not args.no_packs, project_start=target)
+    except PackError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    run = scan(target, packs=packs, exclude_dirs=set(DEFAULT_EXCLUDED_SCAN_DIRS) | set(config.exclude or []))
+    if config.disable:
+        run.findings = [f for f in run.findings if not matches_rules(f, config.disable)]
+    shown = at_least(run, args.min_severity or config.min_severity or "low")
+    if args.format == "json":
+        out = json.dumps(shown.to_dict(), indent=2) + "\n"
+    elif args.format == "sarif":
+        out = json.dumps(sarif(shown), indent=2) + "\n"
+    else:
+        out = format_text(shown)
+    if args.output:
+        Path(args.output).write_text(out, encoding="utf-8")
+    else:
+        print(out, end="")
+    return 1 if fails(run, args.fail_on or config.fail_on or "high") else 0
 
 
 def cmd_inventory(args) -> int:
@@ -1808,6 +1874,7 @@ def main(argv: List[str] = None) -> int:
     commands = {
         "scan": cmd_scan,
         "inventory": cmd_inventory,
+        "iac": cmd_iac,
         "history": cmd_history,
         "deps": cmd_deps,
         "exploit": cmd_exploit,

@@ -277,6 +277,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
 | `--verify-secrets` | ask each found credential's provider whether it still works ([verifying secrets](#verifying-secrets); network, off by default) |
 | `--sca` | add vulnerable dependencies ([dependencies.md](dependencies.md)) |
+| `--iac` | add infrastructure findings (directory targets; [iac.md](iac.md)) |
 | `--vex openvex\|cyclonedx`, `--vex-out FILE` | with `--sca`: also write a VEX document |
 | `--no-verify` | skip solver verification (faster, more false positives) |
 | `--timeout MS` | solver timeout per check (default 5000) |
@@ -343,6 +344,19 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 ### `frame exploit --target URL`
 
 Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default 40), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
+
+### `frame iac [target]`
+
+Infrastructure files (Kubernetes manifests) under a directory, or one file, against the policy packs ([iac.md](iac.md)). Findings at or above `--fail-on` exit 1. A violation that depends on values the files do not give is listed as undecided, never as a finding.
+
+| Flag | |
+|---|---|
+| `-f`, `--format text\|json\|sarif` | output format |
+| `-o`, `--output FILE` | write to a file instead of stdout |
+| `--pack PATH` / `--no-packs` | load an extra policy pack (repeatable) / skip the built-in packs |
+| `--min-severity critical\|high\|medium\|low\|info` | report only at or above this (default: config, else low) |
+| `--fail-on critical\|high\|medium\|low\|any\|none` | exit 1 at or above this severity (default: config, else high) |
+| `--no-config` | ignore `.frame.toml` / `[tool.frame]` |
 
 ### `frame history [repo]`
 

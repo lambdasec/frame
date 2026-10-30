@@ -122,6 +122,10 @@ def add_pack_args(scan_parser) -> None:
         help="Also report vulnerable dependencies (directory targets): match the lockfiles against the "
              "cached advisories (`frame kb pull --advisories`), and make each vulnerable function a taint "
              "sink, so attacker data reaching it is a finding at the call site.")
+    scan_parser.add_argument(
+        "--iac", action="store_true",
+        help="Also check infrastructure files (directory targets): Kubernetes manifests against the "
+             "policy packs (Pod Security Standards), as `frame iac` does.")
 
 
 def add_language_and_pattern_args(scan_parser) -> None:
@@ -586,7 +590,17 @@ def cmd_scan(args) -> int:
               file=sys.stderr)
         return 2
 
-    if not results and not narrowed:
+    iac_run = None
+    if getattr(args, "iac", False):
+        if target.is_dir():
+            from frame.iac.scan import scan as iac_scan
+            from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
+            iac_run = iac_scan(target, packs=scanner.pack_set,
+                               exclude_dirs=set(DEFAULT_EXCLUDED_SCAN_DIRS) | set(config.exclude or []))
+        else:
+            print("Warning: --iac needs a directory target (use `frame iac FILE` for one file)", file=sys.stderr)
+
+    if not results and not narrowed and iac_run is None:
         print("No files found to scan.", file=sys.stderr)
         return 2
 
@@ -619,6 +633,9 @@ def cmd_scan(args) -> int:
     if sca_run is not None:
         extra["dependencies"] = {"advisories": sca_run.revision, "findings": sca_run.findings,
                                  "warnings": sca_run.warnings}
+    if iac_run is not None:
+        from frame.iac.scan import at_least as iac_at_least
+        extra["infrastructure"] = iac_at_least(iac_run, args.min_severity).to_dict()
     if scanner.pack_set:
         extra["packs"] = scanner.pack_set.names()
     scope = getattr(scanner, "last_project_scope", None)
@@ -685,6 +702,9 @@ def cmd_scan(args) -> int:
         if sca_run is not None:
             from frame.sca.scan import format_text as sca_text
             chunks.append(sca_text(sca_run))
+        if iac_run is not None:
+            from frame.iac.scan import at_least as iac_at_least, format_text as iac_text
+            chunks.append(iac_text(iac_at_least(iac_run, args.min_severity)))
         for output in chunks:
             if args.output:
                 with open(args.output, 'a') as f:
@@ -708,6 +728,13 @@ def cmd_scan(args) -> int:
             doc = json.loads(output)
             doc["runs"][0].setdefault("results", []).extend(sarif_results(sca_run))
             output = json.dumps(doc, indent=2)
+        if iac_run is not None and iac_run.findings:
+            from frame.iac.scan import at_least as iac_at_least, sarif_results as iac_results, sarif_rules
+            doc = json.loads(output)
+            shown = iac_at_least(iac_run, args.min_severity)
+            doc["runs"][0].setdefault("results", []).extend(iac_results(shown))
+            doc["runs"][0]["tool"]["driver"].setdefault("rules", []).extend(sarif_rules(shown))
+            output = json.dumps(doc, indent=2)
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)
@@ -720,6 +747,10 @@ def cmd_scan(args) -> int:
     if sca_run is not None and sca_run.findings and args.fail_on != "none":
         from frame.sca.scan import worst_severity          # 4 critical .. 1 low, as severity_value - 1
         if args.fail_on == "any" or worst_severity(sca_run) >= severity_value(parse_severity(args.fail_on)) - 1:
+            return 1
+    if iac_run is not None:
+        from frame.iac.scan import fails
+        if fails(iac_run, args.fail_on):
             return 1
 
     return 0

@@ -413,3 +413,31 @@ def test_go_govulncheck_walkthrough(tmp_path):
                  "calls github.com/gin-gonic/gin.(*Engine).Run at main.go:8",
                  "govulncheck also reports 66 advisory(ies) in the Go standard library of go1.22.12 (33 called)"]:
         assert line in out and line in readme, (line, out[-1500:])
+
+
+def test_iac_kubernetes_walkthrough(tmp_path):
+    work = tmp_path / "iac-kubernetes"
+    shutil.copytree(EXAMPLES / "iac-kubernetes", work)
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("iac", "."), [
+            "k8s/log-agent.yaml:13: [high] k8s-host-namespaces (CWE-668) DaemonSet/ops/log-agent: Pod shares the host's "
+            "network, PID or IPC namespace [spec.template.spec.hostNetwork]",
+            "k8s/log-agent.yaml:15: [medium] acme-memory-limit (CWE-770) DaemonSet/ops/log-agent: Container has no memory "
+            "limit [spec.template.spec.containers[0]]",
+            "[spec.template.spec.containers[0].securityContext.capabilities] (also k8s-capabilities-baseline)",
+            "k8s/web.yaml:15: [medium] k8s-run-as-non-root (CWE-250) Deployment/shop/web: Container may run as root "
+            "[spec.template.spec.containers[0]]",
+            "Infrastructure: 4 resource(s) in kubernetes: 4 file(s); 15 finding(s), 2 suppressed",
+            "warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)"]),
+        (("iac", ".", "--min-severity", "high"), [
+            "Infrastructure: 4 resource(s) in kubernetes: 4 file(s); 3 finding(s), 2 suppressed"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out, (args, line, out[-2000:])
+            assert line in readme, f"README does not show {line!r}"
+    out = frame(work, env, "iac", ".")
+    assert "api.yaml" not in out and "k8s-privileged" not in out

@@ -26,6 +26,11 @@ A Maven service using fastjson and Log4j. Frame finds the Log4j mitigation alrea
 A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two functions the code uses. `--verify` runs the tests and rolls the upgrade back; `--adapt` lets a model rewrite the code, and the result is kept only because the tests pass and a re-scan finds nothing new.
 *The plan runs offline; the rollback needs pip, and `--adapt` needs a model (`FRAME_LLM_*`).*
 
+### [iac-kubernetes](iac-kubernetes/README.md): Kubernetes manifests
+
+A shop's Deployments, a log-collecting DaemonSet, a break-glass debug pod and a Helm chart, checked against the Pod Security Standards as Kubernetes' admission controller checks them, plus an organisation's own policy in one TOML file. Shows where each finding points, suppressions, and what Helm templates need.
+*Runs offline.*
+
 ### [container-image](container-image/README.md): what is inside a Docker image
 
 The package lists of the official `debian:12.0`, `alpine:3.18.0`, `rockylinux:9.4`, `ubi9/ubi:9.4`, `ubi10/ubi:10.0`, Azure Linux 3, openSUSE Leap 15.6 and Chainguard (Wolfi) images, and an application image with pip packages, an npm tree, a jar, and Go and Rust binaries. It shows their known vulnerabilities (OS packages: the same ones OSV's API reports), why Debian's own Python packages are left to Debian's advisories, the fix for each, a CI gate, and an SBOM.
