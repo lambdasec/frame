@@ -14,6 +14,10 @@
 extensions = [".ejs", ".pug", ".jade", ".hbs", ".handlebars", ".njk", ".nunjucks", ".twig", ".swig", ".html"]
 view_dirs = ["views", "templates", "app/views", "src/views", "app/templates", "src/templates"]
 layouts = ["layout", "_layout", "base"]
+# Words that start an include in a raw tag (`<%- include("x") %>`: the include's own output, whose file
+# is read instead), and the directories an include is also looked up in, beside the view.
+include_words = ["include", "partial", "extends"]
+partial_dirs = ["partials"]
 
 # Words of the expression languages that are not data names.
 keywords = ["true", "false", "null", "undefined", "this", "new", "typeof", "instanceof", "in", "of", "if",

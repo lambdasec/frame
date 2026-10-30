@@ -17,7 +17,8 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "data" / "template-engines.toml"
 IDENT = r"[A-Za-z_$][\w$]*"
-_TOP = {"extensions", "view_dirs", "layouts", "keywords", "escape", "engine", "compiler"}
+_TOP = {"extensions", "view_dirs", "layouts", "include_words", "partial_dirs", "keywords", "escape", "engine",
+        "compiler"}
 _COMPILER = {"name", "calls", "tag", "escaped", "raw_text", "settings"}
 _ESCAPE = {"template_off", "dynamic_include", "config_off"}
 _ENGINE = {"name", "raw", "include", "alias", "block_open", "block_close", "block_raw_engines"}
@@ -51,6 +52,8 @@ class TemplateEngines(NamedTuple):
     extensions: Tuple[str, ...]
     view_dirs: Tuple[str, ...]
     layouts: Tuple[str, ...]
+    include_words: Tuple[str, ...]
+    partial_dirs: Tuple[str, ...]
     keywords: FrozenSet[str]
     template_escape_off: Pattern
     dynamic_include: Pattern
@@ -134,6 +137,8 @@ def load(path: Path = PATH) -> TemplateEngines:
         extensions=_strings(name, "extensions", data["extensions"]),
         view_dirs=_strings(name, "view_dirs", data["view_dirs"]),
         layouts=_strings(name, "layouts", data["layouts"]),
+        include_words=_strings(name, "include_words", data["include_words"]),
+        partial_dirs=_strings(name, "partial_dirs", data["partial_dirs"]),
         keywords=frozenset(_strings(name, "keywords", data["keywords"])),
         template_escape_off=_compile(name, "[escape] template_off", escape["template_off"], "escape"),
         dynamic_include=_compile(name, "[escape] dynamic_include", escape["dynamic_include"], "escape"),

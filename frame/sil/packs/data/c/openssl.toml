@@ -40,3 +40,12 @@ description = "OpenSSL legacy cipher (RC4, Blowfish, RC2, 3DES, CAST5, IDEA)"
 call = ["SSL_read", "SSL_read_ex", "SSL_peek", "BIO_read", "BIO_gets"]
 out_args = [1]
 kind = "network_input"
+
+# SSL_CTX_set_verify(ctx, mode, cb): the mode constant (`:SSL_VERIFY_NONE`).
+[[option_call]]
+name = "SSL_CTX_set_verify"
+option_arg = 1
+
+[[option_call]]
+name = "SSL_set_verify"
+option_arg = 1

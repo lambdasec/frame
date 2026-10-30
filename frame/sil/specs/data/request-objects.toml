@@ -18,3 +18,13 @@ server_state = ["user", "session", "auth"]
 # `source_evidence: "naming-convention"` unless the project shows a web framework.
 js_request_names = ["req", "request"]
 js_handler_names = ["res", "response", "next"]
+
+# Evidence that a JS/TS file (or project) really is a web application, so a `req.x` read is request
+# data and not a naming coincidence: an import of one of these modules (or a subpath), a decorator of
+# these names (NestJS), or a parameter typed as one of these request types.
+js_framework_modules = ["express", "koa", "koa-router", "@koa/router", "fastify", "hapi", "@hapi/hapi", "restify",
+                        "@nestjs/common", "@nestjs/core", "next", "next/server", "sails", "loopback", "connect",
+                        "polka", "micro", "h3", "hono", "@adonisjs/core", "@feathersjs/feathers", "serverless-http",
+                        "http", "https"]
+js_handler_decorators = ["Controller", "Get", "Post", "Put", "Delete", "Patch", "Req", "Request"]
+js_request_types = ["Request", "NextRequest", "FastifyRequest"]

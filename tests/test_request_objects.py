@@ -17,7 +17,8 @@ def test_the_shipped_file_loads():
 def test_a_name_cannot_be_both(tmp_path):
     bad = tmp_path / "request-objects.toml"
     bad.write_text('client_properties = ["body", "session"]\nserver_state = ["session"]\n'
-                   'js_request_names = ["req"]\njs_handler_names = ["res"]\n')
+                   'js_request_names = ["req"]\njs_handler_names = ["res"]\njs_framework_modules = ["express"]\n'
+                   'js_handler_decorators = ["Get"]\njs_request_types = ["Request"]\n')
     with pytest.raises(ValueError, match="both"):
         request_objects.load(bad)
 

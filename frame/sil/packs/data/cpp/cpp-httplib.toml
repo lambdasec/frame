@@ -52,3 +52,8 @@ description = "httplib::Client connects to the host it is constructed with"
 name = ["html_escape", "escape_html", "htmlEscape", "escapeHtml", "html_encode", "encode_html", "sanitize_html"]
 kinds = ["html", "xss"]
 description = "conventionally named HTML escaping helper"
+
+# res.set_content(body, content_type): with an HTML type the call is `set_content:html`.
+[[content_type_call]]
+method = "set_content"
+arg = 1

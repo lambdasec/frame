@@ -45,44 +45,19 @@ DETECT_SYSTEM = (
     "Use an empty findings array if there are no real vulnerabilities."
 )
 
-# Files worth sending to the model: security-relevant code. Skips the vast
-# majority of files (models, DTOs, config) to keep a scan tractable.
-_CANDIDATE_RE = re.compile(
-    r"\b(req\.|request\.|@RequestParam|@PathVariable|@RequestBody|getParameter|"
-    r"getHeader|getCookies|res\.send|sendFile|sendRedirect|redirect|execute|"
-    r"executeQuery|createStatement|prepareStatement|Runtime\.|ProcessBuilder|"
-    r"readFile|writeFile|ObjectInputStream|Cipher|MessageDigest|eval\(|exec\(|"
-    r"\.query\(|\.find\(|\.findOne\(|new URL\(|fetch\(|axios|render|template|"
-    # Python: web routes + file/path/process/deserialize sinks (path traversal,
-    # command injection, SSRF, unsafe deserialization surface the JS/Java lists miss).
-    # Match the call form (router.get(...)) not the @ decorator: a leading '@' is a
-    # non-word char, so the wrapping \b...\b can never anchor to it.
-    r"router\.(get|post|put|delete|patch|websocket|api_route)|add_api_route|"
-    r"add_url_rule|\.route\(|os\.system|os\.popen|subprocess|Popen|send_file|"
-    r"send_from_directory|FileResponse|StreamingResponse|shutil\.|open\(|Path\(|"
-    r"\.iterdir\(|os\.path|pickle\.load|yaml\.load|marshal\.loads|os\.remove|"
-    r"os\.rename|os\.mkdir|render_template_string|__import__|urlopen|"
-    # C# / ASP.NET: request binding, DB, process, file, view, redirect, deserialize
-    r"FromQuery|FromBody|FromRoute|FromForm|HttpContext|IActionResult|ActionResult|"
-    r"SqlCommand|ExecuteReader|ExecuteNonQuery|ExecuteScalar|DbCommand|"
-    r"Process\.Start|File\.Read|File\.Write|Html\.Raw|Response\.Redirect|"
-    r"Deserialize|HttpClient|WebClient|Request\.Query|Request\.Form)\b",
-    re.I)
+# CWEs a model may name for a flaw Frame reports under a related one (MITRE CWE: 73 External Control
+# of File Name or Path relates to 22, 95 Eval Injection is a child of 94, 789 Memory Allocation with
+# Excessive Size Value is a child of 770).
+_CWE_RELATED = {"CWE-73": "CWE-22", "CWE-95": "CWE-94", "CWE-789": "CWE-770"}
 
 
-# Which symbolic sink kinds ground each CWE. If Frame's SIL has a sink of the
-# matching kind at the LLM's claimed line, the finding is grounded in a real
-# dangerous operation Frame recognizes (it just couldn't connect the flow).
-_CWE_SINK_KINDS = {
-    "CWE-89": {"sql", "orm"}, "CWE-943": {"nosql"}, "CWE-79": {"html", "xss"},
-    "CWE-78": {"shell", "command"}, "CWE-22": {"path", "filesystem"},
-    "CWE-73": {"path", "filesystem"}, "CWE-918": {"ssrf"},
-    "CWE-94": {"eval"}, "CWE-95": {"eval"}, "CWE-91": {"xml_injection"},
-    "CWE-502": {"deserialize", "deserialize_unsafe"}, "CWE-611": {"xml"},
-    "CWE-90": {"ldap"}, "CWE-643": {"xpath"}, "CWE-601": {"redirect"},
-    "CWE-113": {"header"}, "CWE-117": {"log"}, "CWE-1336": {"template"},
-    "CWE-770": {"alloc_size"}, "CWE-789": {"alloc_size"},
-}
+def _sink_kinds_of(cwe_id: Optional[str]) -> set:
+    """The sink kinds (with their aliases) whose findings carry `cwe_id` (specs/data/kinds.toml)."""
+    from frame.sil.kinds import load as load_kinds
+    k = load_kinds()
+    cwe_id = _CWE_RELATED.get(cwe_id or "", cwe_id)
+    kinds = {sk for sk, vt in k.sink_vuln.items() if vt and k.cwe.get(vt) == cwe_id}
+    return kinds | {alias for alias, sk in k.aliases.items() if sk in kinds}
 
 
 def collect_sinks(program) -> list:
@@ -102,7 +77,7 @@ def collect_sinks(program) -> list:
 def is_sink_grounded(cwe_id: Optional[str], line: Optional[int],
                      sinks: list, window: int = 3) -> bool:
     """True if Frame's SIL has a matching-kind sink near the claimed line."""
-    kinds = _CWE_SINK_KINDS.get(cwe_id)
+    kinds = _sink_kinds_of(cwe_id)
     if not kinds:
         return False
     return any(abs((line or 0) - sl) <= window and sk in kinds for sl, sk in sinks)
@@ -111,15 +86,27 @@ def is_sink_grounded(cwe_id: Optional[str], line: Optional[int],
 def cross_file_grounded(cwe_id: Optional[str], explored_sink_kinds) -> bool:
     """True if a sink of the CWE's kind exists in any file the agent explored --
     grounds a cross-file finding whose sink lives in a different file."""
-    kinds = _CWE_SINK_KINDS.get(cwe_id)
+    kinds = _sink_kinds_of(cwe_id)
     return bool(kinds and (kinds & set(explored_sink_kinds)))
 
 
-def is_detection_candidate(source_code: str, has_symbolic_findings: bool) -> bool:
-    """Only analyze security-relevant files (or ones the symbolic pass flagged)."""
-    if has_symbolic_findings:
+def is_detection_candidate(source_code: str, has_symbolic_findings: bool, program=None) -> bool:
+    """Only analyze security-relevant files: ones the symbolic pass flagged, or whose program has a
+    source or a sink (an entry point's attacker data, a spec or pack sink, a call whose spec is a
+    source or sink). Without a program (a language Frame does not translate) every file is one."""
+    if has_symbolic_findings or program is None:
         return True
-    return bool(_CANDIDATE_RE.search(source_code or ""))
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for instr in getattr(node, "instrs", []):
+                name = type(instr).__name__
+                if name in ("TaintSource", "TaintSink"):
+                    return True
+                if name == "Call":
+                    spec = program.spec_for_call(instr) if hasattr(program, "spec_for_call") else None
+                    if spec is not None and (spec.is_source or spec.is_sink):
+                        return True
+    return False
 
 
 def _numbered(source_code: str, max_chars: int) -> str:

@@ -46,7 +46,8 @@ from frame.sil.c_int_model import LIMITS
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
-from frame.sil.packs import finish_program
+from frame.sil.packs import default_packs, finish_program
+from frame.sil.specs.cpp_types import load as _cpp_types
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.c_specs import C_SPECS, CPP_SPECS
 
@@ -218,10 +219,11 @@ class CFrontend:
                 continue
             stack.extend(n.children)
         annotate_program_calls(program, includes)
-        _qualify_option_calls(program)
+        program.language = self.LANGUAGE
+        _qualify_option_calls(program, self.packs)
         if self.LANGUAGE == "cpp":
             self._qualify_member_calls(program)
-            _qualify_content_type_calls(program)
+            _qualify_content_type_calls(program, self.packs)
         program.import_wildcards = list(includes.wildcards)
         program.language = self.LANGUAGE
         finish_program(program, self.packs, source_code)
@@ -805,10 +807,6 @@ class CFrontend:
         self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpVar(ret_id)))
         return True
 
-    _SCALAR_TYPEDEF = re.compile(r"(?:^|::)(?:u?int\d*_t|u?intptr_t|u?intmax_t|size_t|ssize_t|ptrdiff_t|off_t|"
-                                 r"time_t|pid_t|uid_t|gid_t|mode_t|socklen_t|sig_atomic_t|wchar_t|char\d*_t|"
-                                 r"DWORD|BOOL|BYTE|WORD|HANDLE|LPVOID|SOCKET|qint\d+|quint\d+|qreal|uint|ulong|ushort|uchar)$")
-
     def _is_default_constructed(self, declarator: TSNode, type_node: Optional[TSNode]) -> bool:
         """C++ `std::ostringstream out;` / `QString s;` / `boost::asio::io_context io;` runs a
         constructor: it is not an uninitialised read waiting to happen (CWE-457 is about
@@ -818,7 +816,7 @@ class CFrontend:
             return False
         if type_node.type not in ("type_identifier", "qualified_identifier", "template_type"):
             return False
-        return not self._SCALAR_TYPEDEF.search(self._get_text(type_node))
+        return not _cpp_types().is_scalar_typedef(self._get_text(type_node))     # cpp-types.toml
 
     def _note_var_type(self, name: Optional[str], type_node: Optional[TSNode]) -> None:
         """Remember the declared type of a local (C++): member calls on it are then
@@ -1774,7 +1772,7 @@ class CFrontend:
             return self._translate_expression(self._content_accessor_receiver(node))
 
         elif (node.type == "call_expression" and self.LANGUAGE == "cpp"
-              and self._get_call_name(node) in self._VIEW_WRAPPERS and self._get_call_args(node)):
+              and self._get_call_name(node) in _cpp_types().view_wrappers and self._get_call_args(node)):
             # asio::buffer(data, n) / std::span(buf) / std::ref(x) are views of their first argument:
             # a read "into the buffer" fills `data`
             return self._translate_expression(self._get_call_args(node)[0])
@@ -2077,28 +2075,14 @@ class CFrontend:
             return text
         return ""
 
-    # Methods that hand back (a view of) the receiver's own contents: `cmd.c_str()`,
-    # `text.toStdString()`, `buf.data()`. In an expression they are the receiver itself,
-    # so taint on it reaches `system(cmd.c_str())` without a spec per container type.
-    _CONTENT_ACCESSORS = frozenset({
-        "c_str", "data", "str", "string", "c_string", "view", "get_str", "toStdString", "toUtf8",
-        "toLatin1", "toLocal8Bit", "toAscii", "constData", "toStdWString", "utf8", "trimmed",
-        "simplified", "toLower", "toUpper", "substr", "substring", "left", "right", "mid", "s",
-    })
-
-    _VIEW_WRAPPERS = frozenset({
-        "asio::buffer", "boost::asio::buffer", "asio::mutable_buffer", "boost::asio::mutable_buffer",
-        "boost::asio::buffer_cast", "std::span", "std::ref", "std::cref", "std::string_view",
-        "boost::asio::mutable_buffers_1",
-    })
-
     def _content_accessor_receiver(self, node: TSNode) -> Optional[TSNode]:
-        """For `recv.c_str()`-style calls, the receiver node (else None)."""
+        """For `recv.c_str()`-style calls (cpp-types.toml `content_accessors`: methods that hand back
+        the receiver's own contents), the receiver node (else None)."""
         func = node.child_by_field_name("function")
         if func is None or func.type != "field_expression":
             return None
         field = func.child_by_field_name("field")
-        if field is None or self._get_text(field) not in self._CONTENT_ACCESSORS:
+        if field is None or self._get_text(field) not in _cpp_types().content_accessors:
             return None
         return func.child_by_field_name("argument")
 
@@ -2303,41 +2287,36 @@ def _func_str(call: Call) -> str:
 
 
 # -- option-dispatch APIs ---------------------------------------------------------
-# `curl_easy_setopt(h, CURLOPT_URL, x)` is one function whose meaning is the constant
-# in its second argument; `xmlReadMemory(..., XML_PARSE_NOENT)` is only an XXE hazard
-# with certain flags. A pack rule matches calls by canonical id, so for these APIs the
-# canonical id carries the constant: `curl_easy_setopt:CURLOPT_URL`,
+# A packs' `[[option_call]]` (`curl_easy_setopt(h, CURLOPT_URL, x)`) is one function whose
+# meaning is the constant at its option position; `xmlReadMemory(..., XML_PARSE_NOENT)` is only
+# an XXE hazard with certain flags. A pack rule matches calls by canonical id, so for these
+# APIs the canonical id carries the constant: `curl_easy_setopt:CURLOPT_URL`,
 # `curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off` (value 0/false),
 # `SSL_CTX_set_verify:SSL_VERIFY_NONE`, `xmlReadMemory:XML_PARSE_NOENT|XML_PARSE_DTDLOAD`.
 # Only identifier constants written at the call are read; an option held in a variable
 # leaves the plain id, which no rule matches (no guess).
-_OPTION_ARG = {
-    "curl_easy_setopt": 1, "curl_multi_setopt": 1, "curl_share_setopt": 1,
-    "SSL_CTX_set_verify": 1, "SSL_set_verify": 1,
-    "xmlReadMemory": 4, "xmlReadFile": 2, "xmlReadDoc": 3, "xmlReadIO": 5,
-    "xmlCtxtReadMemory": 5, "xmlCtxtReadFile": 3, "xmlCtxtReadDoc": 4, "xmlCtxtUseOptions": 1,
-    "xmlCtxtSetOptions": 1,
-}
-_OPTION_VALUE_ARG = {"curl_easy_setopt": 2, "curl_multi_setopt": 2, "curl_share_setopt": 2}
 _IDENT = re.compile(r"[A-Za-z_]\w*")
 _OFF_VALUES = {"0", "0l", "0ul", "false", "null", "nullptr"}
 
 
-# A response writer whose meaning depends on the content type written beside the body:
-# `res.set_content(body, "text/html")` is an XSS sink, `res.set_content(json, "application/json")`
-# is not. Calls named here whose type argument is an HTML literal get the suffix ":html"
-# (`res.set_content:html`), which a pack's `name` rule can target.
-_CONTENT_TYPE_ARG = {"set_content": 1}
+# A packs' `[[content_type_call]]`: a response writer whose meaning depends on the content type
+# written beside the body. `res.set_content(body, "text/html")` is an XSS sink,
+# `res.set_content(json, "application/json")` is not; with an HTML literal the call gets the suffix
+# ":html" (`res.set_content:html`), which a pack's `name` rule can target.
+def _pack_entries(packs, language: str, attr: str) -> list:
+    packs = packs if packs is not None else default_packs()
+    return [e for p in packs.for_language(language) for e in getattr(p, attr)]
 
 
-def _qualify_content_type_calls(program: Program) -> None:
+def _qualify_content_type_calls(program: Program, packs=None) -> None:
+    positions = {c.method: c.arg for c in _pack_entries(packs, "cpp", "content_type_calls")}
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for instr in node.instrs:
                 if not isinstance(instr, Call):
                     continue
                 name = _func_str(instr)
-                idx = _CONTENT_TYPE_ARG.get(name.rsplit(".", 1)[-1])
+                idx = positions.get(name.rsplit(".", 1)[-1])
                 if idx is None or "." not in name or idx >= len(instr.args):
                     continue
                 arg = instr.args[idx][0]
@@ -2347,13 +2326,15 @@ def _qualify_content_type_calls(program: Program) -> None:
                         instr.canonical += ":html"
 
 
-def _qualify_option_calls(program: Program) -> None:
+def _qualify_option_calls(program: Program, packs=None) -> None:
+    options = {o.name: o for o in _pack_entries(packs, program.language or "c", "option_calls")}
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for instr in node.instrs:
                 if not isinstance(instr, Call) or not instr.canonical:
                     continue
-                idx = _OPTION_ARG.get(instr.canonical)
+                opt = options.get(instr.canonical)
+                idx = opt.option_arg if opt is not None else None
                 if idx is None or idx >= len(instr.args):
                     continue
                 text = str(instr.args[idx][0])
@@ -2361,7 +2342,7 @@ def _qualify_option_calls(program: Program) -> None:
                 if not idents:
                     continue
                 canonical = f"{instr.canonical}:{'|'.join(idents)}"
-                vidx = _OPTION_VALUE_ARG.get(instr.canonical)
+                vidx = opt.value_arg
                 if vidx is not None and vidx < len(instr.args):
                     if str(instr.args[vidx][0]).strip().lower() in _OFF_VALUES:
                         canonical += ":off"

@@ -99,9 +99,11 @@ def test_csharp_controller_is_a_candidate():
           '  public IActionResult Get([FromQuery] string id) {\n'
           '    var cmd = new SqlCommand("SELECT * FROM m WHERE id=" + id);\n'
           '  }\n}')
-    assert is_detection_candidate(cs, False) is True
+    from frame.sil.frontends.csharp_frontend import CSharpFrontend
+    assert is_detection_candidate(cs, False, CSharpFrontend().translate(cs, "M.cs")) is True
     # a plain C# DTO with no security-relevant surface is not a candidate
-    assert is_detection_candidate("public class Movie { public string Title; }", False) is False
+    dto = "public class Movie { public string Title; }"
+    assert is_detection_candidate(dto, False, CSharpFrontend().translate(dto, "Movie.cs")) is False
 
 
 def test_cli_ai_flags_parse():

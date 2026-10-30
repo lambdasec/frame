@@ -1,0 +1,27 @@
+# The C/C++ type model the C frontend reads (frame/sil/specs/cpp_types.py, strictly).
+
+# Typedefs that name a plain scalar (C, POSIX, Windows, Qt): `size_t n;` is uninitialised, while a
+# declared object of any other class type (`std::ostringstream out;`, `QString s;`) ran a constructor.
+# Matched as the whole name or its last `::` part; `u?int\d*_t` style families are written out.
+scalar_typedefs = ["int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+                   "int_t", "uint_t", "int128_t", "uint128_t", "intptr_t", "uintptr_t", "intmax_t", "uintmax_t", "size_t", "ssize_t",
+                   "ptrdiff_t", "off_t", "time_t", "pid_t", "uid_t", "gid_t", "mode_t", "socklen_t",
+                   "sig_atomic_t", "wchar_t", "char_t", "char8_t", "char16_t", "char32_t",
+                   "int_least8_t", "int_least16_t", "int_least32_t", "int_least64_t",
+                   "uint_least8_t", "uint_least16_t", "uint_least32_t", "uint_least64_t",
+                   "int_fast8_t", "int_fast16_t", "int_fast32_t", "int_fast64_t",
+                   "uint_fast8_t", "uint_fast16_t", "uint_fast32_t", "uint_fast64_t",
+                   "DWORD", "BOOL", "BYTE", "WORD", "HANDLE", "LPVOID", "SOCKET",
+                   "qint8", "qint16", "qint32", "qint64", "quint8", "quint16", "quint32", "quint64", "qreal",
+                   "uint", "ulong", "ushort", "uchar"]
+
+# Methods that hand back (a view of) the receiver's own contents (`cmd.c_str()`, `text.toStdString()`,
+# `buf.data()`, Qt's `trimmed()` / `mid()`): in an expression they are the receiver itself.
+content_accessors = ["c_str", "data", "str", "string", "c_string", "view", "get_str", "toStdString", "toUtf8",
+                     "toLatin1", "toLocal8Bit", "toAscii", "constData", "toStdWString", "utf8", "trimmed",
+                     "simplified", "toLower", "toUpper", "substr", "substring", "left", "right", "mid", "s"]
+
+# Functions that wrap their argument in a view of the same bytes (`asio::buffer(s)`, `std::span(p, n)`).
+view_wrappers = ["asio::buffer", "boost::asio::buffer", "asio::mutable_buffer", "boost::asio::mutable_buffer",
+                 "boost::asio::buffer_cast", "std::span", "std::ref", "std::cref", "std::string_view",
+                 "boost::asio::mutable_buffers_1"]

@@ -85,7 +85,7 @@ def _scan(path: Path, depth: int, seen: Set[Path]) -> Optional[Tuple[Set[str], D
     aliases: Dict[str, Set[str]] = {}
     for rx in engines.patterns("raw"):
         for m in rx.finditer(text):
-            if re.match(r"\s*(?:include|partial|extends)\b", m.group("expr")):
+            if re.match(r"\s*(?:" + "|".join(map(re.escape, engines.include_words)) + r")\b", m.group("expr")):
                 continue                             # an include's own output; its file is read below
             roots = _roots(m.group("expr"))
             if not roots:
@@ -126,7 +126,7 @@ def _resolve_include(from_file: Path, ref: str) -> Optional[Path]:
     names = [ref] if Path(ref).suffix in extensions else [ref + e for e in extensions]
     for base in (from_file.parent, from_file.parent.parent):
         for name in names:
-            for cand in (base / name, base / "partials" / name):
+            for cand in (base / name, *(base / d / name for d in _engines().partial_dirs)):
                 try:
                     if cand.is_file():
                         return cand

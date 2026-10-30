@@ -21,3 +21,20 @@ call = ["curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off", "curl_easy_setopt:CURLOPT
 args = []
 kind = "cert_validation"
 description = "libcurl TLS certificate verification disabled"
+
+# curl_*_setopt(handle, option, value): the option constant decides the meaning (`:CURLOPT_URL`),
+# a 0 / false / NULL value adds `:off` (CURLOPT_SSL_VERIFYPEER off).
+[[option_call]]
+name = "curl_easy_setopt"
+option_arg = 1
+value_arg = 2
+
+[[option_call]]
+name = "curl_multi_setopt"
+option_arg = 1
+value_arg = 2
+
+[[option_call]]
+name = "curl_share_setopt"
+option_arg = 1
+value_arg = 2

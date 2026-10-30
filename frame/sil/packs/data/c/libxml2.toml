@@ -23,3 +23,40 @@ call = ["xmlCtxtReadMemory:*XML_PARSE_NOENT*", "xmlCtxtReadMemory:*XML_PARSE_DTD
 args = [1]
 kind = "xxe"
 description = "libxml2 parses the document with entity substitution / external DTD loading enabled"
+
+# The parser-option flags (`:XML_PARSE_NOENT|XML_PARSE_DTDLOAD`) of each read / option call.
+[[option_call]]
+name = "xmlReadMemory"
+option_arg = 4
+
+[[option_call]]
+name = "xmlReadFile"
+option_arg = 2
+
+[[option_call]]
+name = "xmlReadDoc"
+option_arg = 3
+
+[[option_call]]
+name = "xmlReadIO"
+option_arg = 5
+
+[[option_call]]
+name = "xmlCtxtReadMemory"
+option_arg = 5
+
+[[option_call]]
+name = "xmlCtxtReadFile"
+option_arg = 3
+
+[[option_call]]
+name = "xmlCtxtReadDoc"
+option_arg = 4
+
+[[option_call]]
+name = "xmlCtxtUseOptions"
+option_arg = 1
+
+[[option_call]]
+name = "xmlCtxtSetOptions"
+option_arg = 1

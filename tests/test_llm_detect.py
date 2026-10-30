@@ -52,12 +52,19 @@ def test_transport_error_raises_not_empty():
         detect_in_file(SRC, "javascript", "x.js", TriageConfig(agent_retries=0), c)
 
 
+def _js_program(src):
+    from frame.sil.frontends.javascript_frontend import JavaScriptFrontend
+    return JavaScriptFrontend().translate(src, "x.js")
+
+
 def test_candidate_selection():
-    assert is_detection_candidate("const x = req.query.id;", False) is True
-    assert is_detection_candidate("db.query(stuff)", False) is True
-    assert is_detection_candidate("const total = a + b;", False) is False
-    # anything the symbolic pass already flagged is a candidate
-    assert is_detection_candidate("const total = a + b;", True) is True
+    """A file is a candidate when its program has a source or a sink (from the specs and packs)."""
+    for src, want in (("const x = req.query.id;", True), ("db.query(stuff);", True),
+                      ("const total = a + b;", False)):
+        assert is_detection_candidate(src, False, _js_program(src)) is want, src
+    # anything the symbolic pass already flagged is a candidate, and so is an untranslated file
+    assert is_detection_candidate("const total = a + b;", True, _js_program("const total = a + b;")) is True
+    assert is_detection_candidate("whatever", False, None) is True
 
 
 def test_sink_grounding():

@@ -144,6 +144,8 @@ C# packs state ASP.NET's cookie off-switches as `[[setting]]` entries with `at =
 
 A `[[function]]` in a pack of any language can say `noreturn = true` (`flask.abort` ends the request); the memory facts (`allocates`, `frees`, `dereferences`, and `writes_headers` for a C call that writes an HTTP header from its literal argument) are C and C++ only. A JavaScript `[[middleware]]` names the method that registers middleware on an app or router (`app.use(mw)`: the request fields mw sets reach every handler of `app`), and a Java `[[request_attribute]]` says that what a filter stores on the request (`setAttribute`) is what a servlet's `getAttribute` reads.
 
+C and C++ packs name option-dispatch functions with `[[option_call]]` (`name`, `option_arg`, optional `value_arg`): `curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L)` then has the canonical id `curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off`, which a rule can match. A C++ `[[content_type_call]]` (`method`, `arg`) names a response writer whose content type sits beside the body: `res.set_content(body, "text/html")` becomes `res.set_content:html`.
+
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:

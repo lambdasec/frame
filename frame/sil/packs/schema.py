@@ -74,7 +74,7 @@ _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
-             "request_attribute", "middleware", "policy", "define"}
+             "request_attribute", "middleware", "option_call", "content_type_call", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -273,6 +273,30 @@ class RequestAttribute:
 
 
 @dataclass
+class OptionCall:
+    """C/C++: a function whose meaning is the constant at `option_arg` (`curl_easy_setopt(h,
+    CURLOPT_URL, x)`): its canonical id carries the constants written there
+    (`curl_easy_setopt:CURLOPT_URL`) and `:off` when `value_arg` is 0/false/NULL, so a rule can match
+    one meaning (`[[option_call]]`)."""
+    id: str
+    name: str
+    option_arg: int
+    value_arg: Optional[int] = None
+    description: str = ""
+
+
+@dataclass
+class ContentTypeCall:
+    """C++: a response writer whose content type is the argument at `arg` (`res.set_content(body,
+    "text/html")`); with an HTML literal there the call is named `<name>:html`, which a sink rule
+    targets (`[[content_type_call]]`)."""
+    id: str
+    method: str
+    arg: int
+    description: str = ""
+
+
+@dataclass
 class DeferredCall:
     """Python: a method that runs the function it is called on, later, with the same arguments
     (`[[deferred_call]]`): Celery's `task.delay(a, b)` is the call `task(a, b)` for taint."""
@@ -340,6 +364,8 @@ class Pack:
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
+    option_calls: List[OptionCall] = field(default_factory=list)
+    content_type_calls: List[ContentTypeCall] = field(default_factory=list)
     annotated_queries: List[AnnotatedQuery] = field(default_factory=list)
     required_flags: List[RequiredFlag] = field(default_factory=list)
     disabled_protections: List[DisabledProtection] = field(default_factory=list)
@@ -666,6 +692,35 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                     exclude_decorator=_strings(origin, f"{where}.exclude_decorator", t.get("exclude_decorator", [])),
                     return_type=_strings(origin, f"{where}.return_type", t.get("return_type", [])),
                     description=desc))
+
+    def _position(where, value):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise _fail(origin, where, "must be an argument position (0-based)")
+        return value
+
+    for i, t in enumerate(data.get("option_call", [])):
+        where = f"[[option_call]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "name", "option_arg", "value_arg", "description"})
+        if language not in ("c", "cpp"):
+            raise _fail(origin, where, "option calls are for C and C++ packs")
+        if not isinstance(t.get("name"), str) or not t["name"]:
+            raise _fail(origin, f"{where}.name", "needs the function's name")
+        pack.option_calls.append(OptionCall(
+            id=str(t.get("id", f"{name}-option-{i + 1}")), name=t["name"],
+            option_arg=_position(f"{where}.option_arg", t.get("option_arg")),
+            value_arg=_position(f"{where}.value_arg", t["value_arg"]) if "value_arg" in t else None,
+            description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("content_type_call", [])):
+        where = f"[[content_type_call]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "method", "arg", "description"})
+        if language != "cpp":
+            raise _fail(origin, where, "content-type calls are for C++ packs")
+        if not isinstance(t.get("method"), str) or not t["method"]:
+            raise _fail(origin, f"{where}.method", "needs the method's name")
+        pack.content_type_calls.append(ContentTypeCall(
+            id=str(t.get("id", f"{name}-content-type-{i + 1}")), method=t["method"],
+            arg=_position(f"{where}.arg", t.get("arg")), description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("request_attribute", [])):
         where = f"[[request_attribute]] #{i + 1}"

@@ -1220,11 +1220,10 @@ class FrameScanner:
             if self.verbose:
                 print("[Scanner] LLM detect requested but no endpoint/model; skipping.")
             return vulns
-        # Supported languages gate on the candidate heuristic (avoid calling the
-        # model on every file). For an unsupported language (LLM-only mode) the user
-        # explicitly opted in with --ai, so detection always runs -- the heuristic's
-        # patterns are tuned for the symbolic languages and would miss PHP/Ruby/etc.
-        if self.frontend is not None and not is_detection_candidate(source_code, bool(vulns)):
+        # Supported languages send only files whose program has a source or a sink (avoid
+        # calling the model on every file). For an unsupported language (LLM-only mode) the
+        # user explicitly opted in with --ai, so detection always runs.
+        if self.frontend is not None and not is_detection_candidate(source_code, bool(vulns), program):
             return vulns
         if self._llm_client is None:
             self._llm_client = LLMTriageClient(config)
