@@ -1,0 +1,69 @@
+# The JavaScript / TypeScript type model: what kind of value an expression is, from the builtins and
+# Node's core modules, without running anything. Read by the JS frontend (`_value_kind`) through
+# frame/sil/specs/javascript_types.py (strictly). A NoSQL sink is a database-handle method, so a
+# receiver this model knows is something else (an array, a string, a hash from `crypto`) is not one.
+
+[modules]
+# Node core modules: they hand out hashes, buffers, streams and handles of their own, never a
+# database collection (`fs/promises` and other subpaths count as their module).
+node_core = ["assert", "async_hooks", "buffer", "child_process", "cluster", "console", "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "fs/promises", "http", "http2", "https", "inspector", "module", "net", "os", "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib"]
+# In-memory collection utilities: their find / remove work on arrays and objects (`lodash.*`
+# per-method packages count as lodash).
+in_memory = ["lodash", "lodash-es", "lodash/fp", "ramda", "underscore"]
+
+[methods]
+# A call of one of these returns a database handle (`db.collection("users")`,
+# `mongoose.model("User", schema)`).
+db_handle_factories = ["collection", "model"]
+# Array methods returning an array, string methods returning a string (the receiver's own kind).
+array_to_array = ["concat", "copyWithin", "fill", "filter", "flat", "flatMap", "map", "reverse", "slice", "sort", "splice", "toReversed", "toSorted", "toSpliced", "with"]
+string_to_string = ["charAt", "concat", "normalize", "padEnd", "padStart", "repeat", "replace", "replaceAll", "slice", "substr", "substring", "toLocaleLowerCase", "toLocaleUpperCase", "toLowerCase", "toString", "toUpperCase", "trim", "trimEnd", "trimStart"]
+
+# String methods no database driver or common container shares: the result's kind, whatever the
+# receiver is.
+[string_only_methods]
+split = "Array"
+toLowerCase = "String"
+toUpperCase = "String"
+trim = "String"
+trimStart = "String"
+trimEnd = "String"
+padStart = "String"
+padEnd = "String"
+charAt = "String"
+toLocaleLowerCase = "String"
+toLocaleUpperCase = "String"
+
+# `new X(...)` of a global constructor: the kind of value it makes.
+[constructors]
+Array = "Array"
+Map = "Map"
+Set = "Set"
+WeakMap = "Map"
+WeakSet = "Set"
+RegExp = "RegExp"
+String = "String"
+Number = "Number"
+Boolean = "Boolean"
+Date = "Date"
+Promise = "Promise"
+Error = "Error"
+URL = "URL"
+URLSearchParams = "URLSearchParams"
+Buffer = "Buffer"
+
+# Global factory calls (`Array.from`, `JSON.parse`): the kind of value they return.
+[factories]
+"Array.from" = "Array"
+"Array.of" = "Array"
+"Object.keys" = "Array"
+"Object.values" = "Array"
+"Object.entries" = "Array"
+"Object.assign" = "Object"
+"Object.create" = "Object"
+"JSON.parse" = "Object"
+"Buffer.from" = "Buffer"
+"Buffer.alloc" = "Buffer"
+"Buffer.concat" = "Buffer"
+String = "String"
+Number = "Number"

@@ -52,6 +52,7 @@ from frame.sil.metadata import (
 )
 from frame.sil.packs import finish_program
 from frame.sil.loop_exit import body_can_exit_loop
+from frame.sil.specs.javascript_types import load as _js_types
 from frame.sil.specs.passthrough import load as _passthrough
 from frame.sil.specs.request_objects import load as _request_objects
 from frame.sil.specs.shells import is_shell
@@ -1918,44 +1919,17 @@ class JavaScriptFrontend:
 
     # -- what kind of value a receiver is (for db_method specs) ------------------
 
-    # Node core modules hand out hashes, buffers, streams and handles of their
-    # own -- never a database collection; nor do the in-memory collection
-    # utilities, whose find / remove operate on arrays and objects.
-    _NODE_CORE_MODULES = frozenset({
-        "assert", "async_hooks", "buffer", "child_process", "cluster", "console",
-        "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs",
-        "fs/promises", "http", "http2", "https", "inspector", "module", "net", "os",
-        "path", "perf_hooks", "process", "punycode", "querystring", "readline",
-        "repl", "stream", "string_decoder", "timers", "tls", "tty", "url", "util",
-        "v8", "vm", "wasi", "worker_threads", "zlib"})
-    _IN_MEMORY_LIBS = frozenset({"lodash", "lodash-es", "lodash/fp", "underscore", "ramda"})
-    # A call of one of these methods returns a database handle (`db.collection
-    # ('users')`, `mongoose.model('User', schema)`).
-    _DB_HANDLE_FACTORIES = frozenset({"collection", "model"})
-    # Methods that return a value of the receiver's own kind.
-    _ARRAY_TO_ARRAY = frozenset({"map", "filter", "slice", "concat", "splice", "flat",
-                                 "flatMap", "sort", "reverse", "fill", "copyWithin", "toSorted",
-                                 "toReversed", "toSpliced", "with"})
-    _STRING_TO_STRING = frozenset({"toString", "trim", "trimStart", "trimEnd", "toLowerCase",
-                                   "toUpperCase", "replace", "replaceAll", "slice", "substring",
-                                   "substr", "padStart", "padEnd", "repeat", "normalize",
-                                   "charAt", "concat", "toLocaleLowerCase", "toLocaleUpperCase"})
-    # String methods no database driver or common container shares, so the
-    # result kind does not depend on knowing the receiver.
-    _STRING_ONLY_METHODS = {"split": "Array", "toLowerCase": "String", "toUpperCase": "String",
-                            "trim": "String", "trimStart": "String", "trimEnd": "String",
-                            "padStart": "String", "padEnd": "String", "charAt": "String",
-                            "toLocaleLowerCase": "String", "toLocaleUpperCase": "String"}
-    _GLOBAL_CONSTRUCTOR_KINDS = {"Array": "Array", "Map": "Map", "Set": "Set", "WeakMap": "Map",
-                                 "WeakSet": "Set", "RegExp": "RegExp", "String": "String",
-                                 "Number": "Number", "Boolean": "Boolean", "Date": "Date",
-                                 "Promise": "Promise", "Error": "Error", "URL": "URL",
-                                 "URLSearchParams": "URLSearchParams", "Buffer": "Buffer"}
-    _GLOBAL_FACTORIES = {"Array.from": "Array", "Array.of": "Array", "Object.keys": "Array",
-                         "Object.values": "Array", "Object.entries": "Array",
-                         "Object.assign": "Object", "Object.create": "Object",
-                         "JSON.parse": "Object", "Buffer.from": "Buffer", "Buffer.alloc": "Buffer",
-                         "Buffer.concat": "Buffer", "String": "String", "Number": "Number"}
+    # The type model (Node core modules, in-memory libraries, database-handle factories, builtin
+    # method result kinds, global constructors and factories): specs/data/javascript-types.toml.
+    _TYPES = _js_types()
+    _NODE_CORE_MODULES = _TYPES.node_core_modules
+    _IN_MEMORY_LIBS = _TYPES.in_memory_libs
+    _DB_HANDLE_FACTORIES = _TYPES.db_handle_factories
+    _ARRAY_TO_ARRAY = _TYPES.array_to_array
+    _STRING_TO_STRING = _TYPES.string_to_string
+    _STRING_ONLY_METHODS = _TYPES.string_only_methods
+    _GLOBAL_CONSTRUCTOR_KINDS = _TYPES.constructors
+    _GLOBAL_FACTORIES = _TYPES.factories
 
     def _module_kind(self, module: str) -> Optional[str]:
         """Kind of the values a module hands out, if it is known not to be a

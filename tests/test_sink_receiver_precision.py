@@ -479,3 +479,13 @@ def test_js_lexical_scope_resolves_shadowed_names():
     r = FrameScanner(language="javascript", library_mode=True).scan(code, "s.js")
     lines = {v.line for v in r.vulnerabilities if v.cwe_id == "CWE-943"}
     assert 3 in lines and 7 not in lines
+
+
+def test_the_javascript_type_model_is_data_and_strict(tmp_path):
+    from frame.sil.specs import javascript_types
+    model = javascript_types.load()
+    assert "crypto" in model.node_core_modules and model.factories["JSON.parse"] == "Object"
+    bad = tmp_path / "javascript-types.toml"
+    bad.write_text(javascript_types.PATH.read_text().replace("db_handle_factories", "handles"))
+    with pytest.raises(ValueError, match=r"\[methods\]"):
+        javascript_types.load(bad)
