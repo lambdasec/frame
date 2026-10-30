@@ -51,6 +51,9 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
         derefs = entry.get("dereferences", [])
         if not isinstance(derefs, list) or not all(isinstance(i, int) and i >= -1 for i in derefs):
             raise SpecTableError(f"{origin}: {name}: dereferences must be argument positions (-1: every one)")
+        sizes = entry.get("size_args", [])
+        if not isinstance(sizes, list) or not all(isinstance(i, int) and i >= 0 for i in sizes):
+            raise SpecTableError(f"{origin}: {name}: size_args must be argument positions")
         specs[name] = ProcSpec(**{k: (set(v) if k in _SET_FIELDS else v) for k, v in entry.items()})
     return specs
 

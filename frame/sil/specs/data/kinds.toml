@@ -633,6 +633,7 @@ category = "memory"
 
 [[vuln]]
 type = "integer_underflow"
+cwe = "CWE-191"
 category = "memory"
 
 [[vuln]]
@@ -667,6 +668,17 @@ category = "access-control"
 
 [[vuln]]
 type = "sign_extension"
+cwe = "CWE-194"
+category = "memory"
+
+[[vuln]]
+type = "signed_to_unsigned"
+cwe = "CWE-195"
+category = "memory"
+
+[[vuln]]
+type = "numeric_truncation"
+cwe = "CWE-197"
 category = "memory"
 
 [[vuln]]

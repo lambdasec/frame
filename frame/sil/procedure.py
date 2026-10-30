@@ -166,6 +166,10 @@ class ProcSpec:
     # -1 for every argument (printf's varargs).
     dereferences: List[int] = field(default_factory=list)
 
+    # Argument positions whose parameter is a size (`size_t`): memcpy's length, malloc's size.
+    # A negative signed value passed there becomes a huge one (CWE-194/195).
+    size_args: List[int] = field(default_factory=list)
+
     # =========================================================================
     # Structural weakness specifications
     #

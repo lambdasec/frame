@@ -42,6 +42,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
+from frame.sil.c_int_model import LIMITS
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
 from frame.sil.packs import finish_program
@@ -185,6 +186,7 @@ class CFrontend:
         self._lambda_names: Dict[int, str] = {}
         self._hoisted_calls: Dict[int, Exp] = {}
         self._var_types: Dict[int, Dict[str, str]] = {}      # id(Procedure) -> {variable: declared type}
+        self._ref_aliases: Dict[int, Dict[str, str]] = {}    # id(Procedure) -> {C++ reference: the local it names}
         self._class_field_types: Dict[str, Dict[str, str]] = {}
         self._lambda_parent: Dict[int, Procedure] = {}
 
@@ -194,7 +196,8 @@ class CFrontend:
         program.source_files.append(filename)
         program.syntax_error_line = first_syntax_error_line(tree.root_node)
         program.function_macros = self._function_macro_names(tree.root_node)
-        self._int_macros = self._integer_macros(tree.root_node)
+        # the standard limits (<limits.h>, <stdint.h>) under c_int_model, then the file's own
+        self._int_macros = {**LIMITS, **self._integer_macros(tree.root_node)}
         program.string_macros = dict(self._string_macro_values)
         program.global_array_bounds = self._global_array_bounds(tree.root_node)
 
@@ -638,6 +641,8 @@ class CFrontend:
                 self._record_local(self._extract_identifier(decl))
                 self._note_var_type(self._extract_identifier(decl), type_node)
                 self._note_scalar_type(decl, type_node)
+                if self._note_reference_alias(decl, child.child_by_field_name("value")):
+                    continue
                 self._translate_init_declarator(child, type_node)
             elif child.type == "function_declarator" and self._translate_vexing_constructor(child, type_node):
                 continue
@@ -816,6 +821,31 @@ class CFrontend:
             if text and text not in ("auto", "var"):
                 self._var_types.setdefault(id(self._current_proc), {})[name] = text
 
+    def _note_reference_alias(self, declarator: Optional[TSNode], value: Optional[TSNode]) -> bool:
+        """C++ `T &r = x;` with `x` a local or parameter of this function: a reference is
+        another name for `x` and can never be bound to anything else, so every later use of
+        `r` is lowered as `x` (reads and writes alike). Anything else (a field, an element, a
+        call, a name declared twice) is left as an ordinary variable."""
+        proc = self._current_proc
+        if (self.LANGUAGE != "cpp" or proc is None or declarator is None or value is None
+                or declarator.type != "reference_declarator" or value.type != "identifier"):
+            return False
+        inner = next((c for c in declarator.named_children if c.type == "identifier"), None)
+        if inner is None:
+            return False
+        ref, target = self._get_text(inner), self._alias_of(self._get_text(value))
+        aliases = self._ref_aliases.setdefault(id(proc), {})
+        is_local = target in (proc.locals or {}) or target in {p.name for p, _ in proc.params}
+        if ref in aliases or ref == target or not is_local:
+            aliases.pop(ref, None)
+            return False
+        aliases[ref] = target
+        return True
+
+    def _alias_of(self, name: str) -> str:
+        proc = self._current_proc
+        return self._ref_aliases.get(id(proc), {}).get(name, name) if proc is not None else name
+
     def _note_scalar_type(self, declarator: Optional[TSNode], type_node: Optional[TSNode]) -> None:
         """`Procedure.scalar_types`: a plain variable's declared type (not a pointer or array)."""
         if declarator is None or type_node is None or declarator.type != "identifier" \
@@ -869,6 +899,7 @@ class CFrontend:
     def _assign_to_identifier(self, target: str, right: TSNode, op: str, loc: Location) -> None:
         """`target op right` for a plain name (a local, a global, or a member written by its
         bare name or in a constructor's initializer list)."""
+        target = self._alias_of(target)
         if op != "=":
             # Compound assignment `x += e` is `x = x + e`; lowering it as
             # `x = e` dropped the old value (and made `x == e` a false fact).
@@ -1153,7 +1184,7 @@ class CFrontend:
             self._translate_assignment(node)
         elif node.type == "update_expression":
             self._translate_update(node)
-        elif node.type == "parenthesized_expression":
+        elif node.type in ("parenthesized_expression", "condition_clause"):
             for child in node.children:
                 if child.type not in ("(", ")"):
                     self._translate_effects(child)
@@ -1615,7 +1646,7 @@ class CFrontend:
             return ExpConst.null()
 
         if node.type == "identifier":
-            text = self._get_text(node)
+            text = self._alias_of(self._get_text(node))
             if text in self._int_macros:
                 return ExpConst.integer(self._int_macros[text])     # the preprocessor's view
             return ExpVar(PVar(text))
@@ -1755,6 +1786,16 @@ class CFrontend:
             for child in node.children:
                 if child.type not in ("(", ")"):
                     return self._translate_expression(child)
+
+        elif node.type == "condition_clause":
+            # C++ wraps `if` / `while` / `switch` conditions in a clause (`if (x > 0)`, also
+            # `if (init; cond)`); its value is the condition. Read as text it was an opaque name,
+            # so no C++ branch said anything to the solver.
+            value = node.child_by_field_name("value")
+            if value is not None:
+                return self._translate_expression(value)
+            named = [c for c in node.named_children if c.type != "comment"]
+            return self._translate_expression(named[-1]) if named else ExpConst.boolean(True)
 
         elif node.type == "conditional_expression":
             conseq = node.child_by_field_name("consequence")

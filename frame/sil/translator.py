@@ -40,6 +40,7 @@ from .instructions import (
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for
 from . import c_facts as _c_facts
+from .c_int_model import INT_TYPES, int_range
 from .specs.parser_hardening import load as _parser_hardening
 from .specs.request_objects import load as _request_objects
 from .specs.weak_algorithms import load as _weak_algorithms
@@ -165,6 +166,8 @@ class VulnType(Enum):
     ASSERTION_FAILURE = "assertion_failure"     # CWE-617
     PRIVILEGE_MANAGEMENT = "privilege_management"  # CWE-269
     SIGN_EXTENSION = "sign_extension"           # CWE-194
+    SIGNED_TO_UNSIGNED = "signed_to_unsigned"   # CWE-195
+    NUMERIC_TRUNCATION = "numeric_truncation"   # CWE-197
     UNICODE_HANDLING = "unicode_handling"       # CWE-176
     CONFIG_INJECTION = "config_injection"       # CWE-15
 
@@ -3998,6 +4001,8 @@ class SILTranslator:
 
         # Get specification for this function
         spec = self.program.spec_for_call(instr)
+        if self._is_c_lang and spec is not None and spec.size_args:
+            self._note_size_arg_candidates(instr, spec, state, proc_name)
 
         # A call to a procedure of this file: pass its argument taint on, and
         # take the result's taint from the callee's return summary (or, before
@@ -7082,15 +7087,16 @@ class SILTranslator:
                                                for v in g.free_vars())]
             out.append(check)
 
-        for pos, check, formula, bounds, limit in self._overflow_candidates:
-            key = ("overflow", pos, str(formula))
+        for pos, check, parts in self._overflow_candidates:
+            key = ("range", pos, check.vuln_type, tuple(str(g) for g in parts))
             if pos is None or key in seen:
                 continue
             seen.add(key)
             pc = facts_at(pos)
-            if pc is None or not self._exceeds_type_range(formula, bounds, limit, pc):
+            if pc is None or not self._exceeds_type_range(parts, pc):
                 continue
-            check.path_condition = [g for g in pc if g.free_vars() & formula.free_vars()]
+            names = set().union(*(g.free_vars() for g in parts))
+            check.path_condition = [g for g in pc if g.free_vars() & names]
             out.append(check)
 
         self._null_candidates = []
@@ -7098,42 +7104,52 @@ class SILTranslator:
         self._overflow_candidates = []
         return out
 
-    # ---- CWE-190: attacker data driving integer arithmetic past its type's maximum -----------
+    # ---- CWE-190/191/194/195/197: attacker integers leaving the range of their type ------------
     #
-    # C/C++ only. A `*`, `+` or constant `<<` whose operands are plain variables of a known
-    # declared integer type or literals, with attacker data in one of them, is a candidate; it is
-    # reported when the path facts, each operand's range and `result > MAX` (MAX of the type the
-    # usual arithmetic conversions give) are satisfiable together. A guard that keeps the result
-    # in range (`if (d < 1000)` before `d * 2`) makes that unsatisfiable. A type whose width
-    # depends on the platform (`long`, `size_t`) is not guessed: such arithmetic is not checked.
+    # C/C++ only. Each candidate is a question for the solver: with the path facts and each
+    # operand's range (its declared integer type), can the value leave the range that matters?
+    #
+    # * `*`, `+`, constant `<<` past the maximum of the type the usual arithmetic conversions give
+    #   (CWE-190); `-`, `*` below its minimum (CWE-191);
+    # * a value assigned to a narrower declared type, outside that type's range (CWE-197);
+    # * a signed value passed where the callee takes a size (`size_args`: `memcpy`'s length,
+    #   `malloc`'s size), when it can be negative: CWE-194 from a type narrower than `int` (it is
+    #   sign-extended), CWE-195 otherwise.
+    #
+    # Operands are plain variables of a type in `_INT_TYPES` (`Procedure.scalar_types`) or
+    # integer literals; a width that depends on the platform (`long`, `size_t`) is not guessed.
+    # A guard that keeps the value in range (`if (d < 1000)` before `d * 2`) makes the question
+    # unsatisfiable. Weak-random data and IPA seeds are not attacker data here.
 
-    _INT_TYPES = {
-        "char": (8, True), "signed char": (8, True), "int8_t": (8, True),
-        "unsigned char": (8, False), "uint8_t": (8, False),
-        "short": (16, True), "short int": (16, True), "signed short": (16, True), "int16_t": (16, True),
-        "unsigned short": (16, False), "unsigned short int": (16, False), "uint16_t": (16, False),
-        "int": (32, True), "signed": (32, True), "signed int": (32, True), "int32_t": (32, True),
-        "unsigned": (32, False), "unsigned int": (32, False), "uint32_t": (32, False),
-        "long long": (64, True), "long long int": (64, True), "signed long long": (64, True),
-        "int64_t": (64, True),
-        "unsigned long long": (64, False), "unsigned long long int": (64, False), "uint64_t": (64, False),
-    }
+    _INT_TYPES = INT_TYPES
 
     @staticmethod
     def _int_range(bits: int, signed: bool) -> Tuple[int, int]:
-        return (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
+        return int_range(bits, signed)
+
+    def _declared_int_type(self, var: str) -> Optional[Tuple[int, bool]]:
+        declared = (getattr(self._cur_proc, "scalar_types", None) or {}).get(var)
+        return self._INT_TYPES.get(declared or "")
 
     def _operand_int_type(self, exp: Exp) -> Optional[Tuple[int, bool]]:
         """(bits, signed) after integer promotion, or None when not known."""
         if isinstance(exp, ExpConst) and isinstance(exp.value, int) and not isinstance(exp.value, bool):
             return (32, True) if -(1 << 31) <= exp.value < (1 << 31) else None
         if isinstance(exp, ExpVar):
-            declared = (getattr(self._cur_proc, "scalar_types", None) or {}).get(self._get_var_name(exp.var))
-            t = self._INT_TYPES.get(declared or "")
+            t = self._declared_int_type(self._get_var_name(exp.var))
             if t is None:
                 return None
             return (32, True) if t[0] < 32 else t
         return None
+
+    def _var_range_facts(self, exps) -> List[Formula]:
+        out: List[Formula] = []
+        for x in exps:
+            if isinstance(x, ExpVar):
+                name = self._get_var_name(x.var)
+                lo, hi = self._int_range(*self._declared_int_type(name))
+                out += [Ge(Var(name), Const(lo)), Le(Var(name), Const(hi))]
+        return out
 
     def _attacker_tainted(self, var: str, state: SymbolicState) -> bool:
         info = state.get_taint_info(var)
@@ -7141,19 +7157,29 @@ class SILTranslator:
                 and info.source_kind not in (TaintKind.WEAK_RANDOM,)
                 and not info.source_var.startswith(self._SEED_PREFIX))
 
+    def _range_candidate(self, instr: Instr, state: SymbolicState, proc_name: str, var: str,
+                         vuln_type: "VulnType", parts: List[Formula], description: str) -> None:
+        check = self._create_taint_check(instr, state, proc_name, var, SinkKind.INTEGER_OVERFLOW)
+        check.vuln_type = vuln_type
+        check.sink_type = vuln_type.value
+        check.description = description
+        self._overflow_candidates.append((getattr(self, "_cur_pos", None), check, parts))
+
+    @staticmethod
+    def _strip_casts(e: Exp) -> Exp:
+        while isinstance(e, ExpCast):
+            e = e.exp
+        return e
+
     def _note_overflow_candidates(self, instr: Assign, state: SymbolicState, proc_name: str) -> None:
         stack = [instr.exp]
         while stack:
-            e = stack.pop()
-            if isinstance(e, ExpCast):
-                stack.append(e.exp)
-                continue
+            e = self._strip_casts(stack.pop())
             if not isinstance(e, ExpBinOp):
                 continue
             stack.extend((e.left, e.right))
-            left = e.left.exp if isinstance(e.left, ExpCast) else e.left
-            right = e.right.exp if isinstance(e.right, ExpCast) else e.right
-            if e.op not in ("*", "+", "<<"):
+            left, right = self._strip_casts(e.left), self._strip_casts(e.right)
+            if e.op not in ("*", "+", "<<", "-"):
                 continue
             lt, rt = self._operand_int_type(left), self._operand_int_type(right)
             if lt is None or rt is None:
@@ -7173,28 +7199,64 @@ class SILTranslator:
                 signed = all(t[1] for t in (lt, rt) if t[0] == bits)
             if not isinstance(formula, ArithExpr):
                 continue
-            bounds = []
-            for x in (left, right):
-                if isinstance(x, ExpVar):
-                    declared = self._cur_proc.scalar_types.get(self._get_var_name(x.var), "")
-                    lo, hi = self._int_range(*self._INT_TYPES[declared])
-                    v = Var(self._get_var_name(x.var))
-                    bounds += [Ge(v, Const(lo)), Le(v, Const(hi))]
-            limit = self._int_range(bits, signed)[1]
-            check = self._create_taint_check(instr, state, proc_name, tainted[0], SinkKind.INTEGER_OVERFLOW)
-            check.description = (f"Integer overflow: attacker data in '{tainted[0]}' can take "
-                                 f"{e.op} past the maximum of its type ({limit})")
-            self._overflow_candidates.append(
-                (getattr(self, "_cur_pos", None), check, formula, bounds, limit))
+            lo, hi = self._int_range(bits, signed)
+            bounds = self._var_range_facts((left, right))
+            if e.op in ("*", "+", "<<"):
+                self._range_candidate(instr, state, proc_name, tainted[0], VulnType.INTEGER_OVERFLOW,
+                                      bounds + [Gt(formula, Const(hi))],
+                                      f"Integer overflow: attacker data in '{tainted[0]}' can take "
+                                      f"{e.op} past the maximum of its type ({hi})")
+            if e.op in ("*", "-"):
+                self._range_candidate(instr, state, proc_name, tainted[0], VulnType.INTEGER_UNDERFLOW,
+                                      bounds + [Lt(formula, Const(lo))],
+                                      f"Integer underflow: attacker data in '{tainted[0]}' can take "
+                                      f"{e.op} below the minimum of its type ({lo})")
+        self._note_truncation_candidate(instr, state, proc_name)
 
-    def _exceeds_type_range(self, formula, bounds, limit: int, pc: List[Formula]) -> bool:
-        """Is `formula > limit` possible on this path? Undecided (solver error or timeout) keeps
-        the candidate, as `_maybe_uninitialized` does."""
-        key = (str(formula), limit, tuple(str(g) for g in pc))
+    def _note_truncation_candidate(self, instr: Assign, state: SymbolicState, proc_name: str) -> None:
+        """`short s = i;` / `char c = (char)i;`: CWE-197 when the attacker value can fall outside
+        the narrower declared type of the target."""
+        target = self._get_var_name(instr.id)
+        to = self._declared_int_type(target)
+        value = self._strip_casts(instr.exp)
+        if to is None or not isinstance(value, ExpVar):
+            return
+        src = self._get_var_name(value.var)
+        frm = self._declared_int_type(src)
+        if frm is None or frm[0] <= to[0] or not self._attacker_tainted(src, state):
+            return
+        lo, hi = self._int_range(*to)
+        v = Var(src)
+        self._range_candidate(instr, state, proc_name, src, VulnType.NUMERIC_TRUNCATION,
+                              self._var_range_facts((value,)) + [Or(Lt(v, Const(lo)), Gt(v, Const(hi)))],
+                              f"Numeric truncation: attacker data in '{src}' can lie outside the range "
+                              f"of '{target}' ({lo}..{hi})")
+
+    def _note_size_arg_candidates(self, instr: Call, spec, state: SymbolicState, proc_name: str) -> None:
+        """A signed attacker value passed as a size (`spec.size_args`) that can be negative."""
+        for idx in getattr(spec, "size_args", None) or ():
+            if idx >= len(instr.args):
+                continue
+            arg = self._strip_casts(instr.args[idx][0])
+            if not isinstance(arg, ExpVar):
+                continue
+            name = self._get_var_name(arg.var)
+            t = self._declared_int_type(name)
+            if t is None or not t[1] or not self._attacker_tainted(name, state):
+                continue
+            vt = VulnType.SIGN_EXTENSION if t[0] < 32 else VulnType.SIGNED_TO_UNSIGNED
+            self._range_candidate(instr, state, proc_name, name, vt,
+                                  self._var_range_facts((arg,)) + [Lt(Var(name), Const(0))],
+                                  f"Signed to unsigned: attacker data in '{name}' can be negative where "
+                                  f"'{instr.get_full_name()}' takes a size, and becomes a huge value")
+
+    def _exceeds_type_range(self, parts: List[Formula], pc: List[Formula]) -> bool:
+        """Can the candidate's condition hold on this path? Undecided (solver error or timeout)
+        keeps the candidate, as `_maybe_uninitialized` does."""
+        key = tuple(str(g) for g in list(pc) + list(parts))
         cache = self.__dict__.setdefault("_overflow_query_cache", {})
         if key not in cache:
-            cache[key] = self._feasibility_sat(
-                self._build_conjunction(list(pc) + list(bounds) + [Gt(formula, Const(limit))]))
+            cache[key] = self._feasibility_sat(self._build_conjunction(list(pc) + list(parts)))
         return cache[key]
 
     def _maybe_uninitialized(self, var: str, pc: List[Formula]) -> bool:
