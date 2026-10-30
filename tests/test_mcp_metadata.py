@@ -114,3 +114,67 @@ def test_inventory_lists_each_tool_and_what_it_can_do(tmp_path):
         "@mcp.tool()\ndef add(a: int, b: int) -> int:\n    return a + b\n")
     tools = {t["tool"]: t["capabilities"] for t in build_inventory(tmp_path).mcp_tools}
     assert tools == {"disk_usage": ["shell"], "lookup": ["database"], "fetch": ["network"], "add": []}
+
+
+# --- the registration shapes are pack data ([[tool_registration]]) -----------------------------
+
+_ACME_PACK = '''
+[pack]
+name = "acme-tools"
+language = "javascript"
+detect = { imports = ["acme-agents"] }
+
+[[entrypoint]]
+id = "tool"
+registered_via = ["*.defineTool"]
+params = "all"
+kind = "llm"
+
+[[tool_registration]]
+id = "define-tool"
+entrypoint = "tool"
+method = ["defineTool"]
+config_arg = 0
+name_field = "id"
+text_fields = ["summary"]
+handler_field = "run"
+'''
+
+
+def test_a_pack_teaches_another_registration_shape(tmp_path):
+    (tmp_path / "acme.toml").write_text(_ACME_PACK)
+    code = ("const { Agent } = require('acme-agents');\nconst a = new Agent();\n"
+            "a.defineTool({ id: 'search', summary: process.env.DESC, run: async (q) => q });\n")
+    with_pack = FrameScanner(language="javascript", packs=[str(tmp_path / "acme.toml")]).scan(code, "s.js")
+    assert [(v.type.value, v.line) for v in with_pack.vulnerabilities
+            if v.category == "ai"] == [("mcp_dynamic_tool_metadata", 3)]
+    assert not [v for v in FrameScanner(language="javascript").scan(code, "s.js").vulnerabilities
+                if v.type.value.startswith("mcp_")]
+
+
+def test_the_engine_has_no_registration_shape_of_its_own():
+    code = _PY + "\n@mcp.tool(description=os.environ['D'])\ndef add(a: int) -> int:\n    return a\n"
+    assert found(code)
+    assert not FrameScanner(language="python", use_builtin_packs=False).scan(code, "server.py").vulnerabilities
+
+
+@pytest.mark.parametrize("language,body,error", [
+    ("python", 'call = ["Tool"]\n', "when_kwargs"),
+    ("python", 'decorator = ["*.tool"]\ncall = ["Tool"]\nwhen_kwargs = ["x"]\n', "exactly one of"),
+    ("python", 'call = ["Tool"]\nwhen_kwargs = ["x"]\ndocstring = true\n', "decorator form"),
+    ("javascript", 'method = ["tool"]\nhandler_arg = -1\n', "name_arg or name_field"),
+    ("javascript", 'method = ["tool"]\nname_arg = 0\n', "handler_arg or handler_field"),
+    ("javascript", 'method = ["tool"]\nname_arg = 0\nhandler_arg = -2\n', "argument position"),
+    ("javascript", 'method = ["tool"]\nname_arg = 0\nhandler_field = "run"\n', "needs config_arg"),
+    ("javascript", 'method = ["tool"]\nname_arg = 0\nhandler_arg = -1\nentrypoint = "nope"\n', "names no entry"),
+    ("java", 'method = ["tool"]\n', "tool registrations are for"),
+])
+def test_malformed_tool_registrations_are_errors(language, body, error):
+    from frame.sil.packs.schema import PackError, parse_pack
+    try:
+        import tomllib
+    except ModuleNotFoundError:                                        # pragma: no cover - 3.10
+        import tomli as tomllib
+    text = f'[pack]\nname = "x"\nlanguage = "{language}"\n[[tool_registration]]\n' + body
+    with pytest.raises(PackError, match=error):
+        parse_pack(tomllib.loads(text), "x.toml")

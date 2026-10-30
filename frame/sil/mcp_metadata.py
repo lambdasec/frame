@@ -1,5 +1,6 @@
 """MCP tool metadata: what a server tells the model about its tools (names, descriptions,
-parameter descriptions), read from the syntax tree of a file the `mcp-servers` pack applies to.
+parameter descriptions), read from the syntax tree of a file whose packs say how the server
+library registers tools (`[[tool_registration]]`).
 
 A client shows the user a tool's description and passes it to the model verbatim, so text there
 is instructions to the model. Two properties are checked, both decided by the code, not by the
@@ -14,12 +15,10 @@ wording (Frame does not guess at whether a sentence is malicious):
   server can then tell the model something else than what was reviewed and approved (a "rug
   pull"). A literal, literals joined, or a module constant bound once to a literal is fixed.
 
-Tools: Python FastMCP `@x.tool(...)` (the description is the `description=` argument or the
-function's docstring; parameter descriptions are strings in the signature) and low-level
-`Tool(name=..., description=...)`; JS/TS `server.tool(name, [description], [schema], handler)`,
-`server.registerTool(name, {title, description, inputSchema}, handler)` and fastmcp's
-`server.addTool({name, description, parameters, execute})` (strings in the schema count; the
-handler's body does not).
+Which calls register a tool, and where their name, description and handler are, is pack data
+(`[[tool_registration]]` in `python/mcp-servers` and `javascript/mcp-servers`): FastMCP's
+`@x.tool(...)`, `Tool(name=..., description=...)`, the TypeScript SDK's `tool`/`registerTool`,
+fastmcp's `addTool`. Strings in the registration's arguments count; a handler's body does not.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from typing import Dict, Iterator, List, Optional, Tuple
 
 HIDDEN = "hidden"
@@ -186,7 +186,24 @@ def _hidden(tool: str, node, value: str) -> Optional[Finding]:
 
 # -- Python -----------------------------------------------------------------------------------
 
-def scan_python(root) -> List[Finding]:
+def _decorator_form(dec, regs):
+    """(registration, call node or None, callee node) when `dec` registers a tool."""
+    call = dec.named_children[0] if dec.named_children else None
+    target = call.child_by_field_name("function") if call is not None and call.type == "call" else call
+    if target is None:
+        return None
+    reg = next((r for r in regs if r.decorator and any(fnmatchcase(_text(target), g) for g in r.decorator)), None)
+    return (reg, call if call.type == "call" else None) if reg is not None else None
+
+
+def _kwargs(args) -> Dict[str, object]:
+    return {_text(k.child_by_field_name("name")): k.child_by_field_name("value")
+            for k in (args.named_children if args is not None else [])
+            if k.type == "keyword_argument" and k.child_by_field_name("name") is not None}
+
+
+def scan_python(root, regs) -> List[Finding]:
+    """`regs`: the `[[tool_registration]]` entries of the packs applied to the file."""
     bindings = _module_bindings(root, ("assignment",))
     out: List[Finding] = []
     stack = [root]
@@ -196,29 +213,29 @@ def scan_python(root) -> List[Finding]:
         if n.type == "decorated_definition":
             fn = n.child_by_field_name("definition")
             for dec in (c for c in n.named_children if c.type == "decorator"):
-                call = dec.named_children[0] if dec.named_children else None
-                target = call.child_by_field_name("function") if call is not None and call.type == "call" else call
-                if target is None or not _text(target).endswith(".tool") or fn is None:
+                form = _decorator_form(dec, regs)
+                if form is None or fn is None:
                     continue
+                reg, call = form
                 name_node = fn.child_by_field_name("name")
                 tool = _text(name_node) if name_node is not None else "?"
-                args = call.child_by_field_name("arguments") if call is not None and call.type == "call" else None
-                described = False
-                for kw in (a for a in (args.named_children if args is not None else []) if a.type == "keyword_argument"):
-                    key, value = kw.child_by_field_name("name"), kw.child_by_field_name("value")
-                    if key is not None and _text(key) == "name" and _python_string(value) is not None:
-                        tool = _python_string(value) or tool
-                    if key is not None and _text(key) in ("description", "title") and value is not None:
-                        described = described or _text(key) == "description"
-                        if not _constant(value, _python_string, bindings):
-                            out.append(_dynamic(tool, value, _text(key)))
-                regions = [r for r in (args, fn.child_by_field_name("parameters"), fn.child_by_field_name("return_type"))
-                           if r is not None]
+                args = call.child_by_field_name("arguments") if call is not None else None
+                kws = _kwargs(args)
+                if kws.get(reg.name_kwarg) is not None and _python_string(kws[reg.name_kwarg]) is not None:
+                    tool = _python_string(kws[reg.name_kwarg]) or tool
+                for key in reg.text_kwargs:
+                    if kws.get(key) is not None and not _constant(kws[key], _python_string, bindings):
+                        out.append(_dynamic(tool, kws[key], key))
+                regions = [args] if args is not None else []
+                if reg.signature:
+                    regions += [r for r in (fn.child_by_field_name("parameters"), fn.child_by_field_name("return_type"))
+                                if r is not None]
                 body = fn.child_by_field_name("body")
-                if body is not None and body.named_children and body.named_children[0].type == "expression_statement":
+                if reg.docstring and body is not None and body.named_children \
+                        and body.named_children[0].type == "expression_statement":
                     first = body.named_children[0].named_children
                     if first and first[0].type == "string":
-                        regions.append(first[0])                  # the docstring: the description FastMCP sends
+                        regions.append(first[0])
                 for region in regions:
                     for s, value in _strings(region, _python_string):
                         f = _hidden(tool, s, value)
@@ -226,17 +243,14 @@ def scan_python(root) -> List[Finding]:
                             out.append(f)
         elif n.type == "call":
             fn = n.child_by_field_name("function")
-            if fn is None or _text(fn).rsplit(".", 1)[-1] != "Tool":
-                continue
+            last = _text(fn).rsplit(".", 1)[-1] if fn is not None else ""
             args = n.child_by_field_name("arguments")
-            kws = {(_text(k.child_by_field_name("name"))): k.child_by_field_name("value")
-                   for k in (args.named_children if args is not None else []) if k.type == "keyword_argument"
-                   and k.child_by_field_name("name") is not None}
-            if "description" not in kws and "inputSchema" not in kws:
+            kws = _kwargs(args)
+            reg = next((r for r in regs if last in r.call and any(k in kws for k in r.when_kwargs)), None)
+            if reg is None:
                 continue
-            tool = _python_string(kws["name"]) if kws.get("name") is not None else None
-            tool = tool or "?"
-            for key in ("description", "title"):
+            tool = (_python_string(kws[reg.name_kwarg]) if kws.get(reg.name_kwarg) is not None else None) or "?"
+            for key in reg.text_kwargs:
                 if kws.get(key) is not None and not _constant(kws[key], _python_string, bindings):
                     out.append(_dynamic(tool, kws[key], key))
             for s, value in _strings(args, _python_string):
@@ -255,49 +269,64 @@ def _js_env(node) -> bool:
     return node.type == "member_expression" and _text(node).startswith("process.env")
 
 
-def scan_javascript(root) -> List[Finding]:
+def _js_registration(n, regs):
+    """(registration, argument nodes, config fields) when call `n` registers a tool."""
+    if n.type != "call_expression":
+        return None
+    fn = n.child_by_field_name("function")
+    prop = fn.child_by_field_name("property") if fn is not None and fn.type == "member_expression" else None
+    method = _text(prop) if prop is not None else ""
+    args_node = n.child_by_field_name("arguments")
+    args = list(args_node.named_children) if args_node is not None else []
+    for reg in regs:
+        if method not in reg.method or not args:
+            continue
+        config = None
+        if reg.config_arg is not None:
+            if len(args) <= reg.config_arg or args[reg.config_arg].type != "object":
+                continue
+            config = _object_fields(args[reg.config_arg])
+        if reg.name_arg is not None and (len(args) <= reg.name_arg or _js_string(args[reg.name_arg]) is None):
+            continue
+        if reg.handler_arg is not None and len(args) < 2:
+            continue                                       # a name and nothing to run
+        return reg, args, config or {}
+    return None
+
+
+def _js_tool_name(reg, args, config) -> Optional[str]:
+    if reg.name_arg is not None:
+        return _js_string(args[reg.name_arg])
+    value = config.get(reg.name_field)
+    return _js_string(value) if value is not None else None
+
+
+def scan_javascript(root, regs) -> List[Finding]:
+    """`regs`: the `[[tool_registration]]` entries of the packs applied to the file."""
     bindings = _module_bindings(root, ("variable_declarator",))
     out: List[Finding] = []
     stack = [root]
     while stack:
         n = stack.pop()
         stack.extend(n.named_children)
-        if n.type != "call_expression":
+        form = _js_registration(n, regs)
+        if form is None:
             continue
-        fn = n.child_by_field_name("function")
-        prop = fn.child_by_field_name("property") if fn is not None and fn.type == "member_expression" else None
-        method = _text(prop) if prop is not None else ""
-        if method not in ("tool", "registerTool", "addTool"):
-            continue
-        args_node = n.child_by_field_name("arguments")
-        args = list(args_node.named_children) if args_node is not None else []
-        if not args:
-            continue
-        described: List[Tuple[str, object]] = []
-        tool = "?"
-        if method == "addTool" and args[0].type == "object":
-            fields = _object_fields(args[0])
-            tool = _js_string(fields["name"]) if fields.get("name") is not None else None
-            described = [(k, fields[k]) for k in ("description",) if fields.get(k) is not None]
-        else:
-            tool = _js_string(args[0]) or None
-            if len(args) < 2 or tool is None:
-                continue
-            if method == "registerTool" and args[1].type == "object":
-                fields = _object_fields(args[1])
-                described = [(k, fields[k]) for k in ("title", "description") if fields.get(k) is not None]
-            elif method == "tool" and len(args) >= 3:
-                second = args[1]
-                if _js_string(second) is not None or second.type in ("template_string", "binary_expression") \
-                        or _js_env(second) or (second.type == "identifier"
-                                               and any(_js_string(b) is not None or b.type == "template_string"
-                                                       for b in bindings.get(_text(second), []))):
-                    described = [("description", second)]
-        tool = tool or "?"
+        reg, args, config = form
+        tool = _js_tool_name(reg, args, config) or "?"
+        described: List[Tuple[str, object]] = [(k, config[k]) for k in reg.text_fields if config.get(k) is not None]
+        d = reg.description_arg
+        if d is not None and len(args) > d + 1:            # the last argument is the handler
+            second = args[d]
+            if _js_string(second) is not None or second.type in ("template_string", "binary_expression") \
+                    or _js_env(second) or (second.type == "identifier"
+                                           and any(_js_string(b) is not None or b.type == "template_string"
+                                                   for b in bindings.get(_text(second), []))):
+                described.append(("description", second))
         for key, value in described:
             if not _constant(value, _js_string, bindings):
                 out.append(_dynamic(tool, value, key))
-        for s, value in _strings(args_node, _js_string, skip=_FUNCTIONS):
+        for s, value in _strings(n.child_by_field_name("arguments"), _js_string, skip=_FUNCTIONS):
             f = _hidden(tool, s, value)
             if f:
                 out.append(f)
@@ -339,7 +368,7 @@ CAPABILITIES = {
 }
 
 
-def tool_names(root, language: str) -> Dict[int, str]:
+def tool_names(root, language: str, regs) -> Dict[int, str]:
     """Line of each tool handler -> the tool's name (Python: the decorated function's `def`
     line; JS: the handler function's first line)."""
     out: Dict[int, str] = {}
@@ -350,30 +379,38 @@ def tool_names(root, language: str) -> Dict[int, str]:
         if language == "python" and n.type == "decorated_definition":
             fn = n.child_by_field_name("definition")
             for dec in (c for c in n.named_children if c.type == "decorator"):
-                call = dec.named_children[0] if dec.named_children else None
-                target = call.child_by_field_name("function") if call is not None and call.type == "call" else call
-                if fn is not None and target is not None and _text(target).endswith(".tool"):
-                    name = _text(fn.child_by_field_name("name"))
-                    args = call.child_by_field_name("arguments") if call.type == "call" else None
-                    for kw in (args.named_children if args is not None else []):
-                        if kw.type == "keyword_argument" and _text(kw.child_by_field_name("name")) == "name":
-                            name = _python_string(kw.child_by_field_name("value")) or name
-                    out[fn.start_point[0] + 1] = name
-        elif language != "python" and n.type == "call_expression":
-            fn = n.child_by_field_name("function")
-            prop = fn.child_by_field_name("property") if fn is not None and fn.type == "member_expression" else None
-            if prop is None or _text(prop) not in ("tool", "registerTool", "addTool"):
+                form = _decorator_form(dec, regs)
+                if fn is None or form is None:
+                    continue
+                reg, call = form
+                name = _text(fn.child_by_field_name("name"))
+                kws = _kwargs(call.child_by_field_name("arguments") if call is not None else None)
+                if reg.name_kwarg and kws.get(reg.name_kwarg) is not None:
+                    name = _python_string(kws[reg.name_kwarg]) or name
+                out[fn.start_point[0] + 1] = name
+        elif language != "python":
+            form = _js_registration(n, regs)
+            if form is None:
                 continue
-            args = n.child_by_field_name("arguments")
-            items = list(args.named_children) if args is not None else []
-            if _text(prop) == "addTool" and items and items[0].type == "object":
-                fields = _object_fields(items[0])
-                handler, name = fields.get("execute"), _js_string(fields["name"]) if fields.get("name") is not None else None
-            else:
-                handler, name = (items[-1] if items else None), (_js_string(items[0]) if items else None)
+            reg, args, config = form
+            handler = config.get(reg.handler_field) if reg.handler_field else \
+                (args[reg.handler_arg] if reg.handler_arg is not None and -len(args) <= reg.handler_arg < len(args)
+                 else None)
+            name = _js_tool_name(reg, args, config)
             if handler is not None and name and handler.type in _FUNCTIONS:
                 out[handler.start_point[0] + 1] = name
     return out
+
+
+def registrations(program) -> list:
+    """The `[[tool_registration]]` entries of the packs applied to `program`."""
+    return [r for p in getattr(program, "active_packs", ()) for r in getattr(p, "tool_registrations", ())]
+
+
+def tool_entry_kinds(program) -> set:
+    """`Procedure.entry_kinds` values that make a procedure a tool handler."""
+    return {f"{p.name}:{r.entrypoint}" for p in getattr(program, "active_packs", ())
+            for r in getattr(p, "tool_registrations", ()) if r.entrypoint}
 
 
 def capabilities(program, proc) -> List[str]:
@@ -403,4 +440,4 @@ def capabilities(program, proc) -> List[str]:
 
 
 __all__ = ["Finding", "HIDDEN", "DYNAMIC", "hidden_characters", "scan_python", "scan_javascript", "tool_names",
-           "capabilities", "CAPABILITIES"]
+           "registrations", "tool_entry_kinds", "capabilities", "CAPABILITIES"]

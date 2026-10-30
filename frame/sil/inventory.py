@@ -167,7 +167,7 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
                     llm.setdefault(sdk, set()).add(rel)
                 if _prefix_hit(module, catalog.mcp_server_sdks):
                     mcp.add(rel)
-            if any(p.endswith("/mcp-servers") for p in getattr(program, "packs_applied", []) or []):
+            if any(getattr(p, "tool_registrations", None) for p in getattr(program, "active_packs", []) or []):
                 inv.mcp_tools.extend(_mcp_tools(scanner, program, text, lang, rel))
         inv.llm_sdks = {k: sorted(v) for k, v in sorted(llm.items())}
         inv.mcp_servers = sorted(mcp)
@@ -177,15 +177,18 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
 
 
 def _mcp_tools(scanner, program, text: str, lang: str, rel: str) -> List[Dict[str, Any]]:
-    """The file's MCP tools (pack entry points `mcp-servers:tool`) and their capabilities."""
-    from frame.sil.mcp_metadata import capabilities, tool_names
+    """The file's MCP tools (the entry points a pack's `[[tool_registration]]` names) and their
+    capabilities."""
+    from frame.sil.mcp_metadata import capabilities, registrations, tool_entry_kinds, tool_names
     try:
-        names = tool_names(scanner._get_frontend(lang).parser.parse(text.encode("utf-8")).root_node, lang)
+        names = tool_names(scanner._get_frontend(lang).parser.parse(text.encode("utf-8")).root_node, lang,
+                           registrations(program))
     except Exception:
         names = {}
+    kinds = tool_entry_kinds(program)
     out = []
     for proc in program.procedures.values():
-        if "mcp-servers:tool" not in proc.entry_kinds:
+        if not kinds & set(proc.entry_kinds):
             continue
         line = proc.loc.line if proc.loc else 0
         out.append({"path": rel, "tool": names.get(line, proc.name), "line": line,

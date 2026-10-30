@@ -13,3 +13,34 @@ registered_via = ["*.tool", "*.registerTool", "*.addTool"]
 params = "all"
 exclude_param = ["extra", "context", "ctx"]
 kind = "llm"
+
+# What the model is shown about each tool (mcp_metadata.py). TypeScript SDK:
+# server.tool(name, [description], [paramsSchema], handler) and
+# server.registerTool(name, {title, description, inputSchema}, handler)
+# (https://github.com/modelcontextprotocol/typescript-sdk); fastmcp:
+# server.addTool({name, description, parameters, execute}) (https://github.com/punkpeye/fastmcp).
+[[tool_registration]]
+id = "tool"
+entrypoint = "tool"
+method = ["tool"]
+name_arg = 0
+description_arg = 1
+handler_arg = -1
+
+[[tool_registration]]
+id = "register-tool"
+entrypoint = "tool"
+method = ["registerTool"]
+name_arg = 0
+config_arg = 1
+text_fields = ["title", "description"]
+handler_arg = -1
+
+[[tool_registration]]
+id = "add-tool"
+entrypoint = "tool"
+method = ["addTool"]
+config_arg = 0
+name_field = "name"
+text_fields = ["description"]
+handler_field = "execute"

@@ -146,6 +146,19 @@ A `[[function]]` in a pack of any language can say `noreturn = true` (`flask.abo
 
 C and C++ packs name option-dispatch functions with `[[option_call]]` (`name`, `option_arg`, optional `value_arg`): `curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L)` then has the canonical id `curl_easy_setopt:CURLOPT_SSL_VERIFYPEER:off`, which a rule can match. A C++ `[[content_type_call]]` (`method`, `arg`) names a response writer whose content type sits beside the body: `res.set_content(body, "text/html")` becomes `res.set_content:html`.
 
+Python and JavaScript packs say how a server library registers a tool a model may call with `[[tool_registration]]`, so the tool metadata checks (hidden characters, descriptions computed at run time) and `frame inventory` read the text the model is shown and find the handler. Python takes a `decorator` (globs over the callee; `docstring` and `signature` add the handler's docstring and parameters) or a constructor `call` (with `when_kwargs`), plus `name_kwarg` and `text_kwargs`. JavaScript takes a `method` with the tool's name at `name_arg` or in `name_field` of the object at `config_arg`, a string-shaped description at `description_arg`, `text_fields`, and the handler at `handler_arg` (-1 is the last) or `handler_field`. `entrypoint` names the pack's entry point whose procedures are the tools:
+
+```toml
+[[tool_registration]]                     # server.registerTool(name, {title, description}, handler)
+id = "register-tool"
+entrypoint = "tool"
+method = ["registerTool"]
+name_arg = 0
+config_arg = 1
+text_fields = ["title", "description"]
+handler_arg = -1
+```
+
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:

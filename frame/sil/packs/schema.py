@@ -71,10 +71,17 @@ _JAVA_KIND_KEYS = {
 _DEFERRED_KEYS = {"id", "methods", "description"}
 _REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"}
 _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
+_TOOL_KEYS = {
+    "python": {"id", "entrypoint", "decorator", "call", "name_kwarg", "text_kwargs", "when_kwargs", "docstring",
+               "signature", "description"},
+    "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
+                   "text_fields", "handler_arg", "handler_field", "description"},
+}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
-             "request_attribute", "middleware", "option_call", "content_type_call", "policy", "define"}
+             "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration",
+             "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -324,6 +331,39 @@ class Fluent:
 
 
 @dataclass
+class ToolRegistration:
+    """How a server library registers a tool the model may call (`[[tool_registration]]`), so
+    `mcp_metadata.py` can read the text the model is shown (name, description, schema strings)
+    and find the handler. Python: a decorator (`decorator` globs over the callee as written; the
+    decorator's arguments count, plus the handler's `signature` and `docstring` when set) or a
+    constructor call (`call`: the callee's last name part; only with one of `when_kwargs`), the
+    tool's name in `name_kwarg`, its description-like keywords in `text_kwargs`. JavaScript: a
+    method call (`method`) whose name is at `name_arg`, a description at `description_arg` when
+    that argument is string-shaped, a config object at `config_arg` (fields `name_field`,
+    `text_fields`, `handler_field`), else the handler at `handler_arg` (-1 is the last). Every
+    string in the call's arguments counts, never one inside a function. `entrypoint` is the id
+    of this pack's entry point whose procedures are the tools (`frame inventory`)."""
+    id: str
+    entrypoint: str = ""
+    decorator: List[str] = field(default_factory=list)
+    call: List[str] = field(default_factory=list)
+    name_kwarg: str = ""
+    text_kwargs: List[str] = field(default_factory=list)
+    when_kwargs: List[str] = field(default_factory=list)
+    docstring: bool = False
+    signature: bool = False
+    method: List[str] = field(default_factory=list)
+    name_arg: Optional[int] = None
+    description_arg: Optional[int] = None
+    config_arg: Optional[int] = None
+    name_field: str = ""
+    text_fields: List[str] = field(default_factory=list)
+    handler_arg: Optional[int] = None
+    handler_field: str = ""
+    description: str = ""
+
+
+@dataclass
 class Policy:
     """An infrastructure misconfiguration (`[[policy]]`, IaC packs only): `when` is a formula in
     the policy language (frame/iac/policy.py) over a resource's views; a resource of one of
@@ -359,6 +399,7 @@ class Pack:
     functions: List[FunctionFact] = field(default_factory=list)
     lambda_handlers: List[LambdaHandler] = field(default_factory=list)
     fluents: List[Fluent] = field(default_factory=list)
+    tool_registrations: List[ToolRegistration] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
@@ -810,6 +851,62 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if bool(fl.roots) != bool(fl.name):
             raise _fail(origin, where, "roots and name go together")
         pack.fluents.append(fl)
+
+    for i, t in enumerate(data.get("tool_registration", [])):
+        where = f"[[tool_registration]] #{i + 1}"
+        if language not in _TOOL_KEYS:
+            raise _fail(origin, where, f"tool registrations are for {sorted(_TOOL_KEYS)} packs")
+        _check_keys(origin, where, t, _TOOL_KEYS[language])
+
+        def _opt_position(key, t=t, where=where, low=0):
+            if key not in t:
+                return None
+            v = t[key]
+            if not isinstance(v, int) or isinstance(v, bool) or v < low:
+                raise _fail(origin, f"{where}.{key}", "must be an argument position (0-based"
+                                                      + (", -1 for the last)" if low < 0 else ")"))
+            return v
+
+        def _flag(key, t=t, where=where):
+            if not isinstance(t.get(key, False), bool):
+                raise _fail(origin, f"{where}.{key}", "is true or false")
+            return t.get(key, False)
+        reg = ToolRegistration(
+            id=str(t.get("id", f"{name}-tool-{i + 1}")), entrypoint=str(t.get("entrypoint", "")),
+            decorator=_strings(origin, f"{where}.decorator", t.get("decorator", [])),
+            call=_strings(origin, f"{where}.call", t.get("call", [])),
+            name_kwarg=str(t.get("name_kwarg", "")),
+            text_kwargs=_strings(origin, f"{where}.text_kwargs", t.get("text_kwargs", [])),
+            when_kwargs=_strings(origin, f"{where}.when_kwargs", t.get("when_kwargs", [])),
+            docstring=_flag("docstring"), signature=_flag("signature"),
+            method=_strings(origin, f"{where}.method", t.get("method", [])),
+            name_arg=_opt_position("name_arg"), description_arg=_opt_position("description_arg"),
+            config_arg=_opt_position("config_arg"), name_field=str(t.get("name_field", "")),
+            text_fields=_strings(origin, f"{where}.text_fields", t.get("text_fields", [])),
+            handler_arg=_opt_position("handler_arg", low=-1), handler_field=str(t.get("handler_field", "")),
+            description=str(t.get("description", "")))
+        if language == "python" and bool(reg.decorator) == bool(reg.call):
+            raise _fail(origin, where, "needs exactly one of decorator or call")
+        if language == "python" and reg.call and not reg.when_kwargs:
+            raise _fail(origin, where, "a call form needs when_kwargs (the keywords that make it a tool)")
+        if language == "python" and reg.call and (reg.docstring or reg.signature):
+            raise _fail(origin, where, "docstring and signature are for the decorator form")
+        if language == "javascript":
+            if not reg.method:
+                raise _fail(origin, where, "needs method")
+            if reg.name_arg is None and not reg.name_field:
+                raise _fail(origin, where, "needs name_arg or name_field")
+            if reg.name_field and reg.config_arg is None:
+                raise _fail(origin, where, "name_field needs config_arg")
+            if reg.handler_arg is None and not reg.handler_field:
+                raise _fail(origin, where, "needs handler_arg or handler_field")
+            if reg.handler_field and reg.config_arg is None:
+                raise _fail(origin, where, "handler_field needs config_arg")
+            if reg.text_fields and reg.config_arg is None:
+                raise _fail(origin, where, "text_fields needs config_arg")
+        if reg.entrypoint and reg.entrypoint not in {e.id for e in pack.entrypoints}:
+            raise _fail(origin, f"{where}.entrypoint", f"names no entry point of this pack ({reg.entrypoint})")
+        pack.tool_registrations.append(reg)
 
     code_tables = [t for t in _TOP_KEYS - {"pack", "policy", "define"} if data.get(t)]
     if language in IAC_LANGUAGES and code_tables:

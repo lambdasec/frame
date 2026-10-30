@@ -13,3 +13,22 @@ params = "all"
 exclude_param = ["self", "ctx", "context"]
 exclude_param_type = ["mcp.server.fastmcp.Context", "fastmcp.Context"]
 kind = "llm"
+
+# What the model is shown about each tool (mcp_metadata.py). FastMCP builds a tool's description
+# from the decorator's description= or the function's docstring, and its input schema from the
+# signature (https://gofastmcp.com/servers/tools); the low-level server lists mcp.types.Tool objects.
+[[tool_registration]]
+id = "fastmcp-decorator"
+entrypoint = "tool"
+decorator = ["*.tool"]
+name_kwarg = "name"
+text_kwargs = ["description", "title"]
+docstring = true
+signature = true
+
+[[tool_registration]]
+id = "tool-object"
+call = ["Tool"]
+when_kwargs = ["description", "inputSchema"]
+name_kwarg = "name"
+text_kwargs = ["description", "title"]

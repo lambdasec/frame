@@ -2176,15 +2176,16 @@ class FrameScanner:
 
     def _scan_mcp_metadata(self, source_code: str, filename: str, program: Program) -> List[Vulnerability]:
         """What an MCP server tells the model about its tools: hidden characters, and descriptions
-        computed at run time (`mcp_metadata.py`). Only where the mcp-servers pack applies."""
-        lang = "python" if self.language == "python" else self.language
-        if lang not in ("python", "javascript", "typescript") or \
-                not any(p.endswith("/mcp-servers") for p in program.packs_applied):
-            return []
+        computed at run time (`mcp_metadata.py`). Only where an applied pack has
+        `[[tool_registration]]` entries."""
         from frame.sil import mcp_metadata
+        lang = self.language
+        regs = mcp_metadata.registrations(program)
+        if lang not in ("python", "javascript", "typescript") or not regs:
+            return []
         try:
             root = self._get_frontend(lang).parser.parse(source_code.encode("utf-8")).root_node
-            found = (mcp_metadata.scan_python if lang == "python" else mcp_metadata.scan_javascript)(root)
+            found = (mcp_metadata.scan_python if lang == "python" else mcp_metadata.scan_javascript)(root, regs)
         except Exception:
             return []
         out = []
