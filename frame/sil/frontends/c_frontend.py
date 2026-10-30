@@ -33,7 +33,7 @@ except ImportError:
 from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall,
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary,
     var, const
 )
 from frame.sil.instructions import (
@@ -1845,8 +1845,16 @@ class CFrontend:
             return self._translate_expression(named[-1]) if named else ExpConst.boolean(True)
 
         elif node.type == "conditional_expression":
+            # `c ? a : b` is either branch (the translator takes the one its condition folds to, else
+            # the taint of both); GNU `c ?: b` yields c itself when it is true. Reading it as `a`
+            # alone lost the guard: `home ? home : "/"` read like an unchecked `home`.
+            cond = node.child_by_field_name("condition")
             conseq = node.child_by_field_name("consequence")
-            return self._translate_expression(conseq) if conseq else ExpConst.null()
+            alt = node.child_by_field_name("alternative")
+            cond_exp = self._translate_expression(cond) if cond is not None else ExpConst.null()
+            return ExpTernary(cond_exp,
+                              self._translate_expression(conseq) if conseq is not None else cond_exp,
+                              self._translate_expression(alt) if alt is not None else ExpConst.null())
 
         elif node.type == "cast_expression":
             value = node.child_by_field_name("value")

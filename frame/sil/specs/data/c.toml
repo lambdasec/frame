@@ -12,6 +12,7 @@ description = "gets() - unbounded read (CWE-120), use fgets"
 
 [[spec]]
 name = "fgets"
+dereferences = [0, 2]
 is_source = "user"
 taint_out_args = [0]
 description = "fgets() - reads line from stream"
@@ -29,11 +30,13 @@ description = "getchar() - reads char from stdin"
 
 [[spec]]
 name = "getc"
+dereferences = [0]
 is_source = "user"
 description = "getc() - reads char from stream"
 
 [[spec]]
 name = "fgetc"
+dereferences = [0]
 is_source = "user"
 description = "fgetc() - reads char from stream"
 
@@ -47,6 +50,7 @@ description = "scanf() - unbounded %s read (CWE-120)"
 
 [[spec]]
 name = "fscanf"
+dereferences = [-1]
 is_source = "user"
 is_sink = "buffer_overflow"
 sink_args = []
@@ -90,7 +94,7 @@ description = "getwd() - no bounds check (CWE-676), use getcwd"
 [[spec]]
 name = "fread"
 size_args = [1, 2]
-dereferences = [0]
+dereferences = [0, 3]
 taint_out_args = [0]
 description = "fread() - reads from stream"
 
@@ -119,6 +123,7 @@ description = "pread() - POSIX positional read"
 
 [[spec]]
 name = "getenv"
+returns_null = "normally"
 is_source = "env"
 description = "getenv() - environment variable"
 
@@ -129,6 +134,7 @@ description = "GETENV macro - environment variable"
 
 [[spec]]
 name = "secure_getenv"
+returns_null = "normally"
 is_source = "env"
 description = "secure_getenv() - secure environment variable"
 
@@ -217,7 +223,7 @@ description = "syslog format string (CWE-134)"
 
 [[spec]]
 name = "fputs"
-dereferences = [0]
+dereferences = [0, 1]
 taint_propagates = [0]
 description = "fputs() - writes string to stream"
 
@@ -230,7 +236,7 @@ description = "puts() - writes string to stdout"
 [[spec]]
 name = "fwrite"
 size_args = [1, 2]
-dereferences = [0]
+dereferences = [0, 3]
 taint_propagates = [0]
 description = "fwrite() - writes to stream"
 
@@ -292,39 +298,44 @@ description = "strncmp() - bounded string compare"
 
 [[spec]]
 name = "strchr"
+returns_null = "normally"
 taint_propagates = [0]
 description = "strchr() - find char in string"
 
 [[spec]]
 name = "strrchr"
+returns_null = "normally"
 taint_propagates = [0]
 description = "strrchr() - find last char in string"
 
 [[spec]]
 name = "strstr"
+returns_null = "normally"
 taint_propagates = [0, 1]
 description = "strstr() - find substring"
 
 [[spec]]
 name = "strdup"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "strdup (string duplication)"
 
 [[spec]]
 name = "strndup"
 size_args = [1]
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "strndup (bounded string duplication)"
 
 [[spec]]
 name = "strtok"
+returns_null = "normally"
 taint_propagates = [0]
 description = "strtok() - tokenize string"
 
 [[spec]]
 name = "strtok_r"
+returns_null = "normally"
 taint_propagates = [0]
 description = "strtok_r() - reentrant tokenize"
 
@@ -369,52 +380,52 @@ name = "malloc"
 size_args = [0]
 is_sink = "integer_overflow"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "malloc (dynamic allocation, may return NULL)"
 
 [[spec]]
 name = "calloc"
 size_args = [0, 1]
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "calloc (zeroed allocation)"
 
 [[spec]]
 name = "realloc"
 size_args = [1]
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "realloc (resize allocation)"
 
 [[spec]]
 name = "aligned_alloc"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "aligned_alloc() - aligned allocation"
 
 [[spec]]
 name = "memalign"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "memalign() - aligned allocation"
 
 [[spec]]
 name = "posix_memalign"
 allocates_via = 0
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "posix_memalign() - POSIX aligned allocation"
 
 [[spec]]
 name = "valloc"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "valloc() - page-aligned allocation"
 
 [[spec]]
 name = "pvalloc"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "pvalloc() - page-aligned allocation"
 
 [[spec]]
@@ -472,6 +483,7 @@ description = "operator delete[] (C++ array deallocation)"
 
 [[spec]]
 name = "dlopen"
+returns_null = "normally"
 is_sink = "library_load"
 sink_args = [0]
 description = "dlopen(filename, flags) - loads and runs code from the named library (CWE-114)"
@@ -678,6 +690,7 @@ description = "system() - command injection sink"
 
 [[spec]]
 name = "popen"
+returns_null = "normally"
 is_sink = "command"
 description = "popen() - command injection sink"
 
@@ -745,12 +758,14 @@ description = "glob() - path pattern expansion"
 
 [[spec]]
 name = "fopen"
+returns_null = "normally"
 uses_path = 0
 is_sink = "path"
 description = "fopen() - file open (path traversal)"
 
 [[spec]]
 name = "freopen"
+returns_null = "normally"
 is_sink = "path"
 description = "freopen() - file reopen (path traversal)"
 
@@ -860,11 +875,14 @@ description = "link() - create hard link (path traversal)"
 
 [[spec]]
 name = "opendir"
+returns_null = "normally"
 is_sink = "path"
 description = "opendir() - open directory (path traversal)"
 
 [[spec]]
 name = "readdir"
+dereferences = [0]
+returns_null = "normally"
 taint_propagates = [0]
 description = "readdir() - read directory entry"
 
@@ -952,6 +970,7 @@ description = "sendmsg() - send message"
 
 [[spec]]
 name = "gethostbyname"
+returns_null = "normally"
 is_sink = "ssrf"
 description = "gethostbyname() - DNS lookup (SSRF)"
 
@@ -1643,11 +1662,13 @@ description = "getpass() password input"
 
 [[spec]]
 name = "getpwnam"
+returns_null = "normally"
 taint_propagates = [0]
 description = "Get password entry by name"
 
 [[spec]]
 name = "getpwuid"
+returns_null = "normally"
 taint_propagates = [0]
 description = "Get password entry by UID"
 
@@ -2004,7 +2025,7 @@ taint_propagates = [0]
 [[spec]]
 name = "reallocarray"
 allocates = "heap"
-may_return_null = true
+returns_null = "on_exhaustion"
 description = "reallocarray (resize allocation, overflow-checked)"
 
 [[spec]]

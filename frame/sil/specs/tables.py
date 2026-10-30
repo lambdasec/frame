@@ -45,6 +45,8 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
             raise SpecTableError(f"{origin}: {name}: unknown field(s) {sorted(unknown)}")
         if name in specs:
             raise SpecTableError(f"{origin}: {name} is listed twice")
+        if entry.get("returns_null", "") not in ("", "on_exhaustion", "normally"):
+            raise SpecTableError(f"{origin}: {name}: returns_null must be on_exhaustion or normally")
         for key, kinds in (("allocates", ALLOCATION_KINDS), ("frees", RELEASE_KINDS)):
             if key in entry and entry[key] not in kinds:
                 raise SpecTableError(f"{origin}: {name}: {key} must be one of {sorted(kinds)}")

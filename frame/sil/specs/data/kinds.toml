@@ -690,6 +690,11 @@ type = "unicode_handling"
 category = "memory"
 
 [[vuln]]
+type = "null_result_deref"
+cwe = "CWE-690"
+category = "memory"
+
+[[vuln]]
 type = "hardcoded_key"
 cwe = "CWE-321"
 category = "secret"

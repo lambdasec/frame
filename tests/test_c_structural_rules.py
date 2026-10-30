@@ -176,3 +176,15 @@ def test_a_checked_path_then_used_is_cwe_367(check, lang):
 ])
 def test_an_unchecked_or_rewritten_path_is_not(check, between):
     assert not {f for f in findings(_RACE % (check, between)) if f[0] == "CWE-367"}
+
+
+@pytest.mark.parametrize("value, reported", [
+    ('user ? user : "guest"', True),       # either branch can be the value
+    ('user ? "guest" : user', True),
+    ('1 ? "guest" : user', False),         # the condition folds: only the constant branch
+    ('0 ? user : "guest"', False),
+])
+def test_a_c_ternary_is_either_branch(value, reported):
+    code = ("#include <stdio.h>\n#include <stdlib.h>\n\nvoid f(void)\n{\n    char *user = getenv(\"USER\");\n"
+            f"    char *who = {value};\n    system(who);\n}}\n")
+    assert (("CWE-78", 8) in findings(code)) == reported

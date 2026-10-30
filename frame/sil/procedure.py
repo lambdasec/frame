@@ -156,8 +156,11 @@ class ProcSpec:
     # (posix_memalign(&p, ...) returns an error code); None when it returns the memory.
     allocates_via: Optional[int] = None
 
-    # Can this function return null?
-    may_return_null: bool = False
+    # When this function returns null: "on_exhaustion" (only when memory runs out: malloc, strdup;
+    # an unchecked dereference is the ordinary idiom and is not reported) or "normally" (as an
+    # ordinary result: getenv of an unset variable, fopen of a missing file, strchr with no match;
+    # dereferencing it on a path that did not exclude null is CWE-690).
+    returns_null: str = ""
 
     # Does this function never return (exit, abort, longjmp)?
     noreturn: bool = False

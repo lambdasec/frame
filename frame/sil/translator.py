@@ -176,6 +176,7 @@ class VulnType(Enum):
     FIXED_ADDRESS = "fixed_address"             # CWE-587
     TOCTOU = "toctou"                           # CWE-367
     HARDCODED_KEY = "hardcoded_key"             # CWE-321
+    NULL_RESULT_DEREF = "null_result_deref"     # CWE-690
 
     # Additional memory safety and resource management
     RESOURCE_EXHAUSTION = "resource_exhaustion" # CWE-400
@@ -1493,6 +1494,7 @@ class SILTranslator:
         self._uninit_candidates = []
         self._overflow_candidates = []
         self._toctou_candidates = []
+        self._maybe_null_candidates = []
         self._branch_node_clean = False
 
         # Initialize state with parameters potentially tainted
@@ -1653,7 +1655,7 @@ class SILTranslator:
         # only its path condition changes, so a verdict taken during the walk
         # could rest on one branch's facts alone.
         if self._null_candidates or self._uninit_candidates or self._overflow_candidates \
-                or self._toctou_candidates:
+                or self._toctou_candidates or self._maybe_null_candidates:
             checks.extend(self._confirm_path_candidates(proc))
 
         # (A handler with another finding used to lose its XSS checks here so
@@ -2773,10 +2775,15 @@ class SILTranslator:
         if isinstance(exp, ExpBinOp):
             a, b = self._fold_condition(exp.left, state), self._fold_condition(exp.right, state)
             op = exp.op
+            # a condition is read by its truthiness, in C (`1 && 0`) as in Python (`x and ""`)
             if op in ("and", "&&"):
-                return False if a is False or b is False else (True if a is True and b is True else None)
+                if (a is not None and not a) or (b is not None and not b):
+                    return False
+                return True if a is not None and b is not None else None
             if op in ("or", "||"):
-                return True if a is True or b is True else (False if a is False and b is False else None)
+                if (a is not None and a) or (b is not None and b):
+                    return True
+                return False if a is not None and b is not None else None
             if a is None or b is None:
                 return None
             try:
@@ -3478,8 +3485,9 @@ class SILTranslator:
         # constants this path knows, else either branch (never the condition itself).
         if isinstance(instr.exp, ExpTernary):
             taken = self._fold_condition(instr.exp.condition, state)
-            branches = [instr.exp.true_exp] if taken is True else [instr.exp.false_exp] if taken is False \
-                else [instr.exp.true_exp, instr.exp.false_exp]
+            # truthiness, as both C (`1 ? a : b`) and Python (`a if "" else b`) read a condition
+            branches = [instr.exp.true_exp, instr.exp.false_exp] if taken is None \
+                else [instr.exp.true_exp] if taken else [instr.exp.false_exp]
             if len(branches) == 1:
                 return self._exec_assign(Assign(loc=instr.loc, id=instr.id, exp=branches[0]), state, proc_name)
             leaves = sorted((v for b in branches for v in self._get_exp_vars(b) if state.is_tainted(v)),
@@ -7485,10 +7493,23 @@ class SILTranslator:
                 continue
             out.append(check)
 
+        for pos, check, var in self._maybe_null_candidates:
+            key = ("null-result", pos, var)
+            if pos is None or key in seen:
+                continue
+            seen.add(key)
+            pc = facts_at(pos)
+            if pc is None or not self._feasibility_sat(
+                    self._build_conjunction(list(pc) + [Eq(Var(var), Const(None))])):
+                continue
+            check.path_condition = self._relevant_facts(var, pc)
+            out.append(check)
+
         self._null_candidates = []
         self._uninit_candidates = []
         self._overflow_candidates = []
         self._toctou_candidates = []
+        self._maybe_null_candidates = []
         return out
 
     # ---- CWE-190/191/194/195/197: attacker integers leaving the range of their type ------------
@@ -7824,7 +7845,55 @@ class SILTranslator:
                 # _confirm_path_candidates.
                 self._null_candidates.append(
                     (getattr(self, "_cur_pos", None), instr, base, proc_name))
+        checks.extend(self._null_result_deref_checks(instr, state, proc_name))
         return checks
+
+    # ---- CWE-690: dereferencing a result that is null as an ordinary outcome -----------------
+    #
+    # `returns_null = "normally"` in the c/cpp tables (getenv, fopen, strchr, readdir...): null is
+    # one of the function's ordinary results, so its result must be checked before it is read
+    # through. A dereference (`*p`, `p->f`, `p[i]`, or a `dereferences` argument of a call such as
+    # strlen's) of a variable whose single definition is such a call is a candidate, reported when
+    # the path facts allow `p == nil` (`if (!p) return;` before it makes that unsatisfiable). The
+    # call written straight into a dereferenced argument (`strlen(getenv("HOME"))`) cannot have
+    # been checked. Allocators (`returns_null = "on_exhaustion"`) are not reported.
+
+    def _returns_null_normally(self, call: Exp) -> Optional[str]:
+        if not isinstance(call, ExpCall):
+            return None
+        name = self._call_exp_name(call).rsplit("::", 1)[-1]
+        spec = self.program.get_spec(name) if name else None
+        return name if spec is not None and spec.returns_null == "normally" else None
+
+    def _null_result_deref_checks(self, instr: Instr, state: SymbolicState,
+                                  proc_name: str) -> List[VulnerabilityCheck]:
+        checks: List[VulnerabilityCheck] = []
+        bases = [b for b in self._iter_deref_bases(instr) if b not in state.freed]
+        if isinstance(instr, Call):
+            spec = self.program.spec_for_call(instr)
+            positions = (spec.dereferences if spec is not None else None) or []
+            args = [self._cast_strip(a) for a, _ in instr.args]
+            picked = range(len(args)) if -1 in positions else [i for i in positions if i < len(args)]
+            for i in picked:
+                if isinstance(args[i], ExpVar):
+                    bases.append(self._get_var_name(args[i].var))
+                else:
+                    callee = self._returns_null_normally(args[i])
+                    if callee is not None:
+                        checks.append(self._null_result_check(instr, proc_name, f"{callee}()", callee))
+        for base in dict.fromkeys(bases):
+            callee = self._returns_null_normally(self._single_def(base))
+            if callee is not None:
+                check = self._null_result_check(instr, proc_name, base, callee)
+                self._maybe_null_candidates.append((getattr(self, "_cur_pos", None), check, base))
+        return checks
+
+    def _null_result_check(self, instr: Instr, proc_name: str, what: str, callee: str) -> VulnerabilityCheck:
+        return VulnerabilityCheck(
+            formula=NullDeref(Var(what)), vuln_type=VulnType.NULL_RESULT_DEREF, location=instr.loc,
+            description=f"'{what}' is read through, but {callee}() returns NULL as an ordinary result "
+                        f"and nothing on this path excludes it",
+            tainted_var=what, sink_type=VulnType.NULL_RESULT_DEREF.value, procedure_name=proc_name)
 
     # =========================================================================
     # Numeric / value defects (CWE-457 uninitialized read, CWE-369 divide by zero)
