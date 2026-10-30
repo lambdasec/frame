@@ -1,0 +1,2 @@
+# escape=`
+  HEALTHCHECK	x y	#

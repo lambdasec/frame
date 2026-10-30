@@ -1,0 +1,61 @@
+# Dockerfiles: what an image runs as, what it downloads unverified, which base it floats on, and
+# credentials written into it. Each build stage is a resource (frame/iac/dockerfile.py): `self`
+# is the stage, read as BuildKit reads the file (tests/test_iac_dockerfile.py compares the parser
+# with BuildKit's own on real and generated Dockerfiles).
+
+[pack]
+name = "docker"
+language = "dockerfile"
+description = "Dockerfile build stages: user, unverified downloads, floating base images, credentials"
+references = ["https://docs.docker.com/reference/dockerfile/"]
+
+[[policy]]
+id = "docker-root-user"
+title = "The image runs as root"
+severity = "medium"
+cwe = "CWE-250"
+# the final stage's user, as Docker resolves it: its last USER, else the stage it builds on;
+# a scratch image with no USER runs as UID 0. A base image's own user is not in the files, so a
+# Dockerfile that never sets one is undecided here (and reported by docker-user-not-set).
+when = '''
+self.final == true and (self.user in ["", "root", "0"]
+    or starts_with(self.user, "root:") or starts_with(self.user, "0:"))
+'''
+references = ["https://docs.docker.com/reference/dockerfile/#user",
+              "https://docs.docker.com/build/building/best-practices/#user"]
+
+[[policy]]
+id = "docker-user-not-set"
+title = "The image never sets a user, so it runs as the base image's (root for most)"
+severity = "low"
+cwe = "CWE-250"
+when = '''self.final == true and self.user_set == false and self.from.scratch == false'''
+references = ["https://docs.docker.com/build/building/best-practices/#user"]
+
+[[policy]]
+id = "docker-add-unverified-download"
+title = "ADD downloads a remote file without a checksum"
+severity = "medium"
+cwe = "CWE-494"
+when = '''
+some i in self.instructions: i.cmd == "add" and absent(i.flags.checksum)
+    and (some src in i.sources: starts_with(src, "http://") or starts_with(src, "https://"))
+'''
+references = ["https://docs.docker.com/reference/dockerfile/#add---checksum"]
+
+[[policy]]
+id = "docker-floating-base-image"
+title = "Base image is not pinned (no tag, or latest, and no digest)"
+severity = "low"
+cwe = "CWE-829"
+when = '''self.from.external == true and absent(self.from.digest) and default(self.from.tag, "latest") == "latest"'''
+references = ["https://docs.docker.com/build/building/best-practices/#pin-base-image-versions"]
+
+[[policy]]
+id = "docker-credential-in-image"
+title = "A provider credential is written into the Dockerfile (ENV, ARG or LABEL)"
+severity = "high"
+cwe = "CWE-798"
+# ENV and LABEL values are stored in the image's configuration, ARG defaults in its history
+when = '''some i in self.instructions + self.preamble: some v in i.vars: present(v.credential)'''
+references = ["https://docs.docker.com/build/building/secrets/"]

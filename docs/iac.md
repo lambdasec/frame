@@ -1,6 +1,6 @@
 # Infrastructure as code
 
-`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests and ships the Kubernetes Pod Security Standards. Terraform, CloudFormation, Dockerfiles and Helm follow ([roadmap](roadmap.md)).
+`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards) and Dockerfiles. Terraform, CloudFormation and Helm rendering follow ([roadmap](roadmap.md)).
 
 ```console
 $ frame iac .
@@ -10,7 +10,7 @@ k8s/log-agent.yaml:24: [high] k8s-host-volume-types (CWE-668) DaemonSet/ops/log-
 Infrastructure: 4 resource(s) in kubernetes: 4 file(s); 15 finding(s), 2 suppressed
 ```
 
-`frame scan DIR --iac` adds the same results to a source scan (an `infrastructure` section in JSON, results in SARIF). A walkthrough: [examples/iac-kubernetes](../examples/iac-kubernetes/README.md).
+`frame scan DIR --iac` adds the same results to a source scan (an `infrastructure` section in JSON, results in SARIF). A walkthrough: [examples/iac](../examples/iac/README.md).
 
 ## What is checked
 
@@ -45,13 +45,25 @@ How close this is to Kubernetes itself, measured with the controller's own evalu
 - On upstream's 148 test fixtures for 1.38, the checks that deny each pod at each level are the evaluator's, check for check, in 295 of 296 evaluations. The one difference is a volume with no source: the API server defaults it to `emptyDir`, and upstream lists that fixture as admitted, so Frame follows the cluster.
 - On 450 workloads from four public repositories (GoogleCloudPlatform/microservices-demo, madhuakula/kubernetes-goat, kubernetes/examples, argoproj/argo-cd), the same in 881 of 900 evaluations. The rest are objects the evaluator's decoder rejects and Frame reads (removed `extensions/v1beta1` kinds, a string where the API wants a number), and the same `emptyDir` default.
 
+**Dockerfiles.** `Dockerfile`, `Containerfile`, `*.Dockerfile` and `Dockerfile.*`, read as BuildKit reads them: Frame's parser is a port of BuildKit's (parser directives and the backtick escape, continuations with comments and blank lines inside, heredocs, JSON and shell forms, builder flags, `ENV a b`, ONBUILD), and on 345 files (BuildKit's own parser tests, real Dockerfiles from Docker's official images and samples, and 300 generated to stress it) it produces BuildKit's instructions, arguments, flags, lines and heredocs exactly, and fails where BuildKit fails. During development 16,000 generated files agreed as well. Each build stage is checked on its own:
+
+| Policy | Check | Severity |
+|---|---|---|
+| `docker-credential-in-image` | a provider credential ([secret formats](../frame/sil/specs/data/secret-formats.toml)) in an ENV, ARG or LABEL value | high |
+| `docker-root-user` | the image runs as root: its last USER is `root` or `0`, or it is `scratch` with none | medium |
+| `docker-add-unverified-download` | ADD from an `http(s)` URL without `--checksum` | medium |
+| `docker-user-not-set` | the image never sets a user, so it runs as its base image's | low |
+| `docker-floating-base-image` | a base image with no tag or `latest`, and no digest | low |
+
+The user an image runs as is resolved as Docker resolves it: the last USER of the final stage, else that of the stage it builds on (`FROM build`), root for `scratch`. A base image's own user is not in the files, so an image that never sets one makes `docker-root-user` undecided, and `docker-user-not-set` (which the file does entail) is reported instead. A value BuildKit expands from a build argument (`FROM ${BASE}`, `USER ${UID}`, `ADD ${URL}`) is unknown: `--build-arg` can change it, so policies on it are undecided rather than judged on the default. Compared with hadolint's base-image and root rules on the same files, every difference is a case Frame reads correctly: hadolint stops on three of BuildKit's test files with an untagged `FROM`, and reports three `FROM name-${ARG}` lines that name earlier build stages as untagged images.
+
 **Helm.** A chart's `templates/` are Go templates. A template with no template actions (`{{`) renders as written and is checked; any other is skipped, with one warning per chart. Render the chart (`helm template ... > rendered.yaml`) and check the output.
 
 ## Findings
 
 Each finding names the policy, its CWE, the resource (`Kind/namespace/name`), and the value that decides it: the line of `privileged: true`, or, for something missing, the container or securityContext that lacks it (`field` in JSON). `evidence` is `matched` when the files give every value the policy reads, and `solver-verified` when the solver proved the violation holds whatever the values the files leave open (Terraform variables, in a later release).
 
-A violation that depends on values the files do not give is **undecided**: listed in `undecided` in JSON and counted in the summary, never reported as a finding.
+A violation that depends on values the files do not give (a base image's user, a build argument) is **undecided**: listed in `undecided` in JSON and counted in the summary, never reported as a finding.
 
 `frame: ignore[<policy id or CWE>]` on the finding's line, or on a comment line above it, suppresses it (`suppressed` in JSON). `.frame.toml`'s `exclude`, `disable`, `packs`, `min_severity` and `fail_on` apply. Exit status: 0 clean, 1 a finding at or above `--fail-on` (default high), 2 the command could not run.
 
@@ -87,7 +99,7 @@ references = ["https://kubernetes.io/docs/concepts/configuration/manage-resource
 
 The body of `some`/`every` extends as far right as it can; parenthesise to stop it. A comparison with a missing value is false, `==` and `!=` alike, so say what a missing field means with `default(...)`: the Kubernetes API's zero values (`false`, `0`, `""`) for its fields.
 
-Paths start at a resource's views. Every resource has `self` (the whole document). A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
+Paths start at a resource's views. Every resource has `self` (the whole document; for a Dockerfile, the build stage: `final`, `from` with `image`/`tag`/`digest`/`stage`/`scratch`/`external`, `user`, `user_set`, `instructions` with `cmd`, `args`, `flags`, `sources`/`dest`, `vars` with `key`/`value`/`credential`, and `preamble` for the ARGs before the first FROM, in `frame/iac/dockerfile.py`). A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
 
 ## How a policy is decided
 

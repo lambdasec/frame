@@ -124,8 +124,8 @@ def add_pack_args(scan_parser) -> None:
              "sink, so attacker data reaching it is a finding at the call site.")
     scan_parser.add_argument(
         "--iac", action="store_true",
-        help="Also check infrastructure files (directory targets): Kubernetes manifests against the "
-             "policy packs (Pod Security Standards), as `frame iac` does.")
+        help="Also check infrastructure files (directory targets): Kubernetes manifests and "
+             "Dockerfiles against the policy packs, as `frame iac` does.")
 
 
 def add_language_and_pattern_args(scan_parser) -> None:

@@ -1,0 +1,2 @@
+  ENTRYPOINT {}\
+# tail

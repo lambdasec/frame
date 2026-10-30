@@ -19,11 +19,11 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from . import kubernetes
+from . import dockerfile, kubernetes
 from .engine import decide
 from .model import ReadResult, Resource, dotted
 
-FORMATS = ("kubernetes",)
+FORMATS = ("kubernetes", "dockerfile")
 _SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 _YAML_SUFFIXES = (".yaml", ".yml", ".json")
 
@@ -94,7 +94,7 @@ def _candidates(target: Path, excluded) -> List[Tuple[Path, str]]:
         return [(target, target.name)]
     out = []
     for path in sorted(target.rglob("*")):
-        if path.is_file() and path.suffix.lower() in _YAML_SUFFIXES \
+        if path.is_file() and (path.suffix.lower() in _YAML_SUFFIXES or dockerfile.is_dockerfile(path)) \
                 and not FrameScanner._is_excluded_dir_member(path, target, excluded):
             out.append((path, path.relative_to(target).as_posix()))
     return out
@@ -104,9 +104,10 @@ def read(target: Path, excluded) -> Dict[str, ReadResult]:
     """Every format's resources under `target` (a directory or one file)."""
     files = _candidates(target, excluded)
     root = target if target.is_dir() else target.parent
-    k8s = kubernetes.read([(p, r) for p, r in files], root)
+    docker = [(p, r) for p, r in files if dockerfile.is_dockerfile(p)]
+    k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root)
     _one_warning_per_chart(k8s)
-    return {"kubernetes": k8s}
+    return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker)}
 
 
 def _one_warning_per_chart(result: ReadResult) -> None:
@@ -142,7 +143,9 @@ def check(resources: Sequence[Resource], policies: Sequence, run: IacRun) -> Lis
             v = decide(p.expr, r.subject())
             if v.outcome == "pass":
                 continue
-            path = max(v.why, key=len) if v.why else ()
+            # the deepest deciding path; between equals the last one, the formula's most
+            # specific condition (`final == true and user == "root"` points at the USER)
+            path = max(reversed(v.why), key=len) if v.why else ()
             if v.outcome == "undecided":
                 run.undecided.append({"rule": p.id, "resource": r.address, "path": r.file,
                                       "line": r.line_of(path)})
@@ -201,7 +204,8 @@ def scan(target, packs=None, exclude_dirs: Optional[Iterable] = None) -> IacRun:
             run.files[fmt] = sorted(set(result.files))
         run.resources += len(result.resources)
         fmt_packs = packs.for_language(fmt)
-        run.packs += [f"{p.language}/{p.name}" for p in fmt_packs]
+        if result.resources:                    # the packs that had something to check
+            run.packs += [f"{p.language}/{p.name}" for p in fmt_packs]
         found += check(result.resources, [pol for p in fmt_packs for pol in p.policies], run)
     root = target if target.is_dir() else target.parent
     kept, run.suppressed = _suppress(found, root, target if target.is_file() else None)

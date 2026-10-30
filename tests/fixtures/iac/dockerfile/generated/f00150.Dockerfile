@@ -1,0 +1,2 @@
+  WORKDIR  "q r"
+ FROM	|

@@ -1,0 +1,4 @@
+COPY	   <<EOF
+EOF
+  SHELL
+ SHELL  <<'EOF' []
