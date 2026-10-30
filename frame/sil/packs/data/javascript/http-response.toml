@@ -15,3 +15,8 @@ methods = ["status", "code", "type", "contentType", "set", "header", "headers", 
            "append", "vary", "location", "links", "attachment", "hijack", "serializer", "statusCode"]
 content_type = ["type", "contentType"]               # res.type("json"), reply.type("text/plain")
 content_type_header = ["set", "header", "append"]    # res.set("Content-Type", "image/png")
+
+# `app.use(mw)` / `router.use(mw)` (Express, Connect, Koa): the request fields mw sets reach every
+# handler registered on the same object.
+[[middleware]]
+methods = ["use"]

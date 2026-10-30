@@ -2889,13 +2889,15 @@ class SILTranslator:
             # Sanitized for a kind only if every path that sets the field sanitized it.
             fields[fld] = (info, kinds) if fld not in fields else (fields[fld][0], fields[fld][1] & kinds)
 
-    # Registering middleware on an app or router object (Express, Connect, Koa).
-    _MIDDLEWARE_REGISTRATION = frozenset({"use"})
+    def _pack_entries(self, attr: str) -> list:
+        """The entries of kind `attr` of the packs applied to this program (`Program.active_packs`)."""
+        return [e for p in getattr(self.program, "active_packs", ()) for e in getattr(p, attr, ())]
 
     def _record_middleware(self, instr: Call, func_name: str, state: SymbolicState) -> None:
-        """`app.use(mw)`: the request fields mw sets reach every handler of `app`."""
+        """`app.use(mw)` (a packs' `[[middleware]]` method): the request fields mw sets reach every
+        handler of `app`."""
         head, _, method = func_name.rpartition(".")
-        if not self._ipa_summarising or method not in self._MIDDLEWARE_REGISTRATION \
+        if not self._ipa_summarising or method not in self._pack_entries("middleware_methods") \
                 or not _PLAIN_LOCAL.match(head or "-"):
             return
         for arg, _ in instr.args:
@@ -2924,15 +2926,15 @@ class SILTranslator:
                 if any(c.rpartition(".")[0] == head for c, _ in proc.passed_as):
                     self._ipa.dirty.add((self._file_key, proc.name))
 
-    # Servlet filters run before the servlet; what they store on the request is read there.
-    _FILTER_TYPES = frozenset({"javax.servlet.Filter", "jakarta.servlet.Filter"})
-    _REQUEST_TYPES = frozenset({"ServletRequest", "HttpServletRequest"})
+    # Filters run before the servlet; what they store on the request is read there (the packs'
+    # `[[request_attribute]]`: java/servlet).
 
-    def _request_receiver(self, func_name: str, receiver_type: Optional[str]) -> bool:
-        """Is `x.m(...)` called on a servlet request (declared type, or a parameter
+    def _request_receiver(self, func_name: str, receiver_type: Optional[str], entry) -> bool:
+        """Is `x.m(...)` called on a request of `entry.request_types` (declared type, or a parameter
         declared as one)?"""
+        request_types = set(entry.request_types)
         head = func_name.rpartition(".")[0]
-        if (receiver_type or "").rsplit(".", 1)[-1] in self._REQUEST_TYPES:
+        if (receiver_type or "").rsplit(".", 1)[-1] in request_types:
             return True
         proc = self._cur_proc
         if proc is None or not _PLAIN_LOCAL.match(head or "-"):
@@ -2940,19 +2942,21 @@ class SILTranslator:
         names = [p.name for p, _ in proc.params]
         types = getattr(proc, "param_type_names", None) or []
         return head in names and names.index(head) < len(types) \
-            and (types[names.index(head)] or "").rsplit(".", 1)[-1] in self._REQUEST_TYPES
+            and (types[names.index(head)] or "").rsplit(".", 1)[-1] in request_types
 
     def _record_request_attribute(self, instr: Call, func_name: str, state: SymbolicState) -> None:
         """`request.setAttribute("tenant", value)` in a servlet Filter with attacker
         data in value: what every `getAttribute("tenant")` in the project reads."""
-        if not self._ipa_summarising or not func_name.endswith(".setAttribute") or len(instr.args) != 2:
+        entry = next((e for e in self._pack_entries("request_attributes")
+                       if func_name.endswith("." + e.set)), None)
+        if not self._ipa_summarising or entry is None or len(instr.args) != 2:
             return
         key = instr.args[0][0]
         cls = self.program.class_info.get((self._cur_proc.class_name or "").rsplit(".", 1)[-1]) \
             if self._cur_proc is not None else None
         if not (isinstance(key, ExpConst) and isinstance(key.value, str)) or cls is None \
-                or not self._FILTER_TYPES & set(cls.canonical_bases) \
-                or not self._request_receiver(func_name, getattr(instr, "receiver_type", None)):
+                or not set(entry.writer_bases) & set(cls.canonical_bases) \
+                or not self._request_receiver(func_name, getattr(instr, "receiver_type", None), entry):
             return
         leaves = [(i, k) for i, k in self._arg_taint_leaves(instr.args[1][0], state)
                   if not i.source_var.startswith(self._SEED_PREFIX)]
@@ -2976,8 +2980,9 @@ class SILTranslator:
             return
         name = self._call_exp_name(exp)
         key = exp.args[0]
-        if not name.endswith(".getAttribute") or not (isinstance(key, ExpConst) and isinstance(key.value, str)) \
-                or not self._request_receiver(name, receiver_type):
+        entry = next((e for e in self._pack_entries("request_attributes") if name.endswith("." + e.get)), None)
+        if entry is None or not (isinstance(key, ExpConst) and isinstance(key.value, str)) \
+                or not self._request_receiver(name, receiver_type, entry):
             return
         if self._ipa_summarising:
             self._ipa.attribute_readers.add(self._cur_ref)
@@ -4251,31 +4256,11 @@ class SILTranslator:
                                     instr, state, proc_name, sink_kind
                                 )
                                 checks.append(check)
-                    # Special handling for set_cookie - only flag when secure=False
-                    elif func_name.endswith("set_cookie"):
-                        # Check if any arg is False (indicating secure=False)
-                        has_false_arg = False
-                        for arg_exp, _ in instr.args:
-                            arg_str = str(arg_exp).lower()
-                            if arg_str == "false":
-                                has_false_arg = True
-                                break
-                        if has_false_arg:
-                            check = self._create_usage_based_check(
-                                instr, state, proc_name, sink_kind
-                            )
-                            checks.append(check)
-                    # Special handling for setSecure - Java Cookie.setSecure(false) - CWE-614
-                    elif func_name.endswith("setSecure") or func_name.endswith(".setSecure"):
-                        # Only flag if argument is false
-                        if len(instr.args) >= 1:
-                            arg_exp, _ = instr.args[0]
-                            arg_str = str(arg_exp).lower().strip()
-                            if arg_str == "false":
-                                check = self._create_usage_based_check(
-                                    instr, state, proc_name, sink_kind
-                                )
-                                checks.append(check)
+                    # A usage sink only with an explicit off value among its arguments
+                    # (`set_cookie(..., secure=False)`, `cookie.setSecure(false)`): the spec says which.
+                    elif spec.sink_if_arg_literal:
+                        if any(str(a).strip().strip('"') in spec.sink_if_arg_literal for a, _ in instr.args):
+                            checks.append(self._create_usage_based_check(instr, state, proc_name, sink_kind))
                     # Skip SecureRandom.getInstance - this is safe, not a weak hash
                     elif "SecureRandom" in func_name:
                         pass  # SecureRandom is secure, don't flag
@@ -4593,9 +4578,8 @@ class SILTranslator:
             self._settle_call_sanitization(
                 instr, spec, state, pre_call_input_kinds)
 
-        # Track secure XML parsers
-        # xml.sax.make_parser() creates a parser with secure defaults (XXE disabled)
-        if func_name in ('xml.sax.make_parser', 'defusedxml.make_parser'):
+        # Parser factories whose parsers do not expand external entities (parser-hardening.toml)
+        if func_name in _parser_hardening().safe_parser_factories:
             if instr.ret:
                 ret_var = str(instr.ret[0])
                 state.secure_parsers.add(ret_var)
@@ -7630,9 +7614,6 @@ class SILTranslator:
     # to one ends the current path, so nothing after it on that branch runs.
     _NORETURN_FUNCS = frozenset({
         "__frame_goto__",   # the C frontend's lowering of `goto`
-        # other languages' process exits and request aborts
-        "sys.exit", "quit", "os._exit", "os.abort", "flask.abort", "werkzeug.exceptions.abort",
-        "System.exit", "Environment.Exit", "process.exit", "os.Exit",
     }) | _c_facts.noreturn()                                         # C: specs/data/c.toml
 
     def _is_noreturn_call(self, instr: Instr) -> bool:
@@ -7647,8 +7628,12 @@ class SILTranslator:
         if not name:
             return False
         name = self._strip_self_receiver(name)
-        fact = (getattr(self.program, "library_facts", None) or {}).get(name)   # a C pack's [[function]]
-        return name in self._NORETURN_FUNCS or bool(fact and fact.noreturn)
+        # a pack's [[function]] (flask.abort), or a spec row of the language (sys.exit, process.exit)
+        facts = getattr(self.program, "library_facts", None) or {}
+        canonical = getattr(instr, "canonical", None)
+        fact = facts.get(name) or (facts.get(canonical) if canonical else None)
+        spec = self.program.library_specs.get(name)
+        return name in self._NORETURN_FUNCS or bool(fact and fact.noreturn) or bool(spec and spec.noreturn)
 
     def _deref_base(self, exp: Exp) -> Optional[str]:
         """The base pointer variable a dereference address reads through.
@@ -8452,15 +8437,12 @@ class SILTranslator:
             procedure_name=proc_name,
         )]
 
-    # Calls that write HTTP response headers in C/C++ CGI, FastCGI and embedded servers.
-    _HEADER_WRITERS = frozenset({"printf", "fprintf", "dprintf", "FCGX_FPrintF", "FCGI_printf",
-                                 "MHD_add_response_header", "mg_printf", "mg_send_http_ok",
-                                 "evhttp_add_header", "snprintf", "sprintf"})
 
     def _cookie_header_checks(self, instr: Instr, state: SymbolicState,
                               proc_name: str) -> List[VulnerabilityCheck]:
         """CWE-338: a value written into a `Set-Cookie` header (a session or auth token)
-        that comes from a non-cryptographic PRNG. The header is recognised by its name in
+        that comes from a non-cryptographic PRNG, at a call that writes headers (`writes_headers`
+        on a c/cpp spec row or a C pack's [[function]]). The header is recognised by its name in
         a literal argument (`printf("Set-Cookie: sid=%s", t)`,
         `MHD_add_response_header(r, "Set-Cookie", t)`); every other argument is a value
         that must be unpredictable."""
@@ -8468,7 +8450,9 @@ class SILTranslator:
             return []
         func = instr.func
         fname = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"').rsplit("::", 1)[-1]
-        if fname not in self._HEADER_WRITERS:
+        spec = self.program.library_specs.get(fname)
+        fact = (getattr(self.program, "library_facts", None) or {}).get(fname)
+        if not ((spec and spec.writes_headers) or (fact and fact.writes_headers)):     # spec rows, C packs
             return []
         args = [a for a, _ in instr.args]
         literal = [a for a in args if isinstance(a, ExpConst) and isinstance(a.value, str)]

@@ -341,3 +341,50 @@ public class GoController : Controller {
 }
 """
     assert _cs(src, "GoController.cs") == [(8, "CWE-79")]
+
+
+# --- translator: pack kinds and spec fields instead of framework lists ----------------------
+
+def test_flask_abort_ends_the_path_through_the_pack():
+    src = """import os
+from flask import Flask, request, abort
+app = Flask(__name__)
+
+@app.route("/x")
+def x():
+    cmd = request.args.get("c")
+    if cmd not in ("ls", "pwd"):
+        abort(403)
+    os.system(cmd)
+    return ""
+"""
+    assert _py(src) == []
+
+
+def test_cookie_sink_only_with_an_explicit_false():
+    src = """from flask import Flask, make_response
+app = Flask(__name__)
+
+@app.route("/a")
+def a():
+    r = make_response("x")
+    r.set_cookie("s", "1", secure=False)
+    r.set_cookie("t", "1", secure=True)
+    return r
+"""
+    assert _py(src) == [(7, "CWE-614")]
+
+
+def test_c_header_writer_from_a_pack():
+    src = """#include <stdlib.h>
+#include <microhttpd.h>
+void f(struct MHD_Response *r) {
+    int t = rand();
+    MHD_add_response_header(r, "Set-Cookie", t);
+}
+"""
+    def scan(builtin):
+        s = FrameScanner(language="c", verify=False, use_builtin_packs=builtin)
+        return sorted((v.line, v.cwe_id) for v in s.scan(src, "s.c").vulnerabilities)
+    assert scan(True) == [(5, "CWE-338")]      # c/libmicrohttpd says the call writes headers
+    assert scan(False) == []

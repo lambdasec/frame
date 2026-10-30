@@ -1370,6 +1370,7 @@ description = "Uncaught exception handler"
 
 [[spec]]
 name = "process.exit"
+noreturn = true
 is_sink = "exception"
 description = "Process exit (CWE-705)"
 

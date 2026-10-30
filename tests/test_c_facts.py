@@ -116,7 +116,11 @@ def test_malformed_function_facts_are_errors(body, error):
         load_pack_text('[pack]\nname = "x"\nlanguage = "c"\n' + body, "x.toml")
 
 
-def test_function_facts_are_for_c_packs_only():
-    with pytest.raises(PackError, match="C and C\\+\\+"):
-        load_pack_text('[pack]\nname = "x"\nlanguage = "python"\n[[function]]\nname = "f"\nnoreturn = true\n',
+def test_outside_c_a_function_fact_states_only_noreturn():
+    # flask.abort never returns: any language may say so; memory facts are C and C++ only
+    pack = load_pack_text('[pack]\nname = "x"\nlanguage = "python"\n[[function]]\nname = "f"\nnoreturn = true\n',
+                          "x.toml")
+    assert pack.functions[0].noreturn
+    with pytest.raises(PackError, match="only noreturn"):
+        load_pack_text('[pack]\nname = "x"\nlanguage = "python"\n[[function]]\nname = "f"\nallocates = "heap"\n',
                        "x.toml")

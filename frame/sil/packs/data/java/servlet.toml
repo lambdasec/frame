@@ -25,3 +25,12 @@ setter = "setHttpOnly"
 value = "true"
 kind = "insecure_cookie_httponly"
 description = "Cookie added without HttpOnly flag (CWE-1004)"
+
+# Filters run before the servlet: what a Filter stores with request.setAttribute("k", v) is what a
+# servlet's request.getAttribute("k") reads.
+[[request_attribute]]
+id = "filter-attributes"
+writer_bases = ["javax.servlet.Filter", "jakarta.servlet.Filter"]
+request_types = ["ServletRequest", "HttpServletRequest"]
+set = "setAttribute"
+get = "getAttribute"

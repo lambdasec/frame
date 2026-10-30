@@ -1415,6 +1415,7 @@ description = "Empty catch block (CWE-390)"
 
 [[spec]]
 name = "Environment.Exit"
+noreturn = true
 is_sink = "exception"
 description = "Environment exit (CWE-705)"
 

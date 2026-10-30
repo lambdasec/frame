@@ -145,12 +145,14 @@ description = "Command line arguments"
 
 [[spec]]
 name = "printf"
+writes_headers = true    # CGI: a header line printed to the response
 dereferences = [-1]
 is_sink = "format_string"
 description = "printf format string (CWE-134)"
 
 [[spec]]
 name = "fprintf"
+writes_headers = true    # CGI: a header line printed to the response
 dereferences = [-1]
 is_sink = "format_string"
 sink_args = [1]
@@ -174,6 +176,7 @@ description = "vswprintf(buffer, size, format, args) - format string sink (CWE-1
 
 [[spec]]
 name = "sprintf"
+writes_headers = true    # CGI: a header line printed to the response
 dereferences = [-1]
 is_sink = "format_string"
 sink_args = [1]
@@ -182,6 +185,7 @@ description = "sprintf format string (CWE-134)"
 
 [[spec]]
 name = "snprintf"
+writes_headers = true    # CGI: a header line printed to the response
 size_args = [1]
 dereferences = [-1]
 is_sink = "format_string"
@@ -5304,3 +5308,7 @@ description = "std::basic_ifstream opens its path argument"
 name = "std::basic_ofstream"
 is_sink = "filesystem"
 description = "std::basic_ofstream opens its path argument"
+
+[[spec]]
+name = "dprintf"
+writes_headers = true    # CGI: a header line printed to the response

@@ -14,3 +14,12 @@ decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete"]
 params = "all"
 exclude_param = ["self", "cls"]
 description = "Flask view function argument (URL variable)"
+
+# flask.abort / werkzeug.exceptions.abort raise an HTTPException: the request handling ends there.
+[[function]]
+name = "flask.abort"
+noreturn = true
+
+[[function]]
+name = "werkzeug.exceptions.abort"
+noreturn = true

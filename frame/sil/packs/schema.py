@@ -54,7 +54,8 @@ _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_f
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "values", "at", "call", "receiver", "description"}
-_FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "description"}
+_FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "writes_headers",
+                  "description"}
 _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "description"}
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
                 "description"}
@@ -73,7 +74,7 @@ _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
-             "policy", "define"}
+             "request_attribute", "middleware", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -160,6 +161,7 @@ class FunctionFact:
     allocates_via: Optional[int] = None
     noreturn: bool = False
     dereferences: List[int] = field(default_factory=list)   # -1: every argument
+    writes_headers: bool = False         # writes an HTTP header from its literal argument (C)
     description: str = ""
 
 
@@ -258,6 +260,19 @@ class SameOriginCheck:
 
 
 @dataclass
+class RequestAttribute:
+    """Java: a request attribute a filter stores (`request.setAttribute("tenant", v)` in a class
+    implementing one of `writer_bases`) is what every `getAttribute("tenant")` on a request in the
+    project reads (`[[request_attribute]]`; servlet filters run before the servlet)."""
+    id: str
+    writer_bases: List[str]
+    request_types: List[str]
+    set: str
+    get: str
+    description: str = ""
+
+
+@dataclass
 class DeferredCall:
     """Python: a method that runs the function it is called on, later, with the same arguments
     (`[[deferred_call]]`): Celery's `task.delay(a, b)` is the call `task(a, b)` for taint."""
@@ -323,6 +338,8 @@ class Pack:
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
+    request_attributes: List[RequestAttribute] = field(default_factory=list)
+    middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
     annotated_queries: List[AnnotatedQuery] = field(default_factory=list)
     required_flags: List[RequiredFlag] = field(default_factory=list)
     disabled_protections: List[DisabledProtection] = field(default_factory=list)
@@ -547,8 +564,8 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     for i, t in enumerate(data.get("function", [])):
         where = f"[[function]] #{i + 1}"
         _check_keys(origin, where, t, _FUNCTION_KEYS)
-        if language not in ("c", "cpp"):
-            raise _fail(origin, where, "library facts are for C and C++ packs")
+        if language not in ("c", "cpp") and set(t) - {"name", "noreturn", "description"}:
+            raise _fail(origin, where, "outside C and C++ a [[function]] states only noreturn")
         if not isinstance(t.get("name"), str) or not t["name"]:
             raise _fail(origin, f"{where}.name", "needs the function's name")
         for key, kinds in (("allocates", ALLOCATION_KINDS), ("frees", RELEASE_KINDS)):
@@ -563,11 +580,14 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, f"{where}.dereferences", "must be argument positions (-1: every one)")
         if not isinstance(t.get("noreturn", False), bool):
             raise _fail(origin, f"{where}.noreturn", "must be true or false")
+        if not isinstance(t.get("writes_headers", False), bool):
+            raise _fail(origin, f"{where}.writes_headers", "must be true or false")
         fact = FunctionFact(name=t["name"], allocates=t.get("allocates", ""), frees=t.get("frees", ""),
                             allocates_via=via, noreturn=t.get("noreturn", False), dereferences=list(derefs),
+                            writes_headers=t.get("writes_headers", False),
                             description=str(t.get("description", "")))
-        if not (fact.allocates or fact.frees or fact.noreturn or fact.dereferences):
-            raise _fail(origin, where, "states nothing: set allocates, frees, noreturn or dereferences")
+        if not (fact.allocates or fact.frees or fact.noreturn or fact.dereferences or fact.writes_headers):
+            raise _fail(origin, where, "states nothing: set allocates, frees, noreturn, dereferences or writes_headers")
         pack.functions.append(fact)
 
     for i, t in enumerate(data.get("lambda_handler", [])):
@@ -646,6 +666,29 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                     exclude_decorator=_strings(origin, f"{where}.exclude_decorator", t.get("exclude_decorator", [])),
                     return_type=_strings(origin, f"{where}.return_type", t.get("return_type", [])),
                     description=desc))
+
+    for i, t in enumerate(data.get("request_attribute", [])):
+        where = f"[[request_attribute]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "writer_bases", "request_types", "set", "get", "description"})
+        if language != "java":
+            raise _fail(origin, where, "request attributes are for Java packs")
+        for k in ("writer_bases", "request_types", "set", "get"):
+            if not t.get(k):
+                raise _fail(origin, where, f"needs {k}")
+        pack.request_attributes.append(RequestAttribute(
+            id=str(t.get("id", f"{name}-request-attribute-{i + 1}")),
+            writer_bases=_strings(origin, f"{where}.writer_bases", t["writer_bases"]),
+            request_types=_strings(origin, f"{where}.request_types", t["request_types"]),
+            set=str(t["set"]), get=str(t["get"]), description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("middleware", [])):
+        where = f"[[middleware]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "methods", "description"})
+        if language != "javascript":
+            raise _fail(origin, where, "middleware registration is for JavaScript packs")
+        if not t.get("methods"):
+            raise _fail(origin, where, "needs methods")
+        pack.middleware_methods += _strings(origin, f"{where}.methods", t["methods"])
 
     for i, t in enumerate(data.get("same_origin_check", [])):
         where = f"[[same_origin_check]] #{i + 1}"

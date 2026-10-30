@@ -256,6 +256,14 @@ class ProcSpec:
     # ...or the argument at this position (ASP.NET's `Content(body, "application/json")`).
     content_type_arg: Optional[int] = None
 
+    # A usage sink only when one of its arguments is one of these literals (`set_cookie(...,
+    # secure=False)`, `cookie.setSecure(false)`): the call itself is fine otherwise.
+    sink_if_arg_literal: List[str] = field(default_factory=list)
+
+    # C/C++: writes an HTTP response header from its literal argument (`printf("Set-Cookie: ...")`
+    # in a CGI program); its other arguments are the header's values.
+    writes_headers: bool = False
+
     # Does this spec name a GLOBAL function (`setTimeout`, `eval`)? Frontends
     # match a dotless spec key against the last segment of a member call
     # (`models.sequelize.query` -> `query`); for a global function that would
@@ -730,6 +738,9 @@ class Program:
     packs_applied: List[str] = field(default_factory=list)
     # C/C++ library facts the applied packs state (`[[function]]`): name -> packs.schema.FunctionFact
     library_facts: Dict[str, Any] = field(default_factory=dict)
+    # The packs (packs.schema.Pack) applied to this program, for the translator's pack kinds
+    # (`[[middleware]]`, `[[request_attribute]]`).
+    active_packs: List[Any] = field(default_factory=list)
     # Class (full name) -> its declared instance fields, for languages that write a
     # field by its bare name (Java, C#). Not `ClassInfo.fields`, which C# keeps for
     # model-bound members only.

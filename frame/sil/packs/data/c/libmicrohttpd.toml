@@ -44,3 +44,7 @@ call = ["MHD_add_response_header"]
 args = [1, 2]
 kind = "header"
 description = "libmicrohttpd response header name / value"
+
+[[function]]
+name = "MHD_add_response_header"
+writes_headers = true

@@ -18,7 +18,8 @@ PATH = Path(__file__).parent / "data" / "parser-hardening.toml"
 
 _SHAPE = {
     "xxe": {"features": dict, "access_attributes": list, "parser_products": list},
-    "lxml": {"parse_functions": list, "parser": str, "parser_arg": int, "parser_keyword": str, "safe_keyword": str},
+    "lxml": {"parse_functions": list, "parser": str, "parser_arg": int, "parser_keyword": str, "safe_keyword": str,
+             "safe_factories": list},
     "dotnet": {"parser_types": list, "reader_factory": str, "resolver_property": str, "dtd_property": str,
                "dtd_parse": list, "dtd_safe": list, "prohibit_dtd_property": str},
     "deserialization": {"unsafe_types": list, "xstream": dict, "jackson": dict, "snakeyaml": dict},
@@ -37,6 +38,7 @@ class ParserHardening(NamedTuple):
     lxml_safe_keyword: str
     lxml_parser_arg: int
     lxml_parser_keyword: str
+    safe_parser_factories: FrozenSet[str]
     unsafe_deserializers: FrozenSet[str]
     xstream_type: str
     xstream_hardening: FrozenSet[str]
@@ -82,6 +84,7 @@ def load(path: Path = PATH) -> ParserHardening:
         lxml_safe_keyword=lxml["safe_keyword"],
         lxml_parser_arg=lxml["parser_arg"],
         lxml_parser_keyword=lxml["parser_keyword"],
+        safe_parser_factories=frozenset(lxml["safe_factories"]),
         unsafe_deserializers=frozenset(de["unsafe_types"]),
         xstream_type=de["xstream"]["type"],
         xstream_hardening=frozenset(de["xstream"]["hardening"]),

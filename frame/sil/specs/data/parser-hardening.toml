@@ -22,6 +22,9 @@ parser = "XMLParser"
 parser_arg = 1                # the parser's position...
 parser_keyword = "parser"     # ...or keyword in a parse function's arguments
 safe_keyword = "resolve_entities"
+# Python parser factories whose parsers do not expand external entities: the standard SAX parser has
+# external general entities off by default (Python 3.7.1+), defusedxml forbids them.
+safe_factories = ["xml.sax.make_parser", "defusedxml.make_parser"]
 
 # .NET: `new XmlDocument()` / `new XmlTextReader(x)` are XXE sinks unless configured
 # (`XmlResolver = null`, or `DtdProcessing = Prohibit|Ignore`, or the older `ProhibitDtd = true`);

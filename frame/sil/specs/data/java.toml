@@ -260,12 +260,14 @@ description = "Secure cookie flag"
 name = "Cookie.setSecure"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie.setSecure (insecure cookie)"
 
 [[spec]]
 name = "cookie.setSecure"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie.setSecure (insecure cookie)"
 
 [[spec]]
@@ -2091,6 +2093,7 @@ description = "Try-with-resources"
 
 [[spec]]
 name = "System.exit"
+noreturn = true
 is_sink = "exception"
 description = "System exit (CWE-705)"
 

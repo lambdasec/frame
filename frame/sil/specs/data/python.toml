@@ -2237,36 +2237,35 @@ description = "Flask g storage (CWE-501)"
 name = "response.set_cookie"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie setting (check secure flag CWE-614)"
 
 [[spec]]
 name = "Response.set_cookie"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie setting (CWE-614)"
 
 [[spec]]
 name = "make_response().set_cookie"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie setting (CWE-614)"
 
 [[spec]]
 name = "set_cookie"
 is_sink = "insecure_cookie"
 sink_args = []
-description = "Cookie setting (CWE-614)"
-
-[[spec]]
-name = "RESPONSE.set_cookie"
-is_sink = "insecure_cookie"
-sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Cookie setting (CWE-614)"
 
 [[spec]]
 name = "HttpResponse.set_cookie"
 is_sink = "insecure_cookie"
 sink_args = []
+sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
 description = "Django cookie (CWE-614)"
 
 [[spec]]
@@ -2618,3 +2617,19 @@ name = "abs"
 is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
 taint_propagates = [0]
 description = "numeric conversion (not text)"
+
+[[spec]]
+name = "sys.exit"
+noreturn = true
+
+[[spec]]
+name = "quit"
+noreturn = true
+
+[[spec]]
+name = "os._exit"
+noreturn = true
+
+[[spec]]
+name = "os.abort"
+noreturn = true

@@ -1,0 +1,10 @@
+[pack]
+name = "libevent"
+language = "c"
+description = "libevent's HTTP server (evhttp): response headers"
+references = ["https://libevent.org/doc/http_8h.html"]
+detect = { imports = ["evhttp.h", "event2/http.h"] }
+
+[[function]]
+name = "evhttp_add_header"
+writes_headers = true

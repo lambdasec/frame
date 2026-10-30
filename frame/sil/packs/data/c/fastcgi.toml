@@ -32,3 +32,12 @@ call = ["FCGX_FPrintF"]
 args = [1]
 kind = "format_string"
 description = "FCGX_FPrintF format string"
+
+# FastCGI writes the response, headers first, through these.
+[[function]]
+name = "FCGX_FPrintF"
+writes_headers = true
+
+[[function]]
+name = "FCGI_printf"
+writes_headers = true
