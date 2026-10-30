@@ -19,6 +19,8 @@ PATH = Path(__file__).parent / "data" / "parser-hardening.toml"
 _SHAPE = {
     "xxe": {"features": dict, "access_attributes": list, "parser_products": list},
     "lxml": {"parse_functions": list, "parser": str, "parser_arg": int, "parser_keyword": str, "safe_keyword": str},
+    "dotnet": {"parser_types": list, "reader_factory": str, "resolver_property": str, "dtd_property": str,
+               "dtd_parse": list, "dtd_safe": list, "prohibit_dtd_property": str},
     "deserialization": {"unsafe_types": list, "xstream": dict, "jackson": dict, "snakeyaml": dict},
     "deserialization.xstream": {"type": str, "hardening": list},
     "deserialization.jackson": {"type": str, "polymorphic": list},
@@ -42,6 +44,7 @@ class ParserHardening(NamedTuple):
     jackson_polymorphic: FrozenSet[str]
     yaml_type: str
     yaml_safe_constructors: FrozenSet[str]
+    dotnet: Dict[str, object] = {}
 
 
 def _check(name: str, where: str, table, shape) -> None:
@@ -62,8 +65,8 @@ def _check(name: str, where: str, table, shape) -> None:
 def load(path: Path = PATH) -> ParserHardening:
     name = Path(path).name
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    if set(data) != {"xxe", "lxml", "deserialization"}:
-        raise ValueError(f"{name}: needs exactly [xxe], [lxml] and [deserialization]")
+    if set(data) != {"xxe", "lxml", "dotnet", "deserialization"}:
+        raise ValueError(f"{name}: needs exactly [xxe], [lxml], [dotnet] and [deserialization]")
     for where, shape in _SHAPE.items():
         table = data
         for part in where.split("."):
@@ -85,7 +88,8 @@ def load(path: Path = PATH) -> ParserHardening:
         jackson_type=de["jackson"]["type"],
         jackson_polymorphic=frozenset(de["jackson"]["polymorphic"]),
         yaml_type=de["snakeyaml"]["type"],
-        yaml_safe_constructors=frozenset(de["snakeyaml"]["safe_constructors"]))
+        yaml_safe_constructors=frozenset(de["snakeyaml"]["safe_constructors"]),
+        dotnet=dict(data["dotnet"]))
 
 
 __all__ = ["PATH", "ParserHardening", "load"]

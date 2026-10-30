@@ -24,6 +24,9 @@ except ImportError:
     TREE_SITTER_CSHARP_AVAILABLE = False
     TSNode = Any
 
+from frame.sil.specs.dotnet_api import load as _dotnet
+from frame.sil.packs import annotation_marks_entry as _glob_any, default_packs
+from frame.sil.specs.parser_hardening import load as _parser_hardening
 from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
@@ -45,6 +48,10 @@ from frame.sil.metadata import (
 from frame.sil.packs import finish_program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
 from frame.sil.specs.passthrough import load as _passthrough
+
+
+# a pack [[setting]]'s kind -> the sink kind its finding is reported under
+_SETTING_SINK_KINDS = {"cookie_secure": "insecure_cookie", "cookie_httponly": "insecure_cookie_httponly"}
 
 
 class CSharpFrontend:
@@ -97,31 +104,6 @@ class CSharpFrontend:
         self._hoisted: Dict[Tuple[int, int], str] = {}
         # variable -> XML parser configuration flags seen in the procedure being translated
         self._xml_flags: Dict[str, set] = {}
-        # Member-access values whose mere reference is insecure config. Emitted
-        # as a Call so the usage-based sink path fires regardless of kind.
-        self._DANGEROUS_MEMBER_VALUES = {
-            "HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMode.ECB",
-            "TypeNameHandling.All", "TypeNameHandling.Auto", "TypeNameHandling.Objects",
-            "TypeNameHandling.Arrays",
-            "ContextOptions.SimpleBind",   # LDAP simple bind (CWE-522)
-            "AuthType.Basic",              # LDAP basic auth in cleartext (CWE-522)
-        }
-        # Members whose assignment disables TLS certificate validation (CWE-295).
-        self._CERT_CALLBACK_MEMBERS = {
-            "ServerCertificateValidationCallback",
-            "ServerCertificateCustomValidationCallback",
-        }
-        # Asymmetric-crypto providers whose ctor int arg is a key size (CWE-326).
-        self._WEAK_KEYSIZE_TYPES = {
-            "RSACryptoServiceProvider", "DSACryptoServiceProvider",
-            "RSACng", "DSACng",
-        }
-        # Property assignments that flow the RHS into a sink (obj.Prop = value).
-        self._ASSIGNMENT_SINK_PROPS = {
-            "CommandText": "sql",
-            "Sql": "sql",              # EF MigrationStatement.Sql = "..."+input
-            "InnerHtml": "html", "InnerHTML": "html",
-        }
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
@@ -1047,15 +1029,13 @@ class CSharpFrontend:
                     return self._get_member_chain(c)
         return ""
 
-    _REQUEST_TYPES = frozenset({"HttpRequest", "HttpRequestBase", "HttpRequestMessage"})
-
     def _request_chain(self, chain: str) -> str:
         """`req.Query` where `req` is declared as an HttpRequest reads like `Request.Query`
         (the source specs are written against the conventional property name)."""
         head, dot, rest = chain.partition(".")
         if dot and head != "Request" and self._current_proc is not None:
             types = self._proc_types.get(id(self._current_proc), {})
-            if types.get(head) in self._REQUEST_TYPES:
+            if types.get(head) in _dotnet().request_types:
                 return f"Request.{rest}"
         return chain
 
@@ -1172,7 +1152,7 @@ class CSharpFrontend:
                 if left.type == "member_access_expression" else None)
         # Overriding a TLS certificate-validation callback (= or += an always-true
         # delegate) is improper certificate validation regardless of the RHS.
-        if prop and self._get_text(prop) in self._CERT_CALLBACK_MEMBERS:
+        if prop and self._get_text(prop) in _dotnet().certificate_callback_members:
             self._add_instr(Call(loc=loc, ret=None,
                                  func=ExpConst.string("ServerCertificateValidationCallback"),
                                  args=[]))
@@ -1181,7 +1161,7 @@ class CSharpFrontend:
             recv_chain = self._get_member_chain(recv_node)
             recv_type = self._receiver_types().get(recv_chain, recv_chain)
             self._add_instrs(self._config_flag_instrs(recv_type, self._get_text(prop), right, loc))
-        sink_kind_str = self._ASSIGNMENT_SINK_PROPS.get(self._get_text(prop)) if prop else None
+        sink_kind_str = _dotnet().assignment_sinks.get(self._get_text(prop)) if prop else None
         if sink_kind_str is None and prop is not None:
             recv = self._get_member_chain(left.child_by_field_name("expression"))
             rtype = self._proc_types.get(id(self._current_proc), {}).get(recv, "") if self._current_proc else ""
@@ -1192,14 +1172,6 @@ class CSharpFrontend:
                 loc=loc, exp=self._translate_expression(right),
                 kind=resolve_sink_kind(sink_kind_str),
                 description=f"assignment to {self._get_text(prop)} sink", arg_index=0))
-
-    # Properties that are a sink only on a particular declared type (`FileName` on any
-    # other type is just a name): (type, property) -> sink kind.
-    _TYPED_PROP_SINKS = {
-        ("ProcessStartInfo", "FileName"): "command",
-        ("ProcessStartInfo", "Arguments"): "command",
-        ("DirectorySearcher", "Filter"): "ldap",
-    }
 
     # -- configuration that switches a protection off -----------------------------
     #
@@ -1212,28 +1184,36 @@ class CSharpFrontend:
         if rhs is None:
             return []
         text = self._get_text(rhs).strip()
-        owner_l = owner.lower()
         kind = desc = None
-        if "cookie" in owner_l:
-            if prop == "HttpOnly" and (text == "false" or text.endswith("HttpOnlyPolicy.None")):
-                kind, desc = "insecure_cookie_httponly", "cookie without HttpOnly"
-            elif prop == "Secure" and text == "false" or (
-                    prop == "SecurePolicy" and text.endswith(("CookieSecurePolicy.None", "CookieSecurePolicy.SameAsRequest"))):
-                kind, desc = "insecure_cookie", "cookie without Secure"
-        if kind is None and prop in ("ServerCertificateCustomValidationCallback",
-                                     "ServerCertificateValidationCallback") and self._always_true_callback(rhs):
+        for st in self._member_settings():
+            if st.kind in _SETTING_SINK_KINDS and prop in st.keys and _glob_any(st.receiver, owner, owner.split(".")[-1]) \
+                    and (text == str(st.value).lower() or (st.values and text.endswith(tuple(st.values)))):
+                kind = _SETTING_SINK_KINDS[st.kind]
+                desc = st.description or st.kind.replace("_", " ")
+                break
+        if kind is None and prop in _dotnet().certificate_callback_members and self._always_true_callback(rhs):
             kind, desc = "cert_validation", "TLS certificate validation disabled"
         if kind is None:
             return []
         return [TaintSink(loc=loc, exp=ExpConst.string(text), kind=resolve_sink_kind(kind),
                           description=f"{owner}.{prop} = {text}: {desc}", arg_index=0)]
 
+    def _member_settings(self) -> list:
+        """The `[[setting]] at = "member"` entries of the C# packs this file's `using`s select
+        (cookie options switched off: `new CookieOptions { Secure = false }`)."""
+        packs = self.packs if self.packs is not None else default_packs()
+        values = list(self._imports.names.values()) + list(self._imports.wildcards)
+        return [st for p in packs.for_language("csharp")
+                if not p.detect_imports or any(v == pre or v.startswith(pre + ".") for v in values
+                                               for pre in p.detect_imports)
+                for st in p.settings if st.at == "member"]
+
     def _always_true_callback(self, node: Optional[TSNode]) -> bool:
         """`(m, c, ch, e) => true`, `delegate { return true; }`, `DangerousAcceptAnyServerCertificateValidator`."""
         if node is None:
             return False
         if node.type == "member_access_expression":
-            return self._get_text(node).endswith("DangerousAcceptAnyServerCertificateValidator")
+            return self._get_text(node).endswith(_dotnet().accept_all_validators)
         if node.type in self._LAMBDA_TYPES:
             body = node.child_by_field_name("body") or next((c for c in node.children if c.type == "block"), None)
             if body is None:
@@ -1243,20 +1223,21 @@ class CSharpFrontend:
             return bool(re.fullmatch(r"\{\s*return\s+true\s*;\s*\}", self._get_text(body).strip()))
         return False
 
-    def _is_html_content_result(self, type_name: str, init: TSNode, lhs: Optional[TSNode]) -> bool:
-        """`new ContentResult { Content = x, ContentType = "text/html" }`: the content is markup
-        only when the initializer says so (the default content type is text/plain)."""
-        if type_name.split(".")[-1] != "ContentResult" or lhs is None or self._get_text(lhs) != "Content":
-            return False
-        for c in init.children:
+    def _typed_prop_sink(self, type_name: str, prop: str, init: Optional[TSNode] = None) -> Optional[str]:
+        """A property that is a sink on this declared type (dotnet-api.toml `typed_property_sink`); one
+        with `when` only if the object initializer `init` sets that property to a matching literal
+        (`new ContentResult { Content = x, ContentType = "text/html" }`)."""
+        t = _dotnet().typed_sink(type_name, prop)
+        if t is None:
+            return None
+        if t.when is None:
+            return t.kind
+        for c in (init.children if init is not None else ()):
             if c.type == "assignment_expression":
                 left, right = c.child_by_field_name("left"), c.child_by_field_name("right")
-                if left is not None and right is not None and self._get_text(left) == "ContentType":
-                    return "html" in self._get_text(right).lower()
-        return False
-
-    def _typed_prop_sink(self, type_name: str, prop: str) -> Optional[str]:
-        return self._TYPED_PROP_SINKS.get((type_name.split(".")[-1], prop))
+                if left is not None and right is not None and self._get_text(left) == t.when[0]:
+                    return t.kind if t.when[1] in self._get_text(right).lower() else None
+        return None
 
     # -- XML parser hardening ----------------------------------------------------
     #
@@ -1267,15 +1248,16 @@ class CSharpFrontend:
 
     def _xml_member_flags(self, prop: str, rhs: Optional[TSNode]) -> set:
         text = self._get_text(rhs).strip() if rhs is not None else ""
+        x = _parser_hardening().dotnet                      # parser-hardening.toml [dotnet]
         flags = set()
-        if prop == "XmlResolver":
+        if prop == x["resolver_property"]:
             flags.add("null_resolver" if text == "null" else "resolver")
-        elif prop == "DtdProcessing":
-            if text.endswith("Parse"):
+        elif prop == x["dtd_property"]:
+            if text.endswith(tuple(x["dtd_parse"])):
                 flags.add("parse")
-            elif text.endswith(("Prohibit", "Ignore")):
+            elif text.endswith(tuple(x["dtd_safe"])):
                 flags.add("no_dtd")
-        elif prop == "ProhibitDtd":
+        elif prop == x["prohibit_dtd_property"]:
             flags.add("no_dtd" if text == "true" else "parse")
         return flags
 
@@ -1361,7 +1343,8 @@ class CSharpFrontend:
     def _xml_create_instrs(self, call_node: TSNode, loc: Location) -> List[Instr]:
         """`XmlReader.Create(input, settings)` with unsafe settings parses attacker XML with DTDs."""
         name = self._get_method_name(call_node)
-        if name.split(".")[-1] != "Create" or "XmlReader" not in name:
+        factory = _parser_hardening().dotnet["reader_factory"]
+        if name != factory and not name.endswith("." + factory):
             return []
         args = self._get_method_args(call_node)
         if len(args) >= 2 and self._xml_settings_unsafe(args[1]):
@@ -1568,9 +1551,7 @@ class CSharpFrontend:
                     if rhs:
                         self._translate_expression(rhs)
                         lhs = child.child_by_field_name("left")
-                        kind = self._typed_prop_sink(type_name, self._get_text(lhs) if lhs else "")
-                        if kind is None and self._is_html_content_result(type_name, init, lhs):
-                            kind = "html"
+                        kind = self._typed_prop_sink(type_name, self._get_text(lhs) if lhs else "", init)
                         instrs.extend(self._config_flag_instrs(
                             type_name, self._get_text(lhs) if lhs else "", rhs, self._get_location(child)))
                         if kind:
@@ -1581,7 +1562,7 @@ class CSharpFrontend:
                                 arg_index=0))
 
         # A parser configured not to resolve external entities is not an XXE sink.
-        if type_name.split(".")[-1] in ("XmlDocument", "XmlTextReader") and (
+        if type_name.split(".")[-1] in _parser_hardening().dotnet["parser_types"] and (
                 self._xml_parser_hardened(target)
                 or {"null_resolver", "no_dtd"} & self._initializer_xml_flags(node)):
             if target is not None:
@@ -1615,9 +1596,9 @@ class CSharpFrontend:
         # Insufficient asymmetric key size: new RSACryptoServiceProvider(1024)
         # etc. with an integer-literal key size below 2048 bits (CWE-326).
         short_type = type_name.split('.')[-1]
-        if short_type in self._WEAK_KEYSIZE_TYPES and args:
+        if short_type in _dotnet().key_size_types and args:
             ksize = self._int_literal(args[0])
-            if ksize is not None and ksize < 2048:
+            if ksize is not None and ksize < _dotnet().key_size_minimum:
                 instrs.append(Call(loc=loc, ret=None,
                                    func=ExpConst.string("__weak_key_size__"), args=[]))
         return instrs
@@ -2142,7 +2123,7 @@ class CSharpFrontend:
             # (its spec has empty sink_args) fires on the mere reference.
             chain = self._get_member_chain(node)
             short = ".".join(chain.split(".")[-2:]) if "." in chain else chain
-            if chain in self._DANGEROUS_MEMBER_VALUES or short in self._DANGEROUS_MEMBER_VALUES:
+            if chain in _dotnet().dangerous_values or short in _dotnet().dangerous_values:
                 self._add_instr(Call(loc=self._get_location(node), ret=None,
                                      func=ExpConst.string(short), args=[]))
             return ExpFieldAccess(self._translate_expression(expr), self._get_text(name) if name else "")
@@ -2236,14 +2217,15 @@ class CSharpFrontend:
     # =========================================================================
 
     def _local_url_exp(self, node: Optional[TSNode]):
-        """For `Url.IsLocalUrl(x)` (or `IsLocalUrl(x)`, parenthesised or not) on a plain variable,
-        the expressions `x.startsWith("/")` and `x.startsWith("//")` that say the same thing."""
+        """For a packs' `[[same_origin_check]]` call (`Url.IsLocalUrl(x)`, parenthesised or not) on a
+        plain variable, the expressions `x.startsWith("/")` and `x.startsWith("//")` that say the same."""
         while node is not None and node.type == "parenthesized_expression":
             node = next((c for c in node.children if c.type not in ("(", ")")), None)
         if node is None or node.type != "invocation_expression":
             return None
         name = self._get_method_name(node)
-        if name.split(".")[-1] != "IsLocalUrl":
+        packs = self.packs if self.packs is not None else default_packs()
+        if not any(name.split(".")[-1] in c.name for p in packs.for_language("csharp") for c in p.same_origin_checks):
             return None
         args = self._get_method_args(node)
         if len(args) != 1 or args[0].type != "identifier":
@@ -2275,19 +2257,20 @@ class CSharpFrontend:
 
     _GENERIC_ARGS = re.compile(r"<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>")
 
-    # Response helpers whose body is HTML unless the content type says otherwise: with an explicit
-    # non-HTML content-type literal the call is renamed so the XSS sink spec does not match it.
-    _HTML_RESPONSE_CALLS = frozenset({"Content", "Results.Content", "TypedResults.Content"})
+    # A response sink whose spec names `content_type_arg`, called with a non-HTML content-type literal
+    # there, is renamed so the XSS sink spec does not match it.
     _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
 
     def _get_method_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
         if func:
             name = self._strip_generics(self._get_text(func))
-            if name.rsplit(".", 2)[-1] == "Content" or name in self._HTML_RESPONSE_CALLS:
+            spec = self.specs.get(name) or self.specs.get(name.rsplit(".", 1)[-1])
+            pos = getattr(spec, "content_type_arg", None)
+            if pos is not None:
                 args = self._get_method_args(node)
-                if len(args) >= 2 and args[1].type in ("string_literal", "verbatim_string_literal") \
-                        and "html" not in self._get_text(args[1]).lower():
+                if len(args) > pos and args[pos].type in ("string_literal", "verbatim_string_literal") \
+                        and "html" not in self._get_text(args[pos]).lower():
                     return name + self._NON_HTML_RESPONSE_SUFFIX
             return name
 

@@ -74,3 +74,26 @@ id = "websocket-handler-message"
 extends = ["WebSocketHandler", "Microsoft.Web.WebSockets.WebSocketHandler"]
 method = ["OnMessage"]
 params = "all"
+
+# System.Web.HttpCookie with Secure / HttpOnly explicitly off.
+[[setting]]
+id = "httpcookie-secure-off"
+kind = "cookie_secure"
+at = "member"
+receiver = ["HttpCookie", "System.Web.HttpCookie"]
+keys = ["Secure"]
+value = false
+description = "cookie without Secure"
+
+[[setting]]
+id = "httpcookie-httponly-off"
+kind = "cookie_httponly"
+at = "member"
+receiver = ["HttpCookie", "System.Web.HttpCookie"]
+keys = ["HttpOnly"]
+value = false
+description = "cookie without HttpOnly"
+
+# System.Web.Mvc UrlHelper.IsLocalUrl: the same check in MVC 5.
+[[same_origin_check]]
+name = ["IsLocalUrl"]

@@ -1,0 +1,57 @@
+# .NET library facts the C# frontend reads (frame/sil/specs/dotnet_api.py, strictly). XML parser
+# configuration is in parser-hardening.toml [dotnet]; ASP.NET conventions are in the csharp packs.
+
+# Member-access values whose mere reference selects an insecure configuration: a weak hash or cipher
+# mode, Json.NET type-name handling (the JSON names the class to create), LDAP binds that send the
+# password in cleartext. Each is reported through the spec row of the same name (csharp.toml).
+dangerous_values = ["HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMode.ECB",
+                    "TypeNameHandling.All", "TypeNameHandling.Auto", "TypeNameHandling.Objects",
+                    "TypeNameHandling.Arrays", "ContextOptions.SimpleBind", "AuthType.Basic"]
+
+# Types of an HTTP request object: `req.Query` on a variable of one of them reads like `Request.Query`
+# (the source rows are written against the conventional property name).
+request_types = ["HttpRequest", "HttpRequestBase", "HttpRequestMessage"]
+
+# Members that install a TLS server-certificate validation callback (ServicePointManager,
+# HttpClientHandler, HttpWebRequest), and the built-in validator that accepts every certificate.
+[certificate_callbacks]
+members = ["ServerCertificateValidationCallback", "ServerCertificateCustomValidationCallback"]
+accept_all = ["DangerousAcceptAnyServerCertificateValidator"]
+
+# Asymmetric providers whose first constructor argument is the key size in bits; below `minimum`
+# is too small (NIST SP 800-131A: RSA / DSA keys of at least 2048 bits).
+[key_size]
+types = ["RSACryptoServiceProvider", "DSACryptoServiceProvider", "RSACng", "DSACng"]
+minimum = 2048
+
+# Property assignments whose value reaches a sink on any receiver (`cmd.CommandText = sql`,
+# EF `MigrationStatement.Sql`, `element.InnerHtml`).
+[assignment_sinks]
+CommandText = "sql"
+Sql = "sql"
+InnerHtml = "html"
+InnerHTML = "html"
+
+# Properties that are a sink only on one declared type (`FileName` elsewhere is just a name). With
+# `when`, only if the same object initializer sets `property` to a literal containing `contains`
+# (`new ContentResult { Content = x, ContentType = "text/html" }`; the default is text/plain).
+[[typed_property_sink]]
+type = "ProcessStartInfo"
+property = "FileName"
+kind = "command"
+
+[[typed_property_sink]]
+type = "ProcessStartInfo"
+property = "Arguments"
+kind = "command"
+
+[[typed_property_sink]]
+type = "DirectorySearcher"
+property = "Filter"
+kind = "ldap"
+
+[[typed_property_sink]]
+type = "ContentResult"
+property = "Content"
+kind = "html"
+when = { property = "ContentType", contains = "html" }

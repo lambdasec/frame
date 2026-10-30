@@ -215,6 +215,7 @@ description = "ASP.NET Response.Write (XSS)"
 [[spec]]
 name = "Content"
 is_sink = "html"
+content_type_arg = 1      # Content(body, "application/json"): not HTML unless the type says so
 description = "ASP.NET Content() response (XSS)"
 
 [[spec]]

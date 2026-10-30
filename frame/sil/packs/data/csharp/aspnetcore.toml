@@ -156,3 +156,33 @@ name = ["AllowAnyOrigin"]
 args = []
 kind = "cors"
 description = "CORS policy that allows any origin"
+
+# Cookie protections switched off: CookieOptions / CookieBuilder (`options.Cookie` of the
+# authentication, session and antiforgery options) and the app-wide CookiePolicyOptions.
+# `SameAsRequest` sends the cookie over plain HTTP when the request came that way.
+[[setting]]
+id = "cookie-secure-off"
+kind = "cookie_secure"
+at = "member"
+receiver = ["CookieOptions", "CookieBuilder", "CookiePolicyOptions", "*.Cookie",
+            "Microsoft.AspNetCore.Http.CookieOptions", "Microsoft.AspNetCore.Http.CookieBuilder"]
+keys = ["Secure", "SecurePolicy"]
+value = false
+values = ["CookieSecurePolicy.None", "CookieSecurePolicy.SameAsRequest"]
+description = "cookie without Secure"
+
+[[setting]]
+id = "cookie-httponly-off"
+kind = "cookie_httponly"
+at = "member"
+receiver = ["CookieOptions", "CookieBuilder", "CookiePolicyOptions", "*.Cookie",
+            "Microsoft.AspNetCore.Http.CookieOptions", "Microsoft.AspNetCore.Http.CookieBuilder"]
+keys = ["HttpOnly"]
+value = false
+values = ["HttpOnlyPolicy.None"]
+description = "cookie without HttpOnly"
+
+# IUrlHelper.IsLocalUrl: true for a path on this site ("/x"), false for "//host" and "/\\host" (the
+# redirect target is then safe on its true branch).
+[[same_origin_check]]
+name = ["IsLocalUrl"]

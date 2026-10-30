@@ -53,7 +53,7 @@ _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
-_SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
+_SETTING_KEYS = {"id", "kind", "keys", "value", "values", "at", "call", "receiver", "description"}
 _FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "description"}
 _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "description"}
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
@@ -72,11 +72,12 @@ _REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"
 _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
-             "required_flag", "disabled_protection", "handler_return", "injected_field", "policy", "define"}
+             "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
+             "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
-SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property")
+SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property", "member")
 
 
 class PackError(ValueError):
@@ -144,7 +145,8 @@ class Setting:
     value: bool
     at: str                              # one of SETTING_PLACES
     call: List[str] = field(default_factory=list)       # kwarg / property: the call it is passed to
-    receiver: List[str] = field(default_factory=list)   # subscript / attribute: the object written
+    receiver: List[str] = field(default_factory=list)   # subscript / attribute / member: the object written
+    values: List[str] = field(default_factory=list)     # member: other literal values that switch it off
     description: str = ""
 
 
@@ -246,6 +248,16 @@ class HandlerReturn:
 
 
 @dataclass
+class SameOriginCheck:
+    """A call that is true exactly when its argument is a local URL, a path on this site (`/x`, not
+    `//host` or `/\\host`): ASP.NET's `Url.IsLocalUrl(x)` (`[[same_origin_check]]`). Read as
+    `x.startsWith("/") && !x.startsWith("//")`, which the redirect guard already understands."""
+    id: str
+    name: List[str]
+    description: str = ""
+
+
+@dataclass
 class DeferredCall:
     """Python: a method that runs the function it is called on, later, with the same arguments
     (`[[deferred_call]]`): Celery's `task.delay(a, b)` is the call `task(a, b)` for taint."""
@@ -310,6 +322,7 @@ class Pack:
     fluents: List[Fluent] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
+    same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     annotated_queries: List[AnnotatedQuery] = field(default_factory=list)
     required_flags: List[RequiredFlag] = field(default_factory=list)
     disabled_protections: List[DisabledProtection] = field(default_factory=list)
@@ -514,15 +527,20 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, f"{where}.at", f"must be one of {list(SETTING_PLACES)}")
         if not isinstance(t.get("value"), bool):
             raise _fail(origin, f"{where}.value", "must be true or false (the value that switches it off)")
+        if "values" in t and t.get("at") != "member":
+            raise _fail(origin, f"{where}.values", 'only at = "member" (C# enum values such as CookieSecurePolicy.None)')
         st = Setting(id=str(t.get("id", f"{name}-setting-{i + 1}")), kind=t["kind"], at=t["at"],
                      keys=_strings(origin, f"{where}.keys", t.get("keys", []), allow_empty=False),
                      value=t["value"], description=str(t.get("description", "")),
                      call=_strings(origin, f"{where}.call", t.get("call", [])),
-                     receiver=_strings(origin, f"{where}.receiver", t.get("receiver", [])))
+                     receiver=_strings(origin, f"{where}.receiver", t.get("receiver", [])),
+                     values=_strings(origin, f"{where}.values", t.get("values", [])))
         if st.at in ("kwarg", "property") and not st.call:
             raise _fail(origin, where, f'at = "{st.at}" needs call')
-        if st.at == "subscript" and not st.receiver:
-            raise _fail(origin, where, 'at = "subscript" needs receiver')
+        if st.at in ("subscript", "member") and not st.receiver:
+            raise _fail(origin, where, f'at = "{st.at}" needs receiver')
+        if st.at == "member" and language != "csharp":
+            raise _fail(origin, where, 'at = "member" is for C# packs (a property assignment or initializer member)')
         pack.settings.append(st)
 
     from frame.sil.specs.tables import ALLOCATION_KINDS, RELEASE_KINDS
@@ -628,6 +646,17 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                     exclude_decorator=_strings(origin, f"{where}.exclude_decorator", t.get("exclude_decorator", [])),
                     return_type=_strings(origin, f"{where}.return_type", t.get("return_type", [])),
                     description=desc))
+
+    for i, t in enumerate(data.get("same_origin_check", [])):
+        where = f"[[same_origin_check]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "name", "description"})
+        if language != "csharp":
+            raise _fail(origin, where, "same-origin checks are for C# packs")
+        if not t.get("name"):
+            raise _fail(origin, where, "needs name (the method's name)")
+        pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
+                                                       name=_strings(origin, f"{where}.name", t["name"]),
+                                                       description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("deferred_call", [])):
         where = f"[[deferred_call]] #{i + 1}"

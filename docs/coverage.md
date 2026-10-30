@@ -140,6 +140,8 @@ annotations = ["Autowired", "Inject"]
 
 A `[[handler_return]]` can instead name the handler's class (`class_decorator`), `return_type` and `exclude_decorator`: a String returned by a Spring `@Controller` handler without `@ResponseBody` is a view name.
 
+C# packs state ASP.NET's cookie off-switches as `[[setting]]` entries with `at = "member"` (a property assignment or object-initializer member on a `receiver` type, switched off by `value` or one of the enum `values`, such as `CookieSecurePolicy.None`), and a `[[same_origin_check]]` names a method that is true exactly for a path on this site (`Url.IsLocalUrl(x)`), so a redirect on its true branch is safe.
+
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:

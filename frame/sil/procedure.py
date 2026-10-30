@@ -253,6 +253,8 @@ class ProcSpec:
     # A response sink whose body is HTML unless a keyword argument here gives a literal content type
     # that is not HTML (Django's `HttpResponse(body, content_type="application/json")`).
     content_type_kwargs: List[str] = field(default_factory=list)
+    # ...or the argument at this position (ASP.NET's `Content(body, "application/json")`).
+    content_type_arg: Optional[int] = None
 
     # Does this spec name a GLOBAL function (`setTimeout`, `eval`)? Frontends
     # match a dotless spec key against the last segment of a member call

@@ -302,3 +302,42 @@ public class W {
     # redirect view; view name; not the @ResponseBody handler's body
     assert _java(src, "W.java") == [(6, "CWE-601"), (8, "CWE-1336")]
     assert _java(src, "W.java", builtin=False) == []
+
+
+# --- C#: ASP.NET conventions are pack entries, .NET facts are data ---------------------------
+
+def _cs(src, name="C.cs", builtin=True):
+    scanner = FrameScanner(language="csharp", verify=False, use_builtin_packs=builtin)
+    return sorted((v.line, v.cwe_id) for v in scanner.scan(src, name).vulnerabilities)
+
+
+ASPNET_COOKIES = """using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+public class HomeController : Controller {
+  public IActionResult A() {
+    Response.Cookies.Append("a", "1", new CookieOptions { Secure = false });
+    var o = new CookieOptions { HttpOnly = true, Secure = true };
+    Response.Cookies.Append("b", "1", o);
+    return Ok();
+  }
+}
+"""
+
+
+def test_aspnet_cookie_off_switches_come_from_the_pack():
+    assert [c for _, c in _cs(ASPNET_COOKIES, "HomeController.cs")] == ["CWE-614"]
+    assert _cs(ASPNET_COOKIES, "HomeController.cs", builtin=False) == []
+
+
+def test_islocalurl_and_content_type():
+    src = """using Microsoft.AspNetCore.Mvc;
+public class GoController : Controller {
+  public IActionResult Go(string url) {
+    if (Url.IsLocalUrl(url)) { return Redirect(url); }
+    return Redirect("/");
+  }
+  public IActionResult Echo(string q) { return Content(q, "application/json"); }
+  public IActionResult Page(string q) { return Content(q, "text/html"); }
+}
+"""
+    assert _cs(src, "GoController.cs") == [(8, "CWE-79")]
