@@ -12,6 +12,7 @@ using tree-sitter for parsing. It handles:
 - Object destructuring
 """
 
+import fnmatch
 import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple, Any, Set
@@ -35,7 +36,7 @@ from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
     ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall,
-    var, const
+    ExpTernary, var, const
 )
 from frame.sil.instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
@@ -50,7 +51,9 @@ from frame.sil.procedure import (
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
-from frame.sil.packs import finish_program
+from frame.sil.packs import default_packs, finish_program
+from frame.sil.specs.template_engines import load as _template_engines
+from frame.sil.specs.third_party_js import load as _third_party_js
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_types import load as _js_types
 from frame.sil.specs.passthrough import load as _passthrough
@@ -286,12 +289,18 @@ class JavaScriptFrontend:
                             if fn is not None and via not in fn.registered_via:
                                 fn.registered_via.append(via)
 
-    _GRAPHQL_ROOTS = frozenset({"Query", "Mutation", "Subscription"})
+    def _registrations(self):
+        packs = self.packs if self.packs is not None else default_packs()
+        return [r for pack in packs.for_language("javascript") for r in pack.registrations]
 
     def _register_graphql_resolvers(self, node: TSNode, by_span) -> None:
-        """Apollo / graphql-tools resolver maps: the functions in `Query: { ... }` /
-        `Mutation: { ... }` and (one level deeper) in an object named `resolvers` are
-        registered as "graphql.resolver" -- (parent, args, context, info) callbacks."""
+        """The packs' `[[registration]]` entries: the functions of an object under one of their
+        `keys` (`Query: { ... }`), or of any object inside one bound to a name matching their
+        `containers` (`const resolvers = { User: { ... } }`; case-insensitive globs), are
+        registered as their `registered_as` ("graphql.resolver")."""
+        regs = self._registrations()
+        if not regs:
+            return
         if node.type == "pair":
             key_node, value = node.child_by_field_name("key"), node.child_by_field_name("value")
         else:
@@ -300,53 +309,26 @@ class JavaScriptFrontend:
             return
         key = self._get_text(key_node).strip("'\"")
 
-        def functions(obj):
+        def functions(obj, via):
             for member in obj.named_children:
                 fn_node = member.child_by_field_name("value") if member.type == "pair" else member
                 if fn_node is not None and fn_node.type in self._FUNC_LIKE:
                     fn = by_span.get((fn_node.start_byte, fn_node.end_byte))
-                    if fn is not None and "graphql.resolver" not in fn.registered_via:
-                        fn.registered_via.append("graphql.resolver")
+                    if fn is not None and via not in fn.registered_via:
+                        fn.registered_via.append(via)
 
-        if key in self._GRAPHQL_ROOTS:
-            functions(value)
-        elif key.lower().endswith("resolvers"):
-            for member in value.named_children:
-                inner = member.child_by_field_name("value") if member.type == "pair" else None
-                if inner is not None and inner.type == "object":
-                    functions(inner)
-
-    # Third-party library / generated-bundle detection: filename conventions
-    # plus a content check for minification. Used to suppress the structural
-    # ReDoS / prototype-pollution heuristics on non-application code.
-    _VENDOR_DIR_RE = re.compile(
-        r"/(?:lib|libs|vendor|vendors|plugins?|external|third[_-]?party|"
-        r"bower_components|node_modules|jspm_packages|dist|build|min)/", re.I)
-    _LIB_NAME_RE = re.compile(
-        r"(?:^|[-_.])(?:jquery|jquery-?ui|bootstrap|angular|backbone|underscore|"
-        r"lodash|moment|modernizr|d3|react|react-dom|vue|ember|knockout|prototype(?=[-_.]?\d|\.js$|\.min\b|$)|"
-        r"mootools|dojo|extjs|tinymce|ckeditor|wysihtml5|select2|datatables|"
-        r"highcharts|chartjs|three|ace|requirejs|handlebars|mustache|popper|slick|"
-        r"swiper|flatpickr|axios|zepto|hammer|normalize|polyfill)(?:[-_.]|\d|$)",
-        re.I)
-    _VERSION_IN_NAME_RE = re.compile(r"[-_.]\d+\.\d+")
+        for reg in regs:
+            if key in reg.keys:
+                functions(value, reg.registered_as)
+            elif any(fnmatch.fnmatchcase(key.lower(), c.lower()) for c in reg.containers):
+                for member in value.named_children:
+                    inner = member.child_by_field_name("value") if member.type == "pair" else None
+                    if inner is not None and inner.type == "object":
+                        functions(inner, reg.registered_as)
 
     def _is_vendored_or_minified(self) -> bool:
-        """True for third-party libraries and minified/generated JS bundles."""
-        fn = (self._filename or "").replace("\\", "/")
-        low = fn.lower()
-        if ".min." in low or low.endswith((".bundle.js", ".map")):
-            return True
-        if self._VENDOR_DIR_RE.search("/" + fn.strip("/") + "/"):
-            return True
-        base = fn.rsplit("/", 1)[-1]
-        if self._VERSION_IN_NAME_RE.search(base) or self._LIB_NAME_RE.search(base):
-            return True
-        # Content minification: a very long physical line is the reliable signal.
-        for line in (self._source or "").splitlines():
-            if len(line) > 800:
-                return True
-        return False
+        """True for third-party libraries and minified/generated JS bundles (third-party-js.toml)."""
+        return _third_party_js().is_third_party(self._filename, self._source)
 
     # Every function-like node becomes its own procedure -- including callbacks
     # and route handlers like `app.post(path, (req,res) => {...})`, which are
@@ -1277,8 +1259,7 @@ class JavaScriptFrontend:
                         if name not in names:
                             chain = self._get_member_chain(init)
                             refs = self._referenced_identifiers(init)
-                            if ((chain and (chain.startswith("req.") or chain.startswith("request.")))
-                                    or (refs & names)):
+                            if self._is_request_chain(chain) or (refs & names):
                                 names.add(name)
                                 added = True
                 stack.extend(c.children)
@@ -1456,10 +1437,8 @@ class JavaScriptFrontend:
                                     if name not in req_names:
                                         refs = self._referenced_identifiers(init)
                                         chain = self._get_member_chain(init)
-                                        if ((chain and (chain.startswith("req.")
-                                                        or chain.startswith("request.")))
-                                                or (refs & req_names)
-                                                or ("req" in refs) or ("request" in refs)):
+                                        if (self._is_request_chain(chain) or (refs & req_names)
+                                                or refs & set(_request_objects().js_request_names)):
                                             req_names.add(name)
                                             added = True
                             stack.extend(c.children)
@@ -1468,6 +1447,11 @@ class JavaScriptFrontend:
                 names |= req_names
             cur = cur.parent
         return names
+
+    @staticmethod
+    def _is_request_chain(chain: Optional[str]) -> bool:
+        """`req.query.x`: a member chain rooted at a conventional request name (request-objects.toml)."""
+        return bool(chain) and chain.split(".", 1)[0] in _request_objects().js_request_names and "." in chain
 
     def _referenced_identifiers(self, node: TSNode) -> set:
         """All identifier names referenced in a subtree (bounded walk)."""
@@ -1500,7 +1484,7 @@ class JavaScriptFrontend:
         is_handler = False
         for ch in param_children:
             if ch.type == "identifier":
-                if self._get_text(ch) in ("res", "response", "next"):
+                if self._get_text(ch) in _request_objects().js_handler_names:
                     is_handler = True
             elif ch.type in ("required_parameter", "optional_parameter"):
                 typ = ch.child_by_field_name("type")
@@ -1510,7 +1494,7 @@ class JavaScriptFrontend:
                 if pat is not None and pat.type == "object_pattern":
                     destructured.append(pat)
                 elif pat is not None and pat.type == "identifier" and \
-                        self._get_text(pat) in ("res", "response", "next"):
+                        self._get_text(pat) in _request_objects().js_handler_names:
                     is_handler = True
             elif ch.type == "object_pattern":
                 destructured.append(ch)
@@ -1806,8 +1790,7 @@ class JavaScriptFrontend:
         # vars). The taint engine then reports it only when that value is
         # actually attacker-tainted; a constant right-hand side stays untainted.
         sink_spec = self._assignment_sink_spec(left)
-        if sink_spec and sink_spec.is_sink in ("html", "xss") and right.type in ("object", "array") \
-                and self._get_text(left).rsplit(".", 1)[-1] == "body":
+        if sink_spec and sink_spec.json_for_literals and right.type in ("object", "array"):
             sink_spec = None            # `ctx.body = { q }` is serialised as JSON, not sent as HTML
         if sink_spec:
             self._add_instr(TaintSink(
@@ -1871,15 +1854,26 @@ class JavaScriptFrontend:
                     return spec
         return None
 
-    # js-yaml: `load(text, { schema: JSON_SCHEMA })` (or the safe / core / failsafe schemas)
-    # cannot construct arbitrary objects, so it is not an unsafe-deserialization sink.
-    _YAML_SAFE_SCHEMA_RE = re.compile(r"\b(?:JSON_SCHEMA|CORE_SCHEMA|FAILSAFE_SCHEMA|DEFAULT_SAFE_SCHEMA|SAFE_SCHEMA)\b")
-
-    def _safe_yaml_load(self, func_name: str, call_node: Optional[TSNode]) -> bool:
-        if call_node is None or func_name.rsplit(".", 1)[-1] != "load" or "yaml" not in func_name.lower():
+    def _safe_options(self, func_name: str, call_node: Optional[TSNode]) -> bool:
+        """The call passes an option its spec's `safe_options` names (`load(text, { schema:
+        JSON_SCHEMA })`), so it is not that spec's sink."""
+        if call_node is None:
+            return False
+        spec = self._lookup_call_spec_by_name(func_name)
+        opt = getattr(spec, "safe_options", None) if spec is not None else None
+        if not opt:
             return False
         args = self._get_call_args(call_node)
-        return len(args) > 1 and bool(self._YAML_SAFE_SCHEMA_RE.search(self._get_text(args[1])))
+        if len(args) <= opt["arg"] or args[opt["arg"]].type != "object":
+            return False
+        for pair in args[opt["arg"]].named_children:
+            if pair.type != "pair":
+                continue
+            key, value = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+            if key is not None and value is not None and self._get_text(key).strip("'\"") == opt["key"] \
+                    and self._get_text(value).rsplit(".", 1)[-1] in opt["values"]:
+                return True
+        return False
 
     def _lookup_call_spec(self, func_name: str, call_node: Optional[TSNode] = None):
         qualified = self._arg_qualified_spec(func_name, call_node)
@@ -1937,7 +1931,7 @@ class JavaScriptFrontend:
         may well export a Mongoose model)."""
         if module in self._NODE_CORE_MODULES or module.split("/")[0] in self._NODE_CORE_MODULES:
             return f"module:{module}"
-        if module in self._IN_MEMORY_LIBS or module.startswith("lodash."):
+        if any(fnmatch.fnmatchcase(module, lib) for lib in self._IN_MEMORY_LIBS):
             return f"module:{module}"
         return None
 
@@ -2414,17 +2408,15 @@ class JavaScriptFrontend:
                 counts[name] = counts.get(name, 0) + 1
         return {k: v for k, v in found.items() if counts.get(k) == 1}
 
-    _TEMPLATE_COMPILERS = frozenset({"lodash.template", "_.template", "underscore.template", "lodash/template"})
-
     def _escaping_template(self, func_node: TSNode) -> bool:
-        """`_.template("<b><%- x %></b>")`: a literal template whose only tags are `<%- %>`
-        (lodash / underscore HTML-escape them), so what the compiled template returns is escaped
-        for HTML. Not when the template has `<%= %>` (raw), `<% %>` (code that can print raw) or
-        `${...}` (lodash interpolates it raw), when an options argument or `templateSettings`
-        could change the delimiters, or when the template is not a literal."""
+        """`_.template("<b><%- x %></b>")`: a literal template for a `[[compiler]]` of
+        template-engines.toml whose every tag escapes, so what the compiled template returns is
+        escaped for HTML. Not with raw syntax, an options argument, the compiler's settings
+        anywhere in the file, or a template that is not a literal."""
         if func_node is None or func_node.type != "call_expression":
             return False
-        if self._get_call_name(func_node) not in self._TEMPLATE_COMPILERS:
+        compiler = _template_engines().compiler_for(self._get_call_name(func_node))
+        if compiler is None:
             return False
         args = self._get_call_args(func_node)
         if len(args) != 1 or args[0].type not in ("string", "template_string"):
@@ -2432,10 +2424,10 @@ class JavaScriptFrontend:
         if args[0].type == "template_string" and any(c.type == "template_substitution" for c in args[0].children):
             return False
         text = self._get_text(args[0])
-        if "templateSettings" in self._source or "${" in text:
+        if compiler.settings in self._source or any(p.search(text) for p in compiler.raw_text):
             return False
-        tags = re.findall(r"<%(.?)", text)
-        return bool(tags) and all(t == "-" for t in tags)
+        tags = [m.group("marker") for m in compiler.tag.finditer(text)]
+        return bool(tags) and all(t in compiler.escaped for t in tags)
 
     _FUNCTION_TYPES = ("function_declaration", "function_expression", "arrow_function", "method_definition",
                        "generator_function_declaration", "program")
@@ -2549,14 +2541,14 @@ class JavaScriptFrontend:
         return list(arguments.named_children) if arguments is not None else []
 
     def _render_data_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> Optional[List[Exp]]:
-        """For `res.render("view", { a, b: x })` whose template is found and
+        """For a `renders_view` call (`res.render("view", { a, b: x })`) whose template is found and
         readable: the data values the template prints without escaping
         (`<%- a %>`, `{{{ a }}}`, `a | safe`). The rest is escaped by the engine
         and is not an XSS sink. None when this is not such a call or the
         template is unknown (every value then stays a sink)."""
         node = args[arg_idx]
-        if not (arg_idx == 1 and func_name.rsplit(".", 1)[-1] == "render"
-                and args[0].type == "string" and node.type == "object"):
+        if not (arg_idx == 1 and args[0].type == "string" and node.type == "object"
+                and getattr(self._lookup_call_spec_by_name(func_name), "renders_view", False)):
             return None
         from frame.sil.templates import keep_render_arguments
         view = self._get_text(args[0]).strip("'\"`")
@@ -2583,7 +2575,7 @@ class JavaScriptFrontend:
         if kept is None:
             if self._spawn_argv_is_data(func_name, args, idx):
                 return ExpConst.string("")      # argv of a shell-less spawn: arguments, not a command line
-            if args[idx].type in ("object", "array") and func_name.rsplit(".", 1)[-1] in ("send", "response"):
+            if args[idx].type in ("object", "array") and self._json_for_literals(func_name):
                 return ExpConst.string("")      # serialised as JSON, not sent as HTML
             return self._translate_expression(args[idx])
         return ExpStringConcat(kept) if kept else ExpConst.string("")
@@ -2607,6 +2599,15 @@ class JavaScriptFrontend:
             return is_shell(text)                                     # specs/data/shells.toml
         return node.type != "template_string"
 
+    def _json_for_literals(self, func_name: str) -> bool:
+        """The call is a response sink that sends an object or array literal as JSON: its spec row
+        or a pack sink rule naming it says `json_for_literals`."""
+        if getattr(self._lookup_call_spec_by_name(func_name), "json_for_literals", False):
+            return True
+        packs = self.packs if self.packs is not None else default_packs()
+        return any(r.json_for_literals and func_name in r.name
+                   for pack in packs.for_language("javascript") for r in pack.rules if r.role == "sink")
+
     def _sink_arg_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> List[Exp]:
         """The expressions of sink argument `arg_idx`: the argument itself, or
         for a render call whose template is known, the raw-printed data values."""
@@ -2618,10 +2619,9 @@ class JavaScriptFrontend:
         # `{ shell: true }` the framework-pack rule covers it.
         if self._spawn_argv_is_data(func_name, args, arg_idx):
             return []
-        # `res.send({ q: req.query.q })` / `h.response([...])`: an object or array is
-        # serialised as JSON (application/json), not sent as HTML.
-        if (args[arg_idx].type in ("object", "array")
-                and func_name.rsplit(".", 1)[-1] in ("send", "response")):
+        # `res.send({ q: req.query.q })`: a sink whose spec says it sends an object or array
+        # as JSON (`json_for_literals`) does not send this one as HTML.
+        if args[arg_idx].type in ("object", "array") and self._json_for_literals(func_name):
             return []
         return [self._translate_expression(args[arg_idx])]
 
@@ -3193,24 +3193,15 @@ class JavaScriptFrontend:
 
         elif node.type == "ternary_expression" or node.type == "conditional_expression":
             # condition ? true : false
-            # For taint tracking, we need to consider both branches
-            # Simplified: prefer alternative if it looks like a taint source, otherwise consequence
             cond = node.child_by_field_name("condition")
             conseq = node.child_by_field_name("consequence")
             alt = node.child_by_field_name("alternative")
 
-            # Check if alternative contains a taint source pattern
-            alt_chain = self._get_member_chain(alt) if alt else ""
-            if alt_chain and any(alt_chain.startswith(src) for src in ["req.", "request."]):
-                return self._translate_expression(alt) if alt else ExpConst.null()
-
-            # Check if consequence contains a taint source pattern
-            conseq_chain = self._get_member_chain(conseq) if conseq else ""
-            if conseq_chain and any(conseq_chain.startswith(src) for src in ["req.", "request."]):
+            # Either branch: the translator takes the one the condition folds to, else both.
+            if cond is None or conseq is None or alt is None:
                 return self._translate_expression(conseq) if conseq else ExpConst.null()
-
-            # Default: return consequence
-            return self._translate_expression(conseq) if conseq else ExpConst.null()
+            return ExpTernary(self._translate_expression(cond), self._translate_expression(conseq),
+                              self._translate_expression(alt))
 
         elif node.type == "await_expression":
             # await_expression has NO "argument" field -- the awaited expression
@@ -3319,7 +3310,7 @@ class JavaScriptFrontend:
         if container is None:
             return
 
-        value_node = self._extract_jsx_sink_value(container)
+        value_node = self._extract_jsx_sink_value(container, spec.sink_property)
         if value_node is None:
             return
 
@@ -3331,12 +3322,12 @@ class JavaScriptFrontend:
             arg_index=0,
         ))
 
-    def _extract_jsx_sink_value(self, container_node: TSNode) -> Optional[TSNode]:
+    def _extract_jsx_sink_value(self, container_node: TSNode, prop: str) -> Optional[TSNode]:
         """Extract the taint-relevant value from a JSX expression container.
 
-        For ``dangerouslySetInnerHTML={{ __html: EXPR }}`` returns the ``EXPR``
-        node of the ``__html`` property. Falls back to the container's inner
-        expression when there is no inline ``__html`` object (e.g. ``={x}``).
+        For an inline object and a spec with `sink_property` (``dangerouslySetInnerHTML={{ __html:
+        EXPR }}``) returns that property's ``EXPR``; otherwise the container's inner expression
+        (e.g. ``={x}``).
         """
         inner = next(
             (c for c in container_node.children if c.type not in ("{", "}")),
@@ -3346,13 +3337,13 @@ class JavaScriptFrontend:
             return None
 
         # Inline object literal: { __html: EXPR }
-        if inner.type == "object":
+        if inner.type == "object" and prop:
             for child in inner.children:
                 if child.type != "pair":
                     continue
                 key_node = child.child_by_field_name("key")
                 key_text = self._get_text(key_node).strip("\"'") if key_node else ""
-                if key_text == "__html":
+                if key_text == prop:
                     return child.child_by_field_name("value")
             return None
 
@@ -3433,20 +3424,34 @@ class JavaScriptFrontend:
         return Location(file=self._filename, line=prop.start_point[0] + 1, column=prop.start_point[1],
                         end_line=call_node.end_point[0] + 1, end_column=call_node.end_point[1])
 
-    # Methods that configure the object they are called on and return it, so
-    # `res.status(200).send(x)` is `res.send(x)` (Express/Fastify/Koa responses).
-    _FLUENT_SETTERS = frozenset({"status", "code", "type", "contentType", "set", "header", "headers",
-                                 "cookie", "clearCookie", "append", "vary", "location", "links",
-                                 "attachment", "hijack", "serializer", "statusCode"})
-
-    _JQUERY_ROOTS = frozenset({"$", "jQuery"})
-    # traversal / filtering methods that return another jQuery collection
-    _JQUERY_CHAIN = frozenset({"find", "children", "parent", "parents", "closest", "first", "last", "eq", "next",
-                               "prev", "siblings", "filter", "not", "has", "addClass", "removeClass", "css", "show",
-                               "hide", "empty", "end", "slice", "add", "contents", "nextAll", "prevAll", "wrap"})
+    def _fluent_tables(self):
+        """From the packs' `[[fluent]]` entries: (setter methods of plain receivers, {root: (name,
+        chain methods)}, content-type methods, content-type header methods)."""
+        packs = self.packs if self.packs is not None else default_packs()
+        cached = getattr(self, "_fluent_cache", None)
+        if cached is not None and cached[0] is packs:
+            return cached[1]
+        setters, roots, ctype, header = set(), {}, set(), set()
+        for pack in packs.for_language("javascript"):
+            for fl in pack.fluents:
+                if fl.roots:
+                    for r in fl.roots:
+                        name, methods = roots.get(r, (fl.name, frozenset()))
+                        roots[r] = (name, methods | frozenset(fl.methods))
+                else:
+                    setters |= set(fl.methods)
+                ctype |= set(fl.content_type)
+                header |= set(fl.content_type_header)
+        tables = (frozenset(setters), roots, frozenset(ctype), frozenset(header))
+        self._fluent_cache = (packs, tables)
+        return tables
 
     def _jquery_call_name(self, call_node: TSNode) -> Optional[str]:
-        """`$('#x').find('li').html(v)` -> `$.html`: a method called on a jQuery collection."""
+        """`$('#x').find('li').html(v)` -> `$.html`: a method called on a collection a fluent root
+        (`[[fluent]] roots`) returned, through its chain methods."""
+        _, roots, _, _ = self._fluent_tables()
+        if not roots:
+            return None
         func = call_node.child_by_field_name("function")
         if func is None or func.type != "member_expression":
             return None
@@ -3456,23 +3461,41 @@ class JavaScriptFrontend:
             inner = obj.child_by_field_name("function")
             if inner is None:
                 return None
-            if inner.type == "identifier" and self._get_text(inner) in self._JQUERY_ROOTS:
-                return f"$.{self._get_text(method)}" if method is not None else None
+            if inner.type == "identifier" and self._get_text(inner) in roots:
+                name = roots[self._get_text(inner)][0]
+                return f"{name}.{self._get_text(method)}" if method is not None else None
             if inner.type != "member_expression":
                 return None
             prop = inner.child_by_field_name("property")
-            if prop is None or self._get_text(prop) not in self._JQUERY_CHAIN:
+            chain = self._chain_root(inner)
+            if prop is None or chain is None or self._get_text(prop) not in roots[chain][1]:
                 return None
             obj = inner.child_by_field_name("object")
         return None
 
+    def _chain_root(self, member: TSNode) -> Optional[str]:
+        """The fluent root a chain `root(...).a(...).b` starts from, or None."""
+        roots = self._fluent_tables()[1]
+        obj = member.child_by_field_name("object")
+        while obj is not None and obj.type == "call_expression":
+            f = obj.child_by_field_name("function")
+            if f is None:
+                return None
+            if f.type == "identifier":
+                return self._get_text(f) if self._get_text(f) in roots else None
+            if f.type != "member_expression":
+                return None
+            obj = f.child_by_field_name("object")
+        return None
+
     def _sets_non_html_content_type(self, setter: str, args: List[TSNode]) -> bool:
-        """`type('json')`, `contentType('text/plain')`, `set('Content-Type', 'image/png')`: a literal
-        content type that is not HTML / XML."""
+        """`type('json')`, `contentType('text/plain')`, `set('Content-Type', 'image/png')` (the packs'
+        content-type setters): a literal content type that is not HTML / XML."""
+        _, _, ctype, header = self._fluent_tables()
         value = None
-        if setter in ("type", "contentType") and args:
+        if setter in ctype and args:
             value = args[0]
-        elif setter in ("set", "header", "append") and len(args) >= 2 \
+        elif setter in header and len(args) >= 2 \
                 and args[0].type == "string" and self._get_text(args[0]).strip("'\"`").lower() == "content-type":
             value = args[1]
         if value is None or value.type != "string":
@@ -3498,7 +3521,7 @@ class JavaScriptFrontend:
             if inner is None or inner.type != "member_expression":
                 return None
             prop = inner.child_by_field_name("property")
-            if prop is None or self._get_text(prop) not in self._FLUENT_SETTERS:
+            if prop is None or self._get_text(prop) not in self._fluent_tables()[0]:
                 return None
             if self._sets_non_html_content_type(self._get_text(prop), self._get_call_args(obj)):
                 return None         # `res.type('text').send(x)` is not an HTML response
@@ -3530,8 +3553,8 @@ class JavaScriptFrontend:
             name = f"{self._module_aliases[root]}.{rest}"
         elif not dot and name in getattr(self, "_imported_names", {}):
             name = self._imported_names[name]
-        if self._safe_yaml_load(name, call_node):
-            return name.rsplit(".", 1)[0] + ".safeLoad"     # load(text, { schema: JSON_SCHEMA }) is safeLoad
+        if self._safe_options(name, call_node):
+            return name + ":safe-options"       # not the sink spec's name: default propagation applies
         return name
 
     def _constructor_field_paths(self, root: TSNode) -> Dict[str, Set[str]]:

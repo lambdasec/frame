@@ -82,6 +82,33 @@ exclude_decorator = ["NonAction"]
 params = "all"
 ```
 
+`param_positions` narrows an entry point to parameters by position (0-based), whatever they are called or however they are destructured: a GraphQL resolver is called as `(parent, args, context, info)`, so the built-in `graphql` pack takes `param_positions = [1]`.
+
+JavaScript packs have two more kinds. `[[registration]]` names the functions an application hands to a framework inside an object, for an entry point's `registered_via` to select:
+
+```toml
+[[registration]]                         # Query: { user(parent, args) {...} }, or const resolvers = { User: {...} }
+keys = ["Query", "Mutation", "Subscription"]
+containers = ["*resolvers"]              # case-insensitive globs on the enclosing object's name
+registered_as = "graphql.resolver"
+```
+
+`[[fluent]]` names methods that return the object they configure, so a call at the end of a chain is matched as if made on the object itself. With `roots`, a call of a root starts such a chain and calls on it are named `<name>.<method>`. A pack holding `[[fluent]]` entries has no `detect` (the object is often a parameter of a file that imports nothing):
+
+```toml
+[[fluent]]                               # res.status(200).send(x) is res.send(x)
+methods = ["status", "type", "set"]
+content_type = ["type"]                  # res.type("json").send(x) is not an HTML response
+content_type_header = ["set"]            # nor is res.set("Content-Type", "image/png").send(x)
+
+[[fluent]]                               # $("#x").find("li").html(v) is $.html(v)
+roots = ["$", "jQuery"]
+name = "$"
+methods = ["find", "filter"]
+```
+
+A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
+
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:
 
 ```toml

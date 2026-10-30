@@ -10,3 +10,11 @@ client_properties = ["body", "params", "query", "cookies", "headers", "file", "f
 # (Django / DRF), the server-side session, the auth token object. A handler's `request` parameter is
 # tainted as a whole, so a read of `request.<one of these>...` is not attacker data.
 server_state = ["user", "session", "auth"]
+
+# JavaScript naming conventions, used where the frontend has no framework evidence for a handler:
+# the names an Express / Koa / Fastify handler conventionally gives its request object (a value read
+# from `req.x` / `request.x` is request data) and the names of the parameters beside it (a function
+# taking `res`, `response` or `next` is a request handler). Findings resting on them carry
+# `source_evidence: "naming-convention"` unless the project shows a web framework.
+js_request_names = ["req", "request"]
+js_handler_names = ["res", "response", "next"]

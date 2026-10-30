@@ -55,6 +55,7 @@ description = "Express single file upload"
 [[spec]]
 name = "res.send"
 is_sink = "html"
+json_for_literals = true      # an object or array is sent as application/json
 description = "Express response (XSS)"
 
 [[spec]]
@@ -71,6 +72,7 @@ description = "Express response end (XSS)"
 name = "res.render"
 is_sink = "html"
 sink_args = [1]
+renders_view = true      # (view, data): only the data the view prints raw is a sink (templates.py)
 description = "Express template render"
 
 [[spec]]
@@ -98,6 +100,7 @@ description = "Express header injection"
 [[spec]]
 name = "ctx.body"
 is_sink = "html"
+json_for_literals = true      # an object or array is sent as application/json
 description = "Koa response body (XSS)"
 
 [[spec]]
@@ -834,6 +837,7 @@ description = "Message event data"
 [[spec]]
 name = "dangerouslySetInnerHTML"
 is_sink = "html"
+sink_property = "__html"      # ={{ __html: x }}: React inserts x as HTML (react.dev, dangerouslySetInnerHTML)
 description = "React dangerouslySetInnerHTML (XSS)"
 
 [[spec]]
@@ -944,11 +948,14 @@ description = "node-serialize.unserialize (RCE)"
 [[spec]]
 name = "js-yaml.load"
 is_sink = "deserialize"
+# the JSON / core / failsafe / safe schemas construct no JavaScript objects (js-yaml README, "Schemas")
+safe_options = { arg = 1, key = "schema", values = ["JSON_SCHEMA", "CORE_SCHEMA", "FAILSAFE_SCHEMA", "DEFAULT_SAFE_SCHEMA", "SAFE_SCHEMA"] }
 description = "js-yaml.load (unsafe by default)"
 
 [[spec]]
 name = "yaml.load"
 is_sink = "deserialize"
+safe_options = { arg = 1, key = "schema", values = ["JSON_SCHEMA", "CORE_SCHEMA", "FAILSAFE_SCHEMA", "DEFAULT_SAFE_SCHEMA", "SAFE_SCHEMA"] }
 description = "yaml.load (unsafe deserialization)"
 
 [[spec]]

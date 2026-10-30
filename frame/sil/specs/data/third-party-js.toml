@@ -1,0 +1,22 @@
+# Which JavaScript files are third-party libraries or generated bundles, not the application's own
+# code. The whole-file ReDoS and prototype-pollution passes (structural, not taint-gated) skip them;
+# taint analysis runs everywhere. Read by the JS frontend through frame/sil/specs/third_party_js.py.
+
+# Path parts (directories) that hold copies of libraries or build output (case-insensitive).
+directories = ["lib", "libs", "vendor", "vendors", "plugin", "plugins", "external", "third_party", "third-party",
+               "thirdparty", "bower_components", "node_modules", "jspm_packages", "dist", "build", "min"]
+# File-name markers of a minified or bundled file.
+minified_markers = [".min."]
+minified_suffixes = [".bundle.js", ".map"]
+# A physical line longer than this is minified code.
+minified_line_length = 800
+# A file named after a well-known browser library (`jquery-3.6.0.js`, `bootstrap.min.js`): the name
+# followed by a separator, a digit or the end. `prototype` only before a version or `.js`/`.min`.
+library_names = ["jquery", "jquery-ui", "jqueryui", "bootstrap", "angular", "backbone", "underscore", "lodash",
+                 "moment", "modernizr", "d3", "react", "react-dom", "vue", "ember", "knockout", "mootools",
+                 "dojo", "extjs", "tinymce", "ckeditor", "wysihtml5", "select2", "datatables", "highcharts",
+                 "chartjs", "three", "ace", "requirejs", "handlebars", "mustache", "popper", "slick", "swiper",
+                 "flatpickr", "axios", "zepto", "hammer", "normalize", "polyfill"]
+versioned_library_names = ["prototype"]
+# A file name carrying a version (`foo-1.2.js`).
+version_in_name = true

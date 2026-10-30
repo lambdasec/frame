@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from frame.sil.specs.request_objects import load as _request_objects
+
 _FRAMEWORKS = (
     "express", "koa", "koa-router", "@koa/router", "fastify", "hapi", "@hapi/hapi", "restify",
     "@nestjs/common", "@nestjs/core", "next", "next/server", "sails", "loopback", "connect", "polka",
@@ -19,7 +21,7 @@ _IMPORT = re.compile(
     r"""(?:require\s*\(\s*|from\s+|import\s+|import\s*\(\s*)['"]((?:node:)?[@\w./-]+)['"]""")
 _NEST_DECORATOR = re.compile(r"@(?:Controller|Get|Post|Put|Delete|Patch|Req|Request)\s*\(")
 _TYPED_REQUEST = re.compile(r"\b\w+\s*:\s*(?:express\.|Express\.)?(?:Request|NextRequest|FastifyRequest)\b")
-SOURCE_ROOTS = ("req", "request")
+SOURCE_ROOTS = _request_objects().js_request_names
 
 
 def has_framework_evidence(source: str) -> bool:

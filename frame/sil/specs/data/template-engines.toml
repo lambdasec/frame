@@ -62,3 +62,15 @@ name = "pug"               # also Jade
 raw = ['(?m)^\s*[\w.#-]*(?:\([^)]*\))?\s*!=(?P<expr>.*)$', '!\{(?P<expr>.*?)\}']
 include = ['(?m)^\s*(?:include|extends)\s+(?P<file>[\w./-]+)\s*$']
 alias = ['each\s+(?P<alias>{ident})(?:\s*,\s*{ident})?\s+in\s+(?P<source>.+)']
+
+# Templates compiled in code. lodash / underscore `_.template(text)` returns a function; `<%- x %>`
+# HTML-escapes x, `<%= x %>` prints it raw, `<% code %>` runs code that can print raw, and lodash also
+# interpolates ES `${x}` raw. `templateSettings` changes the delimiters for every template.
+# (lodash docs, _.template; underscore docs, _.template.)
+[[compiler]]
+name = "lodash"
+calls = ["lodash.template", "_.template", "underscore.template", "lodash/template"]
+tag = '<%(?P<marker>.?)'
+escaped = ["-"]
+raw_text = ['\$\{']
+settings = "templateSettings"

@@ -1,0 +1,17 @@
+[pack]
+name = "http-response"
+language = "javascript"
+description = "Response objects of Express, Fastify, Koa and Restify: setter methods that return the response"
+references = ["https://expressjs.com/en/api.html#res", "https://fastify.dev/docs/latest/Reference/Reply/",
+              "https://koajs.com/#response", "http://restify.com/docs/response-api/"]
+
+# No detect: a route module receives `res` as a parameter and often imports nothing.
+# `res.status(200).send(x)` is `res.send(x)`: each of these configures the response and returns it
+# (Express res.status/type/set/header/cookie/clearCookie/append/vary/location/links/attachment;
+# Fastify reply.code/type/header/headers/hijack/serializer; Restify res.status/header).
+[[fluent]]
+id = "response-setters"
+methods = ["status", "code", "type", "contentType", "set", "header", "headers", "cookie", "clearCookie",
+           "append", "vary", "location", "links", "attachment", "hijack", "serializer", "statusCode"]
+content_type = ["type", "contentType"]               # res.type("json"), reply.type("text/plain")
+content_type_header = ["set", "header", "append"]    # res.set("Content-Type", "image/png")

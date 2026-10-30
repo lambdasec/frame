@@ -201,6 +201,7 @@ def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
                 continue
             spec.is_sink = rule.kind
             spec.sink_args = args
+            spec.json_for_literals = spec.json_for_literals or rule.json_for_literals
             changed = True
         elif rule.role == "sanitizer":
             spec.is_sanitizer = sorted(set(spec.is_sanitizer) | set(rule.kinds))
@@ -384,7 +385,8 @@ def bound_names(param: str) -> List[str]:
 
 
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
-    names = [n for p, _ in proc.params for n in (bound_names(p.name) if p.name[:1] in "{[" else [p.name])]
+    params = [p for i, (p, _) in enumerate(proc.params) if not e.param_positions or i in e.param_positions]
+    names = [n for p in params for n in (bound_names(p.name) if p.name[:1] in "{[" else [p.name])]
     out: List[str] = []
     for n in names:
         if n in _IMPLICIT_RECEIVERS or _glob(e.exclude_param, n):

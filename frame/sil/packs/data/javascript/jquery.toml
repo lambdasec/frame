@@ -1,0 +1,16 @@
+[pack]
+name = "jquery"
+language = "javascript"
+description = "jQuery collections: $(...) and its traversal methods return a collection, whose html() / append() are DOM sinks"
+references = ["https://api.jquery.com/category/traversing/", "https://api.jquery.com/html/"]
+
+# No detect: jQuery is usually a page global, not an import.
+# $("#x").find("li").html(v) is `$.html(v)`: the traversal, filtering and styling methods return
+# the (filtered) collection, so the sink specs written for `$.html`, `$.append`... apply.
+[[fluent]]
+id = "jquery-collection"
+roots = ["$", "jQuery"]
+name = "$"
+methods = ["find", "children", "parent", "parents", "closest", "first", "last", "eq", "next", "prev", "siblings",
+           "filter", "not", "has", "addClass", "removeClass", "css", "show", "hide", "empty", "end", "slice", "add",
+           "contents", "nextAll", "prevAll", "wrap"]

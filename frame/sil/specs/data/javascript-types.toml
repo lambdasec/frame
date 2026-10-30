@@ -7,9 +7,9 @@
 # Node core modules: they hand out hashes, buffers, streams and handles of their own, never a
 # database collection (`fs/promises` and other subpaths count as their module).
 node_core = ["assert", "async_hooks", "buffer", "child_process", "cluster", "console", "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "fs/promises", "http", "http2", "https", "inspector", "module", "net", "os", "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib"]
-# In-memory collection utilities: their find / remove work on arrays and objects (`lodash.*`
-# per-method packages count as lodash).
-in_memory = ["lodash", "lodash-es", "lodash/fp", "ramda", "underscore"]
+# In-memory collection utilities: their find / remove work on arrays and objects (globs: the
+# `lodash.*` per-method packages are lodash).
+in_memory = ["lodash", "lodash-es", "lodash/fp", "lodash.*", "ramda", "underscore"]
 
 [methods]
 # A call of one of these returns a database handle (`db.collection("users")`,

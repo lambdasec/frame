@@ -59,6 +59,11 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
         sizes = entry.get("size_args", [])
         if not isinstance(sizes, list) or not all(isinstance(i, int) and i >= 0 for i in sizes):
             raise SpecTableError(f"{origin}: {name}: size_args must be argument positions")
+        safe = entry.get("safe_options")
+        if safe is not None and not (isinstance(safe, dict) and set(safe) == {"arg", "key", "values"}
+                                     and isinstance(safe["arg"], int) and isinstance(safe["key"], str)
+                                     and isinstance(safe["values"], list) and safe["values"]):
+            raise SpecTableError(f"{origin}: {name}: safe_options needs arg, key and a non-empty values list")
         specs[name] = ProcSpec(**{k: (set(v) if k in _SET_FIELDS else v) for k, v in entry.items()})
     return specs
 

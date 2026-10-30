@@ -20,6 +20,7 @@ description = "hapi handler exported as an object method"
 name = ["h.response"]
 args = [0]
 kind = "html"
+json_for_literals = true      # an object or array is serialised as JSON
 description = "hapi response toolkit: the value is the response body"
 
 [[sink]]

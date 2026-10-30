@@ -17,6 +17,7 @@ description = "Fastify request object (query, params, body, headers, cookies)"
 name = ["reply.send", "res.send"]
 args = [0]
 kind = "html"
+json_for_literals = true      # an object or array is serialised as JSON
 description = "Fastify reply.send"
 
 [[sink]]

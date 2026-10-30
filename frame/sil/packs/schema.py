@@ -45,10 +45,10 @@ _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 _PACK_KEYS = {"name", "language", "description", "detect", "version", "references"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
-               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "params", "param_annotation", "param_type", "exclude_param",
+               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
-_SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "description"}
+_SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
@@ -57,8 +57,10 @@ _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "descrip
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
                 "description"}
 _DEFINE_KEYS = {"name", "params", "body", "description"}
+_REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"}
+_FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
-             "lambda_handler", "policy", "define"}
+             "lambda_handler", "fluent", "registration", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -82,6 +84,7 @@ class Entrypoint:
     exclude_modifiers: List[str] = field(default_factory=list)   # none of these (static)
     exclude_decorator: List[str] = field(default_factory=list)   # none of these annotations ([NonAction])
     exclude_method: List[str] = field(default_factory=list)      # method-name globs that are not entries
+    param_positions: List[int] = field(default_factory=list)     # only these parameters (0-based), if given
     params: Any = "none"                 # "all" | "annotated" | "typed" | "none" | [names]
     param_annotation: List[str] = field(default_factory=list)
     param_type: List[str] = field(default_factory=list)
@@ -109,6 +112,7 @@ class Rule:
     propagate_from: List[int] = field(default_factory=list)
     propagate_to: str = "return"
     receiver: bool = False
+    json_for_literals: bool = False      # sink: an object / array literal is sent as JSON, not as HTML
     description: str = ""
     # a sink only where nothing else already makes the call one (generated rules, frame/sca):
     # never replaces a built-in or pack sink kind
@@ -157,6 +161,37 @@ class LambdaHandler:
 
 
 @dataclass
+class Registration:
+    """JavaScript: functions an application hands to a framework by putting them in an object
+    under one of `keys` (`Query: { user(parent, args) {...} }`), or one level deeper in an object
+    bound to a name matching `containers` (`const resolvers = { Query: {...} }`), are registered
+    as `registered_as`, for an `[[entrypoint]] registered_via` to select (`[[registration]]`)."""
+    id: str
+    keys: List[str]
+    registered_as: str
+    containers: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
+class Fluent:
+    """JavaScript: methods that configure the object they are called on and return it
+    (`[[fluent]]`), so `res.status(200).send(x)` is the call `res.send(x)`. With `roots`, a call
+    of a root (`$("#x")`) is such an object too, and a method called on the chain is named
+    `<name>.<method>` (`$("#x").find("li").html(v)` is `$.html`). `content_type` /
+    `content_type_header` are the methods that set a response's content type (`type(v)`,
+    `set("Content-Type", v)`): a literal type that is neither HTML nor XML makes the response
+    not an HTML sink."""
+    id: str
+    methods: List[str]
+    roots: List[str] = field(default_factory=list)
+    name: str = ""
+    content_type: List[str] = field(default_factory=list)
+    content_type_header: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
 class Policy:
     """An infrastructure misconfiguration (`[[policy]]`, IaC packs only): `when` is a formula in
     the policy language (frame/iac/policy.py) over a resource's views; a resource of one of
@@ -191,6 +226,8 @@ class Pack:
     settings: List[Setting] = field(default_factory=list)
     functions: List[FunctionFact] = field(default_factory=list)
     lambda_handlers: List[LambdaHandler] = field(default_factory=list)
+    fluents: List[Fluent] = field(default_factory=list)
+    registrations: List[Registration] = field(default_factory=list)
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
@@ -295,6 +332,11 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             e.decorator += _strings(origin, f"{where}.annotation", t["annotation"])
         if "class_annotation" in t:
             e.class_decorator += _strings(origin, f"{where}.class_annotation", t["class_annotation"])
+        positions = t.get("param_positions", [])
+        if not isinstance(positions, list) or not all(isinstance(i, int) and not isinstance(i, bool) and i >= 0
+                                                      for i in positions):
+            raise _fail(origin, f"{where}.param_positions", "must be a list of parameter positions (0-based)")
+        e.param_positions = list(positions)
         params = t.get("params", "none")
         if isinstance(params, str):
             if params not in ("all", "annotated", "typed", "none"):
@@ -337,6 +379,9 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                 r.kind = _sink_kind(origin, f"{where}.kind", t.get("kind"))
                 r.args = _ints(origin, f"{where}.args", t["args"]) if "args" in t else [0]
                 r.arg_names = _strings(origin, f"{where}.arg_names", t.get("arg_names", []))
+                if not isinstance(t.get("json_for_literals", False), bool):
+                    raise _fail(origin, f"{where}.json_for_literals", "must be true or false")
+                r.json_for_literals = t.get("json_for_literals", False)
                 wk = t.get("when_kwarg")
                 if wk is not None:
                     if not (isinstance(wk, dict) and set(wk) == {"name", "value"}
@@ -432,6 +477,47 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (handler.imports or pack.detect_imports):
             raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
         pack.lambda_handlers.append(handler)
+
+    for i, t in enumerate(data.get("registration", [])):
+        where = f"[[registration]] #{i + 1}"
+        _check_keys(origin, where, t, _REGISTRATION_KEYS)
+        if language != "javascript":
+            raise _fail(origin, where, "registrations are for JavaScript packs")
+        for key in ("keys", "registered_as"):
+            if key not in t:
+                raise _fail(origin, where, f"needs {key}")
+        reg = Registration(id=str(t.get("id", f"{name}-registration-{i + 1}")),
+                           keys=_strings(origin, f"{where}.keys", t["keys"]),
+                           registered_as=str(t["registered_as"]),
+                           containers=_strings(origin, f"{where}.containers", t.get("containers", [])),
+                           description=str(t.get("description", "")))
+        if not reg.keys or not reg.registered_as:
+            raise _fail(origin, where, "keys and registered_as must not be empty")
+        pack.registrations.append(reg)
+
+    for i, t in enumerate(data.get("fluent", [])):
+        where = f"[[fluent]] #{i + 1}"
+        _check_keys(origin, where, t, _FLUENT_KEYS)
+        if language != "javascript":
+            raise _fail(origin, where, "fluent entries are for JavaScript packs")
+        if pack.has_detect:
+            raise _fail(origin, where, "fluent entries apply to every file (the object is often a parameter "
+                                       "of a file that imports nothing): use a pack without detect")
+        if "methods" not in t:
+            raise _fail(origin, where, "needs methods")
+        fl = Fluent(id=str(t.get("id", f"{name}-fluent-{i + 1}")),
+                    methods=_strings(origin, f"{where}.methods", t["methods"]),
+                    roots=_strings(origin, f"{where}.roots", t.get("roots", [])),
+                    name=str(t.get("name", "")),
+                    content_type=_strings(origin, f"{where}.content_type", t.get("content_type", [])),
+                    content_type_header=_strings(origin, f"{where}.content_type_header",
+                                                 t.get("content_type_header", [])),
+                    description=str(t.get("description", "")))
+        if not fl.methods:
+            raise _fail(origin, where, "methods must not be empty")
+        if bool(fl.roots) != bool(fl.name):
+            raise _fail(origin, where, "roots and name go together")
+        pack.fluents.append(fl)
 
     code_tables = [t for t in _TOP_KEYS - {"pack", "policy", "define"} if data.get(t)]
     if language in IAC_LANGUAGES and code_tables:

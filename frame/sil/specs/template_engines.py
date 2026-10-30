@@ -17,10 +17,11 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "data" / "template-engines.toml"
 IDENT = r"[A-Za-z_$][\w$]*"
-_TOP = {"extensions", "view_dirs", "layouts", "keywords", "escape", "engine"}
+_TOP = {"extensions", "view_dirs", "layouts", "keywords", "escape", "engine", "compiler"}
+_COMPILER = {"name", "calls", "tag", "escaped", "raw_text", "settings"}
 _ESCAPE = {"template_off", "dynamic_include", "config_off"}
 _ENGINE = {"name", "raw", "include", "alias", "block_open", "block_close", "block_raw_engines"}
-_GROUPS = {"raw": {"expr"}, "include": {"file"}, "alias": {"alias", "source"}, "block_open": {"context"},
+_GROUPS = {"tag": {"marker"}, "raw": {"expr"}, "include": {"file"}, "alias": {"alias", "source"}, "block_open": {"context"},
            "block_close": set()}
 
 
@@ -34,6 +35,18 @@ class Engine(NamedTuple):
     block_raw_engines: Tuple[str, ...]
 
 
+class Compiler(NamedTuple):
+    """A template compiled in code (`_.template("<%- x %>")`): its output is escaped when the
+    literal's every `tag` match has an `escaped` marker, no `raw_text` occurs, and the file never
+    mentions `settings` (which can change the delimiters)."""
+    name: str
+    calls: FrozenSet[str]
+    tag: Pattern
+    escaped: FrozenSet[str]
+    raw_text: Tuple[Pattern, ...]
+    settings: str
+
+
 class TemplateEngines(NamedTuple):
     extensions: Tuple[str, ...]
     view_dirs: Tuple[str, ...]
@@ -43,6 +56,10 @@ class TemplateEngines(NamedTuple):
     dynamic_include: Pattern
     config_escape_off: Pattern
     engines: Tuple[Engine, ...]
+    compilers: Tuple[Compiler, ...] = ()
+
+    def compiler_for(self, call: str) -> Optional[Compiler]:
+        return next((c for c in self.compilers if call in c.calls), None)
 
     def patterns(self, role: str) -> List[Pattern]:
         return [p for e in self.engines for p in getattr(e, role)]
@@ -101,6 +118,18 @@ def load(path: Path = PATH) -> TemplateEngines:
         unknown = set(e.block_raw_engines) - known
         if unknown:
             raise ValueError(f"{name}: engine {e.name}: block_raw_engines names unknown {sorted(unknown)}")
+    compilers = []
+    for i, c in enumerate(data["compiler"]):
+        where = f"compiler {i + 1}"
+        if not isinstance(c, dict) or set(c) != _COMPILER:
+            raise ValueError(f"{name}: {where} needs exactly {sorted(_COMPILER)}")
+        compilers.append(Compiler(
+            name=str(c["name"]), calls=frozenset(_strings(name, f"{where} calls", c["calls"])),
+            tag=_compile(name, f"{where} tag", c["tag"], "tag"),
+            escaped=frozenset(_strings(name, f"{where} escaped", c["escaped"])),
+            raw_text=tuple(_compile(name, f"{where} raw_text", p, "raw_text")
+                           for p in _strings(name, f"{where} raw_text", c["raw_text"])),
+            settings=str(c["settings"])))
     return TemplateEngines(
         extensions=_strings(name, "extensions", data["extensions"]),
         view_dirs=_strings(name, "view_dirs", data["view_dirs"]),
@@ -109,7 +138,7 @@ def load(path: Path = PATH) -> TemplateEngines:
         template_escape_off=_compile(name, "[escape] template_off", escape["template_off"], "escape"),
         dynamic_include=_compile(name, "[escape] dynamic_include", escape["dynamic_include"], "escape"),
         config_escape_off=_compile(name, "[escape] config_off", escape["config_off"], "escape"),
-        engines=tuple(engines))
+        engines=tuple(engines), compilers=tuple(compilers))
 
 
-__all__ = ["Engine", "IDENT", "PATH", "TemplateEngines", "load"]
+__all__ = ["Compiler", "Engine", "IDENT", "PATH", "TemplateEngines", "load"]

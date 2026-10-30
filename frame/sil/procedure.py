@@ -232,6 +232,24 @@ class ProcSpec:
     # the attacker data they deliver never becomes tainted.
     taint_out_args: List[int] = field(default_factory=list)
 
+    # JavaScript: the call is not this spec's sink when argument `arg` is an object literal whose
+    # property `key` is one of `values` (compared by the last part of the name written there):
+    # js-yaml's `load(text, { schema: JSON_SCHEMA })` cannot construct objects.
+    # {"arg": 1, "key": "schema", "values": [...]}
+    safe_options: Dict[str, Any] = field(default_factory=dict)
+
+    # A response sink that serialises an object or array literal as JSON (`res.send({ q })`,
+    # Koa's `ctx.body = [x]`): such a value is not sent as HTML.
+    json_for_literals: bool = False
+
+    # A JSX attribute sink whose value is an object: the sink is this property's value
+    # (React's `dangerouslySetInnerHTML={{ __html: x }}`).
+    sink_property: str = ""
+
+    # `res.render(view, data)`: argument 0 names a template, and only the values of argument 1
+    # that template prints without escaping reach the sink (frame/sil/templates.py).
+    renders_view: bool = False
+
     # Does this spec name a GLOBAL function (`setTimeout`, `eval`)? Frontends
     # match a dotless spec key against the last segment of a member call
     # (`models.sequelize.query` -> `query`); for a global function that would
