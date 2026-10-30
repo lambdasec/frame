@@ -89,7 +89,7 @@ On TerraGoat these policies report the same resources as checkov's equivalent ch
 
 On the 280 templates of aws-cloudformation/aws-cloudformation-templates Frame reads every template (warnings only for transforms). On the 44 where either tool reports something, every one of checkov's 31 equivalent findings is a Frame finding except a read replica, which takes its source's encryption; Frame adds four load balancer groups open on every port. A sample whose SSH default is `192.168.1.0/0` (all addresses, if AWS accepts a CIDR with host bits set) is undecided: whether AWS takes its network or refuses it is not documented.
 
-**Helm.** A chart's `templates/` are Go templates. A template with no template actions (`{{`) renders as written and is checked; any other is skipped, with one warning per chart. Render the chart (`helm template ... > rendered.yaml`) and check the output.
+**Helm.** A chart's `templates/` are Go templates. A template with no template actions (`{{`) renders as written and is checked; any other is skipped, with one warning per chart. With `--render-helm`, every chart (not subcharts, which render with their parent) is rendered by Helm itself, `helm template` with the chart's default values, and what Helm writes is checked; each object is attributed to the template Helm names in its `# Source:` comment, at line 1 with the deciding field (a rendered line is not a template line). It is opt-in because it runs Helm. Nothing is fetched: a chart whose dependencies are not in its `charts/` directory is a warning, and values schemas are not validated (one can reference a URL).
 
 ## Findings
 

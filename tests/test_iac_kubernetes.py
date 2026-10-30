@@ -289,7 +289,7 @@ def test_helm_templates_with_actions_are_skipped_and_named_once(tmp_path):
     run = scan(tmp_path)
     assert {f.file for f in run.findings} == {"chart/templates/plain.yaml"}
     assert [w for w in run.warnings if "Helm" in w] == [
-        "chart: Helm chart with 2 template(s) not checked (render it with `helm template` and scan the output)"]
+        "chart: Helm chart with 2 template(s) not checked (render it with --render-helm)"]
 
 
 def test_inline_suppressions(tmp_path):
@@ -353,3 +353,63 @@ def test_frame_scan_iac_adds_the_infrastructure_section(tmp_path):
     assert "k8s-privileged" in {f["rule"] for f in infra["findings"]}
     plain = json.loads(_frame("scan", str(tmp_path), "-f", "json").stdout)
     assert "infrastructure" not in plain
+
+
+# --- rendering Helm charts (frame/iac/helm.py) ----------------------------------------------
+
+import os  # noqa: E402
+import shutil  # noqa: E402
+
+CHART = {"web/Chart.yaml": "apiVersion: v2\nname: web\nversion: 0.1.0\n",
+         "web/values.yaml": "privileged: true\n",
+         "web/templates/deploy.yaml": DEPLOY.replace("privileged: true", "privileged: {{ .Values.privileged }}"),
+         "web/charts/sub/Chart.yaml": "apiVersion: v2\nname: sub\nversion: 0.1.0\n",
+         "web/charts/sub/templates/x.yaml": "kind: {{ .Values.k }}\n"}
+
+
+def _stand_in_helm(tmp_path, monkeypatch, output: str, status: int = 0):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "out.txt").write_text(output)
+    script = bindir / "helm"
+    script.write_text(f"#!/bin/sh\necho \"$@\" >> {bindir}/calls.txt\ncat {bindir}/out.txt\nexit {status}\n")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    return bindir
+
+
+def test_render_helm_reads_what_helm_writes_and_points_at_the_template(tmp_path, monkeypatch):
+    for name, text in CHART.items():
+        _write(tmp_path / "repo", name, text)
+    rendered = "---\n# Source: web/templates/deploy.yaml\n" + DEPLOY
+    bindir = _stand_in_helm(tmp_path, monkeypatch, rendered)
+    run = scan(tmp_path / "repo", render_helm=True)
+    f = next(f for f in run.findings if f.rule == "k8s-privileged")
+    assert (f.file, f.line, f.field) == ("web/templates/deploy.yaml", 1,
+                                         "spec.template.spec.containers[0].securityContext.privileged")
+    calls = (bindir / "calls.txt").read_text().splitlines()
+    assert len(calls) == 1 and calls[0].startswith("template release ")      # the subchart renders with it
+    assert "--skip-schema-validation" in calls[0]
+    assert not [w for w in run.warnings if "Helm" in w]
+
+
+def test_render_helm_failures_are_warnings(tmp_path, monkeypatch):
+    for name, text in CHART.items():
+        _write(tmp_path / "repo", name, text)
+    _stand_in_helm(tmp_path, monkeypatch, "", status=1)
+    run = scan(tmp_path / "repo", render_helm=True)
+    assert run.findings == [] and run.warnings[0].startswith("web: Helm chart not rendered (helm template failed")
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
+    run = scan(tmp_path / "repo", render_helm=True)
+    assert run.warnings == ["web: Helm chart not rendered (helm is not installed (needed by --render-helm))"]
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="needs Helm")
+def test_render_helm_with_real_helm(tmp_path):
+    for name, text in CHART.items():
+        if "charts/sub" not in name:
+            _write(tmp_path, name, text)
+    run = scan(tmp_path, render_helm=True)
+    assert "k8s-privileged" in {f.rule for f in run.findings}
+    _write(tmp_path, "web/values.yaml", "privileged: false\n")
+    assert "k8s-privileged" not in {f.rule for f in scan(tmp_path, render_helm=True).findings}

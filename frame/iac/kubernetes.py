@@ -126,9 +126,35 @@ def _looks_like_manifest(text: str) -> bool:
     return "apiVersion:" in head and "kind:" in head
 
 
-def read(paths: List[Tuple[Path, str]], root: Path) -> ReadResult:
+def _render_charts(root: Path, excluded, out: ReadResult) -> set:
+    """Each chart rendered by Helm, its objects read; the chart directories it handled."""
+    from . import helm
+    done = set()
+    for chart in helm.charts(root, excluded):
+        rel_chart = chart.relative_to(root).as_posix() if chart != root else "."
+        done.add(chart.resolve())                  # its files are Helm's to read, rendered or not
+        rendered, why = helm.render(chart)
+        if rendered is None:
+            out.warnings.append(f"{rel_chart}: Helm chart not rendered ({why})")
+            continue
+        for source, text in helm.split_sources(rendered):
+            # "<chart name>/templates/x.yaml" (or a subchart's "<chart>/charts/<sub>/templates/x.yaml")
+            inside = source.split("/", 1)[1] if "/" in source else source
+            rel = (f"{rel_chart}/{inside}" if rel_chart != "." else inside) if source else rel_chart
+            before = len(out.resources)
+            read_file(chart / inside, rel, out, text)
+            for r in out.resources[before:]:
+                r.line = 1
+                r.lines = {}                       # rendered lines are not the template's
+    return done
+
+
+def read(paths: List[Tuple[Path, str]], root: Path, render_helm: bool = False, excluded=frozenset()) -> ReadResult:
     out = ReadResult()
+    rendered = _render_charts(root, excluded, out) if render_helm and root.is_dir() else set()
     for path, rel in paths:
+        if rendered and any(parent.resolve() in rendered for parent in path.parents):
+            continue                               # read through Helm's rendering
         if _in_helm_templates(path, root):
             try:
                 text = path.read_text(encoding="utf-8")

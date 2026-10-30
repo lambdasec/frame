@@ -86,6 +86,9 @@ def create_parser() -> argparse.ArgumentParser:
                             default=None, help="Report findings at or above this severity (default: low)")
     iac_parser.add_argument("--fail-on", choices=["critical", "high", "medium", "low", "any", "none"],
                             default=None, help="Exit 1 when a finding reaches this severity (default: high)")
+    iac_parser.add_argument("--render-helm", action="store_true",
+                            help="Render each Helm chart with `helm template` (its default values; nothing "
+                                 "fetched) and check the output. Runs Helm, so it is opt-in.")
     iac_parser.add_argument("--no-config", action="store_true",
                             help="Ignore .frame.toml / [tool.frame] (exclude, disable, packs, severities)")
 
@@ -597,7 +600,8 @@ def cmd_iac(args) -> int:
     except PackError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-    run = scan(target, packs=packs, exclude_dirs=set(DEFAULT_EXCLUDED_SCAN_DIRS) | set(config.exclude or []))
+    run = scan(target, packs=packs, exclude_dirs=set(DEFAULT_EXCLUDED_SCAN_DIRS) | set(config.exclude or []),
+               render_helm=args.render_helm)
     if config.disable:
         run.findings = [f for f in run.findings if not matches_rules(f, config.disable)]
     shown = at_least(run, args.min_severity or config.min_severity or "low")

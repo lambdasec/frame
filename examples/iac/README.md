@@ -33,7 +33,7 @@ terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy
 Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 25 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
 undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)
 undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh (depends on var.partner_cidr)
-warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)
+warning: chart: Helm chart with 1 template(s) not checked (render it with --render-helm)
 ```
 
 ## The Kubernetes manifests
@@ -82,11 +82,7 @@ The template is read as a deployment that takes every parameter's default would 
 
 The debug pod is privileged and shares the host's PID namespace on purpose. Its two findings are suppressed by comments, on the line itself or on the comment line above (`# frame: ignore[k8s-privileged]`), and counted as `2 suppressed`. Its other findings are still reported: a suppression names the policy it silences. In a Dockerfile the comment goes on the line above (a `#` after an instruction is part of it).
 
-The Helm template (`chart/templates/deployment.yaml`) uses template actions (`{{ .Values.image }}`), so its text is not the manifest the cluster sees. It is not checked, and the warning says so once per chart. Render it and check the result:
-
-```bash
-helm template worker chart/ > rendered.yaml && frame iac rendered.yaml
-```
+The Helm template (`chart/templates/deployment.yaml`) uses template actions (`{{ .Values.image }}`), so its text is not the manifest the cluster sees. It is not checked, and the warning says so once per chart. With Helm installed, `frame iac . --render-helm` renders each chart with `helm template` and its default values, and checks what Helm writes: the worker Deployment then gets the Restricted-profile findings the storefront has, plus the platform team's memory-limit rule, each pointing at `chart/templates/deployment.yaml` (line 1: a rendered line is not a template line) with the field that decides it.
 
 ## In CI
 

@@ -101,12 +101,13 @@ def _candidates(target: Path, excluded) -> List[Tuple[Path, str]]:
     return out
 
 
-def read(target: Path, excluded) -> Dict[str, ReadResult]:
+def read(target: Path, excluded, render_helm: bool = False) -> Dict[str, ReadResult]:
     """Every format's resources under `target` (a directory or one file)."""
     files = _candidates(target, excluded)
     root = target if target.is_dir() else target.parent
     docker = [(p, r) for p, r in files if dockerfile.is_dockerfile(p)]
-    k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root)
+    k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root,
+                          render_helm=render_helm, excluded=excluded)
     _one_warning_per_chart(k8s)
     tf = terraform.read([(p, r) for p, r in files if p.suffix == ".tf"], root)
     cfn = cloudformation.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES + (".template",)])
@@ -123,8 +124,8 @@ def _one_warning_per_chart(result: ReadResult) -> None:
             charts[chart] = charts.get(chart, 0) + 1
         else:
             rest.append(w)
-    rest += [f"{c}: Helm chart with {n} template(s) not checked (render it with `helm template` "
-             f"and scan the output)" for c, n in sorted(charts.items())]
+    rest += [f"{c}: Helm chart with {n} template(s) not checked (render it with --render-helm)"
+             for c, n in sorted(charts.items())]
     result.warnings = rest
 
 
@@ -209,9 +210,10 @@ def _suppress(findings: List[Finding], root: Path, single: Optional[Path]) -> Tu
     return kept, dropped
 
 
-def scan(target, packs=None, exclude_dirs: Optional[Iterable] = None) -> IacRun:
+def scan(target, packs=None, exclude_dirs: Optional[Iterable] = None, render_helm: bool = False) -> IacRun:
     """Check every infrastructure file under `target` against the policies of `packs`
-    (a frame.sil.packs.PackSet; default: the built-in and knowledge-base packs)."""
+    (a frame.sil.packs.PackSet; default: the built-in and knowledge-base packs). With
+    `render_helm`, Helm charts are rendered by `helm template` (frame/iac/helm.py)."""
     from frame.sil.packs import PackSet
     from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS
     target = Path(target)
@@ -220,7 +222,7 @@ def scan(target, packs=None, exclude_dirs: Optional[Iterable] = None) -> IacRun:
         packs = PackSet.build(project_start=target)
     run = IacRun(root=str(target.resolve()))
     found: List[Finding] = []
-    for fmt, result in read(target, excluded).items():
+    for fmt, result in read(target, excluded, render_helm).items():
         run.warnings += result.warnings
         if result.files:
             run.files[fmt] = sorted(set(result.files))

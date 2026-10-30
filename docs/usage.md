@@ -356,6 +356,7 @@ Infrastructure files (Kubernetes manifests, Dockerfiles, Terraform, CloudFormati
 | `--pack PATH` / `--no-packs` | load an extra policy pack (repeatable) / skip the built-in packs |
 | `--min-severity critical\|high\|medium\|low\|info` | report only at or above this (default: config, else low) |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | exit 1 at or above this severity (default: config, else high) |
+| `--render-helm` | render each Helm chart with `helm template` (default values, nothing fetched) and check the output; runs Helm |
 | `--no-config` | ignore `.frame.toml` / `[tool.frame]` |
 
 ### `frame history [repo]`

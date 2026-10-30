@@ -452,7 +452,7 @@ def test_iac_walkthrough(tmp_path):
             "undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)",
             "undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh "
             "(depends on var.partner_cidr)",
-            "warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)"]),
+            "warning: chart: Helm chart with 1 template(s) not checked (render it with --render-helm)"]),
         (("iac", ".", "--min-severity", "high"), [
             "Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), "
             "terraform: 3 file(s); 9 finding(s), 2 suppressed, 2 undecided"]),
