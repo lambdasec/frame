@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, FrozenSet, NamedTuple
+from typing import Dict, FrozenSet, NamedTuple, Optional
 
 try:                                        # Python 3.11+
     import tomllib
@@ -39,4 +39,22 @@ def load(path: Path = PATH) -> WeakAlgorithms:
     return WeakAlgorithms(*lists, {k: v.upper() for k, v in alg_ids.items()})
 
 
-__all__ = ["PATH", "WeakAlgorithms", "load"]
+def weak_algorithm(sink_kind: str, name: str) -> Optional[str]:
+    """Why `name`, an algorithm named by string, is weak for a `weak_hash` / `weak_crypto` call:
+    "hash", "cipher" or "mode", else None. A hash name is compared whole; a JCA cipher
+    transformation is `algorithm[/mode[/padding]]`, weak when the algorithm part contains a weak
+    cipher (`PBEWithMD5AndDES`, `DESede`) or the mode is a weak mode."""
+    weak = load()
+    n = name.strip().upper()
+    if sink_kind == "weak_hash":
+        return "hash" if n in weak.hashes else None
+    if sink_kind == "weak_crypto":
+        parts = n.split("/")
+        if any(c in parts[0] for c in weak.ciphers):
+            return "cipher"
+        if len(parts) > 1 and parts[1] in weak.cipher_modes:
+            return "mode"
+    return None
+
+
+__all__ = ["PATH", "WeakAlgorithms", "load", "weak_algorithm"]

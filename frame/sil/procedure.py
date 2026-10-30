@@ -260,6 +260,19 @@ class ProcSpec:
     # secure=False)`, `cookie.setSecure(false)`): the call itself is fine otherwise.
     sink_if_arg_literal: List[str] = field(default_factory=list)
 
+    # The argument that names the algorithm as a string (`hashlib.new("md5")`,
+    # `MessageDigest.getInstance("MD5")`, `Cipher.getInstance("DES/CBC/PKCS5Padding")`): a usage
+    # sink only when that literal names a weak one (`specs/weak_algorithms.weak_algorithm`).
+    algorithm_name_arg: Optional[int] = None
+
+    # A usage sink not reported when a keyword argument is this literal (hashlib's
+    # `usedforsecurity=False`, Python 3.9+: a hash documented as not used for security).
+    safe_kwargs: Dict[str, str] = field(default_factory=dict)
+
+    # The scanf format argument: a usage sink (CWE-120) only when that literal has an
+    # unbounded `%s` / `%[` conversion (no field width).
+    scanf_format_arg: Optional[int] = None
+
     # C/C++: writes an HTTP response header from its literal argument (`printf("Set-Cookie: ...")`
     # in a CGI program); its other arguments are the header's values.
     writes_headers: bool = False

@@ -1,0 +1,82 @@
+# Library API facts the branch-guard reasoning reads (translator `_guard_facts`, `_call_guard`):
+# which calls test a string's characters, parse a URL, normalise a path, match a regex, or test
+# membership in a collection. What a guard proves is the translator's (the expression tree and
+# the regex itself); which calls do these things is data. Names are the callee as written
+# (`a.b.c`); a single name also matches the last part of a dotted callee where noted.
+# Read by frame/sil/specs/guards.py.
+
+# `x.<method>()` is true only when every character of x is a digit / letter (Python str methods).
+charset_methods = ["isdigit", "isnumeric", "isdecimal", "isalnum", "isalpha"]
+
+# `x.<method>(PREFIX)`: x starts with PREFIX (JS/Java startsWith, Python startswith, C# StartsWith).
+prefix_methods = ["startsWith", "startswith", "StartsWith"]
+
+# `COLLECTION.<method>(x)`: x is an element (JS Array includes, Java Collection contains, C# Contains).
+membership_methods = ["includes", "contains", "Contains"]
+
+# `<view>(COLLECTION).includes(x)`: x is a value / key of a constant object (JS Object.values / keys).
+collection_views = ["Object.values", "Object.keys"]
+
+# Java factories whose result is a collection of exactly their literal arguments
+# (`Set.of("a", "b").contains(x)`); matched as `<type>.<factory>` with an optional package.
+literal_collection_types = ["Set", "List", "Arrays", "ImmutableSet", "ImmutableList"]
+literal_collection_factories = ["of", "asList", "copyOf"]
+
+# Calls returning a parsed URL whose `host_fields` are its host (urllib.parse urlparse/urlsplit,
+# WHATWG URL, java.net.URL, System.Uri). Also matched by the last part of a dotted callee.
+url_parsers = ["urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL", "new URL.parse"]
+host_fields = ["hostname", "netloc", "host", "Host"]
+
+# Calls returning a normalised path with no `..` left (Node path/fs, os.path, java.io.File,
+# java.nio.file.Path, System.IO.Path). Also matched by the last part of a dotted callee.
+path_normalizers = ["path.resolve", "path.normalize", "fs.realpathSync", "realpathSync", "os.path.realpath",
+                    "os.path.abspath", "os.path.normpath", "getCanonicalPath", "getCanonicalFile",
+                    "toRealPath", "Path.GetFullPath", "System.IO.Path.GetFullPath"]
+
+# Constants holding the platform's path separator.
+path_separators = ["path.sep", "os.sep", "os.path.sep", "File.separator", "Path.DirectorySeparatorChar"]
+
+# How much of the subject a match must cover: "full", "prefix" (anchored at the start) or
+# "search" (anywhere).
+[regex]
+# A compiled pattern's method, the subject its only argument (Python re.Pattern, JS RegExp,
+# .NET Regex).
+compiled_methods = { fullmatch = "full", match = "prefix", search = "search", test = "search", IsMatch = "search" }
+# A regex literal's method (`/^\d+$/.test(x)`).
+literal_methods = { test = "search" }
+# The subject's own method taking the pattern (Java String.matches).
+subject_methods = { matches = "full" }
+# `PATTERN.<matcher>(x).<method>()` (java.util.regex.Pattern.matcher(...).matches()).
+matcher = "matcher"
+matcher_methods = { matches = "full" }
+
+# Functions taking the pattern and the subject as arguments.
+[[regex.function]]
+names = ["re.fullmatch", "fullmatch"]
+pattern_arg = 0
+subject_arg = 1
+how = "full"
+
+[[regex.function]]
+names = ["re.match", "match"]
+pattern_arg = 0
+subject_arg = 1
+how = "prefix"
+
+[[regex.function]]
+names = ["re.search", "search"]
+pattern_arg = 0
+subject_arg = 1
+how = "search"
+
+[[regex.function]]
+names = ["Pattern.matches", "java.util.regex.Pattern.matches"]
+pattern_arg = 0
+subject_arg = 1
+how = "full"
+
+[[regex.function]]
+names = ["Regex.IsMatch", "System.Text.RegularExpressions.Regex.IsMatch"]
+pattern_arg = 1
+subject_arg = 0
+how = "search"

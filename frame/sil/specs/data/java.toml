@@ -1902,15 +1902,17 @@ description = "All interfaces (SSRF)"
 
 [[spec]]
 name = "MessageDigest.getInstance"
+algorithm_name_arg = 0
 is_sink = "weak_hash"
 sink_args = []
-description = "Hash function (algorithm check required)"
+description = "Hash function (weak only with a weak algorithm name, CWE-328)"
 
 [[spec]]
 name = "java.security.MessageDigest.getInstance"
+algorithm_name_arg = 0
 is_sink = "weak_hash"
 sink_args = []
-description = "Hash function (algorithm check required)"
+description = "Hash function (weak only with a weak algorithm name, CWE-328)"
 
 [[spec]]
 name = "DigestUtils.md5"
@@ -1938,15 +1940,17 @@ description = "SHA-1 hash (CWE-328)"
 
 [[spec]]
 name = "Cipher.getInstance"
+algorithm_name_arg = 0
 is_sink = "weak_crypto"
 sink_args = []
-description = "Cipher (algorithm check required)"
+description = "Cipher (weak only with a weak algorithm or mode, CWE-327)"
 
 [[spec]]
 name = "javax.crypto.Cipher.getInstance"
+algorithm_name_arg = 0
 is_sink = "weak_crypto"
 sink_args = []
-description = "Cipher (algorithm check required)"
+description = "Cipher (weak only with a weak algorithm or mode, CWE-327)"
 
 [[spec]]
 name = "Math.random"

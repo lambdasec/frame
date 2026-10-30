@@ -1372,18 +1372,22 @@ description = "JSON dumps"
 
 [[spec]]
 name = "hashlib.md5"
+safe_kwargs = { usedforsecurity = "False" }
 is_sink = "weak_hash"
 sink_args = []
 description = "MD5 hash (CWE-328)"
 
 [[spec]]
 name = "hashlib.sha1"
+safe_kwargs = { usedforsecurity = "False" }
 is_sink = "weak_hash"
 sink_args = []
 description = "SHA1 hash (CWE-328)"
 
 [[spec]]
 name = "hashlib.new"
+safe_kwargs = { usedforsecurity = "False" }
+algorithm_name_arg = 0
 is_sink = "weak_hash"
 sink_args = []
 description = "hashlib.new - usage-based (CWE-328)"
@@ -1402,12 +1406,14 @@ description = "PyCrypto SHA1 (CWE-328)"
 
 [[spec]]
 name = "md5"
+safe_kwargs = { usedforsecurity = "False" }
 is_sink = "weak_hash"
 sink_args = []
 description = "MD5 hash (CWE-328)"
 
 [[spec]]
 name = "sha1"
+safe_kwargs = { usedforsecurity = "False" }
 is_sink = "weak_hash"
 sink_args = []
 description = "SHA1 hash (CWE-328)"

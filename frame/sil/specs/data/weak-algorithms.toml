@@ -1,7 +1,8 @@
 # Algorithm names that are weak wherever an API takes the algorithm by name (Java's
 # MessageDigest.getInstance / Cipher.getInstance, Python's hashlib.new). Compared without regard to
-# case; how a name is found in the argument (exact, base of "DES/CBC/PKCS5Padding", substring) is
-# the checking code's. Read by frame/sil/specs/weak_algorithms.py.
+# case; how a name is found in the argument (a hash whole, a cipher within the algorithm part of
+# "DES/CBC/PKCS5Padding", the mode part) is weak_algorithms.weak_algorithm's; which argument holds
+# it is the spec row's `algorithm_name_arg`. Read by frame/sil/specs/weak_algorithms.py.
 
 # Hash functions with practical collisions (CWE-328). "SHA" is the JCA name of SHA-1.
 hashes = ["MD2", "MD4", "MD5", "SHA", "SHA1", "SHA-1"]

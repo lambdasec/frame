@@ -55,7 +55,7 @@ from frame.sil.packs import annotation_marks_entry as _glob_any
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.parser_hardening import load as parser_hardening
 from frame.sil.specs.shells import is_shell, load as shells
-from frame.sil.specs.weak_algorithms import load as weak_algorithms
+from frame.sil.specs.weak_algorithms import weak_algorithm
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
     JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES)
@@ -1884,8 +1884,8 @@ class JavaFrontend:
         instrs.extend(self._tag_sinks(call_node, method_name, args_exp, loc))
         if spec and spec.is_taint_sink() and self._sink_applies(spec, args):
             # Special handling for crypto/hash sinks that need algorithm checking
-            if self._is_algorithm_based_sink(method_name):
-                algo_instr = self._check_algorithm_sink(method_name, args, loc)
+            if spec.algorithm_name_arg is not None:
+                algo_instr = self._check_algorithm_sink(spec, args, loc)
                 if algo_instr:
                     instrs.append(algo_instr)
             else:
@@ -2335,70 +2335,28 @@ class JavaFrontend:
             out[recv] = entries if recv not in out else None
         return out
 
-    def _is_algorithm_based_sink(self, method_name: str) -> bool:
-        """Check if this method requires algorithm-based sink detection"""
-        algo_methods = [
-            'MessageDigest.getInstance',
-            'java.security.MessageDigest.getInstance',
-            'Cipher.getInstance',
-            'javax.crypto.Cipher.getInstance',
-        ]
-        return any(method_name.endswith(m) for m in algo_methods)
-
-    def _check_algorithm_sink(self, method_name: str, args: List[TSNode], loc: Location) -> Optional[Instr]:
-        """Check algorithm argument and return TaintSink only for weak algorithms"""
-        if not args:
+    def _check_algorithm_sink(self, spec, args: List[TSNode], loc: Location) -> Optional[Instr]:
+        """A call naming its algorithm by string (`algorithm_name_arg`: `MessageDigest.getInstance`,
+        `Cipher.getInstance`) is a sink only for a weak one; a name the frontend cannot read (not a
+        literal or a known constant) is not reported."""
+        pos = spec.algorithm_name_arg
+        if pos >= len(args):
             return None
-
-        # Get the algorithm from the first argument
-        arg_text = self._get_text(args[0]).strip()
-
-        # Remove quotes from string literals
-        if arg_text.startswith('"') and arg_text.endswith('"'):
-            algo = arg_text[1:-1].upper()
-        elif arg_text.startswith("'") and arg_text.endswith("'"):
-            algo = arg_text[1:-1].upper()
-        elif isinstance(self._constant_values.get(arg_text), str):
-            algo = self._constant_values[arg_text].upper()      # a constant, e.g. from a properties resource
+        arg = args[pos]
+        if arg.type == "string_literal":
+            algo = self._string_literal_value(arg)
         else:
-            return None                                          # not known: no finding
-
-        # Check for weak hash algorithms
-        if 'MessageDigest' in method_name:
-            if algo in weak_algorithms().hashes:                # specs/data/weak-algorithms.toml
-                return TaintSink(
-                    loc=loc,
-                    exp=ExpConst.string(algo),
-                    kind=SinkKind.WEAK_HASH,
-                    description=f"Weak hash algorithm: {algo} (CWE-328)"
-                )
-
-        # Check for weak crypto algorithms
-        if 'Cipher' in method_name:
-            # Weak algorithms or modes
-            weak_crypto_patterns = weak_algorithms().ciphers     # specs/data/weak-algorithms.toml
-            weak_modes = weak_algorithms().cipher_modes          # ECB leaks plaintext patterns
-
-            algo_parts = algo.split('/')
-            base_algo = algo_parts[0]
-            mode = algo_parts[1] if len(algo_parts) > 1 else ''
-
-            if base_algo in weak_crypto_patterns:
-                return TaintSink(
-                    loc=loc,
-                    exp=ExpConst.string(algo),
-                    kind=SinkKind.WEAK_CRYPTO,
-                    description=f"Weak cipher algorithm: {algo} (CWE-327)"
-                )
-            elif mode in weak_modes:
-                return TaintSink(
-                    loc=loc,
-                    exp=ExpConst.string(algo),
-                    kind=SinkKind.WEAK_CRYPTO,
-                    description=f"Weak cipher mode: {algo} (CWE-327)"
-                )
-
-        return None
+            algo = self._constant_values.get(self._get_text(arg).strip())   # e.g. from a properties resource
+        if not isinstance(algo, str):
+            return None
+        why = weak_algorithm(str(spec.is_sink), algo)
+        if why is None:
+            return None
+        kind = resolve_sink_kind(spec.is_sink)
+        what = {"hash": "hash algorithm", "cipher": "cipher algorithm", "mode": "cipher mode"}[why]
+        cwe = "CWE-328" if why == "hash" else "CWE-327"
+        return TaintSink(loc=loc, exp=ExpConst.string(algo.upper()), kind=kind,
+                         description=f"Weak {what}: {algo.upper()} ({cwe})")
 
     def _translate_object_creation_assignment(
         self,

@@ -161,6 +161,8 @@ handler_arg = -1
 
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 
+In the spec tables (`frame/sil/specs/data/<table>.toml`), a usage sink (`sink_args = []`, where the call itself is the finding) can say what makes the call weak. With `algorithm_name_arg`, the argument names the algorithm as a string and the call is reported only for a weak one from `specs/data/weak-algorithms.toml` (`hashlib.new("md5")`, `Cipher.getInstance("DES/CBC/PKCS5Padding")`); a name the analysis cannot read is not reported. `safe_kwargs = { usedforsecurity = "False" }` drops the call when that keyword is that literal. `scanf_format_arg` reports a scanf-family call only when its format has an unbounded `%s` or `%[`.
+
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:
 
 ```toml

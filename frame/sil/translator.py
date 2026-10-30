@@ -44,7 +44,8 @@ from . import c_facts as _c_facts
 from .c_int_model import INT_TYPES, int_range, may_be_negative
 from .specs.parser_hardening import load as _parser_hardening
 from .specs.request_objects import load as _request_objects
-from .specs.weak_algorithms import load as _weak_algorithms
+from .specs.weak_algorithms import load as _weak_algorithms, weak_algorithm
+from .specs.guards import load as _load_guards
 from .specs.principals import load as _principals
 from .kinds import check as _kinds_check, load as _load_kinds
 
@@ -2223,25 +2224,24 @@ class SILTranslator:
                 entry[param] = (known[0], known[1] & sanitized)
                 self._ipa.dirty.add(callee.ref)
 
-    _CHARSET_METHODS = frozenset({"isdigit", "isnumeric", "isdecimal", "isalnum", "isalpha"})
+    # Which library calls test characters, parse URLs, normalise paths, match regexes or test
+    # membership: specs/data/guards.toml.
+    _GUARDS = _load_guards()
+    _CHARSET_METHODS = _GUARDS.charset_methods
     _CONST_NAME = re.compile(r"[A-Z][A-Z0-9_]*$")
     _HOST_KINDS = frozenset({"ssrf", "redirect"})
-    _HOST_PARSERS = frozenset({"urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL",
-                               "new URL.parse"})
+    _HOST_PARSERS = _GUARDS.url_parsers
     _LITERAL_COLLECTION = re.compile(
-        r"^(?:[\w.]+\.)?(?:Set|List|Arrays|ImmutableSet|ImmutableList)\.(?:of|asList|copyOf)"
-        r"\((\s*\"[^\"]*\"\s*(?:,\s*\"[^\"]*\"\s*)*)\)\.contains$")
+        r"^(?:[\w.]+\.)?(?:%s)\.(?:%s)" % ("|".join(_GUARDS.literal_collection_types),
+                                           "|".join(_GUARDS.literal_collection_factories))
+        + r"\((\s*\"[^\"]*\"\s*(?:,\s*\"[^\"]*\"\s*)*)\)\.(?:%s)$" % "|".join(sorted(_GUARDS.membership_methods)))
 
     # Path containment: `x.startsWith(BASE)` confines x to BASE only when x is normalised
     # (no `..` left). `_call_guard` marks the prefix test; `_apply_branch_guards` turns
     # it into a filesystem sanitisation when x came from one of these calls.
     _CONTAINED = "@contained"
-    _PATH_SEPARATORS = frozenset({"path.sep", "os.sep", "os.path.sep", "File.separator",
-                                  "Path.DirectorySeparatorChar"})
-    _PATH_NORMALIZERS = frozenset({
-        "path.resolve", "path.normalize", "fs.realpathSync", "realpathSync", "os.path.realpath",
-        "os.path.abspath", "os.path.normpath", "getCanonicalPath", "getCanonicalFile",
-        "toRealPath", "Path.GetFullPath", "System.IO.Path.GetFullPath"})
+    _PATH_SEPARATORS = _GUARDS.path_separators
+    _PATH_NORMALIZERS = _GUARDS.path_normalizers
 
     @classmethod
     def _constant_prefix(cls, exp) -> bool:
@@ -2348,7 +2348,7 @@ class SILTranslator:
     @classmethod
     def _host_var(cls, exp) -> Optional[str]:
         """`u` for `urlparse(u).hostname` / `new URL(u).host`."""
-        if isinstance(exp, ExpFieldAccess) and exp.field_name in ("hostname", "netloc", "host", "Host") \
+        if isinstance(exp, ExpFieldAccess) and exp.field_name in cls._GUARDS.host_fields \
                 and isinstance(exp.base, ExpCall) and exp.base.args and isinstance(exp.base.args[0], ExpVar):
             parser = cls._flatten(exp.base.func) or ""
             if parser in cls._HOST_PARSERS or parser.rsplit(".", 1)[-1] in cls._HOST_PARSERS:
@@ -2471,15 +2471,16 @@ class SILTranslator:
         everything = frozenset(cls._ALLOWLIST_KINDS)
         func, args = call.func, call.args
         # `/^\d+$/.test(v)`: a regex literal receiver
-        if isinstance(func, ExpFieldAccess) and isinstance(func.base, ExpConst) and func.field_name == "test" \
-                and len(args) == 1 and isinstance(args[0], ExpVar):
+        g = cls._GUARDS
+        if isinstance(func, ExpFieldAccess) and isinstance(func.base, ExpConst) \
+                and func.field_name in g.literal_methods and len(args) == 1 and isinstance(args[0], ExpVar):
             pat = cls._regex_text(func.base, language)
-            kinds = cls._regex_proves(pat, "search") if pat is not None else None
+            kinds = cls._regex_proves(pat, g.literal_methods[func.field_name]) if pat is not None else None
             return {str(args[0].var): kinds} if kinds else {}
         # Object.values(CONST).includes(x): an attribute call on a call
-        if isinstance(func, ExpFieldAccess) and func.field_name == "includes" and len(args) == 1 \
+        if isinstance(func, ExpFieldAccess) and func.field_name in g.membership_methods and len(args) == 1 \
                 and isinstance(func.base, ExpCall) and len(func.base.args) == 1 \
-                and cls._flatten(func.base.func) in ("Object.values", "Object.keys"):
+                and cls._flatten(func.base.func) in g.collection_views:
             return cls._member_fact(args[0], func.base.args[0])
         text = cls._flatten(func)
         if not text:
@@ -2490,45 +2491,39 @@ class SILTranslator:
             return {recv: everything}
         # compiled constant: HOST.fullmatch(x) / HOST.test(x) / HOST.IsMatch(x)
         if recv in regexes and len(args) == 1 and isinstance(args[0], ExpVar):
-            how = {"fullmatch": "full", "match": "prefix", "search": "search", "test": "search",
-                   "IsMatch": "search"}.get(meth)
+            how = g.compiled_methods.get(meth)
             kinds = cls._regex_proves(regexes[recv], how) if how else None
             return {str(args[0].var): kinds} if kinds else {}
         # Java: HOST.matcher(x).matches()
-        m = re.fullmatch(r"(\w+)\.matcher\((\w+)\)\.matches", text)
-        if m and not args and m.group(1) in regexes:
-            kinds = cls._regex_proves(regexes[m.group(1)], "full")
+        m = re.fullmatch(r"(\w+)\.%s\((\w+)\)\.(\w+)" % re.escape(g.matcher), text)
+        if m and not args and m.group(1) in regexes and m.group(3) in g.matcher_methods:
+            kinds = cls._regex_proves(regexes[m.group(1)], g.matcher_methods[m.group(3)])
             return {m.group(2): kinds} if kinds else {}
         # re.fullmatch("lit", x), Pattern.matches("lit", x), Regex.IsMatch(x, "lit")
-        if re.fullmatch(r"(?:re\.)?(fullmatch|match|search)|(?:java\.util\.regex\.)?Pattern\.matches", text) \
-                and len(args) == 2 and isinstance(args[1], ExpVar):
-            how = {"fullmatch": "full", "matches": "full", "match": "prefix", "search": "search"}[
-                text.rsplit(".", 1)[-1]]
-            pat = cls._regex_text(args[0], language)
-            kinds = cls._regex_proves(pat, how) if pat is not None else None
-            return {str(args[1].var): kinds} if kinds else {}
-        if text in ("Regex.IsMatch", "System.Text.RegularExpressions.Regex.IsMatch") and len(args) == 2 \
-                and isinstance(args[0], ExpVar):
-            pat = cls._regex_text(args[1], language)
-            kinds = cls._regex_proves(pat, "search") if pat is not None else None
-            return {str(args[0].var): kinds} if kinds else {}
+        fn = g.regex_function(text)
+        if fn is not None and len(args) == 2 and isinstance(args[fn.subject_arg], ExpVar):
+            pat = cls._regex_text(args[fn.pattern_arg], language)
+            kinds = cls._regex_proves(pat, fn.how) if pat is not None else None
+            return {str(args[fn.subject_arg].var): kinds} if kinds else {}
         # String.matches("lit") is a full match of the receiver
-        if recv and meth == "matches" and len(args) == 1:
+        if recv and meth in g.subject_methods and len(args) == 1:
             pat = cls._regex_text(args[0], language)
-            kinds = cls._regex_proves(pat, "full") if pat is not None else None
+            kinds = cls._regex_proves(pat, g.subject_methods[meth]) if pat is not None else None
             return {recv: kinds} if kinds else {}
         # `full.startsWith(BASE + path.sep)`: a prefix built from constants. It confines
         # only a normalised path ("/srv/a/../etc" passes too); the caller checks that.
-        if recv and meth in ("startsWith", "startswith", "StartsWith") and len(args) == 1 \
+        if recv and meth in g.prefix_methods and len(args) == 1 \
                 and cls._constant_prefix(args[0]):
             return {recv: frozenset({cls._CONTAINED})}
         # membership: ALLOWED.includes(x) / .contains(x), Object.values(ALLOWED).includes(x),
         # Set.of("a", "b").contains(x)
         if len(args) == 1:
             subject = args[0]
-            if recv and cls._CONST_NAME.match(recv) and meth in ("includes", "contains", "Contains"):
+            if recv and cls._CONST_NAME.match(recv) and meth in g.membership_methods:
                 return cls._member_fact(subject, ExpVar(PVar(recv)))
-            m = re.fullmatch(r"Object\.(?:values|keys)\(\s*([A-Z][A-Z0-9_]*)\s*\)\.includes", text)
+            m = re.fullmatch(r"(?:%s)\(\s*([A-Z][A-Z0-9_]*)\s*\)\.(?:%s)" % (
+                "|".join(re.escape(v) for v in sorted(g.collection_views)),
+                "|".join(sorted(g.membership_methods))), text)
             if m:
                 return cls._member_fact(subject, ExpVar(PVar(m.group(1))))
             if cls._LITERAL_COLLECTION.match(text):
@@ -4206,88 +4201,12 @@ class SILTranslator:
                 # For sinks with empty sink_args (e.g., insecure_random, weak_hash),
                 # the function usage itself is the vulnerability - no taint required
                 if not spec.sink_args:
-                    # Special handling for hashlib.new - only flag weak algorithms
-                    if func_name == "hashlib.new":
-                        if len(instr.args) > 0:
-                            arg_exp, _ = instr.args[0]
-                            arg_str = str(arg_exp).strip("'\"").lower()
-                            # Only flag weak algorithms (specs/data/weak-algorithms.toml)
-                            if arg_str.upper() not in _weak_algorithms().hashes:
-                                # Strong algorithm like sha256, sha384, sha512 - not vulnerable
-                                pass
-                            else:
-                                check = self._create_usage_based_check(
-                                    instr, state, proc_name, sink_kind
-                                )
-                                checks.append(check)
-                    # Special handling for Java MessageDigest.getInstance - check algorithm
-                    # But NOT SecureRandom.getInstance which is safe
-                    elif func_name.endswith("MessageDigest.getInstance") and "SecureRandom" not in func_name:
-                        if len(instr.args) > 0:
-                            arg_exp, _ = instr.args[0]
-                            arg_str = str(arg_exp).strip("'\"").upper()
-                            # Only flag a known weak algorithm (specs/data/weak-algorithms.toml),
-                            # never a variable/dynamic one (too many FPs)
-                            if arg_str in _weak_algorithms().hashes:
-                                check = self._create_usage_based_check(
-                                    instr, state, proc_name, sink_kind
-                                )
-                                checks.append(check)
-                    # Special handling for Java Cipher.getInstance - check algorithm
-                    elif func_name.endswith("Cipher.getInstance"):
-                        if len(instr.args) > 0:
-                            arg_exp, _ = instr.args[0]
-                            arg_str = str(arg_exp).strip("'\"").upper()
-                            # Weak encryption algorithms (inherently insecure)
-                            weak_ciphers = _weak_algorithms().ciphers
-                            # ECB mode is always weak (no IV, patterns preserved)
-                            # NOPADDING is weak ONLY when NOT using authenticated modes (GCM, CCM)
-                            # GCM and CCM provide integrity, so NOPADDING is safe with them
-                            is_weak_cipher = any(weak in arg_str for weak in weak_ciphers)
-                            is_ecb = any(m in arg_str for m in _weak_algorithms().cipher_modes)
-                            is_nopadding_without_auth = (
-                                'NOPADDING' in arg_str and
-                                'GCM' not in arg_str and
-                                'CCM' not in arg_str
-                            )
-                            is_weak = is_weak_cipher or is_ecb or is_nopadding_without_auth
-                            if is_weak:
-                                check = self._create_usage_based_check(
-                                    instr, state, proc_name, sink_kind
-                                )
-                                checks.append(check)
-                    # A usage sink only with an explicit off value among its arguments
-                    # (`set_cookie(..., secure=False)`, `cookie.setSecure(false)`): the spec says which.
-                    elif spec.sink_if_arg_literal:
-                        if any(str(a).strip().strip('"') in spec.sink_if_arg_literal for a, _ in instr.args):
-                            checks.append(self._create_usage_based_check(instr, state, proc_name, sink_kind))
-                    # Skip SecureRandom.getInstance - this is safe, not a weak hash
-                    elif "SecureRandom" in func_name:
-                        pass  # SecureRandom is secure, don't flag
-                    # scanf family: unbounded read only when the format string
-                    # uses %s/%[ without a field width (e.g. scanf("%d") is safe).
-                    elif func_name in ("scanf", "fscanf", "sscanf",
-                                       "wscanf", "swscanf", "fwscanf"):
-                        if any(self._is_unbounded_scanf_format(a) for a, _ in instr.args):
-                            check = self._create_usage_based_check(
-                                instr, state, proc_name, sink_kind
-                            )
-                            checks.append(check)
-                    else:
-                        # Weak-hash usage honors usedforsecurity=False (Python 3.9+,
-                        # matching Bandit B324): a documented non-security hash is not a
-                        # vulnerability. The frontend lowers that keyword to a bare False
-                        # argument, so a False arg on a weak-hash call marks the opt-out.
-                        if (getattr(sink_kind, "value", None) == "weak_hash"
-                                and any(str(a[0]).strip().lower() == "false"
-                                        for a in instr.args)):
-                            pass  # usedforsecurity=False -> not flagged
-                        else:
-                            # Create a usage-based vulnerability check
-                            check = self._create_usage_based_check(
-                                instr, state, proc_name, sink_kind
-                            )
-                            checks.append(check)
+                    # The spec row says what makes the call weak: an algorithm named by a literal
+                    # (`hashlib.new("md5")`, `Cipher.getInstance("DES/...")`; a variable is not
+                    # known, so not reported), an explicit off value (`set_cookie(...,
+                    # secure=False)`), an unbounded scanf conversion; or the call itself.
+                    if self._usage_sink_applies(spec, instr):
+                        checks.append(self._create_usage_based_check(instr, state, proc_name, sink_kind))
                 else:
                     # Special handling for XML parsers with secure parser argument
                     # xml.dom.minidom.parseString(data, parser) - safe if parser is secure
@@ -5763,6 +5682,25 @@ class SILTranslator:
 
     _CONFIDENTIALITY_SINKS = frozenset({SinkKind.SENSITIVE_LOG, SinkKind.SENSITIVE_EXPOSURE, SinkKind.SECRET_EXPOSURE,
                                         SinkKind.ERROR_DISCLOSURE, SinkKind.CREDENTIAL, SinkKind.HARDCODED_SECRET})
+
+    def _usage_sink_applies(self, spec, instr) -> bool:
+        """Whether a usage sink (no `sink_args`) holds for this call, by the row's fields."""
+        args = [a for a, _ in instr.args]
+        names = list(getattr(instr, "kwarg_names", None) or [])
+        for key, literal in spec.safe_kwargs.items():
+            if any(n == key and isinstance(a, ExpConst) and str(a.value) == literal for n, a in zip(names, args)):
+                return False
+        if spec.algorithm_name_arg is not None:
+            if spec.algorithm_name_arg >= len(args):
+                return False
+            arg = args[spec.algorithm_name_arg]
+            return isinstance(arg, ExpConst) and isinstance(arg.value, str) \
+                and weak_algorithm(str(spec.is_sink), arg.value) is not None
+        if spec.sink_if_arg_literal:
+            return any(str(a).strip().strip('"') in spec.sink_if_arg_literal for a in args)
+        if spec.scanf_format_arg is not None:
+            return spec.scanf_format_arg < len(args) and self._is_unbounded_scanf_format(args[spec.scanf_format_arg])
+        return True
 
     # Matches an unbounded conversion in a scanf format string: %s / %[ / %ls
     # with no field width (e.g. "%s", "%[^\n]"), but NOT a bounded "%9s".
