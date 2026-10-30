@@ -551,6 +551,27 @@ def _constraints(related: Dict[str, List[Any]]) -> List[Any]:
     return out
 
 
+def _network_reach(resources, related, constraints) -> None:
+    """`internet_reach` on every aws_instance: per port of data/aws-network.toml, True, False or
+    unknown (frame/iac/aws_network.py)."""
+    instances = [(a, d) for a, d, b, _, _ in resources if b.labels[0] == "aws_instance"]
+    if not instances:
+        return
+    try:
+        import tomllib
+    except ModuleNotFoundError:             # pragma: no cover - 3.10
+        import tomli as tomllib             # type: ignore[no-redef]
+    from .aws_network import instance_reach
+    ports = tomllib.loads((Path(__file__).parent / "data" / "aws-network.toml").read_text())["ports"]
+    for address, doc in instances:
+        reach = {}
+        for name, port in ports.items():
+            verdict = instance_reach(doc, related, constraints, int(port))
+            reach[name] = verdict if verdict is not None else Unknown(
+                f"{address}.internet_reach.{name}", f"the network path to {address} (port {port})")
+        doc["internet_reach"] = reach
+
+
 def _related(resources: List[Tuple[str, Dict[str, Any], Block, _File, Dict]]) -> Dict[str, List[Any]]:
     out: Dict[str, List[Any]] = {}
     for address, doc, block, _, _ in resources:
@@ -573,6 +594,7 @@ def read(paths: List[Tuple[Path, str]], root: Path) -> ReadResult:
         resources = inst.resources()
         related = _related(resources)
         constraints = _constraints(related)
+        _network_reach(resources, related, constraints)
         for address, doc, block, f, lines in resources:
             r = Resource(format="terraform", type=block.labels[0], name=block.labels[1], file=f.rel,
                          line=block.line, document=doc, lines=lines, views={"self": (), "resources": ()},

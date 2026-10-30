@@ -1,0 +1,5 @@
+# The TCP ports whose reachability from the internet is decided for every EC2 instance
+# (frame/iac/aws_network.py), as `internet_reach.<name>` on the instance's document.
+[ports]
+ssh = 22
+rdp = 3389

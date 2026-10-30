@@ -339,7 +339,9 @@ def test_terragoat():
     assert {(f.rule, f.resource) for f in run.findings} == {
         ("aws-rds-public", "aws_db_instance.default"), ("aws-rds-unencrypted", "aws_db_instance.default"),
         ("aws-ebs-unencrypted", "aws_ebs_volume.web_host_storage"),
-        ("aws-sg-admin-from-internet", "aws_security_group.web-node")}
+        ("aws-sg-admin-from-internet", "aws_security_group.web-node"),
+        # both instances sit in the public subnet behind that group: SSH is reachable end to end
+        ("aws-ec2-admin-reachable", "aws_instance.web_host"), ("aws-ec2-admin-reachable", "aws_instance.db_app")}
 
 
 # --- addresses -------------------------------------------------------------------------------
@@ -510,3 +512,74 @@ def test_two_buckets_are_different_objects_and_an_s3_id_is_its_name(tmp_path):
     elsewhere = BUCKET + OWNERSHIP + PAB_OFF + ACL.replace("aws_s3_bucket.b.id", '"someone-elses-bucket"')
     run = _tf(tmp_path, {"main.tf": elsewhere})        # b.id is "shop-assets", so not this bucket
     assert not run.findings and not run.undecided
+
+
+# --- network reachability (frame/iac/aws_network.py) ----------------------------------------
+
+BASTION = (FIXTURES / "public-bastion.tf").read_text()
+
+
+def _reach(tmp_path, text):
+    run = _tf(tmp_path, {"main.tf": text})
+    if any(f.rule == "aws-ec2-admin-reachable" for f in run.findings):
+        return True
+    if any(u["rule"] == "aws-ec2-admin-reachable" for u in run.undecided):
+        return None
+    return False
+
+
+NACL = '''
+resource "aws_network_acl" "n" {
+  vpc_id     = aws_vpc.main.id
+  subnet_ids = [aws_subnet.public.id]
+  ingress {
+    rule_no    = 100
+    action     = "deny"
+    protocol   = "tcp"
+    from_port  = 22
+    to_port    = 22
+    cidr_block = "0.0.0.0/0"
+  }
+  ingress {
+    rule_no    = 200
+    action     = "allow"
+    protocol   = "-1"
+    from_port  = 0
+    to_port    = 0
+    cidr_block = "0.0.0.0/0"
+  }
+  egress {
+    rule_no    = 100
+    action     = "allow"
+    protocol   = "-1"
+    from_port  = 0
+    to_port    = 0
+    cidr_block = "0.0.0.0/0"
+  }
+}
+'''
+
+
+@pytest.mark.parametrize("edit, reachable", [
+    (lambda t: t, True),
+    # no explicit association: the main table of a new VPC has only the local route
+    (lambda t: t.replace('resource "aws_route_table_association" "public"', 'resource "x" "unused"'), False),
+    (lambda t: t.replace("map_public_ip_on_launch = true", "map_public_ip_on_launch = false"), False),
+    (lambda t: t.replace("map_public_ip_on_launch = true", "map_public_ip_on_launch = false")
+     + 'resource "aws_eip" "ip" {\n  instance = aws_instance.bastion.id\n}\n', True),
+    (lambda t: t.replace("gateway_id = aws_internet_gateway.gw.id", "nat_gateway_id = aws_nat_gateway.n.id"), False),
+    # a more specific route elsewhere leaves the rest of the internet on the gateway
+    (lambda t: t.replace('  route {\n    cidr_block = "0.0.0.0/0"',
+                         '  route {\n    cidr_block = "8.0.0.0/8"\n    vpc_peering_connection_id = "pcx-1"\n  }\n'
+                         '  route {\n    cidr_block = "0.0.0.0/0"'), True),
+    (lambda t: t + NACL, False),                                  # rule 100 denies 22 before 200 allows
+    (lambda t: t + NACL.replace('rule_no    = 100\n    action     = "deny"', 'rule_no    = 300\n    action     = "deny"'),
+     True),
+    (lambda t: t + NACL.replace('  egress {\n    rule_no    = 100\n    action     = "allow"',
+                                '  egress {\n    rule_no    = 100\n    action     = "deny"'), False),   # no reply
+    (lambda t: t.replace('cidr_blocks = ["0.0.0.0/0"]', 'cidr_blocks = ["10.0.0.0/8"]'), False),
+    (lambda t: t.replace("subnet_id              = aws_subnet.public.id", "subnet_id = data.aws_subnet.s.id"), None),
+    (lambda t: t.replace("subnet_id              = aws_subnet.public.id\n", ""), None),   # the default VPC
+])
+def test_an_instance_reachable_from_the_internet(tmp_path, edit, reachable):
+    assert _reach(tmp_path, edit(BASTION)) is reachable

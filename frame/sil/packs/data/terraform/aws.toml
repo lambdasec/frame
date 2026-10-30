@@ -204,3 +204,19 @@ cwe = "CWE-269"
 resources = ["aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy", "aws_iam_role"]
 when = '''self.policy_admin == true or (some p in self.inline_policy: p.policy_admin == true)'''
 references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/iam-controls.html#iam-1"]
+
+# --- network reachability -----------------------------------------------------------------
+# frame/iac/aws_network.py decides, for each instance, whether some internet address can
+# reach the port through its public address, its subnet's route to an internet gateway
+# (longest prefix match), the subnet's network ACL both ways, and its security groups.
+
+[[policy]]
+id = "aws-ec2-admin-reachable"
+title = "The internet can reach SSH or RDP on this instance"
+severity = "critical"
+cwe = "CWE-284"
+resources = ["aws_instance"]
+when = '''self.internet_reach.ssh == true or self.internet_reach.rdp == true'''
+references = ["https://docs.aws.amazon.com/vpc/latest/userguide/route-tables-priority.html",
+              "https://docs.aws.amazon.com/vpc/latest/userguide/nacl-rules.html",
+              "https://docs.aws.amazon.com/vpc/latest/userguide/subnet-route-tables.html"]
