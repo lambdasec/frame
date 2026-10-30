@@ -32,6 +32,50 @@ def test_java_cipher(algo, weak):
 
 def test_a_malformed_file_is_an_error(tmp_path):
     p = tmp_path / "w.toml"
-    p.write_text('hashes = ["MD5"]\nciphers = []\ncipher_modes = ["ECB"]\n')
+    p.write_text('hashes = ["MD5"]\nciphers = []\ncipher_modes = ["ECB"]\n[windows_alg_ids]\nCALG_MD5 = "MD5"\n')
     with pytest.raises(ValueError, match="non-empty"):
         load(p)
+
+
+def test_an_alg_id_must_name_a_listed_algorithm(tmp_path):
+    p = tmp_path / "w.toml"
+    p.write_text('hashes = ["MD5"]\nciphers = ["DES"]\ncipher_modes = ["ECB"]\n[windows_alg_ids]\nCALG_RC5 = "RC5"\n')
+    with pytest.raises(ValueError, match="RC5"):
+        load(p)
+
+
+_CRYPTOAPI = """#include <windows.h>
+#include <wincrypt.h>
+
+void f(HCRYPTPROV prov, HCRYPTHASH base)
+{
+    HCRYPTHASH hash;
+    HCRYPTKEY key;
+    %s
+}
+"""
+
+
+@pytest.mark.parametrize("call,cwe", [
+    ("CryptCreateHash(prov, CALG_MD5, 0, 0, &hash);", "CWE-328"),
+    ("CryptCreateHash(prov, CALG_SHA1, 0, 0, &hash);", "CWE-328"),
+    ("CryptDeriveKey(prov, CALG_RC4, base, 0, &key);", "CWE-327"),
+    ("CryptGenKey(prov, CALG_DES, 0, &key);", "CWE-327"),
+    ("CryptCreateHash(prov, CALG_SHA_256, 0, 0, &hash);", None),
+    ("CryptDeriveKey(prov, CALG_AES_256, base, 0, &key);", None),
+])
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+def test_windows_cryptoapi_algorithm_ids(call, cwe, lang):
+    r = FrameScanner(language=lang).scan(_CRYPTOAPI % call, "t." + lang)
+    found = {v.cwe_id for v in r.vulnerabilities} & {"CWE-327", "CWE-328"}
+    assert found == ({cwe} if cwe else set())
+
+
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+def test_a_call_inside_a_condition_is_checked_too(lang):
+    """`if (!CryptCreateHash(...))` and `if (!MD5(...))`: a call that is itself a finding is its own
+    Call instruction even inside an expression."""
+    body = ("if (!CryptCreateHash(prov, CALG_MD5, 0, 0, &hash))\n    {\n        return;\n    }\n"
+            "    if (!MD5((const unsigned char *)\"x\", 1, (unsigned char *)&key))\n    {\n        return;\n    }")
+    r = FrameScanner(language=lang).scan(_CRYPTOAPI % body, "t." + lang)
+    assert {(v.cwe_id, v.line) for v in r.vulnerabilities if v.cwe_id == "CWE-328"} == {("CWE-328", 8), ("CWE-328", 12)}

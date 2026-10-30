@@ -170,6 +170,10 @@ class ProcSpec:
     # A negative signed value passed there becomes a huge one (CWE-194/195).
     size_args: List[int] = field(default_factory=list)
 
+    # The argument that selects the algorithm by a constant (Windows CryptoAPI ALG_ID); a weak one
+    # (`windows_alg_ids` in specs/data/weak-algorithms.toml) makes the call a weak hash / cipher.
+    algorithm_arg: Optional[int] = None
+
     # =========================================================================
     # Structural weakness specifications
     #

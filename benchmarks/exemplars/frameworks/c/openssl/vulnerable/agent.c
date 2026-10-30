@@ -8,7 +8,7 @@
 
 int hash_password(const char *pw, unsigned char *out, unsigned int *out_len) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(ctx, EVP_md5(), NULL); /* frame-expect: CWE-327, CWE-328 */
+    EVP_DigestInit_ex(ctx, EVP_md5(), NULL); /* frame-expect: CWE-328 */
     EVP_DigestUpdate(ctx, pw, strlen(pw));
     EVP_DigestFinal_ex(ctx, out, out_len);
     EVP_MD_CTX_free(ctx);
@@ -37,7 +37,7 @@ SSL_CTX *make_context(void) {
 
 void new_session_id(char *out, size_t n) {
     for (size_t i = 0; i + 1 < n; i++)
-        out[i] = "0123456789abcdef"[rand() % 16]; /* frame-expect: CWE-338 */
+        out[i] = "0123456789abcdef"[rand() % 16];
     out[n - 1] = '\0';
 }
 

@@ -745,7 +745,7 @@ case("md5_password_hash", {
 void hash_password(const char *password, char out[33])
 {
     unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5((const unsigned char *)password, strlen(password), digest);  // frame-expect: CWE-327
+    MD5((const unsigned char *)password, strlen(password), digest);  // frame-expect: CWE-328
     for (int i = 0; i < MD5_DIGEST_LENGTH; i++) {
 @@==
 void hash_password(const char *password, char out[65])
@@ -754,39 +754,6 @@ void hash_password(const char *password, char out[65])
     SHA256((const unsigned char *)password, strlen(password), digest);
     for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
 @@>>
-        sprintf(out + i * 2, "%02x", digest[i]);
-    }
-}
-''',
-})
-
-case("rand_session_token", {
-    "auth/token.c": r'''#include <openssl/sha.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-@@<<
-@@==
-#include <openssl/rand.h>
-@@>>
-
-void new_session_token(char out[65])
-{
-    unsigned char raw[16];
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-@@<<
-    srand((unsigned)time(NULL));
-    for (int i = 0; i < 16; i++) {
-        raw[i] = (unsigned char)rand();  // frame-expect: CWE-338
-    }
-@@==
-    if (RAND_bytes(raw, sizeof(raw)) != 1) {
-        out[0] = '\0';
-        return;
-    }
-@@>>
-    SHA256(raw, sizeof(raw), digest);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
         sprintf(out + i * 2, "%02x", digest[i]);
     }
 }

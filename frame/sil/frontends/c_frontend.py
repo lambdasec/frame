@@ -1243,9 +1243,16 @@ class CFrontend:
         return name in (proc.locals or {}) or name in {p.name for p, _ in proc.params}
 
     def _delivers_into_arguments(self, call_node: TSNode) -> bool:
-        """Does this call fill one of its arguments with input (`read`, `recv`, `fgets`, `fread`)?"""
+        """Must this call be its own Call instruction even inside an expression? It fills one of
+        its arguments with input (`read`, `recv`, `fgets`, `fread`), or the call itself is a
+        finding: a usage sink (`MD5(...)`, `tmpnam(...)`) or a weak algorithm constant at its
+        `algorithm_arg` (`if (!CryptCreateHash(prov, CALG_MD5, ...))`). An expression-level call
+        only carries its return value, so none of those would be seen."""
         spec = self.specs.get(self._get_call_name(call_node))
-        return bool(spec is not None and getattr(spec, "taint_out_args", None))
+        if spec is None:
+            return False
+        usage_sink = bool(spec.is_sink) and spec.sink_args is not None and not spec.sink_args
+        return bool(getattr(spec, "taint_out_args", None)) or spec.algorithm_arg is not None or usage_sink
 
     def _is_value_call(self, call_node: TSNode) -> bool:
         """A call the expression translator already lowers to a value (`sizeof`-like or a

@@ -11,3 +11,19 @@ ciphers = ["DES", "DESEDE", "3DES", "RC2", "RC4", "BLOWFISH"]
 
 # Block cipher modes that leak patterns of the plaintext (CWE-327).
 cipher_modes = ["ECB"]
+
+# Windows CryptoAPI algorithm identifiers (ALG_ID constants from wincrypt.h, as Microsoft's
+# "ALG_ID" reference names them) -> the algorithm they select. A call whose algorithm argument
+# (`algorithm_arg` in the C/C++ spec tables: CryptCreateHash, CryptDeriveKey, CryptGenKey) is one
+# of these is weak when the algorithm is in the lists above.
+[windows_alg_ids]
+CALG_MD2 = "MD2"
+CALG_MD4 = "MD4"
+CALG_MD5 = "MD5"
+CALG_SHA = "SHA"
+CALG_SHA1 = "SHA1"
+CALG_DES = "DES"
+CALG_3DES = "3DES"
+CALG_3DES_112 = "3DES"
+CALG_RC2 = "RC2"
+CALG_RC4 = "RC4"

@@ -278,6 +278,10 @@ vuln = "privilege_management"
 kind = "system_config"
 vuln = "config_injection"
 
+[[sink]]
+kind = "library_load"
+vuln = "process_control"
+
 [[vuln]]
 type = "path_traversal"
 cwe = "CWE-22"
@@ -684,6 +688,11 @@ category = "memory"
 [[vuln]]
 type = "unicode_handling"
 category = "memory"
+
+[[vuln]]
+type = "process_control"
+cwe = "CWE-114"
+category = "taint"
 
 [[vuln]]
 type = "config_injection"

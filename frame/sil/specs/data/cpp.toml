@@ -450,23 +450,54 @@ description = "operator delete[] (C++ array deallocation)"
 
 [[spec]]
 name = "dlopen"
-is_sink = "eval"
-description = "dlopen() - loads and runs code from the named library"
+is_sink = "library_load"
+sink_args = [0]
+description = "dlopen(filename, flags) - loads and runs code from the named library (CWE-114)"
 
 [[spec]]
 name = "LoadLibrary"
-is_sink = "eval"
-description = "LoadLibrary() - loads and runs code from the named library"
+is_sink = "library_load"
+sink_args = [0]
+description = "LoadLibrary(lpLibFileName) - loads and runs code from the named library (CWE-114)"
 
 [[spec]]
 name = "LoadLibraryA"
-is_sink = "eval"
-description = "LoadLibraryA() - loads and runs code from the named library"
+is_sink = "library_load"
+sink_args = [0]
+description = "LoadLibraryA(lpLibFileName) - loads and runs code from the named library (CWE-114)"
 
 [[spec]]
 name = "LoadLibraryW"
-is_sink = "eval"
-description = "LoadLibraryW() - loads and runs code from the named library"
+is_sink = "library_load"
+sink_args = [0]
+description = "LoadLibraryW(lpLibFileName) - loads and runs code from the named library (CWE-114)"
+
+[[spec]]
+name = "LoadLibraryExA"
+is_sink = "library_load"
+sink_args = [0]
+description = "LoadLibraryExA(lpLibFileName, hFile, dwFlags) - loads and runs code from the named library (CWE-114)"
+
+[[spec]]
+name = "LoadLibraryExW"
+is_sink = "library_load"
+sink_args = [0]
+description = "LoadLibraryExW(lpLibFileName, hFile, dwFlags) - loads and runs code from the named library (CWE-114)"
+
+[[spec]]
+name = "CryptCreateHash"
+algorithm_arg = 1
+description = "CryptCreateHash(hProv, Algid, hKey, dwFlags, phHash): Algid selects the algorithm"
+
+[[spec]]
+name = "CryptDeriveKey"
+algorithm_arg = 1
+description = "CryptDeriveKey(hProv, Algid, hBaseData, dwFlags, phKey): Algid selects the algorithm"
+
+[[spec]]
+name = "CryptGenKey"
+algorithm_arg = 1
+description = "CryptGenKey(hProv, Algid, dwFlags, phKey): Algid selects the algorithm"
 
 [[spec]]
 name = "system"
@@ -1263,6 +1294,24 @@ taint_propagates = [0]
 description = "SSLv3 disabled"
 
 [[spec]]
+name = "EVP_md4"
+is_sink = "weak_hash"
+sink_args = []
+description = "EVP_md4() - selects MD4, a weak hash (CWE-328)"
+
+[[spec]]
+name = "EVP_md5"
+is_sink = "weak_hash"
+sink_args = []
+description = "EVP_md5() - selects MD5, a weak hash (CWE-328)"
+
+[[spec]]
+name = "EVP_sha1"
+is_sink = "weak_hash"
+sink_args = []
+description = "EVP_sha1() - selects SHA-1, a weak hash (CWE-328)"
+
+[[spec]]
 name = "EVP_des_ecb"
 is_sink = "weak_crypto"
 sink_args = []
@@ -1504,8 +1553,21 @@ description = "mktemp race condition (CWE-377), use mkstemp"
 
 [[spec]]
 name = "tempnam"
-is_sink = "race"
-description = "tempnam race condition (CWE-377)"
+is_sink = "insecure_temp_file"
+sink_args = []
+description = "tempnam race condition (CWE-377), use mkstemp"
+
+[[spec]]
+name = "_tempnam"
+is_sink = "insecure_temp_file"
+sink_args = []
+description = "_tempnam (Windows tempnam) race condition (CWE-377)"
+
+[[spec]]
+name = "_mktemp"
+is_sink = "insecure_temp_file"
+sink_args = []
+description = "_mktemp (Windows mktemp) race condition (CWE-377)"
 
 [[spec]]
 name = "tmpnam"
@@ -2631,42 +2693,50 @@ description = "delete (check for UAF CWE-416)"
 
 [[spec]]
 name = "std::dlopen"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "dlopen() - loads and runs code from the named library"
 
 [[spec]]
 name = "::dlopen"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "dlopen() - loads and runs code from the named library"
 
 [[spec]]
 name = "std::LoadLibrary"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibrary() - loads and runs code from the named library"
 
 [[spec]]
 name = "::LoadLibrary"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibrary() - loads and runs code from the named library"
 
 [[spec]]
 name = "std::LoadLibraryA"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibraryA() - loads and runs code from the named library"
 
 [[spec]]
 name = "::LoadLibraryA"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibraryA() - loads and runs code from the named library"
 
 [[spec]]
 name = "std::LoadLibraryW"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibraryW() - loads and runs code from the named library"
 
 [[spec]]
 name = "::LoadLibraryW"
-is_sink = "eval"
+is_sink = "library_load"
+sink_args = [0]
 description = "LoadLibraryW() - loads and runs code from the named library"
 
 [[spec]]

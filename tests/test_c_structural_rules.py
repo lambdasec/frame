@@ -40,3 +40,40 @@ def test_attacker_data_choosing_a_system_setting_is_cwe_15(call, lang):
                                   "RegSetValueExA(key, \"v\", 0, REG_SZ, (BYTE *)\"x\", 2);"])
 def test_a_constant_setting_is_not(call):
     assert not {f for f in findings(_CONFIG % call) if f[0] == "CWE-15"}
+
+
+_LOAD = """#include <windows.h>
+#include <dlfcn.h>
+#include <stdio.h>
+
+void plugin(void)
+{
+    char path[256] = "";
+    fgets(path, 256, stdin);
+    %s
+}
+"""
+
+
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+@pytest.mark.parametrize("call", ["LoadLibraryA(path);", "LoadLibraryExW(path, NULL, 0);", "dlopen(path, RTLD_NOW);"])
+def test_a_library_named_by_attacker_data_is_cwe_114(call, lang):
+    assert ("CWE-114", 9) in findings(_LOAD % call, lang)
+
+
+@pytest.mark.parametrize("call", ['LoadLibraryA("C:\\\\Windows\\\\System32\\\\winhttp.dll");',
+                                  'dlopen("/usr/lib/libz.so.1", RTLD_NOW);'])
+def test_a_fixed_library_is_not(call):
+    assert not {f for f in findings(_LOAD % call) if f[0] == "CWE-114"}
+
+
+@pytest.mark.parametrize("call", ["tmpnam(name);", "tempnam(NULL, \"x\");", "mktemp(name);", "_mktemp(name);"])
+def test_temp_names_that_race_are_cwe_377(call):
+    code = "#include <stdio.h>\n#include <stdlib.h>\n\nvoid f(void)\n{\n    char name[64] = \"tmpXXXXXX\";\n    %s\n}\n"
+    assert ("CWE-377", 7) in findings(code % call)
+
+
+def test_mkstemp_is_not():
+    code = ("#include <stdlib.h>\n\nvoid f(void)\n{\n    char name[64] = \"tmpXXXXXX\";\n"
+            "    int fd = mkstemp(name);\n    (void)fd;\n}\n")
+    assert not {f for f in findings(code) if f[0] == "CWE-377"}

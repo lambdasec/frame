@@ -2092,102 +2092,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 confidence=0.8,
             ))
 
-        # =====================================================================
-        # CWE-327: Use of Broken or Risky Cryptographic Algorithm
-        # =====================================================================
-
-        # Weak Windows CryptoAPI algorithms (CALG_* constants)
-        weak_calg_patterns = [
-            (r'\bCALG_RC2\b', 'RC2'),
-            (r'\bCALG_RC4\b', 'RC4'),
-            (r'\bCALG_RC5\b', 'RC5'),
-            (r'\bCALG_DES\b', 'DES'),
-            (r'\bCALG_3DES\b', '3DES'),
-            (r'\bCALG_MD2\b', 'MD2'),
-            (r'\bCALG_MD4\b', 'MD4'),
-            (r'\bCALG_MD5\b', 'MD5'),
-            (r'\bCALG_SHA\b(?!_256|_384|_512)', 'SHA-1'),
-            (r'\bCALG_SHA1\b', 'SHA-1'),
-        ]
-        for pattern, algo_name in weak_calg_patterns:
-            if re.search(pattern, stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
-                    cwe_id="CWE-327",
-                    location=loc,
-                    var_name="crypto_algorithm",
-                    description=f"Use of weak cryptographic algorithm: {algo_name}",
-                    confidence=0.9,
-                ))
-                break  # Only report once per line
-
-        # Weak OpenSSL/general crypto function patterns
-        weak_crypto_funcs = [
-            (r'\bMD5\s*\(', 'MD5'),
-            (r'\bMD5_Init\s*\(', 'MD5'),
-            (r'\bSHA1\s*\(', 'SHA-1'),
-            (r'\bSHA1_Init\s*\(', 'SHA-1'),
-            (r'\bDES_\w+\s*\(', 'DES'),
-            (r'\bEVP_des_\w+\s*\(', 'DES'),
-            (r'\bEVP_rc2_\w+\s*\(', 'RC2'),
-            (r'\bEVP_rc4\s*\(', 'RC4'),
-            (r'\bEVP_md5\s*\(', 'MD5'),
-            (r'\bEVP_sha1\s*\(', 'SHA-1'),
-        ]
-        for pattern, algo_name in weak_crypto_funcs:
-            if re.search(pattern, stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
-                    cwe_id="CWE-327",
-                    location=loc,
-                    var_name="crypto_algorithm",
-                    description=f"Use of weak cryptographic algorithm: {algo_name}",
-                    confidence=0.9,
-                ))
-                break
-
-        # =====================================================================
-        # CWE-338: Use of Cryptographically Weak PRNG
-        # =====================================================================
-        # Detects use of non-cryptographic random number generators like rand(),
-        # random(), which are predictable and shouldn't be used for security purposes.
-        # Only flag in crypto-related context to avoid FPs from test data generation.
-
-        # Check if this file has crypto context (wincrypt.h, openssl, etc.)
-        if not hasattr(_detect_semantic_cwes, '_file_crypto_context'):
-            _detect_semantic_cwes._file_crypto_context = {}
-
-        if filename not in _detect_semantic_cwes._file_crypto_context:
-            full_content = '\n'.join(lines)
-            has_crypto = bool(re.search(
-                r'#include\s*[<"](wincrypt|openssl|crypto|Crypto|ssl)\b|'
-                r'\b(CryptGenRandom|CryptAcquireContext|HCRYPTPROV|RAND_bytes|EVP_)\b',
-                full_content
-            ))
-            _detect_semantic_cwes._file_crypto_context[filename] = has_crypto
-
-        if _detect_semantic_cwes._file_crypto_context.get(filename, False):
-            weak_prng_patterns = [
-                (r'\brand\s*\(\s*\)', 'rand()'),
-                (r'\brandom\s*\(\s*\)', 'random()'),
-                (r'\bdrand48\s*\(\s*\)', 'drand48()'),
-                (r'\blrand48\s*\(\s*\)', 'lrand48()'),
-                (r'\bmrand48\s*\(\s*\)', 'mrand48()'),
-                (r'\bsrand\s*\(\s*time\s*\(', 'srand(time())'),  # Common weak seeding
-                (r'\bsrandom\s*\(\s*time\s*\(', 'srandom(time())'),
-            ]
-            for pattern, func_name in weak_prng_patterns:
-                if re.search(pattern, stripped):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.WEAK_CRYPTOGRAPHY,
-                        cwe_id="CWE-338",
-                        location=loc,
-                        var_name="prng",
-                        description=f"Use of cryptographically weak PRNG: {func_name}",
-                        confidence=0.85,
-                    ))
-                    break  # Only report once per line
-
         # CWE-252 (unchecked privilege-drop result) is intentionally NOT matched
         # here. A line regex over `stripped` cannot see the canonical idiom
         # `setuid(getuid())` (the inner parenthesis ends the match early), and it
@@ -2447,22 +2351,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 description="OS command injection - command-line argument used directly in command execution",
                 confidence=0.95,
             ))
-
-        # =====================================================================
-        # CWE-114: Process Control - Loading libraries with user input
-        # =====================================================================
-        lib_match = re.search(r'\b(LoadLibrary[AW]?|LoadModule)\s*\(\s*(\w+)', stripped)
-        if lib_match:
-            lib_var = lib_match.group(2)
-            if lib_var in tainted_vars or lib_var == 'data':
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.PATH_TRAVERSAL,
-                    cwe_id="CWE-114",
-                    location=loc,
-                    var_name=lib_var,
-                    description="Process control - loading library from user-controlled path",
-                    confidence=0.85,
-                ))
 
         # =====================================================================
         # CWE-122: Heap Buffer Overflow - strncpy with fixed size to data param
@@ -3221,35 +3109,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
             ))
 
         # =====================================================================
-        # CWE-377: Insecure Temporary File
-        # =====================================================================
-        # Pattern: tmpnam(), tempnam(), mktemp() - insecure temp file functions
-        insecure_temp_funcs = ['tmpnam', 'tempnam', 'mktemp', '_tempnam', '_mktemp']
-        for func in insecure_temp_funcs:
-            if re.search(rf'\b{func}\s*\(', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INSECURE_TEMP_FILE,
-                    cwe_id="CWE-377",
-                    location=loc,
-                    var_name=func,
-                    description=f"Insecure temp file - {func}() is vulnerable to symlink attacks, use mkstemp()",
-                    confidence=0.9,
-                ))
-
-        # Pattern: GetTempFileName without immediate open
-        if re.search(r'\bGetTempFileName\w*\s*\(', stripped):
-            # Check if result is not immediately opened
-            if not re.search(r'CreateFile\w*\s*\(', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.INSECURE_TEMP_FILE,
-                    cwe_id="CWE-377",
-                    location=loc,
-                    var_name="tempfile",
-                    description="Insecure temp file - GetTempFileName result should be opened immediately",
-                    confidence=0.75,
-                ))
-
-        # =====================================================================
         # CWE-242/676: Use of Inherently Dangerous Function
         # =====================================================================
         # Note: gets() detection is already handled in sl_semantic_analyzer.py
@@ -3516,23 +3375,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                     description="Assignment of fixed address to pointer - may access invalid memory",
                     confidence=0.95,
                 ))
-
-        # =====================================================================
-        # CWE-526: Exposure of Sensitive Information Through Environment Variables
-        # =====================================================================
-        # Pattern: printLine(getenv("...")); or printf(..., getenv(...))
-        if re.search(r'\bprintLine\s*\(\s*getenv\s*\(', stripped) or \
-           re.search(r'\bprintf\s*\([^)]*getenv\s*\(', stripped) or \
-           re.search(r'\bfprintf\s*\([^,]+,[^)]*getenv\s*\(', stripped) or \
-           re.search(r'\bputs\s*\(\s*getenv\s*\(', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.SENSITIVE_DATA_EXPOSURE,
-                cwe_id="CWE-526",
-                location=loc,
-                var_name="environment",
-                description="Information exposure - environment variable printed to output",
-                confidence=0.9,
-            ))
 
         # =====================================================================
         # CWE-467: Use of sizeof() on Pointer Type

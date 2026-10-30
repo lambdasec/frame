@@ -170,6 +170,7 @@ class VulnType(Enum):
     NUMERIC_TRUNCATION = "numeric_truncation"   # CWE-197
     UNICODE_HANDLING = "unicode_handling"       # CWE-176
     CONFIG_INJECTION = "config_injection"       # CWE-15
+    PROCESS_CONTROL = "process_control"         # CWE-114
 
     # Additional memory safety and resource management
     RESOURCE_EXHAUSTION = "resource_exhaustion" # CWE-400
@@ -4003,6 +4004,9 @@ class SILTranslator:
         spec = self.program.spec_for_call(instr)
         if self._is_c_lang and spec is not None and spec.size_args:
             self._note_size_arg_candidates(instr, spec, state, proc_name)
+        if self._is_c_lang and spec is not None and spec.algorithm_arg is not None \
+                and spec.algorithm_arg < len(instr.args):
+            checks.extend(self._weak_algorithm_id_checks(instr, spec, state, proc_name))
 
         # A call to a procedure of this file: pass its argument taint on, and
         # take the result's taint from the callee's return summary (or, before
@@ -6462,6 +6466,21 @@ class SILTranslator:
                 ))
 
         return checks
+
+    def _weak_algorithm_id_checks(self, instr: Call, spec, state: SymbolicState,
+                                  proc_name: str) -> List["VulnerabilityCheck"]:
+        """`CryptCreateHash(prov, CALG_MD5, ...)`: the algorithm argument is a constant naming a
+        weak hash (CWE-328) or cipher (CWE-327)."""
+        arg = instr.args[spec.algorithm_arg][0]
+        name = self._get_var_name(arg.var) if isinstance(arg, ExpVar) else str(arg)
+        weak = _weak_algorithms()
+        algorithm = weak.windows_alg_ids.get(name)
+        if algorithm is None:
+            return []
+        kind = SinkKind.WEAK_HASH if algorithm in weak.hashes else SinkKind.WEAK_CRYPTO
+        check = self._create_usage_based_check(instr, state, proc_name, kind)
+        check.description = f"{instr.get_full_name()} selects {name} ({algorithm}), a weak algorithm"
+        return [check]
 
     def _create_usage_based_check(
         self,

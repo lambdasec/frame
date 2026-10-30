@@ -186,6 +186,7 @@ class SinkKind(Enum):
     SENSITIVE_EXPOSURE = "sensitive_exposure"  # Sensitive data exposed (CWE-200)
     PRIVILEGE = "privilege"     # Privilege management on attacker data (CWE-269)
     SYSTEM_CONFIG = "system_config"  # A system setting chosen by attacker data (CWE-15)
+    LIBRARY_LOAD = "library_load"    # A library loaded from a path attacker data chooses (CWE-114)
 
     def __str__(self) -> str:
         return self.value

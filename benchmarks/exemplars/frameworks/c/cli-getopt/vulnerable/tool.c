@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
         system(cmd); /* frame-expect: CWE-78 */
     }
     if (plugin) {
-        void *handle = dlopen(plugin, RTLD_NOW); /* frame-expect: CWE-94 */
+        void *handle = dlopen(plugin, RTLD_NOW); /* frame-expect: CWE-114 */
         if (handle)
             dlclose(handle);
     }
