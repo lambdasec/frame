@@ -109,8 +109,9 @@ def read(target: Path, excluded, render_helm: bool = False) -> Dict[str, ReadRes
     k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root,
                           render_helm=render_helm, excluded=excluded)
     _one_warning_per_chart(k8s)
-    tf = terraform.read([(p, r) for p, r in files if p.suffix == ".tf"], root)
-    cfn = cloudformation.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES + (".template",)])
+    tf = terraform.read([(p, r) for p, r in files if p.suffix == ".tf" or p.name.endswith(".tf.json")], root)
+    cfn = cloudformation.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES + (".template",)
+                               and not p.name.endswith(".tf.json")])
     return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker), "terraform": tf, "cloudformation": cfn}
 
 

@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .engine import Unknown
 from .hcl import (Block, Body, HclError, Scope, Source, contains_unknown, convert, evaluate, parse,
-                  type_constraint)
+                  parse_json, type_constraint)
 from .model import ReadResult, Resource
 
 _META = {"count", "for_each", "depends_on", "provider", "lifecycle", "provisioner", "connection"}
@@ -114,17 +114,18 @@ class _ResourceObject(dict):
 
 
 def _load(directory: Path, root: Path, out_warnings: List[str]) -> Optional[_Module]:
-    files = sorted(p for p in directory.glob("*.tf") if p.is_file())
+    files = sorted(p for p in list(directory.glob("*.tf")) + list(directory.glob("*.tf.json")) if p.is_file())
     if not files:
         return None
     mod = _Module(directory)
     for f in files:
         rel = f.relative_to(root).as_posix() if _under(f, root) else str(f)
-        if f.name == "override.tf" or f.name.endswith("_override.tf"):
+        if f.name in ("override.tf", "override.tf.json") or f.name.endswith(("_override.tf", "_override.tf.json")):
             out_warnings.append(f"{rel}: an override file (not merged; its settings are not checked)")
             continue
         try:
-            body, src = parse(f.read_text(encoding="utf-8"))
+            text = f.read_text(encoding="utf-8")
+            body, src = parse_json(text) if f.name.endswith(".tf.json") else parse(text)
         except (OSError, UnicodeDecodeError) as e:
             out_warnings.append(f"{rel}: cannot read: {e}")
             continue
@@ -145,9 +146,6 @@ def _load(directory: Path, root: Path, out_warnings: List[str]) -> Optional[_Mod
                 mod.calls.append((b, tf))
             elif b.type == "output" and b.labels and "value" in b.body.attributes:
                 mod.outputs[b.labels[0]] = (b.body.attributes["value"], tf)
-    for f in sorted(directory.glob("*.tf.json")):
-        rel = f.relative_to(root).as_posix() if _under(f, root) else str(f)
-        out_warnings.append(f"{rel}: Terraform JSON syntax is not read yet")
     return mod
 
 
@@ -583,7 +581,7 @@ def read(paths: List[Tuple[Path, str]], root: Path) -> ReadResult:
     """Every directory holding `.tf` files among `paths`, read as a root module."""
     out = ReadResult()
     reader = _Reader(root.resolve())
-    dirs = sorted({p.parent.resolve() for p, _ in paths if p.suffix == ".tf"})
+    dirs = sorted({p.parent.resolve() for p, _ in paths if p.suffix == ".tf" or p.name.endswith(".tf.json")})
     for d in dirs:
         mod = reader.module(d)
         if mod is None or not mod.files:

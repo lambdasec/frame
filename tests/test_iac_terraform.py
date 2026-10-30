@@ -583,3 +583,45 @@ resource "aws_network_acl" "n" {
 ])
 def test_an_instance_reachable_from_the_internet(tmp_path, edit, reachable):
     assert _reach(tmp_path, edit(BASTION)) is reachable
+
+
+# --- Terraform's JSON syntax -------------------------------------------------------------------
+
+from frame.iac.hcl import parse_json  # noqa: E402
+
+
+@pytest.mark.parametrize("text, value", [
+    ("plain", "plain"),
+    ('quote " and back\\\\slash \\\\n', 'quote " and back\\\\slash \\\\n'),   # no escapes in a template
+    ("line\none\ttab", "line\none\ttab"),
+    ("$${not} %%{not}", "${not} %{not}"),
+    ("é ✓", "é ✓"),
+    ("${1 + 1}", 2),
+    ("a-${var.x}", "a-y"),
+])
+def test_json_strings_are_templates(text, value):
+    doc = json.dumps({"locals": {"v": text}})
+    body, src = parse_json(doc)
+    attr = body.blocks[0].body.attributes["v"]
+    assert evaluate(attr.expr, Scope({"var": {"x": "y"}}), src) == value
+
+
+def test_json_variable_defaults_are_literal_and_types_are_expressions(tmp_path):
+    doc = {"variable": {"name": {"type": "string", "default": "${not a template}"},
+                        "port": {"type": "number", "default": "22"}},
+           "resource": {"aws_db_instance": {"db": {"identifier": "${var.name}", "publicly_accessible": True}}}}
+    (tmp_path / "main.tf.json").write_text(json.dumps(doc, indent=2))
+    run = scan(tmp_path)
+    assert {f.rule for f in run.findings} == {"aws-rds-public", "aws-rds-unencrypted"}
+    body, src = parse_json(json.dumps(doc))
+    default = body.blocks[0].body.attributes["default"].expr
+    assert evaluate(default, Scope({}), src) == "${not a template}"
+
+
+def test_json_and_hcl_files_form_one_module(tmp_path):
+    (tmp_path / "vars.tf").write_text('variable "cidr" {\n  default = "0.0.0.0/0"\n}\n')
+    (tmp_path / "sg.tf.json").write_text(json.dumps({"resource": {"aws_security_group": {"g": {"ingress": [
+        {"from_port": 3389, "to_port": 3389, "protocol": "tcp", "cidr_blocks": ["${var.cidr}"]}]}}}}))
+    run = scan(tmp_path)
+    assert [(f.rule, f.file) for f in run.findings] == [("aws-sg-admin-from-internet", "sg.tf.json")]
+    assert not run.warnings

@@ -36,6 +36,7 @@ class Expr:
     value: Any = None                  # lit: the value; ref: root name; call: name; unary/binary: op
     parts: List[Any] = field(default_factory=list)
     steps: List[Tuple] = field(default_factory=list)     # ref: ("attr", n) / ("index", Expr) / ("splat", steps)
+    src: Optional["Source"] = None     # its own source text (an expression from a JSON file)
 
     @property
     def line(self) -> int:
@@ -489,6 +490,8 @@ def _unknown(e: Expr, src_text: str, scope: Scope) -> Unknown:
 
 def evaluate(e: Expr, scope: Scope, src: Source):
     """The value of `e`, or an Unknown. HclError where HCL would report an error."""
+    if e.src is not None:
+        src = e.src
     k = e.kind
     if k == "lit":
         return e.value
@@ -1101,3 +1104,112 @@ class _SetUndecided(HclError):
 
 
 __all__ += ["convert", "type_constraint"]
+
+
+# --- Terraform's JSON syntax (developer.hashicorp.com/terraform/language/syntax/json) ----------
+
+_JSON_BLOCKS = {"resource": 2, "data": 2, "module": 1, "variable": 1, "output": 1, "provider": 1}
+
+
+def _quoted(text: str) -> str:
+    """A JSON string's text as an HCL quoted template: the same template, escaped for quotes."""
+    out = []
+    for ch in text:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 0x20:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def _snippet(hcl_text: str) -> Expr:
+    body, src = parse(f"x = {hcl_text}\n")
+    e = body.attributes["x"].expr
+    e.src = src
+    return e
+
+
+def _json_expr(value, template: bool = True) -> Expr:
+    """A JSON value as an expression: a string is a template (or, outside an expression
+    context, literal text); arrays and objects hold expressions."""
+    if isinstance(value, str):
+        return _snippet(_quoted(value)) if template else Expr("lit", value=value)
+    if isinstance(value, list):
+        return Expr("tuple", parts=[_json_expr(v, template) for v in value])
+    if isinstance(value, dict):
+        return Expr("obj", parts=[(("name", k), _json_expr(v, template)) for k, v in value.items() if k != "//"])
+    if isinstance(value, float) and value == int(value):
+        value = int(value)
+    return Expr("lit", value=value)
+
+
+def _json_body(obj, lines, path, kind: str = "") -> "Body":
+    body = Body()
+    if not isinstance(obj, dict):
+        return body
+    for k, v in obj.items():
+        if k == "//":
+            continue
+        line = lines.get(path + (k,), 0)
+        if kind == "variable" and k in ("default",):
+            body.attributes[k] = Attribute(k, _json_expr(v, template=False), line)
+        elif kind == "variable" and k == "type" and isinstance(v, str):
+            try:
+                body.attributes[k] = Attribute(k, _snippet(v), line)
+            except HclError:
+                continue
+        else:
+            body.attributes[k] = Attribute(k, _json_expr(v), line)
+    return body
+
+
+def parse_json(text: str) -> Tuple["Body", "Source"]:
+    """A `.tf.json` file as the same bodies and blocks `parse` makes. A nested object is read as
+    an attribute (a block's schema, which the JSON syntax leaves to the provider, is not known),
+    so a nested block written as one object is a map, and as an array of objects a list of them,
+    which is how block lists are read from HCL."""
+    from .yaml_doc import YamlError, load_all
+    try:
+        docs = list(load_all(text))
+    except YamlError as e:
+        raise HclError(f"not valid JSON: {e}") from None
+    if len(docs) != 1 or not isinstance(docs[0][0], dict):
+        raise HclError("a Terraform JSON file is one object")
+    top, lines, _ = docs[0]
+    out = Body()
+    for btype, content in top.items():
+        if btype == "locals":
+            for i, obj in enumerate(content if isinstance(content, list) else [content]):
+                path = ("locals", i) if isinstance(content, list) else ("locals",)
+                out.blocks.append(Block("locals", [], _json_body(obj, lines, path), lines.get(path, 1)))
+            continue
+        depth = _JSON_BLOCKS.get(btype)
+        if depth is None:
+            continue
+
+        def walk(value, labels, path):
+            if len(labels) == depth:
+                items = value if isinstance(value, list) else [value]
+                for i, item in enumerate(items):
+                    p = path + ((i,) if isinstance(value, list) else ())
+                    out.blocks.append(Block(btype, list(labels), _json_body(item, lines, p, btype), lines.get(p, 1)))
+                return
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    if k != "//":
+                        walk(v, labels + [k], path + (k,))
+        walk(content, [], (btype,))
+    return out, Source(text.encode("utf-8"))
+
+
+__all__ += ["parse_json"]

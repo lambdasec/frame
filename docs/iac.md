@@ -63,7 +63,7 @@ The user an image runs as is resolved as Docker resolves it: the last USER of th
 - A variable takes the value of its module call, else `terraform.tfvars` / `*.auto.tfvars` (later files win), else its `default`, converted to its `type` (with `optional()` defaults). A variable with no value in the files (given at apply time) is unknown. Findings are for the values the repository gives; a `-var` on the command line is not in the files.
 - What exists only once applied (`aws_vpc.main.id`) is one unknown per resource and attribute, the same wherever it is read; an attribute a resource configures is its value (`aws_s3_bucket.logs.bucket`).
 - Known `count` and `for_each` expand to their instances (`count = 0` or an empty `for_each` leaves none); unknown ones leave one instance with `count.index` / `each` unknown. `dynamic` blocks expand over a known `for_each`. Local modules (`source = "./x"`), and modules `terraform init` recorded in `.terraform/modules/modules.json`, are read with their call's arguments.
-- Not read yet: `.tf.json` files and override files (each is named in a warning).
+- `.tf.json` files ([Terraform's JSON syntax](https://developer.hashicorp.com/terraform/language/syntax/json)) are part of their module: strings are templates (`"${var.x}"`; a lone interpolation keeps its type), a variable's `default` is literal, `"//"` keys are comments. Without the provider's schema a nested object cannot be told from a block, so it is read as an attribute: a block list written as an array of objects reads as it does from HCL, a single nested block written as one object reads as a map. Override files are not merged (each is named in a warning).
 
 | Policy | Check | Severity |
 |---|---|---|
