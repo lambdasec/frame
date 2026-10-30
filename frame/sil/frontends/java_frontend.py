@@ -101,8 +101,9 @@ class JavaFrontend:
         self._current_class: Optional[str] = None
         # Constant propagation for path-sensitive switch analysis
         self._constant_values: Dict[str, Any] = {}
-        # Track variables that came from weak algorithm properties (hashAlg1)
-        self._weak_algo_vars: set = set()
+        # Properties objects a method loads from a classpath resource: name -> its entries
+        # (None: loaded from something else, or from two resources)
+        self._loaded_properties: Dict[str, Optional[Dict[str, str]]] = {}
         # Declared type of each name visible in the method being translated
         # (fields of the enclosing class, then parameters and locals), so a
         # call is matched to the specs of its receiver's type, not its name.
@@ -419,7 +420,7 @@ class JavaFrontend:
         self._current_proc = proc
         self._node_counter = 0
         self._constant_values = {}
-        self._weak_algo_vars = set()
+        self._loaded_properties = {}
         entry = proc.new_node(NodeKind.ENTRY)
         proc.add_node(entry)
         proc.entry_node = entry.id
@@ -862,16 +863,17 @@ class JavaFrontend:
                 if pn is not None and tn is not None:
                     proc.param_types[self._get_text(pn)] = self._get_text(tn).split("<")[0].strip()
 
-        # Check for static modifier
+        # Modifiers as written (annotations aside)
         for child in node.children:
             if child.type == "modifiers":
-                if "static" in self._get_text(child):
-                    proc.is_static = True
+                proc.modifiers = [self._get_text(m) for m in child.children
+                                  if m.type not in ("marker_annotation", "annotation")]
+                proc.is_static = "static" in proc.modifiers
 
         self._current_proc = proc
         self._node_counter = 0
         self._constant_values = {}  # Reset constant tracking for each method
-        self._weak_algo_vars = set()  # Reset weak algorithm variable tracking
+        self._loaded_properties = self._properties_loads(node)
         self._var_types = self._method_var_types(node)
 
         # Create entry node
@@ -1868,14 +1870,18 @@ class JavaFrontend:
                 except (ValueError, TypeError):
                     pass
 
-        # Track variables from getProperty for weak algorithm detection
-        # Pattern: algorithm = props.getProperty("hashAlg1", "default")
-        if method_name.endswith('.getProperty') or method_name == 'getProperty':
-            if len(args) > 0:
-                prop_name = self._get_text(args[0]).strip().strip('"\'')
-                # hashAlg1 maps to weak algorithm in OWASP benchmark
-                if 'hashAlg1' in prop_name or 'cryptoAlg1' in prop_name:
-                    self._weak_algo_vars.add(target)
+        # `v = props.getProperty("key"[, "default"])` after `props.load(...getResourceAsStream("x.properties"))`:
+        # the value the project's resource gives (frontends/_java_properties.py), else unknown
+        if method_name.endswith('.getProperty') and args and args[0].type == "string_literal":
+            entries = self._loaded_properties.get(method_name.rsplit(".", 1)[0])
+            key = self._string_literal_value(args[0])
+            if entries is not None and key is not None:
+                if key in entries:
+                    self._constant_values[target] = entries[key]
+                elif len(args) == 2 and args[1].type == "string_literal":
+                    default = self._string_literal_value(args[1])
+                    if default is not None:
+                        self._constant_values[target] = default
 
         # Check specs with flexible lookup
         spec = self._lookup_spec(method_name, call_node)
@@ -2038,7 +2044,7 @@ class JavaFrontend:
         if body is not None:
             proc.captures = sorted((enclosing - own) & self._identifiers_in(body))
         saved = (self._current_proc, self._current_node, self._node_counter, self._var_types,
-                 self._constant_values, self._weak_algo_vars, self._in_call_args)
+                 self._constant_values, self._loaded_properties, self._in_call_args)
         parent_proc = self._current_proc
         if parent_proc is not None:
             self._lambda_parents.append((proc, parent_proc))        # linked by final name later
@@ -2046,7 +2052,7 @@ class JavaFrontend:
         self._node_counter = 0
         self._var_types = local_types
         self._constant_values = {}
-        self._weak_algo_vars = set()
+        self._loaded_properties = self._properties_loads(node)
         self._in_call_args = False
         entry = proc.new_node(NodeKind.ENTRY)
         proc.add_node(entry)
@@ -2063,7 +2069,7 @@ class JavaFrontend:
         if self._current_node:
             proc.connect(self._current_node.id, exit_node.id)
         (self._current_proc, self._current_node, self._node_counter, self._var_types,
-         self._constant_values, self._weak_algo_vars, self._in_call_args) = saved
+         self._constant_values, self._loaded_properties, self._in_call_args) = saved
         program.add_procedure(proc)
         return name
 
@@ -2287,6 +2293,40 @@ class JavaFrontend:
                 stack.extend(n.named_children)
         return out
 
+    def _string_literal_value(self, node: TSNode) -> Optional[str]:
+        text = self._get_text(node)
+        if len(text) >= 2 and text[0] == text[-1] == '"' and "\\" not in text:
+            return text[1:-1]
+        return None
+
+    def _properties_loads(self, node: TSNode) -> Dict[str, Optional[Dict[str, str]]]:
+        """`X.load(... getResourceAsStream("name") ...)` in this method's body: X's entries from
+        that classpath resource (None if X loads anything else, or two resources)."""
+        from ._java_properties import resource
+        out: Dict[str, Optional[Dict[str, str]]] = {}
+        body = node.child_by_field_name("body") if node is not None else None
+        stack = [body] if body is not None else []
+        while stack:
+            n = stack.pop()
+            stack.extend(n.named_children)
+            if n.type != "method_invocation":
+                continue
+            name, obj = n.child_by_field_name("name"), n.child_by_field_name("object")
+            if name is None or self._get_text(name) != "load" or obj is None or obj.type != "identifier":
+                continue
+            recv = self._get_text(obj)
+            resources = []
+            for d in self._descendants(n.child_by_field_name("arguments"), ()) if n.child_by_field_name("arguments") else []:
+                if d.type == "method_invocation" and d.child_by_field_name("name") is not None \
+                        and self._get_text(d.child_by_field_name("name")) == "getResourceAsStream":
+                    a = d.child_by_field_name("arguments")
+                    lits = [c for c in (a.named_children if a else []) if c.type == "string_literal"]
+                    if len(lits) == 1:
+                        resources.append(self._string_literal_value(lits[0]))
+            entries = resource(self._filename, resources[0]) if len(resources) == 1 and resources[0] else None
+            out[recv] = entries if recv not in out else None
+        return out
+
     def _is_algorithm_based_sink(self, method_name: str) -> bool:
         """Check if this method requires algorithm-based sink detection"""
         algo_methods = [
@@ -2310,25 +2350,10 @@ class JavaFrontend:
             algo = arg_text[1:-1].upper()
         elif arg_text.startswith("'") and arg_text.endswith("'"):
             algo = arg_text[1:-1].upper()
+        elif isinstance(self._constant_values.get(arg_text), str):
+            algo = self._constant_values[arg_text].upper()      # a constant, e.g. from a properties resource
         else:
-            # Check if this variable came from a weak algorithm property
-            if arg_text in self._weak_algo_vars:
-                if 'MessageDigest' in method_name:
-                    return TaintSink(
-                        loc=loc,
-                        exp=ExpConst.string(arg_text),
-                        kind=SinkKind.WEAK_HASH,
-                        description=f"Weak hash algorithm from property (CWE-328)"
-                    )
-                elif 'Cipher' in method_name:
-                    return TaintSink(
-                        loc=loc,
-                        exp=ExpConst.string(arg_text),
-                        kind=SinkKind.WEAK_CRYPTO,
-                        description=f"Weak cipher algorithm from property (CWE-327)"
-                    )
-            # Unknown variable - can't determine, skip (conservative for FPs)
-            return None
+            return None                                          # not known: no finding
 
         # Check for weak hash algorithms
         if 'MessageDigest' in method_name:

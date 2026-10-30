@@ -43,3 +43,34 @@ kinds = ["xss"]
 [[sanitizer]]
 name = ["Server.UrlEncode", "HttpUtility.UrlEncode"]
 kinds = ["xss", "redirect"]
+
+# ASP.NET MVC 5 / Web API 2 conventional controllers: the controller factory takes a class whose
+# name ends in "Controller" (the base may sit in another file: `CallbackController : BaseController`);
+# its public, non-static methods are actions unless [NonAction], their parameters model-bound.
+[[entrypoint]]
+id = "mvc5-conventional-action"
+class_name = ["*Controller"]
+method = ["*"]
+exclude_method = ["ctor"]
+modifiers = ["public"]
+exclude_modifiers = ["static"]
+exclude_decorator = ["NonAction", "NonActionAttribute", "System.Web.Mvc.NonAction*", "System.Web.Http.NonAction*"]
+params = "all"
+exclude_param_type = ["CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# ASMX web services: a [WebMethod] of a System.Web.Services.WebService takes the SOAP request's values.
+[[entrypoint]]
+id = "asmx-web-method"
+annotation = ["WebMethod", "WebMethodAttribute", "System.Web.Services.WebMethod*"]
+params = "all"
+exclude_param_type = ["CancellationToken", "int", "long", "short", "byte", "bool", "double", "float", "decimal",
+                      "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan"]
+
+# Microsoft.WebSockets (Microsoft.Web.WebSockets.WebSocketHandler): OnMessage receives the client's message.
+[[entrypoint]]
+id = "websocket-handler-message"
+extends = ["WebSocketHandler", "Microsoft.Web.WebSockets.WebSocketHandler"]
+method = ["OnMessage"]
+params = "all"

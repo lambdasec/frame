@@ -69,6 +69,19 @@ value = true                             # acme.web.serve(trace=True) is reporte
 description = "Tracing server enabled"
 ```
 
+An `[[entrypoint]]` selects handlers by what the framework itself uses to find them, and every selector given must hold: `decorator` (decorators, annotations, attributes), `class_decorator`, `extends` (base classes, transitively), `class_name` (a naming convention, globbed: ASP.NET's `*Controller`), `method`, `registered_via` (the call a function is passed to), `modifiers` (all of them, as written: `public`), and the exclusions `exclude_method`, `exclude_modifiers`, `exclude_decorator` (`[NonAction]`). The built-in ASP.NET packs state the controller conventions this way, so a public, non-static method of a `*Controller` class is an action and its constructor is not:
+
+```toml
+[[entrypoint]]
+class_name = ["*Controller"]
+method = ["*"]
+exclude_method = ["ctor"]
+modifiers = ["public"]
+exclude_modifiers = ["static"]
+exclude_decorator = ["NonAction"]
+params = "all"
+```
+
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:
 
 ```toml

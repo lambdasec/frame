@@ -28,6 +28,7 @@ from frame.core.ast import (
 )
 
 from .types import (
+    LITERAL_COLLECTION,
     Ident, PVar, Location, Typ, TypeKind,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
     ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary, ExpCast
@@ -388,7 +389,6 @@ class SymbolicState:
 
     # Variables that have been validated for code injection
     # (e.g., passed through startswith/endswith validation)
-    validated_for_eval: Set[str] = field(default_factory=set)
 
     # Per-key dictionary tracking (separation logic approach)
     # dict_elements: dict_var -> {key: (value, taint_info or None)}
@@ -428,7 +428,6 @@ class SymbolicState:
             nonconst=set(self.nonconst),
             secure_parsers=set(self.secure_parsers),
             safe_for_xml_sink=set(self.safe_for_xml_sink),
-            validated_for_eval=set(self.validated_for_eval),
             dict_elements={k: dict(v) for k, v in self.dict_elements.items()},
             object_members={k: dict(v) for k, v in self.object_members.items()},
             feasibility_constraints=list(self.feasibility_constraints),
@@ -2351,7 +2350,8 @@ class SILTranslator:
         """`u` for `urlparse(u).hostname` / `new URL(u).host`."""
         if isinstance(exp, ExpFieldAccess) and exp.field_name in ("hostname", "netloc", "host", "Host") \
                 and isinstance(exp.base, ExpCall) and exp.base.args and isinstance(exp.base.args[0], ExpVar):
-            if cls._flatten(exp.base.func) in cls._HOST_PARSERS:
+            parser = cls._flatten(exp.base.func) or ""
+            if parser in cls._HOST_PARSERS or parser.rsplit(".", 1)[-1] in cls._HOST_PARSERS:
                 return str(exp.base.args[0].var)
         return None
 
@@ -2456,7 +2456,9 @@ class SILTranslator:
         everything = cls._EXACT_VALUE_KINDS
         constant = (isinstance(collection, ExpVar) and cls._CONST_NAME.match(str(collection.var))) \
             or (isinstance(collection, ExpConst) and isinstance(collection.value, str)
-                and cls._CONST_NAME.match(collection.value))
+                and cls._CONST_NAME.match(collection.value)) \
+            or (isinstance(collection, ExpCall) and isinstance(collection.func, ExpConst)
+                and collection.func.value == LITERAL_COLLECTION)
         if not constant:
             return {}
         if isinstance(subject, ExpVar):
@@ -4348,48 +4350,6 @@ class SILTranslator:
                                 inline_sanitized_vars = set()
                                 inline_sanitized_for = {}  # var -> set of sink types
 
-                                if spec.is_sink == 'xpath':
-                                    xpath_sanitize_match = re.findall(
-                                        r'(\w+)\.replace\([^)]*&apos;[^)]*\)',
-                                        arg_str
-                                    )
-                                    for var in xpath_sanitize_match:
-                                        inline_sanitized_vars.add(var)
-
-                                # Check for embedded sanitizer calls (ESAPI, OWASP Encoder, etc.)
-                                embedded_sanitizer_patterns = [
-                                    # ESAPI sanitizers
-                                    (r'encodeForHTML["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'encodeForJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'encodeForCSS["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'encodeForURL["\']?\s*\(([^)]+)\)', ['url', 'redirect']),
-                                    (r'encodeForXML["\']?\s*\(([^)]+)\)', ['xml', 'xxe']),
-                                    (r'encodeForXPath["\']?\s*\(([^)]+)\)', ['xpath']),
-                                    (r'encodeForSQL["\']?\s*\(([^)]+)\)', ['sql']),
-                                    (r'encodeForLDAP["\']?\s*\(([^)]+)\)', ['ldap']),
-                                    (r'encodeForOS["\']?\s*\(([^)]+)\)', ['command', 'shell']),
-                                    # OWASP Encoder
-                                    (r'forHtml["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'forHtmlContent["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'forHtmlAttribute["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'forJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    # Apache Commons
-                                    (r'escapeHtml[4]?["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                    (r'escapeXml["\']?\s*\(([^)]+)\)', ['xml', 'html', 'xss']),
-                                    (r'escapeSql["\']?\s*\(([^)]+)\)', ['sql']),
-                                    # Spring
-                                    (r'htmlEscape["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-                                ]
-
-                                for pattern, sink_types in embedded_sanitizer_patterns:
-                                    for match in re.finditer(pattern, arg_str, re.IGNORECASE):
-                                        sanitized_arg = match.group(1).strip()
-                                        matched_vars = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', sanitized_arg)
-                                        for matched_var in matched_vars:
-                                            if matched_var not in inline_sanitized_for:
-                                                inline_sanitized_for[matched_var] = set()
-                                            inline_sanitized_for[matched_var].update(sink_types)
-
                                 # Spec-based inline sanitizers: a sanitizer call
                                 # (per language specs) wrapping a variable inside
                                 # the sink argument neutralizes it (e.g. C#'s
@@ -5246,28 +5206,44 @@ class SILTranslator:
             self._apply_branch_guards(state, instr.condition, instr.is_true_branch)
         return state
 
+    def _defining_call(self, var: str) -> Optional[ExpCall]:
+        """The call that is `var`'s only definition in this procedure (`u = urlparse(x)`)."""
+        proc = self._cur_proc
+        if proc is None:
+            return None
+        assigns, calls = [], {}
+        for node in proc.nodes.values():
+            for ins in node.instrs:
+                if isinstance(ins, Assign) and self._get_var_name(ins.id) == var:
+                    assigns.append(ins.exp)
+                elif isinstance(ins, Call) and ins.ret:
+                    calls.setdefault(str(ins.ret[0]), []).append(ExpCall(ins.func, [a for a, _ in ins.args]))
+        # Python lowers `u = f(x)` as the call into `u`'s temporary, then `u = <temporary>`.
+        if len(assigns) != 1 or len(calls.get(var, [])) > 1:
+            return None
+        e = assigns[0]
+        if isinstance(e, ExpVar) and len(calls.get(str(e.var), [])) == 1:
+            return calls[str(e.var)][0]
+        return e if isinstance(e, ExpCall) else None
+
+    def _inline_parsed_urls(self, exp):
+        """`u.netloc` -> `urlparse(x).netloc` where `u`'s only definition in the procedure is a
+        URL parser call, so a host test on a parsed local reads like the inline form."""
+        if isinstance(exp, ExpFieldAccess) and isinstance(exp.base, ExpVar):
+            d = self._defining_call(str(exp.base.var))
+            if isinstance(d, ExpCall) and self._host_var(ExpFieldAccess(d, exp.field_name, False)):
+                return ExpFieldAccess(d, exp.field_name, False)
+            return exp
+        if isinstance(exp, ExpBinOp):
+            return ExpBinOp(exp.op, self._inline_parsed_urls(exp.left), self._inline_parsed_urls(exp.right))
+        if isinstance(exp, ExpUnOp):
+            return ExpUnOp(exp.op, self._inline_parsed_urls(exp.operand))
+        return exp
+
     def _apply_branch_guards(self, state: SymbolicState, condition, is_true_branch: bool) -> SymbolicState:
         """Record what `condition` proves about its variables on the branch where it
         evaluates to `is_true_branch`: sanitization for the sinks it rules out."""
-        # Recognize validation patterns and mark variables as asserted safe
-        # When we see "if '<pattern>' in var: return" and we're in the false branch,
-        # the continuation has validated that the pattern is NOT present
         cond_str = str(condition)
-
-        # Path traversal validation patterns (false branch = safe)
-        if not is_true_branch:
-            # Patterns like "../" in var or ".." in var (with any quote style)
-            if ("../" in cond_str or '".."' in cond_str):
-                # Extract variable being checked
-                cond_vars = self._get_exp_vars(condition)
-                for var in cond_vars:
-                    state.asserted_safe.setdefault(var, []).append("filesystem")
-
-            # XPath injection validation: apostrophe check
-            if ("'" in cond_str and " in " in cond_str):
-                cond_vars = self._get_exp_vars(condition)
-                for var in cond_vars:
-                    state.asserted_safe.setdefault(var, []).append("xpath")
 
         # Open-redirect guard: a same-origin path is `/x` and not `//host` (nor `/\\host`).
         #   if (!next.startsWith("/") || next.startsWith("//")) return res.redirect("/");   -> FALSE branch
@@ -5293,7 +5269,7 @@ class SILTranslator:
         # regex), a URL host in an allowlist. Only constant-looking collections count
         # (UPPER_CASE names or literals), never an arbitrary array.
         for var, kinds, holds_when in self._guard_facts(
-                condition, getattr(self.program, "constant_regexes", None),
+                self._inline_parsed_urls(condition), getattr(self.program, "constant_regexes", None),
                 getattr(self.program, "language", ""), getattr(self.program, "string_macros", None)):
             if holds_when == is_true_branch:
                 kinds = set(kinds)
@@ -5303,35 +5279,6 @@ class SILTranslator:
                         kinds.add("filesystem")
                 if kinds:
                     state.add_sanitization(var, list(kinds))
-
-        # Code injection validation: startswith/endswith checks
-        # Pattern: if not bar.startswith('\'') or not bar.endswith('\''):
-        # On FALSE branch, the condition is FALSE, meaning validation PASSED
-        # (the negated checks are all false -> the positive checks are true)
-        if not is_true_branch:
-            # Check for startswith/endswith validation patterns
-            import re
-            # Pattern matches: bar.startswith('\'') or bar.startswith("'")
-            validation_match = re.search(
-                r"(\w+)\.(?:startswith|endswith)\(['\"].*?['\"]\)",
-                cond_str
-            )
-            if validation_match:
-                var_name = validation_match.group(1)
-                # On the FALSE branch of a validation check with negations,
-                # the variable has passed validation (is a valid string literal)
-                state.validated_for_eval.add(var_name)
-
-            # URL redirect validation: netloc whitelist check
-            # Pattern: if url.netloc not in ['google.com'] or url.scheme != 'https':
-            # On FALSE branch, the URL has been validated against a whitelist
-            import re
-            netloc_check = re.search(r'(\w+)\.netloc\s+not\s+in', cond_str)
-            if netloc_check:
-                # Mark any tainted variables as safe for redirect
-                # Look for variables that were parsed with urlparse
-                for var in list(state.tainted.keys()):
-                    state.asserted_safe.setdefault(var, []).append("redirect")
 
         return state
 
@@ -5402,56 +5349,8 @@ class SILTranslator:
             checks.append(check)
             return checks, state
 
-        # Check for inline .replace() sanitization patterns in the expression
-        # Pattern: var.replace("'", "&apos;") - XPath apostrophe escaping
-        import re
         inline_sanitized_vars = set()
         inline_sanitized_for = {}  # var -> list of sink types sanitized for
-
-        # XPath sanitization: replacing apostrophes with &apos;
-        # Simple pattern that matches var.replace(...&apos;...)
-        xpath_sanitize_match = re.findall(r'(\w+)\.replace\([^)]*&apos;[^)]*\)', exp_str)
-        if xpath_sanitize_match:
-            for var in xpath_sanitize_match:
-                inline_sanitized_vars.add(var)
-
-        # Check for embedded sanitizer calls in the expression
-        # Pattern: encodeForHTML(var), Encode.forHtml(var), escapeHtml(var), etc.
-        # This handles string concatenation like: "text" + encodeForHTML(tainted) + "more text"
-        # Note: In SIL expressions, method names may be quoted: "method.name"(args)
-        embedded_sanitizer_patterns = [
-            # ESAPI sanitizers (handle quoted method names)
-            (r'encodeForHTML["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'encodeForJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'encodeForCSS["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'encodeForURL["\']?\s*\(([^)]+)\)', ['url', 'redirect']),
-            (r'encodeForXML["\']?\s*\(([^)]+)\)', ['xml', 'xxe']),
-            (r'encodeForXPath["\']?\s*\(([^)]+)\)', ['xpath']),
-            (r'encodeForSQL["\']?\s*\(([^)]+)\)', ['sql']),
-            (r'encodeForLDAP["\']?\s*\(([^)]+)\)', ['ldap']),
-            (r'encodeForOS["\']?\s*\(([^)]+)\)', ['command']),
-            # OWASP Encoder
-            (r'forHtml["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'forHtmlContent["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'forHtmlAttribute["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'forJavaScript["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            # Apache Commons
-            (r'escapeHtml[4]?["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-            (r'escapeXml["\']?\s*\(([^)]+)\)', ['xml', 'html', 'xss']),
-            (r'escapeSql["\']?\s*\(([^)]+)\)', ['sql']),
-            # Spring
-            (r'htmlEscape["\']?\s*\(([^)]+)\)', ['html', 'xss']),
-        ]
-
-        for pattern, sink_types in embedded_sanitizer_patterns:
-            for match in re.finditer(pattern, exp_str, re.IGNORECASE):
-                sanitized_arg = match.group(1).strip()
-                # Extract variable names from the argument
-                arg_vars = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', sanitized_arg)
-                for arg_var in arg_vars:
-                    if arg_var not in inline_sanitized_for:
-                        inline_sanitized_for[arg_var] = set()
-                    inline_sanitized_for[arg_var].update(sink_types)
 
         # Spec-based inline sanitizers: any sanitizer call (from the language
         # specs) wrapping a variable inside the sink expression neutralizes that
@@ -5472,10 +5371,6 @@ class SILTranslator:
         for var in sink_vars:
             # Skip xml sinks for variables that have been safely processed
             if instr.kind.value == 'xml' and var in state.safe_for_xml_sink:
-                continue
-
-            # Skip eval sinks for variables that passed validation (startswith/endswith)
-            if instr.kind.value == 'eval' and var in state.validated_for_eval:
                 continue
 
             # Skip xpath sinks for variables with inline .replace() sanitization
@@ -9504,9 +9399,6 @@ class SILTranslator:
                             if state.is_tainted(arg_var):
                                 if not state.is_sanitized_for(arg_var, spec.is_sink):
                                     if not state.is_asserted_safe_for(arg_var, spec.is_sink):
-                                        # Check if validated for eval sinks
-                                        if spec.is_sink == 'eval' and arg_var in state.validated_for_eval:
-                                            continue  # Skip - variable passed validation
                                         tainted_args.append(arg_var)
                         # a source written inline in the argument (`f(g(req.query.n))`): the
                         # same member-access sources the TaintSink path reads
@@ -9730,7 +9622,6 @@ class SILTranslator:
         merged.safe_for_xml_sink = s1.safe_for_xml_sink | s2.safe_for_xml_sink
 
         # Validated for eval: intersection (only safe if validated in both paths)
-        merged.validated_for_eval = s1.validated_for_eval & s2.validated_for_eval
 
         # Dict elements: merge like list elements
         for dict_var in set(s1.dict_elements.keys()) | set(s2.dict_elements.keys()):

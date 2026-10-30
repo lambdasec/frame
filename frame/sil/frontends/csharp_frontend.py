@@ -122,10 +122,6 @@ class CSharpFrontend:
             "Sql": "sql",              # EF MigrationStatement.Sql = "..."+input
             "InnerHtml": "html", "InnerHTML": "html",
         }
-        # Treat public web-handler action parameters as request-bound taint
-        # sources. This is the recall lever for pure-SL mode (regex removed):
-        # it lifts IssueBlot.NET SL recall 36.8% -> 51.3% at ~81% precision.
-        self.taint_action_params: bool = True
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
@@ -538,10 +534,9 @@ class CSharpFrontend:
                 if pn is not None and tn is not None:
                     proc.param_types[self._get_text(pn)] = self._get_text(tn).split("<")[0].rstrip("?").strip()
 
-        # Check for static modifier
-        for child in node.children:
-            if child.type == "modifier" and self._get_text(child) == "static":
-                proc.is_static = True
+        # Modifiers as written (packs match on them: a public method of a controller is an action)
+        proc.modifiers = [self._get_text(c) for c in node.children if c.type == "modifier"]
+        proc.is_static = "static" in proc.modifiers
 
         self._current_proc = proc
         self._node_counter = 0
@@ -562,34 +557,6 @@ class CSharpFrontend:
                         kind=TaintKind.USER_INPUT,
                         description="Command line argument"
                     ))
-
-        # Process attributes for taint sources
-        self._process_param_attributes(attributes, params, proc)
-
-        # ASP.NET MVC/WebAPI/SignalR: a public action/handler's parameters are
-        # model-bound from the HTTP request, hence attacker-controlled. This is
-        # the recall lever for pure-SL mode, gated to public web-facing classes
-        # and to injectable (string/object/model) param types. It is OFF by
-        # default because, while the regex backstop is active, it only adds
-        # false positives (each needs framework modeling: Razor output encoding,
-        # redirect validators, correct path/CWE sink resolution). Enable via
-        # taint_action_params=True once that modeling lands and the regex is
-        # being removed.
-        if self.taint_action_params:
-            cls = self._current_class or ""
-            is_web_handler = any(s in cls for s in
-                                 ("Controller", "Hub", "WebService", "Handler", "Endpoint"))
-            is_public = any(c.type == "modifier" and self._get_text(c) == "public"
-                            for c in node.children)
-            if is_web_handler and is_public and method_name != "Main":
-                injectable = self._injectable_param_names(node)
-                for param, _ in params:
-                    if param.name not in injectable:
-                        continue
-                    self._add_instr(TaintSource(
-                        loc=self._get_location(node), var=param,
-                        kind=TaintKind.USER_INPUT,
-                        description="ASP.NET action/handler parameter (request-bound)"))
 
         # Translate body
         body = node.child_by_field_name("body")
@@ -895,34 +862,6 @@ class CSharpFrontend:
                     if attr.type == "attribute":
                         attributes.append(self._get_text(attr))
         return attributes
-
-    def _process_param_attributes(
-        self,
-        attributes: List[str],
-        params: List[Tuple[PVar, Typ]],
-        proc: Procedure
-    ) -> None:
-        """Process parameter attributes for taint sources"""
-        # ASP.NET Core attributes that mark parameters as taint sources
-        taint_attributes = {
-            "FromQuery": TaintKind.USER_INPUT,
-            "FromBody": TaintKind.USER_INPUT,
-            "FromForm": TaintKind.USER_INPUT,
-            "FromHeader": TaintKind.USER_INPUT,
-            "FromRoute": TaintKind.USER_INPUT,
-        }
-
-        for attr in attributes:
-            for pattern, kind in taint_attributes.items():
-                if pattern in attr:
-                    # Mark all params as tainted (simplified)
-                    for param, _ in params:
-                        self._add_instr(TaintSource(
-                            loc=self._get_location(proc),
-                            var=param,
-                            kind=kind,
-                            description=f"[{pattern}] attribute"
-                        ))
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate method parameters"""

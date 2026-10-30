@@ -149,6 +149,35 @@ def get_owasp_java_test_files(cache_dir: str) -> List[str]:
     return sorted(files)
 
 
+OWASP_JAVA_RESOURCES = ("benchmark.properties",)
+
+
+def ensure_owasp_java_resources(cache_dir: str) -> None:
+    """The project's classpath resources (src/main/resources: `benchmark.properties`, which the test
+    cases load and read their algorithms from), beside the test sources as the project ships them.
+    Frame reads a loaded resource like any project's; it holds no benchmark-specific knowledge."""
+    import urllib.request
+    owasp_dir = os.path.join(cache_dir, 'owasp_java')
+    res_dir = os.path.join(owasp_dir, 'resources')
+    os.makedirs(res_dir, exist_ok=True)
+    for name in OWASP_JAVA_RESOURCES:
+        kept = os.path.join(res_dir, name)
+        if not os.path.exists(kept):
+            url = (OWASP_JAVA_REPO.replace("github.com", "raw.githubusercontent.com").removesuffix(".git")
+                   + f"/{OWASP_JAVA_BRANCH}/src/main/resources/{name}")
+            try:
+                with urllib.request.urlopen(url, timeout=60) as r:
+                    data = r.read()
+            except OSError as e:
+                print(f"Could not fetch {name}: {e}")
+                continue
+            with open(kept, 'wb') as fh:
+                fh.write(data)
+        for d in (os.path.join(owasp_dir, 'src'), os.path.join(owasp_dir, 'owasp_java_curated')):
+            if os.path.isdir(d) and not os.path.exists(os.path.join(d, name)):
+                shutil.copy(kept, os.path.join(d, name))
+
+
 def create_owasp_java_curated_set(
     cache_dir: str,
     sample_size: int = 500,
@@ -225,5 +254,6 @@ def create_owasp_java_curated_set(
     if os.path.exists(expected_src):
         shutil.copy(expected_src, os.path.join(curated_dir, 'expectedresults.csv'))
 
+    ensure_owasp_java_resources(cache_dir)
     print(f"Created OWASP Java curated set: {len(curated_files)} files")
     return len(curated_files)

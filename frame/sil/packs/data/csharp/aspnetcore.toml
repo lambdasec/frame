@@ -17,11 +17,54 @@ exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service",
                       "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
                       "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
 
-# Explicit binding attributes are attacker data wherever they appear (also on helper actions).
+# Conventional actions: ASP.NET Core treats a class as a controller when its name ends in
+# "Controller", it derives from such a class, or it carries [Controller]; every public, non-static
+# method of it is an action unless marked [NonAction], and its parameters are model-bound from the
+# request (learn.microsoft.com/aspnet/core/mvc/controllers/actions).
+[[entrypoint]]
+id = "mvc-conventional-action"
+class_name = ["*Controller"]
+method = ["*"]
+exclude_method = ["ctor"]                 # a constructor's parameters are injected services
+modifiers = ["public"]
+exclude_modifiers = ["static"]
+exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
+params = "all"
+exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+[[entrypoint]]
+id = "mvc-derived-controller-action"
+extends = ["*Controller", "Microsoft.AspNetCore.Mvc.ControllerBase", "Microsoft.AspNetCore.Mvc.Controller"]
+method = ["*"]
+exclude_method = ["ctor"]                 # a constructor's parameters are injected services
+modifiers = ["public"]
+exclude_modifiers = ["static"]
+exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
+params = "all"
+exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+[[entrypoint]]
+id = "mvc-attributed-controller-action"
+class_decorator = ["Controller", "ControllerAttribute", "ApiController", "Microsoft.AspNetCore.Mvc.Controller*",
+                   "Microsoft.AspNetCore.Mvc.ApiController*"]
+method = ["*"]
+exclude_method = ["ctor"]                 # a constructor's parameters are injected services
+modifiers = ["public"]
+exclude_modifiers = ["static"]
+exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
+params = "all"
+exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
+                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+
+# Explicit binding attributes are attacker data wherever they appear (any class: model binding
+# fills a [From*] parameter whatever the controller derives from, POCO controllers included).
 [[entrypoint]]
 id = "mvc-bound-parameter"
-extends = ["ControllerBase", "Controller", "Microsoft.AspNetCore.Mvc.ControllerBase",
-           "Microsoft.AspNetCore.Mvc.Controller"]
 method = ["*"]
 params = "annotated"
 param_annotation = ["FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeader",

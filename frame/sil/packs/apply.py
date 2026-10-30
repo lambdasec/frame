@@ -318,7 +318,17 @@ def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
             return False
     if e.method and not _glob(e.method, _simple_method(proc)):
         return False
+    if e.exclude_method and _glob(e.exclude_method, _simple_method(proc)):
+        return False
     if e.registered_via and not any(_glob(e.registered_via, v) for v in proc.registered_via):
+        return False
+    if e.class_name and not (cls and _glob(e.class_name, cls)):
+        return False
+    if e.modifiers and not all(m in proc.modifiers for m in e.modifiers):
+        return False
+    if e.exclude_modifiers and any(m in proc.modifiers for m in e.exclude_modifiers):
+        return False
+    if e.exclude_decorator and any(_glob(e.exclude_decorator, a.name, a.canonical) for a in proc.annotations):
         return False
     return True
 

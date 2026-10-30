@@ -45,7 +45,7 @@ _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 _PACK_KEYS = {"name", "language", "description", "detect", "version", "references"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
-               "method", "registered_via", "params", "param_annotation", "param_type", "exclude_param",
+               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "description"}
@@ -77,6 +77,11 @@ class Entrypoint:
     extends: List[str] = field(default_factory=list)
     method: List[str] = field(default_factory=list)
     registered_via: List[str] = field(default_factory=list)      # callee a handler is passed to
+    class_name: List[str] = field(default_factory=list)          # globs on the class's own name (a convention)
+    modifiers: List[str] = field(default_factory=list)           # all of these, as written (public)
+    exclude_modifiers: List[str] = field(default_factory=list)   # none of these (static)
+    exclude_decorator: List[str] = field(default_factory=list)   # none of these annotations ([NonAction])
+    exclude_method: List[str] = field(default_factory=list)      # method-name globs that are not entries
     params: Any = "none"                 # "all" | "annotated" | "typed" | "none" | [names]
     param_annotation: List[str] = field(default_factory=list)
     param_type: List[str] = field(default_factory=list)
@@ -282,7 +287,8 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         _check_keys(origin, where, t, _ENTRY_KEYS)
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
         for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "param_annotation", "param_type",
-                    "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation"):
+                    "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation", "class_name",
+                    "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method"):
             if key in t:
                 setattr(e, key, _strings(origin, f"{where}.{key}", t[key]))
         if "annotation" in t:                                   # alias of decorator
@@ -311,9 +317,9 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "fields = \"annotated\" and field_annotation go together")
         e.fields = fields
         e.kind = _source_kind(origin, f"{where}.kind", t.get("kind", "user_input"))
-        if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via):
+        if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via or e.class_name):
             raise _fail(origin, where, "needs at least one of decorator/annotation, class_decorator, "
-                                       "extends, method, registered_via")
+                                       "extends, class_name, method, registered_via")
         if params == "none" and not e.fields and not e.tainted_param_type:
             raise _fail(origin, where, "taints nothing: set params, fields or tainted_param_type")
         pack.entrypoints.append(e)

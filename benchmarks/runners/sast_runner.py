@@ -106,6 +106,7 @@ def run_owasp_java_division(
     from benchmarks.downloaders.owasp_java import (
         download_owasp_java,
         create_owasp_java_curated_set,
+        ensure_owasp_java_resources,
         load_owasp_java_expected_results,
         get_owasp_java_test_files,
     )
@@ -114,6 +115,7 @@ def run_owasp_java_division(
         test_dir = os.path.join(cache_dir, 'owasp_java', 'owasp_java_curated')
         if not os.path.exists(test_dir):
             create_owasp_java_curated_set(cache_dir)
+        ensure_owasp_java_resources(cache_dir)
         test_files = sorted([
             os.path.join(test_dir, f)
             for f in os.listdir(test_dir)
@@ -121,6 +123,7 @@ def run_owasp_java_division(
         ])
     else:
         download_owasp_java(cache_dir)
+        ensure_owasp_java_resources(cache_dir)
         test_files = get_owasp_java_test_files(cache_dir)
 
     expected = load_owasp_java_expected_results(cache_dir)

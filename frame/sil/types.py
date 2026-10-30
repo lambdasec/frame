@@ -215,6 +215,11 @@ class ExpVar(Exp):
         return {str(self.var)}
 
 
+# Callee of `ExpCall(ExpConst(LITERAL_COLLECTION), elements)`: a list / tuple / set literal of
+# literals on the right of a membership test (`x in ["a", "b"]`).
+LITERAL_COLLECTION = "<literal-collection>"
+
+
 @dataclass
 class ExpConst(Exp):
     """

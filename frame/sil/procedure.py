@@ -439,6 +439,7 @@ class Procedure:
     is_method: bool = False           # Is this a method (has self/this)?
     class_name: Optional[str] = None  # Class name if method
     is_static: bool = False           # Is this a static method?
+    modifiers: List[str] = field(default_factory=list)   # as written: public, static, async...
     is_extension: bool = False        # C# extension method: `x.M()` passes x as the first argument
     is_constructor: bool = False      # Is this a constructor?
 

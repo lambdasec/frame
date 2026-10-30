@@ -24,6 +24,7 @@ except ImportError:
     TSNode = Any  # Type hint fallback
 
 from frame.sil.types import (
+    LITERAL_COLLECTION,
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
     ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary,
@@ -1963,6 +1964,18 @@ class PythonFrontend:
 
         return None
 
+    _LITERAL_TYPES = ("string", "integer", "float", "true", "false", "none")
+
+    def _literal_collection(self, node):
+        """The elements of a list / tuple / set literal of literals, else None."""
+        if node.type not in ("list", "tuple", "set"):
+            return None
+        elems = [c for c in node.named_children if c.type != "comment"]
+        if any(c.type not in self._LITERAL_TYPES or (c.type == "string" and any(
+                k.type == "interpolation" for k in c.named_children)) for c in elems):
+            return None
+        return [self._translate_expression(c) for c in elems]
+
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression to SIL Exp"""
         if node is None:
@@ -2045,8 +2058,12 @@ class PythonFrontend:
             children = [c for c in node.children if c.type != "comment"]
             if len(children) >= 3:
                 left = self._translate_expression(children[0])
-                op = self._get_text(children[1])
+                op = " ".join(self._get_text(children[1]).split())
                 right = self._translate_expression(children[2])
+                if op in ("in", "not in") and self._literal_collection(children[2]) is not None:
+                    # `x in ["a", "b"]`: kept as a constant collection (a list otherwise lowers to
+                    # its first element, which reads as the substring test `x in "a"`)
+                    right = ExpCall(ExpConst(LITERAL_COLLECTION), self._literal_collection(children[2]))
                 return ExpBinOp(op, left, right)
             return ExpConst.boolean(True)
 
