@@ -4,8 +4,8 @@ PyYAML's composer gives each node its position; values are built with the safe c
 (YAML 1.1 scalars as PyYAML reads them, which is how the Kubernetes tooling written in Python
 reads them; the API server's Go decoder agrees on the documents Kubernetes accepts). Tags the
 safe loader does not know (CloudFormation's `!Ref`, `!Sub`, ...) are handed to `tags`, a map
-from tag to a function of the node's plain value; any other unknown tag makes the document
-unreadable, which is reported, never guessed around.
+from tag to a function of the node's plain value (`"*"`: any other tag); without one, an unknown
+tag makes the document unreadable, which is reported, never guessed around.
 """
 
 from __future__ import annotations
@@ -21,6 +21,9 @@ Lines = Dict[DocPath, int]
 
 class YamlError(ValueError):
     pass
+
+
+_TIMESTAMP = "tag:yaml.org,2002:timestamp"
 
 
 def _build(node, constructor, path: DocPath, lines: Lines, tags) -> Any:
@@ -41,13 +44,15 @@ def _build(node, constructor, path: DocPath, lines: Lines, tags) -> Any:
     else:
         value = None
     if tag.startswith("!") and not tag.startswith("!!"):
-        fn = tags.get(tag) if tags else None
+        fn = (tags.get(tag) or tags.get("*")) if tags else None
         if fn is None:
             raise YamlError(f"line {node.start_mark.line + 1}: unknown tag {tag}")
         if isinstance(node, yaml.ScalarNode):
             value = node.value
         return fn(value)
     if isinstance(node, yaml.ScalarNode):
+        if tag == _TIMESTAMP and tags and tags.get("!!timestamp") == "string":
+            return node.value                          # a reader that has no timestamps (CloudFormation)
         try:
             return constructor.construct_object(node, deep=True)
         except yaml.YAMLError as e:

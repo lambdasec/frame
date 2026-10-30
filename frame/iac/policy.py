@@ -66,7 +66,14 @@ class Default:
     value: Any
 
 
-Operand = Union[Path, Literal, Default]
+@dataclass(frozen=True)
+class Number:
+    """`number(x)`: x as a number, a decimal string included (CloudFormation passes parameter
+    values as strings; an Integer property takes "22" as 22)."""
+    operand: Any
+
+
+Operand = Union[Path, Literal, Default, Number]
 
 
 @dataclass(frozen=True)
@@ -129,7 +136,7 @@ Expr = Union[Compare, Present, StartsWith, Internet, Call, Not, BoolOp, Quantifi
 # --- tokenizer ---------------------------------------------------------------------------
 
 _KEYWORDS = {"and", "or", "not", "some", "every", "in", "true", "false", "present", "absent",
-             "default", "starts_with", "internet"}
+             "default", "starts_with", "internet", "number"}
 _OPERATORS = ("==", "!=", "<=", ">=", "<", ">")
 _PUNCT = "().,[]:+"
 
@@ -325,6 +332,12 @@ class _Parser:
         return Compare(op, left, self.operand())
 
     def operand(self) -> Operand:
+        if self.at("KW", "number"):
+            self.take()
+            self.expect("P", "(")
+            inner = self.operand()
+            self.expect("P", ")")
+            return Number(inner)
         if self.at("KW", "default"):
             self.take()
             self.expect("P", "(")
@@ -386,6 +399,8 @@ def roots(expr: Expr, bound: Tuple[str, ...] = ()) -> set:
     out: set = set()
 
     def operand(o: Optional[Operand], b) -> None:
+        if isinstance(o, Number):
+            return operand(o.operand, b)
         p = o.path if isinstance(o, Default) else o
         if isinstance(p, Path) and p.root not in b:
             out.add(p.root)
@@ -425,14 +440,16 @@ def inline(expr: Expr, defines: dict) -> Expr:
     counter = [0]
 
     def sub_operand(o, env):
+        if isinstance(o, Number):
+            return Number(sub_operand(o.operand, env))
         p = o.path if isinstance(o, Default) else o
         if not isinstance(p, Path) or p.root not in env:
             return o
         arg = env[p.root]
+        if not p.steps and not isinstance(o, Default):
+            return arg                              # the parameter used whole: any operand
         if isinstance(arg, Path):
             new = Path(arg.root, arg.steps + p.steps)
-        elif isinstance(arg, Literal) and not p.steps and not isinstance(o, Default):
-            return arg
         else:
             raise PolicyError(f"argument for {p.root!r} cannot be used as {p}")
         return Default(new, o.value) if isinstance(o, Default) else new
@@ -478,5 +495,5 @@ def inline(expr: Expr, defines: dict) -> Expr:
     return walk(expr, {}, ())
 
 
-__all__ = ["BoolOp", "Call", "Compare", "Default", "Expr", "Internet", "Literal", "Not", "Path", "PolicyError",
+__all__ = ["BoolOp", "Call", "Compare", "Default", "Expr", "Internet", "Literal", "Not", "Number", "Path", "PolicyError",
            "Present", "Quantifier", "StartsWith", "inline", "parse", "roots"]

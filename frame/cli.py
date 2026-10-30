@@ -67,11 +67,11 @@ def create_parser() -> argparse.ArgumentParser:
     # === IAC command ===
     iac_parser = subparsers.add_parser(
         "iac",
-        help="Check infrastructure files (Kubernetes manifests, Dockerfiles, Terraform) against the policy packs",
+        help="Check infrastructure files (Kubernetes manifests, Dockerfiles, Terraform, CloudFormation) against the policy packs",
         description="Read the infrastructure files under a directory (or one file) and decide each "
                     "policy of the packs on each resource with Z3: Kubernetes objects against the Pod "
                     "Security Standards, Dockerfile build stages against the Docker rules, Terraform AWS "
-                    "resources against the AWS rules. A violation that depends on values the files do not give is "
+                    "and CloudFormation resources against the AWS rules. A violation that depends on values the files do not give is "
                     "listed as undecided, never as a finding."
     )
     iac_parser.add_argument("target", nargs="?", default=".", help="Directory or file (default: .)")

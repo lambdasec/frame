@@ -1,0 +1,18 @@
+# Facts about CloudFormation resources that let the solver relate them
+# (frame/iac/cloudformation.py). Two resources of one type have different physical ids (every
+# type, no entry needed). Where the template reference says `Ref` returns one of the
+# resource's properties, the id equals that property when the template sets it:
+
+[[ref_alias]]
+type = "AWS::S3::Bucket"
+property = "BucketName"
+reference = "https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html#aws-resource-s3-bucket-return-values"
+
+# Properties whose value when left out the template reference does not document, though the
+# object holding them is written: the reader makes them unknown rather than assume a default.
+
+[[undocumented_default]]
+type = "AWS::S3::Bucket"
+object = "PublicAccessBlockConfiguration"
+properties = ["BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls", "RestrictPublicBuckets"]
+reference = "https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-s3-bucket-publicaccessblockconfiguration.html"

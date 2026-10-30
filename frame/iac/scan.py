@@ -19,11 +19,11 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from . import dockerfile, kubernetes, terraform
+from . import cloudformation, dockerfile, kubernetes, terraform
 from .engine import decide
 from .model import ReadResult, Resource, dotted
 
-FORMATS = ("kubernetes", "dockerfile", "terraform")
+FORMATS = ("kubernetes", "dockerfile", "terraform", "cloudformation")
 _SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 _YAML_SUFFIXES = (".yaml", ".yml", ".json")
 
@@ -94,7 +94,7 @@ def _candidates(target: Path, excluded) -> List[Tuple[Path, str]]:
         return [(target, target.name)]
     out = []
     for path in sorted(target.rglob("*")):
-        if path.is_file() and (path.suffix.lower() in _YAML_SUFFIXES or path.suffix == ".tf"
+        if path.is_file() and (path.suffix.lower() in _YAML_SUFFIXES + (".template",) or path.suffix == ".tf"
                                or dockerfile.is_dockerfile(path)) \
                 and not FrameScanner._is_excluded_dir_member(path, target, excluded):
             out.append((path, path.relative_to(target).as_posix()))
@@ -109,7 +109,8 @@ def read(target: Path, excluded) -> Dict[str, ReadResult]:
     k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root)
     _one_warning_per_chart(k8s)
     tf = terraform.read([(p, r) for p, r in files if p.suffix == ".tf"], root)
-    return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker), "terraform": tf}
+    cfn = cloudformation.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES + (".template",)])
+    return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker), "terraform": tf, "cloudformation": cfn}
 
 
 def _one_warning_per_chart(result: ReadResult) -> None:

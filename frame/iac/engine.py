@@ -27,8 +27,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import z3
 
-from .policy import (BoolOp, Compare, Default, Expr, Internet, Literal, Not, Path, Present, Quantifier,
-                     StartsWith)
+from .policy import (BoolOp, Compare, Default, Expr, Internet, Literal, Not, Number, Path, Present,
+                     Quantifier, StartsWith)
 
 DocPath = Tuple[Union[str, int], ...]
 RELATED = "resources"                # `some p in resources["aws_s3_bucket_acl"]: ...`
@@ -197,6 +197,16 @@ class _Evaluator:
         """(value, why): value is a Python value, an Unknown, or _ABSENT."""
         if isinstance(o, Literal):
             return o.value, ()
+        if isinstance(o, Number):
+            v, why = self.operand(o.operand, env)
+            if isinstance(v, str):
+                import re as _re
+                if _re.fullmatch(r"-?[0-9]+", v.strip()):
+                    return int(v.strip()), why
+                if _re.fullmatch(r"-?[0-9]+\.[0-9]+", v.strip()):
+                    return float(v.strip()), why
+                return _ABSENT, why                     # not a number: no comparison holds
+            return v, why
         if isinstance(o, Default):
             r = self.resolve(o.path, env)
             if isinstance(r, _Absent):
@@ -315,7 +325,13 @@ class _Evaluator:
             a, why = self.operand(e.operand, env)
             if isinstance(a, Unknown):
                 return z3.Bool(f"internet{e.family or ''}:{a.key}"), why
-            return (isinstance(a, str) and may_reach(a, e.family)), why
+            if not isinstance(a, str):
+                return False, why
+            reach = may_reach(a, e.family)
+            if reach is None:                        # a CIDR with host bits: not decided
+                self.unknowns.add(f"whether AWS accepts {a}")
+                return self.fresh_bool("cidr"), why
+            return reach, why
         if isinstance(e, Not):
             v, why = self.ev(e.expr, env)
             return _not(v), why

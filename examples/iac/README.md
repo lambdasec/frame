@@ -1,4 +1,4 @@
-# A shop's infrastructure: Kubernetes manifests, Dockerfiles and Terraform
+# A shop's infrastructure: Kubernetes, Dockerfiles, Terraform and CloudFormation
 
 - `k8s/web.yaml`: the storefront, an ordinary Deployment with no security settings.
 - `k8s/log-agent.yaml`: a log collector DaemonSet that reads the node's `/var/log`, on the host network, with `SYS_ADMIN`.
@@ -7,10 +7,13 @@
 - `chart/`: a Helm chart for a worker.
 - `images/`: the Dockerfiles of the web, log agent and API images.
 - `terraform/`: the AWS network, database, buckets and deploy role, with `terraform.tfvars`.
+- `cloudformation/`: the marketing site, kept in CloudFormation by another team.
 - `.frame/packs/acme.toml`: the platform team's own rule, that every container has a memory limit.
 
 ```console
 $ frame iac .
+cloudformation/marketing-site.yaml:25: [high] aws-s3-public (CWE-732) AWS::S3::Bucket SiteBucket: S3 bucket is open to the public (an ACL or bucket policy that takes effect) [PublicAccessBlockConfiguration.RestrictPublicBuckets]
+cloudformation/marketing-site.yaml:47: [high] aws-sg-admin-from-internet (CWE-284) AWS::EC2::SecurityGroup CmsSecurityGroup: Security group lets the internet reach SSH or RDP [SecurityGroupIngress[0].CidrIp]
 images/log-agent/Dockerfile:11: [medium] docker-root-user (CWE-250) images/log-agent/Dockerfile stage 1: The image runs as root [user]
 images/web/Dockerfile:8: [low] docker-floating-base-image (CWE-829) images/web/Dockerfile stage 1: Base image is not pinned (no tag, or latest, and no digest) [from.external]
 images/web/Dockerfile:8: [low] docker-user-not-set (CWE-250) images/web/Dockerfile stage 1: The image never sets a user, so it runs as the base image's (root for most) [from.scratch]
@@ -27,7 +30,7 @@ terraform/network.tf:21: [high] aws-sg-admin-from-internet (CWE-284) aws_securit
 terraform/storage.tf:2: [high] aws-s3-public (CWE-732) aws_s3_bucket.assets: S3 bucket is open to the public (an ACL or bucket policy that takes effect)
 terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy.deploy: IAM policy allows every action on every resource [policy_admin]
 
-Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 23 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
+Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 25 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
 undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)
 undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh (depends on var.partner_cidr)
 warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)
@@ -67,6 +70,14 @@ Terraform is read as a plan would see it, before anything is created: variables 
 - The exports bucket has a `public-read` ACL, yet is not reported. New buckets have ACLs disabled ("bucket owner enforced"), and this configuration never enables them (`aws_s3_bucket_ownership_controls`), so the grant has no effect. Whether a rule about one bucket is about another is decided by Z3, with the provider's facts that two buckets are different objects and that a bucket's `id` is its name.
 - The deploy role's inline policy allows every action on every resource.
 
+## The CloudFormation template
+
+The template is read as a deployment that takes every parameter's default would see it, with the intrinsic functions (`!Ref`, `!Sub`, `!If`, ...) evaluated as the template reference defines them.
+
+- `SiteBucket` turns `BlockPublicPolicy` and `RestrictPublicBuckets` off, and `SiteBucketPolicy` (whose `Bucket` is `!Ref SiteBucket`) allows `s3:GetObject` to everyone: the bucket is public. The two ACL settings stay on, which does not matter here.
+- The CMS group's SSH rule takes `!Ref AdminCidr`, whose default is `0.0.0.0/0`.
+- `DebugSecurityGroup`, open on every port, exists only when `IsStaging` holds. `Environment` defaults to `production`, so the condition is false, the group is not created, and it is not reported.
+
 ## What is not reported
 
 The debug pod is privileged and shares the host's PID namespace on purpose. Its two findings are suppressed by comments, on the line itself or on the comment line above (`# frame: ignore[k8s-privileged]`), and counted as `2 suppressed`. Its other findings are still reported: a suppression names the policy it silences. In a Dockerfile the comment goes on the line above (a `#` after an instruction is part of it).
@@ -83,6 +94,8 @@ The default `--fail-on high` fails on the high findings alone: the Baseline brea
 
 ```console
 $ frame iac . --min-severity high
+cloudformation/marketing-site.yaml:25: [high] aws-s3-public (CWE-732) AWS::S3::Bucket SiteBucket: S3 bucket is open to the public (an ACL or bucket policy that takes effect) [PublicAccessBlockConfiguration.RestrictPublicBuckets]
+cloudformation/marketing-site.yaml:47: [high] aws-sg-admin-from-internet (CWE-284) AWS::EC2::SecurityGroup CmsSecurityGroup: Security group lets the internet reach SSH or RDP [SecurityGroupIngress[0].CidrIp]
 k8s/log-agent.yaml:13: [high] k8s-host-namespaces (CWE-668) DaemonSet/ops/log-agent: Pod shares the host's network, PID or IPC namespace [spec.template.spec.hostNetwork]
 k8s/log-agent.yaml:19: [high] k8s-capabilities-restricted (CWE-250) DaemonSet/ops/log-agent: Container does not drop ALL capabilities, or adds one other than NET_BIND_SERVICE [spec.template.spec.containers[0].securityContext.capabilities] (also k8s-capabilities-baseline)
 k8s/log-agent.yaml:24: [high] k8s-host-volume-types (CWE-668) DaemonSet/ops/log-agent: Pod mounts a volume type outside the restricted set [spec.template.spec.volumes[0].hostPath] (also k8s-host-path-volumes)
@@ -91,9 +104,9 @@ terraform/network.tf:21: [high] aws-sg-admin-from-internet (CWE-284) aws_securit
 terraform/storage.tf:2: [high] aws-s3-public (CWE-732) aws_s3_bucket.assets: S3 bucket is open to the public (an ACL or bucket policy that takes effect)
 terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy.deploy: IAM policy allows every action on every resource [policy_admin]
 
-Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 7 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
+Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 9 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
 ```
 
 The exit status is 1. `-f sarif` writes the findings for GitHub code scanning, each with the line and a stable fingerprint; `frame scan . --iac` puts them beside the source scan's.
 
-How the checks are decided, and how close they are to Kubernetes, BuildKit and HashiCorp's HCL themselves: [docs/iac.md](../../docs/iac.md).
+How the checks are decided, and how close they are to Kubernetes, BuildKit, HashiCorp's HCL and checkov: [docs/iac.md](../../docs/iac.md).

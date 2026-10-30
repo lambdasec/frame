@@ -125,7 +125,7 @@ def add_pack_args(scan_parser) -> None:
     scan_parser.add_argument(
         "--iac", action="store_true",
         help="Also check infrastructure files (directory targets): Kubernetes manifests, "
-             "Dockerfiles and Terraform against the policy packs, as `frame iac` does.")
+             "Dockerfiles, Terraform and CloudFormation against the policy packs, as `frame iac` does.")
 
 
 def add_language_and_pattern_args(scan_parser) -> None:

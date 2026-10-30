@@ -442,15 +442,20 @@ def test_iac_walkthrough(tmp_path):
             "(an ACL or bucket policy that takes effect)",
             "terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy.deploy: IAM policy allows "
             "every action on every resource [policy_admin]",
-            "Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); "
-            "23 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)",
+            "cloudformation/marketing-site.yaml:25: [high] aws-s3-public (CWE-732) AWS::S3::Bucket SiteBucket: S3 bucket "
+            "is open to the public (an ACL or bucket policy that takes effect) "
+            "[PublicAccessBlockConfiguration.RestrictPublicBuckets]",
+            "cloudformation/marketing-site.yaml:47: [high] aws-sg-admin-from-internet (CWE-284) AWS::EC2::SecurityGroup "
+            "CmsSecurityGroup: Security group lets the internet reach SSH or RDP [SecurityGroupIngress[0].CidrIp]",
+            "Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), "
+            "terraform: 3 file(s); 25 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)",
             "undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)",
             "undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh "
             "(depends on var.partner_cidr)",
             "warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)"]),
         (("iac", ".", "--min-severity", "high"), [
-            "Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); "
-            "7 finding(s), 2 suppressed, 2 undecided"]),
+            "Infrastructure: 25 resource(s) in cloudformation: 1 file(s), dockerfile: 3 file(s), kubernetes: 4 file(s), "
+            "terraform: 3 file(s); 9 finding(s), 2 suppressed, 2 undecided"]),
     ]
     for args, lines in shown:
         out = frame(work, env, *args)
@@ -460,4 +465,4 @@ def test_iac_walkthrough(tmp_path):
     out = frame(work, env, "iac", ".")
     assert "k8s/api.yaml" not in out and "images/api" not in out and "k8s-privileged" not in out
     assert "aws_security_group.web" not in out and "aws-ebs-unencrypted" not in out
-    assert "aws_s3_bucket.exports" not in out
+    assert "aws_s3_bucket.exports" not in out and "DebugSecurityGroup" not in out

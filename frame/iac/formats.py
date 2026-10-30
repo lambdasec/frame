@@ -7,7 +7,7 @@ def view_names(language: str) -> set:
     if language == "kubernetes":
         from .kubernetes import view_names as kubernetes_views
         return kubernetes_views()
-    if language == "terraform":
+    if language in ("terraform", "cloudformation"):
         return {"self", "resources"}
     return {"self"}
 

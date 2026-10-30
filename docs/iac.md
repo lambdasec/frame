@@ -1,6 +1,6 @@
 # Infrastructure as code
 
-`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards), Dockerfiles and Terraform (AWS). CloudFormation, Helm rendering and full network reachability follow ([roadmap](roadmap.md)).
+`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards), Dockerfiles, Terraform and CloudFormation (AWS). Helm rendering and full network reachability follow ([roadmap](roadmap.md)).
 
 ```console
 $ frame iac .
@@ -85,13 +85,17 @@ Relations between resources (this public access block is for that bucket) are eq
 
 On TerraGoat these policies report the same resources as checkov's equivalent checks (CKV_AWS_24, 25, 277, 17, 16, 3; for S3 and IAM, CKV_AWS_20, 57, 62 and 1 report nothing there either). On terraform-aws-rds both report the same two databases; checkov also reports two inside a wrapper module whose `for_each` is empty by default (there are no such instances), and Frame leaves the read replica undecided (its source database comes from a module output that may be null).
 
+**CloudFormation.** A YAML or JSON template (`AWSTemplateFormatVersion`, or `Resources` whose entries have `AWS::`-style types) is read as a deployment that takes every parameter's `Default` would see it (`frame/iac/cloudformation.py`). YAML is read as YAML 1.1 without the timestamp tag, as [CloudFormation reads it](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-formats.html) (a bare `yes` is true; `2010-09-09` is a string). The intrinsic functions are evaluated as the template reference defines them when their inputs are known: `Ref` to a parameter (its default, as a string; list types split), `Fn::Sub`, `Fn::Join`, `Fn::Select`, `Fn::Split`, `Fn::FindInMap`, `Fn::Base64`, `Fn::If`, and the `Conditions` (a resource whose condition is false is not created; `AWS::NoValue` removes a property). A resource's physical id (`Ref`), `Fn::GetAtt`, `Fn::ImportValue`, pseudo parameters and a parameter without a default are unknown; a tag that is not CloudFormation's (`!Rain::Embed`) makes its value unknown; a transform's additions are not read (a warning names the template). The AWS pack (`packs/data/cloudformation/aws.toml`) has the same seven policies as Terraform's, with CloudFormation's property names; a Block Public Access setting left out of a written `PublicAccessBlockConfiguration` is unknown, since its default is not documented (`data/cloudformation-facts.toml`).
+
+On the 280 templates of aws-cloudformation/aws-cloudformation-templates Frame reads every template (warnings only for transforms). On the 44 where either tool reports something, every one of checkov's 31 equivalent findings is a Frame finding except a read replica, which takes its source's encryption; Frame adds four load balancer groups open on every port. A sample whose SSH default is `192.168.1.0/0` (all addresses, if AWS accepts a CIDR with host bits set) is undecided: whether AWS takes its network or refuses it is not documented.
+
 **Helm.** A chart's `templates/` are Go templates. A template with no template actions (`{{`) renders as written and is checked; any other is skipped, with one warning per chart. Render the chart (`helm template ... > rendered.yaml`) and check the output.
 
 ## Findings
 
 Each finding names the policy, its CWE, the resource (`Kind/namespace/name`), and the value that decides it: the line of `privileged: true`, or, for something missing, the container or securityContext that lacks it (`field` in JSON). `evidence` is `matched` when the files give every value the policy reads, and `solver-verified` when the solver proved the violation holds whatever the values the files leave open (Terraform variables, in a later release).
 
-A violation that depends on values the files do not give (a base image's user, a build argument, a Terraform variable set at apply time) is **undecided**: listed with what it depends on (`depends_on` in JSON, `undecided:` lines in text), never reported as a finding.
+A violation that depends on values the files do not give (a base image's user, a build argument, a Terraform variable set at apply time, a CloudFormation parameter without a default) is **undecided**: listed with what it depends on (`depends_on` in JSON, `undecided:` lines in text), never reported as a finding.
 
 `frame: ignore[<policy id or CWE>]` on the finding's line, or on a comment line above it, suppresses it (`suppressed` in JSON). `.frame.toml`'s `exclude`, `disable`, `packs`, `min_severity` and `fail_on` apply. Exit status: 0 clean, 1 a finding at or above `--fail-on` (default high), 2 the command could not run.
 
@@ -121,6 +125,7 @@ references = ["https://kubernetes.io/docs/concepts/configuration/manage-resource
 | `x in ["a", "b"]`, `x not in [...]`, `x in path.to.list` | membership |
 | `present(p)`, `absent(p)` | whether a field has a value (`null` is none) |
 | `starts_with(x, "prefix")` | string prefix |
+| `number(x)` | x as a number, a decimal string included (CloudFormation's parameter values are strings) |
 | `internet(c)`, `internet(c, 4)` | CIDR or address c contains an address the internet can send from (of IP version 4 or 6) |
 | `name(a, b)` | a `[[define]]` of the pack, inlined |
 | `default(p, v)` | p's value, or v when p is missing |
@@ -140,7 +145,7 @@ body = '''p in ["-1", "all", -1] or (p in ["tcp", "6", 6] and from <= port and t
 
 `tcp_port(r.protocol, r.from_port, r.to_port, 22)` then stands for the body with the paths (or literals) substituted. A define may call the defines before it.
 
-Paths start at a resource's views. Every resource has `self` (the whole document; for a Dockerfile, the build stage: `final`, `from` with `image`/`tag`/`digest`/`stage`/`scratch`/`external`, `user`, `user_set`, `instructions` with `cmd`, `args`, `flags`, `sources`/`dest`, `vars` with `key`/`value`/`credential`, and `preamble` for the ARGs before the first FROM, in `frame/iac/dockerfile.py`; for Terraform, the resource's arguments, nested blocks as lists, and `id`). A Terraform resource can also look at the other resources of its root module: `some d in resources["aws_ebs_encryption_by_default"]: d.enabled == true`. A resource with a `policy` argument (at any depth) also has `policy_public` and `policy_admin` beside it: true or false when the document is known, else unknown. A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
+Paths start at a resource's views. Every resource has `self` (the whole document; for a Dockerfile, the build stage: `final`, `from` with `image`/`tag`/`digest`/`stage`/`scratch`/`external`, `user`, `user_set`, `instructions` with `cmd`, `args`, `flags`, `sources`/`dest`, `vars` with `key`/`value`/`credential`, and `preamble` for the ARGs before the first FROM, in `frame/iac/dockerfile.py`; for Terraform, the resource's arguments, nested blocks as lists, and `id`; for CloudFormation, its `Properties` and `Ref`). A Terraform resource can also look at the other resources of its root module: `some d in resources["aws_ebs_encryption_by_default"]: d.enabled == true`. A resource with a `policy` argument (at any depth) also has `policy_public` and `policy_admin` beside it: true or false when the document is known, else unknown. A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
 
 ## How a policy is decided
 

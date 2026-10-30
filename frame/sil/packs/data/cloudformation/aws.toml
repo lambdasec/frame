@@ -1,0 +1,145 @@
+# AWS resources in CloudFormation templates: the checks of terraform/aws.toml, with the
+# template reference's property names
+# (https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/). CloudFormation
+# passes parameter values as strings and takes "22" for an Integer and "true" for a Boolean
+# property, so numbers are read with number() and booleans as true or "true".
+
+[pack]
+name = "aws"
+language = "cloudformation"
+description = "AWS: network exposure, public buckets and databases, all-powerful IAM policies, unencrypted storage"
+references = ["https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/"]
+
+[[define]]
+name = "is_true"
+params = ["v"]
+body = '''v in [true, "true", "True"]'''
+
+[[define]]
+name = "is_false"
+params = ["v"]
+body = '''v in [false, "false", "False"]'''
+
+# --- security groups: AWS::EC2::SecurityGroup SecurityGroupIngress entries and
+# AWS::EC2::SecurityGroupIngress resources (IpProtocol, FromPort, ToPort, CidrIp, CidrIpv6;
+# IpProtocol -1 is every protocol and port) --------------------------------------------------
+
+[[define]]
+name = "all_traffic"
+params = ["p"]
+body = '''p in ["-1", -1, "all"]'''
+
+[[define]]
+name = "tcp_port"
+params = ["p", "from", "to", "port"]
+body = '''all_traffic(p) or (p in ["tcp", "6", 6] and number(from) <= port and number(to) >= port)'''
+
+[[define]]
+name = "every_tcp_port"
+params = ["p", "from", "to"]
+body = '''all_traffic(p) or (p in ["tcp", "6", 6] and number(from) <= 0 and number(to) >= 65535)'''
+
+[[define]]
+name = "from_internet"
+params = ["r"]
+body = '''internet(r.CidrIp, 4) or internet(r.CidrIpv6, 6)'''
+
+[[policy]]
+id = "aws-sg-admin-from-internet"
+title = "Security group lets the internet reach SSH or RDP"
+severity = "high"
+cwe = "CWE-284"
+resources = ["AWS::EC2::SecurityGroup", "AWS::EC2::SecurityGroupIngress"]
+when = '''
+(some r in self.SecurityGroupIngress: from_internet(r)
+    and (tcp_port(r.IpProtocol, r.FromPort, r.ToPort, 22) or tcp_port(r.IpProtocol, r.FromPort, r.ToPort, 3389)))
+or (from_internet(self)
+    and (tcp_port(self.IpProtocol, self.FromPort, self.ToPort, 22)
+         or tcp_port(self.IpProtocol, self.FromPort, self.ToPort, 3389)))
+'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/ec2-controls.html#ec2-53"]
+
+[[policy]]
+id = "aws-sg-all-from-internet"
+title = "Security group lets the internet reach every port"
+severity = "high"
+cwe = "CWE-284"
+resources = ["AWS::EC2::SecurityGroup", "AWS::EC2::SecurityGroupIngress"]
+overrides = ["aws-sg-admin-from-internet"]
+when = '''
+(some r in self.SecurityGroupIngress: from_internet(r) and every_tcp_port(r.IpProtocol, r.FromPort, r.ToPort))
+or (from_internet(self) and every_tcp_port(self.IpProtocol, self.FromPort, self.ToPort))
+'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/ec2-controls.html#ec2-18"]
+
+# --- S3: a public grant that takes effect, under the April 2023 defaults (every new bucket
+# blocks public access and disables ACLs, also when CloudFormation creates it). A bucket with
+# PublicAccessBlockConfiguration has exactly the settings it writes; a setting it leaves out is
+# not documented, so it stays unknown. ---------------------------------------------------------
+
+[[define]]
+name = "for_bucket"
+params = ["ref", "b"]
+body = '''ref == b.Ref or ref == b.BucketName'''
+
+[[policy]]
+id = "aws-s3-public"
+title = "S3 bucket is open to the public (an ACL or bucket policy that takes effect)"
+severity = "high"
+cwe = "CWE-732"
+resources = ["AWS::S3::Bucket"]
+when = '''
+(self.AccessControl in ["PublicRead", "PublicReadWrite", "AuthenticatedRead"]
+    and (some r in self.OwnershipControls.Rules: r.ObjectOwnership in ["ObjectWriter", "BucketOwnerPreferred"])
+    and is_false(self.PublicAccessBlockConfiguration.BlockPublicAcls)
+    and is_false(self.PublicAccessBlockConfiguration.IgnorePublicAcls))
+or ((some p in resources["AWS::S3::BucketPolicy"]: for_bucket(p.Bucket, self) and p.policy_public == true)
+    and is_false(self.PublicAccessBlockConfiguration.BlockPublicPolicy)
+    and is_false(self.PublicAccessBlockConfiguration.RestrictPublicBuckets))
+'''
+references = ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html",
+              "https://aws.amazon.com/about-aws/whats-new/2022/12/amazon-s3-automatically-enable-block-public-access-disable-access-control-lists-buckets-april-2023/"]
+
+# --- databases, IAM, storage ------------------------------------------------------------------
+
+[[policy]]
+id = "aws-rds-public"
+title = "Database instance has a public endpoint"
+severity = "high"
+cwe = "CWE-284"
+resources = ["AWS::RDS::DBInstance"]
+when = '''is_true(self.PubliclyAccessible)'''
+references = ["https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbinstance.html#cfn-rds-dbinstance-publiclyaccessible"]
+
+[[policy]]
+id = "aws-iam-full-admin"
+title = "IAM policy allows every action on every resource"
+severity = "high"
+cwe = "CWE-269"
+resources = ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy", "AWS::IAM::Role", "AWS::IAM::User", "AWS::IAM::Group",
+             "AWS::IAM::RolePolicy", "AWS::IAM::UserPolicy", "AWS::IAM::GroupPolicy"]
+when = '''self.policy_admin == true or (some p in self.Policies: p.policy_admin == true)'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/iam-controls.html#iam-1"]
+
+[[policy]]
+id = "aws-ebs-unencrypted"
+title = "EBS volume is not encrypted by this template"
+severity = "low"
+cwe = "CWE-311"
+resources = ["AWS::EC2::Volume"]
+# a volume from a snapshot takes its encryption; so does an account-wide default set elsewhere
+when = '''not is_true(default(self.Encrypted, false)) and absent(self.SnapshotId)'''
+references = ["https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html"]
+
+[[policy]]
+id = "aws-rds-unencrypted"
+title = "Database storage is not encrypted by this template"
+severity = "low"
+cwe = "CWE-311"
+resources = ["AWS::RDS::DBInstance"]
+# a restored or replicated instance takes its source's encryption; an Aurora instance its cluster's
+when = '''
+not is_true(default(self.StorageEncrypted, false)) and absent(self.DBSnapshotIdentifier)
+and absent(self.SourceDBInstanceIdentifier) and absent(self.DBClusterIdentifier)
+'''
+references = ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html"]

@@ -22,7 +22,7 @@ Frame finds vulnerabilities by **following attacker data through your code**, ac
 - **Cross-file by default**: a request that enters a controller and reaches a query three files away is one finding.
 - **70+ framework packs**: Flask to Spring to ASP.NET to Express, plus your own stack in one TOML file.
 - **Dependencies too**: lockfiles of 11 ecosystems plus C/C++, matched against OSV offline, ranked by whether attacker data reaches the vulnerable function, with upgrades it plans, applies and verifies against your tests, licence policy, SBOM and VEX.
-- **Infrastructure too**: Kubernetes manifests checked against the Pod Security Standards (matching the admission controller's own evaluator), Dockerfiles read exactly as BuildKit reads them, and Terraform evaluated as HCL evaluates it; every policy decided with Z3, and what depends on values the files do not give reported as undecided, not guessed.
+- **Infrastructure too**: Kubernetes manifests checked against the Pod Security Standards (matching the admission controller's own evaluator), Dockerfiles read exactly as BuildKit reads them, Terraform evaluated as HCL evaluates it, and CloudFormation templates with their intrinsic functions; every policy decided with Z3, and what depends on values the files do not give reported as undecided, not guessed.
 - **Built for guardrails**: scan only what changed, baseline what you accept, verify that a fix removed the bug.
 - **Wherever you work**: a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
 - **Its own separation logic engine** on Z3: entailment, frame inference, bi-abduction and countermodels.
@@ -97,7 +97,7 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 | [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, suppressions, configuration, every command and flag, environment variables, Python API |
 | [Dependencies](https://github.com/lambdasec/frame/blob/main/docs/dependencies.md) | Supported ecosystems, advisories, reachability, upgrade plans, code mitigation, licences, SBOM, VEX, CI |
 | [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
-| [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles and Terraform, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
+| [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles, Terraform and CloudFormation, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
 | [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | Where Frame is going: SAST gaps, the knowledge base, SCA, secrets and IaC, AI app security, autonomous pentesting |

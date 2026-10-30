@@ -1,0 +1,174 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: 'AWS CloudFormation Sample Template RDS_MySQL_With_Read_Replica: Sample template showing how to create a highly-available, RDS DBInstance with a read replica. **WARNING** This template creates an Amazon Relational Database Service database instance and Amazon CloudWatch alarms. You will be billed for the AWS resources used if you create a stack from this template.'
+
+Metadata:
+  License: Apache-2.0
+
+Parameters:
+  DBName:
+    Description: The database name
+    Type: String
+    Default: MyDatabase
+    MinLength: "1"
+    MaxLength: "64"
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+
+  DBUser:
+    Description: The database admin account username
+    Type: String
+    NoEcho: "true"
+    MinLength: "1"
+    MaxLength: "16"
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+
+  DBAllocatedStorage:
+    Description: The size of the database (Gb)
+    Type: Number
+    Default: "5"
+    MinValue: "5"
+    MaxValue: "1024"
+    ConstraintDescription: must be between 5 and 1024Gb.
+
+  DBInstanceClass:
+    Description: The database instance type
+    Type: String
+    Default: db.t3.medium
+    ConstraintDescription: must select a valid database instance type.
+
+  EC2SecurityGroup:
+    Description: The EC2 security group that contains instances that need access to the database
+    Type: String
+    Default: default
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    ConstraintDescription: must be a valid security group name.
+
+  MultiAZ:
+    Description: Multi-AZ master database
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+    ConstraintDescription: must be true or false.
+
+  EnableReadReplica:
+    Description: Enable the ReadReplica
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+    ConstraintDescription: must be true or false.
+
+Conditions:
+  IsEC2VPC: !Or
+    - !Equals
+      - !Ref AWS::Region
+      - eu-central-1
+    - !Equals
+      - !Ref AWS::Region
+      - cn-north-1
+
+  EnableReadReplica: !Equals
+    - !Ref EnableReadReplica
+    - "true"
+
+Resources:
+  DBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "3306"
+          ToPort: "3306"
+          SourceSecurityGroupName: !Ref EC2SecurityGroup
+    Condition: IsEC2VPC
+
+  DBCredential:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+        RequireEachIncludedType: true
+
+  MainDB:
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Type: AWS::RDS::DBInstance
+    DependsOn: DBCredential
+    Properties:
+      DBName: !Ref DBName
+      AllocatedStorage: !Ref DBAllocatedStorage
+      BackupRetentionPeriod: 7
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: MySQL
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DBCredential}}}'
+      MultiAZ: !Ref MultiAZ
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: Master Database
+      VPCSecurityGroups: !If
+        - IsEC2VPC
+        - - !GetAtt DBEC2SecurityGroup.GroupId
+        - !Ref AWS::NoValue
+
+  ReplicaDB:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Type: AWS::RDS::DBInstance
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - I3013
+    Properties:
+      SourceDBInstanceIdentifier: !Ref MainDB
+      PubliclyAccessible: false
+      DBInstanceClass: !Ref DBInstanceClass
+      Tags:
+        - Key: Name
+          Value: Read Replica Database
+    Condition: EnableReadReplica
+
+Outputs:
+  DBCredentialSecretNameArn:
+    Description: Name of the secret containing the database credential
+    Value: !Ref DBCredential
+
+  EC2Platform:
+    Description: Platform in which this stack is deployed
+    Value: !If
+      - IsEC2VPC
+      - "true"
+      - EC2VPC
+
+  JDBCConnectionString:
+    Description: JDBC connection string for the master database
+    Value: !Join
+      - ""
+      - - jdbc:mysql://
+        - !GetAtt MainDB.Endpoint.Address
+        - ':'
+        - !GetAtt MainDB.Endpoint.Port
+        - /
+        - !Ref DBName
+
+  ReplicaJDBCConnectionString:
+    Description: JDBC connection string for the replica database
+    Value: !Join
+      - ""
+      - - jdbc:mysql://
+        - !GetAtt ReplicaDB.Endpoint.Address
+        - ':'
+        - !GetAtt ReplicaDB.Endpoint.Port
+        - /
+        - !Ref DBName
+    Condition: EnableReadReplica

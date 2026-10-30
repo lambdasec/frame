@@ -358,7 +358,7 @@ def test_internet_reachability_agrees_with_pythons_registry_for_unicast_ipv4():
 @pytest.mark.parametrize("cidr, reachable", [
     ("0.0.0.0/0", True), ("0.0.0.0/1", True), ("10.0.0.0/8", False), ("192.0.0.0/24", True),   # 192.0.0.9
     ("192.0.0.0/29", False), ("::/0", True), ("fc00::/7", False), ("2001:db8::/32", False),
-    ("2002::/16", True), ("10.0.0.1/8", False), ("not a cidr", False),
+    ("2002::/16", True), ("10.0.0.1/8", None), ("192.168.1.0/0", None), ("not a cidr", False),
 ])
 def test_cidrs(cidr, reachable):
     assert may_reach(cidr) is reachable

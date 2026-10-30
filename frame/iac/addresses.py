@@ -59,15 +59,21 @@ def _reachable(ip, bits: int):
 
 
 @lru_cache(maxsize=4096)
-def may_reach(cidr: str, family: int = 0) -> bool:
+def may_reach(cidr: str, family: int = 0):
     """Does `cidr` (an IPv4 or IPv6 CIDR, or a single address; of IP version `family` when
-    that is 4 or 6) contain an address the internet can send from?"""
+    that is 4 or 6) contain an address the internet can send from? None for a CIDR with host
+    bits set (`192.168.1.0/0`): whether the service rejects it or takes its network
+    (0.0.0.0/0) is not documented, so it is not decided."""
     try:
         net = ipaddress.ip_network(cidr.strip(), strict=False)
     except ValueError:
         return False
     if family and net.version != family:
         return False
+    try:
+        ipaddress.ip_network(cidr.strip(), strict=True)
+    except ValueError:
+        return None
     bits = 32 if net.version == 4 else 128
     ip = z3.BitVec("ip", bits)
     s = z3.Solver()
