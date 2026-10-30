@@ -787,6 +787,11 @@ cwe = "CWE-125"
 category = "memory"
 
 [[vuln]]
+type = "buffer_overread"
+cwe = "CWE-126"
+category = "memory"
+
+[[vuln]]
 type = "oob_underwrite"
 cwe = "CWE-124"
 category = "memory"

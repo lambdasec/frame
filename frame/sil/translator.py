@@ -202,6 +202,7 @@ class VulnType(Enum):
     # read.
     OOB_WRITE = "oob_write"                          # CWE-787
     OOB_READ = "oob_read"                            # CWE-125
+    BUFFER_OVERREAD = "buffer_overread"              # CWE-126
 
     # Directional memory safety, the below-the-start pair of OOB_WRITE/OOB_READ.
     # Used only where the IR settles that the access is provably before element
@@ -8025,6 +8026,9 @@ class SILTranslator:
         "read": (1, 2), "recv": (1, 2),
     }
     _LITERAL_COPIES = {"strcpy": 1, "strcat": 1, "sprintf": 1}
+    # Calls that read a constant number of bytes from a buffer: (source index, size index).
+    _BOUNDED_READS = {"memcpy": ((1, 2),), "memmove": ((1, 2),), "bcopy": ((0, 2),),
+                      "memcmp": ((0, 2), (1, 2))}
 
     def _const_int(self, exp: Exp) -> Optional[int]:
         """Integer value of a compile-time constant expression (literals joined
@@ -8124,6 +8128,31 @@ class SILTranslator:
         func = instr.func
         fname = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"')
         args = [a for a, _ in instr.args]
+        reads = self._constant_copy_overread_checks(fname, args, instr, proc_name)
+        return reads + self._constant_copy_write_checks(fname, args, instr, proc_name)
+
+    def _constant_copy_overread_checks(self, fname: str, args: List[Exp], instr: Instr,
+                                       proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-126: a constant number of bytes read from a buffer whose constant capacity is
+        smaller (`memcpy(dst, src, 2048)` with `char src[100]`). Same certainty rules as the
+        write side."""
+        out = []
+        for src_i, n_i in self._BOUNDED_READS.get(fname, ()):
+            if max(src_i, n_i) >= len(args):
+                continue
+            need, cap = self._const_int(args[n_i]), self._buffer_capacity(args[src_i])
+            if need is None or cap is None or need <= cap:
+                continue
+            src_name = self._exp_to_str(self._cast_strip(args[src_i]))
+            out.append(VulnerabilityCheck(
+                formula=True_(), vuln_type=VulnType.BUFFER_OVERREAD, location=instr.loc,
+                description=f"Buffer over-read: {fname}() reads {need} bytes from '{src_name}', "
+                            f"which holds only {cap} bytes",
+                tainted_var=src_name, procedure_name=proc_name))
+        return out
+
+    def _constant_copy_write_checks(self, fname: str, args: List[Exp], instr: Instr,
+                                    proc_name: str) -> List[VulnerabilityCheck]:
         need = None
         what = ""
         if fname in self._BOUNDED_WRITES:

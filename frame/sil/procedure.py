@@ -183,6 +183,11 @@ class ProcSpec:
     # hard-coded key (CWE-321).
     key_args: List[int] = field(default_factory=list)
 
+    # The position where an exec-style argument list starts (`execl(path, arg0, arg1, ..., NULL)`:
+    # 1). When the program is a shell (`shells.toml`) and an argument is a command flag (`-c`),
+    # the argument after it is a command line (a command sink).
+    argv_from: Optional[int] = None
+
     # =========================================================================
     # Structural weakness specifications
     #

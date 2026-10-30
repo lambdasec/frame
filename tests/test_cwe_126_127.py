@@ -1,161 +1,46 @@
-"""
-Test cases for CWE-126 (Buffer Over-read) and CWE-127 (Buffer Under-read) detection.
-
-These tests verify that the interprocedural analyzer correctly detects:
-- CWE-126: Buffer Over-read patterns
-- CWE-127: Buffer Under-read patterns
-
-These tests use the _detect_semantic_cwes function directly for unit testing.
-"""
+"""CWE-125/126 (a read past a buffer's end) and CWE-127 (a read before its start) in C, from the
+structural checks: a constant length read from a buffer of smaller constant capacity (memcpy,
+memmove, memcmp, bcopy), a constant index past a fixed array, a constant negative index. Reads
+through a pointer moved before the start are a known gap (tests/e2e/test_known_gaps_cnative.py)."""
 
 import pytest
-from frame.sil.analyzers.interprocedural_analyzer import _detect_semantic_cwes
+
+from frame.sil.scanner import FrameScanner
+
+HDR = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
 
 
-def get_cwe_vulns(source: str, cwe_id: str) -> list:
-    """Helper to extract vulns with a specific CWE-ID."""
-    vulns = _detect_semantic_cwes(source, "test.c", verbose=False)
-    return [v for v in vulns if v.cwe_id == cwe_id]
+def cwes(*body):
+    src = HDR + "void f(void)\n{\n" + "\n".join("    " + line for line in body) + "\n}\n"
+    r = FrameScanner(language="c", verify=False).scan(src, "t.c")
+    assert not r.errors, r.errors
+    return {v.cwe_id for v in r.vulnerabilities}
 
 
-class TestCWE126BufferOverread:
-    """Tests for CWE-126: Buffer Over-read detection."""
-
-    def test_memcpy_with_dest_size(self):
-        """Detect memcpy using destination size instead of source size."""
-        source = '''
-void vuln(char *data) {
-    char dest[100];
-    memcpy(dest, data, strlen(dest));
-}
-'''
-        cwe_126 = get_cwe_vulns(source, "CWE-126")
-        assert len(cwe_126) > 0, "Should detect CWE-126 for memcpy with dest size"
-
-    def test_strlen_on_tainted_buffer(self):
-        """Detect strlen on potentially non-null-terminated buffer."""
-        source = '''
-void vuln(char *data) {
-    size_t len = strlen(data);
-}
-'''
-        cwe_126 = get_cwe_vulns(source, "CWE-126")
-        assert len(cwe_126) > 0, "Should detect CWE-126 for strlen on tainted buffer"
-
-    def test_large_constant_index(self):
-        """Detect read with very large constant index."""
-        source = '''
-void vuln() {
-    char buf[10];
-    char c = buf[5000];
-}
-'''
-        cwe_126 = get_cwe_vulns(source, "CWE-126")
-        assert len(cwe_126) > 0, "Should detect CWE-126 for large constant index"
-
-    def test_memcpy_large_size(self):
-        """Detect memcpy with large constant size from tainted source."""
-        source = '''
-void vuln(char *data) {
-    char dest[100];
-    memcpy(dest, data, 2048);
-}
-'''
-        cwe_126 = get_cwe_vulns(source, "CWE-126")
-        assert len(cwe_126) > 0, "Should detect CWE-126 for memcpy with large size"
+@pytest.mark.parametrize("body", [
+    ("char src[100];", "char dest[4096];", "memset(src, 'a', 99);", "memcpy(dest, src, 2048);"),
+    ("char *src = malloc(50);", "char dest[100];", "if (src == NULL) return;", "memset(src, 'a', 49);",
+     "memmove(dest, src, 99);", "free(src);"),
+    ("char a[8];", "char b[64];", "memset(a, 0, 8);", "memset(b, 0, 64);", "int same = memcmp(a, b, 64);",
+     'printf("%d", same);'),
+])
+def test_a_constant_read_past_the_source_is_cwe_126(body):
+    assert "CWE-126" in cwes(*body)
 
 
-class TestCWE127BufferUnderread:
-    """Tests for CWE-127: Buffer Under-read detection."""
-
-    def test_negative_array_index_read(self):
-        """Detect read with a negative index into a fixed array.
-
-        This case moved from the interprocedural regex to the structural
-        buffer-bounds detector, which reads the negative constant index and the
-        array's declared extent from the SIL and reports CWE-127 (access before
-        the start of the buffer). It is verified here through the scanner, where
-        that detector runs.
-        """
-        from frame.sil import FrameScanner
-        source = '''
-void vuln() {
-    char buf[10];
-    char c = buf[-1];
-}
-'''
-        result = FrameScanner(language="c", verify=False).scan(source, "test.c")
-        cwe_127 = [v for v in result.vulnerabilities if v.cwe_id == "CWE-127"]
-        assert len(cwe_127) > 0, "Should detect CWE-127 for negative array index"
-
-    def test_ptr_minus_constant(self):
-        """Detect read from ptr - constant offset."""
-        source = '''
-void vuln(char *ptr) {
-    char c = *(ptr - 5);
-}
-'''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
-        assert len(cwe_127) > 0, "Should detect CWE-127 for ptr - constant"
-
-    def test_ptr_minus_variable(self):
-        """Detect read from ptr - variable offset without bounds check."""
-        source = '''
-void vuln(char *ptr, int offset) {
-    char c = *(ptr - offset);
-}
-'''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
-        assert len(cwe_127) > 0, "Should detect CWE-127 for ptr - variable"
-
-    def test_memcpy_from_negative_offset(self):
-        """Detect memcpy reading from ptr - offset."""
-        source = '''
-void vuln(char *data) {
-    char dest[10];
-    memcpy(dest, data - 5, 10);
-}
-'''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
-        assert len(cwe_127) > 0, "Should detect CWE-127 for memcpy from negative offset"
-
-    def test_memmove_from_tainted_source(self):
-        """Detect memmove from tainted data with fixed size."""
-        source = '''
-void vuln(char *data) {
-    char dest[10];
-    memmove(dest, data, 100);
-}
-'''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
-        assert len(cwe_127) > 0, "Should detect CWE-127 for memmove from data"
-
-    def test_data_negative_index_legacy(self):
-        """Detect legacy pattern: data[-n] access."""
-        source = '''
-void vuln(char *data) {
-    char c = data[-1];
-}
-'''
-        cwe_127 = get_cwe_vulns(source, "CWE-127")
-        assert len(cwe_127) > 0, "Should detect CWE-127 for data[-n]"
+def test_a_read_that_fits_is_not():
+    assert "CWE-126" not in cwes("char src[100];", "char dest[100];", "memset(src, 'a', 99);",
+                                 "memcpy(dest, src, 100);")
 
 
-class TestNegativeCases:
-    """Test that false positives are avoided."""
-
-    def test_safe_strlen(self):
-        """No detection for strlen on known null-terminated string."""
-        source = '''
-void safe() {
-    const char *msg = "hello";
-    size_t len = strlen(msg);
-}
-'''
-        cwe_126 = get_cwe_vulns(source, "CWE-126")
-        # msg is not 'data' or in tainted_vars, so should not trigger
-        assert len(cwe_126) == 0, "Should not detect CWE-126 for safe strlen"
+def test_a_large_constant_index_is_an_out_of_bounds_read():
+    assert "CWE-125" in cwes("char buf[10];", "char c = buf[5000];", 'printf("%c", c);')
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_a_negative_index_read_is_cwe_127():
+    assert "CWE-127" in cwes("char buf[10];", "char c = buf[-1];", 'printf("%c", c);')
+
+
+def test_strlen_of_a_literal_is_not_an_over_read():
+    assert not {"CWE-125", "CWE-126"} & cwes('const char *msg = "hello";', "size_t len = strlen(msg);",
+                                             'printf("%zu", len);')

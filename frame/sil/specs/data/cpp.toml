@@ -17,6 +17,12 @@ taint_out_args = [0]
 description = "fgets() - reads line from stream"
 
 [[spec]]
+name = "fgetws"
+is_source = "user"
+taint_out_args = [0]
+description = "fgetws() - reads a wide line from stream"
+
+[[spec]]
 name = "getchar"
 is_source = "user"
 description = "getchar() - reads char from stdin"
@@ -143,6 +149,22 @@ dereferences = [-1]
 is_sink = "format_string"
 sink_args = [1]
 description = "fprintf format string (CWE-134)"
+
+[[spec]]
+name = "swprintf"
+dereferences = [-1]
+is_sink = "format_string"
+sink_args = [2]
+taint_to_dest = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+description = "swprintf(buffer, size, format, ...) - format string sink (CWE-134)"
+
+[[spec]]
+name = "vswprintf"
+dereferences = [-1]
+is_sink = "format_string"
+sink_args = [2]
+taint_to_dest = [2, 3]
+description = "vswprintf(buffer, size, format, args) - format string sink (CWE-134)"
 
 [[spec]]
 name = "sprintf"
@@ -530,6 +552,54 @@ checks_path = 0
 description = "GetFileAttributesW(path, ...) checks a file's state (CWE-367 when the file is then used)"
 
 [[spec]]
+name = "CreateProcessA"
+is_sink = "command"
+sink_args = [0, 1]
+description = "CreateProcessA(lpApplicationName, lpCommandLine, ...) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "CreateProcessW"
+is_sink = "command"
+sink_args = [0, 1]
+description = "CreateProcessW(lpApplicationName, lpCommandLine, ...) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "WinExec"
+is_sink = "command"
+sink_args = [0]
+description = "WinExec(lpCmdLine, uCmdShow) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "ShellExecuteA"
+is_sink = "command"
+sink_args = [2, 3]
+description = "ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "ShellExecuteW"
+is_sink = "command"
+sink_args = [2, 3]
+description = "ShellExecuteW(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "_wsystem"
+is_sink = "command"
+sink_args = [0]
+description = "_wsystem(command) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "_popen"
+is_sink = "command"
+sink_args = [0]
+description = "_popen(command, mode) - runs a command line (CWE-78)"
+
+[[spec]]
+name = "_wpopen"
+is_sink = "command"
+sink_args = [0]
+description = "_wpopen(command, mode) - runs a command line (CWE-78)"
+
+[[spec]]
 name = "system"
 is_sink = "command"
 description = "system() - command injection sink"
@@ -541,16 +611,19 @@ description = "popen() - command injection sink"
 
 [[spec]]
 name = "execl"
+argv_from = 1
 is_sink = "command"
 description = "execl() - command injection sink"
 
 [[spec]]
 name = "execle"
+argv_from = 1
 is_sink = "command"
 description = "execle() - command injection sink"
 
 [[spec]]
 name = "execlp"
+argv_from = 1
 is_sink = "command"
 description = "execlp() - command injection sink"
 

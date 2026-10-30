@@ -1,13 +1,13 @@
 """
 Test CWE-78 (OS Command Injection) detection.
 
-system() / popen() are command sinks of the structural taint analysis (they need a real
-source and honour checks such as strcmp against constants); the exec family, CreateProcess
-and WinExec are still matched by the line analyzer.
+Command sinks of the structural taint analysis: they need a real source and honour checks such
+as strcmp against constants. system/popen, the exec family (an `execl` of a shell with a command
+flag runs the argument after it: `argv_from` and shells.toml), CreateProcess, WinExec and
+ShellExecute are rows of the c/cpp spec tables.
 """
 
 import pytest
-from frame.sil.analyzers.interprocedural_analyzer import analyze_interprocedural
 from frame.sil.scanner import FrameScanner
 
 
@@ -43,55 +43,25 @@ void vulnerable(void) {
 """
         assert "CWE-78" in scan_cwes(code)
 
-    def test_execl_with_shell(self):
-        """Test detection of execl() with /bin/sh -c pattern."""
-        code = '''
-        void vulnerable(char* userInput) {
-            execl("/bin/sh", "sh", "-c", userInput, NULL);
-        }
-        '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe78_vulns = [v for v in vulns if v.cwe_id == "CWE-78"]
-        assert len(cwe78_vulns) >= 1
+    @pytest.mark.parametrize("call", ['execl("/bin/sh", "sh", "-c", cmd, NULL);',
+                                      'execlp("bash", "bash", "-c", cmd, (char *)NULL);',
+                                      'CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);',
+                                      "WinExec(cmd, SW_SHOW);",
+                                      'ShellExecuteA(NULL, "open", cmd, NULL, NULL, SW_SHOW);'])
+    def test_process_apis_with_attacker_data(self, call):
+        code = ("#include <stdlib.h>\n#include <unistd.h>\n#include <windows.h>\n\nvoid run(void)\n{\n"
+                "    STARTUPINFOA si;\n    PROCESS_INFORMATION pi;\n    char *cmd = getenv(\"Q\");\n"
+                f"    {call}\n}}\n")
+        assert "CWE-78" in scan_cwes(code)
+
+    def test_an_exec_argument_that_is_not_a_shell_command_is_not(self):
+        code = ("#include <stdlib.h>\n#include <unistd.h>\n\nvoid run(void)\n{\n"
+                "    char *name = getenv(\"Q\");\n    execl(\"/bin/ls\", \"ls\", \"-l\", name, NULL);\n}\n")
+        assert "CWE-78" not in scan_cwes(code)
 
     def test_argv_in_system(self):
-        """Test detection of direct argv usage in system()."""
-        code = '''
-        int main(int argc, char* argv[]) {
-            system(argv[1]);
-            return 0;
-        }
-        '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe78_vulns = [v for v in vulns if v.cwe_id == "CWE-78"]
-        assert len(cwe78_vulns) >= 1
-        assert any("argv" in v.var_name or "argv" in v.description.lower() for v in cwe78_vulns)
-
-    def test_create_process_with_variable(self):
-        """Test detection of CreateProcess() with variable command line."""
-        code = '''
-        void vulnerable(LPSTR cmdLine) {
-            STARTUPINFO si;
-            PROCESS_INFORMATION pi;
-            CreateProcess(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-        }
-        '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe78_vulns = [v for v in vulns if v.cwe_id == "CWE-78"]
-        assert len(cwe78_vulns) >= 1
-        assert any("createprocess" in v.description.lower() for v in cwe78_vulns)
-
-    def test_winexec_with_variable(self):
-        """Test detection of WinExec() with variable command."""
-        code = '''
-        void vulnerable(char* cmd) {
-            WinExec(cmd, SW_SHOW);
-        }
-        '''
-        vulns = analyze_interprocedural(code, "test.c")
-        cwe78_vulns = [v for v in vulns if v.cwe_id == "CWE-78"]
-        assert len(cwe78_vulns) >= 1
-        assert any("winexec" in v.description.lower() for v in cwe78_vulns)
+        code = "#include <stdlib.h>\n\nint main(int argc, char *argv[])\n{\n    system(argv[1]);\n    return 0;\n}\n"
+        assert "CWE-78" in scan_cwes(code)
 
     def test_taint_tracking_from_fgets(self):
         """fgets -> sprintf -> system."""
@@ -121,18 +91,7 @@ void vulnerable(void) {
         assert "CWE-78" in scan_cwes(code)
 
     def test_safe_constant_system_call(self):
-        """Test that constant string system() calls may have lower confidence."""
-        code = '''
-        void safe() {
-            system("ls -la");
-        }
-        '''
-        vulns = analyze_interprocedural(code, "test.c")
-        # Constant string should not trigger high-confidence CWE-78
-        cwe78_vulns = [v for v in vulns if v.cwe_id == "CWE-78"]
-        # Should not report CWE-78 for constant strings
-        # (our current implementation doesn't flag literal strings)
-        assert len(cwe78_vulns) == 0
+        assert "CWE-78" not in scan_cwes("#include <stdlib.h>\n\nvoid safe(void)\n{\n    system(\"ls -la\");\n}\n")
 
     def test_parameter_no_caller_taints_is_not_reported(self):
         """A parameter is not attacker data by its name ('data'): with no caller passing

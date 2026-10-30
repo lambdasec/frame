@@ -43,6 +43,7 @@ from frame.sil.instructions import (
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.c_int_model import LIMITS
+from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
 from frame.sil.packs import finish_program
@@ -1034,13 +1035,32 @@ class CFrontend:
 
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
-            for arg_idx in spec.sink_args:
+            for arg_idx in list(spec.sink_args) + self._shell_command_args(spec, args):
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,
                                             arg_index=arg_idx, call=func_name))
 
         return instrs
+
+    def _shell_command_args(self, spec: ProcSpec, args: List[TSNode]) -> List[int]:
+        """`execl("/bin/sh", "sh", "-c", cmd, NULL)`: with `spec.argv_from`, a shell program (the
+        path or argv[0], shells.toml) and a command flag, the argument after the flag is a command
+        line (it is run by the shell, so it carries injection like `system`'s)."""
+        start = spec.argv_from
+        if start is None or len(args) <= start:
+            return []
+        literal = [self._string_literal_value(a) for a in args]
+        if not any(v is not None and is_shell(v) for v in (literal[0], literal[start])):
+            return []
+        flags = shells().command_flags
+        return [i + 1 for i in range(start + 1, len(args) - 1)
+                if literal[i] is not None and literal[i].lower() in flags]
+
+    def _string_literal_value(self, node: TSNode) -> Optional[str]:
+        if node is None or node.type != "string_literal":
+            return None
+        return "".join(self._get_text(c) for c in node.children if c.type == "string_content")
 
     _CHAIN_CALL = re.compile(r"^([A-Za-z_]\w*)((?:\.[A-Za-z_]\w*)+)\.[A-Za-z_]\w*$")
 
@@ -1097,7 +1117,7 @@ class CFrontend:
         spec = self.specs.get(func_name)
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
-            for arg_idx in spec.sink_args:
+            for arg_idx in list(spec.sink_args) + self._shell_command_args(spec, args):
                 if arg_idx < len(args):
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,

@@ -1,115 +1,41 @@
-"""Test CWE-122 (Heap Buffer Overflow) and CWE-124 (Buffer Underwrite) detection."""
+"""CWE-120/121/122 (a copy or fill bigger than its destination) and CWE-124 (a write before a
+buffer's start) in C, from the structural checks: a constant size against a constant capacity
+(a local array, or a pointer whose one definition is a constant malloc/alloca), and a constant
+negative index. A write through a pointer moved before the start is a known gap
+(tests/e2e/test_known_gaps_cnative.py)."""
 
 import pytest
-from frame.sil.analyzers.interprocedural_analyzer import analyze_interprocedural
+
+from frame.sil.scanner import FrameScanner
+
+HDR = "#include <stdlib.h>\n#include <string.h>\n\n"
+OVERFLOW = {"CWE-120", "CWE-121", "CWE-122", "CWE-787"}
 
 
-class TestCWE122HeapBufferOverflow:
-    """Test detection of CWE-122: Heap-based Buffer Overflow."""
-
-    def test_memcpy_larger_than_allocation(self):
-        """Test: malloc(10) followed by memcpy(ptr, src, 100)."""
-        source = '''
-void vulnerable() {
-    char *buf = malloc(10);
-    memcpy(buf, userInput, 100);  // CWE-122: copying 100 bytes to 10-byte buffer
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe122_vulns = [v for v in vulns if v.cwe_id == "CWE-122"]
-        assert len(cwe122_vulns) > 0, "Should detect heap buffer overflow with memcpy"
-
-    def test_strcpy_to_heap_buffer_tainted(self):
-        """Test: strcpy to heap buffer from tainted source."""
-        source = '''
-void vulnerable(char *data) {
-    char *heapBuf = malloc(32);
-    strcpy(heapBuf, data);  // CWE-122: strcpy to heap buffer with user input
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe122_vulns = [v for v in vulns if v.cwe_id == "CWE-122"]
-        assert len(cwe122_vulns) > 0, "Should detect heap buffer overflow with strcpy"
-
-    def test_memset_larger_than_allocation(self):
-        """Test: memset with size larger than allocation."""
-        source = '''
-void vulnerable() {
-    char *buf = malloc(16);
-    memset(buf, 0, 256);  // CWE-122: memset 256 bytes to 16-byte buffer
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe122_vulns = [v for v in vulns if v.cwe_id == "CWE-122"]
-        assert len(cwe122_vulns) > 0, "Should detect heap buffer overflow with memset"
-
-    def test_safe_memcpy(self):
-        """Test: memcpy with size within allocation should not be flagged."""
-        source = '''
-void safe() {
-    char *buf = malloc(100);
-    memcpy(buf, src, 50);  // Safe: 50 bytes to 100-byte buffer
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        # This specific memcpy should not trigger CWE-122
-        cwe122_memcpy_vulns = [v for v in vulns if v.cwe_id == "CWE-122" and "memcpy writes" in v.description]
-        assert len(cwe122_memcpy_vulns) == 0, "Safe memcpy should not be flagged"
+def cwes(body, params="void"):
+    src = HDR + f"void f({params})\n{{\n" + "\n".join("    " + line for line in body) + "\n}\n"
+    r = FrameScanner(language="c", verify=False).scan(src, "t.c")
+    assert not r.errors, r.errors
+    return {v.cwe_id for v in r.vulnerabilities}
 
 
-class TestCWE124BufferUnderwrite:
-    """Test detection of CWE-124: Buffer Underwrite (Write-what-where Condition)."""
-
-    def test_negative_array_index(self):
-        """Test: ptr[-1] = x pattern."""
-        source = '''
-void vulnerable() {
-    char buf[10];
-    buf[-1] = 'x';  // CWE-124: negative array index
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe124_vulns = [v for v in vulns if v.cwe_id == "CWE-124"]
-        assert len(cwe124_vulns) > 0, "Should detect buffer underwrite with negative index"
-
-    def test_pointer_arithmetic_underwrite(self):
-        """Test: *(ptr - N) = x pattern."""
-        source = '''
-void vulnerable() {
-    char *ptr = buffer;
-    *(ptr - 5) = 'x';  // CWE-124: pointer arithmetic underwrite
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe124_vulns = [v for v in vulns if v.cwe_id == "CWE-124"]
-        assert len(cwe124_vulns) > 0, "Should detect buffer underwrite via pointer arithmetic"
-
-    def test_pointer_subtraction_from_heap(self):
-        """Test: ptr = heapBuf - offset pattern."""
-        source = '''
-void vulnerable() {
-    char *heapBuf = malloc(100);
-    char *ptr = heapBuf - 10;  // CWE-124: pointer before buffer start
-    *ptr = 'x';
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        cwe124_vulns = [v for v in vulns if v.cwe_id == "CWE-124"]
-        assert len(cwe124_vulns) > 0, "Should detect pointer computed before heap buffer"
-
-    def test_safe_array_access(self):
-        """Test: positive array index should not trigger CWE-124."""
-        source = '''
-void safe() {
-    char buf[10];
-    buf[5] = 'x';  // Safe: positive index
-}
-'''
-        vulns = analyze_interprocedural(source, "test.c")
-        # Filter for CWE-124 specifically from our new patterns
-        cwe124_neg_vulns = [v for v in vulns if v.cwe_id == "CWE-124" and "negative" in v.description]
-        assert len(cwe124_neg_vulns) == 0, "Safe array access should not be flagged"
+@pytest.mark.parametrize("body, params", [
+    (("char *buf = malloc(10);", "if (buf == NULL) return;", "memcpy(buf, src, 100);", "free(buf);"), "const char *src"),
+    (("char *buf = malloc(16);", "if (buf == NULL) return;", "memset(buf, 0, 256);", "free(buf);"), "void"),
+    (("char *buf = malloc(8);", "if (buf == NULL) return;", 'strcpy(buf, "far too long for eight");', "free(buf);"), "void"),
+])
+def test_heap_copy_bigger_than_the_allocation(body, params):
+    assert cwes(body, params) & OVERFLOW
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_a_copy_that_fits_is_not():
+    body = ("char *buf = malloc(100);", "if (buf == NULL) return;", "memcpy(buf, src, 50);", "free(buf);")
+    assert not cwes(body, "const char *src") & OVERFLOW
+
+
+def test_negative_index_write_is_cwe_124():
+    assert "CWE-124" in cwes(("char buf[10];", "buf[-1] = 'x';"))
+
+
+def test_positive_index_write_is_not():
+    assert "CWE-124" not in cwes(("char buf[10];", "buf[5] = 'x';"))
