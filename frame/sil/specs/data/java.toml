@@ -269,28 +269,10 @@ sink_args = []
 description = "Cookie.setSecure (insecure cookie)"
 
 [[spec]]
-name = "__cookie_no_secure__"
-is_sink = "insecure_cookie"
-sink_args = []
-description = "Cookie added without Secure flag (CWE-614)"
-
-[[spec]]
-name = "__cookie_no_httponly__"
-is_sink = "insecure_cookie_httponly"
-sink_args = []
-description = "Cookie added without HttpOnly flag (CWE-1004)"
-
-[[spec]]
 name = "__unsafe_deserialize__"
 is_sink = "deserialize_unsafe"
 sink_args = []
 description = "Unsafe deserializer construction (CWE-502)"
-
-[[spec]]
-name = "__csrf_disabled__"
-is_sink = "csrf_disabled"
-sink_args = []
-description = "CSRF protection disabled (CWE-352)"
 
 [[spec]]
 name = "@RequestParam"

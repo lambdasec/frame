@@ -51,6 +51,7 @@ from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
 from frame.sil.packs import annotation_marks_entry, default_packs, entry_annotation_patterns, finish_program
+from frame.sil.packs import annotation_marks_entry as _glob_any
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.parser_hardening import load as parser_hardening
 from frame.sil.specs.shells import is_shell, load as shells
@@ -174,12 +175,12 @@ class JavaFrontend:
             lam.parent = parent.name
         annotate_program_calls(program, self._imports, self._local_types)
         self._propagate_interprocedural_taint(tree.root_node, program)
-        self._scan_cookie_flags(tree.root_node, program)
+        self._scan_required_flags(tree.root_node, program)
         self._scan_deserialization(tree.root_node, program)
         # Context-dependent detector: only when aggressive mode is enabled (pair
         # with LLM triage, which drops the stateless-API CSRF false positives).
         if _aggressive_detectors():
-            self._scan_csrf_disabled(tree.root_node, program)
+            self._scan_disabled_protections(tree.root_node, program)
         program.import_wildcards = list(self._imports.wildcards)
         finish_program(program, self.packs, source_code)
         self._apply_neutral_specs(program)
@@ -255,13 +256,14 @@ class JavaFrontend:
         name = self._get_text(nm)
         bases = self._declared_bases(node)
         fields: List[str] = []
+        injected = [a for p in self._file_packs() for a in p.injected_field_annotations]   # [[injected_field]]
         body = node.child_by_field_name("body")
         for member in (body.named_children if body is not None else ()):
             if member.type == "field_declaration":
                 # Fields that something else fills in or that never change are not the object's
-                # externally-bound state: injected collaborators, constants.
-                managed = any(a.name in ("Inject", "Autowired", "Resource", "EJB", "Value", "PersistenceContext",
-                                         "Mock", "MockBean", "Spy")
+                # externally-bound state: collaborators a container injects (the packs'
+                # `[[injected_field]]` annotations), constants.
+                managed = any(_glob_any(injected, a.name, a.canonical)
                               for a in (parse_annotation(t, self._imports, value_alias=True)
                                         for t in self._get_annotations(member)))
                 mods = next((c for c in member.children if c.type == "modifiers"), None)
@@ -478,23 +480,25 @@ class JavaFrontend:
             # `default` / `static` methods have bodies: analysed like a class's methods
             self._translate_class(node, program)
 
-    _MYBATIS_STATEMENTS = ("Select", "Update", "Delete", "Insert")
-    _MYBATIS_SUBSTITUTION = re.compile(r"\$\{\s*([A-Za-z_][\w]*)")
-
     def _mybatis_mapper_method(self, member: TSNode, iface: str) -> Optional[Procedure]:
-        """A mapper method whose SQL text substitutes a parameter with `${...}` (spliced into the
-        statement, unlike the bound `#{...}`): a procedure that sinks those parameters."""
-        sql = ""
+        """A method whose annotation is a pack's `[[annotated_query]]` (MyBatis `@Select`) and whose
+        query text substitutes a parameter (`${...}`, spliced into the statement, unlike the bound
+        `#{...}`): a procedure that sinks those parameters."""
         annotations = self._get_annotations(member)
         parsed = [parse_annotation(a, self._imports, value_alias=True) for a in annotations]
-        if not any(a.name in self._MYBATIS_STATEMENTS for a in parsed):
+        query = next((q for p in self._file_packs() for q in p.annotated_queries
+                      if any(_glob_any(q.annotations, a.name, a.canonical) for a in parsed)), None)
+        if query is None:
             return None
+        sql = ""
         mods = next((c for c in member.children if c.type == "modifiers"), None)
         for ann in (mods.children if mods is not None else ()):
-            if ann.type == "annotation" and self._get_text(ann.child_by_field_name("name")) in self._MYBATIS_STATEMENTS:
-                sql += " ".join(self._get_text(n).strip('"') for n in self._descendants(ann, stop=())
-                                if n.type == "string_fragment")
-        roots = set(self._MYBATIS_SUBSTITUTION.findall(sql))
+            if ann.type == "annotation":
+                pa = parse_annotation(self._get_text(ann), self._imports, value_alias=True)
+                if _glob_any(query.annotations, pa.name, pa.canonical):
+                    sql += " ".join(self._get_text(n).strip('"') for n in self._descendants(ann, stop=())
+                                    if n.type == "string_fragment")
+        roots = {m.group("name") for m in query.substitution.finditer(sql)}
         if not roots:
             return None
         params_node = member.child_by_field_name("parameters")
@@ -509,11 +513,11 @@ class JavaFrontend:
             sql_name = java
             for a in self._get_annotations(ch):
                 pa = parse_annotation(a, self._imports, value_alias=True)
-                if pa.name == "Param" and pa.args.get("value"):
+                if query.param_name_annotation and pa.name == query.param_name_annotation and pa.args.get("value"):
                     sql_name = str(pa.args["value"]).strip('"')
             names.append((java, sql_name))
         hit = [j for j, sn in names if sn in roots]
-        if not hit and len(names) == 1:                   # a lone parameter is `${anything}`
+        if not hit and len(names) == 1 and query.lone_parameter:     # a lone parameter is `${anything}`
             hit = [names[0][0]]
         if not hit:
             return None
@@ -528,8 +532,8 @@ class JavaFrontend:
         proc.add_node(entry)
         proc.entry_node = entry.id
         for j in hit:
-            entry.add_instr(TaintSink(loc=loc, exp=ExpVar(PVar(j)), kind=SinkKind.SQL_QUERY,
-                                      description=f"MyBatis ${{{j}}} splices the value into the SQL text"))
+            entry.add_instr(TaintSink(loc=loc, exp=ExpVar(PVar(j)), kind=resolve_sink_kind(query.kind),
+                                      description=query.description or f"{j} is spliced into the query text"))
         exit_node = proc.new_node(NodeKind.EXIT)
         proc.add_node(exit_node)
         proc.exit_node = exit_node.id
@@ -590,6 +594,9 @@ class JavaFrontend:
         """
         methods: Dict[str, Dict[str, Any]] = {}
         overloaded: set = set()
+        # request-binding parameter annotations, as the packs' entry points name them (@RequestParam)
+        packs = self.packs if self.packs is not None else default_packs()
+        binding = [pa for p in packs.for_language("java") for e in p.entrypoints for pa in e.param_annotation]
 
         def collect(mnode: TSNode) -> None:
             name_node = mnode.child_by_field_name("name")
@@ -604,8 +611,9 @@ class JavaFrontend:
                     if ch.type in ("formal_parameter", "spread_parameter"):
                         nn = ch.child_by_field_name("name")
                         pnames.append(self._get_text(nn) if nn else None)
-                        anns = self._get_annotations(ch)
-                        if any(rb in a for a in anns for rb in self._REQUEST_BINDING_ANNOTATIONS):
+                        anns = [parse_annotation(a, self._imports, value_alias=True)
+                                for a in self._get_annotations(ch)]
+                        if any(_glob_any(binding, a.name, a.canonical) for a in anns):
                             req_bound.add(idx)
                         idx += 1
             calls: List[Tuple[str, List[Optional[str]]]] = []
@@ -687,18 +695,14 @@ class JavaFrontend:
             p = p.parent
         return None
 
-    def _scan_cookie_flags(self, root: TSNode, program: Program) -> None:
-        """Typestate check for insecure cookies.
-
-        Models each servlet Cookie object's security attributes and checks them
-        at the escape point `response.addCookie(c)`: a finding is emitted only
-        when the flag is NOT provably set to true (Servlet cookies default to
-        HttpOnly=false / Secure=false). If `setHttpOnly(true)` / `setSecure(true)`
-        is called on the cookie anywhere in the method, the corresponding finding
-        is suppressed -- so `setSecure(true)` alone yields CWE-1004 (missing
-        HttpOnly) but not CWE-614. Tracking per-object attribute state (rather
-        than matching a syntactic pattern) is what keeps this precise.
-        """
+    def _scan_required_flags(self, root: TSNode, program: Program) -> None:
+        """Typestate check for the packs' `[[required_flag]]` entries (servlet cookies' Secure and
+        HttpOnly). Per method, the objects on which `setter(value)` is called are tracked; at an
+        escape call (`response.addCookie(c)`) an object without it, or one created inline there, is
+        a finding. Tracking per-object state (rather than matching a pattern) keeps it precise."""
+        flags = [f for p in self._file_packs() for f in p.required_flags]
+        if not flags:
+            return
         methods: List[TSNode] = []
         stack = [root]
         while stack:
@@ -706,56 +710,41 @@ class JavaFrontend:
             if n.type in ("method_declaration", "constructor_declaration"):
                 methods.append(n)
             stack.extend(n.children)
-
-        hits_httponly: List[Location] = []
-        hits_secure: List[Location] = []
+        hits: Dict[int, List[Location]] = {i: [] for i in range(len(flags))}
         for m in methods:
             body = m.child_by_field_name("body")
             if body is None:
                 continue
-            httponly_set: set = set()
-            secure_set: set = set()
-            addcookies: List[Tuple[Optional[str], Location]] = []
+            calls = []
             st = [body]
             while st:
                 c = st.pop()
                 if c.type == "method_invocation":
                     name_node = c.child_by_field_name("name")
-                    mname = self._get_text(name_node) if name_node is not None else ""
                     obj = c.child_by_field_name("object")
-                    objname = self._get_text(obj) if obj is not None else ""
                     args = c.child_by_field_name("arguments")
-                    arg0 = None
-                    if args is not None:
-                        for a in args.children:
-                            if a.type not in ("(", ")", ",", "line_comment", "block_comment"):
-                                arg0 = a
-                                break
-                    if mname == "setHttpOnly" and arg0 is not None \
-                            and self._get_text(arg0) == "true" and objname:
-                        httponly_set.add(objname)
-                    elif mname == "setSecure" and arg0 is not None \
-                            and self._get_text(arg0) == "true" and objname:
-                        secure_set.add(objname)
-                    elif mname == "addCookie" and arg0 is not None:
-                        if arg0.type == "identifier":
-                            addcookies.append((self._get_text(arg0), self._get_location(c)))
-                        elif arg0.type == "object_creation_expression":
-                            typ = arg0.child_by_field_name("type")
-                            if typ is not None and self._get_text(typ).split(".")[-1] == "Cookie":
-                                addcookies.append((None, self._get_location(c)))
+                    arg0 = next((a for a in (args.children if args is not None else ())
+                                 if a.type not in ("(", ")", ",", "line_comment", "block_comment")), None)
+                    calls.append((self._get_text(name_node) if name_node is not None else "",
+                                  self._get_text(obj) if obj is not None else "", arg0, c))
                 st.extend(c.children)
-
-            for cookie_var, loc in addcookies:
-                if cookie_var is None or cookie_var not in httponly_set:
-                    hits_httponly.append(loc)
-                if cookie_var is None or cookie_var not in secure_set:
-                    hits_secure.append(loc)
-
-        self._emit_findings_proc(program, "<cookie-httponly>",
-                                 "__cookie_no_httponly__", hits_httponly)
-        self._emit_findings_proc(program, "<cookie-secure>",
-                                 "__cookie_no_secure__", hits_secure)
+            for i, flag in enumerate(flags):
+                set_on = {obj for mname, obj, arg0, _ in calls
+                          if mname == flag.setter and obj and arg0 is not None and self._get_text(arg0) == flag.value}
+                for mname, _, arg0, c in calls:
+                    if mname not in flag.escape or arg0 is None:
+                        continue
+                    if arg0.type == "identifier":
+                        if self._get_text(arg0) not in set_on:
+                            hits[i].append(self._get_location(c))
+                    elif arg0.type == "object_creation_expression":
+                        typ = arg0.child_by_field_name("type")
+                        written = self._get_text(typ) if typ is not None else ""
+                        if _glob_any(flag.types, written, self._imports.names.get(written.split(".")[-1])):
+                            hits[i].append(self._get_location(c))
+        for i, flag in enumerate(flags):
+            sink = self._synthetic_sink(program, flag.kind, flag.description)
+            self._emit_findings_proc(program, f"<{flag.id}>", sink, hits[i])
 
     def _scan_deserialization(self, root: TSNode, program: Program) -> None:
         """Flag construction of an inherently-unsafe deserializer (CWE-502).
@@ -778,33 +767,45 @@ class JavaFrontend:
         self._emit_findings_proc(program, "<unsafe-deserialize>",
                                  "__unsafe_deserialize__", hits)
 
-    def _scan_csrf_disabled(self, root: TSNode, program: Program) -> None:
-        """Flag CSRF protection disabled in a Spring Security config (CWE-352).
-
-        Detects `http.csrf().disable()` (the disable() is called on a csrf()
-        receiver) and the lambda/method-reference form `csrf(c -> c.disable())` /
-        `csrf(AbstractHttpConfigurer::disable)`. Disabling CSRF on a session/
-        cookie-authenticated app removes cross-site-request-forgery protection.
-        """
-        hits: List[Location] = []
-        stack = [root]
-        while stack:
-            n = stack.pop()
-            if n.type == "method_invocation":
+    def _scan_disabled_protections(self, root: TSNode, program: Program) -> None:
+        """The packs' `[[disabled_protection]]` entries (Spring Security's CSRF): `x.csrf().disable()`
+        (a disable method called on a configurer call's result), `csrf(c -> c.disable())` (a lambda
+        whose body only calls a disable method on its parameter) or `csrf(Configurer::disable)`."""
+        entries = [d for p in self._file_packs() for d in p.disabled_protections]
+        for d in entries:
+            hits: List[Location] = []
+            stack = [root]
+            while stack:
+                n = stack.pop()
+                stack.extend(n.children)
+                if n.type != "method_invocation":
+                    continue
                 name_node = n.child_by_field_name("name")
                 mname = self._get_text(name_node) if name_node is not None else ""
-                if mname == "disable":
+                if mname in d.disable:
                     obj = n.child_by_field_name("object")
-                    if obj is not None and obj.type == "method_invocation":
-                        onn = obj.child_by_field_name("name")
-                        if onn is not None and self._get_text(onn) == "csrf":
-                            hits.append(self._get_location(n))
-                elif mname == "csrf":
-                    args = n.child_by_field_name("arguments")
-                    if args is not None and "disable" in self._get_text(args):
+                    onn = obj.child_by_field_name("name") if obj is not None and obj.type == "method_invocation" else None
+                    if onn is not None and self._get_text(onn) in d.configurer:
                         hits.append(self._get_location(n))
-            stack.extend(n.children)
-        self._emit_findings_proc(program, "<csrf-disabled>", "__csrf_disabled__", hits)
+                elif mname in d.configurer:
+                    args = n.child_by_field_name("arguments")
+                    if any(self._only_disables(a, d.disable) for a in (args.named_children if args is not None else ())):
+                        hits.append(self._get_location(n))
+            self._emit_findings_proc(program, f"<{d.id}>", self._synthetic_sink(program, d.kind, d.description), hits)
+
+    def _only_disables(self, arg: TSNode, disable: List[str]) -> bool:
+        """`c -> c.disable()` / `Configurer::disable`: a customizer that switches the protection off."""
+        if arg.type == "method_reference":
+            return self._get_text(arg).rsplit("::", 1)[-1].strip() in disable
+        if arg.type == "lambda_expression":
+            body = arg.child_by_field_name("body")
+            if body is not None and body.type == "block" and len(body.named_children) == 1 \
+                    and body.named_children[0].type == "expression_statement":
+                body = body.named_children[0].named_children[0] if body.named_children[0].named_children else None
+            if body is not None and body.type == "method_invocation":
+                nm = body.child_by_field_name("name")
+                return nm is not None and self._get_text(nm) in disable
+        return False
 
     def _emit_findings_proc(self, program: Program, name: str,
                             sink_name: str, hits: List[Location]) -> None:
@@ -947,15 +948,6 @@ class JavaFrontend:
                     if mod.type == "marker_annotation" or mod.type == "annotation":
                         annotations.append(self._get_text(mod))
         return annotations
-
-    # Spring MVC request-binding annotations (on the parameter: `login(@RequestParam String user)`).
-    # The `java/spring` pack's entry points make such parameters attacker data; this list only
-    # feeds the name-based one-hop propagation into same-file helpers, which runs on the syntax tree
-    # before packs apply.
-    _REQUEST_BINDING_ANNOTATIONS = (
-        "RequestParam", "PathVariable", "RequestBody", "RequestHeader",
-        "CookieValue", "ModelAttribute", "MatrixVariable", "RequestPart",
-    )
 
     def _param_type_names(self, node: TSNode) -> List[Optional[str]]:
         """Static parameter types (overload resolution); a varargs parameter
@@ -1978,6 +1970,22 @@ class JavaFrontend:
                         out.append((self._get_text(nm), self._type_name(tn) if tn is not None else None))
         return out
 
+    def _file_packs(self) -> list:
+        """The Java packs this file's imports select (a pack without detect imports always applies):
+        the frontend-time kinds (annotated queries, required flags, disabled protections, handler
+        returns, injected fields) are read from these."""
+        packs = self.packs if self.packs is not None else default_packs()
+        values = list(self._imports.names.values()) + list(self._imports.wildcards)
+        return [p for p in packs.for_language("java")
+                if not p.detect_imports or any(v.startswith(pre) for v in values for pre in p.detect_imports)]
+
+    def _synthetic_sink(self, program: Program, kind: str, description: str) -> str:
+        """The name of a synthetic usage sink of `kind` (a pack finding with no call to carry it)."""
+        name = f"<pack-finding:{kind}>"
+        if name not in program.library_specs:
+            program.library_specs[name] = ProcSpec(is_sink=kind, sink_args=[], description=description)
+        return name
+
     def _framework_lambda_types(self, via: str) -> Tuple[str, ...]:
         """Qualified parameter types for a lambda handed to this registration call: the
         `[[lambda_handler]]` of a Java pack whose method is the call's last name part (with a
@@ -2564,17 +2572,16 @@ class JavaFrontend:
                             if m.type == "string_literal"):
                 out.append(TaintSink(loc=loc, exp=self._hoisted_expression(n), kind=SinkKind.HTML_OUTPUT,
                                      description="Handler responds with raw HTML around user data (XSS)"))
-        # redirect views
+        # the packs' [[handler_return]] entries: a prefix (`"redirect:" + url`) or a view name
         first = expr
         while first.type == "binary_expression" and first.child_by_field_name("left") is not None:
             first = first.child_by_field_name("left")
-        if first.type == "string_literal" and self._get_text(first).strip('"').startswith("redirect:") \
-                and expr.type == "binary_expression":
-            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=SinkKind.REDIRECT,
-                                 description="Spring redirect view built from user data (open redirect)"))
-        elif self._returns_view_name(expr):
-            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=SinkKind.TEMPLATE,
-                                 description="View name built from user data (template / view-name injection)"))
+        entries = [h for p in self._file_packs() for h in p.handler_returns]
+        prefixed = [h for h in entries if h.prefix and expr.type == "binary_expression"
+                    and first.type == "string_literal" and self._get_text(first).strip('"').startswith(h.prefix)]
+        for h in prefixed or [h for h in entries if not h.prefix and self._returns_view_name(expr, h)]:
+            out.append(TaintSink(loc=loc, exp=self._hoisted_expression(expr), kind=resolve_sink_kind(h.kind),
+                                 description=h.description or "Handler return value built from user data"))
         return out
 
     def _hoisted_expression(self, expr: TSNode) -> Exp:
@@ -2585,16 +2592,17 @@ class JavaFrontend:
         finally:
             self._in_call_args = outer
 
-    def _returns_view_name(self, expr: TSNode) -> bool:
-        """A String returned from a @Controller (not @RestController / @ResponseBody) handler is a
-        view name; user data in it selects (and with Thymeleaf evaluates) the template."""
+    def _returns_view_name(self, expr: TSNode, h) -> bool:
+        """A value returned by a handler of a class `h.class_decorator` marks (Spring's view-resolving
+        @Controller), of `h.return_type`, without `h.exclude_decorator` (@ResponseBody): a view name,
+        which user data then selects (and with Thymeleaf evaluates)."""
         proc = self._current_proc
-        # Spring's view-resolving @Controller only (Micronaut / JAX-RS controllers return bodies)
-        is_spring = any(a.name == "Controller" and (a.canonical or "").startswith("org.springframework")
-                        for a in (self._current_class_annotations or ()))
-        if proc is None or not is_spring or proc.ret_type_name != "String":
+        if proc is None or not any(_glob_any(h.class_decorator, a.name, a.canonical)
+                                   for a in (self._current_class_annotations or ())):
             return False
-        if "ResponseBody" in {a.name for a in proc.annotations}:
+        if h.return_type and proc.ret_type_name not in h.return_type:
+            return False
+        if any(_glob_any(h.exclude_decorator, a.name, a.canonical) for a in proc.annotations):
             return False
         if expr.type == "identifier":
             return True

@@ -1,0 +1,19 @@
+[pack]
+name = "mybatis"
+language = "java"
+description = "MyBatis annotated mappers: ${...} substitution splices a parameter into the SQL text"
+references = ["https://mybatis.org/mybatis-3/sqlmap-xml.html#string-substitution",
+              "https://mybatis.org/mybatis-3/java-api.html#mapper-annotations"]
+detect = { imports = ["org.apache.ibatis"] }
+
+# `@Select("SELECT * FROM t ORDER BY ${col}")`: `${}` inserts the value unmodified (the docs' "String
+# Substitution"), unlike the bound `#{}`. A parameter is named by @Param("x"), or by its own name; a
+# mapper method with a single parameter may use any name for it.
+[[annotated_query]]
+id = "string-substitution"
+annotations = ["Select", "Update", "Delete", "Insert", "org.apache.ibatis.annotations.*"]
+substitution = '\$\{\s*(?P<name>[A-Za-z_]\w*)'
+param_name_annotation = "Param"
+lone_parameter = true
+kind = "sql"
+description = "MyBatis ${...} splices the value into the SQL text"

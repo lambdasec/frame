@@ -8,6 +8,16 @@ detect = { imports = ["org.springframework"] }
 # (@RequestParam, @PathVariable, @RequestBody, @RequestHeader, @CookieValue, @ModelAttribute,
 # @MatrixVariable, @RequestPart). Spring also binds UNannotated parameters of a handler: a simple
 # type is an implicit @RequestParam, a bean is an implicit @ModelAttribute (a form / command object).
+# Spring MVC's request-binding annotations: a parameter carrying one is filled from the request
+# (also on a method the mapping entry above does not select, such as an exception handler).
+[[entrypoint]]
+id = "request-bound-parameter"
+annotation = ["*Mapping", "ExceptionHandler", "ModelAttribute", "InitBinder"]
+params = "annotated"
+param_annotation = ["RequestParam", "PathVariable", "RequestBody", "RequestHeader", "CookieValue",
+                    "ModelAttribute", "MatrixVariable", "RequestPart",
+                    "org.springframework.web.bind.annotation.*"]
+
 [[entrypoint]]
 id = "mapping-handler-unannotated"
 annotation = ["*Mapping"]
@@ -104,3 +114,35 @@ id = "webflux-handler-lambda"
 methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "route", "andRoute", "nest"]
 imports = ["org.springframework.web.reactive.function.server"]
 param_types = ["org.springframework.web.reactive.function.server.ServerRequest"]
+
+# Fields Spring fills in: @Autowired / @Value collaborators, and test doubles of Spring Boot's tests.
+[[injected_field]]
+annotations = ["Autowired", "Value", "MockBean", "SpyBean", "MockitoBean", "MockitoSpyBean",
+               "org.springframework.beans.factory.annotation.*", "org.springframework.boot.test.mock.mockito.*"]
+
+# A handler's returned String "redirect:<url>" makes Spring MVC send a redirect to that URL
+# (UrlBasedViewResolver.REDIRECT_URL_PREFIX).
+[[handler_return]]
+id = "redirect-view"
+prefix = "redirect:"
+kind = "redirect"
+description = "Spring redirect view built from user data (open redirect)"
+
+# A String returned by a @Controller handler (not @ResponseBody / @RestController) is a view name the
+# view resolver looks up; Thymeleaf evaluates `__${...}__` preprocessing in it.
+[[handler_return]]
+id = "view-name"
+class_decorator = ["org.springframework.stereotype.Controller"]
+exclude_decorator = ["ResponseBody", "org.springframework.web.bind.annotation.ResponseBody"]
+return_type = ["String"]
+kind = "template"
+description = "View name built from user data (template / view-name injection)"
+
+# Spring Security: `http.csrf().disable()`, `csrf(c -> c.disable())`, `csrf(AbstractHttpConfigurer::disable)`
+# switch off CSRF protection for cookie / session authenticated requests.
+[[disabled_protection]]
+id = "csrf-disabled"
+configurer = ["csrf"]
+disable = ["disable"]
+kind = "csrf_disabled"
+description = "CSRF protection disabled (CWE-352)"

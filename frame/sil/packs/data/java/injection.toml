@@ -1,0 +1,13 @@
+[pack]
+name = "injection"
+language = "java"
+description = "Fields a container or test framework fills in (CDI / JSR-330, Guice, Jakarta EE, Mockito): not request-bound state"
+detect = { imports = ["javax.inject", "jakarta.inject", "com.google.inject", "javax.annotation", "jakarta.annotation",
+                      "javax.ejb", "jakarta.ejb", "org.mockito"] }
+
+# A field carrying one of these is a collaborator the container (or a test runner) injects, never a
+# value bound from the request, so `fields = true` entry points leave it out.
+[[injected_field]]
+annotations = ["Inject", "Resource", "EJB", "Mock", "Spy", "InjectMocks",
+               "javax.inject.*", "jakarta.inject.*", "com.google.inject.*", "javax.annotation.Resource",
+               "jakarta.annotation.Resource", "javax.ejb.EJB", "jakarta.ejb.EJB", "org.mockito.*"]

@@ -1,0 +1,27 @@
+[pack]
+name = "servlet"
+language = "java"
+description = "Jakarta / Java Servlet API: cookies sent without Secure or HttpOnly"
+references = ["https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/cookie"]
+detect = { imports = ["javax.servlet", "jakarta.servlet"] }
+
+# A Cookie is created with Secure and HttpOnly off (Cookie javadoc: setSecure "the default value is
+# false", isHttpOnly "false otherwise"); one added to the response without setting them is sent
+# over plain HTTP / readable by scripts.
+[[required_flag]]
+id = "cookie-secure"
+types = ["Cookie", "javax.servlet.http.Cookie", "jakarta.servlet.http.Cookie"]
+escape = ["addCookie"]
+setter = "setSecure"
+value = "true"
+kind = "insecure_cookie"
+description = "Cookie added without Secure flag (CWE-614)"
+
+[[required_flag]]
+id = "cookie-httponly"
+types = ["Cookie", "javax.servlet.http.Cookie", "jakarta.servlet.http.Cookie"]
+escape = ["addCookie"]
+setter = "setHttpOnly"
+value = "true"
+kind = "insecure_cookie_httponly"
+description = "Cookie added without HttpOnly flag (CWE-1004)"

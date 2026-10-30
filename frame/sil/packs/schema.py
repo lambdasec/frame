@@ -29,6 +29,8 @@ of the same call, everything else is kept.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,11 +59,20 @@ _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "descrip
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
                 "description"}
 _DEFINE_KEYS = {"name", "params", "body", "description"}
+_JAVA_KIND_KEYS = {
+    "annotated_query": {"id", "annotations", "substitution", "kind", "param_name_annotation", "lone_parameter",
+                        "description"},
+    "required_flag": {"id", "types", "escape", "setter", "value", "kind", "description"},
+    "disabled_protection": {"id", "configurer", "disable", "kind", "description"},
+    "handler_return": {"id", "kind", "prefix", "class_decorator", "exclude_decorator", "return_type", "description"},
+    "injected_field": {"id", "annotations", "description"},
+}
 _DEFERRED_KEYS = {"id", "methods", "description"}
 _REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"}
 _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
-             "lambda_handler", "fluent", "registration", "deferred_call", "policy", "define"}
+             "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
+             "required_flag", "disabled_protection", "handler_return", "injected_field", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -177,6 +188,64 @@ class Registration:
 
 
 @dataclass
+class AnnotatedQuery:
+    """Java: an interface method whose annotation IS its implementation, a query text in which
+    `substitution` (a pattern with a `name` group) splices a parameter into the statement
+    (`[[annotated_query]]`; MyBatis `@Select("... ${name} ...")`). A parameter is named by its own
+    name or by `param_name_annotation`'s value; with `lone_parameter`, a method with one parameter
+    matches any substitution."""
+    id: str
+    annotations: List[str]
+    substitution: Any                    # compiled pattern
+    kind: str
+    param_name_annotation: str = ""
+    lone_parameter: bool = False
+    description: str = ""
+
+
+@dataclass
+class RequiredFlag:
+    """Java: an object handed to one of `escape` (`response.addCookie(c)`) without `setter(value)`
+    having been called on it in the method is a finding of sink `kind` (`[[required_flag]]`): the
+    flag's default is off. An object created inline at the escape call never had it set."""
+    id: str
+    types: List[str]
+    escape: List[str]
+    setter: str
+    value: str
+    kind: str
+    description: str = ""
+
+
+@dataclass
+class DisabledProtection:
+    """Java: a protection switched off through its configurer (`[[disabled_protection]]`): a
+    `disable` method called on the result of a `configurer` call (`http.csrf().disable()`), or a
+    `configurer` call given a customizer that only disables it (`csrf(c -> c.disable())`,
+    `csrf(AbstractHttpConfigurer::disable)`)."""
+    id: str
+    configurer: List[str]
+    disable: List[str]
+    kind: str
+    description: str = ""
+
+
+@dataclass
+class HandlerReturn:
+    """Java: the value a web handler returns is a sink of `kind` (`[[handler_return]]`): one built
+    from a literal starting with `prefix` (Spring's `"redirect:" + url`), or, with
+    `class_decorator`, a String returned by a handler of such a class not marked with
+    `exclude_decorator` (a Spring MVC view name)."""
+    id: str
+    kind: str
+    prefix: str = ""
+    class_decorator: List[str] = field(default_factory=list)
+    exclude_decorator: List[str] = field(default_factory=list)
+    return_type: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
 class DeferredCall:
     """Python: a method that runs the function it is called on, later, with the same arguments
     (`[[deferred_call]]`): Celery's `task.delay(a, b)` is the call `task(a, b)` for taint."""
@@ -241,6 +310,11 @@ class Pack:
     fluents: List[Fluent] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
+    annotated_queries: List[AnnotatedQuery] = field(default_factory=list)
+    required_flags: List[RequiredFlag] = field(default_factory=list)
+    disabled_protections: List[DisabledProtection] = field(default_factory=list)
+    handler_returns: List[HandlerReturn] = field(default_factory=list)
+    injected_field_annotations: List[str] = field(default_factory=list)
     dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
@@ -500,6 +574,60 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (handler.imports or pack.detect_imports):
             raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
         pack.lambda_handlers.append(handler)
+
+    for table, keys in _JAVA_KIND_KEYS.items():
+        for i, t in enumerate(data.get(table, [])):
+            where = f"[[{table}]] #{i + 1}"
+            _check_keys(origin, where, t, keys)
+            if language != "java":
+                raise _fail(origin, where, f"{table} entries are for Java packs")
+            eid = str(t.get("id", f"{name}-{table}-{i + 1}"))
+            desc = str(t.get("description", ""))
+
+            def need(*ks, t=t, where=where):
+                for k in ks:
+                    if not t.get(k):
+                        raise _fail(origin, where, f"needs {k}")
+            if table == "injected_field":
+                need("annotations")
+                pack.injected_field_annotations += _strings(origin, f"{where}.annotations", t["annotations"])
+                continue
+            need("kind")
+            kind = _sink_kind(origin, f"{where}.kind", t["kind"])
+            if table == "annotated_query":
+                need("annotations", "substitution")
+                try:
+                    rx = re.compile(t["substitution"])
+                except (re.error, TypeError) as err:
+                    raise _fail(origin, f"{where}.substitution", f"does not compile: {err}")
+                if "name" not in rx.groupindex:
+                    raise _fail(origin, f"{where}.substitution", "needs a (?P<name>...) group")
+                if not isinstance(t.get("lone_parameter", False), bool):
+                    raise _fail(origin, f"{where}.lone_parameter", "must be true or false")
+                pack.annotated_queries.append(AnnotatedQuery(
+                    id=eid, annotations=_strings(origin, f"{where}.annotations", t["annotations"]), substitution=rx,
+                    kind=kind, param_name_annotation=str(t.get("param_name_annotation", "")),
+                    lone_parameter=t.get("lone_parameter", False), description=desc))
+            elif table == "required_flag":
+                need("types", "escape", "setter", "value")
+                pack.required_flags.append(RequiredFlag(
+                    id=eid, types=_strings(origin, f"{where}.types", t["types"]),
+                    escape=_strings(origin, f"{where}.escape", t["escape"]), setter=str(t["setter"]),
+                    value=str(t["value"]), kind=kind, description=desc))
+            elif table == "disabled_protection":
+                need("configurer", "disable")
+                pack.disabled_protections.append(DisabledProtection(
+                    id=eid, configurer=_strings(origin, f"{where}.configurer", t["configurer"]),
+                    disable=_strings(origin, f"{where}.disable", t["disable"]), kind=kind, description=desc))
+            else:
+                if not (t.get("prefix") or t.get("class_decorator")):
+                    raise _fail(origin, where, "needs prefix or class_decorator")
+                pack.handler_returns.append(HandlerReturn(
+                    id=eid, kind=kind, prefix=str(t.get("prefix", "")),
+                    class_decorator=_strings(origin, f"{where}.class_decorator", t.get("class_decorator", [])),
+                    exclude_decorator=_strings(origin, f"{where}.exclude_decorator", t.get("exclude_decorator", [])),
+                    return_type=_strings(origin, f"{where}.return_type", t.get("return_type", [])),
+                    description=desc))
 
     for i, t in enumerate(data.get("deferred_call", [])):
         where = f"[[deferred_call]] #{i + 1}"

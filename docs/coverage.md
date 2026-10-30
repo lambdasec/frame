@@ -109,6 +109,37 @@ methods = ["find", "filter"]
 
 Python packs have `[[deferred_call]]`: a method that runs the function it is called on with the same arguments, so `tasks.convert.delay(path)` is `tasks.convert(path)` for taint (the built-in `celery` pack). It has no `detect`, since the caller imports only the task module. A Python pack's `[pack]` table can say `dict_queries = true` (the built-in `pymongo` pack): in the files it applies to, a dict literal is a query document whose values reach the call it is passed to.
 
+Java packs have five more kinds, each read where the frontend meets the code it describes:
+
+```toml
+[[annotated_query]]                      # MyBatis: @Select("... ${col}") splices col into the SQL
+annotations = ["Select", "org.apache.ibatis.annotations.*"]
+substitution = '\$\{\s*(?P<name>[A-Za-z_]\w*)'
+param_name_annotation = "Param"
+kind = "sql"
+
+[[required_flag]]                        # a Cookie added without setSecure(true)
+types = ["Cookie", "jakarta.servlet.http.Cookie"]
+escape = ["addCookie"]
+setter = "setSecure"
+value = "true"
+kind = "insecure_cookie"
+
+[[disabled_protection]]                  # http.csrf().disable(), csrf(c -> c.disable())
+configurer = ["csrf"]
+disable = ["disable"]
+kind = "csrf_disabled"
+
+[[handler_return]]                       # return "redirect:" + url;
+prefix = "redirect:"
+kind = "redirect"
+
+[[injected_field]]                       # fields a container fills in are not request-bound state
+annotations = ["Autowired", "Inject"]
+```
+
+A `[[handler_return]]` can instead name the handler's class (`class_decorator`), `return_type` and `exclude_decorator`: a String returned by a Spring `@Controller` handler without `@ResponseBody` is a view name.
+
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 
 For C and C++, a pack also says what the project's own functions do with memory and control, so the memory analysis follows an in-house allocator, release function, logging helper or `die()` the way it follows `malloc`, `free`, `strlen` and `exit`:

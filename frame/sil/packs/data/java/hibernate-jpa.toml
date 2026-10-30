@@ -22,3 +22,7 @@ description = "HQL / JPQL / native SQL text built from the argument"
 call = ["org.hibernate.criterion.Restrictions.sqlRestriction", "org.hibernate.criterion.Order.sqlFormula"]
 kind = "sql"
 description = "a raw SQL fragment inside a Criteria query"
+
+# An EntityManager the container injects is a collaborator, not request-bound state.
+[[injected_field]]
+annotations = ["PersistenceContext", "PersistenceUnit", "javax.persistence.Persistence*", "jakarta.persistence.Persistence*"]

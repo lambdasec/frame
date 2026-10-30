@@ -241,3 +241,64 @@ def test_celery_delay_runs_the_task(tmp_path):
     results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
     found = {(r.filename.rsplit("/", 1)[-1], v.cwe_id) for r in results for v in r.vulnerabilities}
     assert ("tasks.py", "CWE-78") in found
+
+
+# --- Java: framework facts are pack entries -------------------------------------------------
+
+def _java(src, name="T.java", builtin=True):
+    scanner = FrameScanner(language="java", verify=False, use_builtin_packs=builtin)
+    return sorted((v.line, v.cwe_id) for v in scanner.scan(src, name).vulnerabilities)
+
+
+def test_mybatis_substitution_from_the_pack():
+    src = """import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Param;
+public interface UserMapper {
+  @Select("SELECT * FROM users ORDER BY ${col}")
+  java.util.List<Object> sorted(@Param("col") String column);
+  @Select("SELECT * FROM users WHERE id = #{id}")
+  Object byId(@Param("id") String id);
+}
+"""
+    procs = {p.name: p for p in __import__("frame.sil.frontends.java_frontend", fromlist=["x"])
+             .JavaFrontend().translate(src, "UserMapper.java").procedures.values()}
+    assert "UserMapper.sorted" in procs and "UserMapper.byId" not in procs
+
+
+COOKIES = """import javax.servlet.http.*;
+public class C extends HttpServlet {
+  protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+    Cookie a = new Cookie("a", "1");
+    a.setSecure(true);
+    a.setHttpOnly(true);
+    resp.addCookie(a);
+    Cookie b = new Cookie("b", "1");
+    b.setSecure(true);
+    resp.addCookie(b);
+  }
+}
+"""
+
+
+def test_servlet_cookie_flags():
+    assert _java(COOKIES, "C.java") == [(10, "CWE-1004")]
+    assert _java(COOKIES, "C.java", builtin=False) == []
+
+
+def test_spring_redirect_and_view_name():
+    src = """import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+@Controller
+public class W {
+  @GetMapping("/go")
+  public String go(@RequestParam String url) { return "redirect:" + url; }
+  @GetMapping("/view")
+  public String view(@RequestParam String name) { return "pages/" + name; }
+  @GetMapping("/body")
+  @ResponseBody
+  public String body(@RequestParam String name) { return "pages/" + name; }
+}
+"""
+    # redirect view; view name; not the @ResponseBody handler's body
+    assert _java(src, "W.java") == [(6, "CWE-601"), (8, "CWE-1336")]
+    assert _java(src, "W.java", builtin=False) == []
