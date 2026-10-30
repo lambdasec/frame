@@ -1,0 +1,12 @@
+[pack]
+name = "ratpack"
+language = "java"
+description = "Ratpack: handler lambdas receive the handling Context"
+detect = { imports = ["ratpack"] }
+
+[[lambda_handler]]
+id = "handler-lambda"
+methods = ["get", "post", "put", "delete", "patch", "head", "options", "trace", "all", "before", "after", "afterAfter",
+           "beforeMatched", "afterMatched", "path", "prefix",
+           "handler", "insert"]
+param_types = ["ratpack.handling.Context"]

@@ -6,7 +6,13 @@ The table itself is data: `data/java.toml` (one `[[spec]]` per call name, in loo
 order), loaded by `frame/sil/specs/tables.py`. Edit the TOML, then run the benchmark sweep.
 """
 
+from pathlib import Path
 from typing import Dict
+
+try:                                        # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                 # pragma: no cover - 3.10
+    import tomli as tomllib                 # type: ignore[no-redef]
 
 from frame.sil.procedure import ProcSpec
 from frame.sil.specs.tables import load_table
@@ -14,159 +20,40 @@ from frame.sil.specs.tables import load_table
 JAVA_SPECS: Dict[str, ProcSpec] = load_table("java")
 
 
-# Spec keys are written against the conventional variable name for a receiver
-# (`documentBuilder.parse`, `jdbcTemplate.query`). The frontend knows each
-# variable's declared type, so a call on `DocumentBuilder b` is looked up under
-# the type's decapitalised name (`documentBuilder`) and under these aliases,
-# whatever the variable is called. Only types whose decapitalised name is NOT
-# the spec receiver need an entry.
-JAVA_TYPE_RECEIVERS = {
-    "HttpServletRequest": ("request",), "ServletRequest": ("request",),
-    "HttpServletRequestWrapper": ("request",),
-    "HttpServletResponse": ("response",), "ServletResponse": ("response",),
-    "HttpSession": ("session",),
-    "Session": ("session",), "StatelessSession": ("session",),
-    "XPath": ("xpath",),
-    "InitialDirContext": ("dirContext",), "LdapContext": ("dirContext",),
-    "InitialLdapContext": ("dirContext",),
-    "SpelExpressionParser": ("expressionParser",),
-    "CloseableHttpClient": ("httpClient",),
-    "HttpsURLConnection": ("httpURLConnection",),
-    "Logger": ("log",),
-}
+# The Java type model (receiver aliases, factory and chain return types, String method result
+# types, permissive verifiers, the javax -> jakarta moves) is data: data/java-types.toml.
+_TYPES_PATH = Path(__file__).parent / "data" / "java-types.toml"
+_TYPE_TABLES = {"type_receivers": list, "factory_return_types": str, "return_types": str,
+                "string_method_types": str}
 
 
-# Documented return types of factory methods, so `var b = f.newDocumentBuilder()`
-# has a type to match specs against (a `var` initialised by `new T(...)` needs
-# no entry).
-JAVA_FACTORY_RETURN_TYPES = {
-    "newDocumentBuilder": "DocumentBuilder",
-    "newSAXParser": "SAXParser",
-    "getXMLReader": "XMLReader",
-    "createXMLReader": "XMLReader",
-    "newTransformer": "Transformer",
-    "createUnmarshaller": "Unmarshaller",
-    "newXPath": "XPath",
-    "getEngineByName": "ScriptEngine",
-    "getEngineByExtension": "ScriptEngine",
-    "getRuntime": "Runtime",
-    "openConnection": "URLConnection",
-    "createDefault": "CloseableHttpClient",
-}
+def _load_types(path: Path = _TYPES_PATH) -> dict:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta"}
+    if set(data) != expected:
+        raise ValueError(f"{path.name}: needs exactly {sorted(expected)}")
+    for table, kind in _TYPE_TABLES.items():
+        if not isinstance(data[table], dict) or not data[table] or not all(
+                isinstance(v, kind) and v and (kind is str or all(isinstance(x, str) and x for x in v))
+                for v in data[table].values()):
+            raise ValueError(f"{path.name}: [{table}] values must be non-empty {kind.__name__}s")
+    for table, key in (("verifiers", "permissive"), ("jakarta", "migrated")):
+        if set(data[table]) != {key} or not isinstance(data[table][key], list) or not data[table][key]:
+            raise ValueError(f"{path.name}: [{table}] needs exactly {key}, a non-empty list")
+    return data
 
 
-# Declared return types of well-known APIs that are reached through a call CHAIN
-# (`ActionContext.getContext().getParameters()`), keyed `OwnerType.method` (the owner is a class
-# used as a qualifier, a variable's declared type, or an earlier link's result). They give the
-# next link a receiver type, so it resolves to a canonical callee (framework packs match on it)
-# instead of staying an unknown `$chain.method`.
-JAVA_RETURN_TYPES = {
-    # JDK conversions documented to return a String: the next call of a chain
-    # (`Float.toString(r).substring(2)`) is made on that String
-    **{f"{t}.{m}": "java.lang.String" for t in ("Integer", "Long", "Short", "Byte", "Float", "Double",
-                                                "Boolean", "Character") for m in ("toString",)},
-    **{f"{t}.{m}": "java.lang.String" for t in ("Integer", "Long")
-       for m in ("toHexString", "toBinaryString", "toOctalString")},
-    "String.valueOf": "java.lang.String",
-    "String.format": "java.lang.String",
-    "String.join": "java.lang.String",
-    "Objects.toString": "java.lang.String",
-    "Arrays.toString": "java.lang.String",
-    # Struts 2
-    "ActionContext.getContext": "com.opensymphony.xwork2.ActionContext",
-    "ActionContext.getValueStack": "com.opensymphony.xwork2.util.ValueStack",
-    "ServletActionContext.getRequest": "javax.servlet.http.HttpServletRequest",
-    "ServletActionContext.getResponse": "javax.servlet.http.HttpServletResponse",
-    "ServletActionContext.getServletContext": "javax.servlet.ServletContext",
-    # JSF
-    "FacesContext.getCurrentInstance": "javax.faces.context.FacesContext",
-    "FacesContext.getExternalContext": "javax.faces.context.ExternalContext",
-    "FacesContext.getApplication": "javax.faces.application.Application",
-    "ExternalContext.getRequestParameterMap": "java.util.Map",
-    "ExternalContext.getRequestHeaderMap": "java.util.Map",
-    "ExternalContext.getRequestCookieMap": "java.util.Map",
-    "ActionContext.getParameters": "java.util.Map",
-    # JAX-RS
-    "UriInfo.getQueryParameters": "javax.ws.rs.core.MultivaluedMap",
-    "UriInfo.getPathParameters": "javax.ws.rs.core.MultivaluedMap",
-    "HttpHeaders.getRequestHeaders": "javax.ws.rs.core.MultivaluedMap",
-    # Micronaut
-    "HttpRequest.getParameters": "io.micronaut.http.HttpParameters",
-    "HttpRequest.getHeaders": "io.micronaut.http.HttpHeaders",
-    "HttpRequest.getCookies": "io.micronaut.http.cookie.Cookies",
-    # Vert.x
-    "HttpServerRequest.params": "io.vertx.core.MultiMap",
-    "HttpServerRequest.headers": "io.vertx.core.MultiMap",
-    "RoutingContext.queryParams": "io.vertx.core.MultiMap",
-    "RoutingContext.queryParam": "java.util.List",
-    "Pool.query": "io.vertx.sqlclient.Query",
-    "Pool.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
-    "PgPool.query": "io.vertx.sqlclient.Query",
-    "PgPool.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
-    "SqlClient.query": "io.vertx.sqlclient.Query",
-    "SqlClient.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
-    "SqlConnection.query": "io.vertx.sqlclient.Query",
-    "SqlConnection.preparedQuery": "io.vertx.sqlclient.PreparedQuery",
-    "RoutingContext.pathParams": "java.util.Map",
-    "RoutingContext.body": "io.vertx.ext.web.RequestBody",
-    "RoutingContext.request": "io.vertx.core.http.HttpServerRequest",
-    "RoutingContext.response": "io.vertx.core.http.HttpServerResponse",
-    "HttpServerResponse.putHeader": "io.vertx.core.http.HttpServerResponse",
-    "HttpServerResponse.setStatusCode": "io.vertx.core.http.HttpServerResponse",
-    "HttpServerResponse.setChunked": "io.vertx.core.http.HttpServerResponse",
-    "HttpServerResponse.setStatusMessage": "io.vertx.core.http.HttpServerResponse",
-    # Servlet / Spring
-    "HttpServletRequest.getSession": "javax.servlet.http.HttpSession",
-    "HttpServletRequest.getInputStream": "javax.servlet.ServletInputStream",
-    "HttpServletRequest.getReader": "java.io.BufferedReader",
-    "BufferedReader.lines": "java.util.stream.Stream",
-    "RequestContextHolder.currentRequestAttributes": "org.springframework.web.context.request.ServletRequestAttributes",
-    "ServletRequestAttributes.getRequest": "javax.servlet.http.HttpServletRequest",
-    # JPA / Hibernate
-    "EntityManager.createQuery": "javax.persistence.Query",
-    "EntityManager.createNativeQuery": "javax.persistence.Query",
-    "SessionFactory.getCurrentSession": "org.hibernate.Session",
-    "SessionFactory.openSession": "org.hibernate.Session",
-    "Session.createCriteria": "org.hibernate.Criteria",
-    "Session.createQuery": "org.hibernate.query.Query",
-    "Session.createSQLQuery": "org.hibernate.query.Query",
-    "Session.createNativeQuery": "org.hibernate.query.Query",
-    # Play
-    "Http.Request.body": "play.mvc.Http.RequestBody",
-    "Request.body": "play.mvc.Http.RequestBody",
-    "RequestBody.asJson": "com.fasterxml.jackson.databind.JsonNode",
-    "Http.RequestBody.asJson": "com.fasterxml.jackson.databind.JsonNode",
-    "JsonNode.get": "com.fasterxml.jackson.databind.JsonNode",
-    "JsonNode.path": "com.fasterxml.jackson.databind.JsonNode",
-    # java.net.http
-    "HttpRequest.newBuilder": "java.net.http.HttpRequest.Builder",
-    # jOOQ
-    "DSL.using": "org.jooq.DSLContext",
-    # JDK
-    "Runtime.getRuntime": "java.lang.Runtime",
-}
+_TYPES = _load_types()
+JAVA_TYPE_RECEIVERS: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["type_receivers"].items()}
+JAVA_FACTORY_RETURN_TYPES: Dict[str, str] = dict(_TYPES["factory_return_types"])
+JAVA_RETURN_TYPES: Dict[str, str] = dict(_TYPES["return_types"])
+JAVA_STRING_METHOD_TYPES: Dict[str, str] = dict(_TYPES["string_method_types"])
+PERMISSIVE_VERIFIERS = frozenset(_TYPES["verifiers"]["permissive"])
+JAKARTA_MIGRATED = tuple(_TYPES["jakarta"]["migrated"])
 
-# Lambdas passed to a framework's route / handler registration receive the framework's request
-# objects, but are written without parameter types (`get("/x", (req, res) -> ...)`). Each row:
-# (import prefixes of which the file must have one, regex over the registration call's text,
-# the qualified parameter types in order). The frontend gives the lambda's parameters these types.
-_HTTP_VERBS = r"get|post|put|delete|patch|head|options|trace|all|before|after|afterAfter|beforeMatched|afterMatched"
-JAVA_LAMBDA_PARAMS = [
-    (("spark.",), rf"(^|\.)({_HTTP_VERBS}|notFound|internalServerError|exception)$",
-     ("spark.Request", "spark.Response")),
-    (("io.javalin",), rf"(^|\.)({_HTTP_VERBS}|error|exception|sse)$", ("io.javalin.http.Context",)),
-    (("io.jooby",), rf"(^|\.)({_HTTP_VERBS}|decorator)$", ("io.jooby.Context",)),
-    (("io.vertx.ext.web",), r"\.(handler|blockingHandler|failureHandler)$", ("io.vertx.ext.web.RoutingContext",)),
-    (("ratpack.",), rf"(^|\.)({_HTTP_VERBS}|path|prefix|handler|insert)$", ("ratpack.handling.Context",)),
-    (("org.springframework.web.reactive.function.server",),
-     r"(^|\.)(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|route|andRoute|nest)$",
-     ("org.springframework.web.reactive.function.server.ServerRequest",)),
-]
 
-# `javax.*` packages that moved to `jakarta.*` (Jakarta EE 9+): a file that imports from jakarta
-# gets the jakarta spelling of the types above.
-JAKARTA_MIGRATED = ("javax.servlet", "javax.faces", "javax.persistence", "javax.ws", "javax.el",
-                    "javax.inject", "javax.enterprise", "javax.validation", "javax.websocket")
+# Which route-registration lambdas receive which request objects is framework knowledge: the
+# `[[lambda_handler]]` entries of the Java packs (sparkjava, javalin, vertx-web, spring, jooby, ratpack).
 
 
 def type_spec_receivers(type_name: str) -> tuple:
@@ -181,12 +68,3 @@ def type_spec_receivers(type_name: str) -> tuple:
     else:
         decap = type_name[:1].lower() + type_name[1:]
     return (type_name, decap) + JAVA_TYPE_RECEIVERS.get(type_name, ())
-
-
-# Library verifier objects documented to accept every host; passing one where
-# a verifier is expected is as permissive as `(host, session) -> true`.
-PERMISSIVE_VERIFIERS = frozenset({
-    "NoopHostnameVerifier", "NoopHostnameVerifier.INSTANCE",
-    "AllowAllHostnameVerifier",
-    "ALLOW_ALL_HOSTNAME_VERIFIER", "SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER",
-})

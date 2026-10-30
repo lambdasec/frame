@@ -50,7 +50,9 @@ _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "at", "call", "receiver", "description"}
 _FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "dereferences", "description"}
-_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function"}
+_LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "description"}
+_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+             "lambda_handler"}
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
 SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property")
@@ -130,6 +132,19 @@ class FunctionFact:
 
 
 @dataclass
+class LambdaHandler:
+    """Java: a lambda handed to one of the framework's registration methods (`get("/x", (req, res)
+    -> ...)`) receives the framework's request objects, written without parameter types; these are
+    its parameters' types, in order (`[[lambda_handler]]`)."""
+    id: str
+    methods: List[str]                   # the registration call's method (last part of its name)
+    param_types: List[str]               # qualified types of the lambda's parameters, in order
+    qualified: bool = False              # only `x.method(...)`, never a bare `method(...)`
+    imports: List[str] = field(default_factory=list)   # the file must also import one of these
+    description: str = ""
+
+
+@dataclass
 class Pack:
     name: str
     language: str
@@ -143,6 +158,7 @@ class Pack:
     rules: List[Rule] = field(default_factory=list)
     settings: List[Setting] = field(default_factory=list)
     functions: List[FunctionFact] = field(default_factory=list)
+    lambda_handlers: List[LambdaHandler] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
     @property
@@ -359,4 +375,27 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (fact.allocates or fact.frees or fact.noreturn or fact.dereferences):
             raise _fail(origin, where, "states nothing: set allocates, frees, noreturn or dereferences")
         pack.functions.append(fact)
+
+    for i, t in enumerate(data.get("lambda_handler", [])):
+        where = f"[[lambda_handler]] #{i + 1}"
+        _check_keys(origin, where, t, _LAMBDA_KEYS)
+        if language != "java":
+            raise _fail(origin, where, "lambda handlers are for Java packs")
+        for key in ("methods", "param_types"):
+            if key not in t:
+                raise _fail(origin, where, f"needs {key}")
+        if not isinstance(t.get("qualified", False), bool):
+            raise _fail(origin, f"{where}.qualified", "must be true or false")
+        handler = LambdaHandler(
+            id=str(t.get("id", f"{name}-lambda-{i + 1}")),
+            methods=_strings(origin, f"{where}.methods", t["methods"]),
+            param_types=_strings(origin, f"{where}.param_types", t["param_types"]),
+            qualified=t.get("qualified", False),
+            imports=_strings(origin, f"{where}.imports", t["imports"]) if "imports" in t else [],
+            description=str(t.get("description", "")))
+        if not handler.methods or not handler.param_types:
+            raise _fail(origin, where, "methods and param_types must not be empty")
+        if not (handler.imports or pack.detect_imports):
+            raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
+        pack.lambda_handlers.append(handler)
     return pack

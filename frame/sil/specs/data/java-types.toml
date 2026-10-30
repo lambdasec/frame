@@ -1,0 +1,179 @@
+# The Java type model: what Frame knows about JDK and library types without seeing their source.
+# Read by frame/sil/specs/java_specs.py (strictly) and exposed under the names the frontend and
+# Program use. Language rules (numeric promotion, boxing) are not here: they are code.
+
+# Spec keys are written against a conventional variable name (`documentBuilder.parse`); a call on a
+# value whose declared type is known is also looked up under these receiver names. Only types whose
+# decapitalised name is NOT the spec receiver need an entry.
+[type_receivers]
+HttpServletRequest = ["request"]
+ServletRequest = ["request"]
+HttpServletRequestWrapper = ["request"]
+HttpServletResponse = ["response"]
+ServletResponse = ["response"]
+HttpSession = ["session"]
+Session = ["session"]
+StatelessSession = ["session"]
+XPath = ["xpath"]
+InitialDirContext = ["dirContext"]
+LdapContext = ["dirContext"]
+InitialLdapContext = ["dirContext"]
+SpelExpressionParser = ["expressionParser"]
+CloseableHttpClient = ["httpClient"]
+HttpsURLConnection = ["httpURLConnection"]
+Logger = ["log"]
+
+# Documented return types of factory methods, so `var b = f.newDocumentBuilder()` has a type (a
+# `var` initialised by `new T(...)` needs no entry).
+[factory_return_types]
+newDocumentBuilder = "DocumentBuilder"
+newSAXParser = "SAXParser"
+getXMLReader = "XMLReader"
+createXMLReader = "XMLReader"
+newTransformer = "Transformer"
+createUnmarshaller = "Unmarshaller"
+newXPath = "XPath"
+getEngineByName = "ScriptEngine"
+getEngineByExtension = "ScriptEngine"
+getRuntime = "Runtime"
+openConnection = "URLConnection"
+createDefault = "CloseableHttpClient"
+
+# Declared return types of APIs reached through a call chain, keyed `OwnerType.method` (the owner is a
+# class used as a qualifier, a variable's declared type, or an earlier link's result): the next link
+# gets a receiver type, so it resolves to a canonical callee instead of an unknown `$chain.method`.
+[return_types]
+# JDK conversions documented to return a String: the next call of a chain
+# (`Float.toString(r).substring(2)`) is made on that String
+"Integer.toString" = "java.lang.String"
+"Long.toString" = "java.lang.String"
+"Short.toString" = "java.lang.String"
+"Byte.toString" = "java.lang.String"
+"Float.toString" = "java.lang.String"
+"Double.toString" = "java.lang.String"
+"Boolean.toString" = "java.lang.String"
+"Character.toString" = "java.lang.String"
+"Integer.toHexString" = "java.lang.String"
+"Integer.toBinaryString" = "java.lang.String"
+"Integer.toOctalString" = "java.lang.String"
+"Long.toHexString" = "java.lang.String"
+"Long.toBinaryString" = "java.lang.String"
+"Long.toOctalString" = "java.lang.String"
+"String.valueOf" = "java.lang.String"
+"String.format" = "java.lang.String"
+"String.join" = "java.lang.String"
+"Objects.toString" = "java.lang.String"
+"Arrays.toString" = "java.lang.String"
+# Struts 2
+"ActionContext.getContext" = "com.opensymphony.xwork2.ActionContext"
+"ActionContext.getValueStack" = "com.opensymphony.xwork2.util.ValueStack"
+"ServletActionContext.getRequest" = "javax.servlet.http.HttpServletRequest"
+"ServletActionContext.getResponse" = "javax.servlet.http.HttpServletResponse"
+"ServletActionContext.getServletContext" = "javax.servlet.ServletContext"
+# JSF
+"FacesContext.getCurrentInstance" = "javax.faces.context.FacesContext"
+"FacesContext.getExternalContext" = "javax.faces.context.ExternalContext"
+"FacesContext.getApplication" = "javax.faces.application.Application"
+"ExternalContext.getRequestParameterMap" = "java.util.Map"
+"ExternalContext.getRequestHeaderMap" = "java.util.Map"
+"ExternalContext.getRequestCookieMap" = "java.util.Map"
+"ActionContext.getParameters" = "java.util.Map"
+# JAX-RS
+"UriInfo.getQueryParameters" = "javax.ws.rs.core.MultivaluedMap"
+"UriInfo.getPathParameters" = "javax.ws.rs.core.MultivaluedMap"
+"HttpHeaders.getRequestHeaders" = "javax.ws.rs.core.MultivaluedMap"
+# Micronaut
+"HttpRequest.getParameters" = "io.micronaut.http.HttpParameters"
+"HttpRequest.getHeaders" = "io.micronaut.http.HttpHeaders"
+"HttpRequest.getCookies" = "io.micronaut.http.cookie.Cookies"
+# Vert.x
+"HttpServerRequest.params" = "io.vertx.core.MultiMap"
+"HttpServerRequest.headers" = "io.vertx.core.MultiMap"
+"RoutingContext.queryParams" = "io.vertx.core.MultiMap"
+"RoutingContext.queryParam" = "java.util.List"
+"Pool.query" = "io.vertx.sqlclient.Query"
+"Pool.preparedQuery" = "io.vertx.sqlclient.PreparedQuery"
+"PgPool.query" = "io.vertx.sqlclient.Query"
+"PgPool.preparedQuery" = "io.vertx.sqlclient.PreparedQuery"
+"SqlClient.query" = "io.vertx.sqlclient.Query"
+"SqlClient.preparedQuery" = "io.vertx.sqlclient.PreparedQuery"
+"SqlConnection.query" = "io.vertx.sqlclient.Query"
+"SqlConnection.preparedQuery" = "io.vertx.sqlclient.PreparedQuery"
+"RoutingContext.pathParams" = "java.util.Map"
+"RoutingContext.body" = "io.vertx.ext.web.RequestBody"
+"RoutingContext.request" = "io.vertx.core.http.HttpServerRequest"
+"RoutingContext.response" = "io.vertx.core.http.HttpServerResponse"
+"HttpServerResponse.putHeader" = "io.vertx.core.http.HttpServerResponse"
+"HttpServerResponse.setStatusCode" = "io.vertx.core.http.HttpServerResponse"
+"HttpServerResponse.setChunked" = "io.vertx.core.http.HttpServerResponse"
+"HttpServerResponse.setStatusMessage" = "io.vertx.core.http.HttpServerResponse"
+# Servlet / Spring
+"HttpServletRequest.getSession" = "javax.servlet.http.HttpSession"
+"HttpServletRequest.getInputStream" = "javax.servlet.ServletInputStream"
+"HttpServletRequest.getReader" = "java.io.BufferedReader"
+"BufferedReader.lines" = "java.util.stream.Stream"
+"RequestContextHolder.currentRequestAttributes" = "org.springframework.web.context.request.ServletRequestAttributes"
+"ServletRequestAttributes.getRequest" = "javax.servlet.http.HttpServletRequest"
+# JPA / Hibernate
+"EntityManager.createQuery" = "javax.persistence.Query"
+"EntityManager.createNativeQuery" = "javax.persistence.Query"
+"SessionFactory.getCurrentSession" = "org.hibernate.Session"
+"SessionFactory.openSession" = "org.hibernate.Session"
+"Session.createCriteria" = "org.hibernate.Criteria"
+"Session.createQuery" = "org.hibernate.query.Query"
+"Session.createSQLQuery" = "org.hibernate.query.Query"
+"Session.createNativeQuery" = "org.hibernate.query.Query"
+# Play
+"Http.Request.body" = "play.mvc.Http.RequestBody"
+"Request.body" = "play.mvc.Http.RequestBody"
+"RequestBody.asJson" = "com.fasterxml.jackson.databind.JsonNode"
+"Http.RequestBody.asJson" = "com.fasterxml.jackson.databind.JsonNode"
+"JsonNode.get" = "com.fasterxml.jackson.databind.JsonNode"
+"JsonNode.path" = "com.fasterxml.jackson.databind.JsonNode"
+# java.net.http
+"HttpRequest.newBuilder" = "java.net.http.HttpRequest.Builder"
+# jOOQ
+"DSL.using" = "org.jooq.DSLContext"
+# JDK
+"Runtime.getRuntime" = "java.lang.Runtime"
+
+# Result types of java.lang.String methods, by method name (`s.trim()` is a String, `s.length()` an
+# int), for overload resolution by argument type.
+[string_method_types]
+substring = "String"
+trim = "String"
+strip = "String"
+toLowerCase = "String"
+toUpperCase = "String"
+replace = "String"
+replaceAll = "String"
+concat = "String"
+repeat = "String"
+intern = "String"
+formatted = "String"
+length = "int"
+indexOf = "int"
+lastIndexOf = "int"
+compareTo = "int"
+charAt = "char"
+equals = "boolean"
+isEmpty = "boolean"
+isBlank = "boolean"
+startsWith = "boolean"
+endsWith = "boolean"
+contains = "boolean"
+matches = "boolean"
+equalsIgnoreCase = "boolean"
+split = "String[]"
+getBytes = "byte[]"
+toCharArray = "char[]"
+
+# Library hostname verifiers documented to accept every host: passing one where a verifier is expected
+# is as permissive as `(host, session) -> true`.
+[verifiers]
+permissive = ["ALLOW_ALL_HOSTNAME_VERIFIER", "AllowAllHostnameVerifier", "NoopHostnameVerifier", "NoopHostnameVerifier.INSTANCE", "SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER"]
+
+# `javax.*` packages that moved to `jakarta.*` (Jakarta EE 9+): a file importing from jakarta gets the
+# jakarta spelling of the types above.
+[jakarta]
+migrated = ["javax.servlet", "javax.faces", "javax.persistence", "javax.ws", "javax.el", "javax.inject", "javax.enterprise", "javax.validation", "javax.websocket"]

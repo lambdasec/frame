@@ -143,7 +143,7 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
         # framework packs: detected by what the code uses, and modelling its code (a pack that only
         # holds [[setting]] checks is not a framework)
         detecting = {f"{p.language}/{p.name}" for p in PackSet.build(builtin=True).packs
-                     if p.has_detect and (p.rules or p.entrypoints)}
+                     if p.has_detect and (p.rules or p.entrypoints or p.lambda_handlers)}
         inv.truncated = len(sources) > file_limit
         llm: Dict[str, Set[str]] = {}
         mcp: Set[str] = set()

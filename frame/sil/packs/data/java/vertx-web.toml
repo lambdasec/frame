@@ -59,3 +59,11 @@ call = ["io.vertx.ext.web.client.WebClient.getAbs", "io.vertx.ext.web.client.Web
         "io.vertx.ext.web.client.WebClient.putAbs", "io.vertx.ext.web.client.WebClient.deleteAbs",
         "io.vertx.ext.web.client.WebClient.headAbs", "io.vertx.ext.web.client.WebClient.patchAbs"]
 kind = "ssrf"
+
+# `router.route(...).handler(ctx -> ...)`: the lambda receives the RoutingContext.
+[[lambda_handler]]
+id = "route-handler-lambda"
+methods = ["handler", "blockingHandler", "failureHandler"]
+qualified = true
+imports = ["io.vertx.ext.web"]
+param_types = ["io.vertx.ext.web.RoutingContext"]

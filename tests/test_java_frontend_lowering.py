@@ -125,3 +125,46 @@ def test_mybatis_dollar_substitution(tmp_path):
         "  protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {\n"
         "    m.byName(req.getParameter(\"a\"));\n    m.safe(req.getParameter(\"b\"));\n  }\n}\n")
     assert [v for v in _project(tmp_path) if v[0] == "CWE-89"] == [("CWE-89", 4)]      # `${n}`, not `#{n}`
+
+
+def _lambda_types(src):
+    program = JavaFrontend().translate(src, "A.java")
+    return [p.param_types for n, p in program.procedures.items() if ".lambda@" in n]
+
+
+@pytest.mark.parametrize("imp, call, types", [
+    ("spark.Spark", 'Spark.get("/x", (req, res) -> req.body());', {"req": "Request", "res": "Response"}),
+    ("spark.Spark", 'Spark.notFound((req, res) -> "x");', {"req": "Request", "res": "Response"}),
+    ("io.javalin.Javalin", 'app.post("/x", ctx -> ctx.body());', {"ctx": "Context"}),
+    ("io.jooby.Jooby", 'app.get("/x", ctx -> ctx.query());', {"ctx": "Context"}),
+    ("io.vertx.ext.web.Router", 'router.route("/x").handler(ctx -> ctx.end());', {"ctx": "RoutingContext"}),
+    ("ratpack.server.RatpackServer", 'chain.path("x", ctx -> ctx.render("y"));', {"ctx": "Context"}),
+    ("org.springframework.web.reactive.function.server.RouterFunctions",
+     'RouterFunctions.route().GET("/x", req -> ok());', {"req": "ServerRequest"}),
+])
+def test_route_lambdas_are_typed_by_the_framework_pack(imp, call, types):
+    """`[[lambda_handler]]` in the framework's pack: the registration method and the file's imports
+    give the lambda its parameters' types."""
+    src = f"import {imp};\nclass A {{\n  void m(Object app, Object router, Object chain) {{\n    {call}\n  }}\n}}\n"
+    assert _lambda_types(src) == [types]
+
+
+@pytest.mark.parametrize("imp, call", [
+    ("java.util.List", 'Spark.get("/x", (req, res) -> req.body());'),              # no framework import
+    ("spark.Spark", 'Spark.map("/x", (req, res) -> req.body());'),                  # not a route method
+    ("io.vertx.ext.web.Router", 'handler(ctx -> ctx.end());'),                        # needs a receiver
+    ("io.vertx.core.Vertx", 'router.route("/x").handler(ctx -> ctx.end());'),       # not vertx-web
+])
+def test_other_lambdas_are_not_typed(imp, call):
+    src = f"import {imp};\nclass A {{\n  void m(Object router) {{\n    {call}\n  }}\n}}\n"
+    assert all(not t for t in _lambda_types(src))
+
+
+def test_lambda_handlers_are_java_only_and_say_when_they_apply():
+    from frame.sil.packs.schema import PackError, parse_pack
+    with pytest.raises(PackError, match="Java packs"):
+        parse_pack({"pack": {"name": "x", "language": "python"},
+                    "lambda_handler": [{"methods": ["get"], "param_types": ["T"], "imports": ["x"]}]}, "x.toml")
+    with pytest.raises(PackError, match="detect.imports"):
+        parse_pack({"pack": {"name": "x", "language": "java"},
+                    "lambda_handler": [{"methods": ["get"], "param_types": ["T"]}]}, "x.toml")

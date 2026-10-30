@@ -50,14 +50,14 @@ from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
-from frame.sil.packs import annotation_marks_entry, entry_annotation_patterns, finish_program
+from frame.sil.packs import annotation_marks_entry, default_packs, entry_annotation_patterns, finish_program
 # ProcSpec is used for type hints in _lookup_spec
 from frame.sil.specs.parser_hardening import load as parser_hardening
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.specs.weak_algorithms import load as weak_algorithms
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
-    JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_LAMBDA_PARAMS)
+    JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES)
 
 
 class JavaFrontend:
@@ -978,16 +978,8 @@ class JavaFrontend:
     _NUMERIC_RANK = {"byte": 1, "short": 2, "char": 2, "int": 3, "long": 4, "float": 5, "double": 6}
     _BOXED = {"Integer": "int", "Long": "long", "Short": "short", "Byte": "byte",
               "Character": "char", "Float": "float", "Double": "double", "Boolean": "boolean"}
-    # Result types of common String methods, by name.
-    _STRING_METHOD_TYPES = {
-        "substring": "String", "trim": "String", "strip": "String", "toLowerCase": "String",
-        "toUpperCase": "String", "replace": "String", "replaceAll": "String", "concat": "String",
-        "repeat": "String", "intern": "String", "formatted": "String",
-        "length": "int", "indexOf": "int", "lastIndexOf": "int", "compareTo": "int",
-        "charAt": "char", "equals": "boolean", "isEmpty": "boolean", "isBlank": "boolean",
-        "startsWith": "boolean", "endsWith": "boolean", "contains": "boolean",
-        "matches": "boolean", "equalsIgnoreCase": "boolean", "split": "String[]",
-        "getBytes": "byte[]", "toCharArray": "char[]"}
+    # Result types of String methods, by name: specs/data/java-types.toml.
+    _STRING_METHOD_TYPES = JAVA_STRING_METHOD_TYPES
 
     def _promote(self, a: Optional[str], b: Optional[str]) -> Optional[str]:
         """Binary numeric promotion (JLS 5.6.2), through unboxing."""
@@ -1981,12 +1973,20 @@ class JavaFrontend:
         return out
 
     def _framework_lambda_types(self, via: str) -> Tuple[str, ...]:
-        """Qualified parameter types for a lambda handed to this registration call."""
+        """Qualified parameter types for a lambda handed to this registration call: the
+        `[[lambda_handler]]` of a Java pack whose method is the call's last name part (with a
+        receiver where it says `qualified`) and whose imports (its own, else the pack's
+        detect.imports) the file imports one of."""
         values = list(self._imports.names.values()) + list(self._imports.wildcards)
-        for prefixes, pattern, types in JAVA_LAMBDA_PARAMS:
-            if any(v.startswith(pre) or v.startswith(pre.rstrip(".")) for v in values for pre in prefixes) \
-                    and re.search(pattern, via):
-                return types
+        method, qualified = via.rsplit(".", 1)[-1], "." in via
+        packs = self.packs if self.packs is not None else default_packs()
+        for pack in packs.for_language("java"):
+            for handler in pack.lambda_handlers:
+                if method not in handler.methods or (handler.qualified and not qualified):
+                    continue
+                prefixes = handler.imports or pack.detect_imports
+                if any(v.startswith(pre) for v in values for pre in prefixes):
+                    return tuple(handler.param_types)
         return ()
 
     def _lower_lambda(self, node: TSNode, via: str) -> str:

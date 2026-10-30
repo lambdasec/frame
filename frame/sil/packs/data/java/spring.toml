@@ -96,3 +96,11 @@ kinds = ["html"]
 call = ["org.springframework.web.util.UriUtils.encode", "org.springframework.web.util.UriUtils.encodePath",
         "org.springframework.web.util.UriUtils.encodeQueryParam"]
 kinds = ["redirect"]
+
+# WebFlux functional routes (`route(GET("/x"), req -> ...)`, `RouterFunctions.route().GET(...)`): the
+# handler lambda receives a ServerRequest.
+[[lambda_handler]]
+id = "webflux-handler-lambda"
+methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "route", "andRoute", "nest"]
+imports = ["org.springframework.web.reactive.function.server"]
+param_types = ["org.springframework.web.reactive.function.server.ServerRequest"]

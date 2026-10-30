@@ -30,3 +30,12 @@ kind = "header"
 call = ["spark.Response.body"]
 kind = "html"
 description = "the response body is the page"
+
+# Route lambdas are written without parameter types (`get("/x", (req, res) -> ...)`): they receive
+# Spark's request and response.
+[[lambda_handler]]
+id = "route-lambda"
+methods = ["get", "post", "put", "delete", "patch", "head", "options", "trace", "all", "before", "after", "afterAfter",
+           "beforeMatched", "afterMatched", "notFound",
+           "internalServerError", "exception"]
+param_types = ["spark.Request", "spark.Response"]

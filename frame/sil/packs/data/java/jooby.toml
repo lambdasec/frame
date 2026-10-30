@@ -1,0 +1,11 @@
+[pack]
+name = "jooby"
+language = "java"
+description = "Jooby: route lambdas receive the request Context"
+detect = { imports = ["io.jooby"] }
+
+[[lambda_handler]]
+id = "route-lambda"
+methods = ["get", "post", "put", "delete", "patch", "head", "options", "trace", "all", "before", "after", "afterAfter",
+           "beforeMatched", "afterMatched", "decorator"]
+param_types = ["io.jooby.Context"]

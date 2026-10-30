@@ -41,7 +41,8 @@ def cmd_packs(args) -> int:
                     continue
                 print(f"ok   {f}: {pack.language}/{pack.name} "
                       f"({len(pack.entrypoints)} entry points, {len(pack.rules)} rules"
-                      + (f", {len(pack.functions)} function facts" if pack.functions else "") + ")")
+                      + (f", {len(pack.functions)} function facts" if pack.functions else "")
+                      + (f", {len(pack.lambda_handlers)} lambda handlers" if pack.lambda_handlers else "") + ")")
         return 1 if bad else 0
     if args.packs_command == "list":
         try:

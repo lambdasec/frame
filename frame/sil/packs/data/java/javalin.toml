@@ -24,3 +24,11 @@ kind = "redirect"
 call = ["io.javalin.http.Context.header"]
 args = [1]
 kind = "header"
+
+# Handler lambdas (`app.get("/x", ctx -> ...)`) receive Javalin's Context.
+[[lambda_handler]]
+id = "handler-lambda"
+methods = ["get", "post", "put", "delete", "patch", "head", "options", "trace", "all", "before", "after", "afterAfter",
+           "beforeMatched", "afterMatched", "error",
+           "exception", "sse"]
+param_types = ["io.javalin.http.Context"]
