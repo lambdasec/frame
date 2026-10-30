@@ -145,7 +145,9 @@ class _Evaluator:
         self.unknowns: set = set()
 
     def _note(self, u: "Unknown") -> None:
-        self.unknowns.add(u.text if u.text and u.text not in ("error", "cycle", "too deep") else u.key)
+        text = u.text if u.text and u.text not in ("error", "cycle", "too deep") else u.key
+        first = text.splitlines()[0] if text.strip() else u.key
+        self.unknowns.add(first if len(first) <= 80 and first == text else first[:77] + "...")
 
     # -- values ---------------------------------------------------------------------------
 

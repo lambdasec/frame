@@ -98,9 +98,11 @@ class _Lazy(dict):
 class _ResourceObject(dict):
     """A resource as another expression reads it: configured attributes, others unknown."""
 
-    def __init__(self, address: str, attrs: Dict[str, Any]):
+    def __init__(self, address: str, attrs: Dict[str, Any], registry: Optional[Dict] = None):
         super().__init__(attrs)
         self.address = address
+        if registry is not None:
+            registry[address] = self
 
     def __contains__(self, name):
         return True
@@ -200,6 +202,7 @@ class _Instance:
         self.objects: Dict[str, Dict[str, Any]] = {}      # resource type -> name -> object
         self.data: Dict[str, Dict[str, Any]] = {}
         self.children: Dict[str, "_Instance"] = {}
+        self.data_objects: Dict[str, "_ResourceObject"] = {}       # data source address -> object
         self.module = _Lazy(self._module_outputs, [b.labels[0] for b, _ in mod.calls], f"{prefix}module")
         self.stack_root = mod.dir                  # the root module's directory (installed modules)
 
@@ -327,9 +330,44 @@ class _Instance:
             lines[path + (b.type, len(items))] = b.line
             lines.update(sublines)
             items.append(sub)
+        if "policy" in doc:
+            self._analyse_policy(doc, address, path)
         if not path:
             doc.setdefault("id", Unknown(f"{address}.id", f"{address}.id"))
         return doc, lines
+
+    def _analyse_policy(self, doc: Dict[str, Any], address: str, path: Tuple) -> None:
+        """`policy_public` and `policy_admin` beside a `policy` argument (frame/iac/aws_policy.py):
+        True or False when the document is known, else unknown."""
+        from . import aws_policy
+        value = doc["policy"]
+        structure = None
+        if isinstance(value, str):
+            structure = aws_policy.document(value)
+        elif isinstance(value, Unknown):
+            structure = self._policy_document_data(value.key)
+        where = ".".join(map(str, path + ("policy",)))
+        for name, fn in (("policy_public", aws_policy.is_public), ("policy_admin", aws_policy.grants_everything)):
+            verdict = fn(structure) if structure is not None else None
+            text = value.text if isinstance(value, Unknown) and value.text else f"the policy of {address}"
+            doc[name] = verdict if verdict is not None else Unknown(f"{address}.{where}.{name}", text)
+
+    def _policy_document_data(self, key: str):
+        """The document of `data.aws_iam_policy_document.<name>[<i>].json` read in this module."""
+        from . import aws_policy
+        head = f"{self.prefix}data.aws_iam_policy_document."
+        if not (key.startswith(head) and key.endswith((".json", ".minified_json"))):
+            return None
+        address = key.rsplit(".", 1)[0]
+        name = address[len(head):].split("[", 1)[0]
+        lazy = self.data.get("aws_iam_policy_document", {}).get(name)
+        if lazy is None:
+            return None
+        lazy.value()                            # registers the instances
+        obj = self.data_objects.get(address)
+        if obj is None:
+            return None
+        return aws_policy.from_policy_document_data(dict(obj))
 
     def _dynamic(self, b: Block, f: _File, extra, address, path, doc, lines) -> None:
         name = b.labels[0]
@@ -365,6 +403,7 @@ class _LazyResource(dict):
     def __init__(self, inst: _Instance, block: Block, f: _File, base: str):
         super().__init__()
         self.inst, self.block, self.f, self.base = inst, block, f, base
+        self.registry = inst.data_objects if base.startswith(f"{inst.prefix}data.") else None
         self._value = None
         self._busy = False
 
@@ -377,10 +416,19 @@ class _LazyResource(dict):
         try:
             attrs = self.block.body.attributes
             if "count" in attrs or "for_each" in attrs:
-                self._value = Unknown(self.base, self.base)   # indexing picks an instance: not modelled
+                # the same instances the resource expands to, so `x.this[0].id` is instance 0's id
+                insts = self.inst.instances(self.block, self.f, self.base)
+                if len(insts) == 1 and insts[0][0].endswith("[*]"):
+                    self._value = Unknown(self.base, self.base)
+                elif "count" in attrs:
+                    self._value = [_ResourceObject(a, self.inst.document(self.block.body, self.f, extra, a)[0],
+                                                   self.registry) for a, extra in insts]
+                else:
+                    self._value = {extra["each"]["key"]: _ResourceObject(a, self.inst.document(
+                        self.block.body, self.f, extra, a)[0], self.registry) for a, extra in insts}
             else:
                 doc, _ = self.inst.document(self.block.body, self.f, {}, self.base)
-                self._value = _ResourceObject(self.base, doc)
+                self._value = _ResourceObject(self.base, doc, self.registry)
         finally:
             self._busy = False
         return self._value
@@ -392,7 +440,15 @@ class _LazyResource(dict):
         v = self.value()
         if isinstance(v, Unknown):
             return v.child(name)
+        if isinstance(v, list):
+            if isinstance(name, str) and name.isdigit() and int(name) < len(v):
+                return v[int(name)]
+            raise KeyError(name)
         return v[name]
+
+    def resolved(self):
+        """The value itself, for index and splat steps (`x.this[0]`, `x.this[*].id`)."""
+        return self.value()
 
 
 class _Reader:
@@ -458,6 +514,43 @@ class _Reader:
             child.prepare()
 
 
+_FACTS = Path(__file__).parent / "data" / "terraform-facts.toml"
+
+
+def _id_aliases() -> Dict[str, str]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:             # pragma: no cover - 3.10
+        import tomli as tomllib             # type: ignore[no-redef]
+    data = tomllib.loads(_FACTS.read_text(encoding="utf-8"))
+    out = {}
+    for i, e in enumerate(data.get("id_alias", [])):
+        if set(e) != {"type", "argument", "reference"}:
+            raise ValueError(f"{_FACTS.name}: id_alias {i + 1} needs exactly type, argument, reference")
+        out[e["type"]] = e["argument"]
+    return out
+
+
+def _constraints(related: Dict[str, List[Any]]) -> List[Any]:
+    """Z3 facts about the module's unknown ids: distinct within a type, and aliases."""
+    import z3
+
+    from .engine import _z3_const
+    out: List[Any] = []
+    aliases = _id_aliases()
+    for rtype, docs in related.items():
+        ids = [d["id"] for d in docs if isinstance(d.get("id"), Unknown)]
+        keys = {u.key for u in ids}
+        if len(keys) > 1:
+            out.append(z3.Distinct(*[_z3_const(Unknown(k), z3.StringSort()) for k in sorted(keys)]))
+        arg = aliases.get(rtype)
+        if arg:
+            for d in docs:
+                if isinstance(d.get("id"), Unknown) and isinstance(d.get(arg), str):
+                    out.append(_z3_const(d["id"], z3.StringSort()) == z3.StringVal(d[arg]))
+    return out
+
+
 def _related(resources: List[Tuple[str, Dict[str, Any], Block, _File, Dict]]) -> Dict[str, List[Any]]:
     out: Dict[str, List[Any]] = {}
     for address, doc, block, _, _ in resources:
@@ -479,11 +572,13 @@ def read(paths: List[Tuple[Path, str]], root: Path) -> ReadResult:
         inst.prepare()
         resources = inst.resources()
         related = _related(resources)
+        constraints = _constraints(related)
         for address, doc, block, f, lines in resources:
             r = Resource(format="terraform", type=block.labels[0], name=block.labels[1], file=f.rel,
                          line=block.line, document=doc, lines=lines, views={"self": (), "resources": ()},
                          address=address)
             r.related = related
+            r.constraints = constraints
             out.resources.append(r)
             out.files.append(f.rel)
     out.warnings = reader.warnings

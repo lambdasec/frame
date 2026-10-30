@@ -6,7 +6,7 @@
 - `k8s/debug.yaml`: a break-glass debug pod, privileged on purpose, its findings suppressed.
 - `chart/`: a Helm chart for a worker.
 - `images/`: the Dockerfiles of the web, log agent and API images.
-- `terraform/`: the AWS network and database, with `terraform.tfvars`.
+- `terraform/`: the AWS network, database, buckets and deploy role, with `terraform.tfvars`.
 - `.frame/packs/acme.toml`: the platform team's own rule, that every container has a memory limit.
 
 ```console
@@ -24,8 +24,10 @@ k8s/web.yaml:15: [medium] k8s-run-as-non-root (CWE-250) Deployment/shop/web: Con
 ...
 terraform/database.tf:7: [high] aws-rds-public (CWE-284) aws_db_instance.orders: Database instance has a public endpoint [publicly_accessible]
 terraform/network.tf:21: [high] aws-sg-admin-from-internet (CWE-284) aws_security_group.bastion: Security group lets the internet reach SSH or RDP [ingress[0].cidr_blocks[0]]
+terraform/storage.tf:2: [high] aws-s3-public (CWE-732) aws_s3_bucket.assets: S3 bucket is open to the public (an ACL or bucket policy that takes effect)
+terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy.deploy: IAM policy allows every action on every resource [policy_admin]
 
-Infrastructure: 16 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 2 file(s); 21 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
+Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 23 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
 undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)
 undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh (depends on var.partner_cidr)
 warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)
@@ -61,6 +63,9 @@ Terraform is read as a plan would see it, before anything is created: variables 
 - The web group opens 443 to everyone, as a web server should: only SSH, RDP and every-port rules are reported.
 - `orders` has a public endpoint (`publicly_accessible = true`). Its storage is encrypted, so only that is reported.
 - The scratch volume sets no encryption, but `aws_ebs_encryption_by_default` in the same configuration turns it on for the account, so it is not reported.
+- The assets bucket is public. Its policy (from `data "aws_iam_policy_document"`) allows `s3:GetObject` to `*` with no condition, which is public by AWS's definition, and its `aws_s3_bucket_public_access_block` leaves every setting at the provider's default, `false`. Since April 2023 a new bucket blocks public access by default, so both are needed: without the public access block resource, the same policy is not reported.
+- The exports bucket has a `public-read` ACL, yet is not reported. New buckets have ACLs disabled ("bucket owner enforced"), and this configuration never enables them (`aws_s3_bucket_ownership_controls`), so the grant has no effect. Whether a rule about one bucket is about another is decided by Z3, with the provider's facts that two buckets are different objects and that a bucket's `id` is its name.
+- The deploy role's inline policy allows every action on every resource.
 
 ## What is not reported
 
@@ -74,7 +79,7 @@ helm template worker chart/ > rendered.yaml && frame iac rendered.yaml
 
 ## In CI
 
-The default `--fail-on high` fails on the high findings alone: the Baseline breaks, SSH open to the internet, and the public database:
+The default `--fail-on high` fails on the high findings alone: the Baseline breaks, SSH open to the internet, the public database and bucket, and the all-powerful role:
 
 ```console
 $ frame iac . --min-severity high
@@ -83,8 +88,10 @@ k8s/log-agent.yaml:19: [high] k8s-capabilities-restricted (CWE-250) DaemonSet/op
 k8s/log-agent.yaml:24: [high] k8s-host-volume-types (CWE-668) DaemonSet/ops/log-agent: Pod mounts a volume type outside the restricted set [spec.template.spec.volumes[0].hostPath] (also k8s-host-path-volumes)
 terraform/database.tf:7: [high] aws-rds-public (CWE-284) aws_db_instance.orders: Database instance has a public endpoint [publicly_accessible]
 terraform/network.tf:21: [high] aws-sg-admin-from-internet (CWE-284) aws_security_group.bastion: Security group lets the internet reach SSH or RDP [ingress[0].cidr_blocks[0]]
+terraform/storage.tf:2: [high] aws-s3-public (CWE-732) aws_s3_bucket.assets: S3 bucket is open to the public (an ACL or bucket policy that takes effect)
+terraform/storage.tf:37: [high] aws-iam-full-admin (CWE-269) aws_iam_role_policy.deploy: IAM policy allows every action on every resource [policy_admin]
 
-Infrastructure: 16 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 2 file(s); 5 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
+Infrastructure: 22 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 3 file(s); 7 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)
 ```
 
 The exit status is 1. `-f sarif` writes the findings for GitHub code scanning, each with the line and a stable fingerprint; `frame scan . --iac` puts them beside the source scan's.

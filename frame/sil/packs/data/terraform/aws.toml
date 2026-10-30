@@ -114,3 +114,93 @@ default(self.storage_encrypted, false) == false
 and absent(self.snapshot_identifier) and absent(self.replicate_source_db)
 '''
 references = ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html"]
+
+# --- S3: a bucket the public can read or write ---------------------------------------------
+# Since April 2023 every new bucket has all four Block Public Access settings on and ACLs
+# disabled (Object Ownership "bucket owner enforced"), however it is created:
+#   https://aws.amazon.com/about-aws/whats-new/2022/12/amazon-s3-automatically-enable-block-public-access-disable-access-control-lists-buckets-april-2023/
+# So a public ACL takes effect only when this configuration enables ACLs
+# (aws_s3_bucket_ownership_controls: ObjectWriter or BucketOwnerPreferred) and turns
+# block_public_acls and ignore_public_acls off (aws_s3_bucket_public_access_block, whose
+# arguments default to false); a public bucket policy only when it turns block_public_policy and
+# restrict_public_buckets off. An aws_s3_account_public_access_block in the configuration with
+# the matching setting on blocks it for every bucket. Settings made outside these files (an
+# account or organization setting) can block it too; they are not in the files.
+# "Public" for a policy is AWS's definition (frame/iac/aws_policy.py: `policy_public`).
+
+[[define]]
+name = "for_bucket"
+params = ["ref", "b"]
+body = '''ref == b.id or ref == b.bucket'''
+
+[[define]]
+name = "public_acl"
+params = ["b"]
+body = '''
+b.acl in ["public-read", "public-read-write", "authenticated-read"]
+or (some a in resources["aws_s3_bucket_acl"]: for_bucket(a.bucket, b) and (
+    a.acl in ["public-read", "public-read-write", "authenticated-read"]
+    or (some p in a.access_control_policy: some g in p.grant: some e in g.grantee:
+        e.uri in ["http://acs.amazonaws.com/groups/global/AllUsers",
+                  "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"])))
+'''
+
+[[define]]
+name = "acls_enabled"
+params = ["b"]
+body = '''
+some o in resources["aws_s3_bucket_ownership_controls"]: for_bucket(o.bucket, b)
+    and (some r in o.rule: r.object_ownership in ["ObjectWriter", "BucketOwnerPreferred"])
+'''
+
+[[define]]
+name = "acls_unblocked"
+params = ["b"]
+body = '''
+(some p in resources["aws_s3_bucket_public_access_block"]: for_bucket(p.bucket, b)
+    and default(p.block_public_acls, false) == false and default(p.ignore_public_acls, false) == false)
+and not (some a in resources["aws_s3_account_public_access_block"]:
+    default(a.block_public_acls, false) == true or default(a.ignore_public_acls, false) == true)
+'''
+
+[[define]]
+name = "public_policy"
+params = ["b"]
+body = '''
+b.policy_public == true
+or (some p in resources["aws_s3_bucket_policy"]: for_bucket(p.bucket, b) and p.policy_public == true)
+'''
+
+[[define]]
+name = "policies_unblocked"
+params = ["b"]
+body = '''
+(some p in resources["aws_s3_bucket_public_access_block"]: for_bucket(p.bucket, b)
+    and default(p.block_public_policy, false) == false and default(p.restrict_public_buckets, false) == false)
+and not (some a in resources["aws_s3_account_public_access_block"]:
+    default(a.block_public_policy, false) == true or default(a.restrict_public_buckets, false) == true)
+'''
+
+[[policy]]
+id = "aws-s3-public"
+title = "S3 bucket is open to the public (an ACL or bucket policy that takes effect)"
+severity = "high"
+cwe = "CWE-732"
+resources = ["aws_s3_bucket"]
+when = '''
+(public_acl(self) and acls_enabled(self) and acls_unblocked(self))
+or (public_policy(self) and policies_unblocked(self))
+'''
+references = ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html",
+              "https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html"]
+
+# --- IAM ---------------------------------------------------------------------------------
+
+[[policy]]
+id = "aws-iam-full-admin"
+title = "IAM policy allows every action on every resource"
+severity = "high"
+cwe = "CWE-269"
+resources = ["aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy", "aws_iam_role"]
+when = '''self.policy_admin == true or (some p in self.inline_policy: p.policy_admin == true)'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/iam-controls.html#iam-1"]

@@ -1,0 +1,26 @@
+# When is an S3 bucket policy "public"? AWS's own definition:
+#   https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status
+# A policy is public unless every statement that allows something is limited to fixed values
+# (no wildcard, no ${policy variable}) of an AWS principal or of one of these condition keys.
+# aws:SourceIp limits it only to CIDRs no broader than /8 (IPv4) or /32 (IPv6), RFC 1918 ranges
+# aside. aws:userid does not limit it with the pattern "AROLEID:*".
+#
+# Loaded by frame/iac/aws_policy.py.
+
+fixed_keys = [
+    "aws:PrincipalOrgID", "aws:PrincipalAccount", "aws:PrincipalArn",
+    "aws:SourceIp", "aws:SourceArn", "aws:SourceVpc", "aws:SourceVpce", "aws:SourceOwner",
+    "aws:SourceAccount", "aws:userid", "s3:DataAccessPointArn", "s3:DataAccessPointAccount",
+]
+
+# Condition operators that pin a key to the listed values (the IAM condition operators:
+# https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html).
+# A *Like operator pins only when no value has a wildcard; an ...IfExists operator never pins
+# (a request without the key passes), nor does a negated one (StringNotEquals, NotIpAddress).
+pinning_operators = ["StringEquals", "StringEqualsIgnoreCase", "StringLike", "ArnEquals", "ArnLike", "IpAddress"]
+
+# Canned ACLs that grant to AllUsers or AuthenticatedUsers, and the group URIs:
+#   https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl
+public_canned_acls = ["public-read", "public-read-write", "authenticated-read"]
+public_group_uris = ["http://acs.amazonaws.com/groups/global/AllUsers",
+                     "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"]

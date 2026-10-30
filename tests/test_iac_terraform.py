@@ -362,3 +362,151 @@ def test_internet_reachability_agrees_with_pythons_registry_for_unicast_ipv4():
 ])
 def test_cidrs(cidr, reachable):
     assert may_reach(cidr) is reachable
+
+
+# --- S3 and IAM --------------------------------------------------------------------------
+
+from frame.iac import aws_policy  # noqa: E402
+
+BUCKET = 'resource "aws_s3_bucket" "b" {\n  bucket = "shop-assets"\n}\n'
+ACL = 'resource "aws_s3_bucket_acl" "a" {\n  bucket = aws_s3_bucket.b.id\n  acl    = "public-read"\n}\n'
+OWNERSHIP = ('resource "aws_s3_bucket_ownership_controls" "o" {\n  bucket = aws_s3_bucket.b.id\n'
+             '  rule {\n    object_ownership = "ObjectWriter"\n  }\n}\n')
+PAB_OFF = 'resource "aws_s3_bucket_public_access_block" "p" {\n  bucket = aws_s3_bucket.b.id\n}\n'
+PAB_IGNORE = ('resource "aws_s3_bucket_public_access_block" "p" {\n  bucket = aws_s3_bucket.b.id\n'
+              '  ignore_public_acls = true\n}\n')
+ACCOUNT_BLOCK = 'resource "aws_s3_account_public_access_block" "acct" {\n  block_public_policy = true\n}\n'
+POLICY = '''resource "aws_s3_bucket_policy" "p" {
+  bucket = "shop-assets"
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = "*", Action = "s3:GetObject", Resource = "arn:aws:s3:::shop-assets/*" }]
+  })
+}
+'''
+
+
+@pytest.mark.parametrize("parts, public", [
+    ([ACL], False),                                    # new buckets: ACLs disabled, public access blocked
+    ([ACL, OWNERSHIP], False),                         # ACLs enabled, still blocked by default
+    ([ACL, PAB_OFF], False),                           # unblocked, but ACLs are disabled
+    ([ACL, OWNERSHIP, PAB_OFF], True),
+    ([ACL, OWNERSHIP, PAB_IGNORE], False),
+    ([POLICY], False),
+    ([POLICY, PAB_OFF], True),                         # the policy names the bucket by name
+    ([POLICY, PAB_OFF, ACCOUNT_BLOCK], False),
+])
+def test_an_s3_bucket_is_public_only_when_the_defaults_are_turned_off(tmp_path, parts, public):
+    run = _tf(tmp_path, {"main.tf": BUCKET + "".join(parts)})
+    assert ("aws-s3-public" in {f.rule for f in run.findings}) is public
+    assert not [u for u in run.undecided if u["rule"] == "aws-s3-public"]
+
+
+def test_a_bucket_policy_from_a_policy_document_data_source(tmp_path):
+    doc = '''data "aws_iam_policy_document" "read" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::shop-assets/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+}
+resource "aws_s3_bucket_policy" "p" {
+  bucket = aws_s3_bucket.b.id
+  policy = data.aws_iam_policy_document.read.json
+}
+'''
+    run = _tf(tmp_path, {"main.tf": BUCKET + PAB_OFF + doc})
+    assert {f.rule for f in run.findings} == {"aws-s3-public"}
+    pinned = doc.replace('    principals {', '    condition {\n      test = "StringEquals"\n'
+                         '      variable = "aws:SourceVpce"\n      values = ["vpce-1a2b"]\n    }\n    principals {')
+    assert not _tf(tmp_path, {"main.tf": BUCKET + PAB_OFF + pinned}).findings
+
+
+@pytest.mark.parametrize("statement, public", [
+    # AWS's own examples (access-control-block-public-access.html, "The meaning of public")
+    ({"Principal": "*", "Resource": "*", "Action": "s3:PutObject", "Effect": "Allow"}, True),
+    ({"Principal": "*", "Resource": "*", "Action": "s3:PutObject", "Effect": "Allow",
+      "Condition": {"StringLike": {"aws:SourceVpc": "vpc-*"}}}, True),
+    ({"Principal": "*", "Resource": "*", "Action": "s3:PutObject", "Effect": "Allow",
+      "Condition": {"StringEquals": {"aws:SourceVpc": "vpc-91237329"}}}, False),
+    ({"Principal": "*", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*",
+      "Condition": {"IpAddress": {"aws:SourceIp": "0.0.0.0/1"}}}, True),             # broader than /8
+    ({"Principal": "*", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*",
+      "Condition": {"IpAddress": {"aws:SourceIp": "203.0.113.0/24"}}}, False),
+    ({"Principal": "*", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*",
+      "Condition": {"StringEqualsIfExists": {"aws:SourceVpc": "vpc-1"}}}, True),
+    ({"Principal": "*", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*",
+      "Condition": {"Bool": {"aws:SecureTransport": "true"}}}, True),
+    ({"Principal": {"AWS": "arn:aws:iam::111122223333:root"}, "Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+     False),
+    ({"Principal": {"Service": "cloudtrail.amazonaws.com"}, "Effect": "Allow", "Action": "s3:PutObject",
+      "Resource": "*"}, False),
+    ({"NotPrincipal": {"AWS": "arn:aws:iam::111122223333:root"}, "Effect": "Allow", "Action": "s3:*",
+      "Resource": "*"}, None),
+])
+def test_what_aws_calls_a_public_policy(statement, public):
+    assert aws_policy.is_public({"Statement": [statement]}) is public
+
+
+def test_a_deny_leaves_a_public_grant_undecided():
+    allow = {"Principal": "*", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}
+    deny = {"Principal": "*", "Effect": "Deny", "Action": "s3:*", "Resource": "*",
+            "Condition": {"StringNotEquals": {"aws:SourceVpc": "vpc-1"}}}
+    assert aws_policy.is_public({"Statement": [allow, deny]}) is None
+
+
+@pytest.mark.parametrize("policy, admin", [
+    ('{"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}', True),
+    ('{"Statement": [{"Effect": "Allow", "Action": ["s3:*", "*:*"], "Resource": ["*"]}]}', True),
+    ('{"Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}', False),
+    ('{"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "arn:aws:s3:::b"}]}', False),
+])
+def test_iam_policies_that_allow_everything(tmp_path, policy, admin):
+    text = f'resource "aws_iam_policy" "p" {{\n  name = "p"\n  policy = <<EOF\n{policy}\nEOF\n}}\n'
+    run = _tf(tmp_path, {"main.tf": text})
+    assert ("aws-iam-full-admin" in {f.rule for f in run.findings}) is admin
+
+
+def test_an_iam_policy_known_only_at_apply_time_is_undecided(tmp_path):
+    run = _tf(tmp_path, {"main.tf": 'variable "doc" {}\nresource "aws_iam_policy" "p" {\n  policy = var.doc\n}\n'})
+    assert not run.findings
+    assert [(u["rule"], u["depends_on"]) for u in run.undecided] == [("aws-iam-full-admin", ["var.doc"])]
+
+
+def test_references_to_counted_resources_reach_the_instance(tmp_path):
+    run = _tf(tmp_path, {"main.tf": '''
+resource "aws_s3_bucket" "b" {
+  count  = 2
+  bucket = "b-${count.index}"
+}
+resource "aws_s3_bucket_ownership_controls" "o" {
+  bucket = aws_s3_bucket.b[1].id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+resource "aws_s3_bucket_public_access_block" "p" {
+  bucket = aws_s3_bucket.b[1].id
+}
+resource "aws_s3_bucket_acl" "a" {
+  bucket = aws_s3_bucket.b[1].id
+  acl    = "public-read-write"
+}
+'''})
+    assert [f.resource for f in run.findings] == ["aws_s3_bucket.b[1]"]
+
+
+def test_two_buckets_are_different_objects_and_an_s3_id_is_its_name(tmp_path):
+    """Without these provider facts, a block on bucket A might be a block on bucket B."""
+    two = BUCKET + BUCKET.replace('"b"', '"c"').replace("shop-assets", "shop-other") + OWNERSHIP + PAB_OFF + \
+        ACL.replace("aws_s3_bucket.b.id", "aws_s3_bucket.c.id")
+    run = _tf(tmp_path, {"main.tf": two})
+    assert not run.findings and not run.undecided      # the ACL is on c; ownership and the unblock are on b
+    named = BUCKET + OWNERSHIP + PAB_OFF + ACL.replace("aws_s3_bucket.b.id", '"shop-assets"')
+    assert [f.rule for f in _tf(tmp_path, {"main.tf": named}).findings] == ["aws-s3-public"]
+    elsewhere = BUCKET + OWNERSHIP + PAB_OFF + ACL.replace("aws_s3_bucket.b.id", '"someone-elses-bucket"')
+    run = _tf(tmp_path, {"main.tf": elsewhere})        # b.id is "shop-assets", so not this bucket
+    assert not run.findings and not run.undecided

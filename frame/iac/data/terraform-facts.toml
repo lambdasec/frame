@@ -1,0 +1,11 @@
+# Facts about Terraform resources that let the solver relate them (frame/iac/terraform.py):
+# each becomes a Z3 constraint on the unknown `id`s of a root module's resources.
+#
+# Two resources of the same type are different objects, so their ids differ (every resource,
+# no entry needed). Where a provider documents a resource's id as one of its arguments, the id
+# equals that argument:
+
+[[id_alias]]
+type = "aws_s3_bucket"
+argument = "bucket"
+reference = "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#id-1"

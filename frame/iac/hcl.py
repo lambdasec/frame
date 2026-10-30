@@ -633,6 +633,8 @@ def _get_attr(v, name: str, e: Expr, src: Source, scope: Scope):
 
 
 def _index(v, i, e: Expr, src: Source, scope: Scope):
+    if hasattr(v, "resolved"):              # a resource with count or for_each (terraform.py)
+        v = v.resolved()
     if isinstance(v, Unknown):
         return v.child(i if isinstance(i, (int, str)) and not isinstance(i, Unknown) else "?")
     if isinstance(i, Unknown):
@@ -662,6 +664,8 @@ def _apply(v, steps, e: Expr, scope: Scope, src: Source):
             _, kind, inner = step
             rest = list(inner) + list(steps[i + 1:]) if kind == "full_splat" else list(inner)
             after = [] if kind == "full_splat" else list(steps[i + 1:])
+            if hasattr(v, "resolved"):
+                v = v.resolved()
             if isinstance(v, Unknown):
                 return _unknown(e, src.text(e.node), scope)
             if v is None:
