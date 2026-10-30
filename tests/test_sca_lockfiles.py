@@ -495,3 +495,22 @@ def test_package_resolved_v1_and_v2(doc):
     df = parse_package_resolved("Package.resolved", json.dumps(doc))
     assert table(df) == {("github.com/apple/swift-nio", "2.58.0"): (None, False)}
     assert {p.purl for p in df.packages.values()} == {"pkg:swift/github.com/apple/swift-nio@2.58.0"}
+
+
+def test_yaml_reader_reads_empty_flow_collections_as_empty():
+    """Package managers write an empty mapping or sequence as `{}` / `[]`; anything else in flow
+    style keeps its text (no field Frame reads is written that way)."""
+    from frame.sca import _yaml
+    assert _yaml.loads("packages: {}\nlist: []\nquoted: \"{}\"\nr: {integrity: abc}\n") == {
+        "packages": {}, "list": [], "quoted": "{}", "r": "{integrity: abc}"}
+
+
+def test_an_empty_pubspec_lock_has_no_packages_and_a_broken_file_is_a_warning(tmp_path):
+    from frame.sca import read_dependencies
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "pubspec.lock").write_text("packages: {}\nsdks:\n  dart: \">=3.0.0 <4.0.0\"\n")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "pubspec.lock").write_text("packages: oops\n")
+    report = read_dependencies(tmp_path)
+    assert [f.path for f in report.files] == ["a/pubspec.lock"] and not report.files[0].packages
+    assert any(w.startswith("b/pubspec.lock: could not be read") for w in report.warnings)

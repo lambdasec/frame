@@ -18,22 +18,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-# imported module (or prefix, ending in `.` or `/`) -> framework
-_IMPORTS = {
-    "python": ("pytest", "unittest", "hypothesis", "nose", "nose2", "testtools", "pytest_asyncio", "freezegun"),
-    "java": ("org.junit.", "junit.framework.", "org.testng.", "org.mockito.", "org.assertj."),
-    "javascript": ("vitest", "@jest/globals", "jest", "mocha", "chai", "node:test", "ava", "jasmine",
-                   "@playwright/test", "sinon", "supertest", "@testing-library/"),
-    "c": ("gtest/", "gmock/", "catch2/", "catch.hpp", "boost/test/", "CUnit/", "cmocka.h", "doctest/", "doctest.h"),
-}
-_LANGUAGE_FAMILY = {"typescript": "javascript", "cpp": "c", "c++": "c"}
+from frame.sil.specs.test_frameworks import load as _frameworks
 
-# test-runner globals a JS test file passes its callbacks to (jest, mocha, jasmine)
-_JS_RUNNER_GLOBALS = frozenset({"describe", "it", "test", "suite", "beforeEach", "afterEach", "beforeAll",
-                                "afterAll", "before", "after", "context"})
-# C# test attributes (xUnit, NUnit, MSTest)
-_CSHARP_ATTRIBUTES = frozenset({"Fact", "Theory", "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
-                                "TestClass", "TestFixture", "SetUp", "TearDown", "OneTimeSetUp", "TestInitialize"})
+# The catalog (imports, annotation packages, attributes, runner globals, pytest's prefix) is
+# data: specs/data/test-frameworks.toml.
+_LANGUAGE_FAMILY = {"typescript": "javascript", "cpp": "c", "c++": "c"}
 
 
 def _matches(module: str, prefixes) -> bool:
@@ -49,31 +38,32 @@ def _matches(module: str, prefixes) -> bool:
 def test_framework(program, language: str) -> Optional[str]:
     """The evidence that the file is test code (e.g. "imports pytest"), or None."""
     family = _LANGUAGE_FAMILY.get(language, language)
+    catalog = _frameworks()
     for module in sorted(set((program.imports or {}).values())):
-        if _matches(str(module), _IMPORTS.get(family, ())):
+        if _matches(str(module), catalog.imports.get(family, ())):
             return f"imports {module}"
     procs = list(program.procedures.values())
     if family == "java":
         for proc in procs:
             for a in getattr(proc, "annotations", ()) or ():
                 qualified = a.canonical or a.name           # `@org.testng.annotations.Test` is written whole
-                if qualified.startswith(("org.junit.", "org.testng.")):
+                if qualified.startswith(catalog.java_annotation_packages):
                     return f"@{a.name} ({qualified})"
     if family == "csharp":
         for proc in procs:
             for a in getattr(proc, "annotations", ()) or ():
-                if a.name.split(".")[-1].removesuffix("Attribute") in _CSHARP_ATTRIBUTES:
+                if a.name.split(".")[-1].removesuffix("Attribute") in catalog.csharp_attributes:
                     return f"[{a.name}]"
     if family == "javascript":
         for proc in procs:
             for callee, _ in getattr(proc, "passed_as", ()) or ():
-                if callee in _JS_RUNNER_GLOBALS:
+                if callee in catalog.js_runner_globals:
                     return f"a callback passed to {callee}()"
     if family == "python":
         # pytest's own discovery: a module-level `test_*` function, which asserts (a production
         # `test_connection()` helper does not); methods are `Class.test_*` and do not count
         for name, proc in program.procedures.items():
-            if name.startswith("test_") and "." not in name and getattr(proc, "asserts", False):
+            if name.startswith(catalog.python_test_prefix) and "." not in name and getattr(proc, "asserts", False):
                 return f"pytest test function {name}()"
     return None
 

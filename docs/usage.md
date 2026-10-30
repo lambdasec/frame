@@ -350,7 +350,7 @@ Provider credentials anywhere in the git history: every line each commit added (
 
 ### `frame inventory [dir]`
 
-Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything. Each MCP tool is listed with its capabilities: the kinds of sink its handler and the file's functions it calls reach, whatever the arguments (`ai.mcp_tools` in JSON), so a tool that can run a shell or write files is visible before anyone reads its code: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).
+Languages, framework packs, manifests and lockfiles, IaC, containers, LLM SDKs and MCP servers, without analysing anything. Dependency files are the ones `frame deps` reads, under the same ecosystem names (OSV's: `PyPI`, `npm`, `Maven`...), each with `read: true`; a declaration `frame deps` does not read on its own (`setup.py`, `Pipfile`, `go.sum`) is listed with `read: false`. Each MCP tool is listed with its capabilities: the kinds of sink its handler and the file's functions it calls reach, whatever the arguments (`ai.mcp_tools` in JSON), so a tool that can run a shell or write files is visible before anyone reads its code: `-f text|json`, `--no-sources` (skip reading source files), `--file-limit N` (default 5000).
 
 ### `frame packs list | check`
 

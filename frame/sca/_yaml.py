@@ -2,8 +2,9 @@
 `yarn.lock`): block mappings and block sequences of plain or quoted scalars.
 
 Lockfiles are machine-written and use only that subset, so Frame reads them without a YAML
-dependency. Flow collections (`{a: b}`, `[x, y]`) are kept as their text: no lockfile field
-Frame reads is written that way. Block scalars (`|`, `>`) are skipped. Anything else is not
+dependency. An empty flow collection (`{}`, `[]`) is an empty mapping / sequence: package managers
+write empty containers that way (`packages: {}` in an empty `pubspec.lock`). Other flow collections
+(`{a: b}`, `[x, y]`) are kept as their text: no lockfile field Frame reads is written that way. Block scalars (`|`, `>`) are skipped. Anything else is not
 guessed at: a line that is not a mapping entry or a sequence item raises `YamlError`.
 """
 
@@ -65,6 +66,10 @@ def _split_key(s: str) -> Optional[Tuple[str, str]]:
 def _scalar(v: str) -> Any:
     if v[:1] in "'\"":
         return _unquote(v)
+    if v.replace(" ", "") == "{}":
+        return {}
+    if v.replace(" ", "") == "[]":
+        return []
     return v
 
 

@@ -88,3 +88,17 @@ def test_sarif_carries_the_context():
                                              "checks.py")
     [result] = r.to_sarif()["runs"][0]["results"]
     assert result["properties"]["context"] == "test"
+
+
+def test_the_catalog_is_data_and_strict(tmp_path):
+    from frame.sil.specs import test_frameworks
+    catalog = test_frameworks.load()
+    assert "pytest" in catalog.imports["python"] and "Fact" in catalog.csharp_attributes
+    text = test_frameworks.PATH.read_text()
+    bad = tmp_path / "test-frameworks.toml"
+    bad.write_text(text.replace('test_function_prefix = "test_"', 'prefix = "test_"'))
+    with pytest.raises(ValueError, match=r"\[python\]"):
+        test_frameworks.load(bad)
+    bad.write_text(text + "\n[ruby]\nimports = []\n")
+    with pytest.raises(ValueError, match="needs exactly"):
+        test_frameworks.load(bad)

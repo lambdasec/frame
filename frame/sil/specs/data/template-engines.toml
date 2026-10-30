@@ -1,0 +1,64 @@
+# Server-side template engines: how each writes raw (unescaped) output, includes another file and
+# binds a loop or local variable. Read by frame/sil/templates.py through
+# frame/sil/specs/template_engines.py (strictly: every pattern must compile and carry its named
+# groups). A view is read with every engine's patterns at once: the markers are distinct.
+#
+# Patterns are Python regular expressions in TOML literal strings; flags are inline (`(?s)`,
+# `(?m)`), and `{ident}` stands for an identifier (`[A-Za-z_$][\w$]*`). Named groups:
+#   raw:       `expr`, the expression printed raw
+#   include:   `file`, the file named
+#   alias:     `alias`, the name bound, and `source`, the expression it reads
+
+# File extensions a view may have, the directories views live in, and the layouts a view's
+# siblings may be (a layout next to a view prints raw output with the same data).
+extensions = [".ejs", ".pug", ".jade", ".hbs", ".handlebars", ".njk", ".nunjucks", ".twig", ".swig", ".html"]
+view_dirs = ["views", "templates", "app/views", "src/views", "app/templates", "src/templates"]
+layouts = ["layout", "_layout", "base"]
+
+# Words of the expression languages that are not data names.
+keywords = ["true", "false", "null", "undefined", "this", "new", "typeof", "instanceof", "in", "of", "if",
+            "else", "for", "while", "return", "var", "let", "const", "function", "and", "or", "not", "is",
+            "none", "include", "extends", "block", "endblock"]
+
+# Escaping switched off for a whole template, a dynamic include (its file is unknown), and escaping
+# switched off in the application's engine configuration (`nunjucks.configure({ autoescape: false })`,
+# Handlebars `noEscape: true`): then the template says nothing about what is raw.
+[escape]
+template_off = '(?i)autoescape\s+(?:false|off)'
+dynamic_include = '''<%[-_]?\s*include\s*\(\s*[^'"\s]|\{%\s*(?:include|extends)\s+[^'"\s]'''
+config_off = '(?i)autoescape\s*:\s*(?:false|0)\b|noEscape\s*:\s*true|\bescape\s*:\s*false\b|autoescape\s*=\s*false'
+
+[[engine]]
+name = "ejs"
+raw = ['(?s)<%-(?P<expr>.*?)%>']
+include = ['''<%[-_]?\s*include\s*\(?\s*['"](?P<file>[^'"]+)['"]''']
+alias = ['for\s*\(\s*(?:const|let|var)?\s*(?P<alias>{ident})\s+(?:of|in)\s+(?P<source>[^)]+)\)',
+         '(?:const|let|var)\s+(?P<alias>{ident})\s*=\s*(?P<source>[^;%\n]+)',
+         '(?P<source>[\w$.\[\]]+)\.(?:forEach|map|filter|some|every|reduce)\s*\(\s*(?:function\s*)?\(?\s*(?P<alias>{ident})']
+
+[[engine]]
+name = "handlebars"
+raw = ['(?s)\{\{\{\{?(?P<expr>.*?)\}\}\}\}?']
+include = ['\{\{>\s*(?P<file>[\w./-]+)']
+# `{{#each list}} ... {{/each}}`: the block's context is printed raw when a raw marker of these
+# engines appears inside the block.
+block_open = '\{\{\s*#(?:each|with)\s+(?P<context>[^}]+?)\s*\}\}'
+block_close = '\{\{\s*/(?:each|with)\s*\}\}'
+block_raw_engines = ["ejs", "handlebars", "mustache"]
+
+[[engine]]
+name = "mustache"
+raw = ['(?s)\{\{\s*&(?P<expr>.*?)\}\}']
+
+[[engine]]
+name = "nunjucks"          # also Swig, Twig and Jinja-style templates
+raw = ['(?s)\{\{(?P<expr>.*?)\|\s*(?:safe|raw)\b.*?\}\}']
+include = ['''\{%\s*(?:include|extends|import|from)\s+['"](?P<file>[^'"]+)['"]''']
+alias = ['for\s+(?P<alias>{ident})(?:\s*,\s*{ident})?\s+in\s+(?P<source>[^%}\n]+)',
+         'set\s+(?P<alias>{ident})\s*=\s*(?P<source>[^%}\n]+)']
+
+[[engine]]
+name = "pug"               # also Jade
+raw = ['(?m)^\s*[\w.#-]*(?:\([^)]*\))?\s*!=(?P<expr>.*)$', '!\{(?P<expr>.*?)\}']
+include = ['(?m)^\s*(?:include|extends)\s+(?P<file>[\w./-]+)\s*$']
+alias = ['each\s+(?P<alias>{ident})(?:\s*,\s*{ident})?\s+in\s+(?P<source>.+)']

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from frame.sca.osv import DISTRO_FAMILIES
 from frame.sca.jvm import (GRADLE_REPORT_FILES, MAVEN_TREE_FILES, MAVEN_TREE_JSON_FILES, parse_gradle_report,
@@ -86,6 +86,24 @@ def _ecosystem_of(name: str) -> Optional[str]:
     return lockfile_ecosystem(name)
 
 
+def dependency_file(path: Path) -> Optional[Tuple[str, str]]:
+    """(ecosystem, kind) of a file `read_dependencies` reads, kind being "lockfile", "report" (a
+    build tool's resolved tree, read like a lockfile) or "manifest"; None for any other file. The
+    one place that decides what a dependency file is (`frame inventory` lists these too)."""
+    kind = _kind(path)
+    if kind in LOCKFILES:
+        if path.name == "project.assets.json" and path.parent.name != "obj":
+            return None
+        eco = lockfile_ecosystem(kind)
+        return (eco, "lockfile") if eco else None
+    if path.name in REPORTS:
+        return MAVEN, "report"
+    if manifest_parser(path.name) is not None:
+        eco = manifest_ecosystem(path.name)
+        return (eco, "manifest") if eco else None
+    return None
+
+
 def _apply_manifest(df: DependencyFile, manifest: Path, names_of: Callable[[str], Dict[str, bool]]) -> None:
     mtext = _read(manifest) if manifest.is_file() else None
     if mtext is None:
@@ -152,9 +170,7 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
             vendored_sources.append(path)
         if name in _GRADLE_BUILD:
             gradle_dirs.append(path.parent)
-        if _kind(path) in LOCKFILES or name in REPORTS or manifest_parser(name) is not None:
-            if name == "project.assets.json" and path.parent.name != "obj":
-                continue
+        if dependency_file(path) is not None:
             by_dir.setdefault(_home(path), []).append(path)
 
     def rel(p: Path) -> str:
@@ -230,7 +246,7 @@ def read_dependencies(root: Union[str, Path], exclude_dirs: Optional[Iterable[st
                 continue
             try:
                 df = _read_one(p, text, d, base, rel, locked, has_lock)
-            except (LockfileError, KeyError, TypeError, ValueError) as e:
+            except (LockfileError, KeyError, TypeError, ValueError, AttributeError) as e:
                 report.warnings.append(f"{rel(p)}: could not be read ({e})")
                 continue
             if df is not None:

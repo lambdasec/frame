@@ -1,0 +1,33 @@
+# What says a file is test code, per language (read by frame/sil/test_code.py through
+# frame/sil/specs/test_frameworks.py, strictly). Never a file name: `test_utils.py` may hold
+# production helpers, and a `checks.py` full of pytest tests is test code.
+
+# Importing one of these is test code. An entry ending in `.` or `/` is a prefix; otherwise the
+# module itself or anything under it (`pytest`, `pytest.mark`).
+[imports]
+python = ["pytest", "unittest", "hypothesis", "nose", "nose2", "testtools", "pytest_asyncio", "freezegun"]
+java = ["org.junit.", "junit.framework.", "org.testng.", "org.mockito.", "org.assertj."]
+javascript = ["vitest", "@jest/globals", "jest", "mocha", "chai", "node:test", "ava", "jasmine",
+              "@playwright/test", "sinon", "supertest", "@testing-library/"]
+c = ["gtest/", "gmock/", "catch2/", "catch.hpp", "boost/test/", "CUnit/", "cmocka.h", "doctest/", "doctest.h"]
+
+# Java: a method annotation resolving into one of these packages (JUnit's and TestNG's `@Test`,
+# `@BeforeEach`...; a fully written `@org.testng.annotations.Test` counts too).
+[java]
+annotation_packages = ["org.junit.", "org.testng."]
+
+# C#: test attributes of xUnit, NUnit and MSTest (compared without an `Attribute` suffix).
+[csharp]
+attributes = ["Fact", "Theory", "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
+              "TestClass", "TestFixture", "SetUp", "TearDown", "OneTimeSetUp", "TestInitialize"]
+
+# JavaScript / TypeScript: the test runner's globals a test file hands its callbacks to (jest,
+# mocha, jasmine).
+[javascript]
+runner_globals = ["describe", "it", "test", "suite", "beforeEach", "afterEach", "beforeAll", "afterAll",
+                  "before", "after", "context"]
+
+# Python: pytest's default discovery, a module-level function with this prefix that asserts (a
+# production `test_connection()` helper does not).
+[python]
+test_function_prefix = "test_"

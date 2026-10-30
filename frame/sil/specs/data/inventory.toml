@@ -1,0 +1,49 @@
+# What `frame inventory` (frame/sil/inventory.py) reports beyond what it reads elsewhere. Loaded
+# strictly by frame/sil/specs/inventory_catalog.py. The dependency files Frame READS are not listed
+# here: they come from frame/sca's own registry (`frame.sca.discover.dependency_file`), so the
+# inventory and `frame deps` agree by construction.
+
+# Dependency declarations Frame recognises but `frame deps` does not read on their own; listed so
+# the inventory shows the ecosystem, with `read = false`. Ecosystems are OSV's names, as everywhere
+# in Frame.
+[[dependency_file]]
+name = "setup.py"
+ecosystem = "PyPI"
+kind = "manifest"
+
+[[dependency_file]]
+name = "setup.cfg"
+ecosystem = "PyPI"
+kind = "manifest"
+
+[[dependency_file]]
+name = "Pipfile"
+ecosystem = "PyPI"
+kind = "manifest"
+
+[[dependency_file]]
+name = "bun.lockb"
+ecosystem = "npm"
+kind = "lockfile"
+
+[[dependency_file]]
+name = "go.sum"
+ecosystem = "Go"
+kind = "lockfile"
+
+[[dependency_file]]
+name = "Directory.Packages.props"
+ecosystem = "NuGet"
+kind = "manifest"
+
+# Imported modules (canonical prefixes: a module, or anything under it) that say the code talks to
+# a model or is an MCP server, in any language (the llm-sdks / mcp-servers packs model only some
+# of these SDKs' APIs; the inventory reports every SDK it can name).
+[ai]
+llm_sdks = ["openai", "anthropic", "@anthropic-ai/sdk", "langchain", "@langchain", "langchain_core",
+            "langchain_community", "llama_index", "llamaindex", "google.generativeai", "google.genai",
+            "@google/generative-ai", "@google/genai", "mistralai", "@mistralai", "cohere", "groq",
+            "litellm", "ollama", "transformers", "dev.langchain4j", "com.openai", "com.anthropic",
+            "OpenAI", "Anthropic", "Microsoft.SemanticKernel", "Azure.AI.OpenAI"]
+mcp_server_sdks = ["mcp.server", "mcp", "fastmcp", "@modelcontextprotocol/sdk/server",
+                   "@modelcontextprotocol/sdk", "ModelContextProtocol", "io.modelcontextprotocol"]

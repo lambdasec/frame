@@ -18,39 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+from frame.sca.discover import dependency_file
 from frame.sil.scanner import DEFAULT_EXCLUDED_SCAN_DIRS, FrameScanner, language_for_file
+from frame.sil.specs.inventory_catalog import load as _catalog
 
-# Manifest / lockfile name -> (ecosystem, kind). Lockfiles pin exact versions; manifests
-# declare ranges.
-MANIFESTS: Dict[str, Tuple[str, str]] = {
-    "requirements.txt": ("pypi", "manifest"), "pyproject.toml": ("pypi", "manifest"),
-    "setup.py": ("pypi", "manifest"), "setup.cfg": ("pypi", "manifest"), "Pipfile": ("pypi", "manifest"),
-    "Pipfile.lock": ("pypi", "lockfile"), "poetry.lock": ("pypi", "lockfile"), "uv.lock": ("pypi", "lockfile"),
-    "pdm.lock": ("pypi", "lockfile"),
-    "package.json": ("npm", "manifest"), "package-lock.json": ("npm", "lockfile"),
-    "npm-shrinkwrap.json": ("npm", "lockfile"), "yarn.lock": ("npm", "lockfile"),
-    "pnpm-lock.yaml": ("npm", "lockfile"), "bun.lockb": ("npm", "lockfile"),
-    "pom.xml": ("maven", "manifest"), "build.gradle": ("maven", "manifest"),
-    "build.gradle.kts": ("maven", "manifest"), "gradle.lockfile": ("maven", "lockfile"),
-    "packages.lock.json": ("nuget", "lockfile"), "packages.config": ("nuget", "manifest"),
-    "Directory.Packages.props": ("nuget", "manifest"),
-    "go.mod": ("go", "manifest"), "go.sum": ("go", "lockfile"),
-    "Cargo.toml": ("crates.io", "manifest"), "Cargo.lock": ("crates.io", "lockfile"),
-    "Gemfile": ("rubygems", "manifest"), "Gemfile.lock": ("rubygems", "lockfile"),
-    "composer.json": ("packagist", "manifest"), "composer.lock": ("packagist", "lockfile"),
-    "conanfile.txt": ("conan", "manifest"), "vcpkg.json": ("vcpkg", "manifest"),
-}
-_REQUIREMENTS = re.compile(r"requirements[-_.\w]*\.txt$")
-
-# Imported modules (canonical prefixes) -> what they say about AI in the code.
-LLM_SDKS = ("openai", "anthropic", "@anthropic-ai/sdk", "langchain", "@langchain", "langchain_core",
-            "langchain_community", "llama_index", "llamaindex", "google.generativeai", "google.genai",
-            "@google/generative-ai", "@google/genai", "mistralai", "@mistralai", "cohere", "groq",
-            "litellm", "ollama", "transformers", "dev.langchain4j", "com.openai", "com.anthropic",
-            "OpenAI", "Anthropic", "Microsoft.SemanticKernel", "Azure.AI.OpenAI")
-MCP_SERVER_SDKS = ("mcp.server", "mcp", "fastmcp", "@modelcontextprotocol/sdk/server",
-                   "@modelcontextprotocol/sdk", "ModelContextProtocol",
-                   "io.modelcontextprotocol")
+# Dependency files: the ones `frame deps` reads come from frame/sca (`dependency_file`), so the two
+# agree; declarations it does not read and the AI SDK prefixes are data (specs/data/inventory.toml).
 
 
 @dataclass
@@ -58,7 +31,8 @@ class Inventory:
     root: str
     languages: Dict[str, int] = field(default_factory=dict)          # language -> source files
     frameworks: Dict[str, int] = field(default_factory=dict)         # "language/pack" -> files
-    manifests: List[Dict[str, str]] = field(default_factory=list)    # {path, ecosystem, kind}
+    # {path, ecosystem (OSV's name), kind (manifest | lockfile | report), read (by `frame deps`)}
+    manifests: List[Dict[str, Any]] = field(default_factory=list)
     iac: List[Dict[str, str]] = field(default_factory=list)          # {path, kind}
     containers: List[Dict[str, str]] = field(default_factory=list)   # {path, kind}
     llm_sdks: Dict[str, List[str]] = field(default_factory=dict)     # sdk -> files
@@ -130,6 +104,7 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
     base = Path(root).resolve()
     excluded = DEFAULT_EXCLUDED_SCAN_DIRS if exclude_dirs is None else frozenset(exclude_dirs)
     inv = Inventory(root=str(base))
+    catalog = _catalog()
     scanner = FrameScanner(verify=False)
     sources: List[Tuple[Path, str]] = []
     for path in sorted(base.rglob("*")):
@@ -137,13 +112,11 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
             continue
         rel = path.relative_to(base).as_posix()
         name = path.name
-        manifest = MANIFESTS.get(name)
-        if manifest is None and _REQUIREMENTS.fullmatch(name):
-            manifest = ("pypi", "manifest")
-        if manifest is None and path.suffix == ".csproj":
-            manifest = ("nuget", "manifest")
-        if manifest is not None:
-            inv.manifests.append({"path": rel, "ecosystem": manifest[0], "kind": manifest[1]})
+        dep = dependency_file(path)
+        unread = None if dep is not None else catalog.unread_files.get(name)
+        if dep is not None or unread is not None:
+            ecosystem, kind = dep or unread
+            inv.manifests.append({"path": rel, "ecosystem": ecosystem, "kind": kind, "read": dep is not None})
             continue
         kind = _container_kind(path)
         if kind:
@@ -189,10 +162,10 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
                     inv.frameworks[pack] = inv.frameworks.get(pack, 0) + 1
             modules = {str(v) for v in (getattr(program, "imports", {}) or {}).values()}
             for module in modules:
-                sdk = _prefix_hit(module, LLM_SDKS)
+                sdk = _prefix_hit(module, catalog.llm_sdks)
                 if sdk:
                     llm.setdefault(sdk, set()).add(rel)
-                if _prefix_hit(module, MCP_SERVER_SDKS):
+                if _prefix_hit(module, catalog.mcp_server_sdks):
                     mcp.add(rel)
             if any(p.endswith("/mcp-servers") for p in getattr(program, "packs_applied", []) or []):
                 inv.mcp_tools.extend(_mcp_tools(scanner, program, text, lang, rel))

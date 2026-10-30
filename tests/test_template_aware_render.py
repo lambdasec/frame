@@ -114,3 +114,18 @@ def test_engine_default_escaping_still_narrows(tmp_path):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / "server.js").write_text("swig.setDefaults({ autoescape: true });\n")
     assert not xss_lines(tmp_path, "<h1>{{ q }}</h1>", DATA, "page.html")
+
+
+def test_the_engine_catalog_is_data_and_strict(tmp_path):
+    from frame.sil.specs import template_engines
+    catalog = template_engines.load()
+    assert {"ejs", "handlebars", "mustache", "nunjucks", "pug"} == {e.name for e in catalog.engines}
+    text = template_engines.PATH.read_text()
+    bad = tmp_path / "template-engines.toml"
+    bad.write_text(text.replace("(?s)<%-(?P<expr>.*?)%>", "(?s)<%-(.*?)%>"))     # no `expr` group
+    with pytest.raises(ValueError, match="expr"):
+        template_engines.load(bad)
+    bad.write_text(text.replace('block_raw_engines = ["ejs", "handlebars", "mustache"]',
+                                'block_raw_engines = ["ejs", "liquid"]'))
+    with pytest.raises(ValueError, match="liquid"):
+        template_engines.load(bad)
