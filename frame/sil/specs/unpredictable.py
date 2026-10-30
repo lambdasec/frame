@@ -24,6 +24,8 @@ Want = Tuple[FrozenSet[int], FrozenSet[str]]
 def table() -> Dict[str, Tuple[Dict[str, Want], List[Tuple[Tuple[str, ...], Want]]]]:
     """language -> ({canonical id: want}, [(trailing name parts, want)])."""
     data = tomllib.loads(PATH.read_text(encoding="utf-8"))
+    if set(data) - {"call", "destinations"}:
+        raise ValueError(f"{PATH.name}: unknown table(s) {sorted(set(data) - {'call', 'destinations'})}")
     out: Dict[str, Tuple[Dict[str, Want], List[Tuple[Tuple[str, ...], Want]]]] = {}
     for i, e in enumerate(data.get("call", [])):
         where = f"{PATH.name}: call {i + 1}"
@@ -38,6 +40,31 @@ def table() -> Dict[str, Tuple[Dict[str, Want], List[Tuple[Tuple[str, ...], Want
         for n in e.get("names", []):
             by_name.append((tuple(n.split(".")), want))
     return out
+
+
+@lru_cache(maxsize=None)
+def destination_words(path: Path = PATH) -> Tuple[Tuple[str, ...], ...]:
+    """`[destinations] words`, each split into its words."""
+    data = tomllib.loads(Path(path).read_text(encoding="utf-8")).get("destinations")
+    if not isinstance(data, dict) or set(data) != {"words"} or not isinstance(data["words"], list) \
+            or not data["words"] or not all(isinstance(w, str) and w.strip() for w in data["words"]):
+        raise ValueError(f"{Path(path).name}: [destinations] needs exactly words, a non-empty list of names")
+    return tuple(tuple(w.lower().split()) for w in data["words"])
+
+
+def must_be_unpredictable(name: str) -> bool:
+    """Does this destination's name say its value must be unpredictable (a token, a nonce, a salt,
+    a session id...)? Matched on the name's words; a metadata head as the last word (`token_length`)
+    names something about the value instead."""
+    from frame.sil.secret_names import load as secret_names, name_words
+    words = name_words(name.rsplit(".", 1)[-1])
+    if not words or words[-1] in secret_names().metadata_heads:
+        return False
+    for phrase in destination_words():
+        n = len(phrase)
+        if any(tuple(words[i:i + n]) == phrase for i in range(len(words) - n + 1)):
+            return True
+    return False
 
 
 def arguments_for(language: str, canonical: Optional[str], name: str) -> Optional[Want]:

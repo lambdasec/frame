@@ -92,3 +92,65 @@ def test_attacker_data_beside_a_weak_random_number_stays_attacker_data(body):
     code = f'const vm = require("vm");\nmodule.exports = function run(code) {{\n  {body}\n}};\n'
     found = {v.cwe_id for v in FrameScanner(language="javascript", library_mode=True).scan(code, "a.js").vulnerabilities}
     assert "CWE-94" in found
+
+
+# ---- CWE-338 by destination: weak-random data written to something whose name says it must be
+# unpredictable (unpredictable.toml [destinations]): a variable, field or buffer, or the result of
+# a function so named (its return value, or a write into one of its parameters: a C out-parameter).
+
+def dest_cwes(code, language, name):
+    r = FrameScanner(language=language, verify=False).scan(code, name)
+    assert not r.errors, r.errors
+    return sorted(v.line for v in r.vulnerabilities if v.cwe_id == "CWE-338")
+
+
+@pytest.mark.parametrize("language, name, code, lines", [
+    ("python", "t.py", "import random\nimport string\n\ndef generate_token():\n"
+     "    return ''.join(random.choice(string.ascii_letters) for _ in range(32))\n", [5]),
+    ("python", "t.py", "import random\n\ndef reset(user):\n    reset_token = str(random.randint(0, 10**9))\n"
+     "    user.save(reset_token)\n", [4]),
+    ("javascript", "t.js", "function makeCsrfToken() {\n  return Math.random().toString(36).slice(2);\n}\n"
+     "module.exports = { makeCsrfToken };\n", [2]),
+    ("javascript", "t.js", "function f(user) {\n  const sessionId = Math.random().toString(36);\n"
+     "  user.save(sessionId);\n}\nmodule.exports = { f };\n", [2]),
+    ("java", "A.java", "import java.util.Random;\nclass A {\n  long newNonce() {\n"
+     "    return new Random().nextLong();\n  }\n}\n", [4]),
+    ("c", "t.c", "#include <stdlib.h>\n\nvoid new_session_id(char *out, size_t n)\n{\n"
+     "    for (size_t i = 0; i + 1 < n; i++)\n        out[i] = \"0123456789abcdef\"[rand() % 16];\n}\n", [6]),
+    ("c", "t.c", "#include <stdio.h>\n#include <stdlib.h>\n#include <openssl/sha.h>\n\n"
+     "void new_session_token(char out[65])\n{\n    unsigned char raw[16];\n    unsigned char digest[32];\n"
+     "    for (int i = 0; i < 16; i++)\n        raw[i] = (unsigned char)rand();\n"
+     "    SHA256(raw, sizeof(raw), digest);\n    for (int i = 0; i < 32; i++)\n"
+     "        sprintf(out + i * 2, \"%02x\", digest[i]);\n}\n", [13]),
+])
+def test_a_predictable_value_where_the_name_says_it_must_not_be(language, name, code, lines):
+    assert dest_cwes(code, language, name) == lines
+
+
+@pytest.mark.parametrize("language, name, code", [
+    ("python", "t.py", "import secrets\n\ndef generate_token():\n    return secrets.token_hex(16)\n"),
+    ("python", "t.py", "import random\nimport time\n\ndef backoff():\n    delay = random.random()\n    time.sleep(delay)\n"),
+    ("python", "t.py", "import random\n\ndef f():\n    token_length = 8 + random.randint(0, 8)\n    return token_length\n"),
+    ("javascript", "t.js", "function pick(items) {\n  return items[Math.floor(Math.random() * items.length)];\n}\n"
+     "module.exports = { pick };\n"),
+    ("javascript", "t.js", "const crypto = require('crypto');\nfunction makeCsrfToken() {\n"
+     "  return crypto.randomBytes(16).toString('hex');\n}\nmodule.exports = { makeCsrfToken };\n"),
+    ("java", "A.java", "import java.security.SecureRandom;\nclass A {\n  long newNonce() {\n"
+     "    return new SecureRandom().nextLong();\n  }\n}\n"),
+    ("c", "t.c", "#include <stdlib.h>\n\nvoid shuffle_deck(int out[52])\n{\n"
+     "    for (int i = 0; i < 52; i++)\n        out[i] = rand() % 52;\n}\n"),
+    ("c", "t.c", "#include <stdio.h>\n#include <openssl/rand.h>\n#include <openssl/sha.h>\n\n"
+     "void new_session_token(char out[65])\n{\n    unsigned char raw[16];\n    unsigned char digest[32];\n"
+     "    RAND_bytes(raw, sizeof(raw));\n    SHA256(raw, sizeof(raw), digest);\n"
+     "    for (int i = 0; i < 32; i++)\n        sprintf(out + i * 2, \"%02x\", digest[i]);\n}\n"),
+])
+def test_an_unpredictable_or_unrelated_value_is_not(language, name, code):
+    assert dest_cwes(code, language, name) == []
+
+
+def test_the_destination_words_are_strict(tmp_path):
+    from frame.sil.specs import unpredictable
+    bad = tmp_path / "unpredictable.toml"
+    bad.write_text('[destinations]\nwords = []\n')
+    with pytest.raises(ValueError, match="destinations"):
+        unpredictable.destination_words(bad)

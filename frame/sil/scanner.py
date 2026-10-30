@@ -2086,9 +2086,8 @@ class FrameScanner:
     def _name_tokens(target: str) -> List[str]:
         """Split an identifier on camelCase and separators, lowercased:
         'SSHAuthPrivateKey' -> ['ssh', 'auth', 'private', 'key']."""
-        t = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', target)
-        t = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', t)
-        return [x for x in re.split(r'[^A-Za-z0-9]+', t.lower()) if x]
+        from frame.sil.secret_names import name_words
+        return name_words(target)
 
     @staticmethod
     def _shannon_entropy(value: str) -> float:

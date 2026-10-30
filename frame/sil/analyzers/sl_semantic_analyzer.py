@@ -10,8 +10,6 @@ This module provides proper semantic analysis using:
 Key CWE Types Detected:
 - CWE-122: Heap-based Buffer Overflow
 - CWE-121: Stack-based Buffer Overflow
-- CWE-124: Buffer Underwrite (negative index)
-- CWE-127: Buffer Under-read (negative index)
 - CWE-252: Unchecked Return Value
 - CWE-415: Double Free
 - CWE-416: Use After Free
@@ -261,8 +259,6 @@ class SLSemanticAnalyzer:
 
         if node.type == 'declaration':
             self._analyze_declaration(node, source, filename, loc)
-            # Also check for subscript expressions in declarations
-            self._check_subscript_in_statement(node, source, filename, loc)
         elif node.type == 'expression_statement':
             # Check for delete expression first
             delete_expr = self._find_child(node, 'delete_expression')
@@ -281,8 +277,6 @@ class SLSemanticAnalyzer:
                 # Check for pointer dereference: *ptr or ptr->field
                 self._check_deref_in_expr(node, loc)
 
-            # Check for array subscript with potential negative index
-            self._check_subscript_in_statement(node, source, filename, loc)
         elif node.type == 'compound_statement':
             self._analyze_compound(node, source, filename)
         elif node.type == 'if_statement':
@@ -1307,90 +1301,10 @@ class SLSemanticAnalyzer:
         return
 
 
-    def _check_subscript_in_statement(self, node: Any, source: str, filename: str, loc: Location):
-        """
-        Check for buffer underwrite/underread (CWE-124/127).
-
-        Detects array accesses with negative or potentially negative indices.
-        Uses tree-sitter AST to find subscript_expression nodes.
-        """
-        # Recursively find all subscript expressions in this statement
-        self._find_and_check_subscripts(node, loc)
-
-    def _find_and_check_subscripts(self, node: Any, loc: Location):
-        """Recursively find and check subscript expressions."""
-        if node.type == 'subscript_expression':
-            self._check_single_subscript(node, loc)
-        for child in node.children:
-            self._find_and_check_subscripts(child, loc)
-
-    def _check_single_subscript(self, node: Any, loc: Location):
-        """Check a single subscript expression for negative index."""
-        array_name = None
-        index_value = None
-
-        for child in node.children:
-            if child.type == 'identifier':
-                array_name = child.text.decode('utf8')
-            elif child.type == 'number_literal':
-                try:
-                    index_value = int(child.text.decode('utf8'))
-                except ValueError:
-                    pass
-            elif child.type == 'unary_expression':
-                # Handle -5 as unary expression
-                text = child.text.decode('utf8')
-                try:
-                    index_value = int(text)
-                except ValueError:
-                    pass
-            elif child.type == 'subscript_argument_list':
-                # In C tree-sitter, the index is inside subscript_argument_list: [-5]
-                for sub in child.children:
-                    if sub.type == 'number_literal':
-                        try:
-                            index_value = int(sub.text.decode('utf8'))
-                        except ValueError:
-                            pass
-                    elif sub.type == 'unary_expression':
-                        # Handle -5 as unary expression
-                        text = sub.text.decode('utf8')
-                        try:
-                            index_value = int(text)
-                        except ValueError:
-                            pass
-                    elif sub.type == 'identifier':
-                        # Variable index like buffer[idx]
-                        pass
-
-        if array_name and index_value is not None and index_value < 0:
-            # Check if this is a write (on left side of assignment)
-            # by checking the parent node
-            is_write = False
-            parent = node.parent
-            if parent and parent.type == 'assignment_expression':
-                # Check if subscript is on the left of the assignment
-                # Compare by start position since tree-sitter creates new node objects
-                node_start = (node.start_point[0], node.start_point[1])
-                for i, sibling in enumerate(parent.children):
-                    sibling_start = (sibling.start_point[0], sibling.start_point[1])
-                    if sibling_start == node_start and sibling.type == node.type:
-                        # If we're before the '=' sign, it's a write
-                        for j in range(i + 1, len(parent.children)):
-                            if parent.children[j].type == '=':
-                                is_write = True
-                                break
-                        break
-
-            cwe = "CWE-124" if is_write else "CWE-127"
-            self._add_vuln(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,
-                cwe_id=cwe,
-                location=loc,
-                var_name=array_name,
-                description=f"Buffer {'underwrite' if is_write else 'under-read'}: negative index {index_value} for '{array_name}'",
-                confidence=0.95
-            ))
+    # CWE-124/127 (an access before a buffer's start) are decided in the translator over regions
+    # and the path facts (`SILTranslator._out_of_bounds_checks`, `_tainted_index_checks`): a
+    # negative literal index on a pointer that points into the middle of an array is legal, so
+    # the subscript rule that used to live here (any `p[-n]`) is gone.
 
     def _check_assignment_in_condition(self, node: Any, source: str, filename: str, loc: Location):
         """

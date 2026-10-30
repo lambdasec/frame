@@ -646,6 +646,7 @@ class CFrontend:
                 self._record_local(self._extract_identifier(decl))
                 self._note_var_type(self._extract_identifier(decl), type_node)
                 self._note_scalar_type(decl, type_node)
+                self._note_element_type(decl, type_node)
                 if self._note_reference_alias(decl, child.child_by_field_name("value")):
                     continue
                 self._translate_init_declarator(child, type_node)
@@ -659,6 +660,7 @@ class CFrontend:
                 self._record_local(var_name)
                 self._note_var_type(var_name, type_node)
                 self._note_scalar_type(child, type_node)
+                self._note_element_type(child, type_node)
                 if var_name:
                     loc = self._get_location(child)
                     self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null(),
@@ -850,6 +852,19 @@ class CFrontend:
     def _alias_of(self, name: str) -> str:
         proc = self._current_proc
         return self._ref_aliases.get(id(proc), {}).get(name, name) if proc is not None else name
+
+    def _note_element_type(self, declarator: Optional[TSNode], type_node: Optional[TSNode]) -> None:
+        """`Procedure.element_types`: `T *p` and `T a[N]` record T; deeper declarators record ""."""
+        if declarator is None or type_node is None or self._current_proc is None \
+                or declarator.type not in ("pointer_declarator", "array_declarator"):
+            return
+        inner = declarator.child_by_field_name("declarator")
+        name = self._extract_identifier(declarator)
+        if not name:
+            return
+        text = " ".join(self._get_text(type_node).split()) if inner is not None and inner.type == "identifier" else ""
+        known = self._current_proc.element_types
+        known[name] = text if known.get(name, text) == text else ""
 
     def _note_scalar_type(self, declarator: Optional[TSNode], type_node: Optional[TSNode]) -> None:
         """`Procedure.scalar_types`: a plain variable's declared type (not a pointer or array)."""

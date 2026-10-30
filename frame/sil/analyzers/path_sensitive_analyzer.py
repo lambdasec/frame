@@ -822,35 +822,6 @@ class PathSensitiveAnalyzer:
     # set, so it emitted nothing, and a source-shaped reimplementation would only
     # reintroduce the false positives the structural rule exists to avoid.
 
-    def _check_buffer_access(self, array_name: str, index_node: Any,
-                             source: str, loc: Location):
-        """
-        CWE-121/122/124/126/127: Buffer Overflow/Underflow detection.
-
-        Tracks buffer sizes and checks accesses against bounds.
-        """
-        if array_name not in self.current_state.pointers:
-            return
-
-        ptr_info = self.current_state.pointers[array_name]
-        if ptr_info.buffer_size is None:
-            return
-
-        # Try to extract index value
-        index_text = index_node.text.decode('utf8') if index_node.text else ''
-
-        # Check for negative index (CWE-124/127)
-        if index_text.startswith('-') or 'negative' in index_text.lower():
-            self._add_vuln(MemoryVuln(
-                vuln_type=VulnType.BUFFER_UNDERFLOW,
-                cwe_id="CWE-124",
-                location=loc,
-                var_name=array_name,
-                description=f"Buffer underwrite: negative index '{index_text}' for '{array_name}'",
-                confidence=0.85,
-                sl_check=f"{array_name}[{index_text}] where index < 0"
-            ))
-
 
 def analyze_path_sensitive(source: str, filename: str = "<unknown>",
                            verbose: bool = False) -> List[MemoryVuln]:

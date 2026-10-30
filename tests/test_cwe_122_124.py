@@ -1,8 +1,7 @@
 """CWE-120/121/122 (a copy or fill bigger than its destination) and CWE-124 (a write before a
 buffer's start) in C, from the structural checks: a constant size against a constant capacity
 (a local array, or a pointer whose one definition is a constant malloc/alloca), and a constant
-negative index. A write through a pointer moved before the start is a known gap
-(tests/e2e/test_known_gaps_cnative.py)."""
+negative index. Accesses through pointers into a region are tests/test_c_regions.py."""
 
 import pytest
 

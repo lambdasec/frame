@@ -188,6 +188,12 @@ class ProcSpec:
     # the argument after it is a command line (a command sink).
     argv_from: Optional[int] = None
 
+    # A digest of some arguments (`digest_of`) is written into `digest_into` (an argument position;
+    # None for the return value). A digest is as predictable as its input and carries nothing
+    # else: only weak-random taint crosses it (`SHA256(raw, n, md)` with rand() bytes in raw).
+    digest_of: List[int] = field(default_factory=list)
+    digest_into: Optional[int] = None
+
     # =========================================================================
     # Structural weakness specifications
     #
@@ -453,6 +459,11 @@ class Procedure:
     # pointer or array declarator), as written (`unsigned`, `int64_t`); "" where a name is
     # declared twice with different types. Read by the integer-range checks (CWE-190/191).
     scalar_types: Dict[str, str] = field(default_factory=dict)
+    # C/C++: the element type of each local declared as a one-level pointer (`char *p` -> "char")
+    # or a one-dimensional array (`int buf[10]` -> "int"); "" where it is anything else or a name is
+    # declared twice differently. Pointer arithmetic is in these units, so a pointer is followed to
+    # the array or block it points into only when every hop has the same element type.
+    element_types: Dict[str, str] = field(default_factory=dict)
     # Callees this function is passed to as an argument (`app.get('/x', handler)`
     # -> ["app.get"]), by their textual names; set by the JS frontend.
     registered_via: List[str] = field(default_factory=list)

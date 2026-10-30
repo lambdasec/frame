@@ -1,7 +1,7 @@
 """CWE-125/126 (a read past a buffer's end) and CWE-127 (a read before its start) in C, from the
 structural checks: a constant length read from a buffer of smaller constant capacity (memcpy,
 memmove, memcmp, bcopy), a constant index past a fixed array, a constant negative index. Reads
-through a pointer moved before the start are a known gap (tests/e2e/test_known_gaps_cnative.py)."""
+through a pointer into a region are tests/test_c_regions.py."""
 
 import pytest
 

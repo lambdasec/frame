@@ -17,7 +17,7 @@ import dataclasses
 import re
 from dataclasses import dataclass, field
 from collections import deque
-from typing import Dict, List, Optional, Set, Tuple, Any, NamedTuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any, NamedTuple
 from enum import Enum, auto
 
 from frame.core.ast import (
@@ -38,9 +38,9 @@ from .instructions import (
     TaintKind, SinkKind, resolve_sink_kind, _SINK_KIND_ALIASES
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
-from .specs.unpredictable import arguments_for
+from .specs.unpredictable import arguments_for, must_be_unpredictable
 from . import c_facts as _c_facts
-from .c_int_model import INT_TYPES, int_range
+from .c_int_model import INT_TYPES, int_range, may_be_negative
 from .specs.parser_hardening import load as _parser_hardening
 from .specs.request_objects import load as _request_objects
 from .specs.weak_algorithms import load as _weak_algorithms
@@ -1481,6 +1481,9 @@ class SILTranslator:
         """
         checks = []
         self._cur_proc = proc
+        # CWE-338 by destination: does this function's name say its result must be unpredictable?
+        self._unpredictable_output = must_be_unpredictable(proc.simple_name.rsplit("::", 1)[-1])
+        self._param_names = {str(p) for p, _ in proc.params}
         # Temporaries holding the result of a project method with a declared class
         # return type (`Tool.of(...)` -> Tool), for `Tool.of(..).run(v)` chains.
         self._value_class: Dict[str, Tuple[str, str]] = {}
@@ -3234,6 +3237,7 @@ class SILTranslator:
         if self._ipa_summarising and self._capture_children:
             self._record_capture_taints(instr, state)
         checks = []
+        weak_before = self._weak_random_vars(state)
 
         # A same-file call nested in an expression (`os.system(f(x))`, `return
         # g(h(y))`) has no Call instruction of its own; it still passes its
@@ -3305,7 +3309,65 @@ class SILTranslator:
         elif isinstance(instr, Return):
             checks, state = self._exec_return(instr, state, proc_name)
 
-        return lifecycle_checks + numeric_checks + checks, state
+        destination_checks = self._unpredictable_destination_checks(instr, weak_before, state, proc_name)
+        return lifecycle_checks + numeric_checks + checks + destination_checks, state
+
+    def _weak_random_calls_in(self, exp: Exp) -> List[Tuple[str, str]]:
+        """Generator calls written inside an expression, at any depth of a call chain
+        (`Math.random().toString(36).slice(2)`), as (name, kind)."""
+        out = []
+        for sub in self._walk_exp(exp):
+            if isinstance(sub, ExpCall):
+                name = self._call_exp_name(sub)
+                spec = self.program.get_spec(name) if name else None
+                if spec is not None and spec.is_source == TaintKind.WEAK_RANDOM.value:
+                    out.append((name, spec.is_source))
+        return out
+
+    def _weak_random_vars(self, state: SymbolicState) -> Set[str]:
+        return {v for v, info in state.tainted.items()
+                if info.source_kind == TaintKind.WEAK_RANDOM and not info.source_var.startswith(self._SEED_PREFIX)}
+
+    def _unpredictable_destination_checks(self, instr: Instr, weak_before: Set[str], state: SymbolicState,
+                                          proc_name: str) -> List[VulnerabilityCheck]:
+        """CWE-338 by destination: weak-random data written to something whose name says it must
+        be unpredictable (`specs/data/unpredictable.toml` [destinations]): a variable, field or
+        buffer (`token`, `session.csrf_token`, `nonce[i]`), or, in a function so named
+        (`new_session_token`), one of its parameters (a C out-parameter) or its return value.
+        Only a write made by this instruction counts, so each is reported where it happens."""
+        out: List[VulnerabilityCheck] = []
+        written = self._weak_random_vars(state) - weak_before
+        for var in sorted(written):
+            root = var.split(".", 1)[0]
+            if must_be_unpredictable(var) or (self._unpredictable_output and root in self._param_names):
+                check = self._create_taint_check(instr, state, proc_name, var, SinkKind.UNPREDICTABLE)
+                check.description = (f"Predictable value: '{var}' must be unpredictable but holds output "
+                                     f"of a non-cryptographic random generator")
+                out.append(check)
+        if isinstance(instr, Return) and self._unpredictable_output and instr.value is not None:
+            description = (f"Predictable value: {proc_name} returns output of a non-cryptographic "
+                           f"random generator as its result")
+            for var in self._get_exp_vars(instr.value):
+                info = state.get_taint_info(var) if state.is_tainted(var) else None
+                if info is not None and info.source_kind == TaintKind.WEAK_RANDOM \
+                        and not info.source_var.startswith(self._SEED_PREFIX):
+                    check = self._create_taint_check(instr, state, proc_name, var, SinkKind.UNPREDICTABLE)
+                    check.description = description
+                    out.append(check)
+                    break
+            else:
+                # `return Math.random().toString(36)`: the generator call written in the result
+                for func, kind in self._weak_random_calls_in(instr.value):
+                    if kind == TaintKind.WEAK_RANDOM.value:
+                        out.append(VulnerabilityCheck(
+                            formula=And(Source(Var(func), kind), Sink(Var(func), SinkKind.UNPREDICTABLE.value)),
+                            vuln_type=VulnType.from_sink_kind(SinkKind.UNPREDICTABLE),
+                            location=instr.loc or Location.unknown(), description=description,
+                            source_var=func, source_location=instr.loc or Location.unknown(),
+                            sink_type=SinkKind.UNPREDICTABLE.value, procedure_name=proc_name,
+                            source_kind=kind))
+                        break
+        return out
 
     # =========================================================================
     # Instruction Execution
@@ -4016,6 +4078,8 @@ class SILTranslator:
             self._note_toctou_candidate(instr, state, proc_name)
         if self._is_c_lang and spec is not None and spec.key_args:
             checks.extend(self._hardcoded_key_checks(instr, spec, state, proc_name))
+        if spec is not None and spec.digest_of:
+            self._apply_digest(instr, spec, state)
         if self._is_c_lang and spec is not None and spec.algorithm_arg is not None \
                 and spec.algorithm_arg < len(instr.args):
             checks.extend(self._weak_algorithm_id_checks(instr, spec, state, proc_name))
@@ -6217,29 +6281,106 @@ class SILTranslator:
             return exp.value
         if isinstance(exp, ExpVar):
             return constants.get(str(exp.var))
+        if isinstance(exp, ExpUnOp) and exp.op == "-":
+            inner = self._constant_index_value(exp.operand, constants)
+            return -inner if inner is not None else None
         return None
 
-    def _out_of_bounds_access(self, base, index, proc: Procedure,
-                              constants: Dict[str, int]) -> Optional[Tuple[str, int, int]]:
-        """Is `base[index]` provably outside `base`'s declared extent?
+    # ---- Regions: where a pointer points ---------------------------------------------------
+    #
+    # `base[i]`, `*(p + i)`, `*p` and the buffer a library call writes or reads are accesses to a
+    # REGION at a constant element OFFSET: a fixed local array (whose element count is its bound)
+    # or the start of a block an allocator returned (`malloc`, `calloc`, `alloca`, `new[]`;
+    # offset 0 is its first element, so anything below is before it; its extent is not used).
+    # A pointer is followed through its single definition (`p = buf`, `p = buf + 3`,
+    # `p = q - 8`) only when every hop has the region's element type (pointer arithmetic counts
+    # elements of the pointer's own type, and the frontend drops casts), and never when its
+    # address is taken (a callee may move it). Whether an access is outside is a question for the
+    # solver over the path facts (see `_out_of_bounds_checks`, `_tainted_index_checks`).
 
-        Returns (name, index, bound) when both the index and the bound are
-        known constants and the index falls outside `0 .. bound - 1`. Anything
-        unknown, either side, yields None: an index whose value the IR does not
-        pin down is not evidence of anything.
-        """
+    def _region_of(self, base: Exp, proc: Procedure,
+                   constants: Dict[str, int]) -> Optional[Tuple[str, int, Optional[int]]]:
+        """(region, offset, bound): bound is the element count of a fixed array, None for a heap
+        or alloca block. None when `base` does not certainly point into one."""
+        base = self._cast_strip(base)
         if not isinstance(base, ExpVar):
             return None
         name = str(base.var)
-        bound = proc.fixed_array_bounds.get(name)
-        # -1 marks a name declared twice with disagreeing bounds.
-        if bound is None or bound < 0:
+        bounds = proc.fixed_array_bounds or {}
+        if name in bounds:                                   # the array itself
+            return (name, 0, bounds[name]) if bounds[name] >= 0 else None
+        elements = getattr(proc, "element_types", None) or {}
+        unit = elements.get(name)
+        if not unit:
             return None
+        offset, seen = 0, set()
+        saved, self._cur_proc = self._cur_proc, proc
+        try:
+            taken = self._proc_address_taken()
+            while True:
+                if elements.get(name) != unit:
+                    return None
+                if name in bounds:
+                    return (name, offset, bounds[name]) if bounds[name] >= 0 else None
+                if name in seen or name in taken:
+                    return None
+                seen.add(name)
+                d = self._single_def(name)
+                d = self._cast_strip(d) if d is not None else None
+                if isinstance(d, ExpVar):
+                    name = str(d.var)
+                elif isinstance(d, ExpBinOp) and d.op in ("+", "-") and isinstance(self._cast_strip(d.left), ExpVar):
+                    step = self._constant_index_value(d.right, constants)
+                    if step is None:
+                        return None
+                    offset += step if d.op == "+" else -step
+                    name = str(self._cast_strip(d.left).var)
+                elif isinstance(d, ExpCall) and isinstance(d.func, ExpConst) \
+                        and str(d.func.value).split("::")[-1] in self._BLOCK_ALLOCATORS:
+                    return name, offset, None
+                else:
+                    return None
+        finally:
+            self._cur_proc = saved
 
-        value = self._constant_index_value(index, constants)
-        if value is None or 0 <= value < bound:
+    @property
+    def _BLOCK_ALLOCATORS(self) -> FrozenSet[str]:
+        return _c_facts.allocators("heap", "stack", "new_array", returning=True) | {"new[]"}
+
+    def _out_of_bounds_access(self, base, index, proc: Procedure,
+                              constants: Dict[str, int]) -> Optional[Tuple[str, int, int]]:
+        """Is `base[index]` certainly outside its region, with the index a known constant?
+        Returns (region, element, bound; bound -1 for a block)."""
+        region = self._region_of(base, proc, constants)
+        if region is None:
             return None
-        return name, value, bound
+        name, offset, bound = region
+        value = self._constant_index_value(index, constants)
+        if value is None:
+            return None
+        value += offset
+        if value >= 0 and (bound is None or value < bound):
+            return None
+        return name, value, -1 if bound is None else bound
+
+    def _iter_deref_reads(self, exp):
+        """Every `*(p + c)`, `*(p - c)` and `*p` read inside an expression, as (p, index)."""
+        stack = [exp]
+        while stack:
+            cur = stack.pop()
+            if cur is None:
+                continue
+            if isinstance(cur, ExpUnOp) and cur.op == "*":
+                inner = self._cast_strip(cur.operand)
+                if isinstance(inner, ExpBinOp) and inner.op in ("+", "-") and isinstance(inner.left, ExpVar):
+                    yield inner.left, (inner.right if inner.op == "+" else ExpUnOp("-", inner.right))
+                elif isinstance(inner, ExpVar):
+                    yield inner, ExpConst(0)
+            for child in (getattr(cur, "__dict__", {}) or {}).values():
+                if isinstance(child, Exp):
+                    stack.append(child)
+                elif isinstance(child, (list, tuple)):
+                    stack.extend(c for c in child if isinstance(c, Exp))
 
     def _iter_read_index_exps(self, exp):
         """Every `base[index]` appearing anywhere inside a read expression."""
@@ -6256,73 +6397,176 @@ class SILTranslator:
                 elif isinstance(child, (list, tuple)):
                     stack.extend(c for c in child if isinstance(c, Exp))
 
+    def _accesses(self, instr: Instr):
+        """Every element access the instruction performs: (base, index, is_write). A store
+        through `base + i` / `base - i` / `base[i]` / `p` is a write; a subscript or a
+        dereference anywhere a value is read is a read."""
+        if isinstance(instr, Store):
+            addr = instr.addr
+            if isinstance(addr, ExpBinOp) and addr.op in ("+", "-"):
+                yield addr.left, (addr.right if addr.op == "+" else ExpUnOp("-", addr.right)), True
+            elif isinstance(addr, ExpIndex):
+                yield addr.base, addr.index, True
+            elif isinstance(addr, ExpVar):
+                yield addr, ExpConst(0), True
+        for exp in self._iter_instr_exps(instr):
+            if isinstance(instr, Store) and exp is instr.addr:
+                continue
+            for sub in self._iter_read_index_exps(exp):
+                yield sub.base, sub.index, False
+            for base, index in self._iter_deref_reads(exp):
+                yield base, index, False
+
+    def _index_term(self, index: Exp) -> Optional[Formula]:
+        """The index as an arithmetic term over variables and integer literals, or None when it
+        holds anything else (a call, a field, an element): an opaque term would be an
+        unconstrained number, so any question about it would be answered by nothing."""
+        def arithmetic(e: Exp) -> bool:
+            e = self._cast_strip(e)
+            if isinstance(e, ExpVar):
+                return True
+            if isinstance(e, ExpConst):
+                return isinstance(e.value, int) and not isinstance(e.value, bool)
+            if isinstance(e, ExpUnOp) and e.op == "-":
+                return arithmetic(e.operand)
+            if isinstance(e, ExpBinOp) and e.op in ("+", "-", "*"):
+                return arithmetic(e.left) and arithmetic(e.right)
+            return False
+        if not arithmetic(index):
+            return None
+        f = self._exp_to_formula(self._cast_strip(index))
+        return f if isinstance(f, (Var, Const, ArithExpr)) else None
+
+    def _entailed(self, pc: List[Formula], goal: Formula) -> bool:
+        """pc |- goal: the facts are satisfiable and contradict `not goal`. `_feasibility_sat`
+        answers True when undecided, so an undecided query is never a proof."""
+        key = (tuple(str(g) for g in pc), str(goal))
+        cache = self.__dict__.setdefault("_entail_cache", {})
+        if key not in cache:
+            facts = self._build_conjunction(list(pc)) if pc else True_()
+            cache[key] = (self._feasibility_sat(facts)
+                          and not self._feasibility_sat(And(facts, Not(goal)) if pc else Not(goal)))
+        return cache[key]
+
+    # Library calls that write / read a buffer from its first element: name -> [(buffer argument,
+    # count argument or None when the call always touches at least one element)].
+    _ELEMENT_WRITES = {
+        "memcpy": [(0, 2)], "memmove": [(0, 2)], "memset": [(0, 2)], "strncpy": [(0, 2)],
+        "strcpy": [(0, None)], "sprintf": [(0, None)], "snprintf": [(0, 1)], "fgets": [(0, 1)],
+        "wcscpy": [(0, None)], "wcsncpy": [(0, 2)], "wmemcpy": [(0, 2)], "wmemmove": [(0, 2)],
+        "wmemset": [(0, 2)], "swprintf": [(0, 1)], "fgetws": [(0, 1)], "read": [(1, 2)], "recv": [(1, 2)],
+    }
+    _ELEMENT_READS = {
+        "memcpy": [(1, 2)], "memmove": [(1, 2)], "memcmp": [(0, 2), (1, 2)], "strncpy": [(1, 2)],
+        "strcpy": [(1, None)], "strlen": [(0, None)], "strcmp": [(0, None), (1, None)],
+        "wcscpy": [(1, None)], "wcsncpy": [(1, 2)], "wmemcpy": [(1, 2)], "wmemmove": [(1, 2)],
+        "wcslen": [(0, None)], "write": [(1, 2)], "send": [(1, 2)],
+    }
+
+    def _call_element_accesses(self, instr: Instr):
+        """(buffer, count, is_write) for the buffers a library call writes or reads from their
+        first element (`_ELEMENT_WRITES`, `_ELEMENT_READS`)."""
+        if not isinstance(instr, Call):
+            return
+        name = instr.get_full_name().rsplit("::", 1)[-1]
+        args = [a for a, _ in instr.args]
+        for table, is_write in ((self._ELEMENT_WRITES, True), (self._ELEMENT_READS, False)):
+            for buf_i, n_i in table.get(name, ()):
+                if buf_i < len(args) and (n_i is None or n_i < len(args)):
+                    yield args[buf_i], (args[n_i] if n_i is not None else None), is_write
+
     def _out_of_bounds_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
-        """CWE-787 and CWE-125: an access provably past a fixed-size local array.
+        """CWE-787 / CWE-125 / CWE-124 / CWE-127: an access certainly outside its region.
 
-        The direction comes from the instruction, not from a name or a comment.
-        A subscripted assignment target reaches the IR as a `Store` whose address
-        is `base + index`, so that is a write; a subscript anywhere a value is
-        READ reaches it as an `ExpIndex`, so that is a read. Frame reports the
-        specific CWE precisely because the IR distinguishes them, and leaves the
-        generic CWE-120 to the paths where it does not.
-
-        Both the bound and the index must be constants. That is narrow on
-        purpose: an index the IR cannot pin down might be in range on every
-        execution, and reporting it would mean asserting something about values
-        this detector has no basis for.
-        """
+        The direction comes from the instruction (a store is a write, a subscript or a
+        dereference that is read is a read), the side from the index: below element 0 is
+        before the start (124/127), at or past a fixed array's bound is past the end (787/125).
+        "Certainly" is decided by the solver: the path facts at the access (the fixpoint of
+        `_path_fact_fixpoint`, replayed through the node) must entail `offset + index < 0` or
+        `>= bound`. A constant index (one the procedure assigns exactly once) is the simplest
+        case and is settled without a query. An index nothing pins down is not evidence."""
         checks: List[VulnerabilityCheck] = []
-        if not proc.fixed_array_bounds:
+        if not self._is_c_lang:
             return checks
-
         constants = self._procedure_constant_ints(proc)
+        entry: Optional[Dict[int, List[Formula]]] = None
 
-        def record(is_write: bool, name: str, value: int, bound: int, loc, verb: str) -> None:
-            # Below element zero is a write/read BEFORE the start of the buffer
-            # (CWE-124 / CWE-127); at or past the top is the over-the-end pair
-            # (CWE-787 / CWE-125). The IR pins the index, so the direction is exact.
-            if value < 0:
+        def record(is_write: bool, name: str, value, bound: Optional[int], loc, verb: str, below: bool) -> None:
+            if below:
                 kind = VulnType.OOB_UNDERWRITE if is_write else VulnType.OOB_UNDERREAD
                 where = f"before the start of '{name}'"
             else:
                 kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
-                where = f"outside the declared extent of '{name}', which holds " \
-                        f"{bound} element(s)"
+                where = f"past the end of '{name}', which holds {bound} element(s)"
             checks.append(VulnerabilityCheck(
-                formula=True_(),
-                vuln_type=kind,
-                location=loc or Location.unknown(),
-                description=f"{verb} '{name}[{value}]' is {where}",
-                sink_type=kind.value,
-                procedure_name=proc.name,
-            ))
+                formula=True_(), vuln_type=kind, location=loc or Location.unknown(),
+                description=f"{verb} element {value} of '{name}', {where}",
+                sink_type=kind.value, procedure_name=proc.name))
 
-        for node in proc.nodes.values():
-            for instr in node.instrs:
-                if isinstance(instr, Store):
-                    addr = instr.addr
-                    # `arr[i] = v` is lowered to a store through `arr + i`.
-                    if isinstance(addr, ExpBinOp) and addr.op == "+":
-                        found = self._out_of_bounds_access(addr.left, addr.right, proc, constants)
-                        if found:
-                            record(True, *found, instr.loc, "Write to")
-                            continue
-                    if isinstance(addr, ExpIndex):
-                        found = self._out_of_bounds_access(addr.base, addr.index, proc, constants)
-                        if found:
-                            record(True, *found, instr.loc, "Write to")
-                            continue
-
-                # Every other position a subscript can appear in is a read,
-                # including the value half of a store.
-                for exp in self._iter_instr_exps(instr):
-                    if isinstance(instr, Store) and exp is instr.addr:
+        for node_id, node in proc.nodes.items():
+            pc: Optional[List[Formula]] = None
+            for idx, instr in enumerate(node.instrs):
+                seen = set()
+                for base, index, is_write in self._accesses(instr):
+                    key = (str(base), str(index), is_write)
+                    if key in seen:
                         continue
-                    for sub in self._iter_read_index_exps(exp):
-                        found = self._out_of_bounds_access(sub.base, sub.index, proc, constants)
-                        if found:
-                            record(False, *found, instr.loc, "Read of")
-
+                    seen.add(key)
+                    verb = "Write to" if is_write else "Read of"
+                    found = self._out_of_bounds_access(base, index, proc, constants)
+                    if found:
+                        name, value, bound = found
+                        record(is_write, name, value, bound, instr.loc, verb, below=value < 0)
+                        continue
+                    region = self._region_of(base, proc, constants)
+                    term = self._index_term(index) if region is not None else None
+                    if term is None or self._constant_index_value(index, constants) is not None:
+                        continue
+                    if pc is None:
+                        if entry is None:
+                            entry = self._path_fact_fixpoint(proc)
+                        if node_id not in entry:
+                            break
+                        pc = list(entry[node_id])
+                        for prev in node.instrs[:idx]:
+                            pc = self._advance_path_facts(pc, prev, ghosts=False)
+                    name, offset, bound = region
+                    at = ArithExpr("+", term, Const(offset)) if offset else term
+                    shown = f"{index}{offset:+d}" if offset else str(index)
+                    if self._entailed(pc, Lt(at, Const(0))):
+                        record(is_write, name, shown, bound, instr.loc, verb, below=True)
+                    elif bound is not None and self._entailed(pc, Ge(at, Const(bound))):
+                        record(is_write, name, shown, bound, instr.loc, verb, below=False)
+                for buf, count, is_write in self._call_element_accesses(instr):
+                    # `memcpy(p, src, n)` with p before its region's start writes there as soon
+                    # as it writes anything: the offset is negative and, when the call takes a
+                    # count, the path facts entail it is positive.
+                    region = self._region_of(buf, proc, constants)
+                    if region is None or region[1] >= 0:
+                        continue
+                    if count is not None:
+                        n = self._constant_index_value(self._cast_strip(count), constants)
+                        if n is None:
+                            term = self._index_term(count)
+                            if term is None:
+                                continue
+                            if pc is None:
+                                if entry is None:
+                                    entry = self._path_fact_fixpoint(proc)
+                                if node_id not in entry:
+                                    break
+                                pc = list(entry[node_id])
+                                for prev in node.instrs[:idx]:
+                                    pc = self._advance_path_facts(pc, prev, ghosts=False)
+                            if not self._entailed(pc, Gt(term, Const(0))):
+                                continue
+                        elif n <= 0:
+                            continue
+                    name, offset, bound = region
+                    verb = (f"{instr.get_full_name()} writes" if is_write else f"{instr.get_full_name()} reads")
+                    record(is_write, name, offset, bound, instr.loc, verb, below=True)
+                if pc is not None:
+                    pc = self._advance_path_facts(pc, instr, ghosts=False)
         return checks
 
     def _unchecked_return_checks(self, proc: Procedure) -> List[VulnerabilityCheck]:
@@ -6478,6 +6722,33 @@ class SILTranslator:
                 ))
 
         return checks
+
+    def _apply_digest(self, instr: Call, spec, state: SymbolicState) -> None:
+        """`SHA256(raw, n, md)`: the digest is as predictable as its input, so weak-random taint
+        in a `digest_of` argument reaches `digest_into` (an argument's buffer, `md + k` included,
+        or the result). No other kind crosses a digest."""
+        weak = None
+        for idx in spec.digest_of:
+            if idx < len(instr.args):
+                for v in self._get_exp_vars(instr.args[idx][0]):
+                    info = state.get_taint_info(v) if state.is_tainted(v) else None
+                    if info is not None and info.source_kind == TaintKind.WEAK_RANDOM:
+                        weak = v
+        if weak is None:
+            return
+        if spec.digest_into is None:
+            targets = [str(instr.ret[0])] if instr.ret else []
+        elif spec.digest_into < len(instr.args):
+            dest = self._cast_strip(instr.args[spec.digest_into][0])
+            if isinstance(dest, ExpUnOp) and dest.op == "&":
+                dest = self._cast_strip(dest.operand)
+            if isinstance(dest, ExpBinOp) and dest.op in ("+", "-"):
+                dest = self._cast_strip(dest.left)
+            targets = [self._get_var_name(dest.var)] if isinstance(dest, ExpVar) else []
+        else:
+            targets = []
+        for t in targets:
+            state.propagate_taint(weak, t)
 
     def _hardcoded_key_checks(self, instr: Call, spec, state: SymbolicState,
                               proc_name: str) -> List["VulnerabilityCheck"]:
@@ -6859,7 +7130,8 @@ class SILTranslator:
 
     def _length_bound_facts(self, instr: Instr) -> List[Formula]:
         """`n = strlen(buf)` with buf a fixed local array of N elements: the string ends
-        inside its storage, so `0 <= n <= N - 1`."""
+        inside its storage, so `0 <= n <= N - 1`; through a pointer into the array at element
+        k (`_region_of`), `0 <= n <= N - 1 - k`."""
         if not isinstance(instr, Call) or not instr.ret or len(instr.args) != 1:
             return []
         func = instr.func
@@ -6869,10 +7141,18 @@ class SILTranslator:
         proc = self._cur_proc
         buf = self._sole_var(self._cast_strip(instr.args[0][0]))
         bound = (proc.fixed_array_bounds or {}).get(buf) if proc is not None and buf else None
-        if bound is None or bound <= 0:
+        offset = 0
+        if bound is None and proc is not None and buf:
+            constants = getattr(proc, "_const_ints_cache", None)
+            if constants is None:
+                constants = proc._const_ints_cache = self._procedure_constant_ints(proc)
+            region = self._region_of(ExpVar(PVar(buf)), proc, constants)
+            if region is not None and region[2] is not None and region[1] >= 0:
+                _, offset, bound = region
+        if bound is None or bound - offset <= 0:
             return []
         n = Var(str(instr.ret[0]))
-        return [Ge(n, Const(0)), Le(n, Const(bound - 1))]
+        return [Ge(n, Const(0)), Le(n, Const(bound - 1 - offset))]
 
     # Suffix of the ghost variable that records "this local has no value yet".
     _UNINIT_GHOST = "#uninit"
@@ -7954,68 +8234,87 @@ class SILTranslator:
 
     def _tainted_index_checks(self, instr: Instr, state: SymbolicState,
                               proc_name: str) -> List[VulnerabilityCheck]:
-        """CWE-787 / CWE-125: an attacker-controlled index into a fixed array with
-        no path guard bounding it below the array size. C/C++ only.
+        """CWE-787 / CWE-125 and CWE-124 / CWE-127: an attacker-controlled index into a region
+        (a fixed array, also through a pointer into one, or a heap block) that the path does not
+        keep inside it. C/C++ only.
 
-        The trigger is TAINT: an ordinary opaque parameter index is never flagged,
-        because it is not attacker-controlled as far as the analysis can see. The
-        rule fires only when the path does NOT force the index below the bound,
-        i.e. `path-condition AND index >= bound` is SATISFIABLE. A guard `if(i<B)`
-        makes that unsatisfiable, and a mask `i % B` keeps the index in range, so
-        both are silent. When the index cannot be modelled as an integer term it
-        is left alone.
-        """
-        checks: List[VulnerabilityCheck] = []
+        The trigger is TAINT: an ordinary opaque parameter index is never flagged. Each access
+        is a candidate decided by `_confirm_path_candidates` against the path-fact fixpoint:
+        past the end when `pc & offset + index >= bound` is satisfiable (fixed arrays), before
+        the start when `pc & ranges & offset + index < 0` is (attacker data only, not a PRNG's,
+        which is never negative). The ranges are the declared types of the index's variables, so
+        an `unsigned` or `size_t` index is never negative; an index of unknown signedness is not
+        asked. A guard (`if (i < B)`, `if (i >= 0)`) makes the matching question unsatisfiable."""
         if not self._is_c_lang or self._cur_proc_unreliable():
-            return checks
+            return []
         proc = self._cur_proc
-        if proc is None or not (proc.fixed_array_bounds or getattr(self.program, "global_array_bounds", None)):
-            return checks
-
+        if proc is None:
+            return []
+        constants = getattr(proc, "_const_ints_cache", None)
+        if constants is None:
+            constants = proc._const_ints_cache = self._procedure_constant_ints(proc)
         seen = set()
-        for base, index, is_write in self._subscript_accesses(instr):
-            bound = self._stack_array_bound(base, proc)
-            if bound is None:
-                continue
+        for base, index, is_write in self._accesses(instr):
             if not self._index_is_tainted(index, state):
-                continue
-            term = self._exp_to_arith(index, state)
-            if term is None:
                 continue
             key = (str(base), str(index), is_write)
             if key in seen:
                 continue
             seen.add(key)
-
-            over = Ge(term, Const(bound))
-            constraints = list(state.feasibility_constraints)
-            if constraints:
-                pc = self._build_conjunction(constraints)
-                # An infeasible path proves nothing; a feasible one that still
-                # permits index >= bound has no upper guard on the index.
-                if not self._feasibility_sat(pc):
+            region = self._region_of(base, proc, constants)
+            if region is None:
+                bound = self._stack_array_bound(base, proc)          # a file-scope array
+                if bound is None:
                     continue
-                permits_over = self._feasibility_sat(And(pc, over))
-            else:
-                permits_over = self._feasibility_sat(over)
-            if not permits_over:
+                stripped = self._cast_strip(base)
+                region = (str(stripped.var) if isinstance(stripped, ExpVar) else str(base), 0, bound)
+            name, offset, bound = region
+            term = self._index_term(index)
+            if term is None:
                 continue
-
-            kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
+            at = ArithExpr("+", term, Const(offset)) if offset else term
+            tainted = [v for v in self._get_exp_vars(index) if state.is_tainted(v)]
             verb = "Write to" if is_write else "Read of"
-            base_name = str(self._cast_strip(base).var) if isinstance(
-                self._cast_strip(base), ExpVar) else str(base)
-            checks.append(VulnerabilityCheck(
-                formula=True_(),
-                vuln_type=kind,
-                location=instr.loc,
-                description=f"{verb} '{base_name}[{index}]' uses an attacker-controlled "
-                            f"index with no guard bounding it below {bound}, the extent "
-                            f"of '{base_name}'",
-                tainted_var=str(index),
-                procedure_name=proc_name,
-            ))
-        return checks
+            if bound is not None:
+                kind = VulnType.OOB_WRITE if is_write else VulnType.OOB_READ
+                self._index_candidate(instr, state, proc_name, tainted[0], kind, [Ge(at, Const(bound))],
+                                      f"{verb} '{name}[{index}]' uses an attacker-controlled index with "
+                                      f"no guard bounding it below {bound}, the extent of '{name}'")
+            attacker = [v for v in tainted if self._attacker_tainted(v, state)]
+            ranges = self._signed_ranges(index)
+            if attacker and ranges is not None:
+                kind = VulnType.OOB_UNDERWRITE if is_write else VulnType.OOB_UNDERREAD
+                self._index_candidate(instr, state, proc_name, attacker[0], kind, ranges + [Lt(at, Const(0))],
+                                      f"{verb} '{name}[{index}]' uses an attacker-controlled index that "
+                                      f"can be negative: before the start of '{name}'")
+        return []
+
+    def _signed_ranges(self, index: Exp) -> Optional[List[Formula]]:
+        """Facts the declared types of the index's variables give (an `int`'s range, `>= 0` for
+        an unsigned type), or None when some variable's signedness is not known."""
+        out: List[Formula] = []
+        declared = getattr(self._cur_proc, "scalar_types", None) or {}
+        for v in self._get_exp_vars(index):
+            t = declared.get(v, "")
+            neg = may_be_negative(t)
+            if neg is None:
+                return None
+            if t in INT_TYPES:
+                lo, hi = int_range(*INT_TYPES[t])
+                out += [Ge(Var(v), Const(lo)), Le(Var(v), Const(hi))]
+            elif not neg:
+                out.append(Ge(Var(v), Const(0)))
+        return out
+
+    def _index_candidate(self, instr: Instr, state: SymbolicState, proc_name: str, var: str,
+                         kind: "VulnType", parts: List[Formula], description: str) -> None:
+        check = VulnerabilityCheck(formula=True_(), vuln_type=kind, location=instr.loc,
+                                   description=description, tainted_var=var, procedure_name=proc_name)
+        taint = state.get_taint_info(var)
+        if taint is not None:
+            check.source_var = taint.source_var
+            check.source_location = taint.source_location
+        self._overflow_candidates.append((getattr(self, "_cur_pos", None), check, parts))
 
     # name -> (index of the destination buffer, index of the byte-count argument
     # or None). The byte count is either an explicit argument or, for the string

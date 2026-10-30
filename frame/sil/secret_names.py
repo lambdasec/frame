@@ -40,6 +40,14 @@ class SecretNames:
     structural_words: FrozenSet[str]
 
 
+def name_words(name: str) -> List[str]:
+    """An identifier's words, lower case: camelCase and separators split
+    ('SSHAuthPrivateKey' -> ['ssh', 'auth', 'private', 'key'], 'new_session_token' -> [..., 'token'])."""
+    t = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
+    t = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', t)
+    return [x for x in re.split(r'[^A-Za-z0-9]+', t.lower()) if x]
+
+
 def _compile(pattern, where: str, flags: int = 0) -> Pattern:
     if not isinstance(pattern, str):
         raise ValueError(f"{where}: pattern must be a string")
@@ -90,4 +98,4 @@ def load(path: Path = PATH) -> SecretNames:
         **{w: frozenset(words[w]) for w in _WORDS})
 
 
-__all__ = ["PATH", "SecretNames", "load"]
+__all__ = ["PATH", "SecretNames", "load", "name_words"]

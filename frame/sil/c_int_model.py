@@ -19,6 +19,25 @@ INT_TYPES: Dict[str, Tuple[int, bool]] = {
 }
 
 
+# Types whose width depends on the platform but whose signedness does not: enough to say whether a
+# value can be negative (an unsigned index never is), never its range.
+SIGNED_PLATFORM_TYPES = frozenset({"long", "long int", "signed long", "signed long int", "ssize_t",
+                                   "ptrdiff_t", "off_t", "intptr_t", "intmax_t"})
+UNSIGNED_PLATFORM_TYPES = frozenset({"unsigned long", "unsigned long int", "size_t", "uintptr_t",
+                                     "uintmax_t", "DWORD", "SIZE_T"})
+
+
+def may_be_negative(declared: str) -> "bool | None":
+    """Can a value of this declared type be negative? None when the type is not known here."""
+    if declared in INT_TYPES:
+        return INT_TYPES[declared][1]
+    if declared in SIGNED_PLATFORM_TYPES:
+        return True
+    if declared in UNSIGNED_PLATFORM_TYPES:
+        return False
+    return None
+
+
 def int_range(bits: int, signed: bool) -> Tuple[int, int]:
     return (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
 
@@ -37,4 +56,5 @@ def _limits() -> Dict[str, int]:
 
 LIMITS: Dict[str, int] = _limits()
 
-__all__ = ["INT_TYPES", "LIMITS", "int_range"]
+__all__ = ["INT_TYPES", "LIMITS", "SIGNED_PLATFORM_TYPES", "UNSIGNED_PLATFORM_TYPES", "int_range",
+           "may_be_negative"]

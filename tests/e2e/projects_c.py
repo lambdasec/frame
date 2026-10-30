@@ -760,6 +760,39 @@ void hash_password(const char *password, char out[65])
 ''',
 })
 
+case("rand_session_token", {
+    "auth/token.c": r'''#include <openssl/sha.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+@@<<
+@@==
+#include <openssl/rand.h>
+@@>>
+
+void new_session_token(char out[65])
+{
+    unsigned char raw[16];
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+@@<<
+    srand((unsigned)time(NULL));
+    for (int i = 0; i < 16; i++) {
+        raw[i] = (unsigned char)rand();
+    }
+@@==
+    if (RAND_bytes(raw, sizeof(raw)) != 1) {
+        out[0] = '\0';
+        return;
+    }
+@@>>
+    SHA256(raw, sizeof(raw), digest);
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(out + i * 2, "%02x", digest[i]);  // frame-expect: CWE-338
+    }
+}
+''',
+})
+
 case("hardcoded_db_password", {
     "db/connect.c": r'''#include <libpq-fe.h>
 #include <stdio.h>
@@ -1385,7 +1418,7 @@ static void new_session_token(char *out, size_t len)
 @@<<
     srand((unsigned)time(NULL));
     for (size_t i = 0; i + 1 < len; i++) {
-        out[i] = "0123456789abcdef"[rand() % 16];
+        out[i] = "0123456789abcdef"[rand() % 16];  // frame-expect: CWE-338
     }
 @@==
     unsigned char bytes[64];

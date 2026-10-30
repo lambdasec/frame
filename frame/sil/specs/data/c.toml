@@ -600,6 +600,78 @@ sink_args = [0]
 description = "_wpopen(command, mode) - runs a command line (CWE-78)"
 
 [[spec]]
+name = "SHA224"
+digest_of = [0]
+digest_into = 2
+description = "SHA224(d, n, md): a digest of its input"
+
+[[spec]]
+name = "SHA256"
+digest_of = [0]
+digest_into = 2
+description = "SHA256(d, n, md): a digest of its input"
+
+[[spec]]
+name = "SHA384"
+digest_of = [0]
+digest_into = 2
+description = "SHA384(d, n, md): a digest of its input"
+
+[[spec]]
+name = "SHA512"
+digest_of = [0]
+digest_into = 2
+description = "SHA512(d, n, md): a digest of its input"
+
+[[spec]]
+name = "EVP_Digest"
+digest_of = [0]
+digest_into = 2
+description = "EVP_Digest(data, count, md, size, type, impl): a digest of its input"
+
+[[spec]]
+name = "EVP_DigestUpdate"
+digest_of = [1]
+digest_into = 0
+description = "EVP_DigestUpdate(ctx, d, cnt): a digest of its input"
+
+[[spec]]
+name = "EVP_DigestFinal_ex"
+digest_of = [0]
+digest_into = 1
+description = "EVP_DigestFinal_ex(ctx, md, s): a digest of its input"
+
+[[spec]]
+name = "EVP_DigestFinal"
+digest_of = [0]
+digest_into = 1
+description = "EVP_DigestFinal(ctx, md, s): a digest of its input"
+
+[[spec]]
+name = "SHA256_Update"
+digest_of = [1]
+digest_into = 0
+description = "SHA256_Update(c, data, len): a digest of its input"
+
+[[spec]]
+name = "SHA256_Final"
+digest_of = [1]
+digest_into = 0
+description = "SHA256_Final(md, c): a digest of its input"
+
+[[spec]]
+name = "SHA1_Update"
+digest_of = [1]
+digest_into = 0
+description = "SHA1_Update(c, data, len): a digest of its input"
+
+[[spec]]
+name = "SHA1_Final"
+digest_of = [1]
+digest_into = 0
+description = "SHA1_Final(md, c): a digest of its input"
+
+[[spec]]
 name = "system"
 is_sink = "command"
 description = "system() - command injection sink"
@@ -1007,6 +1079,8 @@ description = "XML_ParseBuffer() - XXE"
 
 [[spec]]
 name = "MD5"
+digest_of = [0]
+digest_into = 2
 is_sink = "weak_hash"
 sink_args = []
 description = "MD5 - weak hash (CWE-328), use SHA-256"
@@ -1019,18 +1093,24 @@ description = "MD5_Init - weak hash (CWE-328)"
 
 [[spec]]
 name = "MD5_Update"
+digest_of = [1]
+digest_into = 0
 is_sink = "weak_hash"
 sink_args = []
 description = "MD5_Update - weak hash (CWE-328)"
 
 [[spec]]
 name = "MD5_Final"
+digest_of = [1]
+digest_into = 0
 is_sink = "weak_hash"
 sink_args = []
 description = "MD5_Final - weak hash (CWE-328)"
 
 [[spec]]
 name = "SHA1"
+digest_of = [0]
+digest_into = 2
 is_sink = "weak_hash"
 sink_args = []
 description = "SHA1 - weak hash (CWE-328), use SHA-256"
@@ -1152,6 +1232,8 @@ description = "AES key"
 
 [[spec]]
 name = "HMAC"
+digest_of = [1, 3]
+digest_into = 5
 key_args = [1]
 is_sink = "unpredictable"
 sink_args = [1]

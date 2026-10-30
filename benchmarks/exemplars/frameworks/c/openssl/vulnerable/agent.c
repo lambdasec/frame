@@ -37,7 +37,7 @@ SSL_CTX *make_context(void) {
 
 void new_session_id(char *out, size_t n) {
     for (size_t i = 0; i + 1 < n; i++)
-        out[i] = "0123456789abcdef"[rand() % 16];
+        out[i] = "0123456789abcdef"[rand() % 16]; /* frame-expect: CWE-338 */
     out[n - 1] = '\0';
 }
 

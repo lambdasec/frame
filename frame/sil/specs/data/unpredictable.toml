@@ -88,3 +88,15 @@ language = "javascript"
 call = ["crypto.pbkdf2", "crypto.pbkdf2Sync", "crypto.scrypt", "crypto.scryptSync"]
 args = [1]
 description = "a password-hashing salt"
+
+# Destinations whose NAME says the value must be unpredictable: a variable, field or buffer a
+# weak_random value is written into, or a function whose result (return value, or a write into
+# one of its parameters: a C out-parameter has no name but the function's) is one. A name is split
+# into words (camelCase and separators, lower case); an entry matches consecutive words. A name
+# whose last word is a metadata head of secret-names.toml (`token_length`, `salt_size`) names
+# something about the value, not the value. Bare "key" and "id" are not here: a dictionary key and
+# a row id are not secrets.
+[destinations]
+words = ["token", "secret", "password", "passwd", "passphrase", "nonce", "salt", "otp", "csrf",
+         "sessionid", "session id", "session key", "api key", "private key", "signing key",
+         "access key", "encryption key", "crypto key", "auth key", "iv"]
