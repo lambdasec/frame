@@ -89,6 +89,22 @@ class StartsWith:
 
 
 @dataclass(frozen=True)
+class Internet:
+    """`internet(x)`: x is a CIDR (or address) that contains an address the internet can send
+    from (frame/iac/addresses.py); `internet(x, 4)` / `internet(x, 6)`: and of that IP version
+    (a field that takes only IPv4 networks makes nothing of an IPv6 one)."""
+    operand: "Operand"
+    family: int = 0
+
+
+@dataclass(frozen=True)
+class Call:
+    """`name(args)`: a pack's [[define]], inlined when the pack is loaded."""
+    name: str
+    args: Tuple["Operand", ...]
+
+
+@dataclass(frozen=True)
 class Not:
     expr: "Expr"
 
@@ -107,13 +123,13 @@ class Quantifier:
     body: "Expr"
 
 
-Expr = Union[Compare, Present, StartsWith, Not, BoolOp, Quantifier]
+Expr = Union[Compare, Present, StartsWith, Internet, Call, Not, BoolOp, Quantifier]
 
 
 # --- tokenizer ---------------------------------------------------------------------------
 
 _KEYWORDS = {"and", "or", "not", "some", "every", "in", "true", "false", "present", "absent",
-             "default", "starts_with"}
+             "default", "starts_with", "internet"}
 _OPERATORS = ("==", "!=", "<=", ">=", "<", ">")
 _PUNCT = "().,[]:+"
 
@@ -261,6 +277,30 @@ class _Parser:
             p = self.path()
             self.expect("P", ")")
             return Present(p, negate)
+        if self.at("KW", "internet"):
+            self.take()
+            self.expect("P", "(")
+            operand = self.operand()
+            family = 0
+            if self.at("P", ","):
+                self.take()
+                t = self.expect("NUM")
+                if t[1] not in (4, 6):
+                    raise PolicyError(f"internet(): the IP version is 4 or 6, not {t[1]}")
+                family = t[1]
+            self.expect("P", ")")
+            return Internet(operand, family)
+        if self.at("NAME") and self.at("P", "(", 1):
+            name = self.take()[1]
+            self.take()
+            args: List[Operand] = []
+            if not self.at("P", ")"):
+                args.append(self.operand())
+                while self.at("P", ","):
+                    self.take()
+                    args.append(self.operand())
+            self.expect("P", ")")
+            return Call(name, tuple(args))
         if self.at("KW", "starts_with"):
             self.take()
             self.expect("P", "(")
@@ -356,8 +396,11 @@ def roots(expr: Expr, bound: Tuple[str, ...] = ()) -> set:
             operand(e.right, b)
         elif isinstance(e, Present):
             operand(e.path, b)
-        elif isinstance(e, StartsWith):
+        elif isinstance(e, (StartsWith, Internet)):
             operand(e.operand, b)
+        elif isinstance(e, Call):
+            for a in e.args:
+                operand(a, b)
         elif isinstance(e, Not):
             walk(e.expr, b)
         elif isinstance(e, BoolOp):
@@ -372,5 +415,68 @@ def roots(expr: Expr, bound: Tuple[str, ...] = ()) -> set:
     return out
 
 
-__all__ = ["BoolOp", "Compare", "Default", "Expr", "Literal", "Not", "Path", "PolicyError", "Present",
-           "Quantifier", "StartsWith", "parse", "roots"]
+# --- defines -----------------------------------------------------------------------------
+
+def inline(expr: Expr, defines: dict) -> Expr:
+    """`expr` with every call to a define (name -> (params, body)) replaced by the define's
+    body, its parameters substituted (a path argument extends the paths that start at the
+    parameter; a literal replaces a parameter used whole) and its own bound names renamed so a
+    caller's names cannot be captured. PolicyError for an unknown name or a bad argument."""
+    counter = [0]
+
+    def sub_operand(o, env):
+        p = o.path if isinstance(o, Default) else o
+        if not isinstance(p, Path) or p.root not in env:
+            return o
+        arg = env[p.root]
+        if isinstance(arg, Path):
+            new = Path(arg.root, arg.steps + p.steps)
+        elif isinstance(arg, Literal) and not p.steps and not isinstance(o, Default):
+            return arg
+        else:
+            raise PolicyError(f"argument for {p.root!r} cannot be used as {p}")
+        return Default(new, o.value) if isinstance(o, Default) else new
+
+    def walk(e: Expr, env: dict, stack: tuple) -> Expr:
+        if isinstance(e, Compare):
+            return Compare(e.op, sub_operand(e.left, env), sub_operand(e.right, env))
+        if isinstance(e, Present):
+            new = sub_operand(e.path, env)
+            if not isinstance(new, Path):
+                raise PolicyError("present()/absent() need a path")
+            return Present(new, e.negate)
+        if isinstance(e, StartsWith):
+            return StartsWith(sub_operand(e.operand, env), e.prefix)
+        if isinstance(e, Internet):
+            return Internet(sub_operand(e.operand, env), e.family)
+        if isinstance(e, Not):
+            return Not(walk(e.expr, env, stack))
+        if isinstance(e, BoolOp):
+            return BoolOp(e.op, tuple(walk(x, env, stack) for x in e.parts))
+        if isinstance(e, Quantifier):
+            coll = tuple(sub_operand(c, env) for c in e.collection)
+            inner = dict(env)
+            names = []
+            for n in e.names:
+                counter[0] += 1
+                fresh = f"{n}${counter[0]}"
+                inner[n] = Path(fresh)
+                names.append(fresh)
+            return Quantifier(e.kind, tuple(names), coll, walk(e.body, inner, stack))
+        if isinstance(e, Call):
+            if e.name not in defines:
+                raise PolicyError(f"unknown function {e.name}()")
+            if e.name in stack:
+                raise PolicyError(f"{e.name}() calls itself")
+            params, body = defines[e.name]
+            if len(params) != len(e.args):
+                raise PolicyError(f"{e.name}() takes {len(params)} argument(s)")
+            args = [sub_operand(a, env) for a in e.args]
+            return walk(body, dict(zip(params, args)), stack + (e.name,))
+        return e
+
+    return walk(expr, {}, ())
+
+
+__all__ = ["BoolOp", "Call", "Compare", "Default", "Expr", "Internet", "Literal", "Not", "Path", "PolicyError",
+           "Present", "Quantifier", "StartsWith", "inline", "parse", "roots"]

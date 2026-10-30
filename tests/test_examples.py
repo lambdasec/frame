@@ -434,12 +434,19 @@ def test_iac_walkthrough(tmp_path):
             "[spec.template.spec.containers[0].securityContext.capabilities] (also k8s-capabilities-baseline)",
             "k8s/web.yaml:15: [medium] k8s-run-as-non-root (CWE-250) Deployment/shop/web: Container may run as root "
             "[spec.template.spec.containers[0]]",
-            "Infrastructure: 9 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s); 19 finding(s), 2 suppressed, "
-            "1 undecided (depend on values the files do not give)",
+            "terraform/database.tf:7: [high] aws-rds-public (CWE-284) aws_db_instance.orders: Database instance has a "
+            "public endpoint [publicly_accessible]",
+            "terraform/network.tf:21: [high] aws-sg-admin-from-internet (CWE-284) aws_security_group.bastion: Security "
+            "group lets the internet reach SSH or RDP [ingress[0].cidr_blocks[0]]",
+            "Infrastructure: 16 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 2 file(s); "
+            "21 finding(s), 2 suppressed, 2 undecided (depend on values the files do not give)",
+            "undecided: images/web/Dockerfile:8 docker-root-user images/web/Dockerfile stage 1 (depends on the user of nginx)",
+            "undecided: terraform/network.tf:42 aws-sg-admin-from-internet aws_vpc_security_group_ingress_rule.partner_ssh "
+            "(depends on var.partner_cidr)",
             "warning: chart: Helm chart with 1 template(s) not checked (render it with `helm template` and scan the output)"]),
         (("iac", ".", "--min-severity", "high"), [
-            "Infrastructure: 9 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s); 3 finding(s), 2 suppressed, "
-            "1 undecided"]),
+            "Infrastructure: 16 resource(s) in dockerfile: 3 file(s), kubernetes: 4 file(s), terraform: 2 file(s); "
+            "5 finding(s), 2 suppressed, 2 undecided"]),
     ]
     for args, lines in shown:
         out = frame(work, env, *args)
@@ -448,3 +455,4 @@ def test_iac_walkthrough(tmp_path):
             assert line in readme, f"README does not show {line!r}"
     out = frame(work, env, "iac", ".")
     assert "k8s/api.yaml" not in out and "images/api" not in out and "k8s-privileged" not in out
+    assert "aws_security_group.web" not in out and "aws-ebs-unencrypted" not in out

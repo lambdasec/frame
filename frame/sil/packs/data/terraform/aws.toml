@@ -1,0 +1,116 @@
+# AWS resources in Terraform (hashicorp/aws provider). Attribute names and defaults are the
+# provider's (registry.terraform.io/providers/hashicorp/aws/latest/docs); what a setting means
+# is AWS's. `internet(c)`: some address in CIDR c can send from the internet (IANA's
+# special-purpose registries, decided with Z3: frame/iac/addresses.py).
+
+[pack]
+name = "aws"
+language = "terraform"
+description = "AWS: network exposure, public databases, unencrypted storage"
+references = ["https://registry.terraform.io/providers/hashicorp/aws/latest/docs"]
+
+# --- security group rules, in the three ways Terraform writes them -------------------------
+# aws_security_group `ingress` blocks and aws_security_group_rule: protocol, from_port, to_port,
+# cidr_blocks, ipv6_cidr_blocks. aws_vpc_security_group_ingress_rule: ip_protocol, from_port,
+# to_port, cidr_ipv4, cidr_ipv6. Protocol "-1" (or "all") is every protocol and every port; AWS
+# takes a protocol number or name, and a number written without quotes is the same value.
+
+[[define]]
+name = "all_traffic"
+params = ["p"]
+body = '''p in ["-1", "all", -1]'''
+
+[[define]]
+name = "tcp_port"
+params = ["p", "from", "to", "port"]
+body = '''all_traffic(p) or (p in ["tcp", "6", 6] and from <= port and to >= port)'''
+
+[[define]]
+name = "every_tcp_port"
+params = ["p", "from", "to"]
+body = '''all_traffic(p) or (p in ["tcp", "6", 6] and from <= 0 and to >= 65535)'''
+
+[[define]]
+name = "rule_from_internet"
+params = ["r"]
+body = '''(some c in r.cidr_blocks: internet(c, 4)) or (some c in r.ipv6_cidr_blocks: internet(c, 6))'''
+
+[[define]]
+name = "vpc_rule_from_internet"
+params = ["r"]
+body = '''internet(r.cidr_ipv4, 4) or internet(r.cidr_ipv6, 6)'''
+
+[[policy]]
+id = "aws-sg-admin-from-internet"
+title = "Security group lets the internet reach SSH or RDP"
+severity = "high"
+cwe = "CWE-284"
+resources = ["aws_security_group", "aws_security_group_rule", "aws_vpc_security_group_ingress_rule"]
+when = '''
+(some r in self.ingress: rule_from_internet(r)
+    and (tcp_port(r.protocol, r.from_port, r.to_port, 22) or tcp_port(r.protocol, r.from_port, r.to_port, 3389)))
+or (self.type == "ingress" and rule_from_internet(self)
+    and (tcp_port(self.protocol, self.from_port, self.to_port, 22)
+         or tcp_port(self.protocol, self.from_port, self.to_port, 3389)))
+or (vpc_rule_from_internet(self)
+    and (tcp_port(self.ip_protocol, self.from_port, self.to_port, 22)
+         or tcp_port(self.ip_protocol, self.from_port, self.to_port, 3389)))
+'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/ec2-controls.html#ec2-53",
+              "https://docs.aws.amazon.com/vpc/latest/userguide/security-group-rules.html"]
+
+[[policy]]
+id = "aws-sg-all-from-internet"
+title = "Security group lets the internet reach every port"
+severity = "high"
+cwe = "CWE-284"
+resources = ["aws_security_group", "aws_security_group_rule", "aws_vpc_security_group_ingress_rule"]
+overrides = ["aws-sg-admin-from-internet"]
+when = '''
+(some r in self.ingress: rule_from_internet(r) and every_tcp_port(r.protocol, r.from_port, r.to_port))
+or (self.type == "ingress" and rule_from_internet(self)
+    and every_tcp_port(self.protocol, self.from_port, self.to_port))
+or (vpc_rule_from_internet(self) and every_tcp_port(self.ip_protocol, self.from_port, self.to_port))
+'''
+references = ["https://docs.aws.amazon.com/securityhub/latest/userguide/ec2-controls.html#ec2-18",
+              "https://docs.aws.amazon.com/vpc/latest/userguide/security-group-rules.html"]
+
+# --- databases -----------------------------------------------------------------------------
+
+[[policy]]
+id = "aws-rds-public"
+title = "Database instance has a public endpoint"
+severity = "high"
+cwe = "CWE-284"
+resources = ["aws_db_instance", "aws_rds_cluster_instance"]
+when = '''self.publicly_accessible == true'''
+references = ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html#USER_VPC.Hiding"]
+
+# --- storage the configuration leaves unencrypted --------------------------------------------
+# A volume from a snapshot, or a database restored or replicated from another, takes its
+# source's encryption, which the files do not show; so does an account-wide default set
+# outside this configuration.
+
+[[policy]]
+id = "aws-ebs-unencrypted"
+title = "EBS volume is not encrypted by this configuration"
+severity = "low"
+cwe = "CWE-311"
+resources = ["aws_ebs_volume"]
+when = '''
+default(self.encrypted, false) == false and absent(self.snapshot_id)
+and not (some d in resources["aws_ebs_encryption_by_default"]: default(d.enabled, true) == true)
+'''
+references = ["https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html"]
+
+[[policy]]
+id = "aws-rds-unencrypted"
+title = "Database storage is not encrypted by this configuration"
+severity = "low"
+cwe = "CWE-311"
+resources = ["aws_db_instance"]
+when = '''
+default(self.storage_encrypted, false) == false
+and absent(self.snapshot_identifier) and absent(self.replicate_source_db)
+'''
+references = ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html"]

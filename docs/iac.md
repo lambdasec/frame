@@ -1,6 +1,6 @@
 # Infrastructure as code
 
-`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards) and Dockerfiles. Terraform, CloudFormation and Helm rendering follow ([roadmap](roadmap.md)).
+`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards), Dockerfiles and Terraform (AWS). CloudFormation, Helm rendering and full network reachability follow ([roadmap](roadmap.md)).
 
 ```console
 $ frame iac .
@@ -57,13 +57,33 @@ How close this is to Kubernetes itself, measured with the controller's own evalu
 
 The user an image runs as is resolved as Docker resolves it: the last USER of the final stage, else that of the stage it builds on (`FROM build`), root for `scratch`. A base image's own user is not in the files, so an image that never sets one makes `docker-root-user` undecided, and `docker-user-not-set` (which the file does entail) is reported instead. A value BuildKit expands from a build argument (`FROM ${BASE}`, `USER ${UID}`, `ADD ${URL}`) is unknown: `--build-arg` can change it, so policies on it are undecided rather than judged on the default. Compared with hadolint's base-image and root rules on the same files, every difference is a case Frame reads correctly: hadolint stops on three of BuildKit's test files with an untagged `FROM`, and reports three `FROM name-${ARG}` lines that name earlier build stages as untagged images.
 
+**Terraform.** Every directory with `.tf` files is read as a root module, as a plan would see it before anything exists:
+
+- Expressions are evaluated as HashiCorp's HCL library evaluates them (`frame/iac/hcl.py`: templates and heredocs, operators, conditionals, `for` expressions, splats, the common functions with Terraform's semantics). The contract is that an expression gets HCL's value or is unknown, never a different value. Checked against HCL itself (`tests/iac_real/hcl`): 16,243 attributes in TerraGoat and five terraform-aws-modules repositories, none different, 57 unknown where HCL has a value (mostly a conditional whose other branch is unknown, where HCL's type unification could change the chosen value).
+- A variable takes the value of its module call, else `terraform.tfvars` / `*.auto.tfvars` (later files win), else its `default`, converted to its `type` (with `optional()` defaults). A variable with no value in the files (given at apply time) is unknown. Findings are for the values the repository gives; a `-var` on the command line is not in the files.
+- What exists only once applied (`aws_vpc.main.id`) is one unknown per resource and attribute, the same wherever it is read; an attribute a resource configures is its value (`aws_s3_bucket.logs.bucket`).
+- Known `count` and `for_each` expand to their instances (`count = 0` or an empty `for_each` leaves none); unknown ones leave one instance with `count.index` / `each` unknown. `dynamic` blocks expand over a known `for_each`. Local modules (`source = "./x"`), and modules `terraform init` recorded in `.terraform/modules/modules.json`, are read with their call's arguments.
+- Not read yet: `.tf.json` files and override files (each is named in a warning).
+
+| Policy | Check | Severity |
+|---|---|---|
+| `aws-sg-admin-from-internet` | a security group rule lets the internet reach SSH (22) or RDP (3389) | high |
+| `aws-sg-all-from-internet` | a rule lets the internet reach every port | high |
+| `aws-rds-public` | a database instance with a public endpoint | high |
+| `aws-ebs-unencrypted` | an EBS volume this configuration leaves unencrypted | low |
+| `aws-rds-unencrypted` | database storage this configuration leaves unencrypted | low |
+
+Security group rules are read in all three forms (`ingress` blocks, `aws_security_group_rule`, `aws_vpc_security_group_ingress_rule`), with protocol `-1` meaning every protocol and port. "The internet" is decided over the address space with Z3 (`frame/iac/addresses.py`): a CIDR lets the internet in when some address in it is globally reachable by IANA's special-purpose registries (the most specific block decides; multicast is never a source; IPv6 only within 2000::/3). So `0.0.0.0/1` counts and `100.64.0.0/10` does not; an IPv6 network in an IPv4 field is not a rule. A volume from a snapshot, or a database restored or replicated, takes its source's encryption, and `aws_ebs_encryption_by_default` in the same configuration covers every volume.
+
+On TerraGoat these five policies report the same resources as checkov's equivalent checks (CKV_AWS_24, 25, 277, 17, 16, 3). On terraform-aws-rds both report the same two databases; checkov also reports two inside a wrapper module whose `for_each` is empty by default (there are no such instances), and Frame leaves the read replica undecided (its source database comes from a module output that may be null).
+
 **Helm.** A chart's `templates/` are Go templates. A template with no template actions (`{{`) renders as written and is checked; any other is skipped, with one warning per chart. Render the chart (`helm template ... > rendered.yaml`) and check the output.
 
 ## Findings
 
 Each finding names the policy, its CWE, the resource (`Kind/namespace/name`), and the value that decides it: the line of `privileged: true`, or, for something missing, the container or securityContext that lacks it (`field` in JSON). `evidence` is `matched` when the files give every value the policy reads, and `solver-verified` when the solver proved the violation holds whatever the values the files leave open (Terraform variables, in a later release).
 
-A violation that depends on values the files do not give (a base image's user, a build argument) is **undecided**: listed in `undecided` in JSON and counted in the summary, never reported as a finding.
+A violation that depends on values the files do not give (a base image's user, a build argument, a Terraform variable set at apply time) is **undecided**: listed with what it depends on (`depends_on` in JSON, `undecided:` lines in text), never reported as a finding.
 
 `frame: ignore[<policy id or CWE>]` on the finding's line, or on a comment line above it, suppresses it (`suppressed` in JSON). `.frame.toml`'s `exclude`, `disable`, `packs`, `min_severity` and `fail_on` apply. Exit status: 0 clean, 1 a finding at or above `--fail-on` (default high), 2 the command could not run.
 
@@ -93,13 +113,26 @@ references = ["https://kubernetes.io/docs/concepts/configuration/manage-resource
 | `x in ["a", "b"]`, `x not in [...]`, `x in path.to.list` | membership |
 | `present(p)`, `absent(p)` | whether a field has a value (`null` is none) |
 | `starts_with(x, "prefix")` | string prefix |
+| `internet(c)`, `internet(c, 4)` | CIDR or address c contains an address the internet can send from (of IP version 4 or 6) |
+| `name(a, b)` | a `[[define]]` of the pack, inlined |
 | `default(p, v)` | p's value, or v when p is missing |
 | `and`, `or`, `not`, `( )` | as usual |
 | `some x in p: ...`, `every x in p: ...` | over a list; `some (k, v) in p: ...` over a map's entries; `p + q` concatenates |
 
 The body of `some`/`every` extends as far right as it can; parenthesise to stop it. A comparison with a missing value is false, `==` and `!=` alike, so say what a missing field means with `default(...)`: the Kubernetes API's zero values (`false`, `0`, `""`) for its fields.
 
-Paths start at a resource's views. Every resource has `self` (the whole document; for a Dockerfile, the build stage: `final`, `from` with `image`/`tag`/`digest`/`stage`/`scratch`/`external`, `user`, `user_set`, `instructions` with `cmd`, `args`, `flags`, `sources`/`dest`, `vars` with `key`/`value`/`credential`, and `preamble` for the ARGs before the first FROM, in `frame/iac/dockerfile.py`). A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
+A pack can name a formula it uses more than once:
+
+```toml
+[[define]]
+name = "tcp_port"
+params = ["p", "from", "to", "port"]
+body = '''p in ["-1", "all", -1] or (p in ["tcp", "6", 6] and from <= port and to >= port)'''
+```
+
+`tcp_port(r.protocol, r.from_port, r.to_port, 22)` then stands for the body with the paths (or literals) substituted. A define may call the defines before it.
+
+Paths start at a resource's views. Every resource has `self` (the whole document; for a Dockerfile, the build stage: `final`, `from` with `image`/`tag`/`digest`/`stage`/`scratch`/`external`, `user`, `user_set`, `instructions` with `cmd`, `args`, `flags`, `sources`/`dest`, `vars` with `key`/`value`/`credential`, and `preamble` for the ARGs before the first FROM, in `frame/iac/dockerfile.py`; for Terraform, the resource's arguments, nested blocks as lists, and `id`). A Terraform resource can also look at the other resources of its root module: `some d in resources["aws_ebs_encryption_by_default"]: d.enabled == true`. A Kubernetes workload also has `pod` (its PodSpec), `podmeta` (the pod's metadata) and the collection `containers` (init, regular and ephemeral containers). A policy applies to the resources that have every view it names; `resources = ["Deployment", "Stateful*"]` narrows it by type. `overrides = ["other-id"]` replaces another policy on a resource where both hold. An unknown key, view or severity is an error that names the file and the policy.
 
 ## How a policy is decided
 

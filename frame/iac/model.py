@@ -27,9 +27,10 @@ class Resource:
     views: Dict[str, Union[DocPath, List[DocPath]]]
     address: str                     # how a user names it: "Deployment/web", "aws_s3_bucket.logs"
     constraints: List[Any] = field(default_factory=list)
+    related: Dict[str, List[Any]] = field(default_factory=dict)   # other resources, by type
 
     def subject(self) -> Subject:
-        return Subject(self.document, self.views, self.constraints)
+        return Subject(self.document, self.views, self.constraints, self.related)
 
     def line_of(self, path: DocPath) -> int:
         return line_of(self.lines, path, self.line)

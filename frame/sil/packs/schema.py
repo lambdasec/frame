@@ -56,8 +56,9 @@ _FUNCTION_KEYS = {"name", "allocates", "frees", "allocates_via", "noreturn", "de
 _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "description"}
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
                 "description"}
+_DEFINE_KEYS = {"name", "params", "body", "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
-             "lambda_handler", "policy"}
+             "lambda_handler", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -426,12 +427,28 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
         pack.lambda_handlers.append(handler)
 
-    code_tables = [t for t in _TOP_KEYS - {"pack", "policy"} if data.get(t)]
+    code_tables = [t for t in _TOP_KEYS - {"pack", "policy", "define"} if data.get(t)]
     if language in IAC_LANGUAGES and code_tables:
         raise _fail(origin, f"[[{sorted(code_tables)[0]}]]", f"a {language} pack holds only [[policy]] entries")
     if language not in IAC_LANGUAGES and data.get("policy"):
         raise _fail(origin, "[[policy]]", f"policies are for infrastructure packs ({list(IAC_LANGUAGES)})")
-    from frame.iac.policy import PolicyError, parse as parse_policy
+    from frame.iac.policy import PolicyError, inline, parse as parse_policy
+    if language not in IAC_LANGUAGES and data.get("define"):
+        raise _fail(origin, "[[define]]", f"defines are for infrastructure packs ({list(IAC_LANGUAGES)})")
+    defines: Dict[str, Any] = {}
+    for i, t in enumerate(data.get("define", [])):
+        where = f"[[define]] #{i + 1}"
+        _check_keys(origin, where, t, _DEFINE_KEYS)
+        name, params, body = t.get("name"), t.get("params", []), t.get("body")
+        if not isinstance(name, str) or not name.isidentifier() or name in defines:
+            raise _fail(origin, f"{where}.name", "a new identifier is required")
+        params = _strings(origin, f"{where}.params", params)
+        if not isinstance(body, str):
+            raise _fail(origin, f"{where}.body", "required (a policy expression)")
+        try:
+            defines[name] = (params, parse_policy(body))
+        except PolicyError as e:
+            raise _fail(origin, f"{where}.body ({name})", str(e)) from None
     seen = set()
     for i, t in enumerate(data.get("policy", [])):
         where = f"[[policy]] #{i + 1}"
@@ -448,7 +465,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (cwe.startswith("CWE-") and cwe[4:].isdigit()):
             raise _fail(origin, f"{where}.cwe", "must be CWE-<number>")
         try:
-            expr = parse_policy(t["when"])
+            expr = inline(parse_policy(t["when"]), defines)
         except PolicyError as e:
             raise _fail(origin, f"{where}.when ({t['id']})", str(e)) from None
         from frame.iac.formats import view_names

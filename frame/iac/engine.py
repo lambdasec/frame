@@ -27,10 +27,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import z3
 
-from .policy import (BoolOp, Compare, Default, Expr, Literal, Not, Path, Present, Quantifier,
+from .policy import (BoolOp, Compare, Default, Expr, Internet, Literal, Not, Path, Present, Quantifier,
                      StartsWith)
 
 DocPath = Tuple[Union[str, int], ...]
+RELATED = "resources"                # `some p in resources["aws_s3_bucket_acl"]: ...`
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class Subject:
     document: Any
     views: Dict[str, Union[DocPath, List[DocPath]]]
     constraints: List[Any] = field(default_factory=list)      # Z3 facts about the unknowns
+    related: Dict[str, List[Any]] = field(default_factory=dict)   # `resources["type"]`: other documents
 
 
 @dataclass
@@ -70,6 +72,7 @@ class Verdict:
     outcome: str                     # fail / undecided / pass
     evidence: str = "matched"        # matched (folded) or solver-verified (needed Z3)
     why: Tuple[DocPath, ...] = ()    # document paths that decided it
+    unknowns: Tuple[str, ...] = ()   # what the solver had no value for (`var.partner_cidr`)
 
 
 Val = Union[bool, z3.BoolRef]
@@ -139,6 +142,10 @@ class _Evaluator:
     def __init__(self, subject: Subject):
         self.subject = subject
         self.fresh = itertools.count()
+        self.unknowns: set = set()
+
+    def _note(self, u: "Unknown") -> None:
+        self.unknowns.add(u.text if u.text and u.text not in ("error", "cycle", "too deep") else u.key)
 
     # -- values ---------------------------------------------------------------------------
 
@@ -192,11 +199,15 @@ class _Evaluator:
             r = self.resolve(o.path, env)
             if isinstance(r, _Absent):
                 return o.value, (r.at,)
-            return (r if isinstance(r, Unknown) else r.value), (() if isinstance(r, Unknown) else (r.path,))
+            if isinstance(r, Unknown):
+                self._note(r)
+                return r, ()
+            return r.value, (r.path,)
         r = self.resolve(o, env)
         if isinstance(r, _Absent):
             return _ABSENT, (r.at,)
         if isinstance(r, Unknown):
+            self._note(r)
             return r, ()
         return r.value, (r.path,)
 
@@ -284,6 +295,7 @@ class _Evaluator:
         if isinstance(e, Present):
             r = self.resolve(e.path, env)
             if isinstance(r, Unknown):
+                self._note(r)
                 v: Val = z3.Bool(f"present:{r.key}")
                 why: Tuple[DocPath, ...] = ()
             elif isinstance(r, _Absent):
@@ -296,6 +308,12 @@ class _Evaluator:
             if isinstance(a, Unknown):
                 return z3.PrefixOf(z3.StringVal(e.prefix), _z3_const(a, z3.StringSort())), why
             return (isinstance(a, str) and a.startswith(e.prefix)), why
+        if isinstance(e, Internet):
+            from .addresses import may_reach
+            a, why = self.operand(e.operand, env)
+            if isinstance(a, Unknown):
+                return z3.Bool(f"internet{e.family or ''}:{a.key}"), why
+            return (isinstance(a, str) and may_reach(a, e.family)), why
         if isinstance(e, Not):
             v, why = self.ev(e.expr, env)
             return _not(v), why
@@ -322,6 +340,11 @@ class _Evaluator:
         paths: List[DocPath] = []
         coll_paths: List[Union[Path, DocPath]] = []
         for p in e.collection:
+            if p.root == RELATED and p.root not in env and len(p.steps) == 1 and isinstance(p.steps[0], str):
+                # another resource is a different document: its paths never name a line here
+                for i, doc in enumerate(self.subject.related.get(p.steps[0], [])):
+                    out.append((_Bound(doc, ("@", p.steps[0], i)),))
+                continue
             view = self.subject.views.get(p.root) if p.root not in env else None
             if isinstance(view, list) and not p.steps:
                 coll_paths.extend(view)
@@ -330,6 +353,7 @@ class _Evaluator:
         for cp in coll_paths:
             r = self._at(cp) if isinstance(cp, tuple) else self.resolve(cp, env)
             if isinstance(r, Unknown):
+                self._note(r)
                 unknown = True
                 continue
             if isinstance(r, _Absent):
@@ -338,6 +362,7 @@ class _Evaluator:
             paths.append(r.path)
             v = r.value
             if isinstance(v, Unknown):
+                self._note(v)
                 unknown = True
             elif len(e.names) == 2 and isinstance(v, dict):
                 for k, item in v.items():
@@ -386,13 +411,14 @@ def decide(expr: Expr, subject: Subject) -> Verdict:
     s.set("timeout", 5000)
     s.add(*subject.constraints)
     s.add(z3.Not(val))
+    unknowns = tuple(sorted(ev.unknowns))
     if s.check() == z3.unsat:
-        return Verdict("fail", "solver-verified", why)
+        return Verdict("fail", "solver-verified", why, unknowns)
     s = z3.Solver()
     s.set("timeout", 5000)
     s.add(*subject.constraints)
     s.add(val)
-    return Verdict("undecided" if s.check() != z3.unsat else "pass", "solver-verified", why)
+    return Verdict("undecided" if s.check() != z3.unsat else "pass", "solver-verified", why, unknowns)
 
 
-__all__ = ["DocPath", "Subject", "Unknown", "Verdict", "decide"]
+__all__ = ["DocPath", "RELATED", "Subject", "Unknown", "Verdict", "decide"]

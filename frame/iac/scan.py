@@ -19,11 +19,11 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from . import dockerfile, kubernetes
+from . import dockerfile, kubernetes, terraform
 from .engine import decide
 from .model import ReadResult, Resource, dotted
 
-FORMATS = ("kubernetes", "dockerfile")
+FORMATS = ("kubernetes", "dockerfile", "terraform")
 _SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 _YAML_SUFFIXES = (".yaml", ".yml", ".json")
 
@@ -94,7 +94,8 @@ def _candidates(target: Path, excluded) -> List[Tuple[Path, str]]:
         return [(target, target.name)]
     out = []
     for path in sorted(target.rglob("*")):
-        if path.is_file() and (path.suffix.lower() in _YAML_SUFFIXES or dockerfile.is_dockerfile(path)) \
+        if path.is_file() and (path.suffix.lower() in _YAML_SUFFIXES or path.suffix == ".tf"
+                               or dockerfile.is_dockerfile(path)) \
                 and not FrameScanner._is_excluded_dir_member(path, target, excluded):
             out.append((path, path.relative_to(target).as_posix()))
     return out
@@ -107,7 +108,8 @@ def read(target: Path, excluded) -> Dict[str, ReadResult]:
     docker = [(p, r) for p, r in files if dockerfile.is_dockerfile(p)]
     k8s = kubernetes.read([(p, r) for p, r in files if p.suffix.lower() in _YAML_SUFFIXES], root)
     _one_warning_per_chart(k8s)
-    return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker)}
+    tf = terraform.read([(p, r) for p, r in files if p.suffix == ".tf"], root)
+    return {"kubernetes": k8s, "dockerfile": dockerfile.read(docker), "terraform": tf}
 
 
 def _one_warning_per_chart(result: ReadResult) -> None:
@@ -131,6 +133,27 @@ def _applies(policy, resource: Resource, needed: set) -> bool:
     return needed <= set(resource.views)
 
 
+def _pointer(resource: Resource, why) -> tuple:
+    """The value a finding points at: the deepest of the paths that decided it; between equals
+    the first that is not a flag (a rule's CIDR before its ports, a stage's USER rather than its
+    `final`), else the last."""
+    paths = [p for p in why if not (p and p[0] == "@")]          # another resource's paths
+    if not paths:
+        return ()
+    depth = max(len(p) for p in paths)
+    deepest = [p for p in paths if len(p) == depth]
+    for p in deepest:
+        try:
+            value = resource.document
+            for step in p:
+                value = value[step]
+        except (KeyError, IndexError, TypeError):
+            continue
+        if not isinstance(value, bool):
+            return p
+    return deepest[-1]
+
+
 def check(resources: Sequence[Resource], policies: Sequence, run: IacRun) -> List[Finding]:
     from .policy import roots
     needs = {p.id: roots(p.expr) for p in policies}
@@ -143,12 +166,10 @@ def check(resources: Sequence[Resource], policies: Sequence, run: IacRun) -> Lis
             v = decide(p.expr, r.subject())
             if v.outcome == "pass":
                 continue
-            # the deepest deciding path; between equals the last one, the formula's most
-            # specific condition (`final == true and user == "root"` points at the USER)
-            path = max(reversed(v.why), key=len) if v.why else ()
+            path = _pointer(r, v.why)
             if v.outcome == "undecided":
                 run.undecided.append({"rule": p.id, "resource": r.address, "path": r.file,
-                                      "line": r.line_of(path)})
+                                      "line": r.line_of(path), "depends_on": list(v.unknowns)})
                 continue
             fired[p.id] = Finding(rule=p.id, title=p.title, severity=p.severity, cwe=p.cwe, format=r.format,
                                   resource=r.address, resource_type=r.type, file=r.file,
@@ -240,6 +261,10 @@ def format_text(run: IacRun) -> str:
                + (f", {len(run.undecided)} undecided (depend on values the files do not give)"
                   if run.undecided else ""))
     lines.append(summary)
+    for u in run.undecided:
+        on = ", ".join(u.get("depends_on", [])[:3])
+        lines.append(f"undecided: {u['path']}:{u['line']} {u['rule']} {u['resource']}"
+                     + (f" (depends on {on})" if on else ""))
     lines += [f"warning: {w}" for w in run.warnings]
     return "\n".join(lines) + "\n"
 

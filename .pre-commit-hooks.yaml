@@ -16,6 +16,7 @@
     - tree-sitter-javascript>=0.21.0
     - tree-sitter-typescript>=0.21.0
     - tree-sitter-c-sharp>=0.21.0
+    - tree-sitter-hcl>=1.2.0
     - PyYAML>=6.0
   types_or: [python, javascript, jsx, ts, tsx, java, c, c++, c#]
   require_serial: true

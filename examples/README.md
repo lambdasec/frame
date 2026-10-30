@@ -26,9 +26,9 @@ A Maven service using fastjson and Log4j. Frame finds the Log4j mitigation alrea
 A Flask-style helper on Werkzeug 2. The fix is Werkzeug 3, which removed two functions the code uses. `--verify` runs the tests and rolls the upgrade back; `--adapt` lets a model rewrite the code, and the result is kept only because the tests pass and a re-scan finds nothing new.
 *The plan runs offline; the rollback needs pip, and `--adapt` needs a model (`FRAME_LLM_*`).*
 
-### [iac](iac/README.md): Kubernetes manifests and Dockerfiles
+### [iac](iac/README.md): Kubernetes manifests, Dockerfiles and Terraform
 
-A shop's Deployments, a log-collecting DaemonSet, a break-glass debug pod, a Helm chart and the Dockerfiles of its images, checked against the Pod Security Standards as Kubernetes' admission controller checks them and against the Docker rules (root user, unverified downloads, floating base images), plus an organisation's own policy in one TOML file. Shows where each finding points, what is undecided and why, suppressions, and what Helm templates need.
+A shop's Deployments, a log-collecting DaemonSet, a break-glass debug pod, a Helm chart, the Dockerfiles of its images and its AWS Terraform, checked against the Pod Security Standards as Kubernetes' admission controller checks them, the Docker rules (root user, unverified downloads, floating base images) and the AWS rules (SSH open to the internet through a tfvars value, a public database), plus an organisation's own policy in one TOML file. Shows where each finding points, what is undecided and what it depends on, suppressions, and what Helm templates need.
 *Runs offline.*
 
 ### [container-image](container-image/README.md): what is inside a Docker image
