@@ -500,6 +500,36 @@ algorithm_arg = 1
 description = "CryptGenKey(hProv, Algid, dwFlags, phKey): Algid selects the algorithm"
 
 [[spec]]
+name = "_stat"
+checks_path = 0
+description = "_stat(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
+name = "_wstat"
+checks_path = 0
+description = "_wstat(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
+name = "_access"
+checks_path = 0
+description = "_access(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
+name = "_waccess"
+checks_path = 0
+description = "_waccess(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
+name = "GetFileAttributesA"
+checks_path = 0
+description = "GetFileAttributesA(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
+name = "GetFileAttributesW"
+checks_path = 0
+description = "GetFileAttributesW(path, ...) checks a file's state (CWE-367 when the file is then used)"
+
+[[spec]]
 name = "system"
 is_sink = "command"
 description = "system() - command injection sink"
@@ -570,6 +600,7 @@ description = "glob() - path pattern expansion"
 
 [[spec]]
 name = "fopen"
+uses_path = 0
 is_sink = "path"
 description = "fopen() - file open (path traversal)"
 
@@ -580,6 +611,7 @@ description = "freopen() - file reopen (path traversal)"
 
 [[spec]]
 name = "open"
+uses_path = 0
 is_sink = "path"
 permission_mode_arg = 2
 description = "open() - POSIX open (path traversal)"
@@ -593,23 +625,27 @@ description = "openat() - POSIX open relative (path traversal)"
 
 [[spec]]
 name = "creat"
+uses_path = 0
 is_sink = "path"
 permission_mode_arg = 1
 description = "creat() - create file (path traversal)"
 
 [[spec]]
 name = "remove"
+uses_path = 0
 is_sink = "path"
 description = "remove() - delete file (path traversal)"
 
 [[spec]]
 name = "rename"
+uses_path = 0
 is_sink = "path"
 sink_args = [0, 1]
 description = "rename() - rename file (path traversal)"
 
 [[spec]]
 name = "unlink"
+uses_path = 0
 is_sink = "path"
 description = "unlink() - unlink file (path traversal)"
 
@@ -631,27 +667,32 @@ description = "chdir() - change directory (path traversal)"
 
 [[spec]]
 name = "chmod"
+uses_path = 0
 is_sink = "path"
 permission_mode_arg = 1
 description = "chmod() - change permissions (path traversal)"
 
 [[spec]]
 name = "chown"
+uses_path = 0
 is_sink = "path"
 description = "chown() - change owner (path traversal)"
 
 [[spec]]
 name = "stat"
+checks_path = 0
 is_sink = "race"
 description = "stat() TOCTOU (CWE-367)"
 
 [[spec]]
 name = "lstat"
+checks_path = 0
 is_sink = "race"
 description = "lstat() TOCTOU (CWE-367)"
 
 [[spec]]
 name = "access"
+checks_path = 0
 is_sink = "race"
 description = "access() TOCTOU (CWE-367)"
 
@@ -941,6 +982,7 @@ description = "DES_cbc_encrypt - weak encryption (CWE-327), use AES"
 
 [[spec]]
 name = "DES_set_key"
+key_args = [0]
 is_sink = "weak_crypto"
 sink_args = []
 description = "DES_set_key - weak encryption (CWE-327), use AES"
@@ -997,40 +1039,47 @@ description = "jrand48() - predictable PRNG output"
 
 [[spec]]
 name = "EVP_EncryptInit_ex"
+key_args = [3]
 is_sink = "unpredictable"
 sink_args = [3, 4]
 description = "EVP_EncryptInit_ex key / IV"
 
 [[spec]]
 name = "EVP_DecryptInit_ex"
+key_args = [3]
 is_sink = "unpredictable"
 sink_args = [3, 4]
 description = "EVP_DecryptInit_ex key / IV"
 
 [[spec]]
 name = "EVP_CipherInit_ex"
+key_args = [3]
 is_sink = "unpredictable"
 sink_args = [3, 4]
 description = "EVP_CipherInit_ex key / IV"
 
 [[spec]]
 name = "EVP_EncryptInit"
+key_args = [2]
 is_sink = "unpredictable"
 sink_args = [2, 3]
 description = "EVP_EncryptInit key / IV"
 
 [[spec]]
 name = "AES_set_encrypt_key"
+key_args = [0]
 is_sink = "unpredictable"
 description = "AES key"
 
 [[spec]]
 name = "AES_set_decrypt_key"
+key_args = [0]
 is_sink = "unpredictable"
 description = "AES key"
 
 [[spec]]
 name = "HMAC"
+key_args = [1]
 is_sink = "unpredictable"
 sink_args = [1]
 description = "HMAC key"

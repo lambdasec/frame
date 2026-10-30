@@ -77,3 +77,102 @@ def test_mkstemp_is_not():
     code = ("#include <stdlib.h>\n\nvoid f(void)\n{\n    char name[64] = \"tmpXXXXXX\";\n"
             "    int fd = mkstemp(name);\n    (void)fd;\n}\n")
     assert not {f for f in findings(code) if f[0] == "CWE-377"}
+
+
+_SWITCH = """#include <stdio.h>
+#include <stdlib.h>
+
+void f(int x)
+{
+    switch (x)
+    {
+    case 1:
+        printf("one");
+%s
+    case 2:
+        printf("two");
+        break;
+    default:
+        break;
+    }
+}
+"""
+
+
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+def test_a_case_running_into_the_next_is_cwe_484(lang):
+    assert ("CWE-484", 11) in findings(_SWITCH % "", lang)
+
+
+@pytest.mark.parametrize("end", ["        break;", "        return;", "        exit(1);", "        /* fall through */",
+                                 "        // FALLTHRU", "        { printf(\"x\"); break; }"])
+def test_an_ended_or_marked_case_is_not(end):
+    assert not {f for f in findings(_SWITCH % end) if f[0] == "CWE-484"}
+
+
+def test_cpp_fallthrough_attribute_is_a_mark():
+    assert not {f for f in findings(_SWITCH % "        [[fallthrough]];", "cpp") if f[0] == "CWE-484"}
+
+
+def test_shared_labels_are_not_a_fall_through():
+    code = "void f(int x)\n{\n    switch (x)\n    {\n    case 1:\n    case 2:\n        g();\n        break;\n    }\n}\n"
+    assert not {f for f in findings(code) if f[0] == "CWE-484"}
+
+
+@pytest.mark.parametrize("stmt, flagged", [
+    ("char *p = (char *)0x400000;", True),
+    ("int *q; q = (int *)(0x7fff0000);", True),
+    ("char *p = (char *)0;", False),
+    ("char *p = NULL;", False),
+    ("long a = (long)0x400000;", False),
+])
+def test_a_fixed_address_given_to_a_pointer_is_cwe_587(stmt, flagged):
+    code = "#include <stddef.h>\n\nvoid f(void)\n{\n    %s\n}\n" % stmt
+    assert bool({f for f in findings(code) if f[0] == "CWE-587"}) == flagged
+
+
+@pytest.mark.parametrize("define, cwe", [('#define PASSWORD "ABCD1234!"', "CWE-259"),
+                                         ('#define API_TOKEN "q8Hk2LmZp4Rt7XvN"', "CWE-798"),
+                                         ('#define PASSWORD_FIELD "password"', None),
+                                         ('#define GREETING "hello world"', None)])
+def test_a_credential_macro_is_a_hardcoded_secret(define, cwe):
+    code = define + "\n\nvoid f(void)\n{\n}\n"
+    got = {c for c, _ in findings(code) if c in ("CWE-259", "CWE-798", "CWE-321")}
+    assert got == ({cwe} if cwe else set())
+
+
+_RACE = """#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+void f(void)
+{
+    char path[100] = "";
+    struct stat st;
+    fgets(path, 100, stdin);
+    %s
+    {
+        return;
+    }
+    %s
+    int fd = open(path, O_RDWR);
+    (void)fd;
+}
+"""
+
+
+@pytest.mark.parametrize("lang", ["c", "cpp"])
+@pytest.mark.parametrize("check", ["if (stat(path, &st) == -1)", "if (access(path, W_OK) != 0)",
+                                   "if (lstat(path, &st) != 0)"])
+def test_a_checked_path_then_used_is_cwe_367(check, lang):
+    assert ("CWE-367", 17) in findings(_RACE % (check, ""), lang)
+
+
+@pytest.mark.parametrize("check, between", [
+    ("if (stat(path, &st) == -1)", 'strcpy(path, "/var/app/data");'),    # a different path is used
+    ("if (path[0] == '\\0')", ""),                                         # nothing was checked
+])
+def test_an_unchecked_or_rewritten_path_is_not(check, between):
+    assert not {f for f in findings(_RACE % (check, between)) if f[0] == "CWE-367"}

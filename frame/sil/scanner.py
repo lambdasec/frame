@@ -2261,7 +2261,9 @@ class FrameScanner:
 
     def _scan_literals(self, program: Program, filename: str) -> List[Vulnerability]:
         """Tier-2 structural scan over the SIL for hardcoded secrets (CWE-798/
-        259/321): a credential-named assignment target bound to a literal string.
+        259/321): a credential-named assignment target bound to a literal string,
+        and (C/C++) an object-like macro defined as one string literal
+        (`#define PASSWORD "..."` binds the name as an assignment does).
 
         This is the principled, AST/IR-based replacement for the per-language
         `hardcoded_secret` regexes -- language-agnostic and syntax-aware.
@@ -2274,43 +2276,52 @@ class FrameScanner:
                         continue
                     if not isinstance(instr.exp, ExpConst) or not isinstance(instr.exp.value, str):
                         continue
-
-                    target = str(instr.id)
-                    value = instr.exp.value
-                    if len(value) < 4 or value.strip().lower() in self._SECRET_VALUE_PLACEHOLDERS:
-                        continue
-                    # Skip template / interpolation / env placeholders.
-                    if '${' in value or '{{' in value or value.startswith('%'):
-                        continue
-
-                    cwe = label = None
-                    # Rule A: credential-named target bound to a literal whose
-                    # value is not merely a name/label/filename for a secret.
-                    if not self._is_nonsecret_value(target, value):
-                        for pattern, c, lbl in self._SECRET_NAME_RULES:
-                            if pattern.search(target):
-                                cwe, label = c, lbl
-                                break
-                    # Rule B: value embeds a credential (e.g. connection string
-                    # "...;Password=secret;..."), regardless of the target name.
-                    if cwe is None and self._CONNSTR_SECRET.search(value):
-                        cwe, label = 'CWE-798', 'Hardcoded credential in connection string'
-
-                    if cwe is not None:
-                        loc = instr.loc
-                        vulns.append(Vulnerability(
-                            type=VulnType.HARDCODED_SECRET,
-                            severity=self.SEVERITY_MAP.get(VulnType.HARDCODED_SECRET, Severity.HIGH),
-                            location=filename,
-                            line=loc.line if loc else 0,
-                            column=loc.column if loc else 0,
-                            description=f"{label}: '{target}' is assigned a literal value",
-                            procedure=proc.name,
-                            sink_type="hardcoded_secret",
-                            confidence=0.9,
-                            cwe_id=cwe,
-                        ))
+                    loc = instr.loc
+                    v = self._secret_binding(str(instr.id), instr.exp.value, filename,
+                                             loc.line if loc else 0, loc.column if loc else 0, proc.name,
+                                             "is assigned a literal value")
+                    if v is not None:
+                        vulns.append(v)
+        for name, value in program.string_macros.items():
+            v = self._secret_binding(name, value, filename, program.string_macro_lines.get(name, 0), 0,
+                                     "<module>", "is defined as a literal")
+            if v is not None:
+                vulns.append(v)
         return vulns
+
+    def _secret_binding(self, target: str, value: str, filename: str, line: int, column: int,
+                        procedure: str, how: str) -> Optional[Vulnerability]:
+        if len(value) < 4 or value.strip().lower() in self._SECRET_VALUE_PLACEHOLDERS:
+            return None
+        # Skip template / interpolation / env placeholders.
+        if '${' in value or '{{' in value or value.startswith('%'):
+            return None
+        cwe = label = None
+        # Rule A: credential-named target bound to a literal whose
+        # value is not merely a name/label/filename for a secret.
+        if not self._is_nonsecret_value(target, value):
+            for pattern, c, lbl in self._SECRET_NAME_RULES:
+                if pattern.search(target):
+                    cwe, label = c, lbl
+                    break
+        # Rule B: value embeds a credential (e.g. connection string
+        # "...;Password=secret;..."), regardless of the target name.
+        if cwe is None and self._CONNSTR_SECRET.search(value):
+            cwe, label = 'CWE-798', 'Hardcoded credential in connection string'
+        if cwe is None:
+            return None
+        return Vulnerability(
+            type=VulnType.HARDCODED_SECRET,
+            severity=self.SEVERITY_MAP.get(VulnType.HARDCODED_SECRET, Severity.HIGH),
+            location=filename,
+            line=line,
+            column=column,
+            description=f"{label}: '{target}' {how}",
+            procedure=procedure,
+            sink_type="hardcoded_secret",
+            confidence=0.9,
+            cwe_id=cwe,
+        )
 
     def _analyze_memory_safety(self, source_code: str, filename: str) -> List[Vulnerability]:
         """
@@ -2340,6 +2351,15 @@ class FrameScanner:
 
         # Analyze ALL files - combined files contain vulnerable code paths
         # and must be analyzed for proper vulnerability detection
+
+        # Weaknesses that are facts of the syntax tree (CWE-484 fall-through, CWE-587 fixed address).
+        from frame.sil.analyzers import c_syntax_checks
+        kinds = {"CWE-484": VulnType.OMITTED_BREAK, "CWE-587": VulnType.FIXED_ADDRESS}
+        for f in c_syntax_checks.check(source_code, self.language):
+            vulnerabilities.append(Vulnerability(
+                type=kinds[f.cwe_id], severity=self.SEVERITY_MAP.get(kinds[f.cwe_id], Severity.LOW),
+                location=filename, line=f.line, column=f.column, description=f.description,
+                procedure="<syntax>", sink_type=kinds[f.cwe_id].value, confidence=1.0, cwe_id=f.cwe_id))
 
         # First, run inter-procedural analyzer for class lifecycle analysis
         try:

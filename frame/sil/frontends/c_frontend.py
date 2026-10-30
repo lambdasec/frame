@@ -199,6 +199,7 @@ class CFrontend:
         # the standard limits (<limits.h>, <stdint.h>) under c_int_model, then the file's own
         self._int_macros = {**LIMITS, **self._integer_macros(tree.root_node)}
         program.string_macros = dict(self._string_macro_values)
+        program.string_macro_lines = dict(self._string_macro_lines)
         program.global_array_bounds = self._global_array_bounds(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
@@ -233,6 +234,7 @@ class CFrontend:
         conditional, and never `#undef`ed counts: with several definitions (or arms of an `#if`)
         the file does not say which one applies, so the name stays unresolved."""
         defs: Dict[str, List[Optional[str]]] = {}
+        lines: Dict[str, int] = {}
         undef: Set[str] = set()
         top = root.children
         stack = [(c, True) for c in top]
@@ -245,6 +247,7 @@ class CFrontend:
                     key = self._get_text(name)
                     text = self._get_text(value) if value is not None else ""
                     defs.setdefault(key, []).append(text if at_top else None)
+                    lines[key] = n.start_point[0] + 1
             elif n.type == "preproc_call":
                 directive = n.child_by_field_name("directive")
                 if directive is not None and self._get_text(directive).strip() == "#undef":
@@ -267,6 +270,7 @@ class CFrontend:
             name: bodies[0].strip()[1:-1] for name, bodies in defs.items()
             if name not in undef and len(bodies) == 1 and bodies[0] is not None
             and re.fullmatch(r'"[^"\\]*"', bodies[0].strip())}
+        self._string_macro_lines = {name: lines[name] for name in self._string_macro_values}
         return known
 
     def _global_array_bounds(self, root: TSNode) -> Dict[str, int]:
@@ -1252,7 +1256,8 @@ class CFrontend:
         if spec is None:
             return False
         usage_sink = bool(spec.is_sink) and spec.sink_args is not None and not spec.sink_args
-        return bool(getattr(spec, "taint_out_args", None)) or spec.algorithm_arg is not None or usage_sink
+        return (bool(getattr(spec, "taint_out_args", None)) or spec.algorithm_arg is not None or usage_sink
+                or spec.checks_path is not None or spec.uses_path is not None)
 
     def _is_value_call(self, call_node: TSNode) -> bool:
         """A call the expression translator already lowers to a value (`sizeof`-like or a

@@ -174,6 +174,15 @@ class ProcSpec:
     # (`windows_alg_ids` in specs/data/weak-algorithms.toml) makes the call a weak hash / cipher.
     algorithm_arg: Optional[int] = None
 
+    # File-system race (CWE-367): the argument naming a file whose state this call checks
+    # (`stat`, `access`), and the one naming a file this call opens or changes (`open`, `unlink`).
+    checks_path: Optional[int] = None
+    uses_path: Optional[int] = None
+
+    # Arguments that are a cryptographic key: a literal there (or a variable holding one) is a
+    # hard-coded key (CWE-321).
+    key_args: List[int] = field(default_factory=list)
+
     # =========================================================================
     # Structural weakness specifications
     #
@@ -647,6 +656,8 @@ class Program:
     function_macros: Set[str] = field(default_factory=set)
     # C/C++: object-like macros that are one string literal (`#define ALLOWED "https://..."`).
     string_macros: Dict[str, str] = field(default_factory=dict)
+    # ... and the line each is defined on (where a hardcoded credential macro is reported).
+    string_macro_lines: Dict[str, int] = field(default_factory=dict)
     # C/C++: file-scope arrays with a known element count (`static int per_op[NUM_OPS];`);
     # -1 marks a name declared twice with different bounds.
     global_array_bounds: Dict[str, int] = field(default_factory=dict)

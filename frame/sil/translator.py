@@ -52,7 +52,8 @@ _KINDS = _load_kinds()
 # A plain local variable name: no field, element or call in it.
 _PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
 # A C/C++ brace initialiser holding only string / number literals.
-_LITERAL_BRACE_LIST = re.compile(r'\{(?:\s|[{},]|"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?)*\}$')
+_LITERAL_BRACE_LIST = re.compile(
+    r'\{(?:\s|[{},]|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)+\'|-?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)[uUlL]*)*\}$')
 
 
 # =============================================================================
@@ -171,6 +172,10 @@ class VulnType(Enum):
     UNICODE_HANDLING = "unicode_handling"       # CWE-176
     CONFIG_INJECTION = "config_injection"       # CWE-15
     PROCESS_CONTROL = "process_control"         # CWE-114
+    OMITTED_BREAK = "omitted_break"             # CWE-484
+    FIXED_ADDRESS = "fixed_address"             # CWE-587
+    TOCTOU = "toctou"                           # CWE-367
+    HARDCODED_KEY = "hardcoded_key"             # CWE-321
 
     # Additional memory safety and resource management
     RESOURCE_EXHAUSTION = "resource_exhaustion" # CWE-400
@@ -1483,6 +1488,7 @@ class SILTranslator:
         self._null_candidates = []
         self._uninit_candidates = []
         self._overflow_candidates = []
+        self._toctou_candidates = []
         self._branch_node_clean = False
 
         # Initialize state with parameters potentially tainted
@@ -1642,7 +1648,8 @@ class SILTranslator:
         # (_path_fact_fixpoint): the walk above does not re-analyse a node when
         # only its path condition changes, so a verdict taken during the walk
         # could rest on one branch's facts alone.
-        if self._null_candidates or self._uninit_candidates or self._overflow_candidates:
+        if self._null_candidates or self._uninit_candidates or self._overflow_candidates \
+                or self._toctou_candidates:
             checks.extend(self._confirm_path_candidates(proc))
 
         # (A handler with another finding used to lose its XSS checks here so
@@ -4004,6 +4011,10 @@ class SILTranslator:
         spec = self.program.spec_for_call(instr)
         if self._is_c_lang and spec is not None and spec.size_args:
             self._note_size_arg_candidates(instr, spec, state, proc_name)
+        if self._is_c_lang and spec is not None and spec.uses_path is not None:
+            self._note_toctou_candidate(instr, state, proc_name)
+        if self._is_c_lang and spec is not None and spec.key_args:
+            checks.extend(self._hardcoded_key_checks(instr, spec, state, proc_name))
         if self._is_c_lang and spec is not None and spec.algorithm_arg is not None \
                 and spec.algorithm_arg < len(instr.args):
             checks.extend(self._weak_algorithm_id_checks(instr, spec, state, proc_name))
@@ -6467,6 +6478,32 @@ class SILTranslator:
 
         return checks
 
+    def _hardcoded_key_checks(self, instr: Call, spec, state: SymbolicState,
+                              proc_name: str) -> List["VulnerabilityCheck"]:
+        """A key argument (`key_args`) that is a literal, or a variable the path shows holds one
+        (a string, or a local initialised with a brace list of literals): CWE-321."""
+        out = []
+        for idx in spec.key_args:
+            if idx >= len(instr.args):
+                continue
+            arg = self._strip_casts(instr.args[idx][0])
+            if isinstance(arg, ExpUnOp) and arg.op == "&":
+                arg = self._strip_casts(arg.operand)
+            literal = isinstance(arg, ExpConst) and isinstance(arg.value, str)
+            name = self._get_var_name(arg.var) if isinstance(arg, ExpVar) else None
+            if name is not None:
+                literal = isinstance(state.get_constant(name), str) or name in self._literal_tables
+            if not literal:
+                continue
+            check = self._create_usage_based_check(instr, state, proc_name, SinkKind.UNPREDICTABLE)
+            check.vuln_type = VulnType.HARDCODED_KEY
+            check.sink_type = VulnType.HARDCODED_KEY.value
+            check.tainted_var = name or ""
+            check.description = (f"Hard-coded cryptographic key: {instr.get_full_name()} is given "
+                                 f"{'the literal in ' + repr(name) if name else 'a literal'} as its key")
+            out.append(check)
+        return out
+
     def _weak_algorithm_id_checks(self, instr: Call, spec, state: SymbolicState,
                                   proc_name: str) -> List["VulnerabilityCheck"]:
         """`CryptCreateHash(prov, CALG_MD5, ...)`: the algorithm argument is a constant naming a
@@ -6772,6 +6809,8 @@ class SILTranslator:
         `x#uninit == 1` / `== 0`. A pure function of its arguments, so it can be
         replayed from a merged state."""
         drop = set(instr.get_written_vars()) | self._havoc_vars(instr, pc)
+        if ghosts and drop:
+            drop |= {v + self._CHECKED_GHOST for v in drop}      # a rewritten path is not the checked one
         if drop and pc:
             pc = self._forget(pc, drop)
         fact = self._assignment_fact(instr)
@@ -6780,7 +6819,42 @@ class SILTranslator:
         pc = list(pc) + self._length_bound_facts(instr)
         if ghosts:
             pc = self._advance_definedness(pc, instr)
+            checked = self._checked_path(instr)
+            if checked is not None:
+                ghost = checked + self._CHECKED_GHOST
+                pc = self._forget(pc, {ghost}) + [Eq(Var(ghost), Const(1))]
         return pc
+
+    # CWE-367: `p#checked == 1` after a call that checks the file `p` names (`checks_path`: stat,
+    # access), forgotten when p is written. A call that then opens or changes `p` (`uses_path`) is
+    # reported when the path facts entail the ghost: the check and the use name the same path and
+    # nothing in between gave p another value.
+    _CHECKED_GHOST = "#checked"
+
+    def _path_arg(self, instr: Instr, field_name: str) -> Optional[str]:
+        if not isinstance(instr, Call) or not self._is_c_lang:
+            return None
+        spec = self.program.spec_for_call(instr)
+        idx = getattr(spec, field_name, None) if spec is not None else None
+        if idx is None or idx >= len(instr.args):
+            return None
+        arg = self._strip_casts(instr.args[idx][0])
+        return self._get_var_name(arg.var) if isinstance(arg, ExpVar) else None
+
+    def _checked_path(self, instr: Instr) -> Optional[str]:
+        return self._path_arg(instr, "checks_path")
+
+    def _note_toctou_candidate(self, instr: Call, state: SymbolicState, proc_name: str) -> None:
+        var = self._path_arg(instr, "uses_path")
+        if var is None:
+            return
+        check = self._create_usage_based_check(instr, state, proc_name, SinkKind.INTEGER_OVERFLOW)
+        check.vuln_type = VulnType.TOCTOU
+        check.sink_type = VulnType.TOCTOU.value
+        check.tainted_var = var
+        check.description = (f"Time-of-check to time-of-use race: '{var}' is checked, then "
+                             f"{instr.get_full_name()} uses it; the file can change in between")
+        self._toctou_candidates.append((getattr(self, "_cur_pos", None), check, var))
 
     def _length_bound_facts(self, instr: Instr) -> List[Formula]:
         """`n = strlen(buf)` with buf a fixed local array of N elements: the string ends
@@ -7118,9 +7192,22 @@ class SILTranslator:
             check.path_condition = [g for g in pc if g.free_vars() & names]
             out.append(check)
 
+        for pos, check, var in self._toctou_candidates:
+            key = ("toctou", pos, var)
+            if pos is None or key in seen:
+                continue
+            seen.add(key)
+            pc = facts_at(pos)
+            ghost = Var(var + self._CHECKED_GHOST)
+            if not pc or not self._feasibility_sat(self._build_conjunction(pc)) \
+                    or self._feasibility_sat(self._build_conjunction(list(pc) + [Neq(ghost, Const(1))])):
+                continue
+            out.append(check)
+
         self._null_candidates = []
         self._uninit_candidates = []
         self._overflow_candidates = []
+        self._toctou_candidates = []
         return out
 
     # ---- CWE-190/191/194/195/197: attacker integers leaving the range of their type ------------

@@ -719,10 +719,10 @@ case("access_open_toctou", {
 int open_for_user(const char *path)
 {
 @@<<
-    if (access(path, W_OK) != 0) {  // frame-expect: CWE-367
+    if (access(path, W_OK) != 0) {
         return -1;
     }
-    return open(path, O_WRONLY | O_APPEND);
+    return open(path, O_WRONLY | O_APPEND);  // frame-expect: CWE-367
 @@==
     return open(path, O_WRONLY | O_APPEND | O_NOFOLLOW);
 @@>>

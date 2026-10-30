@@ -36,3 +36,16 @@ def _with(tmp_path, old, new):
 def test_a_malformed_file_is_an_error(tmp_path, old, new, error):
     with pytest.raises(ValueError, match=error):
         load(_with(tmp_path, old, new))
+
+
+@pytest.mark.parametrize("lang, code, reported", [
+    ("python", 'SECRET_HOSTNAME = "www.example.internal"\n', False),
+    ("c", '#define SECRET_HOSTNAME "www.domain.example"\n', False),
+    ("python", 'SECRET_TOKEN = "q8Hk2LmZp4Rt7XvN"\n', True),
+])
+def test_a_host_named_secret_is_metadata(lang, code, reported):
+    from frame.sil.scanner import FrameScanner
+    name = "t.py" if lang == "python" else "t.c"
+    found = [v for v in FrameScanner(language=lang).scan(code, name).vulnerabilities
+             if v.cwe_id in ("CWE-798", "CWE-259", "CWE-321")]
+    assert bool(found) == reported

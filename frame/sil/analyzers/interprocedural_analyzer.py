@@ -1236,9 +1236,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
     # Allocation types: 'MALLOC' (malloc/calloc/realloc), 'NEW' (new), 'NEW_ARRAY' (new[])
     alloc_types: Dict[str, Tuple[str, int]] = {}  # var -> (alloc_type, line)
 
-    # Track TOCTOU patterns for CWE-367 (Time-of-check Time-of-use Race Condition)
-    # Maps path variable -> (line checked, check function name)
-    toctou_checked_paths: Dict[str, Tuple[int, str]] = {}
 
     def add_vuln_if_new(vuln: MemoryVuln, cwe_key: str = None):
         """Add vulnerability only if this CWE hasn't been detected yet"""
@@ -1895,203 +1892,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                             confidence=0.9,
                         ))
 
-        # =====================================================================
-        # CWE-259/321: Hardcoded Credentials
-        # =====================================================================
-        hardcoded_match = re.search(
-            r'\b(password|passwd|pwd|secret|api_key|apikey|auth_token|private_key)\s*=\s*["\'][^"\']{3,}["\']',
-            stripped, re.IGNORECASE
-        )
-        if hardcoded_match:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-259",
-                location=loc,
-                var_name=hardcoded_match.group(1),
-                description="Hardcoded credential detected",
-                confidence=0.9,
-            ))
-
-        # Detect #define PASSWORD patterns
-        if re.search(r'#\s*define\s+(?:PASSWORD|PASSWD|SECRET|KEY|CRYPTO_KEY)\s+["\']', stripped, re.IGNORECASE):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-259",
-                location=loc,
-                var_name="password",
-                description="Hardcoded password in #define constant",
-                confidence=0.95,
-            ))
-
-        # Detect strcpy(password, CONSTANT) pattern
-        if re.search(r'\bstrcpy\s*\(\s*password\s*,\s*[A-Z_]+\s*\)', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-259",
-                location=loc,
-                var_name="password",
-                description="Password copied from hardcoded constant",
-                confidence=0.85,
-            ))
-
-        # Detect password variable used in LogonUser without proper sourcing
-        if re.search(r'LogonUser\w*\s*\([^)]*,\s*password\s*,', stripped):
-            # Check if this function has hardcoded password pattern
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-259",
-                location=loc,
-                var_name="password",
-                description="Password used in authentication may be hardcoded",
-                confidence=0.75,
-            ))
-
-        if re.search(r'LogonUser\w*\s*\([^)]*"[^"]+"\s*,', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-259",
-                location=loc,
-                var_name="password",
-                description="Hardcoded password in authentication call",
-                confidence=0.9,
-            ))
-
-        # =====================================================================
-        # CWE-321: Use of Hard-coded Cryptographic Key
-        # =====================================================================
-        # Detect hard-coded encryption keys in crypto function calls
-
-        # Pattern 1: AES_set_encrypt_key/AES_set_decrypt_key with literal key
-        if re.search(r'\bAES_set_(?:encrypt|decrypt)_key\s*\(', stripped):
-            if re.search(r'\bAES_set_(?:encrypt|decrypt)_key\s*\(\s*(?:"\s*|[A-Z_]+\s*,)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id="CWE-321",
-                    location=loc,
-                    var_name="key",
-                    description="Hard-coded cryptographic key in AES key setup",
-                    confidence=0.9,
-                ))
-
-        # Pattern 2: DES_key_sched/DES_set_key with literal
-        if re.search(r'\bDES_(?:key_sched|set_key(?:_checked|_unchecked)?)\s*\(', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name="key",
-                description="Hard-coded cryptographic key in DES key schedule",
-                confidence=0.85,
-            ))
-
-        # Pattern 3: EVP_EncryptInit/EVP_DecryptInit with hard-coded key bytes
-        if re.search(r'\bEVP_(?:Encrypt|Decrypt)Init(?:_ex)?\s*\(', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name="key",
-                description="Hard-coded cryptographic key in EVP encryption init",
-                confidence=0.8,
-            ))
-
-        # Pattern 4: char key[] = "hardcoded" or unsigned char key[16] = {0x00, ...}
-        key_array_match = re.search(
-            r'\b(?:unsigned\s+)?char\s+(?:(?:encryption|crypto|aes|des|cipher|enc|dec|secret)\s*)?key\s*\[',
-            stripped, re.IGNORECASE
-        )
-        if key_array_match:
-            if re.search(r'key\s*\[\s*\d*\s*\]\s*=\s*(?:"|{)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id="CWE-321",
-                    location=loc,
-                    var_name="key",
-                    description="Hard-coded cryptographic key array initialization",
-                    confidence=0.9,
-                ))
-
-        # Pattern 5: Generic crypto key variable with literal assignment
-        crypto_key_match = re.search(
-            r'\b((?:crypto|encryption|cipher|aes|des|secret|enc|hmac|signing)[\w]*[Kk]ey)\s*=\s*["\'][^"\']+["\']',
-            stripped
-        )
-        if crypto_key_match:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name=crypto_key_match.group(1),
-                description="Hard-coded cryptographic key in variable assignment",
-                confidence=0.9,
-            ))
-
-        # Pattern 6: CRYPTO_KEY or AES_KEY constant definitions
-        if re.search(r'#\s*define\s+(?:CRYPTO_KEY|AES_KEY|DES_KEY|ENCRYPTION_KEY|CIPHER_KEY|SECRET_KEY)\s+["\'{]', stripped, re.IGNORECASE):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name="key",
-                description="Hard-coded cryptographic key in #define constant",
-                confidence=0.95,
-            ))
-
-        # Pattern 7: Blowfish/RC4/other crypto with hardcoded keys
-        if re.search(r'\b(?:BF_set_key|RC4_set_key|RC2_set_key|CAST_set_key)\s*\(', stripped):
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name="key",
-                description="Hard-coded cryptographic key in cipher key setup",
-                confidence=0.85,
-            ))
-
-        # Pattern 8: CryptoAPI functions (Windows)
-        # Only flag if there's an actual hard-coded key string, not output parameters like &hKey
-        # CryptDeriveKey(hCryptProv, CALG_AES_256, hHash, 0, &hKey) - hKey is OUTPUT, not hard-coded
-        # CryptImportKey with literal key bytes is vulnerable
-        if re.search(r'\bCrypt(?:DeriveKey|ImportKey|GenKey)\s*\(', stripped):
-            # Only flag if there's an actual string literal for a key, not variable names
-            if re.search(r'Crypt(?:ImportKey)\s*\([^)]*(?:"\s*[^"]+\s*"|{.*0x)', stripped):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id="CWE-321",
-                    location=loc,
-                    var_name="key",
-                    description="Hard-coded cryptographic key in Windows CryptoAPI",
-                    confidence=0.85,
-                ))
-
-        # Pattern 9: Hex byte array that looks like a key
-        if re.search(r'=\s*\{\s*(?:0x[0-9a-fA-F]{2}\s*,\s*){7,}0x[0-9a-fA-F]{2}', stripped):
-            if re.search(r'\b(?:key|iv|nonce|salt|secret|cipher)\s*\[', stripped, re.IGNORECASE):
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.HARDCODED_SECRET,
-                    cwe_id="CWE-321",
-                    location=loc,
-                    var_name="key",
-                    description="Hard-coded cryptographic key bytes in array",
-                    confidence=0.9,
-                ))
-
-        # Pattern 10: Simple key/secret variable assignment with string literal
-        # Matches: const char *key = "literal"; or char *secret = "value";
-        simple_key_match = re.search(
-            r'\b(?:const\s+)?(?:char|unsigned\s+char)\s*\*\s*\b(key|secret|password|passwd|crypto_key)\s*=\s*"[^"]+"\s*;',
-            stripped, re.IGNORECASE
-        )
-        if simple_key_match:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.HARDCODED_SECRET,
-                cwe_id="CWE-321",
-                location=loc,
-                var_name=simple_key_match.group(1),
-                description="Hard-coded cryptographic key in string literal",
-                confidence=0.8,
-            ))
-
         # CWE-252 (unchecked privilege-drop result) is intentionally NOT matched
         # here. A line regex over `stripped` cannot see the canonical idiom
         # `setuid(getuid())` (the inner parenthesis ends the match early), and it
@@ -2101,40 +1901,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # which the spec tables restrict to the privilege-management family. That
         # reasons over the IR, so the call nesting and the formatting cannot
         # defeat it and ordinary POSIX calls are never flagged.
-
-        # =====================================================================
-        # CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition
-        # =====================================================================
-        # Detects patterns like stat() followed by open() on the same file.
-        # This is a simplified detection that looks for common TOCTOU patterns.
-
-        # Track stat-like checks (case-insensitive for Windows macros like STAT)
-        toctou_check_funcs = ['stat', 'lstat', 'fstat', 'access', 'faccessat', '_stat', '_wstat']
-        for func in toctou_check_funcs:
-            stat_match = re.search(rf'\b{func}\s*\(\s*([^,)]+)', stripped, re.IGNORECASE)
-            if stat_match:
-                checked_path = stat_match.group(1).strip()
-                if checked_path and not checked_path.startswith('"'):
-                    # Variable path - track it
-                    toctou_checked_paths[checked_path] = (line_num, func)
-
-        # Check for use after check (simplified - same line or nearby)
-        toctou_use_funcs = ['open', 'fopen', 'creat', 'unlink', 'remove', 'rename', 'chmod', '_open', '_wopen', 'CreateFile']
-        for func in toctou_use_funcs:
-            use_match = re.search(rf'\b{func}\s*\(\s*([^,)]+)', stripped, re.IGNORECASE)
-            if use_match:
-                used_path = use_match.group(1).strip()
-                if used_path in toctou_checked_paths:
-                    check_line, check_func = toctou_checked_paths[used_path]
-                    if line_num > check_line and line_num - check_line < 20:
-                        vulns.append(MemoryVuln(
-                            vuln_type=VulnType.RACE_CONDITION,
-                            cwe_id="CWE-367",
-                            location=loc,
-                            var_name=used_path,
-                            description=f"TOCTOU race condition: {check_func}() at line {check_line} followed by {func}()",
-                            confidence=0.75,
-                        ))
 
         # CWE-476 (NULL pointer dereference) is now detected structurally over the
         # SIL/CFG in the translator (provable-null: an explicit NULL/0 assignment
@@ -3062,53 +2828,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # only when the IR shows the result has no destination at all.
 
         # =====================================================================
-        # CWE-364/366/367: Race Conditions (TOCTOU)
-        # =====================================================================
-        # Pattern: access() followed by open()/fopen()
-        if re.search(r'\baccess\s*\(\s*(\w+)', stripped):
-            access_file = re.search(r'\baccess\s*\(\s*(\w+)', stripped).group(1)
-            # Look ahead for fopen/open of same file
-            for future_line in lines[line_num:min(line_num+10, len(lines))]:
-                if re.search(rf'\b(?:fopen|open)\s*\(\s*{access_file}', future_line):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.RACE_CONDITION,
-                        cwe_id="CWE-367",
-                        location=loc,
-                        var_name=access_file,
-                        description=f"TOCTOU race condition - access() then open() on '{access_file}'",
-                        confidence=0.85,
-                    ))
-                    break
-
-        # Pattern: stat() followed by open()
-        if re.search(r'\bstat\s*\(\s*(\w+)', stripped):
-            stat_file = re.search(r'\bstat\s*\(\s*(\w+)', stripped).group(1)
-            for future_line in lines[line_num:min(line_num+10, len(lines))]:
-                if re.search(rf'\b(?:fopen|open)\s*\(\s*{stat_file}', future_line):
-                    vulns.append(MemoryVuln(
-                        vuln_type=VulnType.RACE_CONDITION,
-                        cwe_id="CWE-367",
-                        location=loc,
-                        var_name=stat_file,
-                        description=f"TOCTOU race condition - stat() then open() on '{stat_file}'",
-                        confidence=0.85,
-                    ))
-                    break
-
-        # Pattern: Signal handler race (CWE-364)
-        if re.search(r'\bsignal\s*\(\s*\w+\s*,\s*(\w+)\s*\)', stripped):
-            handler = re.search(r'\bsignal\s*\(\s*\w+\s*,\s*(\w+)\s*\)', stripped).group(1)
-            # Check if handler accesses shared data without synchronization
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.RACE_CONDITION,
-                cwe_id="CWE-364",
-                location=loc,
-                var_name=handler,
-                description=f"Signal handler race condition - non-reentrant handler '{handler}'",
-                confidence=0.7,
-            ))
-
-        # =====================================================================
         # CWE-242/676: Use of Inherently Dangerous Function
         # =====================================================================
         # Note: gets() detection is already handled in sl_semantic_analyzer.py
@@ -3129,37 +2848,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
         # for func, cwe in dangerous_funcs.items():
         #     if re.search(rf'\b{func}\s*\(', stripped):
         #         ...  # Too aggressive without proper size tracking
-
-        # =====================================================================
-        # CWE-484: Omitted Break Statement in Switch
-        # =====================================================================
-        # Track switch/case structure for missing break detection
-        if re.search(r'\bcase\s+\d+\s*:', stripped) or re.search(r'\bcase\s+\'.\'\s*:', stripped):
-            # Check if previous case (looking back) had a break/return/continue
-            # Look at the lines between current case and previous case
-            found_prev_case = False
-            found_break = False
-            for back_idx in range(line_num - 2, max(0, line_num - 20), -1):
-                if back_idx < len(lines):
-                    back_line = lines[back_idx].strip()
-                    if re.search(r'\bcase\s+|default\s*:', back_line):
-                        found_prev_case = True
-                        break
-                    if re.search(r'\b(?:break|return|continue|exit|goto)\s*[;(]', back_line):
-                        found_break = True
-                        break
-                    # Skip empty lines and comments
-                    if not back_line or back_line.startswith('//') or back_line.startswith('/*'):
-                        continue
-            if found_prev_case and not found_break:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUSINESS_LOGIC_FLAW,
-                    cwe_id="CWE-484",
-                    location=loc,
-                    var_name="switch",
-                    description="Omitted break statement - case falls through to next case",
-                    confidence=0.85,
-                ))
 
         # =====================================================================
         # CWE-390/391: Error Handling Issues
@@ -3343,38 +3031,6 @@ def _detect_semantic_cwes(source: str, filename: str, verbose: bool = False) -> 
                 description="Type confusion - accessing member of void pointer",
                 confidence=0.85,
             ))
-
-        # =====================================================================
-        # CWE-587: Assignment of Fixed Address to Pointer
-        # =====================================================================
-        # Pattern: Casting a hex constant to a pointer type
-        # e.g., char *charPointer = (char*)0x400000;
-        fixed_addr_match = re.search(
-            r'(?:char|int|void|short|long|wchar_t|BYTE|WORD|DWORD)\s*\*\s*\w*\s*=\s*\([^)]*\*\)\s*0[xX][0-9a-fA-F]+',
-            stripped
-        )
-        if fixed_addr_match:
-            vulns.append(MemoryVuln(
-                vuln_type=VulnType.BUFFER_OVERFLOW,  # Memory access issue
-                cwe_id="CWE-587",
-                location=loc,
-                var_name="pointer",
-                description="Assignment of fixed address to pointer - may access invalid memory",
-                confidence=0.95,
-            ))
-
-        # Also check for direct cast assignment without declaration
-        # e.g., ptr = (char*)0x400000;
-        if re.search(r'\w+\s*=\s*\([^)]*\*\)\s*0[xX][0-9a-fA-F]+', stripped):
-            if 'CWE-587' not in [v.cwe_id for v in vulns if v.location.line == line_num]:
-                vulns.append(MemoryVuln(
-                    vuln_type=VulnType.BUFFER_OVERFLOW,
-                    cwe_id="CWE-587",
-                    location=loc,
-                    var_name="pointer",
-                    description="Assignment of fixed address to pointer - may access invalid memory",
-                    confidence=0.95,
-                ))
 
         # =====================================================================
         # CWE-467: Use of sizeof() on Pointer Type
