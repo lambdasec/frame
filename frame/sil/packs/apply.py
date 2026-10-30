@@ -331,6 +331,12 @@ def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
         return False
     if e.exclude_decorator and any(_glob(e.exclude_decorator, a.name, a.canonical) for a in proc.annotations):
         return False
+    if e.first_param:
+        names = [p.name for p, _ in proc.params]
+        if names[:1] in (["self"], ["cls"]):
+            names = names[1:]
+        if not names or not _glob(e.first_param, names[0]):
+            return False
     return True
 
 
@@ -385,7 +391,8 @@ def bound_names(param: str) -> List[str]:
 
 
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
-    params = [p for i, (p, _) in enumerate(proc.params) if not e.param_positions or i in e.param_positions]
+    params = [p for i, (p, _) in enumerate(proc.params)
+              if (not e.param_positions or i in e.param_positions) and i >= e.params_from]
     names = [n for p in params for n in (bound_names(p.name) if p.name[:1] in "{[" else [p.name])]
     out: List[str] = []
     for n in names:

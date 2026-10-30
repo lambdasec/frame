@@ -1,0 +1,16 @@
+[pack]
+name = "flask"
+language = "python"
+description = "Flask (and Quart, which keeps Flask's API): route view functions"
+references = ["https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules",
+              "https://quart.palletsprojects.com/en/latest/"]
+detect = { imports = ["flask", "quart"] }
+
+# A view registered with @app.route / @bp.route or a method shortcut (@app.get, Flask 2.0+) receives
+# the URL's variable parts (`/users/<int:id>`) as keyword arguments: every parameter is client data.
+[[entrypoint]]
+id = "route-view"
+decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete"]
+params = "all"
+exclude_param = ["self", "cls"]
+description = "Flask view function argument (URL variable)"

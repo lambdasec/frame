@@ -82,7 +82,7 @@ exclude_decorator = ["NonAction"]
 params = "all"
 ```
 
-`param_positions` narrows an entry point to parameters by position (0-based), whatever they are called or however they are destructured: a GraphQL resolver is called as `(parent, args, context, info)`, so the built-in `graphql` pack takes `param_positions = [1]`.
+`first_param` selects functions by their first parameter's name (after `self`/`cls`): Django calls a view with the `HttpRequest` first and routes by name in `urls.py`, so the built-in `django` pack takes `first_param = ["request"]`. `params_from` keeps only the parameters from a position on: Graphene calls `resolve_<field>(parent, info, **arguments)`, so its pack takes `params_from = 2`. `param_positions` narrows an entry point to parameters by position (0-based), whatever they are called or however they are destructured: a GraphQL resolver is called as `(parent, args, context, info)`, so the built-in `graphql` pack takes `param_positions = [1]`.
 
 JavaScript packs have two more kinds. `[[registration]]` names the functions an application hands to a framework inside an object, for an entry point's `registered_via` to select:
 
@@ -106,6 +106,8 @@ roots = ["$", "jQuery"]
 name = "$"
 methods = ["find", "filter"]
 ```
+
+Python packs have `[[deferred_call]]`: a method that runs the function it is called on with the same arguments, so `tasks.convert.delay(path)` is `tasks.convert(path)` for taint (the built-in `celery` pack). It has no `detect`, since the caller imports only the task module. A Python pack's `[pack]` table can say `dict_queries = true` (the built-in `pymongo` pack): in the files it applies to, a dict literal is a query document whose values reach the call it is passed to.
 
 A sink rule with `json_for_literals = true` is a response that serialises an object or array literal as JSON (`reply.send({ q })`), so such a value is not an HTML sink.
 

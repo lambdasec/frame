@@ -260,6 +260,7 @@ description = "Django Manager.raw()"
 [[spec]]
 name = "HttpResponse"
 is_sink = "html"
+content_type_kwargs = ["content_type"]   # HttpResponse(body, content_type="application/json") is not HTML
 description = "Django HttpResponse body (XSS)"
 
 [[spec]]

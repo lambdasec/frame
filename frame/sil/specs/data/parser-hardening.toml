@@ -19,6 +19,8 @@ parser_products = ["newDocumentBuilder", "newSAXParser", "getXMLReader", "newTra
 [lxml]
 parse_functions = ["fromstring", "XML", "parse", "fromstringlist", "iterparse"]
 parser = "XMLParser"
+parser_arg = 1                # the parser's position...
+parser_keyword = "parser"     # ...or keyword in a parse function's arguments
 safe_keyword = "resolve_entities"
 
 # Java deserializers.

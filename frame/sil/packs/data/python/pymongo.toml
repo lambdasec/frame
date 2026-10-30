@@ -2,7 +2,10 @@
 name = "pymongo"
 language = "python"
 description = "MongoDB through pymongo / motor: query documents built from request data"
-detect = { imports = ["pymongo", "motor", "mongoengine"] }
+detect = { imports = ["pymongo", "motor", "mongoengine", "bson"] }
+# A dict literal in such a file is a query document: `{"user": u, "$where": js}` reaching find()
+# carries its values (elsewhere a dict literal carries nothing).
+dict_queries = true
 
 # The collection is reached through a client variable (`db = client.app; db.users.find(q)`),
 # so the frontend's derived canonical ids (`pymongo.MongoClient.users.find`) are the handle.

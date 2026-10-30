@@ -33,7 +33,7 @@ def test_inventory_finds_each_kind_of_content(tmp_path):
     write(tmp_path, TREE)
     inv = build_inventory(tmp_path)
     assert inv.languages == {"javascript": 1, "python": 3}             # node_modules is excluded
-    assert inv.frameworks == {"python/flask-extensions": 1, "python/llm-sdks": 1,   # packs whose detect matched
+    assert inv.frameworks == {"python/flask": 1, "python/flask-extensions": 1, "python/llm-sdks": 1,   # packs whose detect matched
                               "python/mcp-servers": 1}
     assert {(m["path"], m["ecosystem"], m["kind"]) for m in inv.manifests} == {
         ("requirements.txt", "PyPI", "manifest"), ("web/package.json", "npm", "manifest"),

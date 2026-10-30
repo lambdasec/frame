@@ -42,10 +42,10 @@ LANGUAGES = CODE_LANGUAGES + IAC_LANGUAGES
 _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "file_input"}
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
-_PACK_KEYS = {"name", "language", "description", "detect", "version", "references"}
+_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
-               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params", "param_annotation", "param_type", "exclude_param",
+               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "description"}
@@ -57,10 +57,11 @@ _LAMBDA_KEYS = {"id", "methods", "qualified", "imports", "param_types", "descrip
 _POLICY_KEYS = {"id", "title", "severity", "cwe", "when", "resources", "overrides", "tags", "references",
                 "description"}
 _DEFINE_KEYS = {"name", "params", "body", "description"}
+_DEFERRED_KEYS = {"id", "methods", "description"}
 _REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"}
 _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
-             "lambda_handler", "fluent", "registration", "policy", "define"}
+             "lambda_handler", "fluent", "registration", "deferred_call", "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
@@ -85,6 +86,8 @@ class Entrypoint:
     exclude_decorator: List[str] = field(default_factory=list)   # none of these annotations ([NonAction])
     exclude_method: List[str] = field(default_factory=list)      # method-name globs that are not entries
     param_positions: List[int] = field(default_factory=list)     # only these parameters (0-based), if given
+    params_from: int = 0                 # only parameters from this position on (0-based)
+    first_param: List[str] = field(default_factory=list)         # globs on the first parameter (after self / cls)
     params: Any = "none"                 # "all" | "annotated" | "typed" | "none" | [names]
     param_annotation: List[str] = field(default_factory=list)
     param_type: List[str] = field(default_factory=list)
@@ -174,6 +177,15 @@ class Registration:
 
 
 @dataclass
+class DeferredCall:
+    """Python: a method that runs the function it is called on, later, with the same arguments
+    (`[[deferred_call]]`): Celery's `task.delay(a, b)` is the call `task(a, b)` for taint."""
+    id: str
+    methods: List[str]
+    description: str = ""
+
+
+@dataclass
 class Fluent:
     """JavaScript: methods that configure the object they are called on and return it
     (`[[fluent]]`), so `res.status(200).send(x)` is the call `res.send(x)`. With `roots`, a call
@@ -228,6 +240,8 @@ class Pack:
     lambda_handlers: List[LambdaHandler] = field(default_factory=list)
     fluents: List[Fluent] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
+    deferred_calls: List[DeferredCall] = field(default_factory=list)
+    dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
@@ -309,6 +323,10 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     if language not in LANGUAGES:
         raise _fail(origin, "[pack].language", f"must be one of {list(LANGUAGES)}")
     pack = Pack(name=name, language=language, description=str(head.get("description", "")), origin=origin)
+    if "dict_queries" in head:
+        if not isinstance(head["dict_queries"], bool) or language != "python":
+            raise _fail(origin, "[pack].dict_queries", "is true or false, in a Python pack")
+        pack.dict_queries = head["dict_queries"]
     detect = head.get("detect", {})
     if not isinstance(detect, dict):
         raise _fail(origin, "[pack].detect", "expected a table")
@@ -325,7 +343,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
         for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "param_annotation", "param_type",
                     "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation", "class_name",
-                    "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method"):
+                    "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "first_param"):
             if key in t:
                 setattr(e, key, _strings(origin, f"{where}.{key}", t[key]))
         if "annotation" in t:                                   # alias of decorator
@@ -337,6 +355,10 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                                                       for i in positions):
             raise _fail(origin, f"{where}.param_positions", "must be a list of parameter positions (0-based)")
         e.param_positions = list(positions)
+        start = t.get("params_from", 0)
+        if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+            raise _fail(origin, f"{where}.params_from", "must be a parameter position (0-based)")
+        e.params_from = start
         params = t.get("params", "none")
         if isinstance(params, str):
             if params not in ("all", "annotated", "typed", "none"):
@@ -359,9 +381,10 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "fields = \"annotated\" and field_annotation go together")
         e.fields = fields
         e.kind = _source_kind(origin, f"{where}.kind", t.get("kind", "user_input"))
-        if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via or e.class_name):
+        if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via or e.class_name
+                or e.first_param):
             raise _fail(origin, where, "needs at least one of decorator/annotation, class_decorator, "
-                                       "extends, class_name, method, registered_via")
+                                       "extends, class_name, method, registered_via, first_param")
         if params == "none" and not e.fields and not e.tainted_param_type:
             raise _fail(origin, where, "taints nothing: set params, fields or tainted_param_type")
         pack.entrypoints.append(e)
@@ -477,6 +500,20 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not (handler.imports or pack.detect_imports):
             raise _fail(origin, where, "needs imports, or the pack's detect.imports, to say when it applies")
         pack.lambda_handlers.append(handler)
+
+    for i, t in enumerate(data.get("deferred_call", [])):
+        where = f"[[deferred_call]] #{i + 1}"
+        _check_keys(origin, where, t, _DEFERRED_KEYS)
+        if language != "python":
+            raise _fail(origin, where, "deferred calls are for Python packs")
+        if pack.has_detect:
+            raise _fail(origin, where, "deferred calls apply to every file (the caller imports only the task "
+                                       "module): use a pack without detect")
+        if not t.get("methods"):
+            raise _fail(origin, where, "needs methods")
+        pack.deferred_calls.append(DeferredCall(id=str(t.get("id", f"{name}-deferred-{i + 1}")),
+                                                methods=_strings(origin, f"{where}.methods", t["methods"]),
+                                                description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("registration", [])):
         where = f"[[registration]] #{i + 1}"

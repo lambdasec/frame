@@ -1,0 +1,16 @@
+[pack]
+name = "graphene"
+language = "python"
+description = "Graphene GraphQL resolvers and mutations"
+references = ["https://docs.graphene-python.org/en/latest/types/objecttypes/#resolvers",
+              "https://docs.graphene-python.org/en/latest/types/mutations/"]
+detect = { imports = ["graphene", "graphene_django"] }
+
+# Graphene calls the method `resolve_<field>` of an ObjectType, and a Mutation's `mutate`, as
+# (parent, info, **arguments): the client's GraphQL arguments are the parameters after `info`.
+[[entrypoint]]
+id = "resolver-arguments"
+method = ["resolve_*", "mutate"]
+params = "all"
+params_from = 2
+description = "GraphQL argument of a Graphene resolver or mutation"

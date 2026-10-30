@@ -250,6 +250,10 @@ class ProcSpec:
     # that template prints without escaping reach the sink (frame/sil/templates.py).
     renders_view: bool = False
 
+    # A response sink whose body is HTML unless a keyword argument here gives a literal content type
+    # that is not HTML (Django's `HttpResponse(body, content_type="application/json")`).
+    content_type_kwargs: List[str] = field(default_factory=list)
+
     # Does this spec name a GLOBAL function (`setTimeout`, `eval`)? Frontends
     # match a dotless spec key against the last segment of a member call
     # (`models.sequelize.query` -> `query`); for a global function that would

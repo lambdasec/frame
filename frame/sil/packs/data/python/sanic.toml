@@ -1,8 +1,18 @@
 [pack]
 name = "sanic"
 language = "python"
-description = "Sanic responses that reflect HTML or serve files"
+description = "Sanic route handlers, responses that reflect HTML or serve files"
 detect = { imports = ["sanic"] }
+
+# Route handlers (@app.route / @app.get / @bp.post ...) are called with the Request and the
+# route's path parameters (`/items/<item_id>`) as arguments (Sanic docs, "Routing").
+[[entrypoint]]
+id = "route-handler"
+decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options",
+             "*.websocket"]
+params = "all"
+exclude_param = ["self", "cls"]
+description = "Sanic handler argument (request or path parameter)"
 
 [[sink]]
 call = ["sanic.response.html", "sanic.html"]

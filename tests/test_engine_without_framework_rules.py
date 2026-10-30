@@ -185,3 +185,59 @@ def test_new_pack_keys_are_validated(tmp_path, body, error):
     p.write_text('[pack]\nname = "bad"\nlanguage = "javascript"\n\n' + body)
     with pytest.raises(PackError, match=error):
         load_pack_file(p)
+
+
+# --- Python: handlers come from packs, not from a guess -------------------------------------
+
+def _py(src, name="app.py"):
+    return sorted((v.line, v.cwe_id) for v in FrameScanner(language="python", verify=False).scan(src, name).vulnerabilities)
+
+
+def test_flask_route_arguments_and_no_guessed_handlers():
+    src = """import os
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route("/run/<cmd>")
+def run(cmd):
+    os.system(cmd)
+
+def helper(cmd):
+    request.args.get("x")
+    os.system(cmd)
+"""
+    # `helper` reads the request object but is no handler: its parameter is not attacker data
+    assert _py(src) == [(7, "CWE-78")]
+
+
+def test_django_view_and_graphene_resolver():
+    django = """import os
+from django.http import HttpResponse
+
+def view(request, name):
+    os.system(name)
+    return HttpResponse(request.GET["q"], content_type="application/json")
+
+def page(request):
+    return HttpResponse(request.GET["q"])
+"""
+    assert _py(django, "views.py") == [(5, "CWE-78"), (9, "CWE-79")]
+    graphene = """import os
+import graphene
+
+class Query(graphene.ObjectType):
+    def resolve_file(self, info, name):
+        os.system(name)
+        os.system(info)
+"""
+    assert _py(graphene, "schema.py") == [(6, "CWE-78")]
+
+
+def test_celery_delay_runs_the_task(tmp_path):
+    (tmp_path / "tasks.py").write_text("import os\n\ndef convert(path):\n    os.system(path)\n")
+    (tmp_path / "views.py").write_text("from flask import Flask, request\nfrom . import tasks\napp = Flask(__name__)\n\n"
+                                      "@app.post('/c')\ndef c():\n    tasks.convert.delay(request.form['p'])\n    return ''\n")
+    (tmp_path / "__init__.py").write_text("")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = {(r.filename.rsplit("/", 1)[-1], v.cwe_id) for r in results for v in r.vulnerabilities}
+    assert ("tasks.py", "CWE-78") in found

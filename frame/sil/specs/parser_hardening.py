@@ -18,7 +18,7 @@ PATH = Path(__file__).parent / "data" / "parser-hardening.toml"
 
 _SHAPE = {
     "xxe": {"features": dict, "access_attributes": list, "parser_products": list},
-    "lxml": {"parse_functions": list, "parser": str, "safe_keyword": str},
+    "lxml": {"parse_functions": list, "parser": str, "parser_arg": int, "parser_keyword": str, "safe_keyword": str},
     "deserialization": {"unsafe_types": list, "xstream": dict, "jackson": dict, "snakeyaml": dict},
     "deserialization.xstream": {"type": str, "hardening": list},
     "deserialization.jackson": {"type": str, "polymorphic": list},
@@ -33,6 +33,8 @@ class ParserHardening(NamedTuple):
     lxml_parse_functions: FrozenSet[str]
     lxml_parser: str
     lxml_safe_keyword: str
+    lxml_parser_arg: int
+    lxml_parser_keyword: str
     unsafe_deserializers: FrozenSet[str]
     xstream_type: str
     xstream_hardening: FrozenSet[str]
@@ -47,7 +49,7 @@ def _check(name: str, where: str, table, shape) -> None:
         raise ValueError(f"{name}: [{where}] needs exactly {sorted(shape)}")
     for key, typ in shape.items():
         value = table[key]
-        ok = isinstance(value, typ) and bool(value)
+        ok = isinstance(value, typ) and not isinstance(value, bool) and (typ is int or bool(value))
         if typ is list:
             ok = ok and all(isinstance(v, str) and v for v in value)
         if typ is dict and where == "xxe":
@@ -75,6 +77,8 @@ def load(path: Path = PATH) -> ParserHardening:
         lxml_parse_functions=frozenset(lxml["parse_functions"]),
         lxml_parser=lxml["parser"],
         lxml_safe_keyword=lxml["safe_keyword"],
+        lxml_parser_arg=lxml["parser_arg"],
+        lxml_parser_keyword=lxml["parser_keyword"],
         unsafe_deserializers=frozenset(de["unsafe_types"]),
         xstream_type=de["xstream"]["type"],
         xstream_hardening=frozenset(de["xstream"]["hardening"]),

@@ -45,7 +45,7 @@ from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
-from frame.sil.packs import finish_program
+from frame.sil.packs import default_packs, finish_program
 
 
 class PythonFrontend:
@@ -118,9 +118,7 @@ class PythonFrontend:
 
         self._imports = self._collect_imports(tree.root_node)
         program.imports = self._imports.as_dict()
-        self._dicts_are_queries = any(
-            v == m or v.startswith(m + ".") for v in self._imports.names.values()
-            for m in self._DOCUMENT_DB_MODULES)
+        self._dicts_are_queries = self._pack_says_dict_queries()
 
         # Walk top-level definitions
         self._const_tables = self._collect_const_tables(tree.root_node)
@@ -204,7 +202,6 @@ class PythonFrontend:
                         and self._get_text(obj) in self._const_tables and self._get_text(attr) == "get")
         return False
 
-    _DOCUMENT_DB_MODULES = ("pymongo", "motor", "mongoengine", "bson")
     _dicts_are_queries = False
 
     def _collect_imports(self, root: TSNode) -> ImportTable:
@@ -472,38 +469,7 @@ class PythonFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
-        # Web-handler parameters are attacker-controlled. A function is a request
-        # handler if it has a route decorator, is a GraphQL resolver/mutation, or
-        # reads the framework request object -- covering Flask decorators,
-        # connexion/OpenAPI operationId handlers (no decorator), and GraphQL. Its
-        # route/query parameters are then USER_INPUT sources, so the sound taint
-        # engine detects IDOR (attacker id reaches a resource-selection sink).
-        # Structural handler identification feeds the IR; the taint engine makes the
-        # detection decision -- this is not a pattern rule.
         body_node = node.child_by_field_name("body")
-        body_text = self._get_text(body_node) if body_node else ""
-        route_params = self._route_path_param_names(decorator_texts)
-        decs = " ".join(decorator_texts)
-        is_handler = (
-            bool(route_params)
-            or any(t in decs for t in (".route(", ".get(", ".post(", ".put(", ".delete(", ".patch("))
-            or func_name.startswith("resolve_") or func_name == "mutate"
-            or self._REQUEST_OBJECT_USE.search(body_text) is not None
-            or self._is_django_view_signature(params)
-        )
-        source_params = set(route_params)
-        if is_handler:
-            source_params.update(
-                p[0].name for p in params
-                if p[0].name not in ("self", "cls", "info", "root", "parent"))
-        if source_params:
-            param_names = {p[0].name for p in params}
-            loc = self._get_location(node)
-            for pname in source_params:
-                if pname in param_names:
-                    self._add_instr(TaintSource(
-                        loc=loc, var=PVar(pname), kind=TaintKind.USER_INPUT,
-                        description="web handler parameter (attacker-controlled)"))
 
         # Translate body (pass program for nested functions)
         outer_yield, self._saw_yield = self._saw_yield, False
@@ -524,44 +490,6 @@ class PythonFrontend:
 
         self._current_proc = None
         return proc
-
-    # The framework request object (`request.args`, `self.request.GET`, `flask.request.form`), not
-    # a module that merely has a `request` attribute (`urllib.request.urlopen`).
-    _REQUEST_OBJECT_USE = re.compile(
-        r"(?<![\w.])(?:(?:self|flask|bottle|cherrypy|quart|sanic|starlette|falcon)\.)?request\.")
-
-    def _is_django_view_signature(self, params) -> bool:
-        """`def view(request, pk)` / `def get(self, request, slug)` in a file that imports
-        Django (or DRF): Django passes the URL's captured groups as the arguments after
-        `request`, and urls.py routes by name so the function carries no decorator."""
-        if not any(v == "django" or v.startswith(("django.", "rest_framework"))
-                   for v in self._imports.names.values()):
-            return False
-        names = [p[0].name for p in params]
-        if names[:1] in (["self"], ["cls"]):
-            names = names[1:]
-        return len(names) > 1 and names[0] == "request"
-
-    @staticmethod
-    def _route_path_param_names(decorator_texts: List[str]) -> List[str]:
-        """Path-parameter names declared in a web route decorator, e.g.
-        @app.route('/users/<id>'), @bp.get('/users/<int:id>'), FastAPI '/users/{id}'.
-
-        This parses the route STRING to build the IR (marking attacker-controlled
-        inputs); it is frontend parsing, not a security detection rule -- the taint
-        engine decides whether a flow is a vulnerability.
-        """
-        names: List[str] = []
-        for d in decorator_texts:
-            if not any(tok in d for tok in (".route(", ".get(", ".post(",
-                                            ".put(", ".delete(", ".patch(")):
-                continue
-            m = re.search(r"['\"]([^'\"]+)['\"]", d)   # the route path literal
-            if not m:
-                continue
-            for pm in re.finditer(r"<(?:[a-zA-Z_]\w*:)?([a-zA-Z_]\w*)>|\{([a-zA-Z_]\w*)\}", m.group(1)):
-                names.append(pm.group(1) or pm.group(2))
-        return names
 
     # Header names that carry a caller's own credential rather than a
     # free-form request value. A read of one of these is PRINCIPAL-typed.
@@ -2259,11 +2187,8 @@ class PythonFrontend:
             end_column=node.end_point[1]
         )
 
-    # Response constructors whose body is HTML unless a content type says
-    # otherwise. With an explicit non-HTML `content_type=` / `mimetype=` literal
-    # the call is renamed so the XSS sink spec does not match it.
-    _HTML_RESPONSE_CALLS = frozenset({"HttpResponse", "http.HttpResponse",
-                                      "django.http.HttpResponse"})
+    # A response sink whose spec names `content_type_kwargs`, called with a literal non-HTML content
+    # type there, is renamed so the XSS sink spec does not match it.
     _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
 
     def _get_call_name(self, call_node: TSNode) -> str:
@@ -2272,17 +2197,16 @@ class PythonFrontend:
         if not func:
             return ""
         name = self._get_text(func)
-        if name.endswith(".delay") and re.fullmatch(r"[A-Za-z_][\w.]*", name):
-            # Celery `task.delay(a, b)` runs `task(a, b)` in a worker: the enqueueing call passes
-            # its arguments to the task function (`tasks.convert.delay(path)` -> `tasks.convert`).
-            return name[:-len(".delay")]
-        if name in self._HTML_RESPONSE_CALLS and self._has_non_html_content_type(call_node):
+        deferred = self._deferred_call_target(name)
+        if deferred is not None:
+            return deferred
+        if self._has_non_html_content_type(name, call_node):
             return name + self._NON_HTML_RESPONSE_SUFFIX
         if name.rsplit(".", 1)[-1] in _parser_hardening().lxml_parse_functions and self._uses_hardened_xml_parser(call_node):
             return name + self._HARDENED_PARSER_SUFFIX
         return name
 
-    # lxml parse functions take the parser as their second argument (or `parser=`). A parser
+    # lxml parse functions take the parser at a position or keyword (parser-hardening.toml). A parser
     # built with `resolve_entities=False` does not expand external entities: the call is renamed
     # so the XXE sink spec does not match it (the same device as the non-HTML response above).
     # The names are `specs/data/parser-hardening.toml` `[lxml]`.
@@ -2301,9 +2225,9 @@ class PythonFrontend:
         for i, a in enumerate(args):
             if a.type == "keyword_argument":
                 key = a.child_by_field_name("name")
-                if key is not None and self._get_text(key) == "parser":
+                if key is not None and self._get_text(key) == _parser_hardening().lxml_parser_keyword:
                     parser = a.child_by_field_name("value")
-            elif i == 1:
+            elif i == _parser_hardening().lxml_parser_arg:
                 parser = a
         if parser is None:
             return False
@@ -2329,7 +2253,31 @@ class PythonFrontend:
                 stack.extend(n.children)
         return bool(verdicts) and all(verdicts)
 
-    def _has_non_html_content_type(self, call_node: TSNode) -> bool:
+    def _pack_says_dict_queries(self) -> bool:
+        """A pack with `dict_queries` whose detect imports this file imports (document databases)."""
+        packs = self.packs if self.packs is not None else default_packs()
+        imported = list(self._imports.names.values())
+        return any(p.dict_queries and any(v == m or v.startswith(m + ".") for v in imported for m in p.detect_imports)
+                   for p in packs.for_language("python"))
+
+    def _deferred_call_target(self, name: str) -> Optional[str]:
+        """`tasks.convert.delay(path)` -> `tasks.convert`: a method of a pack's `[[deferred_call]]`
+        that runs the function it is called on with the same arguments (Celery)."""
+        if "." not in name or not re.fullmatch(r"[A-Za-z_][\w.]*", name):
+            return None
+        target, method = name.rsplit(".", 1)
+        packs = self.packs if self.packs is not None else default_packs()
+        for pack in packs.for_language("python"):
+            for d in pack.deferred_calls:
+                if method in d.methods:
+                    return target
+        return None
+
+    def _has_non_html_content_type(self, name: str, call_node: TSNode) -> bool:
+        spec = self.specs.get(name) or self.specs.get(name.rsplit(".", 1)[-1])
+        keys = getattr(spec, "content_type_kwargs", None)
+        if not keys:
+            return False
         args_node = call_node.child_by_field_name("arguments")
         for child in (args_node.children if args_node else []):
             if child.type != "keyword_argument":
@@ -2338,8 +2286,7 @@ class PythonFrontend:
             value = child.child_by_field_name("value")
             if key is None or value is None or value.type != "string":
                 continue
-            if self._get_text(key) in ("content_type", "mimetype") \
-                    and "html" not in self._get_text(value).lower():
+            if self._get_text(key) in keys and "html" not in self._get_text(value).lower():
                 return True
         return False
 

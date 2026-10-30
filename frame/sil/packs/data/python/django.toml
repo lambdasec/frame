@@ -50,3 +50,15 @@ name = ["self.request.GET.get", "self.request.GET.getlist", "self.request.POST.g
         "self.request.POST.__getitem__", "self.request.GET", "self.request.POST", "self.request.body",
         "self.request.headers.get", "self.request.FILES.get"]
 kind = "user_input"
+
+# Views: Django calls a view with the HttpRequest first and the URL pattern's captured values after
+# it (docs: "Writing views", "URL dispatcher"). urls.py routes by name, so the view carries no
+# decorator; the documented signature (first parameter `request`, also after `self` in a
+# class-based view's get/post) is the evidence. The request is tainted as a whole; what the server
+# set on it (`request.user`, `request.session`) is not client data (request-objects.toml).
+[[entrypoint]]
+id = "view-arguments"
+first_param = ["request"]
+params = "all"
+exclude_param = ["self", "cls"]
+description = "Django view argument (the HttpRequest, or a value captured from the URL)"

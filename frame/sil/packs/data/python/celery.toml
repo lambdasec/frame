@@ -1,0 +1,12 @@
+[pack]
+name = "celery"
+language = "python"
+description = "Celery task calls"
+references = ["https://docs.celeryq.dev/en/stable/userguide/calling.html"]
+
+# No detect: the caller imports only the module defining the task (`from . import tasks`).
+# `tasks.convert.delay(path)` sends the task to a worker, which runs `tasks.convert(path)`: for
+# taint, the arguments reach the task function. (`apply_async` takes them as a tuple: not modelled.)
+[[deferred_call]]
+id = "delay"
+methods = ["delay"]
