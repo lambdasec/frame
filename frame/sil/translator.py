@@ -4186,8 +4186,10 @@ class SILTranslator:
 
         # Get specification for this function
         spec = self.program.spec_for_call(instr)
-        if spec is None:
-            spec = self._request_session_store(instr, state)
+        if spec is None or not (spec.is_taint_sink() or spec.is_taint_source() or spec.is_taint_sanitizer()):
+            # storing into a request's server-side session, whatever propagation row the method's
+            # name matches (`__setitem__`)
+            spec = self._request_session_store(instr, state) or spec
         if self._is_c_lang and spec is not None and spec.size_args:
             self._note_size_arg_candidates(instr, spec, state, proc_name)
         if self._is_c_lang and spec is not None and spec.uses_path is not None:

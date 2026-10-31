@@ -149,14 +149,24 @@ is_source = "principal"
 description = "JWT authenticated subject"
 
 [[spec]]
-name = "session.get"
+name = "flask.session.get"
 is_source = "principal"
 description = "Flask server-side session identity"
 
 [[spec]]
-name = "session.__getitem__"
+name = "quart.session.get"
+is_source = "principal"
+description = "Quart server-side session identity"
+
+[[spec]]
+name = "flask.session.__getitem__"
 is_source = "principal"
 description = "Flask server-side session identity"
+
+[[spec]]
+name = "quart.session.__getitem__"
+is_source = "principal"
+description = "Quart server-side session identity"
 
 [[spec]]
 name = "query.get"
@@ -1527,14 +1537,14 @@ identity_arg = 0
 description = "Authlib JWT decode"
 
 [[spec]]
-name = "session"
-is_sink = "trust_boundary"
-description = "Session storage (CWE-501)"
-
-[[spec]]
 name = "flask.session"
 is_sink = "trust_boundary"
 description = "Flask session storage (CWE-501)"
+
+[[spec]]
+name = "quart.session"
+is_sink = "trust_boundary"
+description = "Quart session storage (CWE-501)"
 
 [[spec]]
 name = "CORS"
@@ -1687,7 +1697,12 @@ is_sanitizer = ["password"]
 description = "Django password hash"
 
 [[spec]]
-name = "session.permanent"
+name = "flask.session.permanent"
+is_sink = "session"
+description = "Permanent session (check timeout)"
+
+[[spec]]
+name = "quart.session.permanent"
 is_sink = "session"
 description = "Permanent session (check timeout)"
 
@@ -1995,7 +2010,7 @@ sink_args = [1]
 description = "Session storage (CWE-501)"
 
 [[spec]]
-name = "session.__setitem__"
+name = "quart.session.__setitem__"
 is_sink = "trust_boundary"
 sink_args = [1]
 description = "Session storage (CWE-501)"

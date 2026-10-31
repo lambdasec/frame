@@ -324,6 +324,16 @@ class PythonFrontend:
                         if chain is not None and chain[0] in imported:
                             register(n, fn, scope, i, None, self._get_text(a))
 
+    def _spec(self, name: str) -> Optional[ProcSpec]:
+        """The spec row for a written name, or for what the file's imports make it (`session.get`
+        after `from flask import session` is `flask.session.get`)."""
+        spec = self.specs.get(name)
+        if spec is None:
+            resolved = self._imports.resolve(name)
+            if resolved and resolved != name:
+                spec = self.specs.get(resolved)
+        return spec
+
     def _alias_specs_by_canonical(self, program: Program) -> None:
         """The built-in specs are keyed by the fully qualified name (`lxml.etree.fromstring`),
         but code calls them through the file's own import names (`from lxml import etree`,
@@ -346,6 +356,15 @@ class PythonFrontend:
                     spec = program.library_specs.get(instr.canonical)
                     if spec is not None:
                         program.library_specs[func] = spec
+        # rows under a canonical id an import binds locally (`from flask import session`: the row
+        # `flask.session.get` is `session.get` in this file), for lookups by written name outside a
+        # call instruction (`session["uid"]` inside an expression)
+        for local_name, qualified in self._imports.names.items():
+            if local_name in local:
+                continue
+            q = str(qualified)
+            for key in [k for k in program.library_specs if k == q or k.startswith(q + ".")]:
+                program.library_specs.setdefault(local_name + key[len(q):], program.library_specs[key])
 
     _const_tables: frozenset = frozenset()
     _saw_yield = False
@@ -727,7 +746,7 @@ class PythonFrontend:
         index = self._source_rule_index()
         for n in range(len(parts) - 1, 0, -1):          # longest prefix first, at least `a.b`
             prefix = ".".join(parts[:n + 1])
-            spec = self.specs.get(prefix)
+            spec = self._spec(prefix)
             hit = bool(spec and spec.is_taint_source())
             if not hit:
                 hit = bool(index.match(self._imports.resolve(prefix), prefix))
@@ -756,7 +775,7 @@ class PythonFrontend:
             return None
         base_text = self._get_text(base)
         func_name = f"{base_text}.__getitem__"
-        spec = self.specs.get(func_name)
+        spec = self._spec(func_name)
         if not (spec and spec.is_taint_source()):
             # a source rule of a detected pack on the container itself
             # (`self.request.params["doc"]` with a rule on `request.params`)
@@ -1279,7 +1298,7 @@ class PythonFrontend:
         ))
 
         # Check if this is a taint source
-        spec = self.specs.get(func_name)
+        spec = self._spec(func_name)
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(
@@ -1439,7 +1458,7 @@ class PythonFrontend:
         instrs.append(call_instr)
 
         # Check if this is a sink
-        spec = self.specs.get(func_name)
+        spec = self._spec(func_name)
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:

@@ -272,3 +272,14 @@ def test_a_python_closure_sees_its_enclosing_values():
     code = _FLASK + ("@app.route('/x')\ndef x():\n    cmd = request.args['c']\n\n"
                      "    def run():\n        os.system(cmd)\n\n    run()\n    return ''\n")
     assert _lines(code, "CWE-78") == [9]
+
+
+def test_flask_session_rows_are_flasks_not_any_session():
+    flask = _FLASK.replace("from flask import Flask, request", "from flask import Flask, request, session")
+    store = flask + "@app.route('/s')\ndef s():\n    session['who'] = request.args['who']\n    return ''\n"
+    assert "CWE-501" in _cwes(store)
+    # SQLAlchemy 2.0's Session.get(Model, pk) and a requests session are not Flask's session
+    orm = ("import sqlite3\nfrom sqlalchemy.orm import Session\nfrom models import User, engine\n\n"
+           "def name_of(pk):\n    session = Session(engine)\n    user = session.get(User, pk)\n"
+           "    sqlite3.connect('x').execute(\"SELECT * FROM t WHERE n = '%s'\" % user.name)\n")
+    assert "CWE-89" not in _cwes(orm)
