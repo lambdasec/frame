@@ -203,7 +203,7 @@ def _pack(body, language="javascript"):
     ('[[request_type]]\nid = "r"\nfields = ["a"]\nserver_state = ["b"]\n', "server_state goes with"),
     ('[[request_type]]\nid = "r"\nfields = ["*"]\nmethods = ["get"]\n', "no methods"),
     ('[[request_type]]\nid = "r"\nfields = ["a b"]\n', "not a property path"),
-    ('[[request_type]]\nid = "r"\nfields = ["a"]\nkinds = { b = "file" }\n', "not one of its fields"),
+    ('[[request_type]]\nid = "r"\nfields = ["a"]\nkinds = { b = "file" }\n', "not one of its client fields"),
     ('[[entrypoint]]\nmethod = ["*"]\nparams = "all"\nrequest_type = "nope"\n', "names no"),
     ('[[request_type]]\nid = "r"\nfields = ["a"]\n[[entrypoint]]\nmethod = ["*"]\nparams = "all"\nrequest_type = "r"\nkind = "user"\n',
      "no kind"),

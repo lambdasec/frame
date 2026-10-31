@@ -13,4 +13,5 @@ id = "resolver-arguments"
 method = ["resolve_*", "mutate"]
 params = "all"
 params_from = 2
+unbound = true                   # resolvers are implicitly static: the first argument is the parent value
 description = "GraphQL argument of a Graphene resolver or mutation"

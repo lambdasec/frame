@@ -6,7 +6,7 @@
 # `request` HTTP client's SSRF sink and `form.getName()` a path sanitizer. A receiver whose origin
 # is known (frame/sil/value_origins.py) and a capitalised receiver are never guessed.
 # Read by frame/sil/specs/receiver_guesses.py.
-python = ["str", "bytes", "list", "dict", "ConfigParser", "configparser.ConfigParser", "request"]
+python = ["str", "bytes", "list", "dict", "ConfigParser", "configparser.ConfigParser"]
 java = ["request", "session", "connection", "URLDecoder", "URLEncoder", "java.net.URLDecoder", "java.net.URLEncoder",
         "Base64", "String", "StringBuilder", "StringBuffer"]
 csharp = ["String", "StringBuilder"]

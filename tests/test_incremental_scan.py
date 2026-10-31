@@ -280,9 +280,16 @@ def test_verify_suppression_is_not_a_fix(repo, capsys):
     assert verify(capsys, findings) == (1, {"app.py": "suppressed"})
 
 
-def test_verify_renamed_bug_is_uncertain_not_fixed(repo, capsys):
+def test_verify_renamed_local_is_the_same_bug(repo, capsys):
+    # the finding's source is the request read (`request.args`), not the local holding it
     findings = _scan_to_file(repo, capsys)
     (repo / "app.py").write_text(SQLI.replace("name", "who"))
+    assert verify(capsys, findings) == (1, {"app.py": "present"})
+
+
+def test_verify_moved_source_is_uncertain_not_fixed(repo, capsys):
+    findings = _scan_to_file(repo, capsys)
+    (repo / "app.py").write_text(SQLI.replace("request.args", "request.form"))
     assert verify(capsys, findings) == (1, {"app.py": "uncertain"})
 
 

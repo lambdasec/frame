@@ -116,6 +116,12 @@ def run_search(term):
         cur.execute("SELECT id, title FROM books WHERE title LIKE '%%" + term + "%%'")  # frame-expect: CWE-89
         return cur.fetchall()
 ''',
+    "catalog/urls.py": '''from django.urls import path
+
+from catalog import views
+
+urlpatterns = [path("search/", views.search)]
+''',
 }, {
     "catalog/views.py": '''from django.http import JsonResponse
 from catalog.search import run_search
@@ -132,6 +138,12 @@ def run_search(term):
     with connection.cursor() as cur:
         cur.execute("SELECT id, title FROM books WHERE title LIKE %s", ["%" + term + "%"])
         return cur.fetchall()
+''',
+    "catalog/urls.py": '''from django.urls import path
+
+from catalog import views
+
+urlpatterns = [path("search/", views.search)]
 ''',
 })
 

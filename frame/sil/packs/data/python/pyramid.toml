@@ -5,14 +5,64 @@ description = "Pyramid views: request.params / matchdict / json_body, HTML respo
 detect = { imports = ["pyramid"] }
 
 # Pyramid views take the request (function views) or hold it on self (class views).
-[[source]]
-name = ["request.params", "request.GET", "request.POST", "request.matchdict", "request.json_body",
-        "request.cookies", "request.body", "request.text", "request.headers", "request.params.get", "request.GET.get",
-        "request.POST.get", "request.matchdict.get", "request.cookies.get", "request.headers.get",
-        "request.params.getall", "request.GET.getall", "request.POST.getall",
-        "request.params.__getitem__", "request.GET.__getitem__", "request.POST.__getitem__",
-        "request.matchdict.__getitem__", "request.json_body.__getitem__", "request.json_body.get"]
-kind = "user_input"
+# The request (pyramid.request.Request, a WebOb request): its parameters, the URL pattern's matched
+# values, the JSON and raw body, cookies and headers are the client's; what the router, security
+# and the application add (context, registry, session, identity, the URL generators) is not.
+[[request_type]]
+id = "Request"
+fields = ["params", "GET", "POST", "matchdict", "json_body", "json", "body", "body_file", "text", "cookies",
+          "headers"]
+headers = ["headers"]
+origin = "pyramid.request.Request"
+references = ["https://docs.pylonsproject.org/projects/pyramid/en/latest/api/request.html",
+              "https://docs.pylonsproject.org/projects/webob/en/stable/api/request.html"]
+
+# View callables: Pyramid calls a function view with the request, or with the context and the
+# request when it takes two arguments (docs "View Callables"); a view class is constructed with
+# them and its view method called on the instance.
+[[entrypoint]]
+id = "view-request"
+decorator = ["pyramid.view.view_config"]
+arity = [1]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "view-context-request"
+decorator = ["pyramid.view.view_config"]
+arity = [2]
+param_positions = [1]
+request_type = "Request"
+
+[[entrypoint]]
+id = "configured-view-request"
+registered_via = ["pyramid.config.Configurator.add_view"]
+arity = [1]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "configured-view-context-request"
+registered_via = ["pyramid.config.Configurator.add_view"]
+arity = [2]
+param_positions = [1]
+request_type = "Request"
+
+[[entrypoint]]
+id = "view-class-request"
+class_decorator = ["pyramid.view.view_config", "pyramid.view.view_defaults"]
+method = ["__init__"]
+arity = [2]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "view-class-context-request"
+class_decorator = ["pyramid.view.view_config", "pyramid.view.view_defaults"]
+method = ["__init__"]
+arity = [3]
+param_positions = [1]
+request_type = "Request"
 
 [[sink]]
 call = ["pyramid.response.Response"]
@@ -37,7 +87,10 @@ arg_names = ["path"]
 
 # URLs the framework builds from route names are not attacker data even though they are
 # methods of the request.
+# URLs the application builds from route and resource names.
 [[sanitizer]]
-name = ["request.route_url", "request.route_path", "request.static_url", "request.static_path",
-        "request.resource_url", "request.application_url", "request.current_route_url"]
+call = ["pyramid.request.Request.route_url", "pyramid.request.Request.route_path",
+        "pyramid.request.Request.static_url", "pyramid.request.Request.static_path",
+        "pyramid.request.Request.resource_url", "pyramid.request.Request.resource_path",
+        "pyramid.request.Request.current_route_url", "pyramid.request.Request.current_route_path"]
 kinds = ["redirect", "ssrf", "html", "xss", "filesystem", "sql"]

@@ -4,17 +4,40 @@ language = "python"
 description = "Tornado request handlers and templates"
 detect = { imports = ["tornado"] }
 
-# A RequestHandler's verb methods receive the URL's regex groups as arguments.
+# The request a handler serves (tornado.httputil.HTTPServerRequest, the handler's `request`): its
+# parsed arguments, uploads, body, headers, cookies and query string are the client's.
+[[request_type]]
+id = "HTTPServerRequest"
+fields = ["arguments", "query_arguments", "body_arguments", "files", "body", "headers", "cookies", "query"]
+kinds = { files = "file" }
+headers = ["headers"]
+references = ["https://www.tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest"]
+
+# A RequestHandler instance hands out the request's arguments and cookies through its own accessors,
+# and keeps the URL's captured groups (`path_args`, `path_kwargs`) and the request itself.
+[[request_type]]
+id = "RequestHandler"
+fields = ["path_args", "path_kwargs", "cookies"]
+methods = ["get_argument", "get_arguments", "get_query_argument", "get_query_arguments", "get_body_argument",
+           "get_body_arguments", "get_cookie", "get_signed_cookie", "get_secure_cookie"]
+objects = { request = "HTTPServerRequest" }
+references = ["https://www.tornadoweb.org/en/stable/web.html#tornado.web.RequestHandler"]
+
+[[entrypoint]]
+id = "request-handler-instance"
+extends = ["tornado.web.RequestHandler", "tornado.websocket.WebSocketHandler"]
+receiver = true
+request_type = "RequestHandler"
+exclude_method = ["__init__", "initialize"]
+description = "a RequestHandler instance (its argument and cookie accessors, self.request)"
+
+# A RequestHandler's verb methods receive the URL's regex groups as arguments; a WebSocketHandler's
+# open() the groups and on_message() what the client sent.
 [[entrypoint]]
 id = "request-handler"
 extends = ["tornado.web.RequestHandler", "tornado.websocket.WebSocketHandler"]
 method = ["get", "post", "put", "delete", "patch", "head", "options", "on_message", "open"]
 params = "all"
-
-[[source]]
-name = ["self.get_argument", "self.get_arguments", "self.get_query_argument", "self.get_query_arguments",
-        "self.get_body_argument", "self.get_body_arguments", "self.get_cookie", "self.get_secure_cookie"]
-kind = "user_input"
 
 [[sink]]
 name = ["self.write"]

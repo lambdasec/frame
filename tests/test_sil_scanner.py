@@ -474,11 +474,15 @@ class TestLibrarySpecs:
     """Test library specifications"""
 
     def test_flask_specs(self):
-        """Test Flask specs are defined"""
+        """Flask's request is the flask pack's request type, not spec rows named after `request`"""
+        from frame.sil.packs.loader import builtin_packs
         from frame.sil.specs.python_specs import PYTHON_SPECS
 
-        assert "request.args.get" in PYTHON_SPECS
-        assert PYTHON_SPECS["request.args.get"].is_taint_source()
+        assert not any(name.startswith("request.") for name in PYTHON_SPECS)
+        flask = next(p for p in builtin_packs() if p.language == "python" and p.name == "flask")
+        assert flask.request_proxies == {"flask.request": "Request", "quart.request": "Request"}
+        assert flask.request_types["Request"].is_client_field(("args",))
+        assert flask.request_types["Request"].is_client_method(("get_json",))
 
     def test_sql_sinks(self):
         """Test SQL sink specs"""
@@ -503,7 +507,7 @@ class TestLibrarySpecs:
         from frame.sil.specs.python_specs import PYTHON_SPECS
 
         # Should have all categories
-        assert "request.args.get" in PYTHON_SPECS  # Flask
+        assert "flask.send_file" in PYTHON_SPECS  # Flask
         assert "cursor.execute" in PYTHON_SPECS    # SQL
         assert "os.system" in PYTHON_SPECS         # Shell
         assert "html.escape" in PYTHON_SPECS       # Sanitizer

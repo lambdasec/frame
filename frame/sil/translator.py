@@ -43,7 +43,6 @@ from .specs.unpredictable import arguments_for, must_be_unpredictable
 from . import c_facts as _c_facts
 from .c_int_model import INT_TYPES, int_range, may_be_negative
 from .specs.parser_hardening import load as _parser_hardening
-from .specs.request_objects import load as _request_objects
 from .specs.weak_algorithms import load as _weak_algorithms, weak_algorithm
 from .specs.guards import load as _load_guards
 from .specs.principals import load as _principals
@@ -1718,22 +1717,53 @@ class SILTranslator:
                 and p.simple_name == method]
         return hits[0] if len(hits) == 1 else None
 
-    def _imported_request_objects(self) -> Set[str]:
-        """Names this file imports that are a web request object (`from flask import request`):
-        the module-level request proxies of the packs applied to it (`[pack] request_objects`)."""
-        cache = self.__dict__.get("_request_object_cache")
+    def _request_proxies(self) -> Dict[str, "RequestType"]:
+        """The names this file reaches a module-level request proxy by (`request` after `from flask
+        import request`, `cherrypy.request` after `import cherrypy`), with the request type the
+        applied packs give it (`[[request_type]] proxies`). Inside a request such a proxy is that
+        request's object."""
+        cache = self.__dict__.get("_request_proxy_cache")
         if cache is None:
-            proxies = {o for p in getattr(self.program, "active_packs", ()) for o in getattr(p, "request_objects", ())}
-            cache = {name for name, qualified in self.program.imports.items() if str(qualified) in proxies}
-            self.__dict__["_request_object_cache"] = cache
+            proxies: Dict[str, "RequestType"] = {}
+            for pack in getattr(self.program, "active_packs", ()):
+                for proxy, rid in getattr(pack, "request_proxies", {}).items():
+                    proxies.setdefault(proxy, pack.request_types[rid])
+            cache = {}
+            for local, qualified in (self.program.imports or {}).items():
+                q = str(qualified)
+                for proxy, rtype in proxies.items():
+                    if proxy == q:
+                        cache[local] = rtype
+                    elif proxy.startswith(q + "."):
+                        cache[local + proxy[len(q):]] = rtype
+            self.__dict__["_request_proxy_cache"] = cache
         return cache
 
-    def _is_imported_request_object(self, var: str) -> bool:
-        if var not in self._imported_request_objects():
-            return False
-        proc = self._cur_proc          # a parameter or local of the same name is a different object
-        return proc is None or (var not in {p.name for p, _ in proc.params}
-                                and var not in proc.locals)
+    def _rebound_names(self, proc: Procedure) -> Set[str]:
+        """Names the procedure (or the module) binds itself: a parameter or an assigned local of an
+        imported name is a different object."""
+        out = {p.name for p, _ in proc.params} | set(proc.locals)
+        for p in (proc, self.program.procedures.get("<module>")):
+            if p is None:
+                continue
+            for node in p.nodes.values():
+                for instr in node.instrs:
+                    if isinstance(instr, Assign):
+                        out.add(self._get_var_name(instr.id))
+        return out
+
+    def _seed_request_proxies(self, proc: Procedure, state: "SymbolicState") -> None:
+        if proc.name.startswith("<"):              # module code runs at import, outside any request
+            return
+        proxies = self._request_proxies()
+        if not proxies:
+            return
+        rebound = self._rebound_names(proc)
+        for name, rtype in proxies.items():
+            if name.split(".", 1)[0] in rebound:
+                continue
+            state.add_taint(name, TaintInfo(TaintKind.REQUEST, name, proc.loc or Location.unknown(),
+                                            request=rtype))
 
     def _callback_argument(self, name: str, caller: Procedure) -> Optional[Procedure]:
         """`cb(x)` inside `withName(req, cb)`: the one function of this file that is passed as
@@ -2047,7 +2077,7 @@ class SILTranslator:
                         out.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, wrap,
                                                               at=name))
                 return out
-            called = self._request_call(name, state)
+            called = self._request_call(name, state, exp.args)
             if called is not self._NOT_REQUEST:          # `req.get("Host")`: the request type decides
                 if called:
                     out.append((state.get_taint_info(called), set(wrap)))
@@ -2081,14 +2111,11 @@ class SILTranslator:
             if state.is_tainted(var):
                 out.append((state.get_taint_info(var),
                             set(wrap) | set(state.sanitized.get(var, []))))
-            elif self._is_imported_request_object(var):
-                # `render(request)`: the framework's request object handed to a helper is
-                # attacker data there, whatever the helper calls its parameter
-                out.append((TaintInfo(source_kind=TaintKind.USER_INPUT, source_var=var,
-                                      source_location=loc), set(wrap)))
             return out
         if isinstance(exp, (ExpFieldAccess, ExpIndex)):
-            if isinstance(exp, ExpFieldAccess) and self._is_request_server_state(exp):
+            credential = self._request_header_credential(exp, state)
+            if credential is not None:
+                out.append((state.get_taint_info(credential), set(wrap)))
                 return out
             if isinstance(exp, ExpFieldAccess):
                 dotted = self._field_path(exp)
@@ -3147,6 +3174,7 @@ class SILTranslator:
                     source_location=proc.loc or Location.unknown(),
                 ))
 
+        self._seed_request_proxies(proc, state)
         # Parameters a same-file call passes attacker data (`_record_entry_taints`).
         entry = self._ipa.entry_taints.get((self._file_key, proc.name), {})
         params = {p.name for p, _ in proc.params}
@@ -3284,15 +3312,31 @@ class SILTranslator:
             checks, state = self._exec_free(instr, state, proc_name)
 
         elif isinstance(instr, Call):
-            called = self._request_call(instr.get_full_name(), state)
-            checks, state = self._exec_call(instr, state, proc_name)
+            self._client_receiver = None
+            called = self._request_call(instr.get_full_name(), state, [a for a, _ in instr.args])
+            receiver = self._client_receiver
+            # a method of a request object: the request type says what it returns, not a source
+            # row its name suffix-matches (`request.session.get` is not Flask's `session.get`)
+            self._spec_sources_off = called is not self._NOT_REQUEST
+            try:
+                checks, state = self._exec_call(instr, state, proc_name)
+            finally:
+                self._spec_sources_off = False
+            if receiver and instr.ret and receiver in state.tainted and not state.is_tainted(str(instr.ret[0])):
+                # a method of a request's client data (`request.query.get("k")`, a dict / str method)
+                # returns data derived from it, whatever library row its name suffix-matches
+                spec = self.program.spec_for_call(instr)
+                if not (spec and spec.is_taint_sanitizer()):
+                    info, ret = state.tainted[receiver], str(instr.ret[0])
+                    state.tainted[ret] = TaintInfo(info.source_kind, receiver, info.source_location,
+                                                   list(info.propagation_path) + [ret], read=info.read)
             if called is not self._NOT_REQUEST and instr.ret:
                 # a method of a request object: its result is what the request type says, never the
                 # request object itself (default receiver propagation would make it one)
                 ret = str(instr.ret[0])
                 if called:
                     state.tainted[ret] = TaintInfo(
-                        TaintKind.USER_INPUT, called, state.tainted[called].source_location,
+                        state.tainted[called].source_kind, called, state.tainted[called].source_location,
                         list(state.tainted[called].propagation_path) + [ret])
                 elif self._is_request_value(ret, state):
                     state.tainted.pop(ret, None)
@@ -4083,6 +4127,8 @@ class SILTranslator:
 
         # Get specification for this function
         spec = self.program.spec_for_call(instr)
+        if spec is None:
+            spec = self._request_session_store(instr, state)
         if self._is_c_lang and spec is not None and spec.size_args:
             self._note_size_arg_candidates(instr, spec, state, proc_name)
         if self._is_c_lang and spec is not None and spec.uses_path is not None:
@@ -4181,7 +4227,7 @@ class SILTranslator:
 
         if spec:
             # Handle taint source
-            if spec.is_taint_source() and instr.ret:
+            if spec.is_taint_source() and instr.ret and not self._spec_sources_off:
                 ret_var = str(instr.ret[0])
                 source_kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
                 # The Authorization/Cookie header is an authentication credential, not a
@@ -8967,20 +9013,6 @@ class SILTranslator:
             return f"{self._exp_to_str(exp.base)}[{self._exp_to_str(exp.index)}]"
         return str(exp)
 
-    def _is_request_server_state(self, exp: ExpFieldAccess) -> bool:
-        """Is `exp` a read of `request.user...` / `request.session...` /
-        `request.auth...` in Python? (`server_state` in `specs/data/request-objects.toml`: a
-        handler's `request` is tainted as a whole, so without this `request.user.username`
-        reached sinks as input.)"""
-        if (getattr(self.program, "language", "") or "").lower() != "python":
-            return False
-        cur = exp
-        while isinstance(cur.base, ExpFieldAccess):
-            cur = cur.base
-        return (isinstance(cur.base, ExpVar)
-                and self._get_var_name(cur.base.var) in _request_objects().python_request_names
-                and cur.field_name in _request_objects().server_state)
-
     def _field_path(self, exp: Exp) -> Optional[str]:
         """`a.b.c` for a chain of field reads on a plain variable, else None."""
         parts = []
@@ -8997,6 +9029,8 @@ class SILTranslator:
     # RequestType's: a client property or method is attacker data, anything else is server state.
     _NOT_REQUEST = object()
     _state: Optional["SymbolicState"] = None
+    _client_receiver: Optional[str] = None       # set by _request_call: the client-data receiver it read
+    _spec_sources_off = False                    # _exec_call of a request object's method
 
     def _request_path(self, path: str, state: Optional["SymbolicState"]):
         """For a read of the dotted `path` (`req.query.q`) whose nearest tainted prefix is a request
@@ -9032,11 +9066,73 @@ class SILTranslator:
             return None
         return self._NOT_REQUEST
 
-    def _request_call(self, func_text: str, state: Optional["SymbolicState"]):
+    def _request_credential(self, info: TaintInfo, rest: Tuple[str, ...], key: Optional[Exp], name: str,
+                            state: "SymbolicState") -> Optional[str]:
+        """A lookup of a credential header (`principals.toml`) by literal name in a header map of
+        the request (`request.headers.get("Authorization")`): the caller's own credential, held
+        under `name` as PRINCIPAL. None for any other read."""
+        if info.request is None or not info.request.is_header_map(rest) or not isinstance(key, ExpConst):
+            return None
+        if not isinstance(key.value, str) or key.value.strip("'\"").lower() not in self._AUTH_HEADER_NAMES:
+            return None
+        if name not in state.tainted:
+            state.tainted[name] = TaintInfo(TaintKind.PRINCIPAL, name, info.source_location,
+                                            list(info.propagation_path) + [name], read=info.read + rest)
+        return name
+
+    # MutableMapping's storing methods (Python's data model; `x[k] = v` is `x.__setitem__(k, v)`):
+    # the position of the stored value
+    _MAPPING_STORES = {"__setitem__": [1], "setdefault": [1], "update": [0]}
+
+    def _request_session_store(self, instr: Call, state: "SymbolicState") -> Optional[ProcSpec]:
+        """`request.session["k"] = v` with `session` a session path of the request's type: a
+        trust-boundary sink on the stored value (CWE-501)."""
+        parts = instr.get_full_name().strip('"').split(".")
+        if len(parts) < 3 or parts[-1] not in self._MAPPING_STORES:
+            return None
+        for i in range(len(parts) - 2, 0, -1):
+            info = state.tainted.get(".".join(parts[:i]))
+            if info is None:
+                continue
+            if info.source_kind != TaintKind.REQUEST or info.request is None \
+                    or not info.request.is_session(tuple(parts[i:-1])):
+                return None
+            return ProcSpec(is_sink="trust_boundary", sink_args=list(self._MAPPING_STORES[parts[-1]]),
+                            description=f"{'.'.join(parts[:-1])}: the server-side session (trust boundary)")
+        return None
+
+    def _request_header_credential(self, exp: Exp, state: Optional["SymbolicState"]) -> Optional[str]:
+        """`request.headers["Authorization"]` (and JavaScript's `req.headers.authorization`): a
+        credential header read by name off a request's header map."""
+        if state is None:
+            return None
+        if isinstance(exp, ExpIndex):
+            base, key = exp.base, exp.index
+        elif isinstance(exp, ExpFieldAccess):
+            base, key = exp.base, ExpConst.string(exp.field_name)
+        else:
+            return None
+        path = self._field_path(base)
+        if not path:
+            return None
+        parts = path.split(".")
+        for i in range(len(parts) - 1, 0, -1):
+            info = state.tainted.get(".".join(parts[:i]))
+            if info is None:
+                continue
+            if info.source_kind != TaintKind.REQUEST:
+                return None
+            if not isinstance(key, ExpConst):
+                return None
+            return self._request_credential(info, tuple(parts[i:]), key, f"{path}[{key.value}]", state)
+        return None
+
+    def _request_call(self, func_text: str, state: Optional["SymbolicState"], args=None):
         """For a method call `<receiver>.<m>(...)` on a request object (`req.get("Host")`,
         `req.isAuthenticated()`): the name holding its result when the request type lists the
         method as client data (materialised), else None. `_NOT_REQUEST` when the receiver is not
-        a request object (or is client data already: `req.query.q.trim()` keeps its own taint)."""
+        a request object (or is client data already: `req.query.q.trim()` keeps its own taint;
+        a credential header looked up in its header map is the caller's PRINCIPAL)."""
         if state is None or "." not in func_text:
             return self._NOT_REQUEST
         parts = func_text.strip('"').split(".")
@@ -9051,7 +9147,12 @@ class SILTranslator:
                 return self._NOT_REQUEST
             rest = tuple(parts[i:])
             if info.request.is_client_field(rest[:-1]):
-                self._request_path(".".join(parts[:-1]), state)      # the receiver is client data
+                key = args[0] if args else None
+                credential = self._request_credential(
+                    info, rest[:-1], key, f"{'.'.join(parts)}({getattr(key, 'value', '')})", state)
+                if credential is not None:
+                    return credential
+                self._client_receiver = self._request_path(".".join(parts[:-1]), state)  # client data
                 return self._NOT_REQUEST
             if info.request.is_client_method(rest):
                 name = f"{'.'.join(parts)}()"
@@ -9140,8 +9241,9 @@ class SILTranslator:
         if isinstance(exp, ExpUnOp):
             return self._get_exp_vars(exp.operand)
         if isinstance(exp, ExpFieldAccess):
-            if self._is_request_server_state(exp):
-                return []
+            credential = self._request_header_credential(exp, self._state)
+            if credential is not None:
+                return [credential]
             dotted = self._field_path(exp)
             state = self._state
             resolved = self._request_path(dotted, state) if dotted else self._NOT_REQUEST
@@ -9153,6 +9255,9 @@ class SILTranslator:
             # is tracked under its own name: reading it must look that name up too
             return names + [dotted] if dotted else names
         if isinstance(exp, ExpIndex):
+            credential = self._request_header_credential(exp, self._state)
+            if credential is not None:
+                return [credential]
             if self._constant_table_index(exp):
                 return self._get_exp_vars(exp.base)        # one of the table's constants, whatever the key
             return self._get_exp_vars(exp.base) + self._get_exp_vars(exp.index)
@@ -9167,7 +9272,7 @@ class SILTranslator:
             # For method calls like param.split(), extract the receiver variable
             if hasattr(exp, 'func'):
                 func_str = str(exp.func)
-                called = self._request_call(func_str, self._state) if '.' in func_str else self._NOT_REQUEST
+                called = self._request_call(func_str, self._state, exp.args) if '.' in func_str else self._NOT_REQUEST
                 if called is not self._NOT_REQUEST:
                     if called:
                         result.append(called)
@@ -9316,9 +9421,10 @@ class SILTranslator:
                     result.extend(self._get_embedded_source_calls(arg, sink_kind))
                 return result
 
-            # Check if this function is a taint source
+            # Check if this function is a taint source (a method of a request object is its request
+            # type's to decide, whatever row its name suffix-matches)
             spec = self.program.get_spec(func_name)
-            if spec and spec.is_taint_source():
+            if spec and spec.is_taint_source() and not self._rooted_at_request(func_name.split(".")[:-1]):
                 result.append((func_name, spec.is_source))
             if sink_kind is not None and spec and spec.is_taint_sanitizer() \
                     and self._sanitizes_kind(spec.is_sanitizer, sink_kind):
@@ -9365,8 +9471,9 @@ class SILTranslator:
                 cur = cur.base
             if isinstance(cur, ExpVar):
                 parts.insert(0, self._get_var_name(cur.var))
-            # Longest matching prefix wins (req.query before req).
-            for i in range(len(parts), 0, -1):
+            # Longest matching prefix wins (req.query before req). A read off a request object is
+            # its request type's to decide (`request.session` is server state), not a row's.
+            for i in range(len(parts), 0, -1) if not self._rooted_at_request(parts) else ():
                 spec = self.program.get_spec('.'.join(parts[:i]))
                 if spec and spec.is_taint_source():
                     result.append(('.'.join(parts[:i]), spec.is_source))
@@ -9397,13 +9504,20 @@ class SILTranslator:
             if isinstance(cur, ExpVar) and parts and not _in_call:
                 parts.insert(0, self._get_var_name(cur.var))
                 chain = '.'.join(parts)
-                spec = self.program.get_spec(chain + '.__getitem__')
+                spec = self.program.get_spec(chain + '.__getitem__') if not self._rooted_at_request(parts) else None
                 if spec and spec.is_taint_source():
                     result.append((chain, spec.is_source))
             result.extend(self._get_embedded_member_sources(exp.base, _in_call))
             if not self._constant_table_index(exp):
                 result.extend(self._get_embedded_member_sources(exp.index, _in_call))
         return result
+
+    def _rooted_at_request(self, parts: List[str]) -> bool:
+        """Is the dotted chain `parts` a read off a request object in the current state?"""
+        state = self._state
+        if state is None:
+            return False
+        return any(self._is_request_value(".".join(parts[:i]), state) for i in range(1, len(parts) + 1))
 
     def _constant_table_index(self, exp) -> bool:
         """`TABLE[key]` on a constant table (`Program.constant_tables`): the result is one of
@@ -9445,8 +9559,20 @@ class SILTranslator:
                 for i, arg in enumerate(exp.args):
                     if i in spec.sink_args:
                         arg_vars = self._get_exp_vars(arg)
+                        # a sanitizer written around the value inside the argument
+                        # (`mark_safe(escape(x))` nested in another call)
+                        inline: Dict[str, Set[str]] = {}
+                        for s_func, s_args in self._get_sanitizer_calls(arg):
+                            s_spec = self.program.get_spec(s_func)
+                            if s_spec and s_spec.is_taint_sanitizer():
+                                for s_var in s_args:
+                                    inline.setdefault(s_var, set()).update(s_spec.is_sanitizer)
+                        for s_var, kinds in self._summary_inline_sanitized(arg).items():
+                            inline.setdefault(s_var, set()).update(kinds)
                         for arg_var in arg_vars:
                             if state.is_tainted(arg_var):
+                                if self._sanitizes_kind(inline.get(arg_var, ()), spec.is_sink):
+                                    continue
                                 if not state.is_sanitized_for(arg_var, spec.is_sink):
                                     if not state.is_asserted_safe_for(arg_var, spec.is_sink):
                                         tainted_args.append(arg_var)

@@ -434,6 +434,12 @@ def stock(request):
 class Item(models.Model):
     sku = models.CharField(max_length=20)
 ''',
+    "inv/urls.py": '''from django.urls import path
+
+from inv import views
+
+urlpatterns = [path("stock/", views.stock)]
+''',
 })
 
 case("flask_app_factory_blueprints", {
@@ -612,6 +618,12 @@ from blog.managers import PostManager
 def search(request):
     rows = PostManager().search(request.GET.get("q", ""))
     return HttpResponse(",".join(p.title for p in rows))
+''',
+    "blog/urls.py": '''from django.urls import path
+
+from blog import views
+
+urlpatterns = [path("search/", views.search)]
 ''',
 })
 
@@ -871,5 +883,11 @@ from blog.models import Post
 def search(request):
     rows = Post.objects.search(request.GET.get("q", ""))
     return HttpResponse(",".join(p.title for p in rows))
+''',
+    "blog/urls.py": '''from django.urls import path
+
+from blog import views
+
+urlpatterns = [path("search/", views.search)]
 ''',
 })

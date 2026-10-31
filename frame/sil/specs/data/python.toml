@@ -3,176 +3,6 @@
 # Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
 
 [[spec]]
-name = "request.args.get"
-is_source = "user"
-description = "Flask query parameter"
-
-[[spec]]
-name = "request.args.getlist"
-is_source = "user"
-description = "Flask query parameter list"
-
-[[spec]]
-name = "request.args.__getitem__"
-is_source = "user"
-description = "Flask query parameter"
-
-[[spec]]
-name = "request.form.get"
-is_source = "user"
-description = "Flask form data"
-
-[[spec]]
-name = "request.form.getlist"
-is_source = "user"
-description = "Flask form data list"
-
-[[spec]]
-name = "request.form.__getitem__"
-is_source = "user"
-description = "Flask form data"
-
-[[spec]]
-name = "request.json"
-is_source = "user"
-description = "Flask JSON body"
-
-[[spec]]
-name = "request.json.get"
-is_source = "user"
-description = "Flask JSON field"
-
-[[spec]]
-name = "request.json.__getitem__"
-is_source = "user"
-description = "Flask JSON field"
-
-[[spec]]
-name = "request.data"
-is_source = "user"
-description = "Flask raw request data"
-
-[[spec]]
-name = "request.values.get"
-is_source = "user"
-description = "Flask combined args/form"
-
-[[spec]]
-name = "request.values.__getitem__"
-is_source = "user"
-description = "Flask combined args/form"
-
-[[spec]]
-name = "request.cookies.get"
-is_source = "principal"
-description = "session cookie (authenticated)"
-
-[[spec]]
-name = "request.headers.get"
-is_source = "user"
-description = "Flask request header"
-
-[[spec]]
-name = "request.headers.getlist"
-is_source = "user"
-description = "Flask request header list"
-
-[[spec]]
-name = "request.headers.__getitem__"
-is_source = "user"
-description = "Flask request header"
-
-[[spec]]
-name = "request.files.get"
-is_source = "file"
-description = "Flask file upload"
-
-[[spec]]
-name = "request.get_data"
-is_source = "user"
-description = "Flask raw data"
-
-[[spec]]
-name = "request.get_json"
-is_source = "user"
-description = "Flask JSON data"
-
-[[spec]]
-name = "request.post"
-is_source = "user"
-description = "aiohttp form data"
-
-[[spec]]
-name = "request.text"
-is_source = "user"
-description = "aiohttp/Starlette request body text"
-
-[[spec]]
-name = "request.read"
-is_source = "user"
-description = "aiohttp request body bytes"
-
-[[spec]]
-name = "request.body"
-is_source = "user"
-description = "Django raw body"
-
-[[spec]]
-name = "request.form"
-is_source = "user"
-description = "Starlette form data"
-
-[[spec]]
-name = "request.query.get"
-is_source = "user"
-description = "aiohttp query parameter"
-
-[[spec]]
-name = "request.query.__getitem__"
-is_source = "user"
-description = "aiohttp query parameter"
-
-[[spec]]
-name = "request.query_params.get"
-is_source = "user"
-description = "Starlette query parameter"
-
-[[spec]]
-name = "request.query_params.__getitem__"
-is_source = "user"
-description = "Starlette query parameter"
-
-[[spec]]
-name = "request.path_params.get"
-is_source = "user"
-description = "Starlette path parameter"
-
-[[spec]]
-name = "request.path_params.__getitem__"
-is_source = "user"
-description = "Starlette path parameter"
-
-[[spec]]
-name = "request.match_info.get"
-is_source = "user"
-description = "aiohttp route parameter"
-
-[[spec]]
-name = "request.match_info.__getitem__"
-is_source = "user"
-description = "aiohttp route parameter"
-
-[[spec]]
-name = "request.rel_url.query.get"
-is_source = "user"
-description = "aiohttp query parameter"
-
-[[spec]]
-name = "request.rel_url.query.__getitem__"
-is_source = "user"
-description = "aiohttp query parameter"
-
-[[spec]]
 name = "render_template_string"
 is_sink = "xss"
 description = "Template string (XSS CWE-79)"
@@ -191,51 +21,6 @@ description = "Redirect (open redirect CWE-601)"
 name = "make_response"
 taint_propagates = [0]
 description = "Flask response"
-
-[[spec]]
-name = "request.GET.get"
-is_source = "user"
-description = "Django GET parameter"
-
-[[spec]]
-name = "request.GET.getlist"
-is_source = "user"
-description = "Django GET parameter list"
-
-[[spec]]
-name = "request.GET.__getitem__"
-is_source = "user"
-description = "Django GET parameter"
-
-[[spec]]
-name = "request.POST.get"
-is_source = "user"
-description = "Django POST parameter"
-
-[[spec]]
-name = "request.POST.getlist"
-is_source = "user"
-description = "Django POST parameter list"
-
-[[spec]]
-name = "request.POST.__getitem__"
-is_source = "user"
-description = "Django POST parameter"
-
-[[spec]]
-name = "request.COOKIES.get"
-is_source = "user"
-description = "Django cookie"
-
-[[spec]]
-name = "request.META.get"
-is_source = "user"
-description = "Django request meta"
-
-[[spec]]
-name = "request.FILES.get"
-is_source = "file"
-description = "Django file upload"
 
 [[spec]]
 name = "cursor.execute"
@@ -372,16 +157,6 @@ description = "Flask server-side session identity"
 name = "session.__getitem__"
 is_source = "principal"
 description = "Flask server-side session identity"
-
-[[spec]]
-name = "request.authorization"
-is_source = "principal"
-description = "parsed HTTP auth credential"
-
-[[spec]]
-name = "request.cookies.__getitem__"
-is_source = "principal"
-description = "session cookie (authenticated)"
 
 [[spec]]
 name = "query.get"
@@ -1759,11 +1534,6 @@ is_sink = "trust_boundary"
 description = "Flask session storage (CWE-501)"
 
 [[spec]]
-name = "request.session"
-taint_propagates = [0]
-description = "Django session"
-
-[[spec]]
 name = "CORS"
 is_sink = "cors"
 description = "CORS configuration (CWE-942)"
@@ -2228,12 +1998,6 @@ sink_args = [1]
 description = "Session storage (CWE-501)"
 
 [[spec]]
-name = "request.session.__setitem__"
-is_sink = "trust_boundary"
-sink_args = [1]
-description = "Django session storage (CWE-501)"
-
-[[spec]]
 name = "g.__setattr__"
 is_sink = "trust_boundary"
 sink_args = [1]
@@ -2385,11 +2149,6 @@ is_source = "user"
 description = "Form parameter getter"
 
 [[spec]]
-name = "request_wrapper"
-taint_propagates = [0]
-description = "Request wrapper"
-
-[[spec]]
 name = "helpers.separate_request.request_wrapper"
 taint_propagates = [0]
 description = "OWASP request wrapper"
@@ -2413,31 +2172,6 @@ description = "ConfigParser get (from config)"
 name = "ConfigParser.get"
 taint_from_receiver = true
 description = "ConfigParser get"
-
-[[spec]]
-name = "request.form.keys"
-is_source = "user"
-description = "Flask form keys"
-
-[[spec]]
-name = "request.form.values"
-is_source = "user"
-description = "Flask form values"
-
-[[spec]]
-name = "request.form.items"
-is_source = "user"
-description = "Flask form items"
-
-[[spec]]
-name = "request.args.keys"
-is_source = "user"
-description = "Flask query keys"
-
-[[spec]]
-name = "request.args.values"
-is_source = "user"
-description = "Flask query values"
 
 [[spec]]
 name = "thing.doSomething"

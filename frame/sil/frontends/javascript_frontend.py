@@ -60,7 +60,6 @@ from frame.sil.specs.third_party_js import load as _third_party_js
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.javascript_types import load as _js_types
 from frame.sil.specs.passthrough import load as _passthrough
-from frame.sil.specs.request_objects import load as _request_objects
 from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 

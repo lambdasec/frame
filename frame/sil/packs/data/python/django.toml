@@ -43,22 +43,102 @@ kind = "template"
 args = [0]
 description = "Engine.from_string compiles its argument as template source"
 
-# Class-based views keep the request on `self`.
-[[source]]
-name = ["self.request.GET.get", "self.request.GET.getlist", "self.request.POST.get", "self.request.POST.getlist",
-        "self.request.COOKIES.get", "self.request.META.get", "self.request.GET.__getitem__",
-        "self.request.POST.__getitem__", "self.request.GET", "self.request.POST", "self.request.body",
-        "self.request.headers.get", "self.request.FILES.get"]
-kind = "user_input"
+# The request a view is handed (django.http.HttpRequest; handlers get its WSGIRequest / ASGIRequest
+# subclass): everything on it comes from the client except what the server, the application or
+# middleware set (docs "Request and response objects": attributes set by application code and by
+# middleware; the routing result, the upload handlers, the scheme). Uploaded files are file
+# contents and client-given names; `headers` is the header map; `session` the server-side session.
+[[request_type]]
+id = "HttpRequest"
+fields = ["*"]
+server_state = ["user", "auser", "session", "site", "resolver_match", "current_app", "urlconf",
+                "exception_reporter_filter", "exception_reporter_class", "encoding", "upload_handlers",
+                "multipart_parser_class", "scheme", "is_secure", "LANGUAGE_CODE", "csrf_processing_done"]
+kinds = { FILES = "file" }
+headers = ["headers"]
+sessions = ["session"]
+references = ["https://docs.djangoproject.com/en/stable/ref/request-response/#httprequest-objects"]
 
-# Views: Django calls a view with the HttpRequest first and the URL pattern's captured values after
-# it (docs: "Writing views", "URL dispatcher"). urls.py routes by name, so the view carries no
-# decorator; the documented signature (first parameter `request`, also after `self` in a
-# class-based view's get/post) is the evidence. The request is tainted as a whole; what the server
-# set on it (`request.user`, `request.session`) is not client data (request-objects.toml).
+# A class-based view instance: View.setup() keeps the request and the URL's captured values on
+# it (`self.request`, `self.args`, `self.kwargs`) before dispatch() calls the handler method.
+[[request_type]]
+id = "View"
+fields = ["args", "kwargs"]
+objects = { request = "HttpRequest" }
+references = ["https://docs.djangoproject.com/en/stable/ref/class-based-views/base/#django.views.generic.base.View.setup"]
+
+# Function views: the URLconf routes to them (`path("x/", views.show)` in urls.py; a directory scan
+# finds a view another file registers). Django calls a view with the HttpRequest first and the
+# URL pattern's captured values after it (docs: "URL dispatcher").
+[[entrypoint]]
+id = "view-request"
+registered_via = ["django.urls.path", "django.urls.re_path", "django.conf.urls.url"]
+param_positions = [0]
+request_type = "HttpRequest"
+description = "the HttpRequest a routed view receives"
+
 [[entrypoint]]
 id = "view-arguments"
-first_param = ["request"]
+registered_via = ["django.urls.path", "django.urls.re_path", "django.conf.urls.url"]
 params = "all"
-exclude_param = ["self", "cls"]
-description = "Django view argument (the HttpRequest, or a value captured from the URL)"
+params_from = 1
+description = "a value captured from the URL, passed to a routed view"
+
+# Class-based views (View and the generic views built on it): every method runs on an instance
+# set up for the request; dispatch() calls the method named after the HTTP method with the request
+# and the captured values.
+[[entrypoint]]
+id = "class-based-view"
+extends = ["django.views.View", "django.views.generic.**", "django.contrib.*.views.*"]
+receiver = true
+request_type = "View"
+exclude_method = ["__init__", "setup"]
+description = "a class-based view instance (self.request, self.args, self.kwargs)"
+
+[[entrypoint]]
+id = "class-based-view-request"
+extends = ["django.views.View", "django.views.generic.**", "django.contrib.*.views.*"]
+method = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
+param_positions = [0]
+request_type = "HttpRequest"
+description = "the HttpRequest a class-based view's handler method receives"
+
+[[entrypoint]]
+id = "class-based-view-arguments"
+extends = ["django.views.View", "django.views.generic.**", "django.contrib.*.views.*"]
+method = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
+params = "all"
+params_from = 1
+description = "a value captured from the URL, passed to a class-based view's handler method"
+
+# Old-style middleware (MiddlewareMixin): Django calls process_request / process_view /
+# process_exception / process_response / process_template_response with the request first.
+[[entrypoint]]
+id = "middleware-request"
+extends = ["django.utils.deprecation.MiddlewareMixin"]
+method = ["process_request", "process_view", "process_exception", "process_response",
+          "process_template_response", "__call__"]
+param_positions = [0]
+request_type = "HttpRequest"
+description = "the HttpRequest a MiddlewareMixin hook receives"
+
+# A view passed through one of Django's view decorators used as a function (`path("x/",
+# login_required(views.show))`) is still the view: these return a wrapper calling it with the
+# same arguments.
+[[wrapper]]
+call = ["django.contrib.auth.decorators.login_required", "django.contrib.auth.decorators.permission_required",
+        "django.contrib.auth.decorators.user_passes_test", "django.contrib.auth.decorators.login_not_required",
+        "django.contrib.admin.views.decorators.staff_member_required",
+        "django.views.decorators.csrf.csrf_exempt", "django.views.decorators.csrf.csrf_protect",
+        "django.views.decorators.csrf.ensure_csrf_cookie", "django.views.decorators.csrf.requires_csrf_token",
+        "django.views.decorators.cache.cache_page", "django.views.decorators.cache.never_cache",
+        "django.views.decorators.cache.cache_control",
+        "django.views.decorators.http.require_http_methods", "django.views.decorators.http.require_GET",
+        "django.views.decorators.http.require_POST", "django.views.decorators.http.require_safe",
+        "django.views.decorators.clickjacking.xframe_options_exempt",
+        "django.views.decorators.clickjacking.xframe_options_deny",
+        "django.views.decorators.clickjacking.xframe_options_sameorigin",
+        "django.views.decorators.vary.vary_on_headers", "django.views.decorators.vary.vary_on_cookie",
+        "django.views.decorators.gzip.gzip_page"]
+references = ["https://docs.djangoproject.com/en/stable/topics/http/decorators/",
+              "https://docs.djangoproject.com/en/stable/topics/auth/default/#the-login-required-decorator"]

@@ -4,25 +4,96 @@ language = "python"
 description = "FastAPI / Starlette: route handlers, response classes that reflect, redirect or serve files"
 detect = { imports = ["fastapi", "starlette"] }
 
-# Route handlers: every parameter is client data (path, query, body model, header, cookie,
-# form, upload), except dependencies injected by Depends() which have no annotation worth
-# trusting here; the Request object itself is tainted as a whole.
+# Starlette's request (FastAPI re-exports it as fastapi.Request) and WebSocket: client data except
+# what the application and middleware set (`app`, `state`, `session` from SessionMiddleware,
+# `auth`/`user` from AuthenticationMiddleware) and the URLs it builds from route names.
+[[request_type]]
+id = "Request"
+fields = ["*"]
+server_state = ["app", "state", "url_for", "session", "auth", "user", "is_disconnected", "send_push_promise",
+                "send_early_hints"]
+headers = ["headers"]
+sessions = ["session"]
+references = ["https://starlette.dev/requests/", "https://fastapi.tiangolo.com/advanced/using-request-directly/"]
+
+[[request_type]]
+id = "WebSocket"
+fields = ["*"]
+server_state = ["app", "state", "url_for", "session", "auth", "user", "client_state", "application_state"]
+headers = ["headers"]
+sessions = ["session"]
+references = ["https://starlette.dev/websockets/"]
+
+# A path operation receives the URL's path and query parameters, body fields, headers and cookies as
+# its declared parameters (FastAPI binds them by name and type); parameters of the framework's own
+# types are not client values (a Request or WebSocket is the request object, below).
 [[entrypoint]]
 id = "route"
 decorator = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options", "*.api_route",
              "*.websocket", "fastapi.*.get", "fastapi.*.post"]
 params = "all"
-exclude_param = ["self", "background_tasks", "response"]
 exclude_param_type = ["fastapi.BackgroundTasks", "fastapi.Response", "starlette.responses.Response",
-                      "sqlalchemy.orm.Session", "sqlalchemy.ext.asyncio.AsyncSession"]
+                      "sqlalchemy.orm.Session", "sqlalchemy.ext.asyncio.AsyncSession",
+                      "fastapi.Request", "fastapi.requests.Request", "starlette.requests.Request",
+                      "starlette.requests.HTTPConnection", "fastapi.requests.HTTPConnection",
+                      "fastapi.WebSocket", "fastapi.websockets.WebSocket", "starlette.websockets.WebSocket"]
 
-# Starlette class-based endpoints and routes registered by Route("/x", handler).
+# A parameter declared as the Request / WebSocket gets it, whatever its name or position (a path
+# operation, a dependency, middleware's dispatch).
+[[entrypoint]]
+id = "typed-request"
+method = ["*"]
+params = "typed"
+param_type = ["fastapi.Request", "fastapi.requests.Request", "starlette.requests.Request",
+              "starlette.requests.HTTPConnection", "fastapi.requests.HTTPConnection"]
+request_type = "Request"
+
+[[entrypoint]]
+id = "typed-websocket"
+method = ["*"]
+params = "typed"
+param_type = ["fastapi.WebSocket", "fastapi.websockets.WebSocket", "starlette.websockets.WebSocket"]
+request_type = "WebSocket"
+
+# Starlette function endpoints: Route(path, endpoint) calls endpoint(request); WebSocketRoute
+# calls it with the WebSocket.
+[[entrypoint]]
+id = "route-endpoint"
+registered_via = ["starlette.routing.Route", "starlette.applications.Starlette.add_route",
+                  "starlette.applications.Starlette.route", "fastapi.FastAPI.add_route"]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "websocket-endpoint"
+registered_via = ["starlette.routing.WebSocketRoute", "starlette.applications.Starlette.add_websocket_route",
+                  "starlette.applications.Starlette.websocket_route"]
+param_positions = [0]
+request_type = "WebSocket"
+
+# HTTPEndpoint dispatches to the method named after the HTTP method with the request;
+# WebSocketEndpoint calls on_connect / on_receive / on_disconnect with the WebSocket, on_receive
+# also with the decoded message.
 [[entrypoint]]
 id = "http-endpoint"
 extends = ["starlette.endpoints.HTTPEndpoint"]
-method = ["get", "post", "put", "patch", "delete"]
+method = ["get", "post", "put", "patch", "delete", "head", "options"]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "websocket-endpoint-methods"
+extends = ["starlette.endpoints.WebSocketEndpoint"]
+method = ["on_connect", "on_receive", "on_disconnect"]
+param_positions = [0]
+request_type = "WebSocket"
+
+[[entrypoint]]
+id = "websocket-endpoint-message"
+extends = ["starlette.endpoints.WebSocketEndpoint"]
+method = ["on_receive"]
+param_positions = [1]
 params = "all"
-exclude_param = ["self"]
 
 [[sink]]
 call = ["fastapi.responses.HTMLResponse", "starlette.responses.HTMLResponse"]

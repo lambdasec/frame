@@ -5,19 +5,20 @@ description = "Bottle routes, request accessors, template(), static_file, redire
 detect = { imports = ["bottle"] }
 # The module-level request proxy: passed to a helper, it is the client's request whatever the
 # helper names its parameter.
-request_objects = ["bottle.request"]
 
 # Bottle's `request` is a module-level proxy: `request.query.id`, `request.forms.name`,
 # `request.params.get(...)`, `request.json`, `request.body` are all client data.
-[[source]]
-name = ["request.query", "request.forms", "request.params", "request.GET", "request.POST",
-        "request.json", "request.body", "request.get_cookie", "request.cookies", "request.files",
-        "request.headers.get", "request.query_string",
-        "request.query.get", "request.query.getunicode", "request.query.getall",
-        "request.forms.get", "request.forms.getunicode", "request.forms.getall",
-        "request.params.get", "request.params.getunicode", "request.params.getall",
-        "request.GET.get", "request.POST.get", "request.cookies.get", "request.files.get"]
-kind = "user_input"
+# The request object (bottle.BaseRequest); inside a request the module-level `bottle.request`
+# (a LocalRequest) is that request in every function. Client data: the parsed query string and
+# form, their union, uploads, cookies, headers, the raw body and query string, the JSON body.
+[[request_type]]
+id = "BaseRequest"
+fields = ["query", "forms", "params", "GET", "POST", "json", "body", "cookies", "files", "headers", "query_string"]
+methods = ["get_cookie"]
+kinds = { files = "file" }
+headers = ["headers"]
+proxies = ["bottle.request"]
+references = ["https://bottlepy.org/docs/dev/api.html#bottle.BaseRequest"]
 
 [[sink]]
 call = ["bottle.static_file"]

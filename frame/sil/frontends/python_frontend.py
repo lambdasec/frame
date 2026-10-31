@@ -128,8 +128,147 @@ class PythonFrontend:
         annotate_program_calls(program, self._imports)
         self._alias_specs_by_canonical(program)
         program.import_wildcards = list(self._imports.wildcards)
+        self._record_registrations(tree.root_node, program)
         finish_program(program, self.packs, source_code)
         return program
+
+    def _callee_chain(self, node: TSNode) -> Optional[Tuple[str, Tuple[str, ...]]]:
+        """(`app`, ("router", "add_get")) for `app.router.add_get`: the name a callee is reached
+        from and the attributes after it (calls in between are the values they return)."""
+        rest: List[str] = []
+        cur: Optional[TSNode] = node
+        while cur is not None:
+            if cur.type == "identifier":
+                return self._get_text(cur), tuple(reversed(rest))
+            if cur.type == "attribute":
+                attr = cur.child_by_field_name("attribute")
+                if attr is None:
+                    return None
+                rest.append(self._get_text(attr))
+                cur = cur.child_by_field_name("object")
+            elif cur.type == "call":
+                cur = cur.child_by_field_name("function")
+            elif cur.type in ("parenthesized_expression", "await"):
+                cur = next((c for c in cur.named_children if c.type != "comment"), None)
+            else:
+                return None
+        return None
+
+    def _value_id(self, node: TSNode, scope: str, program: Program) -> Optional[str]:
+        """The callee id of an expression by what its values are (value_origins): `app` bound to
+        `web.Application()` is `aiohttp.web.Application`, an imported name what it imports.
+        None when anything is unknown."""
+        from frame.sil.value_origins import origin_in_scope
+        t = node.type
+        if t in ("parenthesized_expression", "await"):
+            inner = next((c for c in node.named_children if c.type != "comment"), None)
+            return self._value_id(inner, scope, program) if inner is not None else None
+        if t == "identifier":
+            return origin_in_scope(program, scope, self._get_text(node))
+        if t == "attribute":
+            obj, attr = node.child_by_field_name("object"), node.child_by_field_name("attribute")
+            base = self._value_id(obj, scope, program) if obj is not None else None
+            return f"{base}.{self._get_text(attr)}" if base and attr is not None else None
+        if t == "call":
+            fn = node.child_by_field_name("function")
+            return self._value_id(fn, scope, program) if fn is not None else None
+        return None
+
+    def _record_registrations(self, root: TSNode, program: Program) -> None:
+        """Handler registrations: a call that passes a function of this file or a reference to one
+        (`app.router.add_get("/x", handler)`, `path("x/", views.show)`), and a decorator call
+        (`@routes.get("/x")`), each kept as a `Registration` for the project step
+        (frame/sil/registrations.py). A function of this file gets the callee among its
+        `registered_via`, as written and by the value origin of the name it is reached from
+        (`aiohttp.web.Application.router.add_get`), so a pack names a framework's registration
+        call, not a variable."""
+        from frame.sil.registrations import Registration
+        from frame.sil.value_origins import annotate as annotate_value_origins
+        annotate_value_origins(program)
+        by_span = {p.span: p for p in program.procedures.values() if p.span}
+        functions: Dict[str, List[Procedure]] = {}
+        for p in program.procedures.values():
+            if p.span and not p.is_method:
+                functions.setdefault(p.simple_name, []).append(p)
+
+        def scope_of(n: TSNode) -> str:
+            cur = n.parent
+            while cur is not None:
+                if cur.type == "function_definition":
+                    proc = by_span.get((cur.start_byte, cur.end_byte))
+                    if proc is not None:
+                        return proc.name
+                cur = cur.parent
+            return "<module>"
+
+        def register(call_or_callee: TSNode, callee: TSNode, scope: str, arg_index: int,
+                     target: Optional[Procedure], ref: Optional[str]) -> None:
+            callee_text = self._get_text(callee)
+            chain = self._callee_chain(callee)
+            callee_id = self._value_id(callee, scope, program)
+            program.registrations.append(Registration(
+                scope=scope, callee_text=callee_text, root=chain[0] if chain else None,
+                rest=chain[1] if chain else (), arg_index=arg_index,
+                target=target.name if target is not None else None, ref=ref))
+            if target is None:
+                return
+            for via in [callee_text] + ([callee_id] if callee_id and callee_id != callee_text else []):
+                if via not in target.registered_via:
+                    target.registered_via.append(via)
+
+        from frame.sil.packs.apply import _detected
+        packs = self.packs if getattr(self, "packs", None) is not None else default_packs()
+        wrappers = {w for pack in packs.for_language("python") if pack.wrappers and _detected(pack, program)
+                    for w in pack.wrappers}
+
+        def unwrap(a: TSNode, scope: str) -> TSNode:
+            """`login_required(views.show)`, `cache_page(60)(views.show)`: a pack's wrapper call
+            returns the handler wrapped, called with the same arguments."""
+            for _ in range(4):
+                if a.type != "call" or not wrappers:
+                    return a
+                fn, args = a.child_by_field_name("function"), a.child_by_field_name("arguments")
+                if fn is None or args is None or self._value_id(fn, scope, program) not in wrappers:
+                    return a
+                first = next((c for c in args.named_children if c.type not in ("keyword_argument", "comment")), None)
+                if first is None:
+                    return a
+                a = first
+            return a
+
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "decorator":
+                expr = next((c for c in n.named_children if c.type != "comment"), None)
+                definition = n.parent.child_by_field_name("definition") if n.parent is not None else None
+                if expr is None or expr.type != "call" or definition is None \
+                        or definition.type != "function_definition":
+                    continue
+                proc = by_span.get((definition.start_byte, definition.end_byte))
+                fn = expr.child_by_field_name("function")
+                if proc is not None and fn is not None:
+                    register(expr, fn, scope_of(n.parent), -1, proc, None)
+            elif n.type == "call":
+                fn, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
+                if fn is None or args is None or args.type != "argument_list":
+                    continue
+                scope = scope_of(n)
+                positional = [a for a in args.named_children if a.type not in ("keyword_argument", "comment")]
+                imported = program.imports or {}
+                for i, a in enumerate(positional):
+                    a = unwrap(a, scope)
+                    if a.type == "identifier":            # a function of this file, or one imported
+                        same = functions.get(self._get_text(a), [])
+                        if len(same) == 1:
+                            register(n, fn, scope, i, same[0], None)
+                        elif not same and self._get_text(a) in imported:
+                            register(n, fn, scope, i, None, self._get_text(a))
+                    elif a.type == "attribute":           # a function of an imported module (`views.show`)
+                        chain = self._callee_chain(a)
+                        if chain is not None and chain[0] in imported:
+                            register(n, fn, scope, i, None, self._get_text(a))
 
     def _alias_specs_by_canonical(self, program: Program) -> None:
         """The built-in specs are keyed by the fully qualified name (`lxml.etree.fromstring`),
@@ -438,6 +577,7 @@ class PythonFrontend:
             loc=self._get_location(node),
             is_method=is_method,
         )
+        proc.span = (node.start_byte, node.end_byte)
         body = node.child_by_field_name("body")
         stack = list(body.named_children) if body is not None else []
         while stack and not proc.asserts:

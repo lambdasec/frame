@@ -225,8 +225,13 @@ def view(request, name):
 
 def page(request):
     return HttpResponse(request.GET["q"])
+
+from django.urls import path
+urlpatterns = [path("v/<name>/", view), path("p/", page)]
 """
     assert _py(django, "views.py") == [(5, "CWE-78"), (9, "CWE-79")]
+    # a view is what the URLconf routes to, not a function whose first parameter is `request`
+    assert _py(django.split("from django.urls")[0], "views.py") == []
     graphene = """import os
 import graphene
 

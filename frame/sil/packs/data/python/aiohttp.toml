@@ -7,6 +7,59 @@ detect = { imports = ["aiohttp"] }
 # Handlers are plain coroutines registered with app.router.add_*; the request accessors
 # (request.query, request.match_info, await request.post()/json()) are sources in the built-in specs.
 
+# The request (aiohttp.web.Request): the URL's query and captured path values, the headers and
+# cookies, and the body by any of its readers.
+[[request_type]]
+id = "Request"
+fields = ["query", "query_string", "match_info", "rel_url.query", "rel_url.query_string", "url.query",
+          "url.query_string", "headers", "raw_headers", "cookies", "content"]
+methods = ["read", "text", "json", "post", "multipart"]
+headers = ["headers"]
+references = ["https://docs.aiohttp.org/en/stable/web_reference.html#request-and-base-request"]
+
+# A web.View instance keeps the request (`self.request`); aiohttp calls its method named after the
+# HTTP method.
+[[request_type]]
+id = "View"
+objects = { request = "Request" }
+references = ["https://docs.aiohttp.org/en/stable/web_reference.html#view"]
+
+# Handlers are coroutines taking the request: registered on the application's router
+# (`app.router.add_get(path, handler)`), as route definitions (`web.get(path, handler)` for
+# `app.add_routes`), or with a RouteTableDef's decorators (`@routes.get(path)`); middleware is
+# called with the request and the next handler.
+[[entrypoint]]
+id = "handler"
+registered_via = ["aiohttp.web.Application.router.add_*", "aiohttp.web.UrlDispatcher.add_*",
+                  "aiohttp.web.get", "aiohttp.web.post", "aiohttp.web.put", "aiohttp.web.patch",
+                  "aiohttp.web.delete", "aiohttp.web.head", "aiohttp.web.options", "aiohttp.web.route",
+                  "aiohttp.web.RouteTableDef.*"]
+param_positions = [0]
+request_type = "Request"
+description = "the request an aiohttp handler receives"
+
+# A parameter declared as aiohttp's request is one, whoever calls the function.
+[[entrypoint]]
+id = "typed-request"
+method = ["*"]
+params = "typed"
+param_type = ["aiohttp.web.Request", "aiohttp.web.BaseRequest", "aiohttp.web_request.Request",
+              "aiohttp.web_request.BaseRequest"]
+request_type = "Request"
+
+[[entrypoint]]
+id = "middleware"
+decorator = ["aiohttp.web.middleware"]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "class-view"
+extends = ["aiohttp.web.View"]
+receiver = true
+request_type = "View"
+exclude_method = ["__init__"]
+
 [[sink]]
 call = ["aiohttp.web.HTTPFound", "aiohttp.web.HTTPMovedPermanently", "aiohttp.web.HTTPSeeOther",
         "aiohttp.web.HTTPTemporaryRedirect", "aiohttp.web.HTTPPermanentRedirect", "aiohttp.web.HTTPUseProxy",

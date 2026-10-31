@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from ..instructions import Assign, Call, TaintKind, TaintSource
 from ..metadata import ClassInfo, ImportTable, qualify_type
 from ..procedure import Procedure, ProcSpec, Program
-from ..types import PVar
+from ..types import ExpVar, PVar
 from .loader import PackSet, builtin_packs
 from .schema import Entrypoint, Pack, Rule
 
@@ -511,6 +511,28 @@ def _path_glob(patterns: Sequence[str], path: str) -> bool:
     return False
 
 
+def bound_receiver(proc: Procedure, program: Program) -> Optional[str]:
+    """A Python method's explicit receiver: the first parameter of a function defined in a class
+    body and called bound (not a `@staticmethod`), whatever it is named. None elsewhere (other
+    languages do not list the receiver among the parameters)."""
+    if (program.language or "") != "python" or not proc.is_method or not proc.params:
+        return None
+    names = {a.name for a in proc.annotations} | {a.canonical for a in proc.annotations if a.canonical}
+    if "staticmethod" in names or "builtins.staticmethod" in names:
+        return None
+    return proc.params[0][0].name
+
+
+def _call_params(e: Entrypoint, proc: Procedure, program: Program) -> List[Tuple[int, str]]:
+    """The parameters a framework passes arguments to, by argument position: after a method's
+    bound receiver, unless the entry point says the framework calls it unbound (Graphene's
+    implicitly static resolvers)."""
+    names = [p.name for p, _ in proc.params]
+    if not e.unbound and bound_receiver(proc, program) is not None:
+        names = names[1:]
+    return list(enumerate(names))
+
+
 def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
     cls = _simple_class(proc)
     if e.decorator and not any(_glob(e.decorator, a.name, a.canonical) for a in proc.annotations):
@@ -548,10 +570,10 @@ def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
         return False
     if e.exclude_arity and len(proc.params) in e.exclude_arity:
         return False
+    if e.receiver and bound_receiver(proc, program) is None:
+        return False
     if e.first_param:
-        names = [p.name for p, _ in proc.params]
-        if names[:1] in (["self"], ["cls"]):
-            names = names[1:]
+        names = [n for _, n in _call_params(e, proc, program)]
         if not names or not _glob(e.first_param, names[0]):
             return False
     return True
@@ -657,17 +679,19 @@ def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: Impor
     parameter (`$argN`, `Procedure.param_patterns`) either the whole parameter or, when names
     select, the property path each selected name is bound from (`$arg0.body`), so the binding
     at entry reads the taint."""
+    if e.receiver:
+        receiver = bound_receiver(proc, program)
+        return [receiver] if receiver is not None else []
     out: List[str] = []
-    for i, (p, _) in enumerate(proc.params):
+    for i, n in _call_params(e, proc, program):
         if (e.param_positions and i not in e.param_positions) or i < e.params_from:
             continue
-        pattern = proc.param_patterns.get(p.name)
+        pattern = proc.param_patterns.get(n)
         if pattern is not None and isinstance(e.params, list):
             for path, name in bound_keys(pattern):
                 if _glob(e.params, name) and not _glob(e.exclude_param, name):
-                    out.append(f"{p.name}.{'.'.join(path)}" if path else p.name)
+                    out.append(f"{n}.{'.'.join(path)}" if path else n)
             continue
-        n = p.name
         if n in _IMPLICIT_RECEIVERS or (pattern is None and _glob(e.exclude_param, n)):
             continue
         if _param_type_matches(program, table, proc, n, e.exclude_param_type):
@@ -713,18 +737,23 @@ def _apply_entry_origins(program: Program, packs: Sequence[Pack], only: Optional
     response object, `express.Response`), so calls on them are named after it (value_origins).
     Run before the rules, which match those names. Returns whether anything changed."""
     from ..value_origins import annotate, same_file_parameter_origins
-    entries = [(p, e) for p in packs for e in p.entrypoints if e.origin]
+    def origin_of(pack: Pack, e: Entrypoint) -> str:
+        if e.origin:
+            return e.origin
+        rtype = pack.request_types.get(e.request_type) if e.request_type else None
+        return rtype.origin if rtype is not None else ""      # a request object of a type with an origin
+    entries = [(p, e, origin_of(p, e)) for p in packs for e in p.entrypoints if origin_of(p, e)]
     found: Dict[str, Dict[str, str]] = {}
     if entries:
         table = _import_table(program)
         procs = [program.procedures[n] for n in only if n in program.procedures] if only is not None \
             else list(program.procedures.values())
         for proc in procs:
-            for pack, e in entries:
+            for pack, e, value_origin in entries:
                 if _entry_matches(e, proc, program):
                     for n in _entry_params(e, proc, program, table):
                         if "." not in n:
-                            found.setdefault(proc.name, {})[n] = e.origin
+                            found.setdefault(proc.name, {}).setdefault(n, value_origin)
     current = getattr(program, "param_origins", None) or {}
     merged = {k: dict(v) for k, v in current.items()}
     for k, v in found.items():
@@ -790,6 +819,46 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[S
                 description=f"{pack.name}: {e.id} entry point (attacker-controlled)"))
         for src in reversed([r for r in requests if str(r.var) not in tainted]):
             entry.instrs.insert(0, src)
+    _constructor_fields(program)
+
+
+def _constructor_fields(program: Program) -> None:
+    """A class the framework constructs with attacker data (an entry point on its `__init__`):
+    a field `__init__` sets from such a parameter (`self.request = request`) holds that value in
+    every method the framework then calls on the instance (Pyramid class views). Python only."""
+    if (program.language or "") != "python":
+        return
+    for init in program.procedures.values():
+        if init.simple_name != "__init__" or not init.class_name:
+            continue
+        entry = init.nodes.get(init.entry_node)
+        receiver = bound_receiver(init, program)
+        if entry is None or receiver is None:
+            continue
+        sources = {str(i.var): i for i in entry.instrs if isinstance(i, TaintSource)}
+        fields: Dict[str, TaintSource] = {}
+        for node in init.nodes.values():
+            for instr in node.instrs:
+                target = str(instr.id) if isinstance(instr, Assign) else ""
+                if target.startswith(receiver + ".") and target.count(".") == 1 \
+                        and isinstance(instr.exp, ExpVar) and str(instr.exp.var) in sources:
+                    fields[target[len(receiver) + 1:]] = sources[str(instr.exp.var)]
+        if not fields:
+            continue
+        for proc in program.procedures.values():
+            if proc is init or proc.class_name != init.class_name:
+                continue
+            recv = bound_receiver(proc, program)
+            node = proc.nodes.get(proc.entry_node)
+            if recv is None or node is None:
+                continue
+            present = {str(i.var) for i in node.instrs if isinstance(i, TaintSource)}
+            for fld, src in fields.items():
+                name = f"{recv}.{fld}"
+                if name not in present:
+                    node.instrs.insert(0, TaintSource(loc=proc.loc, var=PVar(name), kind=src.kind,
+                                                      request=src.request,
+                                                      description=f"{src.description} (kept by __init__)"))
 
 
 def apply_entrypoints_to(program: Program, names: Sequence[str], packs: Optional[PackSet] = None) -> None:

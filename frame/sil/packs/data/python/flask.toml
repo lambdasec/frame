@@ -5,9 +5,22 @@ description = "Flask (and Quart, which keeps Flask's API): route view functions"
 references = ["https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules",
               "https://quart.palletsprojects.com/en/latest/"]
 detect = { imports = ["flask", "quart"] }
-# The module-level request proxy: passed to a helper, it is the client's request whatever the
-# helper names its parameter.
-request_objects = ["flask.request", "quart.request"]
+
+# The request object (werkzeug's Request, which Flask subclasses; Quart keeps the same names, its
+# body accessors awaitable). Inside a request the module-level proxy `flask.request` /
+# `quart.request` is that request, in every function the view calls, whatever a helper names it.
+# The parsed client data: query string, form, combined values, uploads, cookies, headers, the raw
+# body and its JSON, and the parsed Authorization header. Uploaded files are file contents and
+# client-given names; a cookie or the Authorization header is the caller's own credential.
+[[request_type]]
+id = "Request"
+fields = ["args", "form", "values", "files", "cookies", "headers", "data", "json", "authorization"]
+methods = ["get_data", "get_json"]
+kinds = { files = "file", cookies = "principal", authorization = "principal" }
+headers = ["headers"]
+proxies = ["flask.request", "quart.request"]
+references = ["https://flask.palletsprojects.com/en/stable/api/#flask.Request",
+              "https://werkzeug.palletsprojects.com/en/stable/wrappers/#werkzeug.wrappers.Request"]
 
 # A view registered with @app.route / @bp.route or a method shortcut (@app.get, Flask 2.0+) receives
 # the URL's variable parts (`/users/<int:id>`) as keyword arguments: every parameter is client data.
@@ -15,7 +28,6 @@ request_objects = ["flask.request", "quart.request"]
 id = "route-view"
 decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete"]
 params = "all"
-exclude_param = ["self", "cls"]
 description = "Flask view function argument (URL variable)"
 
 # flask.abort / werkzeug.exceptions.abort raise an HTTPException: the request handling ends there.

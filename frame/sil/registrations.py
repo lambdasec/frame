@@ -1,7 +1,8 @@
 """Handler registrations across a project: `app.get(path, handler)` where `app` is a parameter the
 module's callers pass an `express()` application in, or where `handler` is a function another
 file defines (`router.get("/", controller.list)`, `app.get("/", users.show)` with `users = new
-UsersHandler(db)`).
+UsersHandler(db)`, Django's `path("x/", views.show)` in urls.py). JavaScript, TypeScript and
+Python programs take part.
 
 The frontend records each call that passes a function or a reference to one (`Registration`):
 where it is, its callee as a chain from a name (`app` + `get`), and the handler (a procedure of
@@ -160,7 +161,7 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
     whose registration only the project shows."""
     from .packs.apply import apply_entrypoints_to
     programs: Dict[str, Any] = {k: p for k, p in ctx.programs.items()
-                                if (p.language or "") in ("javascript", "typescript")}
+                                if (p.language or "") in ("javascript", "typescript", "python")}
     if not programs:
         return
     callbacks: Dict[str, list] = {}
@@ -224,7 +225,8 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
     for key, names in targets.items():
         program = programs[key]
         apply_entrypoints_to(program, sorted(names), packs_for(program.language))
-        JavaScriptFrontend._entry_taint_into_closures(program)   # callbacks nested in the handlers
+        if program.language in ("javascript", "typescript"):
+            JavaScriptFrontend._entry_taint_into_closures(program)   # callbacks nested in the handlers
 
 
 __all__ = ["Registration", "apply_callback_params", "link_project", "registration_vias"]

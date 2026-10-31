@@ -178,10 +178,13 @@ def test_flask_send_file_constant_is_clean():
 DJANGO = """
 from django.http import HttpResponse
 from django.utils.html import escape
+from django.urls import path
 import json
 
 def view(request):
     return {body}
+
+urlpatterns = [path("v/", view)]
 """
 
 
@@ -201,6 +204,7 @@ def test_django_httpresponse_non_html_content_type_is_clean():
 
 def test_django_request_user_is_server_state():
     assert "CWE-79" not in cwes(DJANGO.format(body='HttpResponse("Hello " + request.user.username)'))
+    assert "CWE-79" in cwes(DJANGO.format(body='HttpResponse("Hello " + request.GET["username"])'))
 
 
 # ---- await statements, `%` operands, aiohttp sources -----------------------------------------

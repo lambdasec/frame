@@ -1,9 +1,9 @@
 [pack]
 name = "owasp-benchmark-python"
 language = "python"
-description = "The OWASP Benchmark for Python's own helper library (helpers/utils.py): `mysession` is its session store, where the remember-me test cases keep the token they hand out. Passed to the scanner by the benchmark harness only, as any project teaches Frame its own code (.frame/packs or --pack); never shipped with Frame."
-detect = { imports = ["helpers.utils"] }
-references = ["https://github.com/OWASP-Benchmark/BenchmarkPython (helpers/utils.py)"]
+description = "The OWASP Benchmark for Python's own helper library (helpers/utils.py, helpers/separate_request.py): `mysession` is its session store, where the remember-me test cases keep the token they hand out, and `request_wrapper` hands out the request's form fields, query parameters and cookies. Passed to the scanner by the benchmark harness only, as any project teaches Frame its own code (.frame/packs or --pack); never shipped with Frame."
+detect = { imports = ["helpers.utils", "helpers.separate_request"] }
+references = ["https://github.com/OWASP-Benchmark/BenchmarkPython (helpers/utils.py, helpers/separate_request.py)"]
 
 # A value stored in the session store is a session token: it must be unpredictable, so weak-random
 # data there is CWE-338 (the test cases' remember-me key).
@@ -12,3 +12,17 @@ call = ["helpers.utils.mysession.__setitem__"]
 kind = "unpredictable"
 args = [1]
 description = "a value kept in the Benchmark's session store (a remember-me token)"
+
+# helpers/separate_request.py: `request_wrapper(request)` keeps the Flask request it is given;
+# get_form_parameter / get_query_parameter / get_cookie return `request.form.get(name)`,
+# `request.args.get(name)` and `request.cookies.get(name)` (get_safe_value returns a constant).
+[[source]]
+call = ["helpers.separate_request.request_wrapper.get_form_parameter",
+        "helpers.separate_request.request_wrapper.get_query_parameter"]
+kind = "user_input"
+description = "a form field / query parameter of the request the wrapper keeps"
+
+[[source]]
+call = ["helpers.separate_request.request_wrapper.get_cookie"]
+kind = "principal"
+description = "a cookie of the request the wrapper keeps (Flask cookies are the caller's credential)"

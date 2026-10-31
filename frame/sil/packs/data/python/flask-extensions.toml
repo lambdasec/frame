@@ -10,14 +10,12 @@ id = "restful-resource"
 extends = ["flask_restful.Resource", "flask_restx.Resource", "flask_restful_swagger.*", "flask.views.MethodView"]
 method = ["get", "post", "put", "patch", "delete", "head", "options"]
 params = "all"
-exclude_param = ["self"]
 
 # Flask-SocketIO: the event payload is whatever the client emitted.
 [[entrypoint]]
 id = "socketio-event"
 decorator = ["*.on", "*.on_event", "flask_socketio.SocketIO.on", "*.event"]
 params = "all"
-exclude_param = ["self"]
 
 # render_template_string(source, **ctx) compiles `source` as a Jinja template: attacker data in
 # the source is server-side template injection (the escaped context variables are safe).

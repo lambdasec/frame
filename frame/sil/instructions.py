@@ -91,17 +91,35 @@ class RequestType:
     """What a framework's request object holds (a pack's `[[request_type]]`): the property paths
     and the method paths whose values are client data. With `all_fields`, every property and
     method is client data except the names in `server_state` (Django's HttpRequest: everything
-    but `user`, `session`, `auth`). A path that leads into a listed one (`request` for Koa's
-    `ctx.request.body`) is itself a request object, of the type `within` gives."""
+    but `user`, `session`, ...). A path that leads into a listed one (`request` for Koa's
+    `ctx.request.body`) is itself a request object, of the type `within` gives; so is a path
+    `objects` names (a Django class-based view's `self.request`, an HttpRequest). `headers` are
+    the paths of its header maps, where a lookup of a credential header by name is the caller's
+    own credential (`principals.toml`); `sessions` the paths of its server-side session (Django's
+    `request.session`), where storing client data crosses a trust boundary (CWE-501)."""
     name: str
     fields: Tuple[Tuple[str, ...], ...] = ()
     methods: Tuple[Tuple[str, ...], ...] = ()
     all_fields: bool = False
     server_state: Tuple[str, ...] = ()
     kinds: Tuple[Tuple[Tuple[str, ...], str], ...] = ()     # path -> TaintKind value other than "user"
+    objects: Tuple[Tuple[Tuple[str, ...], "RequestType"], ...] = ()   # path -> the request object there
+    headers: Tuple[Tuple[str, ...], ...] = ()
+    sessions: Tuple[Tuple[str, ...], ...] = ()
+    origin: str = ""                      # its value origin: calls on it are named `<origin>.<method>`
+
+    def _object_at(self, path: Tuple[str, ...]) -> Optional[Tuple["RequestType", Tuple[str, ...]]]:
+        best = None
+        for p, t in self.objects:
+            if path[:len(p)] == p and (best is None or len(p) > len(best[0])):
+                best = (p, t)
+        return (best[1], path[len(best[0]):]) if best is not None else None
 
     def kind_of(self, path: Tuple[str, ...]) -> "TaintKind":
         """The source kind of client data read at `path` (uploads are file contents)."""
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].kind_of(obj[1])
         for p, k in self.kinds:
             if path[:len(p)] == p:
                 return TaintKind(k)
@@ -111,6 +129,9 @@ class RequestType:
         """Is the property at `path` (or a value inside it) client data?"""
         if not path:
             return False
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].is_client_field(obj[1])
         if self.all_fields:
             return path[0] not in self.server_state
         return any(path[:len(f)] == f for f in self.fields)
@@ -119,21 +140,44 @@ class RequestType:
         """Does calling the method at `path` (`("get",)`, `("cookies", "get")`) return client data?"""
         if not path:
             return False
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].is_client_method(obj[1])
         if self.all_fields:
             return path[0] not in self.server_state
         return path in self.methods or self.is_client_field(path[:-1])
 
+    def is_header_map(self, path: Tuple[str, ...]) -> bool:
+        """Is the property at `path` one of the request's header maps?"""
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].is_header_map(obj[1])
+        return path in self.headers
+
+    def is_session(self, path: Tuple[str, ...]) -> bool:
+        """Is the property at `path` the request's server-side session?"""
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].is_session(obj[1])
+        return path in self.sessions
+
     def within(self, path: Tuple[str, ...]) -> Optional["RequestType"]:
-        """The request object at `path` when it leads into a listed field or method (Koa's
-        `ctx.request`), else None."""
-        if not path or self.all_fields:
+        """The request object at `path` when `objects` names it or it leads into a listed field
+        or method (Koa's `ctx.request`), else None."""
+        if not path:
+            return None
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0] if not obj[1] else obj[0].within(obj[1])
+        if self.all_fields:
             return None
         fields = tuple(f[len(path):] for f in self.fields if len(f) > len(path) and f[:len(path)] == path)
         methods = tuple(m[len(path):] for m in self.methods if len(m) > len(path) and m[:len(path)] == path)
         if not fields and not methods:
             return None
         kinds = tuple((p[len(path):], k) for p, k in self.kinds if len(p) > len(path) and p[:len(path)] == path)
-        return RequestType(f"{self.name}.{'.'.join(path)}", fields, methods, kinds=kinds)
+        headers = tuple(h[len(path):] for h in self.headers if len(h) > len(path) and h[:len(path)] == path)
+        return RequestType(f"{self.name}.{'.'.join(path)}", fields, methods, kinds=kinds, headers=headers)
 
 
 class SinkKind(Enum):

@@ -4,19 +4,21 @@ language = "python"
 description = "CherryPy exposed methods, request parameters, redirects and static file serving"
 detect = { imports = ["cherrypy"] }
 
+# The request (cherrypy._cprequest.Request); inside a request the module-level `cherrypy.request`
+# (also `cherrypy.serving.request`) is that request in every function. Client data: the query and
+# form parameters, the headers and cookie, the body, the JSON body (tools.json_in), the query string.
+[[request_type]]
+id = "Request"
+fields = ["params", "headers", "header_list", "cookie", "body", "json", "query_string"]
+headers = ["headers"]
+proxies = ["cherrypy.request", "cherrypy.serving.request"]
+references = ["https://docs.cherrypy.dev/en/latest/pkg/cherrypy._cprequest.html#cherrypy._cprequest.Request"]
+
 # Every @cherrypy.expose method receives query / form / path segments as arguments.
 [[entrypoint]]
 id = "exposed"
 decorator = ["cherrypy.expose", "expose", "*.expose"]
 params = "all"
-exclude_param = ["self"]
-
-[[source]]
-name = ["cherrypy.request.params", "cherrypy.request.params.get", "cherrypy.request.cookie",
-        "cherrypy.request.headers", "cherrypy.request.headers.get", "cherrypy.request.body.read",
-        "cherrypy.request.json", "cherrypy.request.query_string", "cherrypy.request.params.__getitem__",
-        "cherrypy.request.headers.__getitem__"]
-kind = "user_input"
 
 [[sink]]
 call = ["cherrypy.HTTPRedirect", "cherrypy._cperror.HTTPRedirect", "cherrypy.lib.httputil.HTTPRedirect"]

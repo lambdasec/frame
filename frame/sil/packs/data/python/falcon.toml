@@ -4,14 +4,34 @@ language = "python"
 description = "Falcon resources: on_<verb> responders, req accessors, resp.text/body HTML, HTTPFound"
 detect = { imports = ["falcon"] }
 
-# Resource classes are plain objects registered with app.add_route(); the responders are
-# found by name. `req` carries query/body/headers/cookies, the URI template fields follow it.
+# The request (falcon.Request, falcon.asgi.Request): client data except what the application,
+# middleware and routing set (`context` is the application's storage, `uri_template` the matched
+# route, `options` the app's settings) and the WSGI scheme and root path.
+[[request_type]]
+id = "Request"
+fields = ["*"]
+server_state = ["context", "uri_template", "options", "context_type", "is_websocket", "root_path", "app", "scheme",
+                "log_error"]
+headers = ["headers", "headers_lower"]
+references = ["https://falcon.readthedocs.io/en/stable/api/request_and_response_wsgi.html"]
+
+# Resource classes are plain objects registered with app.add_route(); Falcon calls the responder
+# named after the HTTP method, on_<method>(req, resp, **uri_template_fields) (on_<method>_<suffix>
+# with add_route(..., suffix=)), and on_websocket(req, ws, ...). The response and the websocket
+# are the application's to write.
+[[entrypoint]]
+id = "responder-request"
+method = ["on_get", "on_post", "on_put", "on_patch", "on_delete", "on_head", "on_options",
+          "on_get_*", "on_post_*", "on_put_*", "on_patch_*", "on_delete_*", "on_websocket"]
+param_positions = [0]
+request_type = "Request"
+
 [[entrypoint]]
 id = "responder"
 method = ["on_get", "on_post", "on_put", "on_patch", "on_delete", "on_head", "on_options",
           "on_get_*", "on_post_*", "on_put_*", "on_patch_*", "on_delete_*", "on_websocket"]
 params = "all"
-exclude_param = ["self", "resp", "response", "ws"]
+params_from = 2
 
 [[sink]]
 name = ["resp.render_body"]

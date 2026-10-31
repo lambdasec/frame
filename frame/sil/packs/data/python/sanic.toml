@@ -4,15 +4,53 @@ language = "python"
 description = "Sanic route handlers, responses that reflect HTML or serve files"
 detect = { imports = ["sanic"] }
 
+# The request (sanic.request.Request): client data except what the application and the server set
+# (`ctx` is the application's per-request storage, `app`, `route` and the URL builder are routing,
+# `conn_info`/`transport`/`protocol` the connection).
+[[request_type]]
+id = "Request"
+fields = ["*"]
+server_state = ["ctx", "app", "route", "name", "endpoint", "uri_template", "url_for", "conn_info", "transport",
+                "protocol", "stream_id", "network_paths", "is_safe", "is_idempotent", "is_cacheable",
+                "responded", "respond", "get_current"]
+kinds = { files = "file" }
+headers = ["headers"]
+references = ["https://sanic.dev/en/guide/basics/request.html"]
+
 # Route handlers (@app.route / @app.get / @bp.post ...) are called with the Request and the
-# route's path parameters (`/items/<item_id>`) as arguments (Sanic docs, "Routing").
+# route's path parameters (`/items/<item_id>`) as arguments (Sanic docs, "Routing"); a websocket
+# handler with the request and the connection the client writes to.
+[[entrypoint]]
+id = "route-request"
+decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options",
+             "*.websocket"]
+param_positions = [0]
+request_type = "Request"
+description = "the Request a Sanic handler receives"
+
 [[entrypoint]]
 id = "route-handler"
 decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options",
              "*.websocket"]
 params = "all"
-exclude_param = ["self", "cls"]
-description = "Sanic handler argument (request or path parameter)"
+params_from = 1
+description = "Sanic handler argument (path parameter, websocket connection)"
+
+# HTTPMethodView dispatches to the method named after the HTTP method with the request and the
+# path parameters.
+[[entrypoint]]
+id = "method-view-request"
+extends = ["sanic.views.HTTPMethodView"]
+method = ["get", "post", "put", "patch", "delete", "head", "options"]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "method-view-arguments"
+extends = ["sanic.views.HTTPMethodView"]
+method = ["get", "post", "put", "patch", "delete", "head", "options"]
+params = "all"
+params_from = 1
 
 [[sink]]
 call = ["sanic.response.html", "sanic.html"]

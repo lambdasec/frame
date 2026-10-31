@@ -44,14 +44,15 @@ LANGUAGES = CODE_LANGUAGES + IAC_LANGUAGES
 _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "file_input"}
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
-_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries",
-              "request_objects"}
+_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names", "dependencies"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
-               "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin"}
-_REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "description", "references"}
+               "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin",
+               "receiver", "unbound"}
+_REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "objects", "headers", "sessions",
+                      "proxies", "origin", "description", "references"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "renders_view",
               "property", "description"}
@@ -81,7 +82,7 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
@@ -122,6 +123,8 @@ class Entrypoint:
     field_annotation: List[str] = field(default_factory=list)
     kind: str = "user_input"
     request_type: str = ""               # the selected parameters are request objects of this [[request_type]]
+    receiver: bool = False               # Python: select the method's bound receiver (`self`), not parameters
+    unbound: bool = False                # Python: the framework calls methods unbound (positions count `self`)
     origin: str = ""                     # the selected parameters hold a value of this origin (`express.Response`)
     module_path: List[str] = field(default_factory=list)    # globs on the file's path (`**/pages/api/**`)
     exports: List[str] = field(default_factory=list)        # what the module exports it as (`default`, `*`)
@@ -431,9 +434,11 @@ class Pack:
     fluents: List[Fluent] = field(default_factory=list)
     tool_registrations: List[ToolRegistration] = field(default_factory=list)
     request_types: Dict[str, Any] = field(default_factory=dict)    # id -> instructions.RequestType
+    request_proxies: Dict[str, str] = field(default_factory=dict)  # Python: `flask.request` -> request type id
     callback_params: List[CallbackParam] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
+    wrappers: List[str] = field(default_factory=list)              # Python: calls returning a view wrapped
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -445,7 +450,6 @@ class Pack:
     handler_returns: List[HandlerReturn] = field(default_factory=list)
     injected_field_annotations: List[str] = field(default_factory=list)
     dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
-    request_objects: List[str] = field(default_factory=list)   # Python: module-level request proxies (flask.request)
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
@@ -483,6 +487,96 @@ def _ints(origin: str, where: str, value: Any) -> List[int]:
                                               for v in value):
         raise _fail(origin, where, "expected a non-negative integer or a list of them")
     return list(value)
+
+
+def _request_types(origin: str, language: str, pack_name: str, pack, tables) -> None:
+    """`[[request_type]]` entries: what a framework's request object holds. `objects` names the
+    paths that hold another request object of the pack (resolved after all are read), `proxies`
+    the module-level objects that are one inside a request (Python: `flask.request`)."""
+    from frame.sil.instructions import RequestType
+    raw: Dict[str, dict] = {}
+    for i, t in enumerate(tables):
+        where = f"[[request_type]] #{i + 1}"
+        _check_keys(origin, where, t, _REQUEST_TYPE_KEYS)
+        rid = t.get("id")
+        if not isinstance(rid, str) or not rid or rid in raw:
+            raise _fail(origin, f"{where}.id", "a new id is required")
+        fields = _strings(origin, f"{where}.fields", t.get("fields", []))
+        methods = _strings(origin, f"{where}.methods", t.get("methods", []))
+        server = _strings(origin, f"{where}.server_state", t.get("server_state", []))
+        objects = t.get("objects", {})
+        if not isinstance(objects, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in objects.items()):
+            raise _fail(origin, f"{where}.objects", "maps property paths to request type ids of this pack")
+        if not fields and not methods and not objects:
+            raise _fail(origin, where, "holds nothing: set fields, methods or objects")
+        if fields == ["*"]:
+            if methods:
+                raise _fail(origin, where, 'with fields = ["*"] every method is client data too: no methods')
+        elif "*" in fields or server:
+            raise _fail(origin, where, 'server_state goes with fields = ["*"] (every property but those)')
+        headers = _strings(origin, f"{where}.headers", t.get("headers", []))
+        sessions = _strings(origin, f"{where}.sessions", t.get("sessions", []))
+        proxies = _strings(origin, f"{where}.proxies", t.get("proxies", []))
+        value_origin = t.get("origin", "")
+        if not isinstance(value_origin, str) or (value_origin and not all(
+                seg.isidentifier() for seg in value_origin.split("."))):
+            raise _fail(origin, f"{where}.origin", "names the request object's value origin (`pyramid.request.Request`)")
+        if proxies and language != "python":
+            raise _fail(origin, f"{where}.proxies", "is for Python packs (module-level request proxies)")
+        for path in fields + methods + server + headers + sessions + list(objects) + proxies:
+            if path != "*" and not all(seg.isidentifier() or seg.startswith("$") for seg in path.split(".")):
+                raise _fail(origin, where, f"{path!r} is not a property path")
+
+        def client(path: str) -> bool:
+            head = path.split(".")
+            if fields == ["*"]:
+                return head[0] not in server
+            return any(head[:len(f.split("."))] == f.split(".") for f in fields)
+        kinds = t.get("kinds", {})
+        if not isinstance(kinds, dict) or not all(isinstance(k, str) for k in kinds):
+            raise _fail(origin, f"{where}.kinds", "maps property paths to source kinds")
+        for path in kinds:
+            if not client(path):
+                raise _fail(origin, f"{where}.kinds", f"{path!r} is not one of its client fields")
+        for path in headers:
+            if not client(path):
+                raise _fail(origin, f"{where}.headers", f"{path!r} is not one of its client fields")
+        for path in sessions:
+            if client(path):
+                raise _fail(origin, f"{where}.sessions", f"{path!r} is client data, not the server's session")
+        raw[rid] = dict(t, fields=fields, methods=methods, server_state=server, objects=objects,
+                        headers=headers, sessions=sessions, proxies=proxies, kinds=kinds, where=where,
+                        value_origin=value_origin)
+    built: Dict[str, Any] = {}
+
+    def build(rid: str, stack: Tuple[str, ...]) -> Any:
+        if rid in built:
+            return built[rid]
+        t = raw[rid]
+        if rid in stack:
+            raise _fail(origin, f"{t['where']}.objects", f"request types hold each other ({' -> '.join(stack + (rid,))})")
+        objs = []
+        for path, other in t["objects"].items():
+            if other not in raw:
+                raise _fail(origin, f"{t['where']}.objects", f"names no [[request_type]] of this pack ({other})")
+            objs.append((tuple(path.split(".")), build(other, stack + (rid,))))
+        fields = t["fields"]
+        built[rid] = RequestType(
+            name=f"{language}/{pack_name}:{rid}",
+            fields=() if fields == ["*"] else tuple(tuple(f.split(".")) for f in fields),
+            methods=tuple(tuple(m.split(".")) for m in t["methods"]),
+            all_fields=fields == ["*"], server_state=tuple(t["server_state"]),
+            kinds=tuple((tuple(path.split(".")), _taint_kind_value(_source_kind(origin, f"{t['where']}.kinds", k)))
+                        for path, k in t["kinds"].items()),
+            objects=tuple(objs), headers=tuple(tuple(h.split(".")) for h in t["headers"]),
+            sessions=tuple(tuple(h.split(".")) for h in t["sessions"]), origin=t["value_origin"])
+        return built[rid]
+    for rid in raw:
+        pack.request_types[rid] = build(rid, ())
+        for proxy in raw[rid]["proxies"]:
+            if proxy in pack.request_proxies:
+                raise _fail(origin, f"{raw[rid]['where']}.proxies", f"{proxy} is already a proxy of this pack")
+            pack.request_proxies[proxy] = rid
 
 
 def _check_keys(origin: str, where: str, table: Dict[str, Any], allowed: set) -> None:
@@ -536,10 +630,6 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not isinstance(head["dict_queries"], bool) or language != "python":
             raise _fail(origin, "[pack].dict_queries", "is true or false, in a Python pack")
         pack.dict_queries = head["dict_queries"]
-    if "request_objects" in head:
-        if language != "python":
-            raise _fail(origin, "[pack].request_objects", "is for Python packs (module-level request proxies)")
-        pack.request_objects = _strings(origin, "[pack].request_objects", head["request_objects"], allow_empty=False)
     detect = head.get("detect", {})
     if not isinstance(detect, dict):
         raise _fail(origin, "[pack].detect", "expected a table")
@@ -553,37 +643,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     if pack.detect_dependencies and language not in ("javascript", "typescript"):
         raise _fail(origin, "detect.dependencies", "reads package.json: for JavaScript packs")
 
-    from frame.sil.instructions import RequestType
-    for i, t in enumerate(data.get("request_type", [])):
-        where = f"[[request_type]] #{i + 1}"
-        _check_keys(origin, where, t, _REQUEST_TYPE_KEYS)
-        rid = t.get("id")
-        if not isinstance(rid, str) or not rid or rid in pack.request_types:
-            raise _fail(origin, f"{where}.id", "a new id is required")
-        fields = _strings(origin, f"{where}.fields", t.get("fields", []), allow_empty=False)
-        methods = _strings(origin, f"{where}.methods", t.get("methods", []))
-        server = _strings(origin, f"{where}.server_state", t.get("server_state", []))
-        if fields == ["*"]:
-            if methods:
-                raise _fail(origin, where, 'with fields = ["*"] every method is client data too: no methods')
-        elif "*" in fields or server:
-            raise _fail(origin, where, 'server_state goes with fields = ["*"] (every property but those)')
-        for path in fields + methods + server:
-            if path != "*" and not all(seg.isidentifier() or seg.startswith("$") for seg in path.split(".")):
-                raise _fail(origin, where, f"{path!r} is not a property path")
-        kinds = t.get("kinds", {})
-        if not isinstance(kinds, dict) or not all(isinstance(k, str) for k in kinds):
-            raise _fail(origin, f"{where}.kinds", "maps property paths to source kinds")
-        for path, kind in kinds.items():
-            if path not in fields:
-                raise _fail(origin, f"{where}.kinds", f"{path!r} is not one of its fields")
-        pack.request_types[rid] = RequestType(
-            name=f"{language}/{name}:{rid}",
-            fields=() if fields == ["*"] else tuple(tuple(f.split(".")) for f in fields),
-            methods=tuple(tuple(m.split(".")) for m in methods),
-            all_fields=fields == ["*"], server_state=tuple(server),
-            kinds=tuple((tuple(path.split(".")), _taint_kind_value(_source_kind(origin, f"{where}.kinds", k)))
-                        for path, k in kinds.items()))
+    _request_types(origin, language, name, pack, data.get("request_type", []))
 
     for i, t in enumerate(data.get("entrypoint", [])):
         where = f"[[entrypoint]] #{i + 1}"
@@ -608,7 +668,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not isinstance(start, int) or isinstance(start, bool) or start < 0:
             raise _fail(origin, f"{where}.params_from", "must be a parameter position (0-based)")
         e.params_from = start
-        params = t.get("params", "none")
+        params = t.get("params", "all" if (e.param_positions or e.params_from) else "none")  # positions select
         if isinstance(params, str):
             if params not in ("all", "annotated", "typed", "none"):
                 raise _fail(origin, f"{where}.params", "must be all | annotated | typed | none | [names]")
@@ -636,6 +696,15 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             if "request_type" in t or "kind" in t:
                 raise _fail(origin, where, "an origin entry point names what a parameter is: no request_type or kind")
             e.origin = t["origin"]
+        for key in ("receiver", "unbound"):
+            if key in t:
+                if not isinstance(t[key], bool):
+                    raise _fail(origin, f"{where}.{key}", "must be true or false")
+                if language != "python":
+                    raise _fail(origin, f"{where}.{key}", "is for Python packs (a method's explicit receiver)")
+                setattr(e, key, t[key])
+        if e.receiver and (e.unbound or e.param_positions or e.params_from or isinstance(params, list)):
+            raise _fail(origin, where, "receiver = true selects the bound receiver: no positions, names or unbound")
         if "request_type" in t:
             if t["request_type"] not in pack.request_types:
                 raise _fail(origin, f"{where}.request_type", f"names no [[request_type]] of this pack ({t['request_type']})")
@@ -655,7 +724,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                                        "extends, class_name, method, registered_via, first_param, exports")
         if e.module_path and not e.exports:
             raise _fail(origin, where, "module_path goes with exports (what a file-system convention dispatches to)")
-        if params == "none" and not e.fields and not e.tainted_param_type and not e.origin:
+        if params == "none" and not e.fields and not e.tainted_param_type and not e.origin and not e.receiver:
             raise _fail(origin, where, "taints nothing: set params, fields or tainted_param_type")
         pack.entrypoints.append(e)
 
@@ -903,6 +972,13 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        name=_strings(origin, f"{where}.name", t["name"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("wrapper", [])):
+        where = f"[[wrapper]] #{i + 1}"
+        _check_keys(origin, where, t, {"call", "description", "references"})
+        if language != "python":
+            raise _fail(origin, where, "wrappers are for Python packs (a handler wrapped by a decorator call)")
+        pack.wrappers += _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
 
     for i, t in enumerate(data.get("deferred_call", [])):
         where = f"[[deferred_call]] #{i + 1}"

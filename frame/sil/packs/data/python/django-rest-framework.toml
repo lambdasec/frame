@@ -4,27 +4,94 @@ language = "python"
 description = "Django REST Framework views, viewsets, @api_view and @action handlers"
 detect = { imports = ["rest_framework"] }
 
-# `request` is a DRF Request (data / query_params are client data; user / auth are not,
-# the translator already treats them as server state) and URL kwargs such as `pk` arrive
-# as strings the client chose.
+# The DRF Request (rest_framework.request.Request): `data` and `query_params` are the client's,
+# and every other attribute is the wrapped HttpRequest's (proxied), so client data except what
+# authentication, content negotiation, versioning, the application and middleware set.
+[[request_type]]
+id = "Request"
+fields = ["*"]
+server_state = ["user", "auth", "authenticators", "successful_authenticator", "parsers", "negotiator",
+                "parser_context", "accepted_renderer", "accepted_media_type", "version", "versioning_scheme",
+                "session", "auser", "site", "resolver_match", "current_app", "urlconf", "exception_reporter_filter",
+                "exception_reporter_class", "encoding", "upload_handlers", "multipart_parser_class", "scheme",
+                "is_secure", "LANGUAGE_CODE", "csrf_processing_done"]
+kinds = { FILES = "file" }
+headers = ["headers"]
+sessions = ["session"]
+references = ["https://www.django-rest-framework.org/api-guide/requests/"]
+
+# An APIView / viewset instance: dispatch() keeps the request and the URL's captured values on it
+# (`self.request`, `self.args`, `self.kwargs`) before calling the handler.
+[[request_type]]
+id = "APIView"
+fields = ["args", "kwargs"]
+objects = { request = "Request" }
+references = ["https://www.django-rest-framework.org/api-guide/views/"]
+
 [[entrypoint]]
-id = "api-view"
+id = "api-view-instance"
+extends = ["rest_framework.views.APIView", "rest_framework.generics.*", "rest_framework.viewsets.*",
+           "rest_framework.mixins.*"]
+receiver = true
+request_type = "APIView"
+exclude_method = ["__init__"]
+description = "an APIView / viewset instance (self.request, self.args, self.kwargs)"
+
+# Handler methods: dispatch() calls the method named after the HTTP method (a viewset's action
+# method) with the request and the URL's captured values (`pk` is a string the client chose).
+[[entrypoint]]
+id = "api-view-request"
+extends = ["rest_framework.views.APIView", "rest_framework.generics.*", "rest_framework.viewsets.*",
+           "rest_framework.mixins.*"]
+method = ["get", "post", "put", "patch", "delete", "head", "options",
+          "list", "retrieve", "create", "update", "partial_update", "destroy"]
+param_positions = [0]
+request_type = "Request"
+
+[[entrypoint]]
+id = "api-view-arguments"
 extends = ["rest_framework.views.APIView", "rest_framework.generics.*", "rest_framework.viewsets.*",
            "rest_framework.mixins.*"]
 method = ["get", "post", "put", "patch", "delete", "head", "options",
           "list", "retrieve", "create", "update", "partial_update", "destroy"]
 params = "all"
-exclude_param = ["self", "format"]
+params_from = 1
+exclude_param = ["format"]
+
+# @api_view functions take the request first; @action methods the request after self.
+[[entrypoint]]
+id = "api-view-function-request"
+decorator = ["rest_framework.decorators.api_view"]
+param_positions = [0]
+request_type = "Request"
 
 [[entrypoint]]
-id = "api-view-function"
-decorator = ["api_view", "rest_framework.decorators.api_view"]
+id = "api-view-function-arguments"
+decorator = ["rest_framework.decorators.api_view"]
 params = "all"
+params_from = 1
 exclude_param = ["format"]
 
 [[entrypoint]]
-id = "viewset-action"
-decorator = ["action", "rest_framework.decorators.action"]
-params = "all"
-exclude_param = ["self", "format"]
+id = "viewset-action-request"
+decorator = ["rest_framework.decorators.action"]
+param_positions = [0]
+request_type = "Request"
 
+[[entrypoint]]
+id = "viewset-action-arguments"
+decorator = ["rest_framework.decorators.action"]
+params = "all"
+params_from = 1
+exclude_param = ["format"]
+
+# Permission and authentication classes: DRF calls has_permission(request, view),
+# has_object_permission(request, view, obj) and authenticate(request) with its Request.
+[[entrypoint]]
+id = "permission-request"
+extends = ["rest_framework.permissions.BasePermission", "rest_framework.authentication.BaseAuthentication",
+           "rest_framework.throttling.BaseThrottle"]
+method = ["has_permission", "has_object_permission", "authenticate", "authenticate_header", "allow_request",
+          "get_ident"]
+param_positions = [0]
+request_type = "Request"
