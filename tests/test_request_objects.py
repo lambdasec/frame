@@ -356,3 +356,12 @@ def test_django_admin_hooks_and_actions():
             "        os.system(request.GET['f'])\n\n    def helper(self, value):\n        os.system(value)\n\n"
             "@admin.action(description='Mark')\ndef mark(modeladmin, request, queryset):\n    os.system(request.POST['m'])\n")
     assert _lines(code, "CWE-78", "admin.py") == [6, 7, 11, 18]
+
+
+def test_raw_query_strings_are_client_data():
+    tornado = ("import os\nimport tornado.web\n\nclass H(tornado.web.RequestHandler):\n    def get(self):\n"
+               "        os.system(self.request.uri)\n")
+    assert _lines(tornado, "CWE-78") == [6]
+    pyramid = ("import os\nfrom pyramid.view import view_config\n\n@view_config(route_name='x')\ndef v(request):\n"
+               "    os.system(request.query_string)\n")
+    assert _lines(pyramid, "CWE-78") == [6]

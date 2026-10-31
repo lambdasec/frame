@@ -9,7 +9,7 @@ detect = { imports = ["cherrypy"] }
 # form parameters, the headers and cookie, the body, the JSON body (tools.json_in), the query string.
 [[request_type]]
 id = "Request"
-fields = ["params", "headers", "header_list", "cookie", "body", "json", "query_string"]
+fields = ["params", "headers", "header_list", "cookie", "body", "json", "query_string", "request_line"]
 headers = ["headers"]
 identities = ["login"]                       # set by the auth tools
 proxies = ["cherrypy.request", "cherrypy.serving.request"]

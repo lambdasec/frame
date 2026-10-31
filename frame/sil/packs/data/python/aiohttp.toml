@@ -12,7 +12,7 @@ detect = { imports = ["aiohttp"] }
 [[request_type]]
 id = "Request"
 fields = ["query", "query_string", "match_info", "rel_url.query", "rel_url.query_string", "url.query",
-          "url.query_string", "headers", "raw_headers", "cookies", "content"]
+          "url.query_string", "path_qs", "headers", "raw_headers", "cookies", "content"]
 methods = ["read", "text", "json", "post", "multipart"]
 headers = ["headers"]
 references = ["https://docs.aiohttp.org/en/stable/web_reference.html#request-and-base-request"]

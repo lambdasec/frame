@@ -11,7 +11,7 @@ detect = { imports = ["pyramid"] }
 [[request_type]]
 id = "Request"
 fields = ["params", "GET", "POST", "matchdict", "json_body", "json", "body", "body_file", "text", "cookies",
-          "headers"]
+          "headers", "query_string", "path_qs"]
 headers = ["headers"]
 identities = ["identity", "authenticated_userid"]    # from the security policy
 origin = "pyramid.request.Request"

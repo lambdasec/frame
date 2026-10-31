@@ -5,10 +5,11 @@ description = "Tornado request handlers and templates"
 detect = { imports = ["tornado"] }
 
 # The request a handler serves (tornado.httputil.HTTPServerRequest, the handler's `request`): its
-# parsed arguments, uploads, body, headers, cookies and query string are the client's.
+# parsed arguments, uploads, body, headers, cookies, query string and the request URI (path and
+# query, as sent) are the client's.
 [[request_type]]
 id = "HTTPServerRequest"
-fields = ["arguments", "query_arguments", "body_arguments", "files", "body", "headers", "cookies", "query"]
+fields = ["arguments", "query_arguments", "body_arguments", "files", "body", "headers", "cookies", "query", "uri"]
 kinds = { files = "file" }
 headers = ["headers"]
 references = ["https://www.tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest"]
