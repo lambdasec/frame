@@ -308,3 +308,22 @@ def test_flask_routes_by_what_the_receiver_is(tmp_path):
     results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
     found = {(r.filename.rsplit("/", 1)[-1], v.line) for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-78"}
     assert found == {("views.py", 6), ("routes.py", 6)}
+
+
+def test_connexion_operations_are_what_the_openapi_document_names(tmp_path):
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "__init__.py").write_text("")
+    (tmp_path / "api" / "users.py").write_text(
+        "import os\n\ndef rename(username, body, user=None):\n    os.system(username + body['to'])\n"
+        "    os.system(user)\n\ndef unrouted(username):\n    os.system(username)\n")
+    (tmp_path / "api" / "books.py").write_text("import os\n\ndef find(title):\n    os.system(title)\n")
+    (tmp_path / "openapi.yaml").write_text(
+        "openapi: 3.0.0\ninfo: {title: t, version: '1'}\npaths:\n"
+        "  /users/{username}:\n    put:\n      operationId: api.users.rename\n      responses: {'200': {description: ok}}\n"
+        "  /books/{title}:\n    x-openapi-router-controller: api.books\n    get:\n      operationId: find\n"
+        "      responses: {'200': {description: ok}}\n")
+    (tmp_path / "app.py").write_text("import connexion\napp = connexion.App(__name__)\napp.add_api('openapi.yaml')\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = {(r.filename.rsplit("/", 1)[-1], v.line) for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-78"}
+    # `user` is the caller connexion's security hands in, not client data; `unrouted` is no operation
+    assert found == {("users.py", 4), ("books.py", 4)}

@@ -82,7 +82,7 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "wrapper", "identity", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
@@ -445,6 +445,9 @@ class Pack:
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     wrappers: List[str] = field(default_factory=list)              # Python: calls returning a view wrapped
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
+    # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
+    # (controller extension keys, the id the handler is registered as)
+    operation_dispatch: List[Tuple[Tuple[str, ...], str]] = field(default_factory=list)
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -994,6 +997,19 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        name=_strings(origin, f"{where}.name", t["name"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("operation_dispatch", [])):
+        where = f"[[operation_dispatch]] #{i + 1}"
+        _check_keys(origin, where, t, {"controller_keys", "registered_as", "description", "references"})
+        if language != "python":
+            raise _fail(origin, where, "operation dispatch names Python functions by dotted path: Python packs")
+        as_ = t.get("registered_as")
+        if not isinstance(as_, str) or not as_:
+            raise _fail(origin, f"{where}.registered_as", "names the id the handlers are registered as")
+        keys = _strings(origin, f"{where}.controller_keys", t.get("controller_keys", []))
+        if not all(k.startswith("x-") for k in keys):
+            raise _fail(origin, f"{where}.controller_keys", "are OpenAPI specification extensions (x-...)")
+        pack.operation_dispatch.append((tuple(keys), as_))
 
     for i, t in enumerate(data.get("identity", [])):
         where = f"[[identity]] #{i + 1}"

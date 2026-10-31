@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fnmatch import fnmatchcase
+from pathlib import Path
 
 from .instructions import Call
 from .types import ExpVar
@@ -229,4 +230,46 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
             JavaScriptFrontend._entry_taint_into_closures(program)   # callbacks nested in the handlers
 
 
-__all__ = ["Registration", "apply_callback_params", "link_project", "registration_vias"]
+def link_openapi(ctx, index, packs_for: Callable[[str], Any]) -> None:
+    """Python frameworks that dispatch an OpenAPI operation to the function its `operationId`
+    names (a pack's `[[operation_dispatch]]`: connexion): read the project's OpenAPI documents,
+    resolve each id as a dotted path the way the app's own file imports it (`api_views.users.
+    update_password`, or the `x-openapi-router-controller` module plus the id), and register the
+    function under the pack's id, so the pack's entry points apply to it."""
+    from .openapi import documents, operations
+    from .packs.apply import _detected, apply_entrypoints_to
+    apps = []
+    for key, program in ctx.programs.items():
+        if (program.language or "") != "python":
+            continue
+        for pack in packs_for("python").for_language("python"):
+            if pack.operation_dispatch and _detected(pack, program):
+                apps.append((key, pack))
+    if not apps or getattr(index, "root", None) is None:
+        return
+    ops = [op for doc in documents(Path(index.root)) for op in operations(doc)]
+    targets: Dict[str, Set[str]] = {}
+    for key, pack in apps:
+        importer = index.modules.get(key)
+        if importer is None:
+            continue
+        for controller_keys, registered_as in pack.operation_dispatch:
+            for op in ops:
+                controller = next((op.extensions[k] for k in controller_keys if k in op.extensions), None)
+                dotted = f"{controller}.{op.operation_id}" if controller else op.operation_id
+                parts = tuple(p for p in dotted.split(".") if p)
+                if len(parts) < 2 or not all(p.isidentifier() for p in parts):
+                    continue
+                target = index._resolve_python(importer, parts[:-1], 0)
+                program = ctx.programs.get(target) if target else None
+                proc = program.procedures.get(parts[-1]) if program is not None else None
+                if proc is None or proc.is_method:
+                    continue
+                if registered_as not in proc.registered_via:
+                    proc.registered_via.append(registered_as)
+                targets.setdefault(target, set()).add(proc.name)
+    for key, names in targets.items():
+        apply_entrypoints_to(ctx.programs[key], sorted(names), packs_for("python"))
+
+
+__all__ = ["Registration", "apply_callback_params", "link_openapi", "link_project", "registration_vias"]

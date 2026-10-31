@@ -1,0 +1,33 @@
+[pack]
+name = "connexion"
+language = "python"
+description = "connexion: OpenAPI operations dispatched to the Python function each operationId names"
+references = ["https://connexion.readthedocs.io/en/latest/routing.html",
+              "https://connexion.readthedocs.io/en/latest/request.html",
+              "https://connexion.readthedocs.io/en/latest/security.html"]
+detect = { imports = ["connexion"] }
+
+# connexion routes each operation of the API documents it loads (`app.add_api("openapi.yaml")`) to
+# the function its operationId names as a dotted path (`api.users.update_password`), or the
+# function the operationId names in the `x-openapi-router-controller` module (Swagger 2.0:
+# `x-swagger-router-controller`).
+[[operation_dispatch]]
+controller_keys = ["x-openapi-router-controller", "x-swagger-router-controller"]
+registered_as = "connexion.operation"
+
+# It calls the function with the operation's path, query, header, form and body parameters as
+# keyword arguments (the body as `body`): client data. With security configured it also hands in
+# `user` and `token_info` by those names (what the security handler returned): the caller.
+[[entrypoint]]
+id = "operation"
+registered_via = ["connexion.operation"]
+params = "all"
+exclude_param = ["user", "token_info"]
+description = "an operation parameter connexion passes the handler"
+
+[[entrypoint]]
+id = "operation-caller"
+registered_via = ["connexion.operation"]
+params = ["user", "token_info"]
+kind = "identity"
+description = "the authenticated caller connexion's security handling passes the handler"

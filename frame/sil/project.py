@@ -1459,6 +1459,8 @@ class ProjectContext:
             fe = frontend_for(language)
             return getattr(fe, "packs", None) or default_packs()
         link_project(ctx, index, packs_for)
+        from frame.sil.registrations import link_openapi
+        link_openapi(ctx, index, packs_for)
         ctx.translators = {
             key: SILTranslator(program, verbose=verbose, ipa=ctx.ipa, file_key=key, project=ctx)
             for key, program in ctx.programs.items()}
