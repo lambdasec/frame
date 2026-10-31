@@ -17,6 +17,7 @@ This is the core of achieving high precision - not flagging safe patterns.
 from typing import Any, Optional, List, Set, Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from frame.sil import c_facts
 import tree_sitter_c as tsc
 import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Parser
@@ -45,34 +46,10 @@ class SemanticPatternAnalyzer:
     For example, it knows that printf("%s", var) is safe while printf(var) is not.
     """
 
-    # Printf-family functions (both regular and wide-char variants)
-    PRINTF_FUNCS = {
-        # Standard C printf family
-        'printf', 'fprintf', 'sprintf', 'snprintf',
-        'vprintf', 'vfprintf', 'vsprintf', 'vsnprintf',
-        # Wide-char variants
-        'wprintf', 'fwprintf', 'swprintf', '_snwprintf',
-        'vwprintf', 'vfwprintf', 'vswprintf',
-        # Windows-specific
-        '_printf', '_fprintf', '_sprintf', '_snprintf',
-        '_wprintf', '_fwprintf', '_swprintf',
-        # Syslog
-        'syslog', 'vsyslog',
-    }
-
-    # Buffer copy functions
-    UNSAFE_COPY_FUNCS = {'strcpy', 'strcat', 'wcscpy', 'wcscat', 'gets', 'sprintf'}
-    SAFE_COPY_FUNCS = {
-        'strncpy': 2,      # Size is 3rd arg (index 2)
-        'strncat': 2,
-        'memcpy': 2,
-        'memmove': 2,
-        'memset': 2,
-        'snprintf': 1,     # Size is 2nd arg (index 1)
-        'fgets': 1,
-        'wcsncpy': 2,
-        'wcsncat': 2,
-    }
+    # The printf family (name -> format argument) and the copy functions: specs/data/c-library.toml
+    PRINTF_FUNCS = c_facts.library().format_functions
+    UNSAFE_COPY_FUNCS = c_facts.library().unbounded_copies
+    SAFE_COPY_FUNCS = c_facts.library().bounded_copies              # name -> size argument
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -138,18 +115,7 @@ class SemanticPatternAnalyzer:
         if not args:
             return PatternAnalysisResult(PatternSafety.UNKNOWN, "No arguments")
 
-        # Determine which argument is the format string
-        # fprintf/sprintf/snprintf: format is 2nd or 3rd arg
-        # printf: format is 1st arg
-        format_arg_idx = 0
-        if base_name in ('fprintf', 'vfprintf', 'fwprintf', 'vfwprintf'):
-            format_arg_idx = 1  # fprintf(file, format, ...)
-        elif base_name in ('sprintf', 'vsprintf', 'swprintf', 'vswprintf'):
-            format_arg_idx = 1  # sprintf(buf, format, ...)
-        elif base_name in ('snprintf', 'vsnprintf'):
-            format_arg_idx = 2  # snprintf(buf, size, format, ...)
-        elif base_name == 'syslog':
-            format_arg_idx = 1  # syslog(priority, format, ...)
+        format_arg_idx = self.PRINTF_FUNCS[base_name]
 
         if format_arg_idx >= len(args):
             return PatternAnalysisResult(PatternSafety.UNKNOWN, "Format arg index out of range")

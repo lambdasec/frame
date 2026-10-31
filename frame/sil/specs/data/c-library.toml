@@ -1,0 +1,202 @@
+# C library facts the C/C++ analyses read by function name, beside the spec tables (c.toml,
+# cpp.toml): adding a spec row turns off default argument->result propagation for a call, so the
+# facts below that concern functions without a row live here. Read by frame/sil/c_facts.py.
+# Argument positions are 0-based. Sources: the C standard (C11 7.16, 7.13, 7.21, 7.22, 7.24, 7.29),
+# POSIX, and the Microsoft CRT for `_stricmp` / `stricmp`.
+
+# Read or write through a pointer argument but never keep it (no stored copy, no ownership
+# transfer): passing an owned pointer to one is a use, not an escape, so the allocation can still
+# leak. Anything that may keep the pointer (strtok, setbuf, realloc, atexit, signal, qsort
+# callbacks) is not listed.
+non_retaining = ["atof", "atoi", "atol", "atoll", "bcopy", "bzero", "fgets", "fprintf", "fputc",
+    "fputs", "fread", "fscanf", "fwrite", "gets", "isalpha", "isdigit", "isspace", "memchr",
+    "memcmp", "memcpy", "memmove", "memset", "printf", "putchar", "puts", "read", "recv", "scanf",
+    "send", "snprintf", "sprintf", "sscanf", "strcasecmp", "strcat", "strchr", "strcmp", "strcoll",
+    "strcpy", "strcspn", "strlen", "strncasecmp", "strncat", "strncmp", "strncpy", "strnlen",
+    "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtol", "strtoll", "strtoul", "strtoull",
+    "tolower", "toupper", "vfprintf", "vprintf", "vsnprintf", "vsprintf", "wcscat", "wcscmp",
+    "wcscpy", "wcslen", "wcsncpy", "wmemcpy", "wmemset", "write"]
+
+# Macros and functions that take a bare aggregate (va_list, jmp_buf) and initialise it: the one
+# place a plain C argument is an out-parameter.
+bare_out_params = ["_setjmp", "longjmp", "setjmp", "siglongjmp", "sigsetjmp", "va_arg", "va_copy",
+    "va_end", "va_start"]
+
+# String comparisons returning zero for equal strings.
+string_compares = ["_stricmp", "strcasecmp", "strcmp", "stricmp", "wcscmp"]
+
+# Copies whose length argument is where attacker data overflows the destination.
+length_sinks = ["bcopy", "memcpy", "memmove"]
+
+# C++ container lookups that return an element (or the end), never the key.
+container_lookups = ["at", "contains", "count", "equal_range", "find", "lower_bound", "upper_bound"]
+
+# Copies with no size limit: the destination (argument 0) receives as much as the source holds.
+unbounded_copies = ["gets", "sprintf", "strcat", "strcpy", "wcscat", "wcscpy"]
+
+# Copies (destination argument 0, source argument 1) whose source size the memory analysis
+# compares with the destination's.
+copies = ["memcpy", "memmove", "strcat", "strcpy", "wcscat", "wcscpy"]
+
+# Size-limited writes: name = the size argument.
+[bounded_copies]
+fgets = 1
+memcpy = 2
+memmove = 2
+memset = 2
+snprintf = 1
+strncat = 2
+strncpy = 2
+wcsncat = 2
+wcsncpy = 2
+
+# printf-family functions: name = the format argument (C11 7.21.6, 7.29.2; POSIX syslog;
+# vsyslog in glibc and the BSDs; the Microsoft CRT's _snprintf / _snwprintf take the buffer
+# and a count first).
+[format_functions]
+printf = 0
+fprintf = 1
+sprintf = 1
+snprintf = 2
+vprintf = 0
+vfprintf = 1
+vsprintf = 1
+vsnprintf = 2
+wprintf = 0
+fwprintf = 1
+swprintf = 2
+vwprintf = 0
+vfwprintf = 1
+vswprintf = 2
+_snprintf = 2
+_snwprintf = 2
+syslog = 1
+vsyslog = 1
+
+# Buffer accesses, per function:
+#   element_writes / element_reads: [buffer, count] pairs for a call that writes / reads the
+#     buffer from its first element; count -1 when the call always touches at least one element.
+#   bounded_write: [destination, byte count] checked against the destination's size.
+#   bounded_reads: [source, byte count] pairs: the call reads exactly that many bytes.
+#   literal_copy: the source argument whose literal length is the bytes written.
+
+[[buffer]]
+name = "bcopy"
+bounded_reads = [[0, 2]]
+
+[[buffer]]
+name = "fgets"
+element_writes = [[0, 1]]
+bounded_write = [0, 1]
+
+[[buffer]]
+name = "fgetws"
+element_writes = [[0, 1]]
+
+[[buffer]]
+name = "memcmp"
+element_reads = [[0, 2], [1, 2]]
+bounded_reads = [[0, 2], [1, 2]]
+
+[[buffer]]
+name = "memcpy"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+bounded_write = [0, 2]
+bounded_reads = [[1, 2]]
+
+[[buffer]]
+name = "memmove"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+bounded_write = [0, 2]
+bounded_reads = [[1, 2]]
+
+[[buffer]]
+name = "memset"
+element_writes = [[0, 2]]
+bounded_write = [0, 2]
+
+[[buffer]]
+name = "read"
+element_writes = [[1, 2]]
+bounded_write = [1, 2]
+
+[[buffer]]
+name = "recv"
+element_writes = [[1, 2]]
+bounded_write = [1, 2]
+
+[[buffer]]
+name = "send"
+element_reads = [[1, 2]]
+
+[[buffer]]
+name = "snprintf"
+element_writes = [[0, 1]]
+bounded_write = [0, 1]
+
+[[buffer]]
+name = "sprintf"
+element_writes = [[0, -1]]
+literal_copy = 1
+
+[[buffer]]
+name = "strcat"
+literal_copy = 1
+
+[[buffer]]
+name = "strcmp"
+element_reads = [[0, -1], [1, -1]]
+
+[[buffer]]
+name = "strcpy"
+element_writes = [[0, -1]]
+element_reads = [[1, -1]]
+literal_copy = 1
+
+[[buffer]]
+name = "strlen"
+element_reads = [[0, -1]]
+
+[[buffer]]
+name = "strncpy"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+bounded_write = [0, 2]
+
+[[buffer]]
+name = "swprintf"
+element_writes = [[0, 1]]
+
+[[buffer]]
+name = "wcscpy"
+element_writes = [[0, -1]]
+element_reads = [[1, -1]]
+
+[[buffer]]
+name = "wcslen"
+element_reads = [[0, -1]]
+
+[[buffer]]
+name = "wcsncpy"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+
+[[buffer]]
+name = "wmemcpy"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+
+[[buffer]]
+name = "wmemmove"
+element_writes = [[0, 2]]
+element_reads = [[1, 2]]
+
+[[buffer]]
+name = "wmemset"
+element_writes = [[0, 2]]
+
+[[buffer]]
+name = "write"
+element_reads = [[1, 2]]

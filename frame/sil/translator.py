@@ -2003,8 +2003,7 @@ class SILTranslator:
                                             args=bound + list(instr.args))
 
     # Lookups that return an element of the container (or its end), never the key.
-    _TABLE_LOOKUPS = frozenset({"find", "at", "count", "contains", "lower_bound", "upper_bound",
-                                "equal_range"})
+    _TABLE_LOOKUPS = _c_facts.library().container_lookups          # specs/data/c-library.toml
 
     def _literal_table_lookup(self, func_name: str) -> bool:
         head, _, method = func_name.rpartition(".")
@@ -2398,7 +2397,7 @@ class SILTranslator:
         return cls._call_guard(exp, regexes, language)
 
     # C string comparisons: zero means equal.
-    _C_STRCMP = frozenset({"strcmp", "strcasecmp", "wcscmp", "_stricmp", "stricmp"})
+    _C_STRCMP = _c_facts.library().string_compares                 # specs/data/c-library.toml
     _C_SAFE_CHARSET = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
     @classmethod
@@ -5713,7 +5712,7 @@ class SILTranslator:
             return bool(self._UNBOUNDED_SCANF.search(arg_exp.value))
         return False
 
-    _COPY_SIZE_SINKS = frozenset({"memcpy", "memmove", "bcopy"})
+    _COPY_SIZE_SINKS = _c_facts.library().length_sinks
 
     def _copy_size_sink(self, func_name: str, kind: str) -> bool:
         """The sink is the length argument of a memory copy (memcpy/memmove/bcopy)."""
@@ -6275,18 +6274,8 @@ class SILTranslator:
 
     # Library calls that write / read a buffer from its first element: name -> [(buffer argument,
     # count argument or None when the call always touches at least one element)].
-    _ELEMENT_WRITES = {
-        "memcpy": [(0, 2)], "memmove": [(0, 2)], "memset": [(0, 2)], "strncpy": [(0, 2)],
-        "strcpy": [(0, None)], "sprintf": [(0, None)], "snprintf": [(0, 1)], "fgets": [(0, 1)],
-        "wcscpy": [(0, None)], "wcsncpy": [(0, 2)], "wmemcpy": [(0, 2)], "wmemmove": [(0, 2)],
-        "wmemset": [(0, 2)], "swprintf": [(0, 1)], "fgetws": [(0, 1)], "read": [(1, 2)], "recv": [(1, 2)],
-    }
-    _ELEMENT_READS = {
-        "memcpy": [(1, 2)], "memmove": [(1, 2)], "memcmp": [(0, 2), (1, 2)], "strncpy": [(1, 2)],
-        "strcpy": [(1, None)], "strlen": [(0, None)], "strcmp": [(0, None), (1, None)],
-        "wcscpy": [(1, None)], "wcsncpy": [(1, 2)], "wmemcpy": [(1, 2)], "wmemmove": [(1, 2)],
-        "wcslen": [(0, None)], "write": [(1, 2)], "send": [(1, 2)],
-    }
+    _ELEMENT_WRITES = _c_facts.library().element_writes            # specs/data/c-library.toml
+    _ELEMENT_READS = _c_facts.library().element_reads
 
     def _call_element_accesses(self, instr: Instr):
         """(buffer, count, is_write) for the buffers a library call writes or reads from their
@@ -7791,9 +7780,7 @@ class SILTranslator:
 
     # C macros/functions that take a bare aggregate (va_list, jmp_buf) and
     # initialise it: the one place a plain C argument is an out-parameter.
-    _C_BARE_OUT_PARAM_CALLS = frozenset({
-        "va_start", "va_end", "va_copy", "va_arg",
-        "setjmp", "_setjmp", "sigsetjmp", "longjmp", "siglongjmp"})
+    _C_BARE_OUT_PARAM_CALLS = _c_facts.library().bare_out_params   # specs/data/c-library.toml
 
     def _arg_may_define(self, arg: Exp, func: Optional[Exp] = None) -> bool:
         """May passing `arg` initialise the variable it names?
@@ -8206,15 +8193,10 @@ class SILTranslator:
     # name -> (index of the destination buffer, index of the byte-count argument
     # or None). The byte count is either an explicit argument or, for the string
     # copies, the length of a literal source argument (see the checker below).
-    _BOUNDED_WRITES = {
-        "memcpy": (0, 2), "memmove": (0, 2), "memset": (0, 2),
-        "strncpy": (0, 2), "snprintf": (0, 1), "fgets": (0, 1),
-        "read": (1, 2), "recv": (1, 2),
-    }
-    _LITERAL_COPIES = {"strcpy": 1, "strcat": 1, "sprintf": 1}
+    _BOUNDED_WRITES = _c_facts.library().bounded_writes            # specs/data/c-library.toml
+    _LITERAL_COPIES = _c_facts.library().literal_copies
     # Calls that read a constant number of bytes from a buffer: (source index, size index).
-    _BOUNDED_READS = {"memcpy": ((1, 2),), "memmove": ((1, 2),), "bcopy": ((0, 2),),
-                      "memcmp": ((0, 2), (1, 2))}
+    _BOUNDED_READS = _c_facts.library().bounded_reads
 
     def _const_int(self, exp: Exp) -> Optional[int]:
         """Integer value of a compile-time constant expression (literals joined
@@ -8785,20 +8767,7 @@ class SILTranslator:
     # to one of these is a use, not an escape, so the allocation can still leak.
     # Deliberately excludes anything that may keep the pointer: strtok, setbuf,
     # setvbuf, realloc, atexit, signal, pthread_*, bsearch/qsort callbacks.
-    _NON_RETAINING_CALLS = frozenset({
-        "strcpy", "strncpy", "strcat", "strncat", "strlen", "strnlen", "strcmp",
-        "strncmp", "strcasecmp", "strncasecmp", "strchr", "strrchr", "strstr",
-        "strspn", "strcspn", "strpbrk", "strcoll",
-        "memcpy", "memmove", "memset", "memcmp", "memchr", "bcopy", "bzero",
-        "printf", "fprintf", "sprintf", "snprintf", "vprintf", "vfprintf",
-        "vsprintf", "vsnprintf", "puts", "fputs", "putchar", "fputc",
-        "scanf", "fscanf", "sscanf", "fgets", "gets", "fread", "fwrite",
-        "read", "write", "send", "recv",
-        "atoi", "atol", "atoll", "atof", "strtol", "strtoul", "strtoll",
-        "strtoull", "strtod",
-        "toupper", "tolower", "isalpha", "isdigit", "isspace",
-        "wcscpy", "wcsncpy", "wcscat", "wcslen", "wcscmp", "wmemcpy", "wmemset",
-    })
+    _NON_RETAINING_CALLS = _c_facts.library().non_retaining        # specs/data/c-library.toml
 
     def _is_size_only_alloc(self, exp: Exp) -> bool:
         """Is `exp` (through casts) a call to malloc/calloc/alloca? Their result is

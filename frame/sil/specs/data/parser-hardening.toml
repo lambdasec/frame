@@ -47,13 +47,17 @@ unsafe_types = ["ObjectInputStream", "XMLDecoder"]
 [deserialization.xstream]
 type = "XStream"
 hardening = ["allowTypes", "allowTypesByWildcard", "allowTypesByRegExp", "addPermission", "setupDefaultSecurity"]
+# The methods that deserialize (what the hardening protects).
+methods = ["fromXML", "unmarshal"]
 
 # A Jackson ObjectMapper with default typing switched on deserializes attacker-named classes.
 [deserialization.jackson]
 type = "ObjectMapper"
 polymorphic = ["enableDefaultTyping", "activateDefaultTyping", "enableDefaultTypingAsProperty"]
+methods = ["readValue", "readValues", "convertValue", "treeToValue"]
 
 # A SnakeYAML Yaml built with one of these constructors creates no arbitrary objects.
 [deserialization.snakeyaml]
 type = "Yaml"
 safe_constructors = ["SafeConstructor"]
+methods = ["load", "loadAs", "loadAll"]

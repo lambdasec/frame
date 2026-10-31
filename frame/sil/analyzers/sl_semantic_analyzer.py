@@ -101,11 +101,10 @@ class SLSemanticAnalyzer:
     FREE_FUNCS = c_facts.releasers('heap')
 
     # Functions that copy unbounded data (unsafe without size check)
-    UNSAFE_COPY_FUNCS = {'strcpy', 'strcat', 'wcscpy', 'wcscat', 'gets', 'sprintf'}
+    UNSAFE_COPY_FUNCS = c_facts.library().unbounded_copies        # specs/data/c-library.toml
 
     # Functions that copy bounded data (safer)
-    BOUNDED_COPY_FUNCS = {'strncpy', 'strncat', 'wcsncpy', 'wcsncat', 'memcpy',
-                          'memmove', 'memset', 'snprintf', 'fgets'}
+    BOUNDED_COPY_FUNCS = frozenset(c_facts.library().bounded_copies)
 
     # C++ delete operators
     DELETE_OPS = {'delete', 'delete[]'}

@@ -29,7 +29,7 @@ _TYPE_TABLES = {"type_receivers": list, "factory_return_types": str, "return_typ
 
 def _load_types(path: Path = _TYPES_PATH) -> dict:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta"}
+    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta", "java_lang", "name_only", "project_packages"}
     if set(data) != expected:
         raise ValueError(f"{path.name}: needs exactly {sorted(expected)}")
     for table, kind in _TYPE_TABLES.items():
@@ -37,7 +37,12 @@ def _load_types(path: Path = _TYPES_PATH) -> dict:
                 isinstance(v, kind) and v and (kind is str or all(isinstance(x, str) and x for x in v))
                 for v in data[table].values()):
             raise ValueError(f"{path.name}: [{table}] values must be non-empty {kind.__name__}s")
-    for table, key in (("verifiers", "permissive"), ("jakarta", "migrated")):
+    receivers = data["name_only"].get("receivers") if isinstance(data["name_only"], dict) else None
+    if set(data["name_only"]) != {"receivers", "not_receivers"} or not isinstance(receivers, dict) or not all(
+            isinstance(v, list) and v and all(isinstance(g, str) and g for g in v) for v in receivers.values()):
+        raise ValueError(f"{path.name}: [name_only] needs receivers (method = [type globs]) and not_receivers")
+    for table, key in (("verifiers", "permissive"), ("jakarta", "migrated"), ("java_lang", "types"),
+                       ("project_packages", "umbrella_roots")):
         if set(data[table]) != {key} or not isinstance(data[table][key], list) or not data[table][key]:
             raise ValueError(f"{path.name}: [{table}] needs exactly {key}, a non-empty list")
     return data
@@ -50,6 +55,10 @@ JAVA_RETURN_TYPES: Dict[str, str] = dict(_TYPES["return_types"])
 JAVA_STRING_METHOD_TYPES: Dict[str, str] = dict(_TYPES["string_method_types"])
 PERMISSIVE_VERIFIERS = frozenset(_TYPES["verifiers"]["permissive"])
 JAKARTA_MIGRATED = tuple(_TYPES["jakarta"]["migrated"])
+JAVA_LANG_TYPES = frozenset(_TYPES["java_lang"]["types"])
+NAME_ONLY_RECEIVERS: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["name_only"]["receivers"].items()}
+NAME_ONLY_NOT_RECEIVERS = frozenset(_TYPES["name_only"]["not_receivers"])
+UMBRELLA_PACKAGE_ROOTS = frozenset(_TYPES["project_packages"]["umbrella_roots"])
 
 
 # Which route-registration lambdas receive which request objects is framework knowledge: the

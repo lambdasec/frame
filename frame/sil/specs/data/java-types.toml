@@ -177,3 +177,30 @@ permissive = ["ALLOW_ALL_HOSTNAME_VERIFIER", "AllowAllHostnameVerifier", "NoopHo
 # jakarta spelling of the types above.
 [jakarta]
 migrated = ["javax.servlet", "javax.faces", "javax.persistence", "javax.ws", "javax.el", "javax.inject", "javax.enterprise", "javax.validation", "javax.websocket"]
+
+# java.lang types (imported implicitly, JLS 7.3) that calls are often qualified by: a name here is
+# never one of the project's own classes, and resolves to java.lang.<name> in canonical ids.
+[java_lang]
+types = ["Boolean", "Byte", "CharSequence", "Character", "Class", "ClassLoader", "Comparable", "Double", "Enum",
+         "Error", "Exception", "Float", "Integer", "Iterable", "Long", "Math", "Number", "Object", "Process",
+         "ProcessBuilder", "Record", "Runnable", "Runtime", "Short", "String", "StringBuffer", "StringBuilder",
+         "System", "Thread", "Throwable", "Void"]
+
+# A bare method name that is a library sink only on some receiver types (`execute` runs SQL on a
+# JDBC statement or a Spring template, not on an Executor or a Command): the receiver's simple type
+# name must match one of the globs, and not be one of `not_receivers` (Vert.x SQL client types).
+[name_only]
+not_receivers = ["PreparedQuery", "RowSet", "SqlResult"]
+
+[name_only.receivers]
+execute = ["*Statement", "*Template", "*Connection", "*Operations", "*Session", "*Manager", "*Runner", "*Context",
+           "*Client"]
+evaluate = ["*XPath*", "*Xpath*"]
+compile = ["*XPath*", "*Xpath*"]
+search = ["*Context*", "*Ldap*", "*LDAP*", "*Dir*"]
+lookup = ["*Ldap*", "*LDAP*", "*Dir*"]
+
+# Two packages are one project's when they share their first two segments, or three under these
+# roots, whose second segment names an umbrella organisation (org.apache.<project>).
+[project_packages]
+umbrella_roots = ["org", "net", "io"]

@@ -187,11 +187,11 @@ _JS_GLOBALS = frozenset(
     "Buffer process console global globalThis localStorage sessionStorage navigator "
     "location XMLHttpRequest WebSocket URL RegExp Promise Reflect Proxy String Number".split())
 
-# java.lang is imported implicitly; these are the types a call is often qualified by.
-_JAVA_LANG = frozenset(
-    "Object String StringBuilder StringBuffer Runtime Process ProcessBuilder System Class "
-    "ClassLoader Thread Math Integer Long Double Float Boolean Byte Short Character Number "
-    "Throwable Exception Error Runnable Iterable Comparable".split())
+def _java_lang() -> frozenset:
+    """java.lang is imported implicitly (specs/data/java-types.toml [java_lang]); read late, since
+    the spec modules import this one."""
+    from frame.sil.specs.java_specs import JAVA_LANG_TYPES
+    return JAVA_LANG_TYPES
 
 # Types a wildcard import (`import java.sql.*;`) commonly brings in. A curated list,
 # not the JDK: a type is resolved through a wildcard only when its package is
@@ -349,7 +349,7 @@ def qualify_type(language: str, type_name: str, table: ImportTable,
         if len(owners) == 1:
             qualified = f"{owners[0]}.{type_name}"
     if qualified is None:
-        if language == "java" and type_name in _JAVA_LANG:
+        if language == "java" and type_name in _java_lang():
             qualified = "java.lang." + type_name
         elif language == "csharp" and type_name in _CSHARP_SYSTEM:
             qualified = "System." + type_name

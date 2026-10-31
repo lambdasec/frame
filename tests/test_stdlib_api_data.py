@@ -107,3 +107,80 @@ def test_guards_read_through_the_data(guard, safe):
             "@app.route('/r')\ndef r():\n    name = request.args.get('n')\n    " + guard + "\n"
             "    os.system('ls ' + name)\n")
     assert (not [c for c, _ in _found(code, "python", "a.py") if c == "CWE-78"]) == safe
+
+
+# --- c-library.toml: libc facts beside the spec tables ------------------------------------------
+
+from frame.sil import c_facts                                          # noqa: E402
+
+
+def test_the_c_library_facts_load():
+    lib = c_facts.library()
+    assert lib.element_writes["strcpy"] == [(0, None)] and lib.element_reads["memcmp"] == [(0, 2), (1, 2)]
+    assert lib.bounded_writes["read"] == (1, 2) and lib.literal_copies["strcpy"] == 1
+    assert "strtok" not in lib.non_retaining and "va_start" in lib.bare_out_params
+    assert lib.bounded_copies["snprintf"] == 1 and "gets" in lib.unbounded_copies
+
+
+@pytest.mark.parametrize("name,position", [
+    ("printf", 0), ("fprintf", 1), ("sprintf", 1), ("snprintf", 2), ("swprintf", 2), ("vswprintf", 2),
+    ("_snprintf", 2), ("_snwprintf", 2), ("syslog", 1), ("vsyslog", 1),
+])
+def test_format_argument_positions_follow_the_signatures(name, position):
+    # C11 7.21.6 / 7.29.2 (swprintf takes a count before the format), POSIX syslog, the MS CRT
+    assert c_facts.library().format_functions[name] == position
+
+
+def test_format_positions_agree_with_the_spec_table():
+    from frame.sil.specs.tables import load_table
+    c = load_table("c")
+    for name, position in c_facts.library().format_functions.items():
+        spec = c.get(name)
+        if spec is not None and spec.sink_args:
+            assert spec.sink_args == [position], name
+
+
+@pytest.mark.parametrize("edit,error", [
+    (("[[buffer]]\nname = \"read\"\n", "[[buffer]]\nname = \"read\"\nextra = 1\n"), "needs a name"),
+    (("swprintf = 2", "swprintf = -2"), "argument positions"),
+    (("bounded_write = [1, 2]", "bounded_write = [1, -1]"), "argument positions"),
+])
+def test_malformed_c_library_facts_are_errors(tmp_path, edit, error):
+    bad = tmp_path / "c-library.toml"
+    text = c_facts.LIBRARY_PATH.read_text()
+    assert edit[0] in text
+    bad.write_text(text.replace(*edit, 1))
+    with pytest.raises(ValueError, match=error):
+        c_facts.library(bad)
+
+
+def test_a_c_function_listed_twice_is_an_error(tmp_path):
+    bad = tmp_path / "c-library.toml"
+    bad.write_text(c_facts.LIBRARY_PATH.read_text() + '\n[[buffer]]\nname = "read"\nliteral_copy = 1\n')
+    with pytest.raises(ValueError, match="listed twice"):
+        c_facts.library(bad)
+
+
+# --- java-types.toml: java.lang, name-only receivers, project packages ---------------------------
+
+def test_java_type_facts():
+    from frame.sil.metadata import _java_lang
+    from frame.sil.specs import java_specs as j
+    assert {"String", "Error", "Void"} <= j.JAVA_LANG_TYPES and _java_lang() == j.JAVA_LANG_TYPES
+    assert "*Statement" in j.NAME_ONLY_RECEIVERS["execute"] and "RowSet" in j.NAME_ONLY_NOT_RECEIVERS
+    assert "org" in j.UMBRELLA_PACKAGE_ROOTS
+
+
+@pytest.mark.parametrize("receiver,sink", [("Statement", True), ("JdbcTemplate", True), ("Executor", False),
+                                           ("PreparedQuery", False)])
+def test_execute_is_sql_only_on_statement_like_receivers(receiver, sink):
+    code = ("import java.sql.*;\nimport java.util.concurrent.*;\nimport javax.servlet.http.*;\n"
+            "class A {\n  void f(HttpServletRequest req, %s s) throws Exception {\n"
+            '    s.execute("SELECT * FROM t WHERE n = \'" + req.getParameter("n") + "\'");\n  }\n}\n') % receiver
+    assert ("CWE-89" in {c for c, _ in _found(code, "java", "A.java")}) == sink
+
+
+def test_deserialization_methods_are_data():
+    from frame.sil.specs.parser_hardening import load
+    h = load()
+    assert "fromXML" in h.xstream_methods and "readValue" in h.jackson_methods and "load" in h.yaml_methods

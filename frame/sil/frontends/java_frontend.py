@@ -13,6 +13,7 @@ for parsing. It handles:
 
 import os
 import re
+from fnmatch import fnmatchcase
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
@@ -58,7 +59,8 @@ from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.specs.weak_algorithms import weak_algorithm
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
-    JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES)
+    JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES,
+    JAVA_LANG_TYPES, NAME_ONLY_RECEIVERS, NAME_ONLY_NOT_RECEIVERS, UMBRELLA_PACKAGE_ROOTS)
 
 
 class JavaFrontend:
@@ -1723,8 +1725,9 @@ class JavaFrontend:
             return "polymorphic"
         return None
 
-    _TAG_SENSITIVE = {"hardened": frozenset({"fromXML", "load", "loadAs", "loadAll", "unmarshal"}),
-                      "polymorphic": frozenset({"readValue", "readValues", "convertValue", "treeToValue"})}
+    # The methods each tag affects (parser-hardening.toml [deserialization.*] methods).
+    _TAG_SENSITIVE = {"hardened": parser_hardening().xstream_methods | parser_hardening().yaml_methods,
+                      "polymorphic": parser_hardening().jackson_methods}
 
     def _tag_sinks(self, call_node: TSNode, method_name: str, args_exp: list, loc: Location) -> List[Instr]:
         """A Jackson mapper with default typing instantiates whatever class the JSON names."""
@@ -1736,27 +1739,13 @@ class JavaFrontend:
         return []
 
     # A bare method name that is a sink only on some library types (`execute` runs SQL on a JDBC
-    # statement / template, not on a Vert.x query, an Executor or a Command).
-    _NAME_ONLY_RECEIVERS = {
-        "execute": re.compile(r"(Statement|Template|Connection|Operations|Session|Manager|Runner|Context|Client)$"),
-        "evaluate": re.compile(r"X[Pp]ath"),
-        "compile": re.compile(r"X[Pp]ath"),
-        "search": re.compile(r"(Context|Ldap|LDAP|Dir|Directory)"),
-        "lookup": re.compile(r"(Ldap|LDAP|Dir)"),
-    }
-
+    # statement / template, not on a Vert.x query, an Executor or a Command): java-types.toml [name_only].
     def _not_a_name_only_receiver(self, recv_type: str, method_name: str) -> bool:
-        pattern = self._NAME_ONLY_RECEIVERS.get(method_name.rsplit(".", 1)[-1])
-        if pattern is None:
+        globs = NAME_ONLY_RECEIVERS.get(method_name.rsplit(".", 1)[-1])
+        if globs is None:
             return False
         simple = recv_type.rsplit(".", 1)[-1]
-        return not pattern.search(simple) or simple in ("PreparedQuery", "RowSet", "SqlResult")
-
-    _JAVA_LANG_TYPES = frozenset({
-        "String", "StringBuilder", "StringBuffer", "Object", "Runtime", "Process", "ProcessBuilder",
-        "System", "Thread", "Class", "ClassLoader", "Math", "Integer", "Long", "Double", "Float",
-        "Short", "Byte", "Character", "Boolean", "Number", "Throwable", "Exception", "Iterable",
-        "Runnable", "Comparable", "CharSequence", "Enum", "Record", "Void"})
+        return not any(fnmatchcase(simple, g) for g in globs) or simple in NAME_ONLY_NOT_RECEIVERS
 
     def _is_project_type(self, type_name: str) -> bool:
         """True when `type_name` is known to be one of this project's own classes: declared in
@@ -1766,7 +1755,7 @@ class JavaFrontend:
         simple = type_name.rsplit(".", 1)[-1]
         if simple in self._local_types:
             return True
-        if simple in self._JAVA_LANG_TYPES or "." in type_name or simple in self._qualified_names:
+        if simple in JAVA_LANG_TYPES or "." in type_name or simple in self._qualified_names:
             return False
         imported = self._imports.names.get(simple)
         if imported is not None:
@@ -1786,7 +1775,7 @@ class JavaFrontend:
             if a != b:
                 break
             shared += 1
-        return shared >= (3 if own[0] in ("org", "net", "io") else 2)
+        return shared >= (3 if own[0] in UMBRELLA_PACKAGE_ROOTS else 2)
 
     def _lookup_spec_by_name(self, method_name: str) -> Optional[ProcSpec]:
         """Name-based lookup (receiver type unknown, or no typed spec)."""

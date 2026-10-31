@@ -23,9 +23,9 @@ _SHAPE = {
     "dotnet": {"parser_types": list, "reader_factory": str, "resolver_property": str, "dtd_property": str,
                "dtd_parse": list, "dtd_safe": list, "prohibit_dtd_property": str},
     "deserialization": {"unsafe_types": list, "xstream": dict, "jackson": dict, "snakeyaml": dict},
-    "deserialization.xstream": {"type": str, "hardening": list},
-    "deserialization.jackson": {"type": str, "polymorphic": list},
-    "deserialization.snakeyaml": {"type": str, "safe_constructors": list},
+    "deserialization.xstream": {"type": str, "hardening": list, "methods": list},
+    "deserialization.jackson": {"type": str, "polymorphic": list, "methods": list},
+    "deserialization.snakeyaml": {"type": str, "safe_constructors": list, "methods": list},
 }
 
 
@@ -46,6 +46,9 @@ class ParserHardening(NamedTuple):
     jackson_polymorphic: FrozenSet[str]
     yaml_type: str
     yaml_safe_constructors: FrozenSet[str]
+    xstream_methods: FrozenSet[str] = frozenset()
+    jackson_methods: FrozenSet[str] = frozenset()
+    yaml_methods: FrozenSet[str] = frozenset()
     dotnet: Dict[str, object] = {}
 
 
@@ -92,6 +95,8 @@ def load(path: Path = PATH) -> ParserHardening:
         jackson_polymorphic=frozenset(de["jackson"]["polymorphic"]),
         yaml_type=de["snakeyaml"]["type"],
         yaml_safe_constructors=frozenset(de["snakeyaml"]["safe_constructors"]),
+        xstream_methods=frozenset(de["xstream"]["methods"]), jackson_methods=frozenset(de["jackson"]["methods"]),
+        yaml_methods=frozenset(de["snakeyaml"]["methods"]),
         dotnet=dict(data["dotnet"]))
 
 

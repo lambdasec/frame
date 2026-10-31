@@ -540,14 +540,7 @@ class SLMemoryAnalyzer:
         This is the key separation logic reasoning:
         - If we can't prove dest has enough space for src, it's a potential overflow
         """
-        copy_funcs = {
-            'strcpy': (1, 2),   # (dest_arg, src_arg)
-            'strcat': (1, 2),
-            'wcscpy': (1, 2),
-            'wcscat': (1, 2),
-            'memcpy': (1, 2),
-            'memmove': (1, 2),
-        }
+        copy_funcs = {f: (1, 2) for f in sorted(c_facts.library().copies)}   # regex groups of (dest, src)
 
         for func, (dest_idx, src_idx) in copy_funcs.items():
             # Match function call and extract arguments
