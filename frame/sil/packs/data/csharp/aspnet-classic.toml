@@ -15,33 +15,37 @@ exclude_param_type = ["CancellationToken", "*Context", "*Service", "*Repository"
                       "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
 
 # NameValueCollection reads (the indexer forms `Request.QueryString["x"]` are built in).
+# On the request (a Page's or MVC 5 controller's inherited `Request`, `HttpContext.Current.Request`):
+# System.Web.HttpRequest, or HttpRequestBase in MVC.
 [[source]]
-name = ["Request.QueryString.Get", "Request.QueryString.GetValues", "Request.Form.Get", "Request.Form.GetValues",
-        "Request.Params.Get", "Request.Params.GetValues", "Request.Headers.Get", "Request.Headers.GetValues",
-        "Request.Cookies.Get", "Request.ServerVariables.Get"]
+call = ["System.Web.HttpRequest*.QueryString.Get", "System.Web.HttpRequest*.QueryString.GetValues",
+        "System.Web.HttpRequest*.Form.Get", "System.Web.HttpRequest*.Form.GetValues",
+        "System.Web.HttpRequest*.Params.Get", "System.Web.HttpRequest*.Params.GetValues",
+        "System.Web.HttpRequest*.Headers.Get", "System.Web.HttpRequest*.Headers.GetValues",
+        "System.Web.HttpRequest*.Cookies.Get", "System.Web.HttpRequest*.ServerVariables.Get"]
 kind = "user_input"
 
 [[sink]]
-name = ["Response.TransmitFile", "Response.WriteFile"]
+call = ["System.Web.HttpResponse*.TransmitFile", "System.Web.HttpResponse*.WriteFile"]
 kind = "filesystem"
 description = "sends the file at the given path"
 
 [[sink]]
-name = ["Response.AppendHeader", "Response.AddHeader"]
+call = ["System.Web.HttpResponse*.AppendHeader", "System.Web.HttpResponse*.AddHeader"]
 args = [1]
 kind = "header_injection"
 
 [[sink]]
-name = ["Response.Output.Write", "Response.Output.WriteLine"]
+call = ["System.Web.HttpResponse*.Output.Write", "System.Web.HttpResponse*.Output.WriteLine"]
 kind = "html"
 
 [[sanitizer]]
-name = ["Server.HtmlEncode", "HttpUtility.HtmlEncode", "HttpUtility.HtmlAttributeEncode", "AntiXssEncoder.HtmlEncode",
-        "Microsoft.Security.Application.Encoder.HtmlEncode", "Encoder.HtmlEncode"]
+call = ["System.Web.HttpServerUtility*.HtmlEncode", "System.Web.HttpUtility.HtmlEncode", "System.Web.HttpUtility.HtmlAttributeEncode",
+        "System.Web.Security.AntiXss.AntiXssEncoder.HtmlEncode", "Microsoft.Security.Application.Encoder.HtmlEncode"]
 kinds = ["xss"]
 
 [[sanitizer]]
-name = ["Server.UrlEncode", "HttpUtility.UrlEncode"]
+call = ["System.Web.HttpServerUtility*.UrlEncode", "System.Web.HttpUtility.UrlEncode"]
 kinds = ["xss", "redirect"]
 
 # ASP.NET MVC 5 / Web API 2 conventional controllers: the controller factory takes a class whose
@@ -96,4 +100,4 @@ description = "cookie without HttpOnly"
 
 # System.Web.Mvc UrlHelper.IsLocalUrl: the same check in MVC 5.
 [[same_origin_check]]
-name = ["IsLocalUrl"]
+call = ["System.Web.Mvc.UrlHelper.IsLocalUrl"]

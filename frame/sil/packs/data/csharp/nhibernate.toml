@@ -4,7 +4,10 @@ language = "csharp"
 description = "NHibernate: native SQL and HQL queries built from strings"
 detect = { imports = ["NHibernate"] }
 
+# On a session (`ISession`, `IStatelessSession`; `sessionFactory.OpenSession()`), by its declared
+# type (https://nhibernate.info/doc/nhibernate-reference/querysql.html).
 [[sink]]
-name = ["CreateSQLQuery", "CreateQuery", "session.CreateSQLQuery", "session.CreateQuery"]
+call = ["NHibernate.ISession.CreateSQLQuery", "NHibernate.ISession.CreateQuery",
+        "NHibernate.IStatelessSession.CreateSQLQuery", "NHibernate.IStatelessSession.CreateQuery"]
 kind = "sql"
 description = "NHibernate query from a string (SQL or HQL)"

@@ -1393,6 +1393,73 @@ def _normalise(path: Path) -> str:
     return str(Path(*out)) if out else "."
 
 
+def _project_library_base(programs: Dict[str, Any], index: "ProjectIndex", key: str, type_name: str,
+                          member: str) -> Optional[str]:
+    """C#: the library type a member of the project class `type_name` (as written in file `key`)
+    comes from: the nearest base outside the project, qualified with its declaring file's imports,
+    unless a project class on the way declares `member`."""
+    from frame.sil.metadata import program_import_table, qualify_type
+
+    def declares(cls: Tuple[str, str]) -> bool:
+        prog = programs.get(cls[0])
+        if prog is None:
+            return True
+        fields = getattr(prog, "declared_fields", None) or {}
+        if any(k.rsplit(".", 1)[-1] == cls[1] and member in v for k, v in fields.items()):
+            return True
+        return any(p.class_name and p.class_name.rsplit(".", 1)[-1] == cls[1] and p.simple_name == member
+                   for p in prog.procedures.values())
+
+    cls = index.resolve_java_type(key, type_name.split("<", 1)[0])
+    seen = set()
+    while cls is not None and cls not in seen and cls[0] in programs:
+        seen.add(cls)
+        if declares(cls):
+            return None
+        mod = index.modules.get(cls[0])
+        bases = mod.bases.get(cls[1], []) if mod is not None else []
+        if not bases:
+            return None
+        nxt = index.resolve_java_type(cls[0], bases[0])
+        if nxt is None:                                       # outside the project: the library type
+            return qualify_type("csharp", bases[0], program_import_table(programs[cls[0]]))
+        cls = nxt
+    return None
+
+
+def _link_library_bases(programs: Dict[str, Any], index: "ProjectIndex") -> None:
+    """C#: a call on a member a project class inherits from a library type declared in another
+    file (`_db.Database.SqlQuery(...)` with `WarehouseDb : DbContext` elsewhere; an unqualified
+    call inside a class whose base controller derives from `Controller`) is named after that
+    library type, unless a project class on the way declares the member."""
+    from frame.sil.instructions import Call
+
+    def library_base(key: str, type_name: str, member: str) -> Optional[str]:
+        return _project_library_base(programs, index, key, type_name, member)
+
+    for key, program in programs.items():
+        if (program.language or "") != "csharp":
+            continue
+        for proc in program.procedures.values():
+            for node in proc.nodes.values():
+                for i in node.instrs:
+                    if not isinstance(i, Call) or i.canonical is not None:
+                        continue
+                    func = str(getattr(i.func, "value", i.func))
+                    head, dot, rest = func.partition(".")
+                    if dot and rest and (proc.var_types or {}).get(head):
+                        lib = library_base(key, proc.var_types[head], rest.split(".", 1)[0])
+                        name = f"{lib}.{rest}" if lib else None
+                    elif not dot and proc.class_name and func.isidentifier():
+                        lib = library_base(key, proc.class_name.rsplit(".", 1)[-1], func)
+                        name = f"{lib}.{func}" if lib else None
+                    else:
+                        name = None
+                    if name:
+                        i.canonical = name
+                        program.origins_moved = True
+
+
 class ProjectContext:
     """The translated files of a project and the summaries they share.
 
@@ -1404,6 +1471,11 @@ class ProjectContext:
     summaries, with the translator built here (`translator_for`), so what one
     file reports never depends on which file was reported first.
     """
+
+    def library_base(self, key: str, type_name: str, member: str) -> Optional[str]:
+        """C#: the library type a member of project class `type_name` comes from (see
+        `_project_library_base`), for calls written inside expressions."""
+        return _project_library_base(self.programs, self.index, key, type_name, member)
 
     def __init__(self, index: ProjectIndex):
         from frame.sil.translator import IPAState
@@ -1452,6 +1524,7 @@ class ProjectContext:
             return {local: (b.file, b.symbol) for local, b in mod.bindings.items()
                     if b.symbol is not None and b.file}
         link_python_modules(ctx.programs, python_bindings)
+        _link_library_bases(ctx.programs, index)
         from frame.sil.packs.apply import _detected, default_packs as _default_packs, reapply_rules
         for key, program in ctx.programs.items():
             if getattr(program, "origins_moved", False):     # calls named by another file's values

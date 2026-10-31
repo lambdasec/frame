@@ -111,43 +111,50 @@ field_annotation = ["Parameter*", "SupplyParameterFrom*", "CascadingParameter*",
                     "*.Parameter*", "*.SupplyParameterFrom*", "*.CascadingParameter*"]
 
 # Request reads that are method calls (the property forms Request.Query[..], Request.Cookies[..] are built in).
+# On the request (a controller's or page's inherited `Request`, `HttpContext.Request`, a minimal
+# API's `HttpRequest` parameter); ReadFromJsonAsync is an extension method on HttpRequest.
 [[source]]
-name = ["Request.ReadFormAsync", "Request.ReadFromJsonAsync", "request.ReadFormAsync", "request.ReadFromJsonAsync",
-        "req.ReadFormAsync", "req.ReadFromJsonAsync"]
+call = ["Microsoft.AspNetCore.Http.HttpRequest.ReadFormAsync", "Microsoft.AspNetCore.Http.HttpRequest.ReadFromJsonAsync"]
 kind = "user_input"
 
 # Response helpers whose argument is a file-system path.
 [[sink]]
-name = ["PhysicalFile", "Results.PhysicalFile", "TypedResults.PhysicalFile"]
+call = ["Microsoft.AspNetCore.Mvc.Controller*.PhysicalFile", "Microsoft.AspNetCore.Mvc.RazorPages.PageModel.PhysicalFile",
+        "Microsoft.AspNetCore.Http.Results.PhysicalFile", "Microsoft.AspNetCore.Http.TypedResults.PhysicalFile"]
 kind = "filesystem"
 description = "serves the file at the given path"
 
 [[sink]]
-name = ["RedirectPermanent", "RedirectPreserveMethod", "RedirectPermanentPreserveMethod",
-        "Results.Redirect", "TypedResults.Redirect"]
+call = ["Microsoft.AspNetCore.Mvc.Controller*.RedirectPermanent", "Microsoft.AspNetCore.Mvc.Controller*.RedirectPreserveMethod",
+        "Microsoft.AspNetCore.Mvc.Controller*.RedirectPermanentPreserveMethod",
+        "Microsoft.AspNetCore.Mvc.RazorPages.PageModel.RedirectPermanent",
+        "Microsoft.AspNetCore.Http.Results.Redirect", "Microsoft.AspNetCore.Http.TypedResults.Redirect"]
 kind = "redirect"
 
 [[sink]]
-name = ["Results.Content", "TypedResults.Content"]
+call = ["Microsoft.AspNetCore.Http.Results.Content", "Microsoft.AspNetCore.Http.TypedResults.Content"]
 kind = "html"
 
+# On an injected NavigationManager (`[Inject] NavigationManager Navigation`), by declared type.
 [[sink]]
-name = ["NavigationManager.NavigateTo", "Navigation.NavigateTo", "NavigationManager.NavigateToLogin"]
+call = ["Microsoft.AspNetCore.Components.NavigationManager.NavigateTo",
+        "Microsoft.AspNetCore.Components.NavigationManager.NavigateToLogin"]
 kind = "redirect"
 description = "Blazor navigation to a caller-chosen URL"
 
 [[sink]]
-name = ["MarkupString"]
+call = ["Microsoft.AspNetCore.Components.MarkupString.<init>"]
 kind = "html"
 description = "MarkupString renders its text as raw HTML"
 
 # The framework's own output encoders and URL checks.
 [[sanitizer]]
-name = ["HtmlEncoder.Default.Encode", "Html.Encode", "WebUtility.HtmlEncode", "HttpUtility.HtmlEncode"]
+call = ["System.Text.Encodings.Web.HtmlEncoder.Default.Encode", "System.Text.Encodings.Web.HtmlEncoder.Encode",
+        "System.Net.WebUtility.HtmlEncode", "System.Web.HttpUtility.HtmlEncode"]
 kinds = ["xss"]
 
 [[sanitizer]]
-name = ["Url.IsLocalUrl", "Url.Content"]
+call = ["Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl", "Microsoft.AspNetCore.Mvc.IUrlHelper.Content"]
 kinds = ["redirect"]
 
 # CORS: AllowAnyOrigin() on a policy lets any site call the API with the user's credentials.
@@ -185,4 +192,4 @@ description = "cookie without HttpOnly"
 # IUrlHelper.IsLocalUrl: true for a path on this site ("/x"), false for "//host" and "/\\host" (the
 # redirect target is then safe on its true branch).
 [[same_origin_check]]
-name = ["IsLocalUrl"]
+call = ["Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl"]

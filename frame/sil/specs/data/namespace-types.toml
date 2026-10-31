@@ -1,0 +1,65 @@
+# Types an on-demand import (`import java.sql.*;`, C# `using System.Data;`) brings in, by package
+# or namespace (frame/sil/metadata.py `qualify_type`). A type written without qualification is
+# resolved through an on-demand import only when exactly one imported package lists it here;
+# anything else stays unresolved, never guessed. Each list follows the library's API reference.
+
+[java]
+"java.sql" = ["Statement", "PreparedStatement", "CallableStatement", "Connection", "ResultSet", "DriverManager",
+              "DatabaseMetaData", "Driver", "SQLException"]
+"java.io" = ["File", "FileInputStream", "FileOutputStream", "FileReader", "FileWriter", "BufferedReader",
+             "BufferedWriter", "InputStream", "OutputStream", "ObjectInputStream", "ObjectOutputStream",
+             "InputStreamReader", "PrintWriter", "RandomAccessFile", "Reader", "Writer"]
+"java.net" = ["URL", "URLConnection", "HttpURLConnection", "Socket", "ServerSocket", "URI", "InetAddress"]
+"java.util" = ["Random", "Scanner", "Properties", "ArrayList", "HashMap", "List", "Map", "Set"]
+"java.nio.file" = ["Files", "Paths", "Path"]
+"javax.servlet.http" = ["HttpServletRequest", "HttpServletResponse", "HttpSession", "Cookie"]
+"javax.xml.parsers" = ["DocumentBuilder", "DocumentBuilderFactory", "SAXParser", "SAXParserFactory"]
+"java.security" = ["MessageDigest", "SecureRandom", "KeyStore"]
+"javax.crypto" = ["Cipher", "Mac", "KeyGenerator"]
+
+# .NET API browser (learn.microsoft.com/dotnet/api) namespaces.
+[csharp]
+"System" = ["Console", "Convert", "Math", "Environment", "Activator", "Type", "Random", "Uri", "String"]
+"System.IO" = ["File", "Directory", "Path", "FileStream", "StreamReader", "StreamWriter", "BinaryReader",
+               "BinaryWriter", "MemoryStream", "FileInfo", "DirectoryInfo", "TextWriter"]
+"System.IO.Compression" = ["ZipFile", "ZipArchive", "ZipArchiveEntry", "ZipFileExtensions"]
+"System.Data.SqlClient" = ["SqlCommand", "SqlConnection", "SqlDataAdapter", "SqlDataReader", "SqlParameter"]
+"Microsoft.Data.SqlClient" = ["SqlCommand", "SqlConnection", "SqlDataAdapter", "SqlDataReader"]
+"System.Data" = ["DataSet", "DataTable", "IDbCommand", "IDbConnection"]
+"System.Data.Common" = ["DbConnection", "DbCommand"]
+"System.Data.OleDb" = ["OleDbCommand", "OleDbConnection"]
+"System.Data.Odbc" = ["OdbcCommand", "OdbcConnection"]
+"System.Diagnostics" = ["Process", "ProcessStartInfo"]
+"System.DirectoryServices" = ["DirectorySearcher", "DirectoryEntry"]
+"System.Net" = ["WebClient", "HttpWebRequest", "WebRequest", "WebUtility"]
+"System.Net.Http" = ["HttpClient"]
+"System.Text.Encodings.Web" = ["HtmlEncoder", "JavaScriptEncoder", "UrlEncoder"]
+"System.Text.RegularExpressions" = ["Regex"]
+"System.Collections.Specialized" = ["NameValueCollection"]
+"System.Web" = ["HttpRequest", "HttpResponse", "HttpContext", "HttpServerUtility", "HttpUtility", "HttpCookie",
+                "HttpRequestBase", "HttpResponseBase", "HttpServerUtilityBase"]
+"System.Web.UI" = ["Page"]
+"System.Web.Mvc" = ["Controller"]
+"System.Web.Security.AntiXss" = ["AntiXssEncoder"]
+"Microsoft.Security.Application" = ["Encoder"]
+"System.Xml" = ["XmlDocument", "XmlReader", "XmlTextReader", "XmlReaderSettings"]
+"System.Security.Cryptography" = ["MD5", "SHA1", "SHA256", "DES", "TripleDES", "AES", "Aes", "RSA",
+                                  "RNGCryptoServiceProvider", "MD5CryptoServiceProvider", "SHA1CryptoServiceProvider"]
+"System.Runtime.Serialization.Formatters.Binary" = ["BinaryFormatter"]
+"System.Reflection" = ["Assembly", "MethodInfo"]
+"Microsoft.AspNetCore.Mvc" = ["Controller", "ControllerBase", "IUrlHelper", "RedirectResult", "LocalRedirectResult",
+                              "ContentResult"]
+"Microsoft.AspNetCore.Mvc.RazorPages" = ["PageModel"]
+"Microsoft.AspNetCore.Cors.Infrastructure" = ["CorsPolicyBuilder"]
+"Npgsql" = ["NpgsqlConnection"]
+"MySql.Data.MySqlClient" = ["MySqlConnection"]
+"MySqlConnector" = ["MySqlConnection"]
+"Microsoft.Data.Sqlite" = ["SqliteConnection"]
+"System.Data.SQLite" = ["SQLiteConnection"]
+"Oracle.ManagedDataAccess.Client" = ["OracleConnection"]
+"Microsoft.AspNetCore.Http" = ["HttpRequest", "HttpResponse", "HttpContext", "Results", "TypedResults"]
+"Microsoft.AspNetCore.Components" = ["NavigationManager", "MarkupString", "ComponentBase"]
+"Microsoft.Azure.Functions.Worker.Http" = ["HttpRequestData"]
+"Microsoft.EntityFrameworkCore" = ["DbContext"]
+"System.Data.Entity" = ["DbContext", "Database"]
+"NHibernate" = ["ISession", "IStatelessSession", "ISessionFactory"]

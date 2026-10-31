@@ -43,7 +43,8 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
-    Annotation, ClassInfo, ImportTable, canonical_call, parse_annotation,
+    Annotation, ClassInfo, ImportTable, _inherited_member, canonical_call, library_base, parse_annotation,
+    qualify_type,
 )
 from frame.sil.packs import finish_program
 from frame.sil.specs.csharp_specs import CSHARP_SPECS
@@ -115,6 +116,7 @@ class CSharpFrontend:
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="csharp")
+        self._program = program                 # the classes seen so far: inherited members' ids
         program.source_files.append(filename)
         program.syntax_error_line = first_syntax_error_line(tree.root_node)
 
@@ -250,18 +252,33 @@ class CSharpFrontend:
                             continue
                         elif func.isidentifier() and own_class and self._class_has_bases.get(proc.class_name):
                             instr.callee_class = own_class        # `Helper(x)`: may be inherited
+                            instr.canonical = _inherited_member(program, proc, func, self._imports, self._local_types)
                             continue
                     elif "." not in rest:
                         receiver = types.get(head) or (head if head[:1].isupper() else None)
+                    elif types.get(head):                         # `_db.Database.SqlQueryRaw(sql)`
+                        lib = self._library_base(program, types[head], rest.split(".", 1)[0])
+                        if lib:
+                            instr.canonical = f"{lib}.{rest}"
+                            continue
+                    elif head[:1].isupper() and qualify_type("csharp", head, self._imports, self._local_types):
+                        q = qualify_type("csharp", head, self._imports, self._local_types)
+                        instr.canonical = f"{q}.{rest}"              # `HtmlEncoder.Default.Encode(x)`
+                        continue
                     elif head in ("System", "Microsoft"):
                         receiver = func.rsplit(".", 1)[0]
                     if receiver is None:
+                        instr.canonical = _inherited_member(program, proc, func, self._imports, self._local_types)
                         continue
                     method = func.rsplit(".", 1)[-1]
                     instr.callee_class = receiver
                     instr.canonical = canonical_call(
                         "csharp", f"{receiver}.{method}", self._imports,
-                        receiver_type=receiver, local_types=self._local_types)
+                        receiver_type=receiver, local_types=self._local_types) or \
+                        _inherited_member(program, proc, func, self._imports, self._local_types)
+
+    def _library_base(self, program: Program, type_name: str, member: str) -> Optional[str]:
+        return library_base(program, type_name, member, self._imports, self._local_types)
 
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C# compilation unit"""
@@ -327,6 +344,10 @@ class CSharpFrontend:
             for member in body.children:
                 if member.type == "field_declaration":
                     fields.update(self._declared_types(member))
+                elif member.type == "property_declaration":    # `[Inject] NavigationManager Navigation { get; set; }`
+                    pn, pt = member.child_by_field_name("name"), member.child_by_field_name("type")
+                    if pn is not None and pt is not None:
+                        fields[self._get_text(pn)] = self._get_text(pt).split("<")[0].rstrip("?").strip()
             self._class_fields_of[full_class_name] = fields
             program.declared_fields[full_class_name] = set(fields)
             self._declared_methods[full_class_name] = {
@@ -2150,6 +2171,14 @@ class CSharpFrontend:
                 if (name is not None and self._get_text(name) in _passthrough().csharp_methods
                         and self._source_in(recv) is not None):
                     return self._translate_expression(recv)   # Request.Query["a"].ToString() reads like Request.Query["a"]
+            if fn is not None and fn.type == "member_access_expression":
+                recv = fn.child_by_field_name("expression")
+                name = fn.child_by_field_name("name")
+                if recv is not None and name is not None and recv.type == "invocation_expression":
+                    # `_db.Database.SqlQueryRaw(q).ToList()` in an expression: the inner call stays a call
+                    # (its own spec, its own arguments); the method is called on what it returns
+                    return ExpCall(ExpFieldAccess(self._translate_expression(recv), self._get_text(name).split("<", 1)[0]),
+                                   [self._translate_expression(a) for a in self._get_method_args(node)])
             local = self._local_url_exp(node)
             if local is not None:                 # IsLocalUrl(x)  ==  x.startsWith("/") && !x.startsWith("//")
                 _, slash, double = local
@@ -2216,6 +2245,29 @@ class CSharpFrontend:
     # Helpers
     # =========================================================================
 
+    def _call_ids(self, func: str) -> List[str]:
+        """While translating: the ids a call written `func` has (the receiver's declared type, or
+        the library base a member is inherited from), with the typed names they reach
+        (`Url.IsLocalUrl` in a Controller: `Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl`)."""
+        from frame.sil.value_origins import typed_names
+        proc, program = self._current_proc, getattr(self, "_program", None)
+        if proc is None or program is None or "." not in func:
+            return []
+        head, rest = func.split(".", 1)
+        cls = proc.class_name or self._current_class or ""      # set on the procedure after its body
+        types = {**self._class_fields_of.get(cls, {}), **self._proc_types.get(id(proc), {})}
+        found = None
+        if types.get(head):
+            q = qualify_type("csharp", types[head], self._imports, self._local_types)
+            found = f"{q}.{rest}" if q else None
+        if found is None:
+            saved, proc.class_name = proc.class_name, cls
+            try:
+                found = _inherited_member(program, proc, func, self._imports, self._local_types)
+            finally:
+                proc.class_name = saved
+        return [found] + typed_names(found, "csharp") if found else []
+
     def _local_url_exp(self, node: Optional[TSNode]):
         """For a packs' `[[same_origin_check]]` call (`Url.IsLocalUrl(x)`, parenthesised or not) on a
         plain variable, the expressions `x.startsWith("/")` and `x.startsWith("//")` that say the same."""
@@ -2225,7 +2277,10 @@ class CSharpFrontend:
             return None
         name = self._get_method_name(node)
         packs = self.packs if self.packs is not None else default_packs()
-        if not any(name.split(".")[-1] in c.name for p in packs.for_language("csharp") for c in p.same_origin_checks):
+        patterns = [g for p in packs.for_language("csharp") for c in p.same_origin_checks for g in c.call]
+        ids = self._call_ids(name)
+        from fnmatch import fnmatchcase
+        if not patterns or not any(fnmatchcase(i, g) for i in ids for g in patterns):
             return None
         args = self._get_method_args(node)
         if len(args) != 1 or args[0].type != "identifier":

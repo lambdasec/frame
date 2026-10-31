@@ -5,10 +5,14 @@ description = "Dapper: Query / Execute extension methods on an IDbConnection tak
 detect = { imports = ["Dapper"] }
 
 # The SQL text is argument 0; the parameters object (`new { id }`) is the safe way to pass values.
+# Dapper's methods extend IDbConnection, so they are called on a connection: the interface, the
+# DbConnection base, or a provider's connection class (each provider's type, by declared type).
 [[sink]]
-name = ["Query", "QueryAsync", "QueryFirst", "QueryFirstAsync", "QueryFirstOrDefault", "QueryFirstOrDefaultAsync",
-        "QuerySingle", "QuerySingleAsync", "QuerySingleOrDefault", "QuerySingleOrDefaultAsync",
-        "QueryMultiple", "QueryMultipleAsync", "ExecuteScalar", "ExecuteScalarAsync"]
+call = ["**Connection.Query", "**Connection.QueryAsync", "**Connection.QueryFirst", "**Connection.QueryFirstAsync",
+        "**Connection.QueryFirstOrDefault", "**Connection.QueryFirstOrDefaultAsync", "**Connection.QuerySingle",
+        "**Connection.QuerySingleAsync", "**Connection.QuerySingleOrDefault", "**Connection.QuerySingleOrDefaultAsync",
+        "**Connection.QueryMultiple", "**Connection.QueryMultipleAsync", "**Connection.ExecuteScalar",
+        "**Connection.ExecuteScalarAsync", "Dapper.SqlMapper.Query", "Dapper.SqlMapper.QueryAsync"]
 kind = "sql"
 description = "Dapper query: the first argument is SQL text"
 

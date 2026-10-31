@@ -2,52 +2,57 @@
 name = "dotnet-system"
 language = "csharp"
 description = ".NET base class library APIs the built-in specs do not cover: async file IO, archives, LDAP, escaping"
-# No `detect`: every rule names a specific BCL member, so it applies wherever that call is written.
+# No `detect`: every rule names a specific BCL member by its id, so it applies wherever it is called.
 
 # System.IO.File / Directory async and stream-returning members (the sync ReadAll*/WriteAll* are built in).
 [[sink]]
-name = ["File.ReadAllBytesAsync", "File.ReadAllLinesAsync", "File.WriteAllBytesAsync", "File.WriteAllLinesAsync",
-        "File.AppendAllTextAsync", "File.AppendAllLinesAsync", "File.AppendAllLines", "File.ReadLines",
-        "File.OpenRead", "File.OpenWrite", "File.OpenText", "File.AppendText", "File.CreateText",
-        "File.SetAttributes", "Directory.EnumerateFiles", "Directory.EnumerateDirectories", "Directory.Exists",
-        "Directory.Move", "FileInfo", "DirectoryInfo"]
+call = ["System.IO.File.ReadAllBytesAsync", "System.IO.File.ReadAllLinesAsync", "System.IO.File.WriteAllBytesAsync",
+        "System.IO.File.WriteAllLinesAsync", "System.IO.File.AppendAllTextAsync", "System.IO.File.AppendAllLinesAsync",
+        "System.IO.File.AppendAllLines", "System.IO.File.ReadLines", "System.IO.File.OpenRead", "System.IO.File.OpenWrite",
+        "System.IO.File.OpenText", "System.IO.File.AppendText", "System.IO.File.CreateText", "System.IO.File.SetAttributes",
+        "System.IO.Directory.EnumerateFiles", "System.IO.Directory.EnumerateDirectories", "System.IO.Directory.Exists",
+        "System.IO.Directory.Move", "System.IO.FileInfo.<init>", "System.IO.DirectoryInfo.<init>"]
 kind = "filesystem"
 description = "System.IO member that takes a path"
 
 # Zip Slip: the destination of an extraction is built from the archive's own entry names.
 [[sink]]
-name = ["ZipFile.ExtractToDirectory", "ZipFileExtensions.ExtractToDirectory"]
+call = ["System.IO.Compression.ZipFile.ExtractToDirectory", "System.IO.Compression.ZipFileExtensions.ExtractToDirectory",
+        "System.IO.Compression.ZipArchive.ExtractToDirectory"]
 args = [0, 1]
 kind = "filesystem"
 description = "extracts an archive: a hostile archive chooses the paths"
 
 [[sink]]
-name = ["ExtractToFile"]
+call = ["System.IO.Compression.ZipArchiveEntry.ExtractToFile",
+        "System.IO.Compression.ZipFileExtensions.ExtractToFile"]
 kind = "filesystem"
 description = "ZipArchiveEntry.ExtractToFile writes to the given path"
 
 # DirectorySearcher(filter) and DirectorySearcher(entry, filter, ...) both take the LDAP filter or search root.
 [[sink]]
-name = ["DirectorySearcher"]
+call = ["System.DirectoryServices.DirectorySearcher.<init>"]
 args = [0, 1]
 kind = "ldap"
 
 [[sink]]
-name = ["DirectoryEntry"]
+call = ["System.DirectoryServices.DirectoryEntry.<init>"]
 args = [0]
 kind = "ldap"
 description = "DirectoryEntry(path): the LDAP path is part of the query"
 
 # Escaping that keeps a value inside one URL / pattern / filter component.
 [[sanitizer]]
-name = ["Uri.EscapeDataString", "WebUtility.UrlEncode", "HttpUtility.UrlEncode"]
+call = ["System.Uri.EscapeDataString", "System.Net.WebUtility.UrlEncode", "System.Web.HttpUtility.UrlEncode"]
 kinds = ["ssrf"]
 
 [[sanitizer]]
-name = ["Regex.Escape"]
+call = ["System.Text.RegularExpressions.Regex.Escape"]
 kinds = ["regex"]
 
 [[sanitizer]]
-name = ["AntiXssEncoder.LdapFilterEncode", "AntiXssEncoder.LdapDistinguishedNameEncode", "Encoder.LdapFilterEncode",
-        "Encoder.LdapDistinguishedNameEncode"]
+call = ["System.Web.Security.AntiXss.AntiXssEncoder.LdapFilterEncode",
+        "System.Web.Security.AntiXss.AntiXssEncoder.LdapDistinguishedNameEncode",
+        "Microsoft.Security.Application.Encoder.LdapFilterEncode",
+        "Microsoft.Security.Application.Encoder.LdapDistinguishedNameEncode"]
 kinds = ["ldap"]

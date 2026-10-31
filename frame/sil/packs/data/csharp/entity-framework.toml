@@ -6,7 +6,9 @@ detect = { imports = ["Microsoft.EntityFrameworkCore"] }
 
 # FromSqlRaw / ExecuteSqlRaw are built in. SqlQueryRaw (EF Core 7+) runs the text as given;
 # SqlQuery / FromSqlInterpolated / ExecuteSqlInterpolated take a FormattableString and parameterise.
+# On a context's Database (a DatabaseFacade; the project's DbContext subclass inherits `Database`).
 [[sink]]
-name = ["SqlQueryRaw", "Database.SqlQueryRaw"]
+call = ["Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade.SqlQueryRaw",
+        "Microsoft.EntityFrameworkCore.DbContext.Database.SqlQueryRaw"]
 kind = "sql"
 description = "EF Core raw SQL query: the first argument is SQL text"

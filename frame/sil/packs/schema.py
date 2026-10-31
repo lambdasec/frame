@@ -285,7 +285,7 @@ class SameOriginCheck:
     `//host` or `/\\host`): ASP.NET's `Url.IsLocalUrl(x)` (`[[same_origin_check]]`). Read as
     `x.startsWith("/") && !x.startsWith("//")`, which the redirect guard already understands."""
     id: str
-    name: List[str]
+    call: List[str]                      # callee ids (globs): `Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl`
     description: str = ""
 
 
@@ -1001,13 +1001,13 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
 
     for i, t in enumerate(data.get("same_origin_check", [])):
         where = f"[[same_origin_check]] #{i + 1}"
-        _check_keys(origin, where, t, {"id", "name", "description"})
+        _check_keys(origin, where, t, {"id", "call", "description"})
         if language != "csharp":
             raise _fail(origin, where, "same-origin checks are for C# packs")
-        if not t.get("name"):
-            raise _fail(origin, where, "needs name (the method's name)")
+        if not t.get("call"):
+            raise _fail(origin, where, "needs call (the method's callee ids)")
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
-                                                       name=_strings(origin, f"{where}.name", t["name"]),
+                                                       call=_strings(origin, f"{where}.call", t["call"]),
                                                        description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("returns", [])):

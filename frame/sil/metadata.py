@@ -24,7 +24,14 @@ pack asks, so recording it must not change a single finding.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional
+
+try:                                        # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                 # pragma: no cover - 3.10
+    import tomli as tomllib                 # type: ignore[no-redef]
 
 
 @dataclass
@@ -193,45 +200,23 @@ def _java_lang() -> frozenset:
     from frame.sil.specs.java_specs import JAVA_LANG_TYPES
     return JAVA_LANG_TYPES
 
-# Types a wildcard import (`import java.sql.*;`) commonly brings in. A curated list,
-# not the JDK: a type is resolved through a wildcard only when its package is
-# imported on demand AND the type is listed here; anything else stays unresolved.
-_JAVA_WILDCARD_TYPES = {
-    "java.sql": "Statement PreparedStatement CallableStatement Connection ResultSet DriverManager "
-                "DatabaseMetaData Driver SQLException".split(),
-    "java.io": "File FileInputStream FileOutputStream FileReader FileWriter BufferedReader "
-               "BufferedWriter InputStream OutputStream ObjectInputStream ObjectOutputStream "
-               "InputStreamReader PrintWriter RandomAccessFile Reader Writer".split(),
-    "java.net": "URL URLConnection HttpURLConnection Socket ServerSocket URI InetAddress".split(),
-    "java.util": "Random Scanner Properties ArrayList HashMap List Map Set".split(),
-    "java.nio.file": "Files Paths Path".split(),
-    "javax.servlet.http": "HttpServletRequest HttpServletResponse HttpSession Cookie".split(),
-    "javax.xml.parsers": "DocumentBuilder DocumentBuilderFactory SAXParser SAXParserFactory".split(),
-    "java.security": "MessageDigest SecureRandom KeyStore".split(),
-    "javax.crypto": "Cipher Mac KeyGenerator".split(),
-}
+# Types an on-demand import brings in, per package / namespace: data
+# (specs/data/namespace-types.toml), so a library's types are not engine code.
+_NAMESPACE_TYPES_PATH = Path(__file__).parent / "specs" / "data" / "namespace-types.toml"
 
-_CSHARP_NAMESPACE_TYPES = {
-    "System": "Console Convert Math Environment Activator Type Random Uri String".split(),
-    "System.IO": "File Directory Path FileStream StreamReader StreamWriter BinaryReader "
-                 "BinaryWriter MemoryStream FileInfo DirectoryInfo".split(),
-    "System.Data.SqlClient": "SqlCommand SqlConnection SqlDataAdapter SqlDataReader SqlParameter".split(),
-    "Microsoft.Data.SqlClient": "SqlCommand SqlConnection SqlDataAdapter SqlDataReader".split(),
-    "System.Data": "DataSet DataTable IDbCommand IDbConnection".split(),
-    "System.Data.OleDb": "OleDbCommand OleDbConnection".split(),
-    "System.Data.Odbc": "OdbcCommand OdbcConnection".split(),
-    "System.Diagnostics": "Process ProcessStartInfo".split(),
-    "System.Net": "WebClient HttpWebRequest WebRequest".split(),
-    "System.Net.Http": "HttpClient".split(),
-    "System.Web": "HttpRequest HttpResponse HttpContext HttpServerUtility".split(),
-    "System.Xml": "XmlDocument XmlReader XmlTextReader XmlReaderSettings".split(),
-    "System.Security.Cryptography": "MD5 SHA1 SHA256 DES TripleDES AES Aes RSA RNGCryptoServiceProvider "
-                                    "MD5CryptoServiceProvider SHA1CryptoServiceProvider".split(),
-    "System.Runtime.Serialization.Formatters.Binary": "BinaryFormatter".split(),
-    "System.Reflection": "Assembly MethodInfo".split(),
-}
 
-_WILDCARD_TYPES = {"java": _JAVA_WILDCARD_TYPES, "csharp": _CSHARP_NAMESPACE_TYPES}
+@lru_cache(maxsize=None)
+def _wildcard_types() -> Dict[str, Dict[str, FrozenSet[str]]]:
+    data = tomllib.loads(_NAMESPACE_TYPES_PATH.read_text(encoding="utf-8"))
+    if set(data) - {"java", "csharp"}:
+        raise ValueError("namespace-types.toml: only [java] and [csharp]")
+    out: Dict[str, Dict[str, FrozenSet[str]]] = {}
+    for lang, table in data.items():
+        if not all(isinstance(v, list) and v and all(isinstance(t, str) and t.isidentifier() for t in v)
+                   for v in table.values()):
+            raise ValueError(f"namespace-types.toml: [{lang}] maps a package to a list of type names")
+        out[lang] = {pkg: frozenset(v) for pkg, v in table.items()}
+    return out
 
 _CSHARP_SYSTEM = frozenset("Console Convert Math Environment Activator GC Buffer String Object".split())
 
@@ -344,7 +329,7 @@ def qualify_type(language: str, type_name: str, table: ImportTable,
         if head[:1].islower() or (language == "csharp" and head in ("System", "Microsoft")):
             qualified = type_name
     if qualified is None:
-        wild = _WILDCARD_TYPES.get(language, {})
+        wild = _wildcard_types().get(language, {})
         owners = [w for w in table.wildcards if type_name in wild.get(w, ())]
         if len(owners) == 1:
             qualified = f"{owners[0]}.{type_name}"
@@ -397,3 +382,70 @@ def annotate_program_calls(program, table: ImportTable,
                     program.language, func, table,
                     receiver_type=instr.receiver_type, callee_class=instr.callee_class,
                     local_names=local_names, local_types=local_types)
+                if instr.canonical is None and program.language == "csharp":
+                    instr.canonical = _inherited_member(program, proc, func, table, local_types or {})
+
+
+def library_base(program, type_name: str, member: str, table: ImportTable,
+                 local_types: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """C#: the library type a member of a class of this file comes from: the nearest base that is
+    not a class of this file, when no class on the way declares `member` (`AppDb : DbContext`,
+    `.Database`). None for a type that is not this file's or declares the member."""
+    infos = getattr(program, "class_info", None) or {}
+    current, seen = type_name.split("<", 1)[0].rsplit(".", 1)[-1], set()
+    fields = getattr(program, "declared_fields", None) or {}
+    while current in infos and current not in seen:
+        seen.add(current)
+        owned = {n for k, v in fields.items() if k.rsplit(".", 1)[-1] == current for n in v}
+        owned |= {p.simple_name for p in program.procedures.values()
+                  if p.class_name and p.class_name.rsplit(".", 1)[-1] == current}
+        if member in owned or not infos[current].bases:
+            return None
+        base = infos[current].bases[0].split("<", 1)[0]
+        if base not in infos:
+            return qualify_type("csharp", base, table, local_types or {})
+        current = base
+    return None
+
+
+def program_import_table(program) -> ImportTable:
+    """The import table a translated program recorded (`Program.imports`, `import_wildcards`)."""
+    table = ImportTable()
+    table.names = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    table.wildcards = list(getattr(program, "import_wildcards", None) or [])
+    return table
+
+
+def _inherited_member(program, proc, func: str, table: ImportTable, local_types: Dict[str, str]) -> Optional[str]:
+    """C#: a call on a member the class inherits from a library base class (`Request.ReadFormAsync()`,
+    `PhysicalFile(path, type)` in a `Controller`) is that base's: `<base>.<member>...`. Only when
+    the head is nothing the method or class declares (a local, parameter, field, method or type)."""
+    cls = proc.class_name or ""
+    if not cls or not func or func.startswith(("new ", "<", "this.", "base.")):
+        return None
+    head = func.split(".", 1)[0]
+    if not head[:1].isupper():
+        return None                                     # members are written capitalised; locals are not
+    declared = set(getattr(proc, "var_types", {}) or {}) | {str(p) for p, _ in proc.params}
+    declared |= set((getattr(program, "declared_fields", None) or {}).get(cls, ()))
+    if head in declared or qualify_type("csharp", head, table, local_types) is not None:
+        return None
+    if "." not in func and any(p.class_name == cls and p.simple_name == func for p in program.procedures.values()):
+        return None
+    infos = getattr(program, "class_info", None) or {}
+    current, seen = cls.rsplit(".", 1)[-1], set()
+    while current in infos and current not in seen:
+        seen.add(current)
+        bases = list(infos[current].bases)
+        if not bases:
+            return None
+        base = bases[0].split("<", 1)[0]
+        if base in infos:                               # a class of this file: its own members first
+            if any(p.class_name and p.class_name.rsplit(".", 1)[-1] == base and p.simple_name == head
+                   for p in program.procedures.values()):
+                return None
+            current = base
+            continue
+        qualified = qualify_type("csharp", base, table, local_types)
+        return f"{qualified}.{func}" if qualified else None
+    return None

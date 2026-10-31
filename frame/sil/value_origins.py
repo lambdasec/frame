@@ -787,8 +787,10 @@ def typed_names(canonical: str, language: str, extra: Optional[Dict[str, str]] =
                 typ, i = cls, len(cls.split("."))
                 continue
             break
-    if typ is None or i != len(parts) - 1:
+    if typ is None:
         return []
+    if i != len(parts) - 1:                             # members after the type: `HttpRequest.QueryString.Get`
+        return [".".join([typ] + parts[i:])]
     method = parts[-1]
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 

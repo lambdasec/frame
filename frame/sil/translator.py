@@ -2670,6 +2670,26 @@ class SILTranslator:
         from .value_origins import origin_in_scope, typed_names
         head, rest = name.split(".", 1)
         origin = origin_in_scope(self.program, self._cur_proc.name, head)
+        lang = (self.program.language or "").lower()
+        if not origin and ((lang == "csharp" and head in ("System", "Microsoft"))
+                           or (lang == "java" and head[:1].islower() and "." in rest)):
+            from .packs.apply import pack_spec_for_id          # written fully qualified: its own id
+            spec = pack_spec_for_id(self.program, name)
+            if spec is not None:
+                return spec
+        declared = (getattr(self._cur_proc, "var_types", None) or {}).get(head) if lang in ("java", "csharp") else None
+        if not origin and lang in ("java", "csharp") and (declared or head[:1].isupper()):
+            from .metadata import library_base, program_import_table, qualify_type
+            table = program_import_table(self.program)          # `Regex.Escape(p)`, `_db.Database.X()` in
+            if declared:                                         # an expression: by the declared type
+                origin = qualify_type(lang, declared, table)
+                if lang == "csharp" and declared.split("<", 1)[0].rsplit(".", 1)[-1] in (self.program.class_info or {}):
+                    origin = library_base(self.program, declared, rest.split(".", 1)[0], table)
+                elif lang == "csharp" and origin is None and getattr(self, "_project", None) is not None \
+                        and hasattr(self._project, "library_base"):
+                    origin = self._project.library_base(self._file_key, declared, rest.split(".", 1)[0])
+            else:
+                origin = qualify_type(lang, head, table)
         if not origin and "." in rest:                  # a field of an imported module's export
             field, rest2 = rest.split(".", 1)
             origin = origin_in_scope(self.program, self._cur_proc.name, f"{head}.{field}", imports=False)
@@ -9845,9 +9865,14 @@ class SILTranslator:
                 if tainted_args:
                     result.append((func_name, spec.is_sink, tainted_args))
 
-            # Recurse into arguments
+            # Recurse into arguments, and into a call the method is called on (`q(x).ToList()`)
             for arg in exp.args:
                 result.extend(self._get_embedded_sink_calls(arg, state))
+            base = exp.func
+            while isinstance(base, ExpFieldAccess):
+                base = base.base
+            if isinstance(base, ExpCall):
+                result.extend(self._get_embedded_sink_calls(base, state))
 
         elif isinstance(exp, ExpBinOp):
             result.extend(self._get_embedded_sink_calls(exp.left, state))

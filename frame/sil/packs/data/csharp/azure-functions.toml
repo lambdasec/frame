@@ -17,13 +17,17 @@ exclude_param_type = ["ILogger", "ILogger<*>", "FunctionContext", "ExecutionCont
                       "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan"]
 
 # Isolated worker: the body and the query string are read through helpers.
+# On the trigger's request: the isolated worker's HttpRequestData (and its extensions), or the
+# in-process model's HttpRequest (the WebJobs HTTP extension's ReadAsStringAsync).
 [[source]]
-name = ["req.ReadAsStringAsync", "req.ReadAsString", "req.ReadFromJsonAsync", "request.ReadAsStringAsync",
-        "request.ReadAsString", "request.ReadFromJsonAsync", "HttpUtility.ParseQueryString"]
+call = ["Microsoft.Azure.Functions.Worker.Http.HttpRequestData.ReadAsStringAsync",
+        "Microsoft.Azure.Functions.Worker.Http.HttpRequestData.ReadAsString",
+        "Microsoft.Azure.Functions.Worker.Http.HttpRequestData.ReadFromJsonAsync",
+        "Microsoft.AspNetCore.Http.HttpRequest.ReadAsStringAsync"]
 kind = "user_input"
 
 # Results that echo into the response.
 [[sink]]
-name = ["RedirectResult", "RedirectPermanentResult"]
+call = ["Microsoft.AspNetCore.Mvc.RedirectResult.<init>"]
 kind = "redirect"
 description = "redirects the client to the given URL"

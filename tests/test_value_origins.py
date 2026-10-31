@@ -25,7 +25,7 @@ def _cwes(code, lang, name):
     ('sqlite3.connect("x").execute', "python", ["sqlite3.Connection.execute", "connection.execute", "conn.execute"]),
     ("mysql.createPool.query", "typescript", ["mysql.Pool.query"]),
     ("pg.Pool.query", "javascript", []),                    # already the class's own id
-    ("sqlite3.connect.foo.execute", "python", []),            # an unknown call in between: no type
+    ("sqlite3.connect.foo.execute", "python", ["sqlite3.Connection.foo.execute"]),   # a member of the type
     ("flask.request.args.get", "python", []),
 ])
 def test_typed_names(canonical, lang, expected):
