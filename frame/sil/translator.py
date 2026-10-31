@@ -442,91 +442,6 @@ class SymbolicState:
         """Get constant value if known"""
         return self.constants.get(var)
 
-    def try_eval_expr(self, expr_str: str) -> Optional[any]:
-        """Try to evaluate an expression using known constants"""
-        import re
-
-        expr_stripped = expr_str.strip()
-
-        # Handle prefix notation: (== guess "A") or (== guess 'A')
-        prefix_eq_match = re.match(
-            r'^\(==\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+["\']([^"\']*)["\'](?:.*)\)$',
-            expr_stripped
-        )
-        if prefix_eq_match:
-            var_name = prefix_eq_match.group(1)
-            pattern_val = prefix_eq_match.group(2)
-            var_val = self.constants.get(var_name)
-            if var_val is not None and isinstance(var_val, str):
-                return var_val == pattern_val
-
-        # Handle string containment: 'substring' in var_name
-        # Patterns: "'should' in bar", '"should" in bar', '("should" in bar)'
-        contain_match = re.match(
-            r'^\(?["\']([^"\']*)["\'](?:\s+)?in(?:\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\)?$',
-            expr_stripped
-        )
-        if contain_match:
-            substring = contain_match.group(1)
-            var_name = contain_match.group(2)
-            var_val = self.constants.get(var_name)
-            if var_val is not None and isinstance(var_val, str):
-                return substring in var_val
-
-        # Handle prefix notation containment: (in "should" bar)
-        prefix_contain_match = re.match(
-            r'^\(in\s+["\']([^"\']*)["\'](?:\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\)$',
-            expr_stripped
-        )
-        if prefix_contain_match:
-            substring = prefix_contain_match.group(1)
-            var_name = prefix_contain_match.group(2)
-            var_val = self.constants.get(var_name)
-            if var_val is not None and isinstance(var_val, str):
-                return substring in var_val
-
-        # Handle infix notation: guess == 'B' or guess == "B"
-        string_eq_match = re.match(
-            r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*==\s*["\']([^"\']*)["\']$',
-            expr_stripped
-        )
-        if string_eq_match:
-            var_name = string_eq_match.group(1)
-            pattern_val = string_eq_match.group(2)
-            var_val = self.constants.get(var_name)
-            if var_val is not None and isinstance(var_val, str):
-                return var_val == pattern_val
-
-        # Substitute known constants for arithmetic
-        result_expr = expr_str
-        for var, val in self.constants.items():
-            # Replace variable with its value
-            if isinstance(val, str):
-                # Quote strings for eval
-                result_expr = re.sub(rf'\b{re.escape(var)}\b', f'"{val}"', result_expr)
-            else:
-                result_expr = re.sub(rf'\b{re.escape(var)}\b', str(val), result_expr)
-
-        # Try to evaluate if it looks safe (only numbers, operators, comparisons)
-        if re.match(r'^[\d\s\+\-\*/%<>=!()]+$', result_expr):
-            try:
-                return eval(result_expr)
-            except:
-                pass
-
-        # Also try evaluating string comparisons
-        if re.match(r'^["\'][^"\']*["\']\s*==\s*["\'][^"\']*["\']$', result_expr.strip()):
-            try:
-                return eval(result_expr)
-            except:
-                pass
-
-        return None
-
-    # =========================================================================
-    # List Element Tracking (Separation Logic Approach)
-    # =========================================================================
-
     def init_list(self, list_var: str) -> None:
         """Initialize an empty list: lst = []"""
         self.list_elements[list_var] = []
@@ -2392,9 +2307,34 @@ class SILTranslator:
             return cls._c_equality_fact(exp.left, exp.right, truth == (exp.op == "=="), strings)
         if isinstance(exp, ExpCall) and not truth and cls._call_base_name(exp) in cls._C_STRCMP | {"strncmp"}:
             return cls._c_equality_fact(exp, ExpConst(0), True, strings)      # `!strcmp(x, "a")`
+        prefix = cls._literal_prefix_test(exp)
+        if prefix is not None:                          # `x.startsWith("/")`, either way
+            return {prefix[0]: frozenset({(cls._STARTS if truth else cls._NOT_STARTS) + prefix[1]})}
         if not truth or not isinstance(exp, ExpCall):
             return {}
         return cls._call_guard(exp, regexes, language)
+
+    # What a prefix test with a literal proves, as markers the branch guard combines: `x` starts
+    # (or does not start) with the literal. A same-origin path starts with "/" and not with "//"
+    # (RFC 3986 4.2: "//" begins a network-path reference, another host).
+    _STARTS, _NOT_STARTS = "@starts:", "@not-starts:"
+
+    @classmethod
+    def _literal_prefix_test(cls, exp):
+        """(variable, literal) for `x.<prefix method>("lit")`, else None."""
+        if not isinstance(exp, ExpCall) or len(exp.args) != 1 or not isinstance(exp.args[0], ExpConst) \
+                or not isinstance(exp.args[0].value, str):
+            return None
+        m = re.fullmatch(r"(\w+)\.(\w+)", cls._flatten(exp.func) or "")
+        if not m or m.group(2) not in cls._GUARDS.prefix_methods:
+            return None
+        text = exp.args[0].value
+        q = re.fullmatch(r"(['\"`])(.*)\1", text, re.S)
+        return m.group(1), (q.group(2) if q else text)
+
+    @classmethod
+    def _same_origin_path(cls, kinds) -> bool:
+        return cls._STARTS + "/" in kinds and cls._NOT_STARTS + "//" in kinds
 
     # C string comparisons: zero means equal.
     _C_STRCMP = _c_facts.library().string_compares                 # specs/data/c-library.toml
@@ -5071,9 +5011,13 @@ class SILTranslator:
         branches), we only skip if BOTH branches would be unreachable. Otherwise, we
         let the reachable branch proceed and just skip adding unreachable successor indices.
         """
-        # Try constant folding: evaluate condition with known constants
-        cond_str = str(instr.condition)
-        eval_result = state.try_eval_expr(cond_str)
+        # Constant folding over the expression tree and the path's known constants. Only a
+        # comparison or a connective counts: a bare literal condition is an opaque name.
+        eval_result = None
+        if isinstance(instr.condition, (ExpBinOp, ExpUnOp, ExpVar)):
+            eval_result = self._fold_condition(instr.condition, state)
+            if not isinstance(eval_result, (bool, int, float)):
+                eval_result = None
 
         if eval_result is not None:
             # Condition can be fully evaluated
@@ -5145,27 +5089,6 @@ class SILTranslator:
     def _apply_branch_guards(self, state: SymbolicState, condition, is_true_branch: bool) -> SymbolicState:
         """Record what `condition` proves about its variables on the branch where it
         evaluates to `is_true_branch`: sanitization for the sinks it rules out."""
-        cond_str = str(condition)
-
-        # Open-redirect guard: a same-origin path is `/x` and not `//host` (nor `/\\host`).
-        #   if (!next.startsWith("/") || next.startsWith("//")) return res.redirect("/");   -> FALSE branch
-        #   if (next.startsWith("/") && !next.startsWith("//")) res.redirect(next);         -> TRUE branch
-        import re as _re
-        _sw = r"\.(?:startsWith|startswith)\(\s*['\"]"
-        _not = r"(?:!|\bnot\b)\s*\(?\s*"
-        for var in set(_re.findall(r"(\w+)" + _sw + r"/['\"]", cond_str)):
-            v = _re.escape(var)
-            neg_slash = _re.search(_not + v + _sw + r"/['\"]", cond_str)
-            pos_slash = _re.search(r"(?<![!(])\b" + v + _sw + r"/['\"]", cond_str) \
-                or _re.search(r"(?<!!)\(\s*" + v + _sw + r"/['\"]", cond_str)
-            neg_double = _re.search(_not + v + _sw + r"//", cond_str)
-            pos_double = _re.search(r"(?<![!(])\b" + v + _sw + r"//", cond_str) \
-                or _re.search(r"(?<!!)\(\s*" + v + _sw + r"//", cond_str)
-            if is_true_branch and pos_slash and neg_double and not neg_slash and not pos_double:
-                state.asserted_safe.setdefault(var, []).append("redirect")
-            elif not is_true_branch and neg_slash and pos_double and not pos_slash and not neg_double:
-                state.asserted_safe.setdefault(var, []).append("redirect")
-
         # Values proven harmless by the condition: a constant allowlist (`x in ALLOWED`,
         # `ALLOWED.includes(x)`), a character class (`x.isdigit()`, an anchored safe-charset
         # regex), a URL host in an allowlist. Only constant-looking collections count
@@ -5175,6 +5098,9 @@ class SILTranslator:
                 getattr(self.program, "language", ""), getattr(self.program, "string_macros", None)):
             if holds_when == is_true_branch:
                 kinds = set(kinds)
+                if self._same_origin_path(kinds):           # `/x` and not `//host`
+                    state.asserted_safe.setdefault(var, []).append("redirect")
+                kinds = {k for k in kinds if not k.startswith((self._STARTS, self._NOT_STARTS))}
                 if self._CONTAINED in kinds:
                     kinds.discard(self._CONTAINED)
                     if self._is_normalized_path(var, state):

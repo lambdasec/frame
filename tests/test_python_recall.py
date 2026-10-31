@@ -4,6 +4,8 @@ Each positive case was a miss before; each negative pins a nearby safe shape so
 the recall gain does not turn into noise.
 """
 
+import pytest
+
 from frame.sil.frontends.python_frontend import PythonFrontend
 from frame.sil.scanner import FrameScanner
 
@@ -268,3 +270,37 @@ def test_realpath_alone_does_not_confine_a_path():
 def test_realpath_then_startswith_base_confines_the_path():
     guard = "    if not full.startswith(BASE + os.sep):\n        return 'no', 400\n"
     assert "CWE-22" not in cwes(_REALPATH.format(guard=guard))
+
+
+# --- match / case: each case is pruned by an equality with its literal(s), folded over constants ---
+
+_MATCH = '''import os
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route("/r")
+def r():
+    param = request.args.get("p")
+    guess = {guess!r}
+    match guess:
+        case "A":
+            bar = "safe"
+        case "C" | "D":
+            bar = param
+        case x:
+            bar = "x"
+    os.system("ls " + bar)
+'''
+
+
+@pytest.mark.parametrize("guess,reported", [("A", False), ("C", True), ("D", True), ("E", False)])
+def test_match_case_folds_over_a_constant_subject(guess, reported):
+    assert ("CWE-78" in cwes(_MATCH.format(guess=guess))) == reported
+
+
+def test_a_capture_pattern_is_not_an_equality():
+    program = PythonFrontend().translate(_MATCH.format(guess="A"), "a.py")
+    conds = [str(i.condition) for p in program.procedures.values() for n in p.nodes.values()
+             for i in n.instrs if type(i).__name__ == "Prune"]
+    assert '(guess == "A")' in conds and '((guess == "C") || (guess == "D"))' in conds
+    assert not any("== x" in c for c in conds)

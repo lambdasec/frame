@@ -1830,22 +1830,15 @@ class PythonFrontend:
 
             # Extract case pattern and add Prune instruction
             # This enables constant folding to eliminate unreachable cases
-            pattern_exp = None
-            for child in case_node.children:
-                if child.type in ("case_pattern", "pattern"):
-                    pattern_exp = self._extract_case_pattern(child)
-                    break
-                # Also check for direct string/identifier patterns
-                elif child.type in ("string", "integer", "identifier"):
-                    pattern_exp = self._translate_expression(child)
-                    break
-
-            # Add Prune instruction for case condition (subject == pattern)
-            if subject_exp and pattern_exp:
+            pattern = next((c for c in case_node.children if c.type in ("case_pattern", "pattern")), None)
+            literals = self._case_literals(pattern) if subject_exp is not None else None
+            if literals:
                 from ..instructions import Prune
-                cond = ExpBinOp(subject_exp, "==", pattern_exp)
-                prune_instr = Prune(condition=cond, is_true_branch=True, loc=loc)
-                self._current_node.instrs.append(prune_instr)
+                cond = None
+                for lit in literals:
+                    eq = ExpBinOp("==", subject_exp, lit)
+                    cond = eq if cond is None else ExpBinOp("||", cond, eq)
+                self._current_node.instrs.append(Prune(condition=cond, is_true_branch=True, loc=loc))
 
             # Translate case body - look for the block/consequence
             for child in case_node.children:
@@ -1857,39 +1850,26 @@ class PythonFrontend:
 
         self._current_node = join_node
 
-    def _extract_case_pattern(self, pattern_node: TSNode) -> Optional[Exp]:
-        """Extract the expression from a case pattern for Prune conditions."""
+    def _case_literals(self, pattern_node: TSNode) -> Optional[List[Exp]]:
+        """The literals a case pattern compares the subject with (`case 'A':`, `case 'C' | 'D':`),
+        or None when the pattern is anything else (a capture `case x:`, the wildcard, a value,
+        class or sequence pattern): then the case is not pruned."""
         if pattern_node is None:
             return None
-
-        # Handle different pattern types
-        # case 'A': -> string literal
-        # case _: -> wildcard (return None to skip)
-        for child in pattern_node.children:
-            if child.type == "string":
-                return self._translate_expression(child)
-            elif child.type == "integer":
-                return self._translate_expression(child)
-            elif child.type == "identifier":
-                name = self._get_text(child)
-                if name == "_":
-                    return None  # Wildcard pattern, matches anything
-                return self._translate_expression(child)
-            elif child.type in ("case_pattern", "pattern"):
-                # Nested pattern
-                return self._extract_case_pattern(child)
-            elif child.type == "union_pattern":
-                # 'C' | 'D' - for now, return first pattern
-                for sub in child.children:
-                    if sub.type != "|":
-                        return self._translate_expression(sub)
-
-        # Try the pattern node itself if it's a simple type
-        if pattern_node.type == "string":
-            return self._translate_expression(pattern_node)
-        elif pattern_node.type == "integer":
-            return self._translate_expression(pattern_node)
-
+        if pattern_node.type in ("case_pattern", "pattern"):
+            kids = [c for c in pattern_node.named_children if c.type != "comment"]
+            return self._case_literals(kids[0]) if len(kids) == 1 else None
+        if pattern_node.type == "union_pattern":
+            out: List[Exp] = []
+            for sub in pattern_node.named_children:
+                lits = self._case_literals(sub)
+                if lits is None:
+                    return None
+                out += lits
+            return out or None
+        if pattern_node.type in ("string", "integer", "float") and not any(
+                k.type == "interpolation" for k in pattern_node.named_children):
+            return [self._translate_expression(pattern_node)]
         return None
 
     _LITERAL_TYPES = ("string", "integer", "float", "true", "false", "none")

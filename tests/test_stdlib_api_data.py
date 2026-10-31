@@ -184,3 +184,35 @@ def test_deserialization_methods_are_data():
     from frame.sil.specs.parser_hardening import load
     h = load()
     assert "fromXML" in h.xstream_methods and "readValue" in h.jackson_methods and "load" in h.yaml_methods
+
+
+# --- the same-origin redirect guard reads the expression tree -------------------------------------
+
+_REDIRECT = """const express = require('express');
+const app = express();
+app.get('/r', (req, res) => {
+  const next = req.query.next;
+  const other = req.query.other;
+  %s
+});
+"""
+
+
+@pytest.mark.parametrize("body,safe", [
+    ("if (next.startsWith('/') && !next.startsWith('//')) { res.redirect(next); }", True),
+    ("if (!next.startsWith('/') || next.startsWith('//')) { return res.redirect('/'); }\n  res.redirect(next);", True),
+    ("if (next.startsWith('/')) { res.redirect(next); }", False),                    # //evil.example passes
+    ("if (next.startsWith('/') && !other.startsWith('//')) { res.redirect(next); }", False),   # another value
+    ("if (next.startsWith('/') || !next.startsWith('//')) { res.redirect(next); }", False),
+])
+def test_same_origin_redirect_guard(body, safe):
+    found = {c for c, _ in _found(_REDIRECT % body, "javascript", "r.js")}
+    assert ("CWE-601" not in found) == safe
+
+
+def test_same_origin_redirect_guard_in_python():
+    code = ("from flask import Flask, request, redirect\napp = Flask(__name__)\n\n@app.route('/r')\ndef r():\n"
+            "    nxt = request.args.get('next')\n    if not nxt.startswith('/') or nxt.startswith('//'):\n"
+            "        return redirect('/')\n    return redirect(nxt)\n")
+    assert "CWE-601" not in {c for c, _ in _found(code, "python", "r.py")}
+    assert "CWE-601" in {c for c, _ in _found(code.replace(" or nxt.startswith('//')", ""), "python", "r.py")}
