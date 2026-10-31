@@ -3,39 +3,39 @@
  "summary": {
   "Frame": {
    "vulpy": {
-    "TP": 6,
+    "TP": 5,
     "FP": 0,
     "DEBATABLE": 0,
     "ADVISORY": 0,
-    "total": 6
+    "total": 5
    },
    "dvpwa": {
     "TP": 2,
     "FP": 0,
-    "DEBATABLE": 0,
+    "DEBATABLE": 1,
     "ADVISORY": 0,
-    "total": 2
+    "total": 3
    },
    "vulnerable-node": {
     "TP": 33,
     "FP": 1,
-    "DEBATABLE": 2,
+    "DEBATABLE": 4,
     "ADVISORY": 0,
-    "total": 36
+    "total": 38
    },
    "NodeGoat": {
-    "TP": 11,
+    "TP": 12,
     "FP": 0,
     "DEBATABLE": 2,
     "ADVISORY": 0,
-    "total": 13
+    "total": 14
    },
    "ALL": {
     "TP": 52,
     "FP": 1,
-    "DEBATABLE": 4,
+    "DEBATABLE": 7,
     "ADVISORY": 0,
-    "total": 57
+    "total": 60
    }
   },
   "CodeQL": {
@@ -80,13 +80,6 @@
   "Frame": {
    "vulpy": [
     {
-     "file": "bad/libapi.py",
-     "line": 14,
-     "id": "CWE-330",
-     "label": "TP",
-     "note": "API key from random.getrandbits"
-    },
-    {
      "file": "bad/libuser.py",
      "line": 12,
      "id": "CWE-89",
@@ -124,6 +117,13 @@
    ],
    "dvpwa": [
     {
+     "file": "run.py",
+     "line": 17,
+     "id": "CWE-117",
+     "label": "DEBATABLE",
+     "note": "host and port from the process's own command line (sys.argv) logged: the operator supplies argv"
+    },
+    {
      "file": "sqli/dao/student.py",
      "line": 45,
      "id": "CWE-89",
@@ -139,6 +139,20 @@
     }
    ],
    "vulnerable-node": [
+    {
+     "file": "db/seed-data.js",
+     "line": 140,
+     "id": "CWE-259",
+     "label": "DEBATABLE",
+     "note": "seed accounts created with fixed passwords; a credential only where the seed runs in production"
+    },
+    {
+     "file": "db/seed-data.js",
+     "line": 141,
+     "id": "CWE-259",
+     "label": "DEBATABLE",
+     "note": "same"
+    },
     {
      "file": "db/seed-data.js",
      "line": 142,
@@ -281,6 +295,13 @@
     },
     {
      "file": "sast/seeds/crypto-weak.js",
+     "line": 10,
+     "id": "CWE-338",
+     "label": "TP",
+     "note": "token from Math.random (the seed's own comment)"
+    },
+    {
+     "file": "sast/seeds/crypto-weak.js",
      "line": 14,
      "id": "CWE-327",
      "label": "TP",
@@ -332,13 +353,6 @@
      "file": "sast/seeds/open-redirect.js",
      "line": 7,
      "id": "CWE-601",
-     "label": "TP",
-     "note": "repo ground truth"
-    },
-    {
-     "file": "sast/seeds/path-traversal.js",
-     "line": 12,
-     "id": "CWE-22",
      "label": "TP",
      "note": "repo ground truth"
     },
@@ -469,6 +483,13 @@
      "id": "CWE-79",
      "label": "TP",
      "note": "reflected into a swig template with autoescape off"
+    },
+    {
+     "file": "app/routes/research.js",
+     "line": 16,
+     "id": "CWE-918",
+     "label": "TP",
+     "note": "needle.get of req.query.url + symbol (NodeGoat's documented SSRF)"
     },
     {
      "file": "app/routes/session.js",
@@ -900,10 +921,11 @@
   "source": "vulnerable-node/sast/ground-truth.yaml (written by the app's authors; file-level)",
   "results": {
    "Frame": {
-    "seeds_found": "10/12",
+    "seeds_found": "9/12",
     "missed": [
      "sqli-concat",
-     "nosql-operator"
+     "nosql-operator",
+     "path-traversal"
     ],
     "clean_seeds_flagged": []
    },

@@ -2110,6 +2110,19 @@ class SILTranslator:
             return '.'.join(parts)
         return str(exp.func)
 
+    _UNSET = object()
+
+    def _flowing_args(self, exp: ExpCall, spec=_UNSET) -> List[Exp]:
+        """The arguments of a call written in an expression whose data reaches its result: all
+        of them, unless the call's spec says which do (`$links.filter(sel)` returns the
+        receiver's elements, not the selector), as when the same call is assigned."""
+        if spec is self._UNSET:
+            spec = self._spec_of_name(self._call_exp_name(exp))
+        if spec and not spec.is_taint_sanitizer() and not spec.is_taint_source() \
+                and (spec.taint_propagates or spec.taint_from_receiver):
+            return [exp.args[i] for i in spec.taint_propagates if 0 <= i < len(exp.args)]
+        return list(exp.args)
+
     def _arg_taint_leaves(self, exp: Exp, state: SymbolicState,
                           wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
         """`_arg_taint_leaves_any`, attacker data first: callers that keep one leaf keep it, not a
@@ -2155,11 +2168,14 @@ class SILTranslator:
                     source_var=name, source_location=loc), set(wrap)))
             if spec and spec.is_taint_sanitizer():
                 wrap = wrap | frozenset(spec.is_sanitizer)
-            for arg in exp.args:
+            for arg in self._flowing_args(exp, spec):
                 out.extend(self._arg_taint_leaves(arg, state, wrap))
             # `name.trim()` / `req.query.q.toLowerCase()`: a method called on attacker data
             # returns data derived from it, as when the same call is assigned to a variable.
             parts = name.split(".")
+            escaped = self._escaped_kinds(self._expression_neutralized(exp, state))
+            if escaped:
+                wrap = wrap | frozenset(escaped)           # a replace chain covering `& < > " '`
             if isinstance(exp.func, ExpFieldAccess) and not isinstance(exp.func.base, (ExpVar, ExpFieldAccess)) \
                     and not (spec and spec.is_taint_sanitizer()):
                 out.extend(self._arg_taint_leaves(exp.func.base, state, wrap))   # `x["k"].split(" ")`
@@ -4171,6 +4187,98 @@ class SILTranslator:
             return [e.base] + ([e.index] if isinstance(e, ExpIndex) else [])
         return []
 
+    # Characters that make text markup: once every occurrence of each is replaced by a character
+    # reference (or removed), the text is safe in HTML text and in quoted attributes.
+    _HTML_SIGNIFICANT = frozenset("&<>\"'")
+    _NEUTRALIZED = "neutralized:"                     # a pseudo sink kind on `state.sanitized`
+    _CHAR_REFERENCE = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);")
+
+    def _note_replaced_characters(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """`s.replace(/</g, "&lt;")` (JS: a `g` regex or `replaceAll`; Python: `str.replace`, which
+        replaces every occurrence): the result holds no raw `<`. The characters a chain has so
+        neutralized ride on the result's sanitization (joins intersect them, copies carry them);
+        when they cover `& < > " '` the result is sanitized for HTML output."""
+        chars = self._replaced_chars(func_name, [a for a, _ in instr.args])
+        if not chars:
+            return
+        receiver, ret = func_name.rsplit(".", 1)[0], str(instr.ret[0])
+        done = self._neutralized_in(receiver, state) | chars
+        kinds = set(state.sanitized.get(ret, [])) | {self._NEUTRALIZED + c for c in done}
+        state.sanitized[ret] = sorted(kinds | self._escaped_kinds(done))
+
+    def _neutralized_in(self, var: str, state: SymbolicState) -> Set[str]:
+        return {k[len(self._NEUTRALIZED):] for k in state.sanitized.get(var, []) if k.startswith(self._NEUTRALIZED)}
+
+    def _escaped_kinds(self, done: Set[str]) -> Set[str]:
+        return {SinkKind.HTML_OUTPUT.value, SinkKind.XSS.value} if self._HTML_SIGNIFICANT <= done else set()
+
+    def _replaced_chars(self, func_name: str, args: List[Exp]) -> Optional[Set[str]]:
+        """The characters a `replace` call replaces every occurrence of with a character reference
+        or nothing, or None when it is not such a call."""
+        method = func_name.rsplit(".", 1)[-1]
+        if method not in ("replace", "replaceAll") or "." not in func_name or len(args) < 2:
+            return None
+        lang = (self.program.language or "").lower()
+        pattern, replacement = self._string_literal(args[0]), self._string_literal(args[1])
+        if pattern is None or replacement is None:
+            return None
+        if replacement and not self._CHAR_REFERENCE.fullmatch(replacement):
+            return None
+        if lang == "python" and method == "replace" and len(pattern) == 1:
+            return {pattern}
+        if lang in ("javascript", "typescript"):
+            m = re.fullmatch(r"/(.+)/([a-z]*)", pattern, re.S)
+            if m and ("g" in m.group(2) or method == "replaceAll"):
+                return self._regex_char_set(m.group(1))
+            if not m and method == "replaceAll" and len(pattern) == 1:
+                return {pattern}
+        return None
+
+    def _expression_neutralized(self, exp: Exp, state: SymbolicState) -> Set[str]:
+        """What a `replace` chain written in an expression neutralizes, with what the variable it
+        starts from already had (`s.replace(/&/g, "&amp;").replace(/</g, "&lt;")...`)."""
+        if isinstance(exp, ExpVar):
+            return self._neutralized_in(self._get_var_name(exp.var), state)
+        if not isinstance(exp, ExpCall) or not isinstance(exp.func, ExpFieldAccess):
+            return set()
+        chars = self._replaced_chars(f"x.{exp.func.field_name}", list(exp.args))
+        if not chars:
+            return set()
+        return chars | self._expression_neutralized(exp.func.base, state)
+
+    @staticmethod
+    def _string_literal(exp) -> Optional[str]:
+        """The text of a string literal argument (as the frontends keep it: quoted or not)."""
+        if not isinstance(exp, ExpConst) or not isinstance(exp.value, str):
+            return None
+        m = re.fullmatch(r"[rRuUbB]?('{3}|\"{3}|'|\")(.*)\1", exp.value, re.S)
+        return m.group(2) if m else exp.value
+
+    @staticmethod
+    def _regex_char_set(body: str) -> Optional[Set[str]]:
+        """The characters a regex that matches exactly one character matches: `<`, `\\"`,
+        `[<>]`, `[&<>"']` (no ranges, negation or classes like `\\w`), else None."""
+        def one(text: str) -> Optional[List[str]]:
+            out, i = [], 0
+            while i < len(text):
+                c = text[i]
+                if c == "\\":
+                    if i + 1 >= len(text) or text[i + 1].isalnum():
+                        return None
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                if c in "[]^$.|?*+(){}-":
+                    return None
+                out.append(c)
+                i += 1
+            return out
+        if body.startswith("[") and body.endswith("]") and len(body) > 2:
+            found = one(body[1:-1])
+            return set(found) if found else None
+        found = one(body)
+        return set(found) if found and len(found) == 1 else None
+
     def _settle_call_sanitization(self, instr: Call, spec, state: SymbolicState,
                                   input_kinds: List[set]) -> None:
         """A call result is sanitized for a kind only if EVERY tainted input
@@ -4659,6 +4767,7 @@ class SILTranslator:
         if instr.ret:
             self._settle_call_sanitization(
                 instr, spec, state, pre_call_input_kinds)
+            self._note_replaced_characters(instr, func_name, state)
 
         # Parser factories whose parsers do not expand external entities (parser-hardening.toml)
         if func_name in _parser_hardening().safe_parser_factories:
@@ -9624,7 +9733,7 @@ class SILTranslator:
             for part in exp.parts:
                 result.extend(self._get_embedded_member_sources(part, _in_call))
         elif isinstance(exp, ExpCall):
-            for arg in exp.args:
+            for arg in self._flowing_args(exp):
                 result.extend(self._get_embedded_member_sources(arg, True))
         elif isinstance(exp, ExpIndex):
             # A subscript read of a source container -- `request.args["d"]` --

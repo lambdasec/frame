@@ -100,6 +100,10 @@
 "aiopg.create_pool" = "aiopg.Pool"
 "aiopg.Pool.acquire" = "aiopg.Connection"
 "aiopg.Connection.cursor" = "aiopg.Cursor"
+# aiopg's classes live in its submodules (aiopg/connection.py, aiopg/pool.py), which annotations
+# import them from; the package re-exports them.
+"aiopg.connection.Connection.cursor" = "aiopg.Cursor"
+"aiopg.pool.Pool.acquire" = "aiopg.Connection"
 
 # Calls that return their argument: `with closing(conn) as c` is conn (contextlib docs).
 [python.passes]

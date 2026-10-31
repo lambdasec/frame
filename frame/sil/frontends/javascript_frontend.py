@@ -160,6 +160,9 @@ class JavaScriptFrontend:
         self._ctor_fields = self._constructor_field_paths(tree.root_node) if self.taint_function_params else {}
         self._const_sets = self._collect_const_sets(tree.root_node)
         self._binding_cache = {}
+        self._values_cache = {}
+        self._tree_root = tree.root_node
+        self._roots_called_cache = None
 
         # Create program with library specs
         program = Program(library_specs=self.specs.copy(), language=self.language)
@@ -2108,6 +2111,52 @@ class JavaScriptFrontend:
             scope = scope.parent
         return None
 
+    def _all_values(self, ident: TSNode) -> List[Optional[TSNode]]:
+        """Every value the variable `ident` names is given in the function scope that declares it:
+        its declarator's initializer and each plain `x = e` (also in nested functions that do not
+        declare their own x); None for a binding whose value is not an expression here (a
+        parameter, destructuring, `x += e`, `x++`). Empty when no enclosing scope declares it."""
+        name = self._get_text(ident)
+        scope = ident.parent
+        while scope is not None and not (scope.type in self._FUNCTION_SCOPES and self._declares(scope, name)):
+            scope = scope.parent
+        if scope is None:
+            return []
+        cache = self.__dict__.setdefault("_values_cache", {})
+        key = (scope.start_byte, scope.end_byte, name)
+        if key not in cache:
+            cache[key] = self._scope_values(scope, name)
+        return cache[key]
+
+    def _scope_values(self, scope: TSNode, name: str) -> List[Optional[TSNode]]:
+        out: List[Optional[TSNode]] = []
+        params = scope.child_by_field_name("parameters") or scope.child_by_field_name("parameter")
+        if params is not None and any(x.type == "identifier" and self._get_text(x) == name
+                                      for x in [params] + self._descendants_js(params)):
+            out.append(None)
+        stack = list(scope.named_children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNCTION_SCOPES and self._declares(n, name):
+                continue                                  # its own variable of that name
+            if n.type == "variable_declarator":
+                nm = n.child_by_field_name("name")
+                if nm is not None and nm.type == "identifier" and self._get_text(nm) == name:
+                    out.append(n.child_by_field_name("value"))
+                elif nm is not None and nm.type != "identifier" and any(
+                        self._get_text(x) == name for x in self._descendants_js(nm)):
+                    out.append(None)
+            elif n.type == "assignment_expression":
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier" and self._get_text(left) == name:
+                    out.append(n.child_by_field_name("right"))
+            elif n.type in ("augmented_assignment_expression", "update_expression"):
+                target = n.child_by_field_name("left") or n.child_by_field_name("argument")
+                if target is not None and self._get_text(target) == name:
+                    out.append(None)
+            stack.extend(n.named_children)
+        return out
+
     def _scope_binding(self, scope: TSNode, name: str):
         """(declared here?, initializer or None) for `name` in one scope."""
         decls, assigned = [], False
@@ -2172,8 +2221,11 @@ class JavaScriptFrontend:
 
     def _declares(self, fn: TSNode, name: str) -> bool:
         """Does this function scope bind `name` itself (shadowing ours)?"""
-        found, _ = self._scope_binding(fn, name)
-        return found
+        cache = self.__dict__.setdefault("_binding_cache", {})
+        key = (fn.start_byte, fn.end_byte, name)
+        if key not in cache:
+            cache[key] = self._scope_binding(fn, name)
+        return cache[key][0]
 
     @staticmethod
     def _descendants_js(root: TSNode) -> List[TSNode]:
@@ -3238,7 +3290,9 @@ class JavaScriptFrontend:
             # literal as an opaque string value.
             pat_node = node.child_by_field_name("pattern")
             pattern = self._get_text(pat_node) if pat_node else ""
-            return ExpConst.string(f"/{pattern}/")
+            flags_node = node.child_by_field_name("flags")
+            flags = self._get_text(flags_node) if flags_node else ""
+            return ExpConst.string(f"/{pattern}/{flags}")      # as written: `g`, `m` change what it means
 
         elif node.type == "parenthesized_expression":
             for child in node.children:
@@ -3546,22 +3600,57 @@ class JavaScriptFrontend:
         if func is None or func.type != "member_expression":
             return None
         method = func.child_by_field_name("property")
-        obj = func.child_by_field_name("object")
-        while obj is not None and obj.type == "call_expression":
-            inner = obj.child_by_field_name("function")
-            if inner is None:
-                return None
-            if inner.type == "identifier" and self._get_text(inner) in roots:
-                name = roots[self._get_text(inner)][0]
-                return f"{name}.{self._get_text(method)}" if method is not None else None
-            if inner.type != "member_expression":
-                return None
-            prop = inner.child_by_field_name("property")
-            chain = self._chain_root(inner)
-            if prop is None or chain is None or self._get_text(prop) not in roots[chain][1]:
-                return None
-            obj = inner.child_by_field_name("object")
-        return None
+        root = self._collection_root(func.child_by_field_name("object"))
+        if root is None or method is None:
+            return None
+        return f"{roots[root][0]}.{self._get_text(method)}"
+
+    def _roots_called(self) -> bool:
+        """Does the file call a fluent root (`$(...)`) at all? Without one there is no collection."""
+        found = self.__dict__.get("_roots_called_cache")
+        if found is None:
+            roots = self._fluent_tables()[1]
+            called = False
+            root = self.__dict__.get("_tree_root")
+            stack = [root] if root is not None else []
+            while stack and not called:
+                n = stack.pop()
+                if n.type == "call_expression":
+                    f = n.child_by_field_name("function")
+                    called = f is not None and f.type == "identifier" and self._get_text(f) in roots
+                stack.extend(n.children)
+            found = (root, called)
+            self._roots_called_cache = found
+        return found[1]
+
+    def _collection_root(self, node: Optional[TSNode], depth: int = 0) -> Optional[str]:
+        """The fluent root whose collection `node` is: `$(...)`, a chain method called on a
+        collection (`$(x).find("li")`), or a name lexically bound once to one
+        (`const $links = $this.find("a")`, `$this = $(this)`)."""
+        roots = self._fluent_tables()[1]
+        if node is None or depth > 8 or not self._roots_called():
+            return None
+        if node.type == "parenthesized_expression" and node.named_child_count:
+            return self._collection_root(node.named_children[0], depth + 1)
+        if node.type == "identifier":
+            bound = self._resolve_binding(node)
+            if bound is not None:
+                return self._collection_root(bound, depth + 1)
+            values = self._all_values(node)               # rebound: every value it is given
+            roots = {self._collection_root(v, depth + 1) if v is not None else None for v in values}
+            return next(iter(roots)) if values and len(roots) == 1 and None not in roots else None
+        if node.type != "call_expression":
+            return None
+        inner = node.child_by_field_name("function")
+        if inner is not None and inner.type == "identifier" and self._get_text(inner) in roots:
+            return self._get_text(inner)
+        if inner is None or inner.type != "member_expression":
+            return None
+        prop = inner.child_by_field_name("property")
+        root = self._collection_root(inner.child_by_field_name("object"), depth + 1)
+        if root is None or prop is None or self._get_text(prop) not in roots[root][1]:
+            return None
+        return root
 
     def _chain_root(self, member: TSNode) -> Optional[str]:
         """The fluent root a chain `root(...).a(...).b` starts from, or None."""
@@ -3649,6 +3738,10 @@ class JavaScriptFrontend:
         if inline is not None:
             return inline
         name = self._callee_text(func)
+        if func.type == "member_expression" and (func.child_by_field_name("object") or func).type == "identifier":
+            jq = self._jquery_call_name(call_node)       # `$links.filter(sel)`, $links a jQuery collection
+            if jq is not None:
+                return jq
         root, dot, rest = name.partition(".")
         if dot and root in getattr(self, "_module_aliases", {}):
             name = f"{self._module_aliases[root]}.{rest}"

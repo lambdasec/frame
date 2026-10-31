@@ -16,9 +16,9 @@ each tool does and why.
 - **Java** (10 cases keyed before the Java feature existed; Frame's first run found 1/10): Frame **10/10 with 0 false alarms**; CodeQL 10/10 with 3; Semgrep/OpenGrep taint rules 1/10 (stock packs 8/10, but 7 safe twins flagged).
 - **Four deliberately vulnerable apps** at pinned commits: Frame found **10/10** of the cross-file vulnerabilities in the answer key;
   CodeQL 7/10 (it misses dvpwa's static async DAO and NodeGoat's DAOs); Semgrep and OpenGrep intrafile taint rules 0/10, OpenGrep's interfile build 3/10.
-- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 52 real, 1 false, 4 debatable of 57
+- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 52 real, 1 false, 7 debatable of 60
   (98%); CodeQL 38 real, 2 false, 3 debatable, 14 hardening-only of 57 (95%).
-- **The app authors' own answer key** (vulnerable-node ships `sast/ground-truth.yaml`): Frame 10/12 seeds and 0 of 2 clean seeds flagged; CodeQL 8/12 and 1 of 2.
+- **The app authors' own answer key** (vulnerable-node ships `sast/ground-truth.yaml`): Frame 9/12 seeds and 0 of 2 clean seeds flagged; CodeQL 8/12 and 1 of 2.
 - Not run: Semgrep Pro, Snyk Code, SonarQube, Checkmarx and other commercial tools (they need an account or server;
   see "Not covered"). Nothing here supports a claim about them.
 
@@ -139,10 +139,10 @@ Cloned at the pinned commits in `real_repos.json` at run time (never vendored). 
 
 | app | Frame | Semgrep (taint rules) | Semgrep (stock packs) | OpenGrep (taint rules) | OpenGrep (stock packs) | OpenGrep interfile (taint rules) | Bandit | CodeQL |
 |---|---|---|---|---|---|---|---|---|
-| `vulpy` | 3/3 (+1) | 0/3 (+0) | 3/3 (+24) | 0/3 (+0) | 3/3 (+24) | 0/3 (+0) | 3/3 (+19) | 3/3 (+6) |
-| `dvpwa` | 1/1 (+1) | 0/1 (+0) | 1/1 (+8) | 0/1 (+0) | 1/1 (+4) | 0/1 (+0) | 0/1 (+2) | 0/1 (+1) |
-| `vulnerable-node` | 4/4 (+30) | 0/4 (+2) | 3/4 (+44) | 0/4 (+2) | 3/4 (+44) | 3/4 (+12) | 0/4 (+0) | 4/4 (+40) |
-| `NodeGoat` | 2/2 (+10) | 0/2 (+0) | 0/2 (+16) | 0/2 (+0) | 0/2 (+16) | 0/2 (+0) | 0/2 (+0) | 0/2 (+1) |
+| `vulpy` | 3/3 (+2) | 0/3 (+0) | 3/3 (+24) | 0/3 (+0) | 3/3 (+24) | 0/3 (+0) | 3/3 (+19) | 3/3 (+6) |
+| `dvpwa` | 1/1 (+2) | 0/1 (+0) | 1/1 (+8) | 0/1 (+0) | 1/1 (+4) | 0/1 (+0) | 0/1 (+2) | 0/1 (+1) |
+| `vulnerable-node` | 4/4 (+33) | 0/4 (+2) | 3/4 (+44) | 0/4 (+2) | 3/4 (+44) | 3/4 (+12) | 0/4 (+0) | 4/4 (+40) |
+| `NodeGoat` | 2/2 (+11) | 0/2 (+0) | 0/2 (+16) | 0/2 (+0) | 0/2 (+16) | 0/2 (+0) | 0/2 (+0) | 0/2 (+1) |
 | **found** | **10/10** | **0/10** | **7/10** | **0/10** | **7/10** | **3/10** | **3/10** | **7/10** |
 
 The expected sinks, each confirmed by reading source and sink:
@@ -161,11 +161,11 @@ Every report Frame and CodeQL make on the four apps, labelled by reading the cod
 
 | app | Frame reports | real | false | debatable | CodeQL reports | real | false | debatable | advisory |
 |---|---|---|---|---|---|---|---|---|---|
-| `vulpy` | 6 | 6 | 0 | 0 | 9 | 5 | 1 | 3 | 0 |
-| `dvpwa` | 2 | 2 | 0 | 0 | 1 | 1 | 0 | 0 | 0 |
-| `vulnerable-node` | 36 | 33 | 1 | 2 | 46 | 31 | 1 | 0 | 14 |
-| `NodeGoat` | 13 | 11 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
-| **all four** | 57 | 52 | 1 | 4 | 57 | 38 | 2 | 3 | 14 |
+| `vulpy` | 5 | 5 | 0 | 0 | 9 | 5 | 1 | 3 | 0 |
+| `dvpwa` | 3 | 2 | 0 | 1 | 1 | 1 | 0 | 0 | 0 |
+| `vulnerable-node` | 38 | 33 | 1 | 4 | 46 | 31 | 1 | 0 | 14 |
+| `NodeGoat` | 14 | 12 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
+| **all four** | 60 | 52 | 1 | 7 | 57 | 38 | 2 | 3 | 14 |
 
 Frame's precision on the labelled reports is 98%; CodeQL's is 95% (advisory queries excluded; Frame's count includes its three hardening findings: two `debug=True` and one `secure: false`). Both are lists of what each tool
 reported, not recall: neither is exhaustive. The other tools' extra reports in the real-app table above are not labelled.
@@ -175,7 +175,7 @@ written by the app's authors:
 
 | | seeds found (of 12) | missed | clean seeds flagged (of 2) |
 |---|---|---|---|
-| Frame | 10/12 | sqli-concat, nosql-operator | 0 |
+| Frame | 9/12 | sqli-concat, nosql-operator, path-traversal | 0 |
 | CodeQL | 8/12 | sqli-concat, nosql-operator, path-traversal, hardcoded-secret | 1 |
 
 Frame's two misses are library-style seeds that take untrusted input as a plain function parameter; its default treats only request reads as sources.
@@ -322,5 +322,12 @@ Stock registry packs change over time, so expect small drift in the stock column
 - 2026-11: the cases' handlers are registered as an application does (`js_constructor_dao`, `ts_class_service` gain the
   `app.js` / `app.ts` that wires them; JS/TS request data comes only from registered handlers), three hold-out cases define
   the database handle they use (above), and the runner gives a cloned app the project root `frame scan DIR` takes (the
-  git top level: NodeGoat's `server.js` hands `app` and the MongoDB `db` to `app/routes`).
+  git top level: NodeGoat's `server.js` hands `app` and the MongoDB `db` to `app/routes`). Triage re-run against the
+  current engine: new reports labelled (NodeGoat's research-page SSRF and vulnerable-node's `Math.random` token are real;
+  dvpwa's argv logging and vulnerable-node's seed-account passwords debatable), and two earlier real reports are no longer
+  made, by design: vulpy's API key from `random.getrandbits` (weak randomness is reported where the destination needs an
+  unpredictable value, and a variable named only `key` does not say so) and vulnerable-node's path-traversal seed (a
+  handler exported but registered by nothing, and a library function whose parameters are not request data). Found on
+  the way: dvpwa's DAO annotates `aiopg.connection.Connection`, the module aiopg defines it in, and jQuery traversal
+  results carried their selector's taint (a materialize.js tab selector matched against `location.hash`).
 - 2026-10 (third pass): hardening findings (debug mode, explicit insecure cookie flags); Java cross-file support (Frame 1/10 -> 10/10 on cases keyed first; CodeQL 10/10 with 3 false alarms); OWASP BenchmarkJava +18 correct CWE-330.

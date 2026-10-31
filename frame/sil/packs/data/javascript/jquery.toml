@@ -14,3 +14,14 @@ name = "$"
 methods = ["find", "children", "parent", "parents", "closest", "first", "last", "eq", "next", "prev", "siblings",
            "filter", "not", "has", "addClass", "removeClass", "css", "show", "hide", "empty", "end", "slice", "add",
            "contents", "nextAll", "prevAll", "wrap"]
+
+# The selector, traversal and styling methods return the collection (elements of the document),
+# not their argument: `$links.filter('[href="' + location.hash + '"]')` matches existing elements
+# (jQuery's selector engine never parses HTML). `add` and `wrap` are not listed: both create
+# elements from an HTML string argument.
+[[propagator]]
+name = ["$.find", "$.children", "$.parent", "$.parents", "$.closest", "$.first", "$.last", "$.eq", "$.next",
+        "$.prev", "$.siblings", "$.filter", "$.not", "$.has", "$.addClass", "$.removeClass", "$.css", "$.show",
+        "$.hide", "$.empty", "$.end", "$.slice", "$.contents", "$.nextAll", "$.prevAll"]
+receiver = true
+description = "jQuery collection method: the result is the receiver's elements"
