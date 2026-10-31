@@ -488,6 +488,8 @@ function handler(req, res) {
         from frame.sil.instructions import Call
 
         code = """
+const { Pool } = require('pg');
+const db = new Pool();
 function query(sql) {
     db.query(sql);
 }
@@ -575,7 +577,7 @@ function Footer() {
         def cwes(code):
             # an Express application and router: the express pack makes their handlers' requests attacker data
             app = ("const express = require('express');\nconst app = express();\n"
-                   "const router = express.Router();\n")
+                   "const router = express.Router();\nconst db = require('mysql').createPool({});\n")
             return {v.cwe_id for v in sc.scan(app + code, "t.js").vulnerabilities}
 
         # function callback, command injection via req.body
@@ -1647,7 +1649,8 @@ class TestJavaScriptTaintRegressions:
         assert "CWE-94" in self._scan(code)
 
     def test_inline_sanitizer_suppresses_finding(self):
-        code = ("app.post('/s', (req, res) => {\n"
+        code = ("const mysql = require('mysql'); const connection = mysql.createConnection({});\n"
+                "app.post('/s', (req, res) => {\n"
                 "  connection.query(\"SELECT * FROM u WHERE n = '\" + mysql.escape(req.body.name) + \"'\");\n"
                 "});\n")
         assert self._scan(code) == []
@@ -1661,7 +1664,8 @@ class TestJavaScriptTaintRegressions:
 
     @pytest.mark.skipif(TypeScriptFrontend is None, reason="tree-sitter-typescript not installed")
     def test_typescript_as_cast_is_transparent_to_taint(self):
-        code = ("app.get('/u', (req, res) => {\n"
+        code = ("import { Pool } from 'pg';\nconst db = new Pool();\n"
+                "app.get('/u', (req, res) => {\n"
                 "  const id: string = req.query.id as string;\n"
                 "  db.query(\"SELECT * FROM users WHERE id = '\" + id + \"'\");\n"
                 "});\n")

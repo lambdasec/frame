@@ -1,0 +1,41 @@
+[pack]
+name = "mongodb"
+language = "javascript"
+description = "MongoDB Node.js driver: query filters, update documents and pipelines on a Collection"
+detect = { imports = ["mongodb"] }
+references = ["https://mongodb.github.io/node-mongodb-native/6.8/classes/Collection.html",
+              "https://mongodb.github.io/node-mongodb-native/6.8/classes/MongoClient.html",
+              "https://mongodb.github.io/node-mongodb-native/2.2/api/MongoClient.html#.connect"]
+
+# The driver's values (specs/data/value-types.toml): `new MongoClient(url)` / `MongoClient.connect`,
+# `client.db(name)` a Db, `db.collection(name)` a Collection. A callback passed to connect
+# receives what connect produces (a 2.x Db, a 3.x client), as its promise resolves to.
+[[callback_param]]
+registered_via = ["mongodb.MongoClient.connect", "mongodb.connect"]
+position = 1
+origin = "mongodb.MongoClient.connect"
+
+# A filter, update document or pipeline written from request data can carry query operators
+# (`{ $ne: null }`, `$where`): NoSQL injection.
+[[sink]]
+call = ["mongodb.Collection.find", "mongodb.Collection.findOne", "mongodb.Collection.countDocuments",
+        "mongodb.Collection.count", "mongodb.Collection.deleteOne", "mongodb.Collection.deleteMany",
+        "mongodb.Collection.remove", "mongodb.Collection.findOneAndDelete", "mongodb.Collection.aggregate",
+        "mongodb.Collection.watch"]
+args = [0]
+kind = "nosql"
+description = "MongoDB query filter"
+
+[[sink]]
+call = ["mongodb.Collection.updateOne", "mongodb.Collection.updateMany", "mongodb.Collection.update",
+        "mongodb.Collection.replaceOne", "mongodb.Collection.findOneAndUpdate", "mongodb.Collection.findOneAndReplace"]
+args = [0, 1]
+kind = "nosql"
+description = "MongoDB filter and update document"
+
+# distinct(key, filter)
+[[sink]]
+call = ["mongodb.Collection.distinct"]
+args = [1]
+kind = "nosql"
+description = "MongoDB distinct filter"

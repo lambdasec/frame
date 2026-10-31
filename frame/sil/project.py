@@ -1454,9 +1454,10 @@ class ProjectContext:
         link_python_modules(ctx.programs, python_bindings)
         from frame.sil.packs.apply import _detected, default_packs as _default_packs, reapply_rules
         for key, program in ctx.programs.items():
-            if (program.language or "") == "python" and getattr(program, "origins_moved", False):
-                packs = getattr(frontend_for("python"), "packs", None) or _default_packs()
-                reapply_rules(program, [p for p in packs.for_language("python") if _detected(p, program)])
+            if getattr(program, "origins_moved", False):     # calls named by another file's values
+                language = program.language or ""
+                packs = getattr(frontend_for(language), "packs", None) or _default_packs()
+                reapply_rules(program, [p for p in packs.for_language(language) if _detected(p, program)])
                 program.origins_moved = False
         from frame.sil.registrations import link_project
         from frame.sil.packs import default_packs

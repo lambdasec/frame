@@ -267,255 +267,49 @@ is_sink = "prototype_pollution"
 sink_args = []
 description = "Prototype pollution (CWE-1321)"
 
-[[spec]]
-name = "find"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB find (NoSQL injection)"
 
-[[spec]]
-name = "findOne"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB findOne (NoSQL injection)"
 
-[[spec]]
-name = "findById"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB findById (NoSQL injection)"
 
-[[spec]]
-name = "findOneAndUpdate"
-is_sink = "nosql"
-sink_args = [0, 1]
-db_method = true
-description = "MongoDB findOneAndUpdate (NoSQL injection)"
 
-[[spec]]
-name = "findOneAndDelete"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB findOneAndDelete (NoSQL injection)"
 
-[[spec]]
-name = "findOneAndRemove"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB findOneAndRemove (NoSQL injection)"
 
-[[spec]]
-name = "findByIdAndUpdate"
-is_sink = "nosql"
-sink_args = [0, 1]
-db_method = true
-description = "MongoDB findByIdAndUpdate (NoSQL injection)"
 
-[[spec]]
-name = "findByIdAndDelete"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB findByIdAndDelete (NoSQL injection)"
 
-[[spec]]
-name = "updateOne"
-is_sink = "nosql"
-sink_args = [0, 1]
-db_method = true
-description = "MongoDB updateOne (NoSQL injection)"
 
-[[spec]]
-name = "updateMany"
-is_sink = "nosql"
-sink_args = [0, 1]
-db_method = true
-description = "MongoDB updateMany (NoSQL injection)"
 
-[[spec]]
-name = "update"
-is_sink = "nosql"
-sink_args = [0, 1]
-db_method = true
-description = "MongoDB/Mongoose update (NoSQL injection)"
 
-[[spec]]
-name = "remove"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB/Mongoose remove (NoSQL injection)"
 
-[[spec]]
-name = "count"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB count (NoSQL injection)"
 
-[[spec]]
-name = "countDocuments"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB countDocuments (NoSQL injection)"
 
-[[spec]]
-name = "distinct"
-is_sink = "nosql"
-sink_args = [1]
-db_method = true
-description = "MongoDB distinct (NoSQL injection)"
 
-[[spec]]
-name = "deleteOne"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB deleteOne (NoSQL injection)"
 
-[[spec]]
-name = "deleteMany"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB deleteMany (NoSQL injection)"
 
-[[spec]]
-name = "aggregate"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB aggregate (NoSQL injection)"
 
-[[spec]]
-name = "where"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB where (NoSQL injection)"
 
-[[spec]]
-name = "$where"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB $where (code injection)"
 
-[[spec]]
-name = "collection.find"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB collection.find (NoSQL injection)"
 
-[[spec]]
-name = "collection.findOne"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB collection.findOne (NoSQL injection)"
 
-[[spec]]
-name = "collection.insertOne"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB insertOne"
 
-[[spec]]
-name = "collection.insertMany"
-is_sink = "nosql"
-db_method = true
-description = "MongoDB insertMany"
 
-[[spec]]
-name = "connection.query"
-is_sink = "sql"
-description = "MySQL query (SQL injection)"
 
-[[spec]]
-name = "connection.execute"
-is_sink = "sql"
-description = "MySQL execute (SQL injection)"
 
-[[spec]]
-name = "pool.query"
-is_sink = "sql"
-description = "MySQL/PostgreSQL pool query (SQL injection)"
 
-[[spec]]
-name = "pool.execute"
-is_sink = "sql"
-description = "MySQL pool execute (SQL injection)"
 
-[[spec]]
-name = "client.query"
-is_sink = "sql"
-description = "PostgreSQL query (SQL injection)"
 
-[[spec]]
-name = "db.query"
-is_sink = "sql"
-description = "database handle query (SQL injection)"
 
-[[spec]]
-name = "conn.query"
-is_sink = "sql"
-description = "database connection query (SQL injection)"
 
-[[spec]]
-name = "database.query"
-is_sink = "sql"
-description = "database handle query (SQL injection)"
 
-[[spec]]
-name = "sequelize.query"
-is_sink = "sql"
-description = "Sequelize raw query (SQL injection)"
 
-[[spec]]
-name = "db.exec"
-is_sink = "sql"
-description = "SQLite exec (SQL injection)"
 
-[[spec]]
-name = "db.prepare"
-is_sink = "sql"
-description = "SQLite prepare (SQL injection)"
 
-[[spec]]
-name = "Model.findAll"
-is_sink = "sql"
-description = "Sequelize findAll (potential SQL injection)"
 
-[[spec]]
-name = "Model.findOne"
-is_sink = "sql"
-description = "Sequelize findOne (potential SQL injection)"
 
-[[spec]]
-name = "sequelize.literal"
-is_sink = "sql"
-description = "Sequelize literal (SQL injection)"
 
-[[spec]]
-name = "knex.raw"
-is_sink = "sql"
-description = "Knex raw query (SQL injection)"
 
-[[spec]]
-name = "$queryRawUnsafe"
-is_sink = "sql"
-description = "Prisma $queryRawUnsafe (SQL injection)"
 
-[[spec]]
-name = "$executeRawUnsafe"
-is_sink = "sql"
-description = "Prisma $executeRawUnsafe (SQL injection)"
 
-[[spec]]
-name = "whereRaw"
-is_sink = "sql"
-description = "Knex whereRaw (SQL injection)"
 
-[[spec]]
-name = "havingRaw"
-is_sink = "sql"
-description = "Knex havingRaw (SQL injection)"
 
-[[spec]]
-name = "orderByRaw"
-is_sink = "sql"
-description = "Knex orderByRaw (SQL injection)"
 
 [[spec]]
 name = "innerHTML"
@@ -724,15 +518,7 @@ is_sink = "html"
 sink_property = "__html"      # ={{ __html: x }}: React inserts x as HTML (react.dev, dangerouslySetInnerHTML)
 description = "React dangerouslySetInnerHTML (XSS)"
 
-[[spec]]
-name = "setState"
-taint_propagates = [0]
-description = "React setState"
 
-[[spec]]
-name = "useState"
-taint_propagates = [0]
-description = "React useState"
 
 [[spec]]
 name = "axios"
@@ -962,100 +748,28 @@ name = "jsonwebtoken.decode"
 is_sink = "auth"
 description = "JWT decode (CWE-347)"
 
-[[spec]]
-name = "cors"
-is_sink = "cors"
-description = "CORS middleware configuration (CWE-942)"
 
-[[spec]]
-name = "Access-Control-Allow-Origin"
-is_sink = "cors"
-description = "CORS header (CWE-942)"
 
-[[spec]]
-name = "origin: '*'"
-is_sink = "cors"
-description = "CORS allow all origins (CWE-942)"
 
-[[spec]]
-name = "origin: true"
-is_sink = "cors"
-description = "CORS reflect origin (CWE-942)"
 
-[[spec]]
-name = "isAuthenticated"
-taint_propagates = [0]
-description = "Authentication check"
 
-[[spec]]
-name = "isAuthorized"
-taint_propagates = [0]
-description = "Authorization check"
 
-[[spec]]
-name = "requiresAuth"
-taint_propagates = [0]
-description = "Auth required middleware"
 
 [[spec]]
 name = "passport.authenticate"
 taint_propagates = [0]
 description = "Passport authentication"
 
-[[spec]]
-name = "NODE_ENV"
-taint_propagates = [0]
-description = "Node environment"
 
-[[spec]]
-name = "development"
-is_sink = "config"
-description = "Development mode"
 
-[[spec]]
-name = "app.set('env', 'development')"
-is_sink = "config"
-description = "Express dev mode"
 
-[[spec]]
-name = "secret"
-is_sink = "hardcoded_secret"
-description = "Hardcoded secret (CWE-798)"
 
-[[spec]]
-name = "SECRET_KEY"
-is_sink = "hardcoded_secret"
-description = "Hardcoded secret key (CWE-798)"
 
-[[spec]]
-name = "JWT_SECRET"
-is_sink = "hardcoded_secret"
-description = "Hardcoded JWT secret (CWE-798)"
 
-[[spec]]
-name = "API_KEY"
-is_sink = "hardcoded_secret"
-description = "Hardcoded API key (CWE-798)"
 
-[[spec]]
-name = "privateKey"
-is_sink = "hardcoded_secret"
-description = "Hardcoded private key (CWE-798)"
 
-[[spec]]
-name = "rejectUnauthorized: false"
-is_sink = "ssl"
-description = "TLS verification disabled (CWE-295)"
 
-[[spec]]
-name = "NODE_TLS_REJECT_UNAUTHORIZED"
-is_sink = "ssl"
-description = "TLS verification disabled (CWE-295)"
 
-[[spec]]
-name = "strictSSL: false"
-is_sink = "ssl"
-description = "Strict SSL disabled (CWE-295)"
 
 [[spec]]
 name = "stack"
@@ -1067,10 +781,6 @@ name = "console.error"
 is_sink = "info_disclosure"
 description = "Console error (may leak info CWE-209)"
 
-[[spec]]
-name = "0.0.0.0"
-is_sink = "ssrf"
-description = "All interfaces (SSRF)"
 
 [[spec]]
 name = "crypto.createHash('md5')"
@@ -1137,15 +847,7 @@ name = "crypto.getRandomValues"
 is_sanitizer = ["random"]
 description = "Crypto getRandomValues (secure)"
 
-[[spec]]
-name = "modulusLength: 1024"
-is_sink = "weak_crypto"
-description = "Weak RSA key size (CWE-326)"
 
-[[spec]]
-name = "modulusLength: 512"
-is_sink = "weak_crypto"
-description = "Weak RSA key size (CWE-326)"
 
 [[spec]]
 name = "password"
@@ -1202,20 +904,8 @@ name = "maxAge"
 is_sink = "session"
 description = "Session max age config"
 
-[[spec]]
-name = "cookie.secure"
-taint_propagates = [0]
-description = "Secure cookie flag"
 
-[[spec]]
-name = "cookie.httpOnly"
-taint_propagates = [0]
-description = "HttpOnly cookie flag"
 
-[[spec]]
-name = "cookie.sameSite"
-taint_propagates = [0]
-description = "SameSite cookie flag"
 
 [[spec]]
 name = "express-rate-limit"
@@ -1227,20 +917,8 @@ name = "rateLimit"
 taint_propagates = [0]
 description = "Rate limiting"
 
-[[spec]]
-name = "catch (e) {}"
-is_sink = "exception"
-description = "Empty catch block (CWE-390)"
 
-[[spec]]
-name = "catch {}"
-is_sink = "exception"
-description = "Empty catch block (CWE-390)"
 
-[[spec]]
-name = ".catch(() =>"
-is_sink = "exception"
-description = "Swallowed promise rejection (CWE-390)"
 
 [[spec]]
 name = "unhandledRejection"
@@ -1258,15 +936,7 @@ noreturn = true
 is_sink = "exception"
 description = "Process exit (CWE-705)"
 
-[[spec]]
-name = "err.stack"
-is_sink = "info_disclosure"
-description = "Error stack disclosure (CWE-209)"
 
-[[spec]]
-name = "error.message"
-taint_propagates = [0]
-description = "Error message (may leak info)"
 
 [[spec]]
 name = "console.log"
@@ -1328,10 +998,6 @@ name = "Strict-Transport-Security"
 taint_propagates = [0]
 description = "HSTS header"
 
-[[spec]]
-name = "169.254.169.254"
-is_sink = "ssrf"
-description = "Cloud metadata endpoint (SSRF)"
 
 [[spec]]
 name = "metadata.google.internal"
@@ -1343,10 +1009,6 @@ name = "localhost"
 is_sink = "ssrf"
 description = "Localhost access (SSRF)"
 
-[[spec]]
-name = "127.0.0.1"
-is_sink = "ssrf"
-description = "Loopback access (SSRF)"
 
 [[spec]]
 name = "__proto__"
@@ -1404,25 +1066,9 @@ name = "RegExp"
 is_sink = "redos"
 description = "Dynamic regex (potential ReDoS CWE-1333)"
 
-[[spec]]
-name = ".match"
-is_sink = "redos"
-description = "Regex match (potential ReDoS)"
 
-[[spec]]
-name = ".replace"
-is_sink = "redos"
-description = "Regex replace (potential ReDoS)"
 
-[[spec]]
-name = ".split"
-is_sink = "redos"
-description = "Regex split (potential ReDoS)"
 
-[[spec]]
-name = ".search"
-is_sink = "redos"
-description = "Regex search (potential ReDoS)"
 
 [[spec]]
 name = "Buffer.alloc"

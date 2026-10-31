@@ -36,6 +36,12 @@ def _call_text(call: Call) -> Optional[str]:
         return f.value
     if isinstance(f, ExpVar):
         return str(f.var)
+    parts = []
+    while type(f).__name__ == "ExpFieldAccess":         # `db.collection(...)` written in an expression
+        parts.insert(0, f.field_name)
+        f = f.base
+    if parts and isinstance(f, ExpVar):
+        return ".".join([str(f.var)] + parts)
     return None
 
 
@@ -86,7 +92,8 @@ def _definitions(proc) -> Dict[str, int]:
     return counts
 
 
-def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Dict[str, str]] = None) -> Optional[str]:
+def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Dict[str, str]] = None,
+                            origin_of=None) -> Optional[str]:
     """`new Pool(o)` / `mysql.createPool(o)` written as an expression (no Call instruction): the
     class or the call id, through the file's imports; a call of a function whose returns are one
     value (`returning`) is that value."""
@@ -101,6 +108,8 @@ def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Di
     name = text[4:] if new else text
     head, _, rest = name.partition(".")
     qualified = imports.get(head)
+    if qualified is None and origin_of is not None and head.isidentifier():
+        qualified = origin_of(head)                 # `new sqlite3.Database(f)`, sqlite3 a value
     if qualified is None or not head.isidentifier():
         return None
     return f"{qualified}.{rest}" if rest else qualified
@@ -118,12 +127,22 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
     origin: Dict[str, str] = dict(params or {})
     through = passes("python") if python else {}
     receivers_ = {p.split(".", 1)[0] for p in origin if "." in p}          # `self` of `self.conn`
-    if python:                                          # a parameter declared as a library type
+    receivers_ |= {p.split(".", 1)[0] for p in outer if "." in p and p.split(".", 1)[0] not in defs}
+    if True:                                            # a parameter declared as a library type
         for name, text in (getattr(proc, "param_types", None) or {}).items():
             head, _, rest = text.partition(".")
             if name not in origin and head.isidentifier() and head in imports:
                 origin[name] = f"{imports[head]}.{rest}" if rest else imports[head]
     modules: Set[str] = set()          # names holding a module itself (`require("express")`), not a call's result
+    params_ = {str(p) for p, _ in proc.params}
+    bound: Dict[str, Dict[int, Optional[str]]] = {}     # a name bound several times: each binding's origin
+
+    def note(name: str, instr, value: Optional[str]) -> None:
+        if defs.get(name, 0) > 1 and name not in params_:
+            # `let db;` (lowered `db = null`) holds no object: a call on db runs on another binding
+            exp = getattr(instr, "exp", None)
+            empty = isinstance(exp, ExpConst) and exp.value is None
+            bound.setdefault(name, {})[id(instr)] = "" if empty else value
 
     def of(name: str) -> Optional[str]:
         if name in origin:
@@ -144,8 +163,10 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                         i.canonical = None
                 parts_ = text.split(".") if text else []
                 field_head = ".".join(parts_[:2]) if len(parts_) > 2 and parts_[0] in receivers_ else None
-                if i.canonical is None and fill and text and field_head and field_head in origin:
-                    _set(i, f"{origin[field_head]}.{'.'.join(parts_[2:])}")   # `self.conn.cursor()`
+                held = (origin.get(field_head) or (outer.get(field_head) if parts_[0] not in defs else None)) \
+                    if field_head else None
+                if i.canonical is None and fill and text and held:
+                    _set(i, f"{held}.{'.'.join(parts_[2:])}")   # `self.conn.cursor()`, `models.sequelize.query()`
                     changed = True
                 elif i.canonical is None and fill and text and "." in text \
                         and (receiver_given or not text.startswith(("this.", "self."))):
@@ -157,10 +178,14 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 elif i.canonical is None and fill and text and text in modules:
                     _set(i, origin[text])                 # `require("express")()`: calling the module value
                     changed = True
+                elif i.canonical is None and fill and not python and text and "." not in text \
+                        and text.replace("$", "_").isidentifier() and of(text) is not None:
+                    _set(i, f"{of(text)}()")              # calling a value: `knex("users")`, `pgp(cn)`
+                    changed = True
                 r = _ret_name(i)
                 required = _required_module(i, proc)
                 produced = i.canonical or required or _module_qualified(text, imported_modules)
-                if python and text and returning and text in returning:     # a function returning one value
+                if text and returning and text in returning:                # a function returning one value
                     produced = returning[text]
                 if python and produced and produced in through and i.args:  # `contextlib.closing(x)` is x
                     arg = i.args[through[produced]][0] if through[produced] < len(i.args) else None
@@ -169,16 +194,42 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 if r and defs.get(r) == 1 and produced and origin.get(r) != produced:
                     origin[r] = produced
                     changed = True
+                if r:
+                    note(r, i, produced)
                 if r and required and defs.get(r) == 1:
                     modules.add(r)
+            elif isinstance(i, Assign) and not python and type(i.exp).__name__ == "ExpFieldAccess":
+                # a member of a module: `MongoClient = require("mongodb").MongoClient`, `Pool = pg.Pool`
+                x, base = str(i.id), i.exp.base
+                head = None
+                if isinstance(base, ExpCall) and _call_text(base) == "require" and len(base.args) == 1 \
+                        and isinstance(base.args[0], ExpConst) and isinstance(base.args[0].value, str) \
+                        and not base.args[0].value.startswith((".", "/")):
+                    head = base.args[0].value
+                elif isinstance(base, ExpVar) and str(base.var) in modules:
+                    head = origin.get(str(base.var))
+                o = f"{head}.{i.exp.field_name}" if head else None
+                if o and defs.get(x) == 1 and origin.get(x) != o:
+                    origin[x] = o
+                    changed = True
+                note(x, i, o)
+            elif isinstance(i, Assign) and not isinstance(i.exp, (ExpVar, ExpCall)):
+                note(str(i.id), i, None)                   # a literal: no origin (null: no object yet)
             elif isinstance(i, Assign) and isinstance(i.exp, (ExpVar, ExpCall)):
                 x = str(i.id)
-                o = of(str(i.exp.var)) if isinstance(i.exp, ExpVar) else _expression_call_origin(i.exp, imports, returning)
+                o = of(str(i.exp.var)) if isinstance(i.exp, ExpVar) else _expression_call_origin(i.exp, imports, returning, of)
                 if o is not None and defs.get(x) == 1 and origin.get(x) != o:
                     origin[x] = o
                     changed = True
+                note(x, i, o)
                 if isinstance(i.exp, ExpVar) and str(i.exp.var) in modules and defs.get(x) == 1:
                     modules.add(x)
+        for name, values in bound.items():              # every binding gives the same kind of value
+            agreed = set(values.values()) - {""}
+            if len(values) == defs.get(name) and len(agreed) == 1 and None not in agreed \
+                    and origin.get(name) != next(iter(agreed)):
+                origin[name] = next(iter(agreed))
+                changed = True
         if not changed:
             break
     if fill and python:
@@ -292,12 +343,10 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
                     i._prev_origin_id = getattr(i, "canonical_by_origin", None)
     param_origins = param_origins or getattr(program, "param_origins", None) or {}
     program.param_origins = param_origins
-    returning: Dict[str, str] = dict(getattr(program, "call_origins", None) or {}) if python else {}
-    for _ in range(3 if python else 1):         # a function returning what another returns
+    returning: Dict[str, str] = dict(getattr(program, "call_origins", None) or {})
+    for _ in range(3):                          # a function returning what another returns
         scopes = _annotate_scopes(program, param_origins, imports, python, returning)
-        if not python:
-            break
-        fields = _init_field_origins(program, scopes)
+        fields = _init_field_origins(program, scopes, python)
         merged = {k: dict(v) for k, v in param_origins.items()}
         for name, extra in fields.items():
             merged.setdefault(name, {}).update({k: v for k, v in extra.items() if k not in merged.get(name, {})})
@@ -321,17 +370,36 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
     if python:
         program.origins_moved = _settle_filled(program) or getattr(program, "origins_moved", False)
     program.export_origin = scopes.get(MODULE, {}).get("module.exports")
+    program.export_fields = _export_fields(program, scopes.get(MODULE, {}))
 
 
-def _init_field_origins(program, scopes) -> Dict[str, Dict[str, str]]:
-    """Python: a field a class's `__init__` sets from a value with an origin (`self.conn = conn`,
-    conn handed a connection by every caller) has it in the class's other methods, under their
-    own receiver's name (`self.conn`)."""
+def _export_fields(program, module_scope: Dict[str, str]) -> Dict[str, str]:
+    """JS: the fields of the object a module exports that hold a value with an origin
+    (`db.sequelize = sequelize; module.exports = db`, `exports.pool = new Pool()`)."""
+    heads = {"module.exports", "exports"}
+    module = program.procedures.get(MODULE)
+    for i in (_instrs(module) if module is not None else ()):
+        if type(i).__name__ == "Assign" and str(i.id) == "module.exports" and isinstance(i.exp, ExpVar):
+            heads.add(str(i.exp.var))
+    out: Dict[str, str] = {}
+    for key, o in module_scope.items():
+        head, _, field = key.rpartition(".")
+        if head in heads and field.isidentifier():
+            out.setdefault(field, o)
+    return out
+
+
+def _init_field_origins(program, scopes, python: bool = True) -> Dict[str, Dict[str, str]]:
+    """A field a class's constructor sets from a value with an origin (`self.conn = conn` in a
+    Python `__init__`, `this.db = db` in a JS/TS `constructor` or a TS parameter property; conn
+    handed a connection by every caller) has it in the class's other methods, under their own
+    receiver's name (`self.conn`, `this.db`)."""
     out: Dict[str, Dict[str, str]] = {}
     for init in program.procedures.values():
-        if not init.is_method or init.simple_name != "__init__" or not init.params or not init.class_name:
+        if not init.is_method or not init.class_name \
+                or init.simple_name != ("__init__" if python else "constructor") or (python and not init.params):
             continue
-        receiver = init.params[0][0].name
+        receiver = init.params[0][0].name if python else "this"
         found: Dict[str, str] = {}
         for i in _instrs(init):
             target = str(i.id) if type(i).__name__ == "Assign" else ""
@@ -342,9 +410,10 @@ def _init_field_origins(program, scopes) -> Dict[str, Dict[str, str]]:
         if not found:
             continue
         for proc in program.procedures.values():
-            if proc is init or not proc.is_method or proc.class_name != init.class_name or not proc.params:
+            if proc is init or not proc.is_method or proc.class_name != init.class_name \
+                    or getattr(proc, "is_static", False) or (python and not proc.params):
                 continue
-            recv = proc.params[0][0].name
+            recv = proc.params[0][0].name if python else "this"
             out[proc.name] = {f"{recv}.{f}": o for f, o in found.items()}
     return out
 
@@ -402,20 +471,72 @@ def origin_in_scope(program, proc_name: str, name: str, imports: bool = True) ->
     return str(imported) if imported is not None else None
 
 
+def call_sites(proc):
+    """(callee text, argument expressions) of every call `proc` makes: its Call instructions and
+    the calls written inside expressions (`const repo = new Repo(pool)`, which the JS frontend
+    lowers as an Assign of the call expression; `res.json(find(db.collection("a")))`)."""
+    def nested(exp):
+        if isinstance(exp, ExpCall):
+            yield _call_text(exp) or "", list(exp.args)
+        for child in _sub_exps(exp):
+            yield from nested(child)
+    for i in _instrs(proc):
+        if isinstance(i, Call):
+            yield _call_text(i) or "", [a for a, _ in i.args]
+            for a, _ in i.args:
+                yield from nested(a)
+        else:
+            exp = getattr(i, "exp", None) if type(i).__name__ == "Assign" else \
+                getattr(i, "value", None) if type(i).__name__ == "Return" else None
+            if exp is not None:
+                yield from nested(exp)
+
+
+def _sub_exps(exp):
+    """The expressions directly inside `exp`."""
+    if isinstance(exp, ExpCall):
+        return list(exp.args)
+    out = []
+    for name in ("base", "left", "right", "operand", "index", "condition", "true_exp", "false_exp"):
+        child = getattr(exp, name, None)
+        if child is not None and hasattr(child, "free_vars"):
+            out.append(child)
+    for name in ("parts",):
+        out += [c for c in (getattr(exp, name, None) or ()) if hasattr(c, "free_vars")]
+    return out
+
+
+def constructed_class(text: str) -> Optional[str]:
+    """`new Repo` -> `Repo` (a JS/TS constructor call), else None."""
+    return text[4:] if text.startswith("new ") and text[4:].isidentifier() else None
+
+
 def same_file_parameter_origins(program) -> Dict[str, Dict[str, str]]:
     """Within one file: a function's parameter that every call of it (by its plain name) passes a
-    value of the same origin (a handler handing its response to `send(res, x)`): procedure ->
-    parameter -> origin. A parameter some call passes something else has none."""
+    value of the same origin (a handler handing its response to `send(res, x)`; `new Repo(pool)`
+    for the class's constructor): procedure -> parameter -> origin. A parameter some call passes
+    something else has none."""
     seen: Dict[Tuple[str, int], Set[Optional[str]]] = {}
+    imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    returning = getattr(program, "return_origins", None) or {}
     for proc in program.procedures.values():
-        for i in _instrs(proc):
-            if not isinstance(i, Call) or not i.args:
+        for text, args in call_sites(proc):
+            if not args:
                 continue
-            callee = program.procedures.get(_call_text(i) or "")
-            if callee is None or callee is proc:
+            cls = constructed_class(text)
+            callee = program.procedures.get(f"{cls}.constructor" if cls else text) or \
+                (program.procedures.get(cls) if cls else None)          # a constructor function
+            if callee is None or (callee is proc and not cls):
                 continue
-            for n, (arg, _) in enumerate(i.args):
-                origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else None
+            if callee is proc:                          # `return new UserDAO(db)` inside UserDAO
+                args = [a if not (isinstance(a, ExpVar) and n < len(proc.params)
+                                  and str(a.var) == str(proc.params[n][0])) else None for n, a in enumerate(args)]
+            for n, arg in enumerate(args):
+                if arg is None:
+                    continue
+                origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else \
+                    _expression_call_origin(arg, imports, returning,
+                                            lambda name, p=proc.name: origin_in_scope(program, p, name, imports=False))
                 seen.setdefault((callee.name, n), set()).add(origin)
     out: Dict[str, Dict[str, str]] = {}
     for (name, n), origins in seen.items():
@@ -467,11 +588,41 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
     value that file exports (`module.exports = mysql.createPool(...)`). `resolve(key, specifier)`
     gives the file a specifier names, or None."""
     for key, program in programs.items():
+        # the local name bound to such a module has that value at module scope, so a call written
+        # inside an expression (`res.json(await db.query(q))`, no Call instruction) is typed too
+        scopes = getattr(program, "value_origins", None)
+        bound: Dict[str, str] = {}                    # local name -> the value it is bound to
+        module = scopes.setdefault(MODULE, {}) if scopes is not None else {}
+        for name, spec in (getattr(program, "imports", None) or {}).items():
+            spec = str(spec)
+            if not spec.startswith("."):
+                continue
+            target = resolve(key, spec)
+            origin = getattr(programs.get(target), "export_origin", None) if target else None
+            if target is None and "." in spec.lstrip("."):   # `const { pool } = require("./db")`
+                mod, _, field = spec.rpartition(".")
+                target = resolve(key, mod)
+                origin = (getattr(programs.get(target), "export_fields", None) or {}).get(field) if target else None
+            if origin:
+                bound[name] = origin
+                if module.get(name) != origin:
+                    module.setdefault(name, origin)
+                    program.origins_moved = True
+            for field, held in ((getattr(programs.get(target), "export_fields", None) or {}).items()
+                                if target and not origin else ()):
+                if f"{name}.{field}" not in module:
+                    module[f"{name}.{field}"] = held
+                    program.origins_moved = True
         for proc in program.procedures.values():
             for i in _instrs(proc):
                 if not isinstance(i, Call) or i.canonical is not None:
                     continue
                 text = _call_text(i)
+                head, dot, rest = (text or "").partition(".")
+                if dot and head in bound and rest and head not in _definitions(proc):
+                    i.canonical = f"{bound[head]}.{rest}"      # `reporting.query()`, reporting a pool
+                    program.origins_moved = True
+                    continue
                 if not text or not text.startswith("."):
                     continue
                 cut = len(text)
@@ -482,8 +633,14 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                     target = resolve(key, text[:cut])
                     if target is not None:
                         origin = getattr(programs.get(target), "export_origin", None)
+                        field, _, rest = text[cut + 1:].partition(".")
+                        held = (getattr(programs.get(target), "export_fields", None) or {}).get(field)
                         if origin:
                             i.canonical = f"{origin}.{text[cut + 1:]}"
+                        elif held and rest:                 # `models.sequelize.query`
+                            i.canonical = f"{held}.{rest}"
+                        if i.canonical is not None:
+                            program.origins_moved = True    # the packs' rules meet it now
                         break
 
 
@@ -548,6 +705,12 @@ def stand_ins(language: str) -> frozenset:
     return frozenset(n for names in receivers.values() for n in names)
 
 
+def by_name(key: str, language: str) -> bool:
+    """May a spec row be found by the written name `key`? Not when its head is a stand-in (a
+    type's receiver name): such a row is found through the value's type only."""
+    return key.split(".", 1)[0] not in stand_ins(language) if "." in key else True
+
+
 def typed_names(canonical: str, language: str, extra: Optional[Dict[str, str]] = None) -> List[str]:
     """Spec keys for a call id whose receiver is a typed library value (most specific first);
     empty when no part of the id is a call whose return type is known. `extra`: more call id ->
@@ -580,4 +743,5 @@ def typed_names(canonical: str, language: str, extra: Optional[Dict[str, str]] =
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 
 
-__all__ = ["annotate", "load", "origin_in_scope", "same_file_parameter_origins", "stand_ins", "typed_names"]
+__all__ = ["annotate", "by_name", "load", "origin_in_scope", "same_file_parameter_origins", "stand_ins",
+           "typed_names"]

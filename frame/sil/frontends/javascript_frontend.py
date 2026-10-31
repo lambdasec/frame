@@ -46,8 +46,8 @@ from frame.sil.instructions import (
 from frame.sil.frontends._literal_fields import literal_init_procedure
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.procedure import (
-    Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS, DB_HANDLE,
-    RECEIVER_UNKNOWN, db_method_applies)
+    Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS,
+    RECEIVER_UNKNOWN)
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
@@ -62,6 +62,7 @@ from frame.sil.specs.javascript_types import load as _js_types
 from frame.sil.specs.passthrough import load as _passthrough
 from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
+from frame.sil.value_origins import by_name
 
 
 def _get_sink_kind(spec_type: str) -> SinkKind:
@@ -901,6 +902,12 @@ class JavaScriptFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
 
+        # TypeScript parameter properties (`constructor(private readonly db: Pool)`): the
+        # constructor assigns each to the field of its name first, as the compiler emits it.
+        if node.type == "method_definition" and proc.name == "constructor":
+            for name in self._parameter_properties(node):
+                self._add_instr(Assign(loc=proc.loc, id=PVar(f"this.{name}"), exp=ExpVar(PVar(name))))
+
         # Find and translate body
         body_node = node.child_by_field_name("body")
         proc.span = (node.start_byte, node.end_byte)
@@ -1519,6 +1526,21 @@ class JavaScriptFrontend:
                 out.append((f"$arg{len(out)}", typ, pattern, ty))
         return out
 
+    def _parameter_properties(self, method: TSNode) -> List[str]:
+        """The constructor parameters TypeScript makes fields: those with an accessibility
+        modifier or `readonly` (handbook, "Parameter Properties")."""
+        params = method.child_by_field_name("parameters")
+        out = []
+        for ch in (params.named_children if params is not None else ()):
+            if ch.type not in ("required_parameter", "optional_parameter"):
+                continue
+            pattern = ch.child_by_field_name("pattern")
+            if pattern is not None and pattern.type == "identifier" and any(
+                    c.type == "accessibility_modifier" or c.type == "readonly" or self._get_text(c) == "readonly"
+                    for c in ch.children if c is not pattern):
+                out.append(self._get_text(pattern))
+        return out
+
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
         return [(PVar(name), typ) for name, typ, _, _ in self._parameter_list(node)]
@@ -1847,7 +1869,7 @@ class JavaScriptFrontend:
             spec = self.specs.get(key)
             if (spec and spec.is_taint_sink()
                     and spec.is_sink not in self._CALL_ONLY_SINK_KINDS
-                    and not spec.global_only and not spec.db_method):
+                    and not spec.global_only):
                 return spec
         return None
 
@@ -1902,10 +1924,7 @@ class JavaScriptFrontend:
         qualified = self._arg_qualified_spec(func_name, call_node)
         if qualified is not None:
             return qualified
-        spec = self._lookup_call_spec_by_name(func_name)
-        if not db_method_applies(spec, func_name, self._receiver_kind(call_node)):
-            return None
-        return spec
+        return self._lookup_call_spec_by_name(func_name)
 
     def _lookup_call_spec_by_name(self, func_name: str):
         """Spec for a call, trying suffixes of a member chain
@@ -1913,17 +1932,23 @@ class JavaScriptFrontend:
         `global_only` spec matched through a suffix needs the rest of the chain
         to be the global object: `window.setTimeout` is the timer,
         `self.req.setTimeout` is a method that happens to share its name."""
-        spec = self.specs.get(func_name)
+        spec = self._spec_by_name(func_name)
         if spec or '.' not in func_name:
             return spec
         parts = func_name.split('.')
         for i in range(1, len(parts)):
-            spec = self.specs.get('.'.join(parts[i:]))
+            spec = self._spec_by_name('.'.join(parts[i:]))
             if spec:
                 if spec.global_only and not self._may_be_global('.'.join(parts[:i])):
                     return None
                 return spec
         return None
+
+    def _spec_by_name(self, key: str):
+        """The row written under `key`, unless its head is a type's receiver name (`pool.query`
+        is a pg or mysql Pool's): such a row is found through the value's type
+        (`Program.spec_for_call`), never because a variable has that name."""
+        return self.specs.get(key) if by_name(key, self.language) else None
 
     def _may_be_global(self, receiver: str) -> bool:
         """Can `receiver` be the global object (or a module bound outside this
@@ -1934,14 +1959,13 @@ class JavaScriptFrontend:
             return True
         return receiver.isidentifier() and receiver not in getattr(self, "_declared_names", {})
 
-    # -- what kind of value a receiver is (for db_method specs) ------------------
+    # -- what kind of value a receiver is -----------------------------------------
 
-    # The type model (Node core modules, in-memory libraries, database-handle factories, builtin
+    # The type model (Node core modules, in-memory libraries, builtin
     # method result kinds, global constructors and factories): specs/data/javascript-types.toml.
     _TYPES = _js_types()
     _NODE_CORE_MODULES = _TYPES.node_core_modules
     _IN_MEMORY_LIBS = _TYPES.in_memory_libs
-    _DB_HANDLE_FACTORIES = _TYPES.db_handle_factories
     _ARRAY_TO_ARRAY = _TYPES.array_to_array
     _STRING_TO_STRING = _TYPES.string_to_string
     _STRING_ONLY_METHODS = _TYPES.string_only_methods
@@ -1961,7 +1985,7 @@ class JavaScriptFrontend:
     def _value_kind(self, node: Optional[TSNode], depth: int = 0) -> Optional[str]:
         """What kind of value an expression is, as far as the file shows:
         "Array", "String", "Object", "Function", a `module:` value, an
-        instance (`new:X`), DB_HANDLE, or None when unknown. Follows a name to
+        instance (`new:X`), or None when unknown. Follows a name to
         its lexically resolved initializer (`_resolve_binding`) and a property
         to its value in an object literal bound to a name."""
         if node is None or depth > 6:
@@ -2012,8 +2036,6 @@ class JavaScriptFrontend:
         if func.type == "member_expression":
             obj, prop = func.child_by_field_name("object"), func.child_by_field_name("property")
             method = self._get_text(prop) if prop is not None else ""
-            if method in self._DB_HANDLE_FACTORIES:
-                return DB_HANDLE
             obj_kind = self._value_kind(obj, depth + 1)
             if obj_kind and obj_kind.startswith("module:"):
                 return obj_kind              # anything a core module computes
@@ -2296,6 +2318,8 @@ class JavaScriptFrontend:
                 self._ident_counter += 1
                 instrs.extend(self._translate_call_assignment(inner, obj_node, loc))
                 func_name = f"{inner}.{self._get_text(prop_node)}"
+            elif obj_node is not None and obj_node.type == "new_expression" and prop_node is not None:
+                func_name = f"{self._hoist_new_receiver(obj_node, loc, instrs)}.{self._get_text(prop_node)}"
         self._note_escaping_const(call_node)
         escaping = self._escaping_callee(func_node)
         if func_node is not None and func_node.type == "call_expression":
@@ -2327,9 +2351,7 @@ class JavaScriptFrontend:
         ))
 
         # Check if this is a taint source
-        spec = self.specs.get(func_name)
-        if not db_method_applies(spec, func_name, self._receiver_kind(call_node)):
-            spec = None
+        spec = self._spec_by_name(func_name)
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
             instrs.append(TaintSource(
@@ -2480,6 +2502,14 @@ class JavaScriptFrontend:
             name = self._get_text(decl.child_by_field_name("name"))
             self._escaping_consts = getattr(self, "_escaping_consts", set()) | {(self._scope_of(call_node), name)}
 
+    def _hoist_new_receiver(self, new_node: TSNode, loc: Location, instrs: List[Instr]) -> str:
+        """`new MongoClient(url).db("app")`: the object is built first, `$newN = new C(...)`
+        (as a declaration lowers it), and the method is called on it."""
+        inner = f"$new{self._ident_counter}"
+        self._ident_counter += 1
+        instrs.append(Assign(loc=loc, id=PVar(inner), exp=self._translate_expression(new_node)))
+        return inner
+
     def _hoist_callee_call(self, func_node: TSNode, loc: Location, instrs: List[Instr]) -> str:
         """`f(x)(y)` (`_.template(src)(data)`, `connect(m)(C)`): the inner call runs first and its
         result is what is called. Lowered as `$chainN = f(x)`, a real Call, so the inner call's
@@ -2506,16 +2536,21 @@ class JavaScriptFrontend:
             obj_node = func_node.child_by_field_name("object")
             prop_node = func_node.child_by_field_name("property")
 
-            # If the object is a call_expression, translate it first
-            if obj_node and obj_node.type == "call_expression":
-                # Recursively translate the inner call
-                inner_instrs = self._translate_call_expr(obj_node)
-                instrs.extend(inner_instrs)
-
-                # Now translate this call with just the method name (or, behind
-                # fluent setters, as a call on the original object)
+            # If the object is a call_expression, translate it first (`require("m").f(x)` is named
+            # after the module, below)
+            if obj_node and obj_node.type == "call_expression" and self._inline_require_member(func_node) is None:
+                # Behind fluent setters, a call on the original object (`res.status(500).send`);
+                # otherwise the inner call's result is the receiver (`db.collection('u').find(q)`
+                # is `$chainN.find` with `$chainN = db.collection('u')`), as when it is assigned.
+                fluent = self._fluent_call_name(call_node)
                 method_name = self._get_text(prop_node) if prop_node else ""
-                func_name = self._fluent_call_name(call_node) or method_name
+                if fluent:
+                    instrs.extend(self._translate_call_expr(obj_node))
+                    func_name = fluent
+                else:
+                    func_name = f"{self._hoist_callee_call(obj_node, loc, instrs)}.{method_name}"
+            elif obj_node is not None and obj_node.type == "new_expression" and prop_node is not None:
+                func_name = f"{self._hoist_new_receiver(obj_node, loc, instrs)}.{self._get_text(prop_node)}"
             else:
                 # Regular method call (e.g., obj.method())
                 func_name = self._get_call_name(call_node)
@@ -3591,6 +3626,17 @@ class JavaScriptFrontend:
             root = f"{self._module_aliases[head]}.{rest}"
         return f"{root}.{self._get_text(method)}"
 
+    def _callee_text(self, node: TSNode) -> str:
+        """A callee as written, without the layout of a member chain split over lines
+        (`this.repo\n  .createQueryBuilder` is `this.repo.createQueryBuilder`): read from the
+        tree for identifier chains, the source text otherwise."""
+        if node.type == "member_expression":
+            obj, prop = node.child_by_field_name("object"), node.child_by_field_name("property")
+            if obj is not None and prop is not None and obj.type in ("identifier", "this", "member_expression"):
+                op = "?." if any(c.type == "optional_chain" or self._get_text(c) == "?." for c in node.children) else "."
+                return f"{self._callee_text(obj)}{op}{self._get_text(prop)}"
+        return self._get_text(node)
+
     def _get_call_name(self, call_node: TSNode) -> str:
         """Get full name of function being called. A call through a module
         binding is named after the module: `cp.exec` with
@@ -3602,7 +3648,7 @@ class JavaScriptFrontend:
         inline = self._inline_require_member(func)
         if inline is not None:
             return inline
-        name = self._get_text(func)
+        name = self._callee_text(func)
         root, dot, rest = name.partition(".")
         if dot and root in getattr(self, "_module_aliases", {}):
             name = f"{self._module_aliases[root]}.{rest}"

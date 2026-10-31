@@ -75,6 +75,7 @@ def handler():
 # =============================================================================
 
 _JS = '''const mysql = require("mysql");
+const connection = mysql.createConnection({});
 const app = require("express")();
 app.get("/f", (req, res) => {
   const a = req.query.a;

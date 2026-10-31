@@ -48,15 +48,25 @@ def run_json(cmd: List[str], cwd: Path = None) -> dict:
 
 
 def frame_tool(target: Path) -> List[Finding]:
-    """Frame in-process (one import, many scans); `frame_cli_tool` is the same through the CLI."""
+    """Frame in-process (one import, many scans); `frame_cli_tool` is the same through the CLI.
+    The project root is what `frame scan DIR` takes: the git top level of a cloned app (a
+    subdirectory scan sees the rest of its application, `server.js` handing `app` and `db` to
+    `app/routes`), the case directory itself for the cases inside Frame's repository."""
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from frame.sil.scanner import FrameScanner
     out: List[Finding] = []
-    for r in FrameScanner(verify=False).scan_directory(str(target), None, project_root=str(target)):
+    root = _git_top(target)
+    root = target if root is None or Path(root).resolve() == ROOT.resolve() else Path(root)
+    for r in FrameScanner(verify=False).scan_directory(str(target), None, project_root=str(root)):
         for v in r.vulnerabilities:
             out.append((r.filename, int(v.line), v.cwe_id or ""))
     return out
+
+
+def _git_top(path: Path):
+    r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
 def frame_cli_tool(target: Path) -> List[Finding]:

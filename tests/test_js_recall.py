@@ -156,6 +156,7 @@ def test_call_chained_on_sink_call_in_declaration():
 
 def test_awaited_sink_call_in_declaration():
     code = ("const express = require('express'); const app = express();\n"
+            "const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient();\n"
             "app.get('/u', async (req, res) => {\n"
             "  const rows = await prisma.$queryRawUnsafe('SELECT * FROM u WHERE id = ' + req.query.id);\n"
             "  res.json(rows);\n});")
@@ -359,8 +360,10 @@ def test_create_cipheriv_flags_only_weak_algorithms(alg, flagged):
 
 
 def test_sink_through_a_member_chain_is_found_in_an_assignment_too():
-    code = ("function f(name) { const rows = this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); return rows; }\n"
-            "function h(req) { f(req.query.n); }\nrequire('express')().get('/u', h);\n")
+    code = ("const mysql = require('mysql');\n"
+            "class R { constructor() { this.db = mysql.createPool({}); }\n"
+            "  f(name) { const rows = this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); return rows; } }\n"
+            "function h(req) { new R().f(req.query.n); }\nrequire('express')().get('/u', h);\n")
     assert any(c == "CWE-89" for _, c in _scan_js(code))
 
 
@@ -375,6 +378,7 @@ def test_file_named_prototype_something_is_not_the_prototype_library():
 # ---- request data inside an object literal, property stores, allowlists -------------------------
 
 NOSQL = ("const express = require('express');\nconst router = express.Router();\n"
+         "const {{ MongoClient }} = require('mongodb');\nconst db = new MongoClient('mongodb://h').db('app');\n"
          "router.post('/t', async (req, res) => {{\n const col = db.collection('p');\n{body}\n"
          " const docs = await col.find(filter).toArray();\n res.json(docs);\n}});")
 

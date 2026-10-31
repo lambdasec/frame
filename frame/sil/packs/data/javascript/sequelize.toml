@@ -1,0 +1,17 @@
+[pack]
+name = "sequelize"
+language = "javascript"
+description = "Sequelize raw queries and SQL literals"
+detect = { imports = ["sequelize", "sequelize-typescript"] }
+references = ["https://sequelize.org/docs/v6/core-concepts/raw-queries/",
+              "https://sequelize.org/api/v6/class/src/sequelize.js~sequelize"]
+
+# A Sequelize instance's query(sql) runs raw SQL; Sequelize.literal / sequelize.literal (static,
+# and on an instance) splices its text into the generated SQL unescaped. The instance is typed by
+# `new Sequelize(...)`, also when sequelize-cli's models/index.js exports it as `db.sequelize`.
+[[sink]]
+call = ["sequelize.Sequelize.query", "sequelize.Sequelize.literal", "sequelize.literal",
+        "sequelize-typescript.Sequelize.query", "sequelize-typescript.Sequelize.literal"]
+args = [0]
+kind = "sql"
+description = "Sequelize raw SQL"

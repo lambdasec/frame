@@ -88,7 +88,7 @@
       "cwe": "CWE-89",
       "file": "user.repository.ts",
       "path": "user.repository.ts",
-      "line": 7,
+      "line": 8,
       "shape": "Nest controller -> service -> repository; the source is a `@Query()` parameter"
     },
     {
@@ -106,7 +106,7 @@
       "cwe": "CWE-89",
       "file": "repo.js",
       "path": "repo.js",
-      "line": 3,
+      "line": 9,
       "shape": "receiver built by `createRepo()` that returns `new Repo()`"
     },
     {

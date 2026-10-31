@@ -1,0 +1,17 @@
+[pack]
+name = "prisma"
+language = "javascript"
+description = "Prisma Client raw queries"
+detect = { imports = ["@prisma/client"] }
+references = ["https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries"]
+
+# `$queryRawUnsafe` / `$executeRawUnsafe` take the SQL as a string (the tagged-template
+# `$queryRaw` / `$executeRaw` parameterise their substitutions), and `Prisma.raw` makes a
+# fragment of unescaped SQL. The client is `new PrismaClient()` (also behind `$extends`), usually
+# exported by a project module (`lib/prisma.js`) that the importers' calls are typed through.
+[[sink]]
+call = ["@prisma/client.PrismaClient.$queryRawUnsafe", "@prisma/client.PrismaClient.$executeRawUnsafe",
+        "@prisma/client.Prisma.raw"]
+args = [0]
+kind = "sql"
+description = "Prisma raw SQL"

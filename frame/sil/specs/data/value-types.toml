@@ -152,22 +152,85 @@
 "aiomysql.Cursor" = ["cursor", "cur"]
 "aiopg.Cursor" = ["cursor", "cur"]
 
-# mysql and mysql2 (npm; mysql2/promise has the same factories): createConnection returns a
-# Connection, createPool a Pool, both with `query` (the packages' READMEs). A class (`pg.Pool`)
-# under `receivers` types its instances.
+# JavaScript SQL clients (each package's README / API reference; the sinks are packs/data/
+# javascript/sql-drivers.toml and typeorm.toml). A class under `receivers` types its instances.
+# mysql / mysql2: createConnection returns a Connection, createPool a Pool, both with `query`
+# (mysql2 adds `execute`); mysql2's `pool.promise()` is the same pool with promises, and its
+# promise API's getConnection() resolves to a pooled Connection.
 [javascript.returns]
 "mysql.createConnection" = "mysql.Connection"
 "mysql.createPool" = "mysql.Pool"
 "mysql2.createConnection" = "mysql2.Connection"
 "mysql2.createPool" = "mysql2.Pool"
+"mysql2.Pool.promise" = "mysql2.Pool"
+"mysql2.Connection.promise" = "mysql2.Connection"
 "mysql2/promise.createConnection" = "mysql2.Connection"
 "mysql2/promise.createPool" = "mysql2.Pool"
-
-[javascript.receivers]
-"mysql.Connection" = ["connection"]
-"mysql.Pool" = ["pool"]
-"mysql2.Connection" = ["connection"]
-"mysql2.Pool" = ["pool"]
-# node-postgres: `new Pool()` / `new Client()`, both with `query` (node-postgres.com/apis).
-"pg.Pool" = ["pool"]
-"pg.Client" = ["client"]
+"mysql2.Pool.getConnection" = "mysql2.Connection"
+# node-postgres (node-postgres.com/apis/pool): pool.connect() resolves to a PoolClient.
+"pg.Pool.connect" = "pg.PoolClient"
+"pg-pool.connect" = "pg.PoolClient"
+# sqlite3: require("sqlite3").verbose() is the module itself with long stack traces.
+"sqlite3.verbose.Database" = "sqlite3.Database"
+# sqlite (the promise wrapper): open({ filename, driver }) resolves to a Database.
+"sqlite.open" = "sqlite.Database"
+# mssql: connect() resolves to the global ConnectionPool; pool.request() is a Request.
+"mssql.connect" = "mssql.ConnectionPool"
+"mssql.ConnectionPool.connect" = "mssql.ConnectionPool"
+"mssql.ConnectionPool.request" = "mssql.Request"
+# oracledb: getConnection() / pool.getConnection() resolve to a Connection.
+"oracledb.getConnection" = "oracledb.Connection"
+"oracledb.createPool" = "oracledb.Pool"
+"oracledb.Pool.getConnection" = "oracledb.Connection"
+# MongoDB driver: a client's db() is a Db, a Db's collection() a Collection; MongoClient.connect
+# resolves to the client (3.x and later). The 2.x driver's connect gave a Db, so `.collection` on
+# what connect produced is a Collection too (the two versions never call the other's method).
+"mongodb.MongoClient.connect" = "mongodb.MongoClient"
+"mongodb.MongoClient.connect.collection" = "mongodb.Collection"
+"mongodb.connect" = "mongodb.MongoClient"
+"mongodb.connect.collection" = "mongodb.Collection"
+"mongodb.MongoClient.db" = "mongodb.Db"
+"mongodb.Db.collection" = "mongodb.Collection"
+# Mongoose: model() returns a Model (on the default connection or one createConnection made);
+# a Model's query methods return a Query, as do a Query's own.
+"mongoose.model" = "mongoose.Model"
+"mongoose.createConnection" = "mongoose.Connection"
+"mongoose.Connection.model" = "mongoose.Model"
+"mongoose.connection.model" = "mongoose.Model"
+"@typegoose/typegoose.getModelForClass" = "mongoose.Model"
+"mongoose.Model.find" = "mongoose.Query"
+"mongoose.Model.findOne" = "mongoose.Query"
+"mongoose.Model.where" = "mongoose.Query"
+"mongoose.Query.find" = "mongoose.Query"
+"mongoose.Query.where" = "mongoose.Query"
+"mongoose.Query.sort" = "mongoose.Query"
+"mongoose.Query.limit" = "mongoose.Query"
+"mongoose.Query.skip" = "mongoose.Query"
+"mongoose.Query.select" = "mongoose.Query"
+"mongoose.Query.populate" = "mongoose.Query"
+"mongoose.Query.lean" = "mongoose.Query"
+# Prisma Client: `$extends` returns an extended client with the same methods.
+"@prisma/client.PrismaClient.$extends" = "@prisma/client.PrismaClient"
+# TypeORM (typeorm.io): a DataSource's manager is an EntityManager; getRepository returns a
+# Repository; createQueryBuilder a SelectQueryBuilder, whose clause methods return it again.
+"typeorm.DataSource.manager" = "typeorm.EntityManager"
+"typeorm.DataSource.getRepository" = "typeorm.Repository"
+"typeorm.EntityManager.getRepository" = "typeorm.Repository"
+"typeorm.DataSource.createQueryRunner" = "typeorm.QueryRunner"
+"typeorm.DataSource.createQueryBuilder" = "typeorm.SelectQueryBuilder"
+"typeorm.EntityManager.createQueryBuilder" = "typeorm.SelectQueryBuilder"
+"typeorm.Repository.createQueryBuilder" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.select" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.where" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.andWhere" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.orWhere" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.leftJoinAndSelect" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.innerJoinAndSelect" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.orderBy" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.addOrderBy" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.groupBy" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.having" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.skip" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.take" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.limit" = "typeorm.SelectQueryBuilder"
+"typeorm.SelectQueryBuilder.offset" = "typeorm.SelectQueryBuilder"

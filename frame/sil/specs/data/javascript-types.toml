@@ -12,9 +12,6 @@ node_core = ["assert", "async_hooks", "buffer", "child_process", "cluster", "con
 in_memory = ["lodash", "lodash-es", "lodash/fp", "lodash.*", "ramda", "underscore"]
 
 [methods]
-# A call of one of these returns a database handle (`db.collection("users")`,
-# `mongoose.model("User", schema)`).
-db_handle_factories = ["collection", "model"]
 # Array methods returning an array, string methods returning a string (the receiver's own kind).
 array_to_array = ["concat", "copyWithin", "fill", "filter", "flat", "flatMap", "map", "reverse", "slice", "sort", "splice", "toReversed", "toSorted", "toSpliced", "with"]
 string_to_string = ["charAt", "concat", "normalize", "padEnd", "padStart", "repeat", "replace", "replaceAll", "slice", "substr", "substring", "toLocaleLowerCase", "toLocaleUpperCase", "toLowerCase", "toString", "toUpperCase", "trim", "trimEnd", "trimStart"]

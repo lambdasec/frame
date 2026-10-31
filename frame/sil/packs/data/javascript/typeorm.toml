@@ -1,22 +1,38 @@
 [pack]
 name = "typeorm"
 language = "javascript"
-description = "TypeORM raw queries and QueryBuilder string fragments"
-detect = { imports = ["typeorm", "@nestjs/typeorm", "mikro-orm", "@mikro-orm/core"] }
+description = "TypeORM and MikroORM raw queries, TypeORM QueryBuilder string fragments"
+detect = { imports = ["typeorm", "@nestjs/typeorm", "@mikro-orm/core", "@mikro-orm/postgresql", "@mikro-orm/mysql",
+                      "@mikro-orm/mariadb", "@mikro-orm/sqlite", "@mikro-orm/knex"] }
+references = ["https://typeorm.io/docs/working-with-entity-manager/entity-manager-api/",
+              "https://typeorm.io/docs/query-builder/select-query-builder/",
+              "https://mikro-orm.io/docs/query-builder#running-native-sql-query"]
 
-# repository.query(sql) / manager.query / dataSource.query / queryRunner.query
+# Raw SQL on the values TypeORM hands out (specs/data/value-types.toml): a DataSource, its
+# EntityManager, a Repository, a QueryRunner. Nest injects them by declared type
+# (`@InjectRepository(User) private repo: Repository<User>`), which types the field.
 [[sink]]
-name = ["query"]
+call = ["typeorm.DataSource.query", "typeorm.EntityManager.query", "typeorm.Repository.query",
+        "typeorm.QueryRunner.query"]
 args = [0]
 kind = "sql"
 description = "TypeORM raw SQL"
 
-# createQueryBuilder().where("a.name = '" + x + "'") -- a string with named parameters
-# (`:name`) and a parameters object is the safe form
+# createQueryBuilder().where("a.name = '" + x + "'"): the clause text is SQL; named parameters
+# (`:name`) with a parameters object are the safe form.
 [[sink]]
-name = ["where", "andWhere", "orWhere", "having", "andHaving", "orHaving", "orderBy", "addOrderBy",
-        "groupBy", "addGroupBy"]
+call = ["typeorm.SelectQueryBuilder.where", "typeorm.SelectQueryBuilder.andWhere",
+        "typeorm.SelectQueryBuilder.orWhere", "typeorm.SelectQueryBuilder.having",
+        "typeorm.SelectQueryBuilder.andHaving", "typeorm.SelectQueryBuilder.orHaving",
+        "typeorm.SelectQueryBuilder.orderBy", "typeorm.SelectQueryBuilder.addOrderBy",
+        "typeorm.SelectQueryBuilder.groupBy", "typeorm.SelectQueryBuilder.addGroupBy"]
 args = [0]
 kind = "sql"
 description = "TypeORM QueryBuilder clause (string is SQL text)"
 
+# MikroORM's SQL drivers: em.execute(sql) runs native SQL.
+[[sink]]
+call = ["@mikro-orm/*.EntityManager.execute", "@mikro-orm/*.SqlEntityManager.execute"]
+args = [0]
+kind = "sql"
+description = "MikroORM native SQL"

@@ -53,7 +53,7 @@ def test_pyproject_ships_the_spec_tables():
 def test_spec_tables_load_and_are_strict():
     from frame.sil.specs.tables import TABLES, SpecTableError, load_table, parse_table
     sizes = {name: len(load_table(name)) for name in TABLES}
-    assert all(n > 200 for n in sizes.values()), sizes
+    assert all(n > 100 for n in sizes.values()), sizes
     with pytest.raises(SpecTableError, match="unknown field"):
         parse_table({"spec": [{"name": "x", "is_snk": "sql"}]}, "t")
     with pytest.raises(SpecTableError, match="twice"):

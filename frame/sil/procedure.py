@@ -52,27 +52,10 @@ def typed_spec_lookup(specs, recv_type: str, func_name: str, exact: bool,
     return spec
 
 
-# `Call.receiver_type` values a frontend sets for a method call's receiver
-# when it is not a declared type: DB_HANDLE for a known database handle,
-# RECEIVER_UNKNOWN for a receiver of unknown kind (a chained call's IR name is
-# only the method, so the name alone cannot tell it has a receiver). Any other
-# kind ("Array", "module:crypto", ...) is known not to be a database handle.
-DB_HANDLE = "DbHandle"
+# `Call.receiver_type` values a frontend sets for a method call's receiver when it
+# is not a declared type: RECEIVER_UNKNOWN for a receiver of unknown kind; any
+# other kind ("Array", "module:crypto", ...) is what the frontend knows it is.
 RECEIVER_UNKNOWN = "Unknown"
-
-
-def db_method_applies(spec: Optional["ProcSpec"], func_name: str,
-                      receiver_type: Optional[str]) -> bool:
-    """False when `spec` is a database-handle method that this call cannot be:
-    a call without a receiver (`find(xs, fn)`, a local function) or a receiver
-    known to be something else (an array, a hash, a user object)."""
-    if spec is None or not spec.db_method:
-        return True
-    if receiver_type in (DB_HANDLE, RECEIVER_UNKNOWN):
-        return True
-    if receiver_type is None:
-        return '.' in func_name     # no receiver information: the name decides
-    return False
 
 
 # Receivers through which a member call still reaches a global function
@@ -306,13 +289,6 @@ class ProcSpec:
     # only matched when the class is named at the call (`new Random().nextInt`,
     # name-based lookup), never through a receiver's declared type.
     exact_class: bool = False
-
-    # Is this a method of a DATABASE HANDLE (a MongoDB collection, a Mongoose
-    # model or query)? The names -- find, update, remove, count -- are shared
-    # with arrays, hashes, lodash and user code, so the spec applies only to a
-    # call with a receiver, and not when the frontend knows the receiver is
-    # some other kind of value (`Call.receiver_type` other than DB_HANDLE).
-    db_method: bool = False
 
     # =========================================================================
     # Additional metadata
@@ -974,10 +950,7 @@ class Program:
         pack_spec = getattr(call, "pack_spec", None)
         if pack_spec is not None:
             return pack_spec
-        spec = self._spec_for_call(call)
-        if not db_method_applies(spec, call.get_full_name(), getattr(call, "receiver_type", None)):
-            return None
-        return spec
+        return self._spec_for_call(call)
 
     def _spec_for_call(self, call) -> Optional[ProcSpec]:
         func_name = call.get_full_name()
@@ -1019,12 +992,8 @@ class Program:
         1. User-defined procedure specs
         2. Library specs (exact match)
         3. Library specs (method name match for var.method patterns)
-
-        A database-handle method (`db_method`) never matches an unqualified
-        call; with a receiver, see spec_for_call.
         """
-        spec = self._get_spec(func_name, guess)
-        return spec if db_method_applies(spec, func_name, None) else None
+        return self._get_spec(func_name, guess)
 
     def _get_spec(self, func_name: str, guess: bool = True) -> Optional[ProcSpec]:
         # Check user procedures first
@@ -1047,8 +1016,10 @@ class Program:
                         return g
             return spec
 
+        from .value_origins import by_name
+        language = self.language or ""
         # Check library specs (exact match)
-        spec = self.library_specs.get(func_name)
+        spec = self.library_specs.get(func_name) if by_name(func_name, language) else None
         if spec:
             return spec
 
@@ -1062,7 +1033,7 @@ class Program:
             parts = func_name.split('.')
             for i in range(1, len(parts)):
                 suffix = '.'.join(parts[i:])
-                spec = self.library_specs.get(suffix)
+                spec = self.library_specs.get(suffix) if by_name(suffix, language) else None
                 if spec:
                     if spec.global_only and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:
                         return None

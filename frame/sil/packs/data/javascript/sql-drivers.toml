@@ -1,38 +1,65 @@
 [pack]
 name = "sql-drivers"
 language = "javascript"
-description = "SQL client libraries: mysql/mysql2, pg, sqlite3, knex, pg-promise, mssql, slonik raw-query APIs"
-detect = { imports = ["mysql", "mysql2", "pg", "pg-promise", "sqlite3", "sqlite", "better-sqlite3", "knex",
-                      "mssql", "oracledb", "@vercel/postgres", "@neondatabase/serverless", "pg-pool"] }
+description = "SQL client libraries: mysql/mysql2, pg, sqlite3, sqlite, better-sqlite3, knex, pg-promise, mssql, oracledb, Neon, Vercel Postgres raw-query APIs"
+detect = { imports = ["mysql", "mysql2", "mysql2/promise", "pg", "pg-pool", "pg-promise", "sqlite3", "sqlite",
+                      "better-sqlite3", "knex", "mssql", "oracledb", "@vercel/postgres", "@neondatabase/serverless"] }
+references = ["https://github.com/mysqljs/mysql#readme", "https://sidorares.github.io/node-mysql2/docs",
+              "https://node-postgres.com/apis/pool", "https://node-postgres.com/apis/client",
+              "https://github.com/TryGhost/node-sqlite3/wiki/API", "https://github.com/kriasoft/node-sqlite#readme",
+              "https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md", "https://knexjs.org/guide/raw.html",
+              "https://vitaly-t.github.io/pg-promise/Database.html", "https://github.com/tediousjs/node-mssql#readme",
+              "https://node-oracledb.readthedocs.io/en/latest/api_manual/connection.html",
+              "https://neon.tech/docs/serverless/serverless-driver", "https://vercel.com/docs/storage/vercel-postgres/sdk"]
 
-# `pool.promise().query(sql)`, `conn.query(sql, params)`: the first argument is SQL text; a
-# parameterised call has a constant there and carries data in the second argument.
+# The methods taking SQL text as their first argument, on the values the libraries hand out
+# (specs/data/value-types.toml types them: `mysql.createPool(...)` is a mysql Pool, `new Pool()`
+# from pg a pg Pool, `await pool.connect()` a PoolClient). A parameterised call has a constant
+# there and carries data in the second argument. A variable is never a connection by its name.
 [[sink]]
-name = ["query", "execute"]
+call = ["mysql.Connection.query", "mysql.Pool.query",
+        "mysql2.Connection.query", "mysql2.Connection.execute", "mysql2.Pool.query", "mysql2.Pool.execute",
+        "pg.Pool.query", "pg.Client.query", "pg.PoolClient.query", "pg-pool.query",
+        "@neondatabase/serverless.Pool.query", "@neondatabase/serverless.Client.query",
+        "mssql.query", "mssql.batch", "mssql.Request.query", "mssql.Request.batch",
+        "mssql.ConnectionPool.query", "mssql.ConnectionPool.batch",
+        "oracledb.Connection.execute", "oracledb.Connection.executeMany",
+        "@vercel/postgres.sql.query"]
 args = [0]
 kind = "sql"
 description = "SQL driver query / execute"
 
-# knex.raw / db.raw / trx.raw and the *Raw builder methods
+# sqlite3's Database: run / get / all / each / exec / prepare take SQL text; so do the promise
+# wrapper `sqlite`'s Database and better-sqlite3's (`new Database(file)`, whose class is the
+# package's export).
 [[sink]]
-name = ["raw", "whereRaw", "andWhereRaw", "orWhereRaw", "havingRaw", "orderByRaw", "joinRaw", "groupByRaw", "selectRaw"]
-args = [0]
-kind = "sql"
-description = "knex raw SQL fragment"
-
-# sqlite3 Database methods take SQL text (db.get / db.run are not covered by the built-in specs
-# because key-value stores share the names; here the file imports a SQLite driver).
-[[sink]]
-name = ["db.all", "db.get", "db.run", "db.each", "db.exec", "db.prepare", "database.all", "database.get",
-        "database.run", "database.each", "database.exec", "database.prepare"]
+call = ["sqlite3.Database.run", "sqlite3.Database.get", "sqlite3.Database.all", "sqlite3.Database.each",
+        "sqlite3.Database.exec", "sqlite3.Database.prepare",
+        "sqlite.Database.run", "sqlite.Database.get", "sqlite.Database.all", "sqlite.Database.each",
+        "sqlite.Database.exec", "sqlite.Database.prepare",
+        "better-sqlite3.prepare", "better-sqlite3.exec"]
 args = [0]
 kind = "sql"
 description = "SQLite statement"
 
-# pg-promise: db.any / db.one / db.none ... take SQL text
+# knex: `require("knex")(config)` is the instance; `knex.raw(sql)` and the *Raw builder methods
+# of the query builders it makes (`knex("users").whereRaw(sql)`) take SQL fragments.
 [[sink]]
-name = ["db.any", "db.one", "db.many", "db.oneOrNone", "db.manyOrNone", "db.none", "db.result", "db.multi",
-        "t.any", "t.one", "t.many", "t.oneOrNone", "t.manyOrNone", "t.none", "t.result"]
+call = ["knex.raw", "knex().raw", "knex().**.raw",
+        "knex().whereRaw", "knex().**.whereRaw", "knex().andWhereRaw", "knex().**.andWhereRaw",
+        "knex().orWhereRaw", "knex().**.orWhereRaw", "knex().havingRaw", "knex().**.havingRaw",
+        "knex().orderByRaw", "knex().**.orderByRaw", "knex().joinRaw", "knex().**.joinRaw",
+        "knex().groupByRaw", "knex().**.groupByRaw", "knex.select.**.whereRaw", "knex.select.**.orderByRaw"]
+args = [0]
+kind = "sql"
+description = "knex raw SQL fragment"
+
+# pg-promise: `const pgp = require("pg-promise")(); const db = pgp(cn)`; the Database's query
+# methods take SQL text.
+[[sink]]
+call = ["pg-promise().query", "pg-promise().any", "pg-promise().one", "pg-promise().many",
+        "pg-promise().oneOrNone", "pg-promise().manyOrNone", "pg-promise().none", "pg-promise().result",
+        "pg-promise().multi", "pg-promise().multiResult", "pg-promise().each", "pg-promise().map"]
 args = [0]
 kind = "sql"
 description = "pg-promise query"

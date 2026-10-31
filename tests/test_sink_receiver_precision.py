@@ -63,8 +63,11 @@ def test_js_global_code_sinks_still_flagged(stmt):
 
 
 def test_js_suffix_matching_still_reaches_member_specs():
-    # Non-global specs keep suffix matching (models.sequelize.query -> query).
-    code = (APP + "app.get('/u', function (req, res) {\n"
+    # A member chain reaches the row of the value it names: `models.sequelize` is a Sequelize
+    # instance (sequelize-cli's models/index.js shape), so `models.sequelize.query` is its query.
+    code = (APP + "const { Sequelize } = require('sequelize');\nconst models = {};\n"
+            "models.sequelize = new Sequelize('sqlite::memory:');\n"
+            "app.get('/u', function (req, res) {\n"
             "  var id = req.query.id;\n"
             "  models.sequelize.query('SELECT * FROM u WHERE id = ' + id);\n"
             "  res.send('ok');\n"
@@ -390,7 +393,7 @@ def test_js_declared_names_cover_bindings():
     assert "b" not in fe._declared_names and "h" not in fe._declared_names
 
 
-# ---- JS NoSQL sinks are methods of a database handle ----------------------
+# ---- JS NoSQL sinks are methods of a MongoDB or Mongoose value, never of a name -------------
 
 def _nosql(head, stmt, library=False):
     if library:
@@ -403,19 +406,53 @@ def _nosql(head, stmt, library=False):
     return "CWE-943" in {v.cwe_id for v in r.vulnerabilities}
 
 
+_MONGO = "const { MongoClient } = require('mongodb');\nconst db = new MongoClient('mongodb://h').db('app');\n"
+
+
 @pytest.mark.parametrize("head,stmt", [
-    # A model imported from another file: unknown kind, still a sink.
-    ("const User = require('./models/user');\n", "User.find({name: q});"),
-    ("const User = require('./models/user');\n", "User.findOne({name: q}, function (err, u) {});"),
     ("const mongoose = require('mongoose');\nconst User = mongoose.model('User', schema);\n",
      "User.find({name: q});"),
-    ("", "db.collection('users').find({name: q});"),
-    ("", "const users = db.collection('users');\n  users.deleteMany({name: q});"),
-    ("", "req.app.locals.db.collection('u').updateOne({a: q}, {$set: {b: 1}});"),
-    ("", "Model.where(q);"),
+    ("const mongoose = require('mongoose');\nconst User = mongoose.model('User', schema);\n",
+     "User.findOne({name: q}, function (err, u) {});"),
+    ("const mongoose = require('mongoose');\nconst User = mongoose.model('User', schema);\n",
+     "User.where(q).sort('name').find({ role: q });"),
+    (_MONGO, "db.collection('users').find({name: q});"),
+    (_MONGO, "const users = db.collection('users');\n  users.deleteMany({name: q});"),
+    (_MONGO, "db.collection('u').updateOne({a: 1}, {$set: {b: q}});"),
 ])
 def test_js_nosql_on_database_handles_is_reported(head, stmt):
     assert _nosql(head, stmt)
+
+
+@pytest.mark.parametrize("head,stmt", [
+    # Nothing in the file says what these are: a module of the project scanned alone, a name
+    # nothing binds, a class's own method named `find`.
+    ("const User = require('./models/user');\n", "User.find({name: q});"),
+    ("", "db.collection('users').find({name: q});"),
+    ("", "Model.where(q);"),
+    ("class Repo { find(x) { return x; } }\nconst repo = new Repo();\n", "repo.find({name: q});"),
+])
+def test_js_nosql_needs_evidence_of_the_value(head, stmt):
+    assert not _nosql(head, stmt)
+
+
+def test_js_mongoose_model_another_file_exports(tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "user.js").write_text(
+        "const mongoose = require('mongoose');\nmodule.exports = mongoose.model('User', new mongoose.Schema({}));\n")
+    (tmp_path / "app.js").write_text(
+        APP + "const User = require('./models/user');\n"
+        "app.get('/x', async (req, res) => { res.json(await User.find({ name: req.query.q })); });\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    assert "CWE-943" in {v.cwe_id for r in results for v in r.vulnerabilities}
+
+
+def test_js_legacy_mongo_connect_callback_hands_in_the_db():
+    code = (APP + "const MongoClient = require('mongodb').MongoClient;\n"
+            "MongoClient.connect('mongodb://h/app', function (err, db) {\n"
+            "  app.get('/x', function (req, res) { db.collection('u').findOne({ name: req.query.q }, () => {}); });\n"
+            "});\n")
+    assert "CWE-943" in {v.cwe_id for v in FrameScanner(language="javascript", verify=False).scan(code, "t.js").vulnerabilities}
 
 
 @pytest.mark.parametrize("head,stmt", [
@@ -444,17 +481,6 @@ def test_js_library_queue_remove_is_not_nosql():
     assert not _nosql("", "remove(q, function () {});", library=True)
 
 
-def test_db_method_rule():
-    from frame.sil.procedure import DB_HANDLE, RECEIVER_UNKNOWN, ProcSpec, db_method_applies
-    spec = ProcSpec(is_sink="nosql", db_method=True)
-    assert db_method_applies(spec, "User.find", None)
-    assert db_method_applies(spec, "find", RECEIVER_UNKNOWN)       # chained call
-    assert db_method_applies(spec, "x.find", DB_HANDLE)
-    assert not db_method_applies(spec, "find", None)               # no receiver
-    assert not db_method_applies(spec, "xs.find", "Array")
-    assert db_method_applies(ProcSpec(is_sink="sql"), "find", None)  # not a db method
-
-
 def test_js_assigning_a_function_named_like_a_db_method_is_not_a_sink():
     # lodash.js: `lodash.find = find;` installs a method, it queries nothing.
     code = ("function find(collection, predicate) {\n"
@@ -471,7 +497,7 @@ def test_js_assigning_a_function_named_like_a_db_method_is_not_a_sink():
 def test_js_lexical_scope_resolves_shadowed_names():
     # The bundled async.js declares `q` in many functions; each use resolves
     # to its own scope's `var q = { _tasks: new DLL() }`.
-    code = ("function a(x) {\n"
+    code = (_MONGO + "function a(x) {\n"
             "  var q = db.collection('jobs');\n"
             "  q.remove(x);\n"
             "}\n"
@@ -482,7 +508,7 @@ def test_js_lexical_scope_resolves_shadowed_names():
             "module.exports = { a: a, b: b };\n")
     r = FrameScanner(language="javascript", library_mode=True).scan(code, "s.js")
     lines = {v.line for v in r.vulnerabilities if v.cwe_id == "CWE-943"}
-    assert 3 in lines and 7 not in lines
+    assert 5 in lines and 9 not in lines
 
 
 def test_the_javascript_type_model_is_data_and_strict(tmp_path):
@@ -490,6 +516,6 @@ def test_the_javascript_type_model_is_data_and_strict(tmp_path):
     model = javascript_types.load()
     assert "crypto" in model.node_core_modules and model.factories["JSON.parse"] == "Object"
     bad = tmp_path / "javascript-types.toml"
-    bad.write_text(javascript_types.PATH.read_text().replace("db_handle_factories", "handles"))
+    bad.write_text(javascript_types.PATH.read_text().replace("array_to_array", "arrays"))
     with pytest.raises(ValueError, match=r"\[methods\]"):
         javascript_types.load(bad)

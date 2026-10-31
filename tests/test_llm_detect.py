@@ -6,7 +6,8 @@ from frame.sil.llm_triage import TriageConfig, LLMTriageClient
 from frame.sil.llm_detect import detect_in_file, is_detection_candidate, _numbered
 
 
-SRC = ("app.get('/x', (req, res) => {\n"
+SRC = ("const db = require('mysql').createPool({});\n"
+       "app.get('/x', (req, res) => {\n"
        "  const id = req.query.id;\n"
        "  db.query('SELECT * FROM u WHERE id=' + id);\n"
        "});\n")
@@ -60,7 +61,8 @@ def _js_program(src):
 def test_candidate_selection():
     """A file is a candidate when its program has a source or a sink (from the specs and packs)."""
     handler = "const app = require('express')();\napp.get('/x', (req, res) => { const x = req.query.id; });"
-    for src, want in ((handler, True), ("db.query(stuff);", True),
+    for src, want in ((handler, True), ("const { Pool } = require('pg');\nconst db = new Pool();\ndb.query(stuff);", True),
+                      ("db.query(stuff);", False),
                       ("const total = a + b;", False)):
         assert is_detection_candidate(src, False, _js_program(src)) is want, src
     # anything the symbolic pass already flagged is a candidate, and so is an untranslated file

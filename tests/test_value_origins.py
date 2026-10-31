@@ -23,8 +23,8 @@ def _cwes(code, lang, name):
 @pytest.mark.parametrize("canonical,lang,expected", [
     ("sqlite3.connect.cursor.execute", "python", ["sqlite3.Cursor.execute", "cursor.execute", "cur.execute"]),
     ('sqlite3.connect("x").execute', "python", ["sqlite3.Connection.execute", "connection.execute", "conn.execute"]),
-    ("mysql.createPool.query", "typescript", ["mysql.Pool.query", "pool.query"]),
-    ("pg.Pool.query", "javascript", ["pg.Pool.query", "pool.query"]),
+    ("mysql.createPool.query", "typescript", ["mysql.Pool.query"]),
+    ("pg.Pool.query", "javascript", []),                    # already the class's own id
     ("sqlite3.connect.foo.execute", "python", []),            # an unknown call in between: no type
     ("flask.request.args.get", "python", []),
 ])
@@ -157,3 +157,56 @@ def test_python_constructor_fields_and_model_classes(tmp_path):
                                          "class Order(db.Model): pass\n\ndef g(i):\n    return Order.query.get(i)\n", "m.py")
     call = next(c for c in _calls(program).values() if c.get_full_name() == "Order.query.get")
     assert program.spec_for_call(call).is_sink == "resource_select"
+
+
+# ---- JavaScript: SQL client rows apply to client values, never to a variable's name ----------
+
+def _js_sql(prelude, call="db.query", lang="javascript"):
+    code = ("const express = require('express');\nconst app = express();\n" + prelude +
+            "\napp.get('/u', (req, res) => {\n  " + call + "(\"SELECT * FROM u WHERE n = '\" + req.query.n + \"'\");\n"
+            "  res.send('ok');\n});\n")
+    return "CWE-89" in _cwes(code, lang, "a.ts" if lang == "typescript" else "a.js")
+
+
+@pytest.mark.parametrize("prelude, call, flagged", [
+    ("const mysql = require('mysql');\nconst db = mysql.createPool({});", "db.query", True),
+    ("const { Pool } = require('pg');\nconst db = new Pool();", "db.query", True),
+    ("const sqlite3 = require('sqlite3').verbose();\nconst db = new sqlite3.Database(':memory:');", "db.all", True),
+    ("const knex = require('knex')({ client: 'pg' });", "knex('u').where({ a: 1 }).whereRaw", True),
+    ("const pgp = require('pg-promise')();\nconst db = pgp('postgres://x');", "db.any", True),
+    ("const { Sequelize } = require('sequelize');\nlet db;\nif (process.env.U) { db = new Sequelize(process.env.U); }"
+     " else { db = new Sequelize('x', 'u', 'p'); }", "db.query", True),   # every binding a Sequelize
+    ("const mysql = require('mysql');\nconst db = {};", "db.query", False),     # a plain object called db
+    ("const cache = require('./cache');", "cache.query", False),                # unresolvable: not guessed
+])
+def test_js_sql_rows_follow_the_value(prelude, call, flagged):
+    assert _js_sql(prelude, call) == flagged
+
+
+def test_js_constructor_fields_and_typescript_parameter_properties():
+    js = ("const { Pool } = require('pg');\nclass Repo {\n  constructor(db) { this.db = db; }\n"
+          "  find(n) { return this.db.query(\"SELECT \" + n); }\n}\nconst repo = new Repo(new Pool());\n"
+          "require('express')().get('/u', (req, res) => res.json(repo.find(req.query.n)));\n")
+    assert "CWE-89" in _cwes(js, "javascript", "a.js")
+    assert "CWE-89" not in _cwes(js.replace("new Repo(new Pool())", "new Repo({})"), "javascript", "a.js")
+    ts = ("import { Repository } from 'typeorm';\nexport class Svc {\n"
+          "  constructor(private readonly repo: Repository<object>) {}\n"
+          "  find(n: string) { return this.repo\n      .createQueryBuilder('a')\n      .where(\"a.n = '\" + n + \"'\")\n"
+          "      .getMany(); }\n}\nrequire('express')().get('/u', (req, res) => res.json(new Svc(null as any).find(req.query.n)));\n")
+    program = JavaScriptFrontend(language="typescript").translate(ts, "a.ts")
+    ids = {c.canonical for c in _calls(program).values()}
+    assert "typeorm.Repository.createQueryBuilder.where" in ids      # the multi-line chain keeps its receiver
+
+
+def test_js_values_another_file_exports(tmp_path):
+    (tmp_path / "pools.js").write_text("const mysql = require('mysql2/promise');\n"
+                                       "exports.reporting = mysql.createPool({});\n")
+    (tmp_path / "models.js").write_text("const { Sequelize } = require('sequelize');\nconst db = {};\n"
+                                        "db.sequelize = new Sequelize('sqlite::memory:');\nmodule.exports = db;\n")
+    (tmp_path / "app.js").write_text(
+        "const express = require('express');\nconst { reporting } = require('./pools');\n"
+        "const models = require('./models');\nconst app = express();\n"
+        "app.get('/a', async (req, res) => res.json(await reporting.query('SELECT ' + req.query.a)));\n"
+        "app.get('/b', async (req, res) => { await models.sequelize.query('SELECT ' + req.query.b); res.send('ok'); });\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    assert sorted(v.line for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-89") == [5, 6]

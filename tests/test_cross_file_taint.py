@@ -1022,8 +1022,9 @@ def test_alias_that_matches_no_project_file_is_left_alone(tmp_path):
     assert not findings(tmp_path)
 
 
-NEST_REPO = ("import { Injectable } from '@nestjs/common';\n@Injectable()\nexport class Repo {\n"
-             "  constructor(private readonly db: any) {}\n"
+NEST_REPO = ("import { Injectable } from '@nestjs/common';\nimport { DataSource } from 'typeorm';\n"
+             "@Injectable()\nexport class Repo {\n"
+             "  constructor(private readonly db: DataSource) {}\n"
              "  find(name: string) { return this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); }\n}\n")
 
 
@@ -1054,8 +1055,8 @@ def _db_handle(tmp_path, query):
     write(tmp_path, {
         "repo.js": ("class Repo {\n  constructor(db) { this.db = db; }\n"
                     "  find(n) { return this.db.query(" + query + "); }\n}\nmodule.exports = { Repo };\n"),
-        "app.js": ("const express = require('express');\nconst { Repo } = require('./repo');\n"
-                   "const app = express();\nconst repo = new Repo({});\n"
+        "app.js": ("const express = require('express');\nconst { Pool } = require('pg');\n"
+                   "const { Repo } = require('./repo');\nconst app = express();\nconst repo = new Repo(new Pool());\n"
                    "app.get('/', (req, res) => { res.json(repo.find(req.query.n)); });\n"),
     })
     return findings(tmp_path)

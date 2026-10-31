@@ -54,17 +54,16 @@ def _instrs(proc):
 
 def _parameter_origins(ctx, index, programs: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, str]]:
     """(file, procedure) -> parameter -> the origin every resolved caller passes for it."""
-    from .value_origins import _expression_call_origin
+    from .value_origins import _expression_call_origin, call_sites
     seen: Dict[Tuple[str, str, int], Set[Optional[str]]] = {}
     resolved: Dict[Tuple[str, str], Optional[Tuple[str, str]]] = {}
     for key, program in programs.items():
         imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
         returning = getattr(program, "return_origins", None) or {}
         for proc in program.procedures.values():
-            for i in _instrs(proc):
-                if not isinstance(i, Call) or not i.args:
+            for name, args in call_sites(proc):
+                if not args or not name:
                     continue
-                name = i.get_full_name()
                 if (key, name) not in resolved:
                     resolved[(key, name)] = ctx.resolve_call(key, name) or _constructor(ctx, index, programs, key, name)
                 ref = resolved[(key, name)]
@@ -73,9 +72,13 @@ def _parameter_origins(ctx, index, programs: Dict[str, Any]) -> Dict[Tuple[str, 
                 target = programs.get(ref[0])
                 callee = target.procedures.get(ref[1]) if target is not None else None
                 shift = 1 if callee is not None and _bound(target, callee) else 0   # Python: past `self`
-                for n, (arg, _) in enumerate(i.args):        # every resolved caller votes, unknown ones too
+                for n, arg in enumerate(args):               # every resolved caller votes, unknown ones too
+                    if callee is proc and isinstance(arg, ExpVar) and n + shift < len(proc.params) \
+                            and str(arg.var) == str(proc.params[n + shift][0]):
+                        continue                             # `return new UserDAO(db)` inside UserDAO: no new value
                     origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else \
-                        _expression_call_origin(arg, imports, returning)
+                        _expression_call_origin(arg, imports, returning,
+                                                lambda n, p=proc.name: origin_in_scope(program, p, n, imports=False))
                     seen.setdefault((ref[0], ref[1], n + shift), set()).add(origin)
     out: Dict[Tuple[str, str], Dict[str, str]] = {}
     for (file, name, n), origins in seen.items():
@@ -96,9 +99,15 @@ def _bound(program, proc) -> bool:
 
 def _constructor(ctx, index, programs: Dict[str, Any], key: str, name: str) -> Optional[Tuple[str, str]]:
     """Python: `SqlDao(conn)` names the `__init__` of the class SqlDao is (this file's, or the one
-    an import binds), when it defines one."""
+    an import binds), when it defines one; JS/TS: `new SqlDao(conn)` its `constructor`."""
+    from .value_origins import constructed_class
     program = programs.get(key)
-    if program is None or (program.language or "") != "python" or "." in name:
+    if program is None:
+        return None
+    python = (program.language or "") == "python"
+    if not python:
+        name = constructed_class(name) or ""
+    if not name or "." in name:
         return None
     target: Optional[Tuple[str, str]] = None
     if name in (getattr(program, "class_info", None) or {}):
@@ -108,12 +117,23 @@ def _constructor(ctx, index, programs: Dict[str, Any], key: str, name: str) -> O
         b = mod.bindings.get(name) if mod is not None else None
         if b is not None and b.symbol is not None:
             target = index.lookup_class(b.file, b.symbol)
+        elif b is not None and b.file and not python:     # `const C = require("./c")`: its default export
+            from .project import DEFAULT
+            target = index.lookup_class(b.file, DEFAULT)
+        if target is None and b is not None and b.file and not python:
+            from .project import DEFAULT                   # an exported constructor function
+            ref = index.lookup_symbol(b.file, b.symbol or DEFAULT)
+            target = (ref[0], ref[1]) if ref is not None else None
+        if target is None and not python and name in programs[key].procedures:
+            target = (key, name)                           # this file's constructor function
     for _ in range(8):                                  # the nearest class of the hierarchy defining __init__
         if target is None or target[0] not in programs:
             return None
-        init = f"{target[1]}.__init__"
+        init = f"{target[1]}.{'__init__' if python else 'constructor'}"
         if init in programs[target[0]].procedures:
             return target[0], init
+        if not python and target[1] in programs[target[0]].procedures:
+            return target                                  # a constructor function: `function C(db) {...}`
         info = (getattr(programs[target[0]], "class_info", None) or {}).get(target[1])
         bases = [b for b in (info.bases if info is not None else ()) if b.isidentifier()]
         if not bases:
@@ -220,7 +240,7 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
         return callbacks[language]
 
     renamed: Set[str] = set()
-    for _ in range(4):                                    # routes mounted from routes mounted from the app
+    for _ in range(16):         # routes mounted from routes from the app; a value handed down a chain of constructors
         found = _parameter_origins(ctx, index, programs)
         for key, program in programs.items():
             cbs = callbacks_for(program.language)

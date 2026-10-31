@@ -1848,7 +1848,7 @@ class SILTranslator:
         m = self._CTOR_RECEIVER.match(receiver)
         if m:
             return m.group(1) if m.group(1) in classes else None
-        if caller is None or not receiver.isidentifier():
+        if caller is None or not receiver.replace("$", "_").isidentifier():
             return None
         declared = caller.var_types.get(receiver)
         if declared and declared.rsplit(".", 1)[-1] in classes:
@@ -1876,7 +1876,15 @@ class SILTranslator:
                             target = str(ins.id)
                             seen[target] = name if seen.get(target, name) == name else None
             cache[id(caller)] = seen
-        return cache[id(caller)].get(receiver)
+        found = cache[id(caller)].get(receiver)
+        if found is None and receiver not in cache[id(caller)]:
+            # bound outside the caller: an enclosing function's or the module's `const r = new R()`
+            from .value_origins import MODULE, _definitions
+            if receiver not in _definitions(caller) and caller.name != MODULE:
+                outer = self.program.procedures.get(getattr(caller, "parent", None) or MODULE)
+                if outer is not None and outer is not caller:
+                    return self._in_file_receiver_class(receiver, outer)
+        return found
 
     def _resolve_callee(self, func_name: str) -> Optional[Callee]:
         """The procedure a call makes: one of this file's (which wins over an
@@ -2139,7 +2147,7 @@ class SILTranslator:
                 if called:
                     out.append((state.get_taint_info(called), set(wrap)))
                 return out
-            spec = self.program.get_spec(name)
+            spec = self._spec_of_name(name)
             if spec and spec.is_taint_source():
                 out.append((TaintInfo(
                     source_kind=TaintKind(spec.is_source)
@@ -2630,6 +2638,29 @@ class SILTranslator:
     # bound to a library call: `res`, `app`) is such a container too (`_is_framework_value`).
     _NON_AGGREGATE_BASES = frozenset({"this", "self", "cls", "module", "exports", "window", "global",
                                       "globalThis", "document", "process", "console"})
+
+    def _spec_of_name(self, name: str):
+        """The spec of a call written as `name` inside an expression (no Call instruction, so no
+        callee id): the row under that name, else the row of the type the head's value has in
+        this scope (`res.json(await db.query(q))` with `db` a pg Pool)."""
+        spec = self.program.get_spec(name)
+        if spec is not None or "." not in name or self._cur_proc is None:
+            return spec
+        from .value_origins import origin_in_scope, typed_names
+        head, rest = name.split(".", 1)
+        origin = origin_in_scope(self.program, self._cur_proc.name, head)
+        if not origin and "." in rest:                  # a field of an imported module's export
+            field, rest2 = rest.split(".", 1)
+            origin = origin_in_scope(self.program, self._cur_proc.name, f"{head}.{field}", imports=False)
+            rest = rest2 if origin else rest
+        if not origin:
+            return None
+        for key in typed_names(f"{origin}.{rest}", self.program.language or "",
+                               getattr(self.program, "value_returns", None)):
+            spec = self.program.library_specs.get(key)
+            if spec is not None:
+                return spec
+        return None
 
     def _is_framework_value(self, name: str, state: "SymbolicState") -> bool:
         if self._is_request_value(name, state):
@@ -3429,7 +3460,7 @@ class SILTranslator:
         for sub in self._walk_exp(exp):
             if isinstance(sub, ExpCall):
                 name = self._call_exp_name(sub)
-                spec = self.program.get_spec(name) if name else None
+                spec = self._spec_of_name(name) if name else None
                 if spec is not None and spec.is_source == TaintKind.WEAK_RANDOM.value:
                     out.append((name, spec.is_source))
         return out
@@ -3791,7 +3822,7 @@ class SILTranslator:
             # If all tainted data passes through sanitizers, the result is sanitized
             all_sanitized = set()
             for func_name, arg_vars in embedded_sanitizers:
-                spec = self.program.get_spec(func_name)
+                spec = self._spec_of_name(func_name)
                 if spec and spec.is_taint_sanitizer():
                     # Check if any of the sanitizer's args are tainted
                     for arg_var in arg_vars:
@@ -3865,7 +3896,7 @@ class SILTranslator:
         if '.' in target and lang != "python":
             # Extract property name (last part after .)
             prop_name = target.split('.')[-1]
-            spec = self.program.get_spec(prop_name)
+            spec = self._spec_of_name(prop_name)
             if spec and spec.is_taint_sink():
                 sink_kind_str = spec.is_sink
                 # Through the alias map like every other sink: a hand-rolled
@@ -4112,7 +4143,7 @@ class SILTranslator:
                 if dotted:
                     out[dotted] = (out[dotted] & set(wrap)) if dotted in out else set(wrap)
             if isinstance(e, ExpCall):
-                spec = self.program.get_spec(self._call_exp_name(e))
+                spec = self._spec_of_name(self._call_exp_name(e))
                 inner = wrap | frozenset(spec.is_sanitizer) if spec and spec.is_taint_sanitizer() else wrap
                 for a in e.args:
                     walk(a, inner)
@@ -4386,7 +4417,7 @@ class SILTranslator:
                                 # the sink argument neutralizes it (e.g. C#'s
                                 # HttpUtility.HtmlEncode / Uri.EscapeDataString).
                                 for s_func, s_args in self._get_sanitizer_calls(arg_exp):
-                                    s_spec = self.program.get_spec(s_func)
+                                    s_spec = self._spec_of_name(s_func)
                                     if not s_spec or not s_spec.is_taint_sanitizer():
                                         continue
                                     for s_var in s_args:
@@ -4563,7 +4594,7 @@ class SILTranslator:
                     if src_idx < len(instr.args):
                         src_exp, _ = instr.args[src_idx]
                         src_vars = self._get_exp_vars(src_exp)
-                        wrapper = self.program.get_spec(self._call_exp_name(src_exp)) \
+                        wrapper = self._spec_of_name(self._call_exp_name(src_exp)) \
                             if isinstance(src_exp, ExpCall) else None
                         for src_var in src_vars:
                             if state.is_tainted(src_var):
@@ -5383,7 +5414,7 @@ class SILTranslator:
         # variable for the sanitizer's sink kinds. This is language-agnostic and
         # covers, e.g., C#'s HttpUtility.HtmlEncode / Uri.EscapeDataString.
         for func_name, arg_vars in self._get_sanitizer_calls(instr.exp):
-            spec = self.program.get_spec(func_name)
+            spec = self._spec_of_name(func_name)
             if not spec or not spec.is_taint_sanitizer():
                 continue
             for arg_var in arg_vars:
@@ -7802,7 +7833,7 @@ class SILTranslator:
         if not isinstance(call, ExpCall):
             return None
         name = self._call_exp_name(call).rsplit("::", 1)[-1]
-        spec = self.program.get_spec(name) if name else None
+        spec = self._spec_of_name(name) if name else None
         return name if spec is not None and spec.returns_null == "normally" else None
 
     def _null_result_deref_checks(self, instr: Instr, state: SymbolicState,
@@ -8188,7 +8219,7 @@ class SILTranslator:
                     elif isinstance(callee, ExpVar):
                         name = str(callee.var)
                     if name:
-                        spec = self.program.get_spec(name)
+                        spec = self._spec_of_name(name)
                         if spec is not None and spec.is_taint_source():
                             return True
         return False
@@ -9528,7 +9559,7 @@ class SILTranslator:
 
             # Check if this function is a taint source (a method of a request object is its request
             # type's to decide, whatever row its name suffix-matches)
-            spec = self.program.get_spec(func_name)
+            spec = self._spec_of_name(func_name)
             if spec and spec.is_taint_source() and not self._rooted_at_request(func_name.split(".")[:-1]):
                 result.append((func_name, spec.is_source))
             if sink_kind is not None and spec and spec.is_taint_sanitizer() \
@@ -9579,7 +9610,7 @@ class SILTranslator:
             # Longest matching prefix wins (req.query before req). A read off a request object is
             # its request type's to decide (`request.session` is server state), not a row's.
             for i in range(len(parts), 0, -1) if not self._rooted_at_request(parts) else ():
-                spec = self.program.get_spec('.'.join(parts[:i]))
+                spec = self._spec_of_name('.'.join(parts[:i]))
                 if spec and spec.is_taint_source():
                     result.append(('.'.join(parts[:i]), spec.is_source))
                     break
@@ -9609,7 +9640,7 @@ class SILTranslator:
             if isinstance(cur, ExpVar) and parts and not _in_call:
                 parts.insert(0, self._get_var_name(cur.var))
                 chain = '.'.join(parts)
-                spec = self.program.get_spec(chain + '.__getitem__') if not self._rooted_at_request(parts) else None
+                spec = self._spec_of_name(chain + '.__getitem__') if not self._rooted_at_request(parts) else None
                 if spec and spec.is_taint_source():
                     result.append((chain, spec.is_source))
             result.extend(self._get_embedded_member_sources(exp.base, _in_call))
@@ -9657,7 +9688,7 @@ class SILTranslator:
                 func_name = str(exp.func)
 
             # Check if this function is a taint sink
-            spec = self.program.get_spec(func_name)
+            spec = self._spec_of_name(func_name)
             if spec and spec.is_taint_sink():
                 # Get tainted arguments
                 tainted_args = []
@@ -9668,7 +9699,7 @@ class SILTranslator:
                         # (`mark_safe(escape(x))` nested in another call)
                         inline: Dict[str, Set[str]] = {}
                         for s_func, s_args in self._get_sanitizer_calls(arg):
-                            s_spec = self.program.get_spec(s_func)
+                            s_spec = self._spec_of_name(s_func)
                             if s_spec and s_spec.is_taint_sanitizer():
                                 for s_var in s_args:
                                     inline.setdefault(s_var, set()).update(s_spec.is_sanitizer)

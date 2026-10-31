@@ -76,6 +76,13 @@ functions, tsconfig `paths`, NestJS `@Query()` parameters, default-exported clas
 `createCipheriv`-style spec keys, and a `shell-escape` sanitizer. The table is the run after those fixes, so it is a
 regression check on the fixes; the 7/14 is the blind score.
 
+Amended 2026-11: three cases were incomplete programs whose database handle nothing defined (`ts_nest_three_layers`
+declared `db: any`, `js_factory_instance` never assigned `this.db`, and `js_router_service_object` required a `../db`
+module the case did not contain). Frame found them only because the variable was called `db`; since database sinks are
+calls on a known value (a pool, a `DataSource`), each twin now defines its handle as a real app does (a `mysql.createPool`
+module, the repository creating its pool, Nest's injected `DataSource`). The cases' shapes are unchanged, and the keyed
+lines moved with the added lines (`holdout.json`).
+
 ✅ found · ❌ missed · ⚠️ also reported on the safe twin
 
 | case | Frame | Semgrep (taint rules) | Semgrep (stock packs) | OpenGrep (taint rules) | OpenGrep (stock packs) | OpenGrep interfile (taint rules) | Bandit | CodeQL |
@@ -312,4 +319,8 @@ Stock registry packs change over time, so expect small drift in the stock column
 - 2026-10: first release: 9 controlled cases, 4 real apps, 1 diff scenario; Frame 9/9 and 10/10, CodeQL 7/9 and 7/10.
 - 2026-10 (second pass): blind hold-out added (Frame 7/14 first run, 14/14 after the fixes it drove; CodeQL 10/14); labelled triage of every Frame and CodeQL report on the four apps;
   the vulnerable-node authors' seed key; resolution for factories, star imports, tsconfig aliases, Nest decorators, default-class statics; NoSQL query objects, redirect and allowlist guards.
+- 2026-11: the cases' handlers are registered as an application does (`js_constructor_dao`, `ts_class_service` gain the
+  `app.js` / `app.ts` that wires them; JS/TS request data comes only from registered handlers), three hold-out cases define
+  the database handle they use (above), and the runner gives a cloned app the project root `frame scan DIR` takes (the
+  git top level: NodeGoat's `server.js` hands `app` and the MongoDB `db` to `app/routes`).
 - 2026-10 (third pass): hardening findings (debug mode, explicit insecure cookie flags); Java cross-file support (Frame 1/10 -> 10/10 on cases keyed first; CodeQL 10/10 with 3 false alarms); OWASP BenchmarkJava +18 correct CWE-330.

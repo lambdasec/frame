@@ -98,6 +98,7 @@ def _detected(pack: Pack, program: Program) -> bool:
         used = {i.canonical for proc in program.procedures.values() for n in proc.nodes.values()
                 for i in n.instrs if isinstance(i, Call) and i.canonical}
         used |= {v for proc in program.procedures.values() for v in proc.registered_via}
+        used |= {v for scope in (getattr(program, "value_origins", None) or {}).values() for v in scope.values()}
         if any(_prefix(p, v) for p in pack.detect_imports for v in used):
             return True
     if pack.detect_dependencies and set(pack.detect_dependencies) & _declared_dependencies(program):
@@ -369,6 +370,11 @@ def _apply_nested_call_sinks(program: Program, packs: Sequence[Pack]) -> None:
                         name = f"{origin}.{rest}"
                         kind, positions = None, []
                         matches = index.match(name, text)
+                        for typed in (typed_names(name, program.language, program.value_returns)
+                                      if not matches else ()):
+                            matches = index.match(typed, None)
+                            if matches:
+                                break
                         if matches:
                             rule = matches[-1][1]
                             kind, positions = rule.kind, list(rule.args)

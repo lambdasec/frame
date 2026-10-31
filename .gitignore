@@ -227,5 +227,7 @@ benchmarks/cache/
 !tests/fixtures/sca/container/**/lib/
 !examples/container-image/**/var/
 !examples/container-image/**/lib/
+# Fixture apps keep their modules where applications do (`lib/prisma.js`).
+!benchmarks/exemplars/**/lib/
 !tests/fixtures/sca/container/**/*.egg-info/
 !examples/container-image/**/*.egg-info/

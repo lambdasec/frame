@@ -1,4 +1,3 @@
 language = "javascript"
-packs = []
-requires_pack = false
+packs = ["javascript/prisma", "javascript/sql-drivers"]
 description = "Prisma raw queries (tagged template is safe) and knex raw / whereRaw"

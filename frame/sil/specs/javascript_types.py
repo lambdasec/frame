@@ -15,14 +15,13 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "data" / "javascript-types.toml"
 _SHAPE = {"modules": {"node_core", "in_memory"},
-          "methods": {"db_handle_factories", "array_to_array", "string_to_string"},
+          "methods": {"array_to_array", "string_to_string"},
           "string_only_methods": None, "constructors": None, "factories": None}
 
 
 class JavaScriptTypes(NamedTuple):
     node_core_modules: FrozenSet[str]
     in_memory_libs: FrozenSet[str]
-    db_handle_factories: FrozenSet[str]
     array_to_array: FrozenSet[str]
     string_to_string: FrozenSet[str]
     string_only_methods: Dict[str, str]
@@ -48,7 +47,7 @@ def load(path: Path = PATH) -> JavaScriptTypes:
             raise ValueError(f"{name}: [{table}] needs exactly {sorted(keys)}, each a non-empty list")
     m, f = data["modules"], data["methods"]
     return JavaScriptTypes(
-        frozenset(m["node_core"]), frozenset(m["in_memory"]), frozenset(f["db_handle_factories"]),
+        frozenset(m["node_core"]), frozenset(m["in_memory"]),
         frozenset(f["array_to_array"]), frozenset(f["string_to_string"]),
         dict(data["string_only_methods"]), dict(data["constructors"]), dict(data["factories"]))
 

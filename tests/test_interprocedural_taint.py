@@ -268,7 +268,9 @@ def build(resp, proxies):
 
 CLOSURE_DAO = """
 const express = require('express');
+const {{ MongoClient }} = require('mongodb');
 const app = express();
+const db = new MongoClient('mongodb://h').db('app');
 function find(col, threshold) {{
   const criteria = () => {{
     if (threshold) {{ return {{ $where: "this.stocks > '" + threshold + "'" }}; }}

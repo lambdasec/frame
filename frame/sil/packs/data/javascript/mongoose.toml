@@ -1,0 +1,38 @@
+[pack]
+name = "mongoose"
+language = "javascript"
+description = "Mongoose models and queries: filters, update documents, $where"
+detect = { imports = ["mongoose", "@nestjs/mongoose", "@typegoose/typegoose"] }
+references = ["https://mongoosejs.com/docs/api/model.html", "https://mongoosejs.com/docs/api/query.html",
+              "https://docs.nestjs.com/techniques/mongodb"]
+
+# A model is what `mongoose.model(name, schema)` / `connection.model(...)` returns (usually a
+# project module's export, `module.exports = mongoose.model("User", userSchema)`), a parameter
+# declared `Model<T>` (Nest's `@InjectModel`), or Typegoose's getModelForClass; its static query
+# methods and the Query they return take filters. Mongoose casts a filter to the schema unless
+# strictQuery is off, but operators in it (`{ $ne: null }`) and `$where` pass through.
+[[sink]]
+call = ["mongoose.Model.find", "mongoose.Model.findOne", "mongoose.Model.findById", "mongoose.Model.where",
+        "mongoose.Model.countDocuments", "mongoose.Model.count", "mongoose.Model.exists",
+        "mongoose.Model.deleteOne", "mongoose.Model.deleteMany", "mongoose.Model.remove",
+        "mongoose.Model.findOneAndDelete", "mongoose.Model.findOneAndRemove", "mongoose.Model.findByIdAndDelete",
+        "mongoose.Model.findByIdAndRemove", "mongoose.Model.aggregate", "mongoose.Model.$where",
+        "mongoose.Query.find", "mongoose.Query.findOne", "mongoose.Query.where", "mongoose.Query.and",
+        "mongoose.Query.or", "mongoose.Query.nor", "mongoose.Query.$where"]
+args = [0]
+kind = "nosql"
+description = "Mongoose filter"
+
+[[sink]]
+call = ["mongoose.Model.updateOne", "mongoose.Model.updateMany", "mongoose.Model.update",
+        "mongoose.Model.replaceOne", "mongoose.Model.findOneAndUpdate", "mongoose.Model.findByIdAndUpdate",
+        "mongoose.Model.findOneAndReplace", "mongoose.Query.updateOne", "mongoose.Query.updateMany"]
+args = [0, 1]
+kind = "nosql"
+description = "Mongoose filter and update document"
+
+[[sink]]
+call = ["mongoose.Model.distinct", "mongoose.Query.distinct"]
+args = [1]
+kind = "nosql"
+description = "Mongoose distinct filter"

@@ -101,6 +101,7 @@ def test_guard_pushes_polarity_through_combinators():
 def test_javascript_disjunctive_guard_keeps_the_continuation_feasible():
     src = (
         "const express = require('express'); const app = express();\n"
+        "const db = require('mysql').createPool({});\n"
         "app.get('/', (req, res) => {\n"
         "  const id = req.query.id;\n"
         "  if (!check(id) || other(id)) { return; }\n"
@@ -109,4 +110,4 @@ def test_javascript_disjunctive_guard_keeps_the_continuation_feasible():
     )
     result = FrameScanner(language="javascript", verify=False).scan(src, "t.js")
     assert [v.line for v in result.vulnerabilities
-            if v.type.value == "sql_injection"] == [5]
+            if v.type.value == "sql_injection"] == [6]
