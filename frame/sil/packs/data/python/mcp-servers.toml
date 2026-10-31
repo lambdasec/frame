@@ -8,9 +8,8 @@ references = ["https://modelcontextprotocol.io/specification"]
 # @mcp.tool() / @server.tool() on FastMCP (the official SDK's mcp.server.fastmcp, and fastmcp).
 [[entrypoint]]
 id = "tool"
-decorator = ["*.tool", "mcp.server.fastmcp.FastMCP.tool", "fastmcp.FastMCP.tool"]
+registered_via = ["mcp.server.fastmcp.FastMCP.tool", "fastmcp.FastMCP.tool", "mcp.server.FastMCP.tool"]
 params = "all"
-exclude_param = ["self", "ctx", "context"]
 exclude_param_type = ["mcp.server.fastmcp.Context", "fastmcp.Context"]
 kind = "llm"
 
@@ -20,7 +19,7 @@ kind = "llm"
 [[tool_registration]]
 id = "fastmcp-decorator"
 entrypoint = "tool"
-decorator = ["*.tool"]
+decorator = ["*"]                # the decorator that registered the `tool` entry point (by value)
 name_kwarg = "name"
 text_kwargs = ["description", "title"]
 docstring = true

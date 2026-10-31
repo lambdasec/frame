@@ -178,3 +178,10 @@ def test_malformed_tool_registrations_are_errors(language, body, error):
     text = f'[pack]\nname = "x"\nlanguage = "{language}"\n[[tool_registration]]\n' + body
     with pytest.raises(PackError, match=error):
         parse_pack(tomllib.loads(text), "x.toml")
+
+
+def test_a_tool_is_what_the_server_object_registers():
+    # `@registry.tool()` on something that is not a FastMCP server registers no MCP tool
+    code = _PY + ("from plugins import Registry\nregistry = Registry()\n\n"
+                  f"@registry.tool()\ndef add(a: int) -> int:\n    \"\"\"Adds.{TAGS}\"\"\"\n    return a\n")
+    assert found(code) == []

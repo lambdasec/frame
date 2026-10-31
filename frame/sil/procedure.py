@@ -278,6 +278,10 @@ class ProcSpec:
     # or identity, so is the result (TaintKind.IDENTITY), never attacker text.
     identity_arg: Optional[int] = None
 
+    # A usage sink only when a keyword argument has this literal (`verify=False`), or a dict-literal
+    # keyword argument this entry (`options.verify_signature` = `False`).
+    sink_if_kwarg: Dict[str, str] = field(default_factory=dict)
+
     # C/C++: writes an HTTP response header from its literal argument (`printf("Set-Cookie: ...")`
     # in a CGI program); its other arguments are the header's values.
     writes_headers: bool = False

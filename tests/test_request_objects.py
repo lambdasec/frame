@@ -290,3 +290,21 @@ def test_flask_session_rows_are_flasks_not_any_session():
 def test_flask_client_data_beyond_the_parsed_containers(read):
     code = _FLASK + f"@app.route('/x')\ndef x():\n    os.system({read})\n    return ''\n"
     assert "CWE-78" in _cwes(code)
+
+
+# ---- a route is registered on the framework's object, whatever it is called ---------------------
+
+def test_flask_routes_by_what_the_receiver_is(tmp_path):
+    other = ("import os\nfrom flask import Flask\nfrom cachelib import SimpleCache\napp = Flask(__name__)\n"
+             "cache = SimpleCache()\n\n@cache.get('/c/<k>')\ndef c(k):\n    os.system(k)\n\n"
+             "@app.get('/a/<k>')\ndef a(k):\n    os.system(k)\n    return ''\n")
+    assert _lines(other, "CWE-78") == [13]                   # `cache.get` registers no route
+    (tmp_path / "app.py").write_text("from flask import Flask\napp = Flask(__name__)\n")
+    (tmp_path / "views.py").write_text("import os\nfrom app import app\n\n@app.route('/u/<name>')\ndef u(name):\n"
+                                       "    os.system(name)\n    return ''\n")
+    (tmp_path / "routes.py").write_text("import os\n\ndef init(server):\n    @server.route('/v/<x>')\n    def v(x):\n"
+                                        "        os.system(x)\n        return ''\n")
+    (tmp_path / "main.py").write_text("from app import app\nimport routes\nroutes.init(app)\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = {(r.filename.rsplit("/", 1)[-1], v.line) for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-78"}
+    assert found == {("views.py", 6), ("routes.py", 6)}

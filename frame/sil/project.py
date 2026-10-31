@@ -1438,12 +1438,20 @@ class ProjectContext:
                 continue
             ctx.programs[key] = program
             index.set_procedures(key, program.procedures)
-        from frame.sil.value_origins import link_modules
+        from frame.sil.value_origins import link_modules, link_python_modules
 
         def resolve_module(key: str, spec: str) -> Optional[str]:
             mod = index.modules.get(key)
             return index._resolve_js(mod, spec) if mod is not None and mod.family == "javascript" else None
         link_modules(ctx.programs, resolve_module)
+
+        def python_bindings(key: str) -> Dict[str, Tuple[str, str]]:
+            mod = index.modules.get(key)
+            if mod is None or mod.family != "python":
+                return {}
+            return {local: (b.file, b.symbol) for local, b in mod.bindings.items()
+                    if b.symbol is not None and b.file}
+        link_python_modules(ctx.programs, python_bindings)
         from frame.sil.registrations import link_project
         from frame.sil.packs import default_packs
 

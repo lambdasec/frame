@@ -22,16 +22,14 @@ references = ["https://sanic.dev/en/guide/basics/request.html"]
 # handler with the request and the connection the client writes to.
 [[entrypoint]]
 id = "route-request"
-decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options",
-             "*.websocket"]
+registered_via = ["sanic.Sanic.route", "sanic.Sanic.get", "sanic.Sanic.post", "sanic.Sanic.put", "sanic.Sanic.patch", "sanic.Sanic.delete", "sanic.Sanic.head", "sanic.Sanic.options", "sanic.Sanic.websocket", "sanic.Sanic.add_route", "sanic.Sanic.add_websocket_route", "sanic.Blueprint.route", "sanic.Blueprint.get", "sanic.Blueprint.post", "sanic.Blueprint.put", "sanic.Blueprint.patch", "sanic.Blueprint.delete", "sanic.Blueprint.head", "sanic.Blueprint.options", "sanic.Blueprint.websocket", "sanic.Blueprint.add_route", "sanic.Blueprint.add_websocket_route", "sanic.blueprints.Blueprint.route", "sanic.blueprints.Blueprint.get", "sanic.blueprints.Blueprint.post", "sanic.blueprints.Blueprint.put", "sanic.blueprints.Blueprint.patch", "sanic.blueprints.Blueprint.delete", "sanic.blueprints.Blueprint.head", "sanic.blueprints.Blueprint.options", "sanic.blueprints.Blueprint.websocket", "sanic.blueprints.Blueprint.add_route", "sanic.blueprints.Blueprint.add_websocket_route"]
 param_positions = [0]
 request_type = "Request"
 description = "the Request a Sanic handler receives"
 
 [[entrypoint]]
 id = "route-handler"
-decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options",
-             "*.websocket"]
+registered_via = ["sanic.Sanic.route", "sanic.Sanic.get", "sanic.Sanic.post", "sanic.Sanic.put", "sanic.Sanic.patch", "sanic.Sanic.delete", "sanic.Sanic.head", "sanic.Sanic.options", "sanic.Sanic.websocket", "sanic.Sanic.add_route", "sanic.Sanic.add_websocket_route", "sanic.Blueprint.route", "sanic.Blueprint.get", "sanic.Blueprint.post", "sanic.Blueprint.put", "sanic.Blueprint.patch", "sanic.Blueprint.delete", "sanic.Blueprint.head", "sanic.Blueprint.options", "sanic.Blueprint.websocket", "sanic.Blueprint.add_route", "sanic.Blueprint.add_websocket_route", "sanic.blueprints.Blueprint.route", "sanic.blueprints.Blueprint.get", "sanic.blueprints.Blueprint.post", "sanic.blueprints.Blueprint.put", "sanic.blueprints.Blueprint.patch", "sanic.blueprints.Blueprint.delete", "sanic.blueprints.Blueprint.head", "sanic.blueprints.Blueprint.options", "sanic.blueprints.Blueprint.websocket", "sanic.blueprints.Blueprint.add_route", "sanic.blueprints.Blueprint.add_websocket_route"]
 params = "all"
 params_from = 1
 description = "Sanic handler argument (path parameter, websocket connection)"

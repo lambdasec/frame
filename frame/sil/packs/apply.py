@@ -692,7 +692,8 @@ def _route_variables(e: Entrypoint, proc: Procedure) -> Optional[Set[str]]:
         return None
     from .schema import ROUTE_SYNTAXES
     for a in proc.annotations:
-        if not _glob(e.decorator, a.name, a.canonical):
+        # the decorator the entry point matched, or the decorator call that registered the function
+        if not (_glob(e.decorator, a.name, a.canonical) if e.decorator else a.name in proc.registered_via):
             continue
         rule = next((a.args[k] for k in e.route_args if k in a.args), None)
         if isinstance(rule, str) and rule.startswith("/"):

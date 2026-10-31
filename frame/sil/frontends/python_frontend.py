@@ -454,6 +454,27 @@ class PythonFrontend:
             stack.extend(n.children)
         return table.finish()
 
+    def _dict_kwargs(self, call_node: TSNode) -> Optional[Dict[str, Dict[str, str]]]:
+        """Keyword arguments written as a dict literal, with their string-keyed literal entries
+        (`options={"verify_signature": False}` -> {"options": {"verify_signature": "False"}})."""
+        args_node = call_node.child_by_field_name("arguments")
+        out: Dict[str, Dict[str, str]] = {}
+        for child in (args_node.named_children if args_node else []):
+            if child.type != "keyword_argument":
+                continue
+            key, value = child.child_by_field_name("name"), child.child_by_field_name("value")
+            if key is None or value is None or value.type != "dictionary":
+                continue
+            entries: Dict[str, str] = {}
+            for pair in value.named_children:
+                k, v = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+                if pair.type == "pair" and k is not None and v is not None and k.type == "string" \
+                        and v.type in ("true", "false", "none", "integer", "string"):
+                    entries[self._get_string_content(k)] = self._get_text(v)
+            if entries:
+                out[self._get_text(key)] = entries
+        return out or None
+
     def _kwarg_names(self, call_node: TSNode) -> Optional[List[Optional[str]]]:
         """Names of the keyword arguments, parallel to `_get_call_args` (None per
         positional argument); None when the call has no keyword argument."""
@@ -1286,7 +1307,8 @@ class PythonFrontend:
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(func_name),
             args=args_exp,
-            kwarg_names=self._kwarg_names(call_node)
+            kwarg_names=self._kwarg_names(call_node),
+            dict_kwargs=self._dict_kwargs(call_node)
         )
         instrs.append(call_instr)
 
@@ -1380,7 +1402,8 @@ class PythonFrontend:
                     ret=None,
                     func=ExpConst.string(func_name),
                     args=args_exp,
-                    kwarg_names=self._kwarg_names(n)
+                    kwarg_names=self._kwarg_names(n),
+                    dict_kwargs=self._dict_kwargs(n)
                 )
                 instrs.append(call_instr)
 
@@ -1453,7 +1476,8 @@ class PythonFrontend:
             ret=None,
             func=ExpConst.string(func_name),
             args=args_exp,
-            kwarg_names=self._kwarg_names(call_node)
+            kwarg_names=self._kwarg_names(call_node),
+            dict_kwargs=self._dict_kwargs(call_node)
         )
         instrs.append(call_instr)
 

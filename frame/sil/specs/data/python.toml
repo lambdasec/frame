@@ -1510,9 +1510,11 @@ description = "Print (may expose sensitive data CWE-532)"
 
 [[spec]]
 name = "jwt.decode"
-is_sink = "auth"
+is_sink = "unverified_signature"
+sink_args = []
+sink_if_kwarg = { "options.verify_signature" = "False", verify = "False" }
 identity_arg = 0
-description = "JWT decode - verify signature (CWE-347)"
+description = "a token decoded with its signature check switched off (CWE-347); decode verifies by default"
 
 [[spec]]
 name = "jwt.encode"
@@ -1521,15 +1523,16 @@ description = "JWT encode"
 
 [[spec]]
 name = "jose.jwt.decode"
-is_sink = "auth"
+is_sink = "unverified_signature"
+sink_args = []
+sink_if_kwarg = { "options.verify_signature" = "False", verify = "False" }
 identity_arg = 0
-description = "python-jose JWT decode"
+description = "a token decoded with its signature check switched off (CWE-347); decode verifies by default"
 
 [[spec]]
 name = "authlib.jose.jwt.decode"
-is_sink = "auth"
 identity_arg = 0
-description = "Authlib JWT decode"
+description = "Authlib JWT decode (verifies the signature with the key it is given)"
 
 [[spec]]
 name = "flask.session"

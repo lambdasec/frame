@@ -18,7 +18,7 @@ references = ["https://docs.cherrypy.dev/en/latest/pkg/cherrypy._cprequest.html#
 # Every @cherrypy.expose method receives query / form / path segments as arguments.
 [[entrypoint]]
 id = "exposed"
-decorator = ["cherrypy.expose", "expose", "*.expose"]
+decorator = ["cherrypy.expose"]
 params = "all"
 
 [[sink]]

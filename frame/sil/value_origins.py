@@ -167,7 +167,7 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
     module = program.procedures.get(MODULE)
     scopes: Dict[str, Dict[str, str]] = {}
     outer = _origins(module, {}, fill=True, imports=imports, params=param_origins.get(MODULE)) \
-        if module is not None else {}
+        if module is not None else dict(param_origins.get(MODULE) or {})
     scopes[MODULE] = outer
     program.export_origin = outer.get("module.exports")
 
@@ -235,6 +235,34 @@ def same_file_parameter_origins(program) -> Dict[str, Dict[str, str]]:
         if len(origins) == 1 and None not in origins and n < len(proc.params):
             out.setdefault(name, {})[proc.params[n][0].name] = next(iter(origins))
     return out
+
+
+def link_python_modules(programs: Dict[str, object], bindings) -> None:
+    """In a project: a name a Python file imports from another project file (`from app import
+    app`) has the origin that file's module level binds it to (`app = Flask(__name__)`), through
+    re-exports. `bindings(key)` gives a file's local name -> (file, symbol) imports."""
+    for _ in range(4):                                  # a name re-exported by an `__init__`
+        changed = False
+        for key, program in programs.items():
+            if (getattr(program, "language", "") or "") != "python":
+                continue
+            found: Dict[str, str] = {}
+            for local, (file, symbol) in bindings(key).items():
+                target = programs.get(file)
+                scopes = getattr(target, "value_origins", None) or {} if target is not None else {}
+                origin = scopes.get(MODULE, {}).get(symbol)
+                if origin and local not in program.procedures:
+                    found[local] = origin
+            current = getattr(program, "param_origins", None) or {}
+            merged = {k: dict(v) for k, v in current.items()}
+            module = merged.setdefault(MODULE, {})
+            new = {k: v for k, v in found.items() if module.get(k) != v}
+            if new:
+                module.update(new)
+                annotate(program, merged)
+                changed = True
+        if not changed:
+            break
 
 
 def link_modules(programs: Dict[str, object], resolve) -> None:

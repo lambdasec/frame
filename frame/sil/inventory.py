@@ -179,10 +179,10 @@ def build_inventory(root: Union[str, Path], exclude_dirs: Optional[Iterable] = N
 def _mcp_tools(scanner, program, text: str, lang: str, rel: str) -> List[Dict[str, Any]]:
     """The file's MCP tools (the entry points a pack's `[[tool_registration]]` names) and their
     capabilities."""
-    from frame.sil.mcp_metadata import capabilities, registrations, tool_entry_kinds, tool_names
+    from frame.sil.mcp_metadata import capabilities, registering_decorators, registrations, tool_entry_kinds, tool_names
     try:
         names = tool_names(scanner._get_frontend(lang).parser.parse(text.encode("utf-8")).root_node, lang,
-                           registrations(program))
+                           registrations(program), registering_decorators(program) if lang == "python" else None)
     except Exception:
         names = {}
     kinds = tool_entry_kinds(program)

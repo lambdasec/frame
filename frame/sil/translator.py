@@ -73,6 +73,7 @@ class VulnType(Enum):
     SSRF = "ssrf"                               # CWE-918
     AUTHORIZATION_BYPASS = "authorization_bypass"  # CWE-863
     CORS_MISCONFIGURATION = "cors_misconfiguration"  # CWE-942
+    UNVERIFIED_SIGNATURE = "unverified_signature"    # CWE-347
     IDOR = "idor"                               # CWE-639
 
     # A02: Security Misconfiguration
@@ -5809,6 +5810,15 @@ class SILTranslator:
                 and weak_algorithm(str(spec.is_sink), arg.value) is not None
         if spec.sink_if_arg_literal:
             return any(str(a).strip().strip('"') in spec.sink_if_arg_literal for a in args)
+        if spec.sink_if_kwarg:
+            entries = getattr(instr, "dict_kwargs", None) or {}
+            for key, literal in spec.sink_if_kwarg.items():
+                kw, _, inner = key.partition(".")
+                if inner and entries.get(kw, {}).get(inner) == literal:
+                    return True
+                if not inner and any(n == kw and str(getattr(a, "value", a)) == literal for n, a in zip(names, args)):
+                    return True
+            return False
         if spec.scanf_format_arg is not None:
             return spec.scanf_format_arg < len(args) and self._is_unbounded_scanf_format(args[spec.scanf_format_arg])
         return True

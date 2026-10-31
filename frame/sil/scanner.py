@@ -739,6 +739,7 @@ class FrameScanner:
         VulnType.SSRF: Severity.HIGH,
         VulnType.AUTHORIZATION_BYPASS: Severity.CRITICAL,
         VulnType.CORS_MISCONFIGURATION: Severity.MEDIUM,
+        VulnType.UNVERIFIED_SIGNATURE: Severity.HIGH,
         VulnType.IDOR: Severity.HIGH,
 
         # A02: Security Misconfiguration
@@ -2152,7 +2153,8 @@ class FrameScanner:
             return []
         try:
             root = self._get_frontend(lang).parser.parse(source_code.encode("utf-8")).root_node
-            found = (mcp_metadata.scan_python if lang == "python" else mcp_metadata.scan_javascript)(root, regs)
+            found = mcp_metadata.scan_python(root, regs, mcp_metadata.registering_decorators(program)) \
+                if lang == "python" else mcp_metadata.scan_javascript(root, regs)
         except Exception:
             return []
         out = []

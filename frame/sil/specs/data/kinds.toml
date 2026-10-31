@@ -98,6 +98,10 @@ kind = "cors"
 vuln = "cors_misconfiguration"
 
 [[sink]]
+kind = "unverified_signature"
+vuln = "unverified_signature"
+
+[[sink]]
 kind = "alloc_size"
 vuln = "unbounded_allocation"
 
@@ -306,6 +310,11 @@ category = "access-control"
 type = "cors_misconfiguration"
 cwe = "CWE-942"
 category = "access-control"
+
+[[vuln]]
+type = "unverified_signature"
+cwe = "CWE-347"
+category = "crypto"
 
 [[vuln]]
 type = "idor"

@@ -186,11 +186,15 @@ def _hidden(tool: str, node, value: str) -> Optional[Finding]:
 
 # -- Python -----------------------------------------------------------------------------------
 
-def _decorator_form(dec, regs):
-    """(registration, call node or None, callee node) when `dec` registers a tool."""
+def _decorator_form(dec, regs, registering=None):
+    """(registration, call node or None) when `dec` registers a tool. `registering`: the decorator
+    calls (as written) that registered a function as a pack's tool entry point, by the value of
+    their receiver (`mcp.server.fastmcp.FastMCP.tool`); a decorator outside it registers nothing."""
     call = dec.named_children[0] if dec.named_children else None
     target = call.child_by_field_name("function") if call is not None and call.type == "call" else call
     if target is None:
+        return None
+    if registering is not None and _text(target) not in registering:
         return None
     reg = next((r for r in regs if r.decorator and any(fnmatchcase(_text(target), g) for g in r.decorator)), None)
     return (reg, call if call.type == "call" else None) if reg is not None else None
@@ -202,8 +206,20 @@ def _kwargs(args) -> Dict[str, object]:
             if k.type == "keyword_argument" and k.child_by_field_name("name") is not None}
 
 
-def scan_python(root, regs) -> List[Finding]:
-    """`regs`: the `[[tool_registration]]` entries of the packs applied to the file."""
+def registering_decorators(program) -> set:
+    """The decorators, as written, that registered a function of `program` as a tool entry point."""
+    kinds = tool_entry_kinds(program)
+    out = set()
+    for proc in program.procedures.values():
+        if kinds & set(proc.entry_kinds):
+            written = {a.name for a in proc.annotations}
+            out |= {v for v in proc.registered_via if v in written}
+    return out
+
+
+def scan_python(root, regs, registering=None) -> List[Finding]:
+    """`regs`: the `[[tool_registration]]` entries of the packs applied to the file;
+    `registering`: `registering_decorators` of its program."""
     bindings = _module_bindings(root, ("assignment",))
     out: List[Finding] = []
     stack = [root]
@@ -213,7 +229,7 @@ def scan_python(root, regs) -> List[Finding]:
         if n.type == "decorated_definition":
             fn = n.child_by_field_name("definition")
             for dec in (c for c in n.named_children if c.type == "decorator"):
-                form = _decorator_form(dec, regs)
+                form = _decorator_form(dec, regs, registering)
                 if form is None or fn is None:
                     continue
                 reg, call = form
@@ -368,7 +384,7 @@ CAPABILITIES = {
 }
 
 
-def tool_names(root, language: str, regs) -> Dict[int, str]:
+def tool_names(root, language: str, regs, registering=None) -> Dict[int, str]:
     """Line of each tool handler -> the tool's name (Python: the decorated function's `def`
     line; JS: the handler function's first line)."""
     out: Dict[int, str] = {}
@@ -379,7 +395,7 @@ def tool_names(root, language: str, regs) -> Dict[int, str]:
         if language == "python" and n.type == "decorated_definition":
             fn = n.child_by_field_name("definition")
             for dec in (c for c in n.named_children if c.type == "decorator"):
-                form = _decorator_form(dec, regs)
+                form = _decorator_form(dec, regs, registering)
                 if fn is None or form is None:
                     continue
                 reg, call = form
@@ -439,5 +455,6 @@ def capabilities(program, proc) -> List[str]:
     return sorted(found)
 
 
-__all__ = ["Finding", "HIDDEN", "DYNAMIC", "hidden_characters", "scan_python", "scan_javascript", "tool_names",
+__all__ = ["Finding", "HIDDEN", "DYNAMIC", "hidden_characters", "registering_decorators", "scan_python",
+           "scan_javascript", "tool_names",
            "registrations", "tool_entry_kinds", "capabilities", "CAPABILITIES"]

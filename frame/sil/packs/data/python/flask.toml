@@ -34,10 +34,18 @@ references = ["https://flask.palletsprojects.com/en/stable/api/#flask.Request",
 # decorator leaves every parameter client data.
 [[entrypoint]]
 id = "route-view"
-decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete"]
+registered_via = ["flask.Flask.route", "flask.Flask.get", "flask.Flask.post", "flask.Flask.put", "flask.Flask.patch", "flask.Flask.delete", "flask.Blueprint.route", "flask.Blueprint.get", "flask.Blueprint.post", "flask.Blueprint.put", "flask.Blueprint.patch", "flask.Blueprint.delete", "quart.Quart.route", "quart.Quart.get", "quart.Quart.post", "quart.Quart.put", "quart.Quart.patch", "quart.Quart.delete", "quart.Blueprint.route", "quart.Blueprint.get", "quart.Blueprint.post", "quart.Blueprint.put", "quart.Blueprint.patch", "quart.Blueprint.delete"]
 params = "all"
 route_syntax = "werkzeug"
 route_args = ["0", "rule"]
+description = "Flask view function argument (URL variable)"
+
+# app.add_url_rule(rule, endpoint, view_func): the same view, registered by a call.
+[[entrypoint]]
+id = "url-rule-view"
+registered_via = ["flask.Flask.add_url_rule", "flask.Blueprint.add_url_rule", "quart.Quart.add_url_rule",
+                  "quart.Blueprint.add_url_rule"]
+params = "all"
 description = "Flask view function argument (URL variable)"
 
 # flask.abort / werkzeug.exceptions.abort raise an HTTPException: the request handling ends there.

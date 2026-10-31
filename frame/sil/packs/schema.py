@@ -718,8 +718,9 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if "route_syntax" in t:
             if t["route_syntax"] not in ROUTE_SYNTAXES:
                 raise _fail(origin, f"{where}.route_syntax", f"must be one of {sorted(ROUTE_SYNTAXES)}")
-            if not e.decorator:
-                raise _fail(origin, where, "route_syntax reads the rule from the matched decorator: needs decorator")
+            if not (e.decorator or e.registered_via):
+                raise _fail(origin, where, "route_syntax reads the rule from the decorator that registers the "
+                                           "function: needs decorator or registered_via")
             e.route_syntax = t["route_syntax"]
             e.route_args = _strings(origin, f"{where}.route_args", t.get("route_args", ["0"]), allow_empty=False)
         elif "route_args" in t:

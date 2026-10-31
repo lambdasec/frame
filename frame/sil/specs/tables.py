@@ -63,6 +63,9 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
             if key in entry and not (isinstance(entry[key], int) and not isinstance(entry[key], bool)
                                      and entry[key] >= 0):
                 raise SpecTableError(f"{origin}: {name}: {key} must be an argument position")
+        cond = entry.get("sink_if_kwarg", {})
+        if not isinstance(cond, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in cond.items()):
+            raise SpecTableError(f"{origin}: {name}: sink_if_kwarg maps keyword names (or kw.key) to literals")
         kw = entry.get("safe_kwargs", {})
         if not isinstance(kw, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in kw.items()):
             raise SpecTableError(f"{origin}: {name}: safe_kwargs maps keyword names to literals")

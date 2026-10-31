@@ -20,7 +20,7 @@ Security Extensions (Frame-specific):
 """
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from enum import Enum, auto
 
 from .types import Ident, PVar, Exp, ExpVar, ExpConst, Typ, Location
@@ -232,6 +232,7 @@ class SinkKind(Enum):
     AUTHZ_CHECK = "authz"       # Authorization bypass (CWE-863)
     RESOURCE_SELECT = "resource_select"  # Object-level resource selection by id -- IDOR/BOLA (CWE-639)
     CORS = "cors"               # CORS misconfiguration (CWE-942)
+    UNVERIFIED_SIGNATURE = "unverified_signature"   # a token decoded with its signature check off (CWE-347)
 
     # Resource exhaustion
     ALLOC_SIZE = "alloc_size"   # Size/count argument of an allocation (CWE-770)
@@ -595,6 +596,9 @@ class Call(Instr):
     # Keyword-argument names parallel to `args` (None for a positional argument),
     # for languages that have them (Python, C# named arguments). None = no names.
     kwarg_names: Optional[List[Optional[str]]] = None
+    # keyword arguments written as a dict literal: keyword -> {string key: literal value as written}
+    # (`options={"verify_signature": False}`), which the argument expression itself does not keep
+    dict_kwargs: Optional[Dict[str, Dict[str, str]]] = None
     # A ProcSpec a framework pack resolved for THIS call (canonical id, then
     # name), already merged over the built-in spec; Program.spec_for_call
     # returns it before any name lookup. See frame/sil/packs.

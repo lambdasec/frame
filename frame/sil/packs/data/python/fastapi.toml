@@ -31,8 +31,8 @@ references = ["https://starlette.dev/websockets/"]
 # types are not client values (a Request or WebSocket is the request object, below).
 [[entrypoint]]
 id = "route"
-decorator = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.head", "*.options", "*.api_route",
-             "*.websocket", "fastapi.*.get", "fastapi.*.post"]
+registered_via = ["fastapi.FastAPI.get", "fastapi.FastAPI.post", "fastapi.FastAPI.put", "fastapi.FastAPI.patch", "fastapi.FastAPI.delete", "fastapi.FastAPI.head", "fastapi.FastAPI.options", "fastapi.FastAPI.trace", "fastapi.FastAPI.api_route", "fastapi.FastAPI.websocket", "fastapi.APIRouter.get", "fastapi.APIRouter.post", "fastapi.APIRouter.put", "fastapi.APIRouter.patch", "fastapi.APIRouter.delete", "fastapi.APIRouter.head", "fastapi.APIRouter.options", "fastapi.APIRouter.trace", "fastapi.APIRouter.api_route", "fastapi.APIRouter.websocket", "fastapi.routing.APIRouter.get", "fastapi.routing.APIRouter.post", "fastapi.routing.APIRouter.put", "fastapi.routing.APIRouter.patch", "fastapi.routing.APIRouter.delete", "fastapi.routing.APIRouter.head", "fastapi.routing.APIRouter.options", "fastapi.routing.APIRouter.trace", "fastapi.routing.APIRouter.api_route", "fastapi.routing.APIRouter.websocket",
+                  "fastapi.FastAPI.add_api_route", "fastapi.APIRouter.add_api_route"]
 params = "all"
 exclude_param_type = ["fastapi.BackgroundTasks", "fastapi.Response", "starlette.responses.Response",
                       "sqlalchemy.orm.Session", "sqlalchemy.ext.asyncio.AsyncSession",

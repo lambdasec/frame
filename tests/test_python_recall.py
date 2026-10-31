@@ -308,3 +308,18 @@ def test_a_capture_pattern_is_not_an_equality():
              for i in n.instrs if type(i).__name__ == "Prune"]
     assert '(guess == "A")' in conds and '((guess == "C") || (guess == "D"))' in conds
     assert not any("== x" in c for c in conds)
+
+
+# ---- a JWT decoded with its signature check off (CWE-347) -----------------------------------
+
+@pytest.mark.parametrize("options, flagged", [
+    ('algorithms=["HS256"]', False),                          # PyJWT verifies by default
+    ('options={"verify_signature": False}', True),
+    ('verify=False', True),                                   # PyJWT 1.x
+    ('options={"verify_signature": True}, algorithms=["HS256"]', False),
+])
+def test_jwt_decode_without_verification(options, flagged):
+    code = ("import jwt\nfrom flask import Flask, request\napp = Flask(__name__)\n\n@app.route('/x')\ndef x():\n"
+            f"    return jwt.decode(request.headers['Authorization'], 'key', {options})['sub']\n")
+    assert ("CWE-347" in _py_cwes(code)) == flagged
+    assert "CWE-863" not in _py_cwes(code)
