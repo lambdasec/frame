@@ -58,6 +58,11 @@ def typed_spec_lookup(specs, recv_type: str, func_name: str, exact: bool,
 RECEIVER_UNKNOWN = "Unknown"
 
 
+def _js_suffix_head(key: str) -> bool:
+    from .frontends.javascript_frontend import _JS_SUFFIX_HEADS
+    return key.split(".", 1)[0] in _JS_SUFFIX_HEADS
+
+
 # Receivers through which a member call still reaches a global function
 # (`window.setTimeout`); see ProcSpec.global_only.
 GLOBAL_OBJECTS = frozenset({"window", "global", "globalThis"})
@@ -1033,6 +1038,8 @@ class Program:
             parts = func_name.split('.')
             for i in range(1, len(parts)):
                 suffix = '.'.join(parts[i:])
+                if language in ("javascript", "typescript") and '.' in suffix and not _js_suffix_head(suffix):
+                    continue                     # a module's row is not a member of something else
                 spec = self.library_specs.get(suffix) if by_name(suffix, language) else None
                 if spec:
                     if spec.global_only and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:

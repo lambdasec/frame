@@ -519,3 +519,16 @@ def test_the_javascript_type_model_is_data_and_strict(tmp_path):
     bad.write_text(javascript_types.PATH.read_text().replace("array_to_array", "arrays"))
     with pytest.raises(ValueError, match=r"\[methods\]"):
         javascript_types.load(bad)
+
+
+@pytest.mark.parametrize("stmt, cwe, flagged", [
+    ("const h = ctx.request.get(ctx.query.h);", "CWE-918", False),     # Koa's header getter, no HTTP client
+    ("svc.fs.readFile(ctx.query.p, () => {});", "CWE-22", False),      # a member called fs, not the module
+    ("require('fs').readFile(ctx.query.p, () => {});", "CWE-22", True),
+    ("window.document.write(ctx.query.p);", "CWE-79", True),           # a runtime global behind its qualifier
+])
+def test_js_module_rows_match_the_module_binding_only(stmt, cwe, flagged):
+    code = ("const Koa = require('koa');\nconst app = new Koa();\nconst svc = { fs: null };\n"
+            "app.use(async (ctx) => {\n  " + stmt + "\n  ctx.body = 'ok';\n});\n")
+    found = {v.cwe_id for v in FrameScanner(language="javascript", verify=False).scan(code, "a.js").vulnerabilities}
+    assert (cwe in found) == flagged

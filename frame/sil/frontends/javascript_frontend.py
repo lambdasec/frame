@@ -63,6 +63,13 @@ from frame.sil.specs.passthrough import load as _passthrough
 from frame.sil.specs.shells import is_shell
 from frame.sil.specs.javascript_specs import JAVASCRIPT_SPECS
 from frame.sil.value_origins import by_name
+from frame.sil.metadata import _JS_GLOBALS
+
+# A row found behind a qualifier (`window.document.write` is `document.write`) must be headed by a
+# runtime global or the jQuery root the frontend names collections after; a module's row
+# (`request.get`, `fs.readFile`) applies to a call named after that module's binding, never to a
+# member of something else that happens to be called `request` or `fs`.
+_JS_SUFFIX_HEADS = _JS_GLOBALS | {"$", "jQuery", "history", "self", "top", "parent", "opener", "frames"}
 
 
 def _get_sink_kind(spec_type: str) -> SinkKind:
@@ -1958,7 +1965,10 @@ class JavaScriptFrontend:
             return spec
         parts = func_name.split('.')
         for i in range(1, len(parts)):
-            spec = self._spec_by_name('.'.join(parts[i:]))
+            key = '.'.join(parts[i:])
+            if '.' in key and key.split('.', 1)[0] not in _JS_SUFFIX_HEADS:
+                continue                         # `ctx.request.get` is no `request` module call
+            spec = self._spec_by_name(key)
             if spec:
                 if spec.global_only and not self._may_be_global('.'.join(parts[:i])):
                     return None
