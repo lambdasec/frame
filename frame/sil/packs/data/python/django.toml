@@ -57,6 +57,7 @@ server_state = ["user", "auser", "session", "site", "resolver_match", "current_a
 kinds = { FILES = "file" }
 headers = ["headers"]
 sessions = ["session"]
+identities = ["user", "auser"]              # AuthenticationMiddleware's user (auser() in async views)
 references = ["https://docs.djangoproject.com/en/stable/ref/request-response/#httprequest-objects"]
 
 # A class-based view instance: View.setup() keeps the request and the URL's captured values on

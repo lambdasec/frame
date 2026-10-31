@@ -16,7 +16,7 @@ import re
 from dataclasses import replace
 from fnmatch import fnmatchcase
 from pathlib import PurePath
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from ..instructions import Assign, Call, TaintKind, TaintSource
 from ..metadata import ClassInfo, ImportTable, qualify_type
@@ -674,6 +674,23 @@ def _request_sources(names: List[str], request, label: str, loc) -> List[TaintSo
                         description=f"{label} entry point (request object)") for n in names if "." not in n]
 
 
+def _route_variables(e: Entrypoint, proc: Procedure) -> Optional[Set[str]]:
+    """The variables of the route rule the matched decorator registers the function under
+    (`@app.route("/t/<int:tid>")` gives `tid`), when the entry point reads them (`route_syntax`)
+    and the rule is a literal. None when everything else decides."""
+    if not e.route_syntax:
+        return None
+    from .schema import ROUTE_SYNTAXES
+    for a in proc.annotations:
+        if not _glob(e.decorator, a.name, a.canonical):
+            continue
+        rule = next((a.args[k] for k in e.route_args if k in a.args), None)
+        if isinstance(rule, str) and rule.startswith("/"):
+            return set(re.findall(ROUTE_SYNTAXES[e.route_syntax], rule))
+        return None                                      # the rule is not written out: unknown
+    return None
+
+
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
     """What an entry point taints of a procedure: parameter names, and for a destructuring
     parameter (`$argN`, `Procedure.param_patterns`) either the whole parameter or, when names
@@ -682,8 +699,11 @@ def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: Impor
     if e.receiver:
         receiver = bound_receiver(proc, program)
         return [receiver] if receiver is not None else []
+    routed = _route_variables(e, proc)
     out: List[str] = []
     for i, n in _call_params(e, proc, program):
+        if routed is not None and n not in routed and n not in proc.variadic:
+            continue                                     # not a URL variable: a decorator's, or a default
         if (e.param_positions and i not in e.param_positions) or i < e.params_from:
             continue
         pattern = proc.param_patterns.get(n)

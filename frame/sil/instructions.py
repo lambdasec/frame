@@ -61,6 +61,11 @@ class TaintKind(Enum):
     # credential -- so a resource selected by a PRINCIPAL-derived value is self-
     # scoped, not a cross-user (IDOR) access. Propagates through custom validators.
     PRINCIPAL = "principal"
+    # The authenticated caller as the server knows it (Flask-Login's `current_user`, Django's
+    # `request.user`, a verified JWT's identity): set by the server, never attacker data at a
+    # sink. It matters where it scopes a resource selection or is compared with an object's
+    # owner (IDOR), and only there.
+    IDENTITY = "identity"
     # Output of a non-cryptographic PRNG (rand(), random()): not attacker data, but
     # predictable. It matters only where a value must be unpredictable
     # (SinkKind.UNPREDICTABLE), and only there.
@@ -106,6 +111,7 @@ class RequestType:
     objects: Tuple[Tuple[Tuple[str, ...], "RequestType"], ...] = ()   # path -> the request object there
     headers: Tuple[Tuple[str, ...], ...] = ()
     sessions: Tuple[Tuple[str, ...], ...] = ()
+    identities: Tuple[str, ...] = ()      # server-state names holding the authenticated caller (`user`)
     origin: str = ""                      # its value origin: calls on it are named `<origin>.<method>`
 
     def _object_at(self, path: Tuple[str, ...]) -> Optional[Tuple["RequestType", Tuple[str, ...]]]:
@@ -153,6 +159,13 @@ class RequestType:
         if obj is not None:
             return obj[0].is_header_map(obj[1])
         return path in self.headers
+
+    def is_identity(self, path: Tuple[str, ...]) -> bool:
+        """Does the read (or method call) at `path` give the authenticated caller?"""
+        obj = self._object_at(path)
+        if obj is not None:
+            return obj[0].is_identity(obj[1])
+        return bool(path) and path[0] in self.identities
 
     def is_session(self, path: Tuple[str, ...]) -> bool:
         """Is the property at `path` the request's server-side session?"""

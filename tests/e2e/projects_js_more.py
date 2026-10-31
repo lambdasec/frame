@@ -810,11 +810,11 @@ export const container = {
   reporter: new Reporter(),
 };
 ''',
-    "src/reporter.ts": '''import { execSync } from "child_process";
+    "src/reporter.ts": '''import { <<execSync||execFileSync>> } from "child_process";
 
 export class Reporter {
   render(title: string): string {
-    return execSync(<<`report --title ${title}`||["report", "--title", title].map((p) => JSON.stringify(p)).join(" ")>>).toString(); // frame-expect: CWE-78
+    return <<execSync(`report --title ${title}`)||execFileSync("report", ["--title", title])>>.toString(); // frame-expect: CWE-78
   }
 }
 ''',

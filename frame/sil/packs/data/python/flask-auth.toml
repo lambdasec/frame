@@ -1,0 +1,20 @@
+[pack]
+name = "flask-auth"
+language = "python"
+description = "Flask authentication extensions: who the authenticated caller is (Flask-Login, Flask-JWT-Extended, Flask-JWT)"
+references = ["https://flask-login.readthedocs.io/en/latest/#flask_login.current_user",
+              "https://flask-jwt-extended.readthedocs.io/en/stable/api.html",
+              "https://pythonhosted.org/Flask-JWT/"]
+detect = { imports = ["flask_login", "flask_jwt_extended", "flask_jwt"] }
+
+# The authenticated caller as the extension resolved it: Flask-Login's `current_user` proxy (the
+# user its user_loader returned for the session), Flask-JWT-Extended's `current_user` (its
+# user_lookup_loader's result) and the verified token's identity and claims, Flask-JWT's
+# `current_identity`. Not attacker data: a resource selected by it is the caller's own.
+[[identity]]
+proxies = ["flask_login.current_user", "flask_jwt_extended.current_user", "flask_jwt.current_identity"]
+
+[[source]]
+call = ["flask_jwt_extended.get_jwt_identity", "flask_jwt_extended.get_current_user", "flask_jwt_extended.get_jwt"]
+kind = "identity"
+description = "the identity / user / claims of the verified JWT accessing the endpoint"

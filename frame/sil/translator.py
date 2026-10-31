@@ -730,6 +730,9 @@ class IPAState:
     # Set when the fixpoint ran out of its visit budget: the summaries may be
     # missing flows (reported by the scan as an incomplete analysis).
     incomplete: bool = False
+    # Python decorators of the project: decorator -> the functions it wraps (`@token_required`),
+    # which its wrapper calls through the decorator's parameter (`f(user, *args)`).
+    decorated: Dict[ProcRef, List["Callee"]] = field(default_factory=dict)
 
 
 # The fixpoint analyses each procedure once, then again only when something it
@@ -752,6 +755,8 @@ def run_ipa_fixpoint(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> 
         tr._prepare()
         tr._ipa_on = True
         tr._ipa_summarising = True
+    for key, tr in sorted(translators.items()):
+        tr._record_decorated()
     queue = deque(sorted((key, name) for key, tr in translators.items()
                          for name in tr.program.procedures))
     queued = set(queue)
@@ -930,6 +935,7 @@ class SILTranslator:
         # The procedure currently being executed (gives detectors access to its
         # fixed-array declarations for heap-origin reasoning).
         self._cur_proc: Optional[Procedure] = None
+        self._ownership_guards: Dict[str, Set[str]] = {}   # procedure -> objects checked against the caller
         # CWE-401 leak bookkeeping: allocation identity -> its source location, so
         # a leak reported when an allocation is lost or outlives its scope points
         # at the allocation site rather than the point of loss.
@@ -1407,6 +1413,7 @@ class SILTranslator:
         """
         checks = []
         self._cur_proc = proc
+        self._ownership_guards[proc.name] = set()      # objects compared with the caller (this walk)
         # CWE-338 by destination: does this function's name say its result must be unpredictable?
         self._unpredictable_output = must_be_unpredictable(proc.simple_name.rsplit("::", 1)[-1])
         self._param_names = {str(p) for p, _ in proc.params}
@@ -1672,6 +1679,11 @@ class SILTranslator:
                             callee = self._resolve_callee(name)
                             if callee is not None and callee.ref != (self._file_key, proc.name):
                                 return True
+                for text, index in proc.passed_as:       # Python: wrapped by a decorator of the project
+                    if lang == "python" and index == 0 and any(a.name == text for a in proc.annotations):
+                        callee = self._resolve_callee(text)
+                        if callee is not None and callee.ref != (self._file_key, proc.name):
+                            return True
             return False
         finally:
             self._cur_proc = saved
@@ -1717,17 +1729,20 @@ class SILTranslator:
                 and p.simple_name == method]
         return hits[0] if len(hits) == 1 else None
 
-    def _request_proxies(self) -> Dict[str, "RequestType"]:
+    def _request_proxies(self) -> Dict[str, Optional["RequestType"]]:
         """The names this file reaches a module-level request proxy by (`request` after `from flask
         import request`, `cherrypy.request` after `import cherrypy`), with the request type the
         applied packs give it (`[[request_type]] proxies`). Inside a request such a proxy is that
-        request's object."""
+        request's object. An identity proxy (`[[identity]] proxies`: Flask-Login's
+        `current_user`) maps to None: it is the authenticated caller."""
         cache = self.__dict__.get("_request_proxy_cache")
         if cache is None:
-            proxies: Dict[str, "RequestType"] = {}
+            proxies: Dict[str, Optional["RequestType"]] = {}
             for pack in getattr(self.program, "active_packs", ()):
                 for proxy, rid in getattr(pack, "request_proxies", {}).items():
                     proxies.setdefault(proxy, pack.request_types[rid])
+                for proxy in getattr(pack, "identity_proxies", ()):
+                    proxies.setdefault(proxy, None)        # the authenticated caller, not a request
             cache = {}
             for local, qualified in (self.program.imports or {}).items():
                 q = str(qualified)
@@ -1762,8 +1777,49 @@ class SILTranslator:
         for name, rtype in proxies.items():
             if name.split(".", 1)[0] in rebound:
                 continue
+            if rtype is None:                        # an identity proxy (`flask_login.current_user`)
+                state.add_taint(name, TaintInfo(TaintKind.IDENTITY, name, proc.loc or Location.unknown()))
+                continue
             state.add_taint(name, TaintInfo(TaintKind.REQUEST, name, proc.loc or Location.unknown(),
                                             request=rtype))
+
+    def _record_decorated(self) -> None:
+        """Python: each function of this file a decorator of the project wraps (`@token_required`
+        def view(user, id)` -> `ipa.decorated[token_required]`), the decorator resolved like a call
+        of it from the function's own file."""
+        if (getattr(self.program, "language", "") or "").lower() != "python":
+            return
+        saved = self._cur_proc
+        try:
+            for proc in self.program.procedures.values():
+                for text, index in proc.passed_as:
+                    if index != 0 or not any(a.name == text for a in proc.annotations):
+                        continue
+                    self._cur_proc = proc
+                    decorator = self._resolve_callee(text)
+                    if decorator is None or decorator.ref == (self._file_key, proc.name):
+                        continue
+                    wrapped = self._ipa.decorated.setdefault(decorator.ref, [])
+                    if all(c.ref != (self._file_key, proc.name) for c in wrapped):
+                        wrapped.append(Callee((self._file_key, proc.name), proc))
+        finally:
+            self._cur_proc = saved
+
+    def _decorated_targets(self, name: str) -> List["Callee"]:
+        """`f(user, *args, **kwargs)` inside a decorator's wrapper, `f` being the decorator's
+        parameter (seen through the wrapper's captures): every function the decorator wraps."""
+        scope, seen = self._cur_proc, set()
+        while scope is not None and id(scope) not in seen:
+            seen.add(id(scope))
+            params = [p.name for p, _ in scope.params]
+            if name in params:
+                if params.index(name) != 0:
+                    return []
+                return list(self._ipa.decorated.get((self._file_key, scope.name), ()))
+            if name not in scope.captures:
+                return []
+            scope = self.program.procedures.get(scope.parent) if scope.parent else None
+        return []
 
     def _callback_argument(self, name: str, caller: Procedure) -> Optional[Procedure]:
         """`cb(x)` inside `withName(req, cb)`: the one function of this file that is passed as
@@ -2095,7 +2151,10 @@ class SILTranslator:
             # `name.trim()` / `req.query.q.toLowerCase()`: a method called on attacker data
             # returns data derived from it, as when the same call is assigned to a variable.
             parts = name.split(".")
-            if len(parts) > 1 and not (spec and spec.is_taint_sanitizer()):
+            if isinstance(exp.func, ExpFieldAccess) and not isinstance(exp.func.base, (ExpVar, ExpFieldAccess)) \
+                    and not (spec and spec.is_taint_sanitizer()):
+                out.extend(self._arg_taint_leaves(exp.func.base, state, wrap))   # `x["k"].split(" ")`
+            elif len(parts) > 1 and not (spec and spec.is_taint_sanitizer()):
                 head = parts[0]
                 if state.is_tainted(head) and not (len(parts) > 2 and self._is_request_value(head, state)):
                     out.append((state.get_taint_info(head),
@@ -4141,6 +4200,16 @@ class SILTranslator:
                 and spec.algorithm_arg < len(instr.args):
             checks.extend(self._weak_algorithm_id_checks(instr, spec, state, proc_name))
 
+        # Whose identity the result is: a verified token decoded from the caller's credential
+        # (`identity_arg`), or the record a resource selection scoped by the caller returns
+        # (`User.query.get(claims["sub"])` is the caller's own user).
+        if spec is not None and instr.ret:
+            idx = spec.identity_arg
+            proves = idx is not None and idx < len(instr.args) and self._carries_identity(instr.args[idx][0], state)
+            if proves or (spec.is_sink == "resource_select" and self._resource_select_principal_scoped(instr, state)):
+                ret_var = str(instr.ret[0])
+                state.tainted[ret_var] = TaintInfo(TaintKind.IDENTITY, ret_var, instr.loc, [ret_var])
+
         # A call to a procedure of this file: pass its argument taint on, and
         # take the result's taint from the callee's return summary (or, before
         # the callee has one, by default argument->result propagation).
@@ -4150,6 +4219,9 @@ class SILTranslator:
             ext = self._extension_call(instr, func_name) or self._partial_call(instr, func_name)
             if ext is not None:
                 callee, ipa_instr = ext
+        if callee is None and self._ipa_on and "." not in func_name:
+            for wrapped in self._decorated_targets(func_name):     # a decorator's wrapper calling it
+                self._record_entry_taints(wrapped, ipa_instr, func_name, state)
         if callee is not None:
             self._record_entry_taints(callee, ipa_instr, func_name, state)
             self._record_field_entry_taints(callee, ipa_instr, func_name, state)
@@ -4230,11 +4302,6 @@ class SILTranslator:
             if spec.is_taint_source() and instr.ret and not self._spec_sources_off:
                 ret_var = str(instr.ret[0])
                 source_kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
-                # The Authorization/Cookie header is an authentication credential, not a
-                # free object-selector: tag PRINCIPAL (arg-sensitive), so values derived
-                # from it -- even through a custom validator -- are the caller's own identity.
-                if source_kind == TaintKind.USER_INPUT and self._is_auth_credential_access(func_name, instr):
-                    source_kind = TaintKind.PRINCIPAL
                 state.add_taint(ret_var, TaintInfo(
                     source_kind=source_kind,
                     source_var=ret_var,
@@ -4343,7 +4410,7 @@ class SILTranslator:
                                                 # Custom/indirect auth and post-hoc ownership checks are
                                                 # left to the LLM layer.
                                                 if spec.is_sink == 'resource_select' and \
-                                                        self._resource_select_principal_scoped(instr):
+                                                        self._resource_select_principal_scoped(instr, state):
                                                     continue
                                                 # Skip xpath sinks for vars with inline .replace() sanitization
                                                 if spec.is_sink == 'xpath' and arg_var in inline_sanitized_vars:
@@ -5113,6 +5180,10 @@ class SILTranslator:
         return out
 
     def _exec_prune(self, instr: Prune, state: SymbolicState) -> Optional[SymbolicState]:
+        self._note_ownership_guard(instr.condition, state)
+        return self._exec_prune_in(instr, state)
+
+    def _exec_prune_in(self, instr: Prune, state: SymbolicState) -> Optional[SymbolicState]:
         """
         Execute prune (conditional).
 
@@ -5542,67 +5613,60 @@ class SILTranslator:
     # Vulnerability Check Creation
     # =========================================================================
 
-    # Authenticated-principal identifiers (an ownership binding when they scope a
-    # resource-selection query). A catalog of framework principals, like the
-    # source/sink name catalogs -- not a source-text pattern rule.
-    _PRINCIPAL_TOKENS = _principals().principal_tokens             # specs/data/principals.toml
+    _AUTH_HEADER_NAMES = _principals().credential_headers        # specs/data/principals.toml
+    # the caller's own identity (the server's) or credential (theirs): either scopes a selection
+    # to the caller's own objects
+    _SELF_SCOPED = (TaintKind.IDENTITY, TaintKind.PRINCIPAL)
 
-    _AUTH_HEADER_NAMES = _principals().credential_headers
+    def _carries_identity(self, exp: Exp, state: "SymbolicState") -> bool:
+        return any(info is not None and info.source_kind in self._SELF_SCOPED
+                   for info, _ in self._arg_taint_leaves(exp, state))
 
-    def _is_auth_credential_access(self, func_name, instr) -> bool:
-        """True if a call reads an HTTP authentication credential header
-        (Authorization / Cookie / API-key). The attacker can only present their own
-        credential, so this value and anything derived from it is the authenticated
-        principal -- tainted PRINCIPAL, not USER_INPUT."""
-        try:
-            fn = str(func_name or "")
-            if "headers.get" not in fn and "headers.__getitem__" not in fn:
-                return False
-            for a in (getattr(instr, "args", None) or []):
-                exp = a[0] if isinstance(a, tuple) else a
-                s = str(exp).strip().strip("'\"").lower()
-                if s in self._AUTH_HEADER_NAMES:
-                    return True
-        except Exception:
-            return False
-        return False
+    def _note_ownership_guard(self, cond: Exp, state: "SymbolicState") -> None:
+        """`if txn.sender_id != current_user.id and ...: abort(403)`: a comparison of an object's
+        field with the authenticated caller's identity (or credential) checks the object's owner;
+        the object is recorded for this procedure (`_filter_post_hoc_ownership_checks`)."""
+        if self._cur_proc is None:
+            return
+        guarded = self._ownership_guards.setdefault(self._cur_proc.name, set())
+        stack = [cond]
+        while stack:
+            e = stack.pop()
+            if isinstance(e, ExpUnOp):
+                stack.append(e.operand)
+                continue
+            if not isinstance(e, ExpBinOp):
+                continue
+            op = str(getattr(e.op, "value", e.op))
+            if op in ("and", "or", "&&", "||"):
+                stack.extend((e.left, e.right))
+                continue
+            if op not in ("==", "!=", "===", "!==", "is", "is not"):
+                continue
+            for side, other in ((e.left, e.right), (e.right, e.left)):
+                if isinstance(side, ExpFieldAccess) and isinstance(side.base, ExpVar) \
+                        and not self._carries_identity(side, state) and self._carries_identity(other, state):
+                    guarded.add(self._get_var_name(side.base.var))
 
     def _filter_post_hoc_ownership_checks(self, proc, checks):
         """Drop IDOR checks whose fetched object is validated by a post-hoc
         ownership guard: a conditional that compares the fetched object's field
-        against the authenticated principal (e.g.
-        `if txn.sender_id != current_user.id and txn.receiver_id != current_user.id: abort(403)`).
+        against the authenticated caller (e.g.
+        `if txn.sender_id != current_user.id and txn.receiver_id != current_user.id: abort(403)`),
+        recorded by `_note_ownership_guard` from the taint of the compared values.
 
         The selection query itself is attacker-parameterized, but the caller's
         access is authorized by the subsequent ownership proof, so it is not an
-        object-level authorization flaw. Scoped per procedure; only fires when an
-        explicit principal-vs-object comparison names the fetched object.
+        object-level authorization flaw. Scoped per procedure.
         """
         idor_checks = [c for c in checks if c.vuln_type == VulnType.IDOR]
         if not idor_checks:
             return checks
-        import re
-
-        def _principal_base(tok):
-            return tok.split(".", 1)[0]
-
-        principal_bases = {_principal_base(t) for t in self._PRINCIPAL_TOKENS}
-
-        # 1. Object bases compared against a principal inside a branch condition.
-        guarded_objects = set()
-        for node in proc.nodes.values():
-            for instr in node.instrs:
-                if isinstance(instr, Prune):
-                    cond = str(instr.condition)
-                    if not any(tok in cond for tok in self._PRINCIPAL_TOKENS):
-                        continue
-                    for base in re.findall(r'([A-Za-z_]\w*)\.\w+', cond):
-                        if base not in principal_bases:
-                            guarded_objects.add(base)
+        guarded_objects = self._ownership_guards.get(proc.name, set())
         if not guarded_objects:
             return checks
 
-        # 2. Alias map: a call result temp assigned to a named variable.
+        # Alias map: a call result temp assigned to a named variable.
         alias = {}
         for node in proc.nodes.values():
             for instr in node.instrs:
@@ -5614,7 +5678,7 @@ class SILTranslator:
                     if len(rhs) == 1:
                         alias[rhs[0]] = str(instr.id)
 
-        # 3. Resource-select calls whose result object is guarded -> protected selectors.
+        # Resource-select calls whose result object is guarded -> protected selectors.
         protected = set()
         for node in proc.nodes.values():
             for instr in node.instrs:
@@ -5636,21 +5700,20 @@ class SILTranslator:
         return [c for c in checks
                 if not (c.vuln_type == VulnType.IDOR and c.source_var in protected)]
 
-    def _resource_select_principal_scoped(self, instr) -> bool:
-        """True if a resource-selection call is scoped by the authenticated principal
-        (e.g. filter_by(user_id=current_user.id, id=x)) -- the query selects the
-        caller's own resource, so it is not an object-level authorization flaw.
-        Inspects the call's receiver + argument expressions in the IR."""
-        try:
-            parts = []
-            if getattr(instr, "receiver", None) is not None:
-                parts.append(str(instr.receiver))
-            for a in (getattr(instr, "args", None) or []):
-                parts.append(str(a[0] if isinstance(a, tuple) else a))
-            blob = " ".join(parts)
-            return any(tok in blob for tok in self._PRINCIPAL_TOKENS)
-        except Exception:
-            return False
+    def _resource_select_principal_scoped(self, instr, state: "SymbolicState") -> bool:
+        """True if a resource-selection call is scoped by the authenticated caller: an argument
+        (`filter_by(user_id=current_user.id, id=x)`) or the query it is called on carries the
+        caller's identity or credential, so it selects the caller's own resource and is not an
+        object-level authorization flaw."""
+        exps = [a for a, _ in (getattr(instr, "args", None) or [])]
+        name = instr.get_full_name().strip('"') if isinstance(instr, Call) else ""
+        parts = name.split(".")[:-1]
+        if parts and all(p.isidentifier() or p.startswith("$") for p in parts):
+            receiver: Exp = ExpVar(PVar(parts[0]))
+            for attr in parts[1:]:
+                receiver = ExpFieldAccess(receiver, attr)
+            exps.append(receiver)
+        return any(self._carries_identity(e, state) for e in exps)
 
     def _create_taint_check(
         self,
@@ -5708,6 +5771,10 @@ class SILTranslator:
         # A request object as a whole is not attacker data: only what its type lists is (read from it
         # by _request_path / _request_call), so the object itself reaching a sink is no finding.
         if taint_info is not None and taint_info.source_kind == TaintKind.REQUEST:
+            check.kind_mismatch = True
+        # The authenticated caller as the server knows it is not attacker data: it only scopes a
+        # resource selection or proves ownership (_resource_select_principal_scoped).
+        if taint_info is not None and taint_info.source_kind == TaintKind.IDENTITY:
             check.kind_mismatch = True
         # A number read off the wire is a size, not text: it matters only where it sizes an allocation.
         if taint_info is not None and taint_info.source_kind == TaintKind.WIRE_SIZE \
@@ -8437,6 +8504,8 @@ class SILTranslator:
         """A source call written inside a sink's argument whose kind does not fit the sink, as
         `_create_taint_check` decides for variables: weak-random output matters only where a value
         must be unpredictable, and only weak-random output does there."""
+        if str(source_kind) in (TaintKind.IDENTITY.value, TaintKind.REQUEST.value):
+            return True
         weak = str(source_kind) == TaintKind.WEAK_RANDOM.value
         return weak != (str(getattr(sink_kind, "value", sink_kind)) == SinkKind.UNPREDICTABLE.value)
 
@@ -9050,6 +9119,10 @@ class SILTranslator:
             if path in state.tainted:                    # stored on the request (`req.filter`) or done
                 return path
             rest = tuple(parts[i:])
+            if info.request.is_identity(rest):           # `request.user`: the authenticated caller
+                state.tainted[path] = TaintInfo(TaintKind.IDENTITY, path, info.source_location,
+                                                list(info.propagation_path) + [path])
+                return path
             if info.request.is_client_field(rest):
                 if path not in state.tainted:
                     state.tainted[path] = TaintInfo(
@@ -9154,6 +9227,11 @@ class SILTranslator:
                     return credential
                 self._client_receiver = self._request_path(".".join(parts[:-1]), state)  # client data
                 return self._NOT_REQUEST
+            if info.request.is_identity(rest):           # `request.auser()`
+                name = f"{'.'.join(parts)}()"
+                state.tainted.setdefault(name, TaintInfo(TaintKind.IDENTITY, name, info.source_location,
+                                                         list(info.propagation_path) + [name]))
+                return name
             if info.request.is_client_method(rest):
                 name = f"{'.'.join(parts)}()"
                 if name not in state.tainted:
@@ -9285,6 +9363,10 @@ class SILTranslator:
                         result.append(parts[0])
                     if len(parts) > 2 and self._is_request_value(parts[0], self._state):
                         result.append(".".join(parts[:-1]))          # `req.query.q.trim()`: req.query.q
+                # a method of a value that is not a plain name (`request.headers["Authorization"].split(" ")`):
+                # the value read as an expression
+                if isinstance(exp.func, ExpFieldAccess) and not isinstance(exp.func.base, (ExpVar, ExpFieldAccess)):
+                    result.extend(self._get_exp_vars(exp.func.base))
             for arg in exp.args:
                 result.extend(self._get_exp_vars(arg))
             result.extend(self._summary_request_reads(exp))

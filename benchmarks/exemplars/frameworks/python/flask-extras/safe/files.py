@@ -16,9 +16,15 @@ def static_file():
     return send_from_directory("/srv/static", request.args["path"])
 
 
+AFTER_LOGIN = ("/", "/account", "/orders")
+
+
 @files_bp.route("/login")
 def login():
-    return redirect("/" + request.args.get("next", "").lstrip("/"))
+    target = request.args.get("next", "/")
+    if target not in AFTER_LOGIN:
+        target = "/"
+    return redirect(target)
 
 
 @files_bp.route("/banner")

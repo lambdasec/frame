@@ -59,7 +59,7 @@ def parse_table(data: dict, origin: str) -> Dict[str, ProcSpec]:
         sizes = entry.get("size_args", [])
         if not isinstance(sizes, list) or not all(isinstance(i, int) and i >= 0 for i in sizes):
             raise SpecTableError(f"{origin}: {name}: size_args must be argument positions")
-        for key in ("algorithm_name_arg", "scanf_format_arg"):
+        for key in ("algorithm_name_arg", "scanf_format_arg", "identity_arg"):
             if key in entry and not (isinstance(entry[key], int) and not isinstance(entry[key], bool)
                                      and entry[key] >= 0):
                 raise SpecTableError(f"{origin}: {name}: {key} must be an argument position")

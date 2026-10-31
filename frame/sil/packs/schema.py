@@ -50,9 +50,9 @@ _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annota
                "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
                "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin",
-               "receiver", "unbound"}
+               "receiver", "unbound", "route_syntax", "route_args"}
 _REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "objects", "headers", "sessions",
-                      "proxies", "origin", "description", "references"}
+                      "identities", "proxies", "origin", "description", "references"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "renders_view",
               "property", "description"}
@@ -82,12 +82,15 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "wrapper", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "identity", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
              "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
+# Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
+# `<converter(args):name>` (Flask, Quart): a rule must start with "/".
+ROUTE_SYNTAXES = {"werkzeug": r"<(?:[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?:)?([A-Za-z_][A-Za-z0-9_]*)>"}
 # What a [[setting]] reports, and where the setting can be written.
 SETTING_KINDS = ("debug", "cookie_secure", "cookie_httponly")
 SETTING_PLACES = ("kwarg", "assignment", "attribute", "subscript", "property", "member")
@@ -125,6 +128,8 @@ class Entrypoint:
     request_type: str = ""               # the selected parameters are request objects of this [[request_type]]
     receiver: bool = False               # Python: select the method's bound receiver (`self`), not parameters
     unbound: bool = False                # Python: the framework calls methods unbound (positions count `self`)
+    route_syntax: str = ""               # "werkzeug": only the parameters the route rule's `<converter:name>` names
+    route_args: List[str] = field(default_factory=list)   # the decorator arguments holding the rule ("0", "rule")
     origin: str = ""                     # the selected parameters hold a value of this origin (`express.Response`)
     module_path: List[str] = field(default_factory=list)    # globs on the file's path (`**/pages/api/**`)
     exports: List[str] = field(default_factory=list)        # what the module exports it as (`default`, `*`)
@@ -439,6 +444,7 @@ class Pack:
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     wrappers: List[str] = field(default_factory=list)              # Python: calls returning a view wrapped
+    identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -516,6 +522,7 @@ def _request_types(origin: str, language: str, pack_name: str, pack, tables) -> 
             raise _fail(origin, where, 'server_state goes with fields = ["*"] (every property but those)')
         headers = _strings(origin, f"{where}.headers", t.get("headers", []))
         sessions = _strings(origin, f"{where}.sessions", t.get("sessions", []))
+        identities = _strings(origin, f"{where}.identities", t.get("identities", []))
         proxies = _strings(origin, f"{where}.proxies", t.get("proxies", []))
         value_origin = t.get("origin", "")
         if not isinstance(value_origin, str) or (value_origin and not all(
@@ -523,7 +530,7 @@ def _request_types(origin: str, language: str, pack_name: str, pack, tables) -> 
             raise _fail(origin, f"{where}.origin", "names the request object's value origin (`pyramid.request.Request`)")
         if proxies and language != "python":
             raise _fail(origin, f"{where}.proxies", "is for Python packs (module-level request proxies)")
-        for path in fields + methods + server + headers + sessions + list(objects) + proxies:
+        for path in fields + methods + server + headers + sessions + identities + list(objects) + proxies:
             if path != "*" and not all(seg.isidentifier() or seg.startswith("$") for seg in path.split(".")):
                 raise _fail(origin, where, f"{path!r} is not a property path")
 
@@ -544,8 +551,12 @@ def _request_types(origin: str, language: str, pack_name: str, pack, tables) -> 
         for path in sessions:
             if client(path):
                 raise _fail(origin, f"{where}.sessions", f"{path!r} is client data, not the server's session")
+        for path in identities:
+            if client(path) or "." in path:
+                raise _fail(origin, f"{where}.identities", f"{path!r} is not a server-state name (the authenticated caller)")
         raw[rid] = dict(t, fields=fields, methods=methods, server_state=server, objects=objects,
-                        headers=headers, sessions=sessions, proxies=proxies, kinds=kinds, where=where,
+                        headers=headers, sessions=sessions, identities=identities, proxies=proxies, kinds=kinds,
+                        where=where,
                         value_origin=value_origin)
     built: Dict[str, Any] = {}
 
@@ -569,7 +580,8 @@ def _request_types(origin: str, language: str, pack_name: str, pack, tables) -> 
             kinds=tuple((tuple(path.split(".")), _taint_kind_value(_source_kind(origin, f"{t['where']}.kinds", k)))
                         for path, k in t["kinds"].items()),
             objects=tuple(objs), headers=tuple(tuple(h.split(".")) for h in t["headers"]),
-            sessions=tuple(tuple(h.split(".")) for h in t["sessions"]), origin=t["value_origin"])
+            sessions=tuple(tuple(h.split(".")) for h in t["sessions"]), identities=tuple(t["identities"]),
+            origin=t["value_origin"])
         return built[rid]
     for rid in raw:
         pack.request_types[rid] = build(rid, ())
@@ -703,6 +715,15 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                 if language != "python":
                     raise _fail(origin, f"{where}.{key}", "is for Python packs (a method's explicit receiver)")
                 setattr(e, key, t[key])
+        if "route_syntax" in t:
+            if t["route_syntax"] not in ROUTE_SYNTAXES:
+                raise _fail(origin, f"{where}.route_syntax", f"must be one of {sorted(ROUTE_SYNTAXES)}")
+            if not e.decorator:
+                raise _fail(origin, where, "route_syntax reads the rule from the matched decorator: needs decorator")
+            e.route_syntax = t["route_syntax"]
+            e.route_args = _strings(origin, f"{where}.route_args", t.get("route_args", ["0"]), allow_empty=False)
+        elif "route_args" in t:
+            raise _fail(origin, f"{where}.route_args", "goes with route_syntax")
         if e.receiver and (e.unbound or e.param_positions or e.params_from or isinstance(params, list)):
             raise _fail(origin, where, "receiver = true selects the bound receiver: no positions, names or unbound")
         if "request_type" in t:
@@ -972,6 +993,13 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        name=_strings(origin, f"{where}.name", t["name"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("identity", [])):
+        where = f"[[identity]] #{i + 1}"
+        _check_keys(origin, where, t, {"proxies", "description", "references"})
+        if language != "python":
+            raise _fail(origin, where, "identity proxies are for Python packs (module-level objects)")
+        pack.identity_proxies += _strings(origin, f"{where}.proxies", t.get("proxies", []), allow_empty=False)
 
     for i, t in enumerate(data.get("wrapper", [])):
         where = f"[[wrapper]] #{i + 1}"

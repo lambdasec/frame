@@ -1,5 +1,6 @@
-"""The caller's own identity as data (`data/principals.toml`): credential header names and the
-frameworks' authenticated-principal names. Loaded strictly."""
+"""The caller's own credential as data (`data/principals.toml`): the HTTP headers that carry it.
+Loaded strictly. Who the authenticated caller is (Flask-Login's `current_user`, Django's
+`request.user`) is pack data, read as values (TaintKind.IDENTITY)."""
 
 from __future__ import annotations
 
@@ -13,12 +14,11 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
     import tomli as tomllib                 # type: ignore[no-redef]
 
 PATH = Path(__file__).parent / "data" / "principals.toml"
-_KEYS = ("credential_headers", "principal_tokens")
+_KEYS = ("credential_headers",)
 
 
 class Principals(NamedTuple):
     credential_headers: Tuple[str, ...]     # lower case
-    principal_tokens: Tuple[str, ...]
 
 
 @lru_cache(maxsize=None)
@@ -29,7 +29,7 @@ def load(path: Path = PATH) -> Principals:
         raise ValueError(f"{Path(path).name}: needs exactly {list(_KEYS)}, each a non-empty list of names")
     if any(h != h.lower() for h in data["credential_headers"]):
         raise ValueError(f"{Path(path).name}: credential_headers are lower case")
-    return Principals(tuple(data["credential_headers"]), tuple(data["principal_tokens"]))
+    return Principals(tuple(data["credential_headers"]))
 
 
 __all__ = ["PATH", "Principals", "load"]

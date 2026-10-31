@@ -1506,6 +1506,7 @@ description = "Print (may expose sensitive data CWE-532)"
 [[spec]]
 name = "jwt.decode"
 is_sink = "auth"
+identity_arg = 0
 description = "JWT decode - verify signature (CWE-347)"
 
 [[spec]]
@@ -1516,11 +1517,13 @@ description = "JWT encode"
 [[spec]]
 name = "jose.jwt.decode"
 is_sink = "auth"
+identity_arg = 0
 description = "python-jose JWT decode"
 
 [[spec]]
 name = "authlib.jose.jwt.decode"
 is_sink = "auth"
+identity_arg = 0
 description = "Authlib JWT decode"
 
 [[spec]]

@@ -23,11 +23,16 @@ references = ["https://flask.palletsprojects.com/en/stable/api/#flask.Request",
               "https://werkzeug.palletsprojects.com/en/stable/wrappers/#werkzeug.wrappers.Request"]
 
 # A view registered with @app.route / @bp.route or a method shortcut (@app.get, Flask 2.0+) receives
-# the URL's variable parts (`/users/<int:id>`) as keyword arguments: every parameter is client data.
+# the URL's variable parts (`/users/<int:id>`) as keyword arguments, by name (Flask docs "Variable
+# Rules"): those parameters are client data. A parameter the rule does not name is a decorator's
+# (`@token_required` handing in the user) or a default; a rule that is not written out at the
+# decorator leaves every parameter client data.
 [[entrypoint]]
 id = "route-view"
 decorator = ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete"]
 params = "all"
+route_syntax = "werkzeug"
+route_args = ["0", "rule"]
 description = "Flask view function argument (URL variable)"
 
 # flask.abort / werkzeug.exceptions.abort raise an HTTPException: the request handling ends there.

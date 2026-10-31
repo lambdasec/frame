@@ -21,6 +21,7 @@ fields = ["path_args", "path_kwargs", "cookies"]
 methods = ["get_argument", "get_arguments", "get_query_argument", "get_query_arguments", "get_body_argument",
            "get_body_arguments", "get_cookie", "get_signed_cookie", "get_secure_cookie"]
 objects = { request = "HTTPServerRequest" }
+identities = ["current_user", "get_current_user"]    # what the application's get_current_user returns
 references = ["https://www.tornadoweb.org/en/stable/web.html#tornado.web.RequestHandler"]
 
 [[entrypoint]]

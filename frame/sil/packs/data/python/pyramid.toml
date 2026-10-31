@@ -13,6 +13,7 @@ id = "Request"
 fields = ["params", "GET", "POST", "matchdict", "json_body", "json", "body", "body_file", "text", "cookies",
           "headers"]
 headers = ["headers"]
+identities = ["identity", "authenticated_userid"]    # from the security policy
 origin = "pyramid.request.Request"
 references = ["https://docs.pylonsproject.org/projects/pyramid/en/latest/api/request.html",
               "https://docs.pylonsproject.org/projects/webob/en/stable/api/request.html"]

@@ -12,7 +12,7 @@ for parsing. It handles:
 """
 
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field
 
 try:
@@ -40,7 +40,6 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.specs.parser_hardening import load as _parser_hardening
-from frame.sil.specs.principals import load as _principals
 from frame.sil.specs.python_specs import PYTHON_SPECS
 from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
@@ -104,6 +103,7 @@ class PythonFrontend:
         """
         self._filename = filename
         self._source = source_code
+        self._nested_in: Dict[Tuple[int, int], Procedure] = {}   # nested def span -> enclosing proc
         self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
@@ -129,8 +129,55 @@ class PythonFrontend:
         self._alias_specs_by_canonical(program)
         program.import_wildcards = list(self._imports.wildcards)
         self._record_registrations(tree.root_node, program)
+        self._record_closures(program)
         finish_program(program, self.packs, source_code)
         return program
+
+    def _record_closures(self, program: Program) -> None:
+        """A function defined inside another (`Procedure.parent`) and the enclosing functions'
+        names it reads (`Procedure.captures`: their parameters and assigned names, which it does
+        not bind itself), so a closure sees its enclosing functions' values and a wrapper's call
+        of a decorator's parameter (`f(user, *args)`) finds the decorated function."""
+        by_span = {p.span: p for p in program.procedures.values() if p.span}
+        for span, outer in self._nested_in.items():
+            proc = by_span.get(span)
+            if proc is None or outer.name not in program.procedures:
+                continue
+            proc.parent = outer.name
+
+        def bound(p: Procedure) -> Set[str]:
+            names = {q.name for q, _ in p.params}
+            for node in p.nodes.values():
+                for instr in node.instrs:
+                    if isinstance(instr, Assign):
+                        names.add(str(instr.id))
+            return names
+
+        def read(p: Procedure) -> Set[str]:
+            names: Set[str] = set()
+            for node in p.nodes.values():
+                for instr in node.instrs:
+                    if isinstance(instr, Call):
+                        names.add(instr.get_full_name().strip('"').split(".", 1)[0])
+                        exps = [a for a, _ in instr.args]
+                    else:
+                        exps = [getattr(instr, a) for a in ("exp", "value", "condition") if hasattr(instr, a)]
+                    for e in exps:
+                        if isinstance(e, Exp):
+                            names.update(str(v) for v in e.free_vars())
+            return names
+
+        for proc in program.procedures.values():
+            if not proc.parent:
+                continue
+            own, outer_names = bound(proc), set()
+            scope = program.procedures.get(proc.parent)
+            seen: Set[str] = set()
+            while scope is not None and scope.name not in seen:
+                seen.add(scope.name)
+                outer_names |= bound(scope)
+                scope = program.procedures.get(scope.parent) if scope.parent else None
+            proc.captures = sorted((read(proc) & outer_names) - own)
 
     def _callee_chain(self, node: TSNode) -> Optional[Tuple[str, Tuple[str, ...]]]:
         """(`app`, ("router", "add_get")) for `app.router.add_get`: the name a callee is reached
@@ -243,10 +290,17 @@ class PythonFrontend:
             if n.type == "decorator":
                 expr = next((c for c in n.named_children if c.type != "comment"), None)
                 definition = n.parent.child_by_field_name("definition") if n.parent is not None else None
-                if expr is None or expr.type != "call" or definition is None \
-                        or definition.type != "function_definition":
+                if expr is None or definition is None or definition.type != "function_definition":
                     continue
                 proc = by_span.get((definition.start_byte, definition.end_byte))
+                if proc is not None and expr.type in ("identifier", "attribute") \
+                        and self._callee_chain(expr) is not None:
+                    # `@token_required`: the function is passed to the decorator, whose wrapper calls it
+                    entry = (self._get_text(expr), 0)
+                    if entry not in proc.passed_as:
+                        proc.passed_as.append(entry)
+                if expr.type != "call":
+                    continue
                 fn = expr.child_by_field_name("function")
                 if proc is not None and fn is not None:
                     register(expr, fn, scope_of(n.parent), -1, proc, None)
@@ -578,6 +632,11 @@ class PythonFrontend:
             is_method=is_method,
         )
         proc.span = (node.start_byte, node.end_byte)
+        if params_node is not None:
+            for c in params_node.named_children:            # `*args`, `**kwargs`, also annotated
+                first = c.children[0] if c.type == "typed_parameter" and c.children else c
+                if first.type in ("list_splat_pattern", "dictionary_splat_pattern"):
+                    proc.variadic.update(self._get_text(i) for i in first.children if i.type == "identifier")
         body = node.child_by_field_name("body")
         stack = list(body.named_children) if body is not None else []
         while stack and not proc.asserts:
@@ -630,30 +689,6 @@ class PythonFrontend:
 
         self._current_proc = None
         return proc
-
-    # Header names that carry a caller's own credential rather than a
-    # free-form request value. A read of one of these is PRINCIPAL-typed.
-    _AUTH_HEADER_NAMES = _principals().credential_headers          # specs/data/principals.toml
-
-    @classmethod
-    def _is_auth_credential_source(cls, func_name: str, arg_texts: List[str]) -> bool:
-        """True when a generic header read targets a credential header.
-
-        e.g. request.headers.get('Authorization'), headers['Cookie'].
-        The func_name must be a header access and one argument must name a
-        known credential header. Non-credential header reads (e.g.
-        headers.get('X-Forwarded-For')) stay USER_INPUT.
-        """
-        fn = (func_name or "").lower()
-        if "header" not in fn:
-            return False
-        for a in arg_texts:
-            if a is None:
-                continue
-            val = a.strip().strip("'\"").lower()
-            if val in cls._AUTH_HEADER_NAMES:
-                return True
-        return False
 
     def _source_rule_index(self, program_imports_ready: bool = True):
         """Index of the source rules of the packs detected in this file (built once per
@@ -744,10 +779,6 @@ class PythonFrontend:
             Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)),
         ]
         kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
-        if kind == TaintKind.USER_INPUT and self._is_auth_credential_source(
-            func_name, [self._get_text(key)]
-        ):
-            kind = TaintKind.PRINCIPAL
         instrs.append(TaintSource(
             loc=loc,
             var=PVar(target),
@@ -840,6 +871,8 @@ class PythonFrontend:
         saved_proc = self._current_proc
         saved_node = self._current_node
         saved_counter = self._node_counter
+        if saved_proc is not None:
+            self._nested_in[(node.start_byte, node.end_byte)] = saved_proc
         try:
             proc = self._translate_function(node)
             if proc:
@@ -1249,16 +1282,6 @@ class PythonFrontend:
         spec = self.specs.get(func_name)
         if spec and spec.is_taint_source():
             kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
-            # Credential-provenance refinement: a generic header read is
-            # USER_INPUT, but reading a *credential* header (Authorization,
-            # Cookie, X-Api-Key, ...) yields a PRINCIPAL — a value the caller
-            # can only present for their own identity, so a selector derived
-            # from it is self-scoped and cannot be an IDOR. This is arg-
-            # sensitive, so it must be decided here where the args are visible.
-            if kind == TaintKind.USER_INPUT and self._is_auth_credential_source(
-                func_name, [self._get_text(a) for a in args]
-            ):
-                kind = TaintKind.PRINCIPAL
             instrs.append(TaintSource(
                 loc=loc,
                 var=PVar(target),

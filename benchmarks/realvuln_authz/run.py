@@ -75,22 +75,24 @@ def _idor_findings(result, root: Path, fpath: Path):
 
 
 def _scan_repo(repo_path: Path, system: str):
-    """Scan every app .py file; return (findings, stats)."""
+    """Scan the app's .py files as one project, as `frame scan DIR` does (cross-file analysis:
+    a view's authenticated user is often handed in by a decorator another module defines);
+    return (findings, stats)."""
     from frame.sil import FrameScanner
     llm = system == "frame_glm52_authz"
-    findings, files, errors = [], 0, []
+    findings, errors = [], []
+    files = list(_py_files(repo_path))
     t0 = time.time()
-    for fpath in _py_files(repo_path):
-        files += 1
-        try:
-            sc = FrameScanner(language="python", verify=not llm,
-                              llm_detect=llm, llm_triage=llm, timeout=8000)
-            res = sc.scan_file(str(fpath))
-            findings.extend(_idor_findings(res, repo_path, fpath))
-        except Exception as e:  # LLMUnavailableError etc. recorded, not swallowed as 0
-            errors.append(f"{fpath.name}: {type(e).__name__}: {e}")
-    return findings, {"files_scanned": files, "wall_clock_seconds": round(time.time() - t0, 2),
-                      "transport_errors": errors}
+    try:
+        sc = FrameScanner(language="python", verify=not llm,
+                          llm_detect=llm, llm_triage=llm, timeout=8000)
+        for res in sc.scan_directory(str(repo_path), "**/*.py", only_files=files):
+            findings.extend(_idor_findings(res, repo_path, Path(res.filename)))
+            errors.extend(f"{Path(res.filename).name}: {e}" for e in res.errors)
+    except Exception as e:  # LLMUnavailableError etc. recorded, not swallowed as 0
+        errors.append(f"{repo_path.name}: {type(e).__name__}: {e}")
+    return findings, {"files_scanned": len(files), "wall_clock_seconds": round(time.time() - t0, 2),
+                      "scan_mode": "project", "transport_errors": errors}
 
 
 def main() -> int:

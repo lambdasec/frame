@@ -1,13 +1,11 @@
-# The caller's own identity. A read of one of these is PRINCIPAL-typed, not attacker-chosen
-# input: the caller can only present their own credential or session, so a value scoped by it is
-# self-scoped (it binds ownership for IDOR checks; it does not select someone else's object).
-# Read by frame/sil/specs/principals.py (the Python frontend and the translator).
+# The caller's own credential. A credential header looked up by name in a request's header map
+# (`[[request_type]] headers`) is PRINCIPAL-typed, not an attacker-chosen object selector: the
+# caller can only present their own credential, so a value scoped by it is self-scoped (it binds
+# ownership for IDOR checks; it does not select someone else's object). Read by
+# frame/sil/specs/principals.py (the translator).
 
 # Request headers that carry the caller's credential (lower case, exact).
 credential_headers = ["authorization", "proxy-authorization", "authentication", "cookie",
                       "x-api-key", "api-key", "apikey", "x-auth-token", "x-access-token",
                       "x-authentication-token", "x-session-token"]
 
-# Framework names for the authenticated principal (Flask-Login, Flask-JWT-Extended,
-# Flask-JWT, Flask's g.user convention, Django), matched as written in an expression.
-principal_tokens = ["current_user", "get_jwt_identity", "current_identity", "g.user", "request.user"]

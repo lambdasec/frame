@@ -18,6 +18,7 @@ server_state = ["user", "auth", "authenticators", "successful_authenticator", "p
 kinds = { FILES = "file" }
 headers = ["headers"]
 sessions = ["session"]
+identities = ["user", "auth", "auser"]      # what the authenticators returned
 references = ["https://www.django-rest-framework.org/api-guide/requests/"]
 
 # An APIView / viewset instance: dispatch() keeps the request and the URL's captured values on it

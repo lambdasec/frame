@@ -249,3 +249,26 @@ def test_receiver_entries_are_python_and_take_no_positions():
     pack = parse_pack(tomllib.loads(head % "python" + '[[entrypoint]]\nmethod = ["get"]\nreceiver = true\n'
                                     'request_type = "r"\n'), "x.toml")
     assert pack.entrypoints[0].receiver
+
+
+# ---- what a Flask view's parameters are -------------------------------------------------------
+
+def test_flask_view_parameters_are_the_rule_variables():
+    code = _FLASK + ("def inject(f):\n    return f\n\n"
+                     "@app.route('/u/<int:uid>/<path:rest>')\ndef u(uid, rest, extra=None, *args, **kw):\n"
+                     "    os.system(uid)\n    os.system(rest)\n    os.system(extra)\n    os.system(kw['k'])\n    return ''\n\n"
+                     "RULE = '/v/<name>'\n\n@app.route(RULE)\ndef v(name, other):\n    os.system(other)\n    return ''\n")
+    # `extra` is no URL variable; with the rule not written at the decorator, every parameter is
+    assert _lines(code, "CWE-78") == [9, 10, 12, 19]
+
+
+def test_a_method_on_an_indexed_read_keeps_its_data():
+    code = _FLASK + ("@app.route('/x')\ndef x():\n    first = request.headers['X-Forwarded-For'].split(',')[0]\n"
+                     "    os.system(first)\n    os.system(request.args.get('a', '').strip().lower())\n    return ''\n")
+    assert _lines(code, "CWE-78") == [7, 8]
+
+
+def test_a_python_closure_sees_its_enclosing_values():
+    code = _FLASK + ("@app.route('/x')\ndef x():\n    cmd = request.args['c']\n\n"
+                     "    def run():\n        os.system(cmd)\n\n    run()\n    return ''\n")
+    assert _lines(code, "CWE-78") == [9]

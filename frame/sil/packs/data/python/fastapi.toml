@@ -14,6 +14,7 @@ server_state = ["app", "state", "url_for", "session", "auth", "user", "is_discon
                 "send_early_hints"]
 headers = ["headers"]
 sessions = ["session"]
+identities = ["user", "auth"]               # AuthenticationMiddleware's
 references = ["https://starlette.dev/requests/", "https://fastapi.tiangolo.com/advanced/using-request-directly/"]
 
 [[request_type]]
@@ -22,6 +23,7 @@ fields = ["*"]
 server_state = ["app", "state", "url_for", "session", "auth", "user", "client_state", "application_state"]
 headers = ["headers"]
 sessions = ["session"]
+identities = ["user", "auth"]
 references = ["https://starlette.dev/websockets/"]
 
 # A path operation receives the URL's path and query parameters, body fields, headers and cookies as

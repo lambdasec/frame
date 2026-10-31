@@ -11,6 +11,7 @@ detect = { imports = ["cherrypy"] }
 id = "Request"
 fields = ["params", "headers", "header_list", "cookie", "body", "json", "query_string"]
 headers = ["headers"]
+identities = ["login"]                       # set by the auth tools
 proxies = ["cherrypy.request", "cherrypy.serving.request"]
 references = ["https://docs.cherrypy.dev/en/latest/pkg/cherrypy._cprequest.html#cherrypy._cprequest.Request"]
 

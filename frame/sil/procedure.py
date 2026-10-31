@@ -273,6 +273,11 @@ class ProcSpec:
     # unbounded `%s` / `%[` conversion (no field width).
     scanf_format_arg: Optional[int] = None
 
+    # The result is the identity the credential at this argument proves (a verified token's
+    # decoded claims, `jwt.decode(token, key)`): when the argument is the caller's own credential
+    # or identity, so is the result (TaintKind.IDENTITY), never attacker text.
+    identity_arg: Optional[int] = None
+
     # C/C++: writes an HTTP response header from its literal argument (`printf("Set-Cookie: ...")`
     # in a CGI program); its other arguments are the header's values.
     writes_headers: bool = False
@@ -503,6 +508,7 @@ class Procedure:
     # A destructuring parameter (`({ body, query: q }) => ...`) is one positional parameter named
     # `$argN`, its names bound at entry from it; this maps `$argN` to the pattern as written.
     param_patterns: Dict[str, str] = field(default_factory=dict)
+    variadic: Set[str] = field(default_factory=set)   # Python: the *args / **kwargs parameters
     # Declared class of the variables, parameters and fields this procedure's calls use as
     # receivers (`_repo` -> "UserRepository"), as the frontend can read them; lets a call
     # `_repo.Find(x)` resolve to the method of a class the program defines.
