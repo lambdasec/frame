@@ -1,0 +1,13 @@
+# A name heuristic, kept as data until value-origin typing replaces it (docs/roadmap.md, "No
+# framework or benchmark knowledge in the engine", stage 4): a call on a lower-case receiver whose
+# type is unknown (`cur.execute(q)`, `res.send(x)`) is also looked up under these conventional
+# receiver names of the language's spec table, in this order. A guess never yields a taint-free
+# usage sink or an exact_class spec (Program._get_spec). A capitalised receiver is never guessed.
+# Read by frame/sil/specs/receiver_guesses.py.
+python = ["str", "bytes", "list", "dict", "ConfigParser", "configparser.ConfigParser", "request", "response",
+          "session", "connection"]
+java = ["request", "response", "session", "connection", "Runtime", "runtime", "processBuilder", "URLDecoder",
+        "URLEncoder", "java.net.URLDecoder", "java.net.URLEncoder", "Base64", "String", "StringBuilder",
+        "StringBuffer", "MessageDigest", "Cipher", "ObjectInputStream", "File", "xpath", "ldapTemplate"]
+javascript = ["request", "connection"]
+csharp = ["String", "StringBuilder", "File"]

@@ -216,3 +216,37 @@ def test_same_origin_redirect_guard_in_python():
             "        return redirect('/')\n    return redirect(nxt)\n")
     assert "CWE-601" not in {c for c, _ in _found(code, "python", "r.py")}
     assert "CWE-601" in {c for c, _ in _found(code.replace(" or nxt.startswith('//')", ""), "python", "r.py")}
+
+
+# --- receiver-guesses.toml: a name heuristic, per language, as data ----------------------------
+
+def test_receiver_guesses_are_per_language_and_name_rows_of_that_table():
+    from frame.sil.specs import receiver_guesses
+    from frame.sil.specs.tables import load_table
+    data = receiver_guesses.load()
+    table = {"python": "python", "java": "java", "javascript": "javascript", "csharp": "csharp"}
+    for lang, names in data.items():
+        rows = load_table(table[lang])
+        for n in names:                       # every guess names a receiver the table has rows for
+            assert any(k.startswith(n + ".") for k in rows), (lang, n)
+    assert receiver_guesses.guesses("typescript") == receiver_guesses.guesses("javascript")
+    assert receiver_guesses.guesses("c") == ()
+
+
+def test_a_guess_of_another_language_does_not_apply():
+    from frame.sil.procedure import Program, ProcSpec
+    p = Program(library_specs={"runtime.exec": ProcSpec(is_sink="command", sink_args=[0])}, language="python")
+    assert p.get_spec("rt.exec") is None                 # `runtime` is a Java guess, not a Python one
+    p.language = "java"
+    assert p.get_spec("rt.exec") is not None
+
+
+def test_malformed_receiver_guesses_are_errors(tmp_path):
+    from frame.sil.specs import receiver_guesses
+    bad = tmp_path / "g.toml"
+    bad.write_text('ruby = ["x"]\n')
+    with pytest.raises(ValueError, match="unknown language"):
+        receiver_guesses.load(bad)
+    bad.write_text('python = ["x", "x"]\n')
+    with pytest.raises(ValueError, match="distinct"):
+        receiver_guesses.load(bad)

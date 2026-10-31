@@ -1023,21 +1023,9 @@ class Program:
             receiver = '.'.join(parts[:-1])
             if receiver.rsplit('.', 1)[-1][:1].isupper():
                 return None
-            # Try common type prefixes for the method (Python and Java)
-            for prefix in ['str', 'bytes', 'list', 'dict', 'set', 'object',
-                           'ConfigParser', 'configparser.ConfigParser',
-                           # Java prefixes
-                           'request', 'response', 'session', 'connection',
-                           'statement', 'PreparedStatement', 'Statement',
-                           'Runtime', 'runtime', 'ProcessBuilder', 'processBuilder',
-                           'URLDecoder', 'URLEncoder', 'java.net.URLDecoder', 'java.net.URLEncoder',
-                           'Base64', 'java.util.Base64',
-                           'String', 'StringBuilder', 'StringBuffer',
-                           'MessageDigest', 'Cipher', 'SecretKeySpec',
-                           'ObjectInputStream', 'ObjectOutputStream',
-                           'FileInputStream', 'FileOutputStream', 'File',
-                           'DocumentBuilder', 'SAXParser', 'XMLReader',
-                           'XPath', 'xpath', 'DirContext', 'ldapTemplate']:
+            # Conventional receiver names of this language (specs/data/receiver-guesses.toml)
+            from frame.sil.specs.receiver_guesses import guesses
+            for prefix in guesses(self.language):
                 qualified_name = f"{prefix}.{method_name}"
                 spec = self.library_specs.get(qualified_name)
                 # A guessed type is not evidence for a sink that fires on mere
