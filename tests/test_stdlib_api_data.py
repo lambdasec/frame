@@ -227,18 +227,27 @@ def test_receiver_guesses_are_per_language_and_name_rows_of_that_table():
     table = {"python": "python", "java": "java", "javascript": "javascript", "csharp": "csharp"}
     for lang, names in data.items():
         rows = load_table(table[lang])
-        for n in names:                       # every guess names a receiver the table has rows for
-            assert any(k.startswith(n + ".") for k in rows), (lang, n)
+        for n in names:                       # every guess names a receiver with a propagation row
+            assert any(k.startswith(n + ".") and not (s.is_sink or s.is_source or s.is_sanitizer)
+                       for k, s in rows.items()), (lang, n)
     assert receiver_guesses.guesses("typescript") == receiver_guesses.guesses("javascript")
     assert receiver_guesses.guesses("c") == ()
 
 
 def test_a_guess_of_another_language_does_not_apply():
     from frame.sil.procedure import Program, ProcSpec
-    p = Program(library_specs={"runtime.exec": ProcSpec(is_sink="command", sink_args=[0])}, language="python")
-    assert p.get_spec("rt.exec") is None                 # `runtime` is a Java guess, not a Python one
+    p = Program(library_specs={"StringBuilder.append": ProcSpec(taint_propagates=[0])}, language="python")
+    assert p.get_spec("sb.append") is None               # `StringBuilder` is a Java guess, not a Python one
     p.language = "java"
-    assert p.get_spec("rt.exec") is not None
+    assert p.get_spec("sb.append") is not None
+
+
+@pytest.mark.parametrize("spec", [{"is_sink": "ssrf"}, {"is_source": "user"}, {"is_sanitizer": ["filesystem"]}])
+def test_a_guess_never_yields_a_source_sink_or_sanitizer(spec):
+    from frame.sil.procedure import Program, ProcSpec
+    p = Program(library_specs={"request.get": ProcSpec(**spec), "dict.get": ProcSpec(taint_propagates=[0])},
+                language="python")
+    assert p.get_spec("app.get") is p.library_specs["dict.get"]     # never the request client's sink
 
 
 def test_malformed_receiver_guesses_are_errors(tmp_path):

@@ -1,0 +1,54 @@
+# What library calls return, so a call on the value they produced is looked up under its type
+# (frame/sil/value_origins.py). `returns`: a call id (module path and the calls made on its
+# results, as `Call.canonical` writes it) -> the type of the value; `receivers`: a type -> the
+# receiver names the language's spec table writes calls on such a value under.
+#
+# Python DB-API 2.0 modules (PEP 249: `connect()` returns a Connection, whose `cursor()` returns a
+# Cursor; sqlite3 connections also have `execute`, per the sqlite3 documentation).
+[python.returns]
+"sqlite3.connect" = "sqlite3.Connection"
+"sqlite3.Connection.cursor" = "sqlite3.Cursor"
+"psycopg2.connect" = "psycopg2.connection"
+"psycopg2.connection.cursor" = "psycopg2.cursor"
+"psycopg.connect" = "psycopg.Connection"
+"psycopg.Connection.cursor" = "psycopg.Cursor"
+"mysql.connector.connect" = "mysql.connector.connection"
+"mysql.connector.connection.cursor" = "mysql.connector.cursor"
+"pymysql.connect" = "pymysql.Connection"
+"pymysql.Connection.cursor" = "pymysql.Cursor"
+"MySQLdb.connect" = "MySQLdb.Connection"
+"MySQLdb.Connection.cursor" = "MySQLdb.Cursor"
+
+[python.receivers]
+"sqlite3.Connection" = ["connection"]
+"sqlite3.Cursor" = ["cursor"]
+"psycopg2.connection" = ["connection"]
+"psycopg2.cursor" = ["cursor"]
+"psycopg.Connection" = ["connection"]
+"psycopg.Cursor" = ["cursor"]
+"mysql.connector.connection" = ["connection"]
+"mysql.connector.cursor" = ["cursor"]
+"pymysql.Connection" = ["connection"]
+"pymysql.Cursor" = ["cursor"]
+"MySQLdb.Connection" = ["connection"]
+"MySQLdb.Cursor" = ["cursor"]
+
+# mysql and mysql2 (npm; mysql2/promise has the same factories): createConnection returns a
+# Connection, createPool a Pool, both with `query` (the packages' READMEs). A class (`pg.Pool`)
+# under `receivers` types its instances.
+[javascript.returns]
+"mysql.createConnection" = "mysql.Connection"
+"mysql.createPool" = "mysql.Pool"
+"mysql2.createConnection" = "mysql2.Connection"
+"mysql2.createPool" = "mysql2.Pool"
+"mysql2/promise.createConnection" = "mysql2.Connection"
+"mysql2/promise.createPool" = "mysql2.Pool"
+
+[javascript.receivers]
+"mysql.Connection" = ["connection"]
+"mysql.Pool" = ["pool"]
+"mysql2.Connection" = ["connection"]
+"mysql2.Pool" = ["pool"]
+# node-postgres: `new Pool()` / `new Client()`, both with `query` (node-postgres.com/apis).
+"pg.Pool" = ["pool"]
+"pg.Client" = ["client"]

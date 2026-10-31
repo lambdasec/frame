@@ -474,6 +474,8 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
         from ..source_facts import constant_regexes, constant_tables
         program.constant_regexes = constant_regexes(source, program.language)
         program.constant_tables = constant_tables(source, program.language)
+    from ..value_origins import annotate as _value_origins
+    _value_origins(program)             # callee ids for calls on values from library calls
     packs = packs if packs is not None else default_packs()
     active = [p for p in packs.for_language(program.language) if _detected(p, program)]
     if not active:

@@ -34,7 +34,8 @@ def _cwes(code, lang, name):
     return {v.cwe_id for v in FrameScanner(language=lang, verify=False).scan(code, name).vulnerabilities}
 
 
-_HANDLER = """const db = require('./db');
+_HANDLER = """const mysql = require('mysql');
+const db = mysql.createConnection({});
 module.exports = ({ %s }, res, next) => {
   db.query("SELECT * FROM t WHERE n = '" + %s + "'");
   res.end();

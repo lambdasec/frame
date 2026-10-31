@@ -972,9 +972,20 @@ class Program:
                 self.library_specs, recv_type, func_name,
                 getattr(call, "receiver_exact", False),
                 lambda: self.get_spec(func_name), self.type_spec_receivers)
+        # A call on a value a library call produced (`cur = conn.cursor(); cur.execute(q)`):
+        # looked up under the value's type (specs/data/value-types.toml), and never under a
+        # guessed receiver name, since what the receiver is is known.
+        canonical = getattr(call, "canonical", None)
+        if canonical and '.' in func_name:
+            from .value_origins import typed_names
+            for key in typed_names(canonical, self.language):
+                spec = self.library_specs.get(key)
+                if spec is not None:
+                    return spec
+            return self.get_spec(func_name, guess=False)
         return self.get_spec(func_name)
 
-    def get_spec(self, func_name: str) -> Optional[ProcSpec]:
+    def get_spec(self, func_name: str, guess: bool = True) -> Optional[ProcSpec]:
         """
         Get specification for a function.
 
@@ -986,10 +997,10 @@ class Program:
         A database-handle method (`db_method`) never matches an unqualified
         call; with a receiver, see spec_for_call.
         """
-        spec = self._get_spec(func_name)
+        spec = self._get_spec(func_name, guess)
         return spec if db_method_applies(spec, func_name, None) else None
 
-    def _get_spec(self, func_name: str) -> Optional[ProcSpec]:
+    def _get_spec(self, func_name: str, guess: bool = True) -> Optional[ProcSpec]:
         # Check user procedures first
         if func_name in self.procedures:
             return self.procedures[func_name].spec
@@ -1025,13 +1036,12 @@ class Program:
                 return None
             # Conventional receiver names of this language (specs/data/receiver-guesses.toml)
             from frame.sil.specs.receiver_guesses import guesses
-            for prefix in guesses(self.language):
+            for prefix in (guesses(self.language) if guess else ()):
                 qualified_name = f"{prefix}.{method_name}"
                 spec = self.library_specs.get(qualified_name)
-                # A guessed type is not evidence for a sink that fires on mere
-                # use (`getFactory().getInstance()` is not MessageDigest's).
-                if spec and not (spec.exact_class or
-                                 (spec.is_sink and spec.sink_args == [])):
+                # A guessed type only ever says how taint moves through the call: a source, sink
+                # or sanitizer needs evidence of what the receiver is.
+                if spec and not (spec.exact_class or spec.is_sink or spec.is_source or spec.is_sanitizer):
                     return spec
             # Also try bare method name (e.g., "xpath" for "root.xpath")
             spec = self.library_specs.get(method_name)

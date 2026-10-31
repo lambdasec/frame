@@ -1438,6 +1438,12 @@ class ProjectContext:
                 continue
             ctx.programs[key] = program
             index.set_procedures(key, program.procedures)
+        from frame.sil.value_origins import link_modules
+
+        def resolve_module(key: str, spec: str) -> Optional[str]:
+            mod = index.modules.get(key)
+            return index._resolve_js(mod, spec) if mod is not None and mod.family == "javascript" else None
+        link_modules(ctx.programs, resolve_module)
         ctx.translators = {
             key: SILTranslator(program, verbose=verbose, ipa=ctx.ipa, file_key=key, project=ctx)
             for key, program in ctx.programs.items()}
