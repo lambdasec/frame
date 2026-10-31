@@ -437,7 +437,7 @@ class JavaScriptFrontend:
         rest: List[str] = []
         cur = node
         while True:
-            if cur.type == "identifier":
+            if cur.type in ("identifier", "this"):          # `this.route.queryParams.subscribe`: a field
                 return self._get_text(cur), tuple(reversed(rest))
             if cur.type == "member_expression":
                 prop = cur.child_by_field_name("property")
@@ -904,6 +904,7 @@ class JavaScriptFrontend:
         proc.add_node(entry)
         proc.entry_node = entry.id
         self._current_node = entry
+        proc.lexical_this = node.type == "arrow_function"   # an arrow's `this` is its enclosing function's
 
         # TypeScript parameter properties (`constructor(private readonly db: Pool)`): the
         # constructor assigns each to the field of its name first, as the compiler emits it.
@@ -919,6 +920,7 @@ class JavaScriptFrontend:
                 n for _, pattern in self._param_patterns_of(node) for n in bound_names(self._get_text(pattern))}
             outer = (self._enclosing_param_names(node) | self._enclosing_local_names(node)) - own_params
             proc.captures = sorted(outer & self._referenced_identifiers(body_node))
+            proc.outer_writes = self._outer_writes(node, body_node)
 
         # Treat the function's parameters as untrusted input (pure-SL recall
         # lever for real-world JS where the attack surface is exported APIs).
@@ -1476,11 +1478,11 @@ class JavaScriptFrontend:
     @staticmethod
     def _link_enclosing_procedures(program: Program) -> None:
         """Set `Procedure.parent` to the innermost procedure whose source range
-        contains a nested function's, so its captured variables can take the
-        enclosing procedure's taint."""
+        contains a nested function's: its captured variables take the enclosing
+        procedure's taint, and it sees the enclosing scopes' values."""
         spans = [(p.span, name) for name, p in program.procedures.items() if p.span]
         for name, proc in program.procedures.items():
-            if not proc.span or not proc.captures:
+            if not proc.span:
                 continue
             best = None
             for span, other in spans:
@@ -1528,6 +1530,22 @@ class JavaScriptFrontend:
             elif pattern.type in self._PATTERNS:
                 out.append((f"$arg{len(out)}", typ, pattern, ty))
         return out
+
+    def _outer_writes(self, fn: TSNode, body: TSNode) -> List[str]:
+        """Names a function assigns (`win = new BrowserWindow()`) that it does not declare: the
+        enclosing scope's variables, resolved lexically (nested functions are their own)."""
+        names: Set[str] = set()
+        stack = list(body.named_children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNCTION_SCOPES:
+                continue
+            if n.type == "assignment_expression":
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    names.add(self._get_text(left))
+            stack.extend(n.named_children)
+        return sorted(x for x in names if not self._declares(fn, x))
 
     def _parameter_properties(self, method: TSNode) -> List[str]:
         """The constructor parameters TypeScript makes fields: those with an accessibility

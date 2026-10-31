@@ -10,9 +10,12 @@ call = ["ejs.render", "ejs.compile", "pug.compile", "pug.render", "pug.compileCl
         "handlebars.compile", "handlebars.precompile", "nunjucks.renderString", "nunjucks.compile",
         "lodash.template", "lodash/template", "underscore.template", "dot.template", "doT.template", "swig.render", "swig.compile",
         "swig-templates.render", "hogan.js.compile", "art-template.compile", "art-template.render", "eta.render", "eta.compile",
-        "twig.twig", "squirrelly.render", "squirrelly.compile", "velocityjs.render", "liquidjs.Liquid.parse"]
-name = ["Handlebars.compile", "handlebars.compile", "nunjucks.renderString", "env.renderString", "ejs.render", "pug.compile",
-        "pug.render", "_.template", "engine.parseAndRender", "liquid.parseAndRender", "liquid.parse"]
+        "twig.twig", "squirrelly.render", "squirrelly.compile", "velocityjs.render", "liquidjs.Liquid.parse",
+        "liquidjs.Liquid.parseAndRender", "liquidjs.Liquid.parseAndRenderSync", "nunjucks.Environment.renderString",
+        "nunjucks.Template"]
+# The browser builds' globals (`<script src="handlebars.js">` gives `Handlebars`, lodash and
+# underscore `_`): no import names them.
+name = ["Handlebars.compile", "_.template"]
 args = [0]
 kind = "template"
 description = "the argument is compiled as template source code"

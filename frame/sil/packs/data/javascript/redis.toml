@@ -4,8 +4,12 @@ language = "javascript"
 description = "Redis clients: EVAL runs a Lua script"
 detect = { imports = ["redis", "ioredis", "@redis/client", "@upstash/redis", "node-redis", "redis-om"] }
 
+# The clients (value-types.toml): node-redis `createClient()`, ioredis `new Redis()` / `new
+# Redis.Cluster()`, Upstash `new Redis()`; EVAL / EVALSHA run a Lua script server side.
 [[sink]]
-name = ["redis.eval", "client.eval", "redis.evalsha", "client.evalsha", "redis.evalSha", "client.evalSha", "cache.eval"]
+call = ["redis.RedisClient.eval", "redis.RedisClient.evalSha", "redis.RedisClient.EVAL", "redis.RedisClient.EVALSHA",
+        "ioredis.eval", "ioredis.evalsha", "ioredis.Cluster.eval", "ioredis.Cluster.evalsha",
+        "ioredis.Redis.eval", "ioredis.Redis.evalsha", "@upstash/redis.Redis.eval", "@upstash/redis.Redis.evalsha"]
 args = [0]
 kind = "code"
 description = "Redis EVAL: the first argument is a Lua script"

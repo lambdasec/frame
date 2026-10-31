@@ -1,0 +1,18 @@
+[pack]
+name = "dom"
+language = "javascript"
+description = "Browser DOM: cross-document messages"
+references = ["https://html.spec.whatwg.org/multipage/web-messaging.html#posting-messages",
+              "https://developer.mozilla.org/en-US/docs/Web/API/Window/message_event"]
+
+# No detect: the DOM is the page's global environment, not an import.
+# Any document holding a reference to this window (an iframe, an opener, a page that opened it)
+# can post it a message, so a window's `message` listener receives data its sender chose; the
+# listener must check `event.origin` itself. A worker's `self.addEventListener("message")` is
+# not listed: its messages come from the page that started it.
+[[entrypoint]]
+id = "window-message"
+registered_via = ["window.addEventListener", "globalThis.addEventListener", "addEventListener"]
+event = ["message"]
+param_positions = [0]
+description = "message posted to the window by another document"

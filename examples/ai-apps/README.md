@@ -127,30 +127,30 @@ An app also feeds its model text nobody in the conversation wrote: documents a v
 ```console
 $ frame scan python/llm-context/vulnerable --root .
 1. [MEDIUM] 🟡 prompt_injection
-   Location: python/llm-context/vulnerable/app.py:17:4
+   Location: python/llm-context/vulnerable/app.py:18:4
    Description: Tainted data from '$docs' flows to prompt sink
 2. [MEDIUM] 🟡 prompt_injection
-   Location: python/llm-context/vulnerable/app.py:26:16
+   Location: python/llm-context/vulnerable/app.py:27:16
    Description: Tainted data from 'docs' flows to prompt sink
 3. [CRITICAL] 🔴 command_injection
-   Location: python/llm-context/vulnerable/app.py:34:4
+   Location: python/llm-context/vulnerable/app.py:35:4
    Description: Tainted data from 'result' flows to command sink
 Scanned 1 file: 3 findings (1 critical, 2 medium)
 
 $ frame scan javascript/llm-context/vulnerable --root .
 1. [MEDIUM] 🟡 prompt_injection
-   Location: javascript/llm-context/vulnerable/app.mjs:14:9
+   Location: javascript/llm-context/vulnerable/app.mjs:18:9
 2. [MEDIUM] 🟡 prompt_injection
-   Location: javascript/llm-context/vulnerable/app.mjs:25:9
+   Location: javascript/llm-context/vulnerable/app.mjs:29:9
 3. [CRITICAL] 🔴 command_injection
-   Location: javascript/llm-context/vulnerable/app.mjs:31:2
+   Location: javascript/llm-context/vulnerable/app.mjs:35:2
 Scanned 1 file: 3 findings (1 critical, 2 medium)
 ```
 
-- **Line 17:** what `store.similarity_search(...)` returned goes into Claude's `system=`, so a planted ticket can rewrite the instructions.
-- **Line 26:** documents from `retriever.invoke(...)` go into a LangChain `SystemMessage`.
-- **Line 34:** an MCP tool's result (`session.call_tool(...)`) is run in a shell.
+- **Line 18:** what `store.similarity_search(...)` returned goes into Claude's `system=`, so a planted ticket can rewrite the instructions.
+- **Line 27:** documents from `retriever.invoke(...)` (`store.as_retriever()`) go into a LangChain `SystemMessage`.
+- **Line 35:** an MCP tool's result (`session.call_tool(...)`) is run in a shell.
 
-The safe twins give the documents to the model in the user turn, with a system prompt saying they are data, and pass the tool's answer to `tar` as an argument list: 0 findings. Retrieved content in a user turn is how retrieval works and is not a finding. The `llm-context` packs name the sources: LangChain's vector-store search methods and retrievers (`retriever.invoke` by the conventional name), and an MCP client's `call_tool` / `read_resource` / `get_prompt` (`callTool`, `readResource`, `getPrompt` in JS). Findings from them have category `ai`.
+The safe twins give the documents to the model in the user turn, with a system prompt saying they are data, and pass the tool's answer to `tar` as an argument list: 0 findings. Retrieved content in a user turn is how retrieval works and is not a finding. The `llm-context` packs name the sources: LangChain's vector-store search methods and retrievers, and an MCP client's `call_tool` / `read_resource` / `get_prompt` (`callTool`, `readResource`, `getPrompt` in JS), on the values those libraries hand out (a store the app builds, `store.asRetriever()`, a declared `VectorStore`, an MCP `Client`), never on a variable because of its name. Findings from them have category `ai`.
 
 What is covered, and what is not yet: [docs/coverage.md](../../docs/coverage.md#what-it-detects).

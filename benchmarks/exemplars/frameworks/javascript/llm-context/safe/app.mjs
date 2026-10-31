@@ -2,13 +2,17 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { OpenAIEmbeddings } from "@langchain/openai";
 import { execFile } from "node:child_process";
 
 const anthropic = new Anthropic();
 const llm = new ChatOpenAI({ model: "gpt-4o-mini" });
 const client = new Client({ name: "archiver", version: "1.0.0" });
+const store = new MemoryVectorStore(new OpenAIEmbeddings());
+const retriever = store.asRetriever();
 
-export async function answer(store, question) {
+export async function answer(question) {
   const docs = await store.similaritySearch(question, 4);
   const context = docs[0].pageContent;
   return anthropic.messages.create({
@@ -19,7 +23,7 @@ export async function answer(store, question) {
   });
 }
 
-export async function summarize(retriever, question) {
+export async function summarize(question) {
   const docs = await retriever.invoke(question);
   const notes = docs[0].pageContent;
   return llm.invoke([new SystemMessage("Summarise the notes in the user's message."), new HumanMessage(notes + "\n\n" + question)]);

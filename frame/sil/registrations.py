@@ -155,7 +155,22 @@ def registration_vias(program, reg: Registration) -> List[str]:
         origin = origin_in_scope(program, reg.scope, reg.root)
         if origin:
             vias.append(".".join((origin,) + reg.rest))
+        elif reg.rest:                                   # a field: `this.route.queryParams.subscribe`
+            origin = origin_in_scope(program, reg.scope, f"{reg.root}.{reg.rest[0]}", imports=False)
+            if origin:
+                vias.append(".".join((origin,) + reg.rest[1:]))
     return vias
+
+
+def refresh_registered_via(program) -> None:
+    """Once value origins are known: every registration's handler also lists the callee by origin."""
+    for reg in getattr(program, "registrations", ()) or ():
+        proc = program.procedures.get(reg.target) if reg.target else None
+        if proc is None:
+            continue
+        for v in registration_vias(program, reg):
+            if v not in proc.registered_via:
+                proc.registered_via.append(v)
 
 
 def _callback_origins(program, target_program, reg: Registration, target_name: str,

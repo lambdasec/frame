@@ -44,6 +44,13 @@
 "flask_sqlalchemy.SQLAlchemy.Model.query" = "flask_sqlalchemy.query.Query"
 # Django: a model class's default manager `objects`.
 "django.db.models.Model.objects" = "django.db.models.Manager"
+# asyncio: the event loop the loop functions return.
+"asyncio.get_event_loop" = "asyncio.AbstractEventLoop"
+"asyncio.get_running_loop" = "asyncio.AbstractEventLoop"
+"asyncio.new_event_loop" = "asyncio.AbstractEventLoop"
+"asyncio.events.get_event_loop" = "asyncio.AbstractEventLoop"
+# django.template.Engine.get_default() returns the configured Engine.
+"django.template.Engine.get_default" = "django.template.Engine"
 # logging.getLogger returns a Logger.
 "logging.getLogger" = "logging.Logger"
 # Flask: make_response returns the app's response class (flask.Response).
@@ -213,6 +220,24 @@
 "mongoose.Query.select" = "mongoose.Query"
 "mongoose.Query.populate" = "mongoose.Query"
 "mongoose.Query.lean" = "mongoose.Query"
+# Electron (electronjs.org/docs/latest/api): a window's and a view's webContents is a WebContents,
+# as is an IPC event's sender; the static lookups return windows.
+"electron.BrowserWindow.webContents" = "electron.WebContents"
+"electron.BrowserView.webContents" = "electron.WebContents"
+"electron.WebContentsView.webContents" = "electron.WebContents"
+"electron.IpcMainEvent.sender" = "electron.WebContents"
+"electron.WebContents.mainFrame" = "electron.WebFrameMain"
+"electron.BrowserWindow.getFocusedWindow" = "electron.BrowserWindow"
+"electron.BrowserWindow.fromId" = "electron.BrowserWindow"
+"electron.BrowserWindow.fromWebContents" = "electron.BrowserWindow"
+# Template engines: nunjucks.configure() returns an Environment.
+"nunjucks.configure" = "nunjucks.Environment"
+# node-redis: createClient() returns a client (the redis and @redis/client packages).
+"redis.createClient" = "redis.RedisClient"
+"@redis/client.createClient" = "redis.RedisClient"
+"redis.createCluster" = "redis.RedisClient"
+# Sails: the global app's getDatastore() returns a Waterline datastore.
+"sails.getDatastore" = "sails.Datastore"
 # Prisma Client: `$extends` returns an extended client with the same methods.
 "@prisma/client.PrismaClient.$extends" = "@prisma/client.PrismaClient"
 # TypeORM (typeorm.io): a DataSource's manager is an EntityManager; getRepository returns a

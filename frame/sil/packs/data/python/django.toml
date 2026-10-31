@@ -6,9 +6,10 @@ detect = { imports = ["django"] }
 
 # QuerySet.extra() splices where / select / order_by / tables strings into the SQL.
 [[sink]]
-name = ["objects.extra"]                 # a model's default manager (`Model.objects`), its class unknown
-call = ["**.objects.extra", "**.objects.**.extra", "django.db.models.Manager.**.extra",
-        "django.db.models.QuerySet.**.extra", "django.db.models.Manager.extra", "django.db.models.QuerySet.extra"]
+# A model's manager (`Model.objects`, typed by the model's base class, value-types.toml) and the
+# querysets it returns.
+call = ["django.db.models.Manager.**.extra", "django.db.models.QuerySet.**.extra", "django.db.models.Manager.extra",
+        "django.db.models.QuerySet.extra"]
 kind = "sql"
 args = [0]                       # positional `select`; the strings passed by keyword are `arg_names`
 arg_names = ["where", "select", "order_by", "tables", "select_params"]
@@ -28,9 +29,7 @@ receiver = true
 origin = "django.db.models.QuerySet"
 
 [[sink]]
-name = ["objects.raw"]                   # a model's default manager (`Model.objects`), its class unknown
-call = ["django.db.models.Manager.raw", "django.db.models.Manager.**.raw", "django.db.models.QuerySet.raw",
-        "**.objects.raw"]
+call = ["django.db.models.Manager.raw", "django.db.models.Manager.**.raw", "django.db.models.QuerySet.raw"]
 kind = "sql"
 args = [0]
 description = "Manager.raw() / QuerySet.raw() runs the SQL string it is given"
@@ -46,8 +45,12 @@ call = ["django.template.Template", "django.template.base.Template"]
 kind = "template"
 args = [0]
 
+# A template Engine (`Engine()`, `Engine.get_default()`) compiles from_string's argument; so did
+# the old loader function.
 [[sink]]
-name = ["engine.from_string", "Engine.from_string", "get_template_from_string"]
+call = ["django.template.Engine.from_string", "django.template.engine.Engine.from_string",
+        "django.template.Engine.get_default.from_string", "django.template.engine.Engine.get_default.from_string",
+        "django.template.loader.get_template_from_string"]
 kind = "template"
 args = [0]
 description = "Engine.from_string compiles its argument as template source"

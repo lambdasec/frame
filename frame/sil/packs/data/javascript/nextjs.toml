@@ -115,7 +115,6 @@ description = "request cookies / headers"
 
 [[sink]]
 call = ["next/server.NextResponse.redirect", "next/server.NextResponse.rewrite"]
-name = ["NextResponse.redirect", "NextResponse.rewrite"]
 args = [0]
 kind = "redirect"
 description = "NextResponse.redirect (open redirect)"
@@ -125,13 +124,6 @@ call = ["next/navigation.redirect", "next/navigation.permanentRedirect"]
 args = [0]
 kind = "redirect"
 description = "next/navigation redirect (open redirect)"
-
-# request.nextUrl.searchParams.get('q'), formData.get('x'), await request.json(): reading a
-# value out of attacker-controlled request data is attacker-controlled
-[[propagator]]
-name = ["get", "getAll", "json", "text", "formData", "arrayBuffer", "toString"]
-receiver = true
-description = "value read from a request / FormData / URLSearchParams"
 
 # pages/api handler(req, res): the response, a Node ServerResponse with Next.js's helpers
 # (https://nextjs.org/docs/pages/building-your-application/routing/api-routes#response-helpers).

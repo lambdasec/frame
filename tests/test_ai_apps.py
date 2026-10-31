@@ -155,7 +155,12 @@ def test_an_mcp_tool_result_is_attacker_data():
 ])
 def test_js_a_retrieved_document_in_a_system_message(stmt):
     code = ("import { SystemMessage, HumanMessage } from '@langchain/core/messages';\n"
-            "import { ChatOpenAI } from '@langchain/openai';\nconst llm = new ChatOpenAI();\n"
-            "export async function f(store, q) {\n  const docs = await store.similaritySearch(q);\n"
+            "import { ChatOpenAI, OpenAIEmbeddings } from '@langchain/openai';\nconst llm = new ChatOpenAI();\n"
+            "import { MemoryVectorStore } from 'langchain/vectorstores/memory';\n"
+            "const store = new MemoryVectorStore(new OpenAIEmbeddings());\n"
+            "export async function f(q) {\n  const docs = await store.similaritySearch(q);\n"
             "  const text = docs[0].pageContent;\n  " + stmt + "\n}\n")
-    assert ("prompt_injection", 7, "ai") in findings(code, "javascript", "app.mjs")
+    assert ("prompt_injection", 9, "ai") in findings(code, "javascript", "app.mjs")
+    # a vector store is known by its value: a parameter nothing types is not one
+    untyped = code.replace("export async function f(q)", "export async function f(store, q)")
+    assert ("prompt_injection", 9, "ai") not in findings(untyped, "javascript", "app.mjs")

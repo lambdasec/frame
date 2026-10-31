@@ -19,14 +19,6 @@ kind = "template"
 args = [0]
 arg_names = ["source"]
 
-# The environment is nearly always a module-level variable of unknown type: fall back to the
-# method name, which is specific to template engines once jinja2 / mako is imported.
-[[sink]]
-name = ["from_string"]
-kind = "template"
-args = [0]
-arg_names = ["source"]
-description = "Environment.from_string compiles its argument as template source"
 
 [[sink]]
 call = ["mako.lookup.TemplateLookup.put_string"]

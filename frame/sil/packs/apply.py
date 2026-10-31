@@ -224,6 +224,29 @@ def _resolve_sink_args(rule: Rule, call: Optional[Call]) -> Optional[List[int]]:
     return resolved if resolved or not args else None
 
 
+def pack_spec_for_id(program: Program, canonical: str) -> Optional[ProcSpec]:
+    """The spec the applied packs give a call by its callee id, for a call written inside an
+    expression (no Call instruction for `_apply_rules` to reach): its rules merged over the
+    built-in spec of that id. Rules with `when_kwarg` hold per call and are not used here."""
+    cache = program.__dict__.setdefault("_pack_id_index", {})
+    packs = tuple(getattr(program, "active_packs", ()) or ())
+    key = tuple(id(p) for p in packs)
+    if cache.get("key") != key:
+        index = _RuleIndex()
+        for pack in packs:
+            for rule in pack.rules:
+                if rule.call and not rule.when_kwarg and not rule.property:
+                    index.add(pack, rule)
+        cache.clear()
+        cache.update(key=key, index=index, specs={})
+    specs = cache["specs"]
+    if canonical not in specs:
+        matches = cache["index"].match(canonical, "")
+        matches = [m for m in matches if m[1].call]          # by id only, never by a written name
+        specs[canonical] = _merge_spec(program.library_specs.get(canonical), matches, None) if matches else None
+    return specs[canonical]
+
+
 def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
                 call: Optional[Call]) -> Optional[ProcSpec]:
     spec = copy.copy(base) if base is not None else ProcSpec()
@@ -574,6 +597,12 @@ def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
         return False
     if e.registered_via and not any(_glob(e.registered_via, v) for v in proc.registered_via):
         return False
+    if e.event:                                     # `addEventListener("message", handler)`
+        from ..registrations import registration_vias
+        if not any(r.target == proc.name and r.event in e.event
+                   and any(_glob(e.registered_via, v) for v in registration_vias(program, r))
+                   for r in getattr(program, "registrations", ()) or ()):
+            return False
     if e.class_name and not (cls and _glob(e.class_name, cls)):
         return False
     if e.modifiers and not all(m in proc.modifiers for m in e.modifiers):
@@ -868,16 +897,16 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[S
 
 
 def _constructor_fields(program: Program) -> None:
-    """A class the framework constructs with attacker data (an entry point on its `__init__`):
-    a field `__init__` sets from such a parameter (`self.request = request`) holds that value in
-    every method the framework then calls on the instance (Pyramid class views). Python only."""
-    if (program.language or "") != "python":
-        return
+    """A class the framework constructs with attacker data (an entry point on its `__init__` or
+    JS/TS `constructor`): a field the constructor sets from such a parameter (`self.request =
+    request`, a TS parameter property `private route: ActivatedRoute`) holds that value in every
+    method the framework then calls on the instance (Pyramid class views, Angular components)."""
+    python = (program.language or "") == "python"
     for init in program.procedures.values():
-        if init.simple_name != "__init__" or not init.class_name:
+        if init.simple_name != ("__init__" if python else "constructor") or not init.class_name:
             continue
         entry = init.nodes.get(init.entry_node)
-        receiver = bound_receiver(init, program)
+        receiver = bound_receiver(init, program) if python else "this"
         if entry is None or receiver is None:
             continue
         sources = {str(i.var): i for i in entry.instrs if isinstance(i, TaintSource)}
@@ -893,7 +922,8 @@ def _constructor_fields(program: Program) -> None:
         for proc in program.procedures.values():
             if proc is init or proc.class_name != init.class_name:
                 continue
-            recv = bound_receiver(proc, program)
+            recv = bound_receiver(proc, program) if python else \
+                ("this" if proc.is_method and not getattr(proc, "is_static", False) else None)
             node = proc.nodes.get(proc.entry_node)
             if recv is None or node is None:
                 continue
@@ -946,7 +976,13 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     active = [p for p in packs.for_language(program.language) if _detected(p, program)]
     if not active:
         return program
+    globals_ = {name: value for p in active for name, value in getattr(p, "globals", {}).items()}
+    if globals_:                                    # `sails.getDatastore()`: the framework's own global
+        program.global_origins = globals_
+        _value_origins(program, getattr(program, "param_origins", None))
     _apply_entry_origins(program, active)
+    from ..registrations import refresh_registered_via
+    refresh_registered_via(program)
     _apply_rules(program, active)
     finish_call_arguments(program)
     _apply_property_sinks(program, active)

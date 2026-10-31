@@ -3,6 +3,8 @@ name = "sails"
 language = "javascript"
 description = "Sails.js: controller actions and their request, native queries (Sails provides a global, so a Sails app is known by its package.json)"
 detect = { dependencies = ["sails"] }
+# Sails exposes the app as the global `sails` (https://sailsjs.com/documentation/reference/application).
+globals = { sails = "sails" }
 references = ["https://sailsjs.com/documentation/concepts/actions-and-controllers",
               "https://sailsjs.com/documentation/reference/request-req",
               "https://sailsjs.com/documentation/reference/waterline-orm/datastores/send-native-query"]
@@ -36,8 +38,9 @@ param_positions = [0]
 params = "all"
 description = "the inputs of a Sails actions2 action"
 
+# The default datastore's (`sails.sendNativeQuery`) and a named one's (`sails.getDatastore(name)`).
 [[sink]]
-name = ["sails.sendNativeQuery", "sendNativeQuery"]
+call = ["sails.sendNativeQuery", "sails.Datastore.sendNativeQuery"]
 args = [0]
 kind = "sql"
 description = "Waterline native SQL query"

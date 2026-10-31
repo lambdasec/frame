@@ -12,9 +12,3 @@ call = ["react-router-dom.useSearchParams", "react-router.useSearchParams", "rea
         "@remix-run/react.useSearchParams", "@remix-run/react.useParams", "@remix-run/react.useLocation"]
 kind = "user_input"
 description = "values read from the URL (path parameters, query string, hash)"
-
-# searchParams.get('q'), params.get(...): a value read out of tainted URL data
-[[propagator]]
-name = ["get", "getAll", "toString"]
-receiver = true
-description = "value read from URLSearchParams"

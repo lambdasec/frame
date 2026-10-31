@@ -44,10 +44,10 @@ LANGUAGES = CODE_LANGUAGES + IAC_LANGUAGES
 _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "file_input"}
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
-_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries"}
+_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries", "globals"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names", "dependencies"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
-               "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
+               "method", "registered_via", "event", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
                "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin",
                "receiver", "unbound", "route_syntax", "route_args"}
@@ -108,6 +108,7 @@ class Entrypoint:
     extends: List[str] = field(default_factory=list)
     method: List[str] = field(default_factory=list)
     registered_via: List[str] = field(default_factory=list)      # callee a handler is passed to
+    event: List[str] = field(default_factory=list)               # with registered_via: the call's first literal
     class_name: List[str] = field(default_factory=list)          # globs on the class's own name (a convention)
     modifiers: List[str] = field(default_factory=list)           # all of these, as written (public)
     exclude_modifiers: List[str] = field(default_factory=list)   # none of these (static)
@@ -463,6 +464,7 @@ class Pack:
     handler_returns: List[HandlerReturn] = field(default_factory=list)
     injected_field_annotations: List[str] = field(default_factory=list)
     dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
+    globals: Dict[str, str] = field(default_factory=dict)   # JS: a global the framework defines -> its value id
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
@@ -645,6 +647,12 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     if language not in LANGUAGES:
         raise _fail(origin, "[pack].language", f"must be one of {list(LANGUAGES)}")
     pack = Pack(name=name, language=language, description=str(head.get("description", "")), origin=origin)
+    if "globals" in head:
+        g = head["globals"]
+        if language != "javascript" or not isinstance(g, dict) or not all(
+                isinstance(k, str) and k.isidentifier() and isinstance(v, str) and v for k, v in g.items()):
+            raise _fail(origin, "[pack].globals", "maps global names to value ids, in a JavaScript pack")
+        pack.globals = dict(g)
     if "dict_queries" in head:
         if not isinstance(head["dict_queries"], bool) or language != "python":
             raise _fail(origin, "[pack].dict_queries", "is true or false, in a Python pack")
@@ -668,7 +676,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         where = f"[[entrypoint]] #{i + 1}"
         _check_keys(origin, where, t, _ENTRY_KEYS)
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
-        for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "param_annotation", "param_type",
+        for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "event", "param_annotation", "param_type",
                     "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation", "class_name",
                     "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "first_param",
                     "module_path", "exports", "directives", "body_directives"):

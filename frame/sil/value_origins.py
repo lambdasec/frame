@@ -117,7 +117,8 @@ def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Di
 
 def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str, str]] = None,
              params: Optional[Dict[str, str]] = None, python: bool = False,
-             returning: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+             returning: Optional[Dict[str, str]] = None,
+             extra: Optional[Dict[str, List[Optional[str]]]] = None) -> Dict[str, str]:
     """Origins of the names bound once in `proc`; with `fill`, also give unresolved calls on
     them their callee id. `params`: origins of parameters every caller agrees on (a project's
     `require("./routes")(app)` with `app = express()`), else a parameter has none."""
@@ -136,6 +137,10 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
     modules: Set[str] = set()          # names holding a module itself (`require("express")`), not a call's result
     params_ = {str(p) for p, _ in proc.params}
     bound: Dict[str, Dict[int, Optional[str]]] = {}     # a name bound several times: each binding's origin
+    for name, values in (extra or {}).items():          # bindings nested functions make (`win = ...`)
+        if name in defs and name not in params_:
+            defs[name] = defs.get(name, 0) + len(values)
+            bound[name] = {-(k + 1): v for k, v in enumerate(values)}
 
     def note(name: str, instr, value: Optional[str]) -> None:
         if defs.get(name, 0) > 1 and name not in params_:
@@ -261,11 +266,13 @@ def _settle_filled(program) -> bool:
     moved = False
     for proc in program.procedures.values():
         for i in _instrs(proc):
+            changed = getattr(i, "canonical_by_origin", None) != getattr(i, "_prev_origin_id", None)
             if getattr(i, "stale_pack_spec", None) is not None:
-                if i.stale_pack_spec and getattr(i, "canonical_by_origin", None) != getattr(i, "_prev_origin_id", None):
+                if i.stale_pack_spec and changed:
                     i.pack_spec = None
-                    moved = True
                 i.stale_pack_spec = None
+            if changed and isinstance(i, Call):
+                moved = True                       # a new or different id: the packs' rules may meet it
     return moved
 
 
@@ -418,18 +425,58 @@ def _init_field_origins(program, scopes, python: bool = True) -> Dict[str, Dict[
     return out
 
 
+def _outer_bindings(program, imports, returning) -> Dict[str, Dict[str, List[Optional[str]]]]:
+    """JS: what nested functions assign to variables of an enclosing scope (`let win;` ...
+    `win = new BrowserWindow()` in a callback): declaring procedure -> name -> each value's origin
+    (None when unknown; null counts as no object)."""
+    out: Dict[str, Dict[str, List[Optional[str]]]] = {}
+    for proc in program.procedures.values():
+        writes = set(getattr(proc, "outer_writes", None) or ())
+        if not writes:
+            continue
+        owner_of: Dict[str, str] = {}
+        for name in writes:                               # the nearest enclosing procedure binding it
+            cur = getattr(proc, "parent", None)
+            while cur and cur in program.procedures and name not in _definitions(program.procedures[cur]):
+                cur = getattr(program.procedures[cur], "parent", None)
+            owner_of[name] = cur if cur in program.procedures else MODULE
+        for i in _instrs(proc):
+            if type(i).__name__ != "Assign" or str(i.id) not in writes:
+                continue
+            exp = i.exp
+            if isinstance(exp, ExpConst) and exp.value is None:
+                value: Optional[str] = ""
+            elif isinstance(exp, ExpCall):
+                value = _expression_call_origin(exp, imports, returning)
+            else:
+                value = None
+            if isinstance(exp, ExpVar):                   # `win = $win_3`: the call bound before it
+                for j in _instrs(proc):
+                    if isinstance(j, Call) and _ret_name(j) == str(exp.var):
+                        value = j.canonical
+            out.setdefault(owner_of[str(i.id)], {}).setdefault(str(i.id), []).append(value)
+    return out
+
+
 def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict[str, Dict[str, str]]:
     if python:
         _reset_filled(program)
     module = program.procedures.get(MODULE)
     scopes: Dict[str, Dict[str, str]] = {}
-    outer = _origins(module, {}, fill=True, imports=imports, params=_module_params(program, param_origins, imports),
-                     python=python, returning=returning) \
+    extra = {} if python else _outer_bindings(program, imports, returning)
+    globals_ = {} if python else {
+        name: value for name, value in (getattr(program, "global_origins", None) or {}).items()
+        if name not in imports and (module is None or name not in _definitions(module))}
+    outer = _origins(module, dict(globals_), fill=True, imports=imports,
+                     params=_module_params(program, param_origins, imports),
+                     python=python, returning=returning, extra=extra.get(MODULE)) \
         if module is not None else _module_params(program, param_origins, imports)
+    outer = {**globals_, **outer}
     scopes[MODULE] = outer
 
     def visible(name: str, seen: Set[str]) -> Dict[str, str]:
-        """What a procedure sees from outside: the module's names and its enclosing functions'."""
+        """What a procedure sees from outside: the module's names and its enclosing functions'
+        (their `this.` fields only in an arrow function, whose `this` is theirs)."""
         proc = program.procedures.get(name)
         parent = getattr(proc, "parent", None) if proc is not None else None
         if not parent or parent not in program.procedures or parent in seen:
@@ -437,14 +484,17 @@ def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict
         out = visible(parent, seen | {name})
         if parent not in scopes:
             scopes[parent] = _origins(program.procedures[parent], out, fill=True, imports=imports,
-                                      params=param_origins.get(parent), python=python, returning=returning)
+                                      params=param_origins.get(parent), python=python, returning=returning,
+                                      extra=extra.get(parent))
         out.update(scopes[parent])
+        if not python and not getattr(proc, "lexical_this", False):
+            out = {k: v for k, v in out.items() if not k.startswith("this.")}
         return out
 
     for name, proc in program.procedures.items():
         if name != MODULE and name not in scopes:
             scopes[name] = _origins(proc, visible(name, set()), fill=True, imports=imports, python=python,
-                                    params=param_origins.get(name), returning=returning)
+                                    params=param_origins.get(name), returning=returning, extra=extra.get(name))
     return scopes
 
 

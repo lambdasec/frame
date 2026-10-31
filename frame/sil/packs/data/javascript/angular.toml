@@ -4,29 +4,57 @@ language = "javascript"
 description = "Angular: ActivatedRoute data as sources, DomSanitizer.bypassSecurityTrust* as sinks"
 detect = { imports = ["@angular/core", "@angular/router", "@angular/platform-browser", "@angular/common"] }
 
+# The router's state for the current route (`ActivatedRoute`, injected by its declared type:
+# `constructor(private route: ActivatedRoute)`): its parameter maps and their snapshot are URL
+# controlled. https://angular.dev/api/router/ActivatedRoute
 [[source]]
-name = ["queryParamMap.get", "queryParamMap.getAll", "paramMap.get", "paramMap.getAll", "route.snapshot.paramMap.get",
-        "route.snapshot.queryParamMap.get"]
+call = ["@angular/router.ActivatedRoute.snapshot.paramMap.get", "@angular/router.ActivatedRoute.snapshot.paramMap.getAll",
+        "@angular/router.ActivatedRoute.snapshot.queryParamMap.get",
+        "@angular/router.ActivatedRoute.snapshot.queryParamMap.getAll"]
 kind = "user_input"
 description = "Angular route / query parameter"
 
-# route.queryParams.subscribe(params => ...)
+# The ActivatedRoute itself as the description of the URL: its parameter maps, query, fragment and
+# URL segments (also as `snapshot`) are what the URL says; `data` (the route's configuration and
+# resolvers), `outlet`, `component` and the router tree are the application's.
+[[request_type]]
+id = "ActivatedRoute"
+fields = ["params", "queryParams", "fragment", "paramMap", "queryParamMap", "url",
+          "snapshot.params", "snapshot.queryParams", "snapshot.fragment", "snapshot.paramMap",
+          "snapshot.queryParamMap", "snapshot.url"]
+references = ["https://angular.dev/api/router/ActivatedRoute", "https://angular.dev/api/router/ActivatedRouteSnapshot"]
+
+# A component, directive or service asks for it by declared type (constructor injection,
+# a TS parameter property); the field holds it in the class's other methods.
+[[entrypoint]]
+id = "injected-route"
+method = ["constructor"]
+params = "typed"
+param_type = ["@angular/router.ActivatedRoute"]
+request_type = "ActivatedRoute"
+description = "the router's ActivatedRoute (URL controlled)"
+
+# route.queryParams.subscribe(params => ...): the values the router emits
 [[entrypoint]]
 id = "route-params-subscriber"
-registered_via = ["*.queryParams.subscribe", "*.params.subscribe", "*.queryParamMap.subscribe", "*.paramMap.subscribe",
-                  "*.fragment.subscribe"]
+registered_via = ["@angular/router.ActivatedRoute.queryParams.subscribe", "@angular/router.ActivatedRoute.params.subscribe",
+                  "@angular/router.ActivatedRoute.queryParamMap.subscribe", "@angular/router.ActivatedRoute.paramMap.subscribe",
+                  "@angular/router.ActivatedRoute.fragment.subscribe", "@angular/router.ActivatedRoute.url.subscribe",
+                  "@angular/router.ActivatedRoute.data.subscribe"]
 params = "all"
 description = "values emitted by the router (URL controlled)"
 
 # DomSanitizer.bypassSecurityTrustHtml(x) tells Angular to stop escaping x
+# (https://angular.dev/api/platform-browser/DomSanitizer)
 [[sink]]
-name = ["bypassSecurityTrustHtml", "bypassSecurityTrustScript", "bypassSecurityTrustStyle",
-        "bypassSecurityTrustUrl", "bypassSecurityTrustResourceUrl"]
+call = ["@angular/platform-browser.DomSanitizer.bypassSecurityTrustHtml", "@angular/platform-browser.DomSanitizer.bypassSecurityTrustScript",
+        "@angular/platform-browser.DomSanitizer.bypassSecurityTrustStyle", "@angular/platform-browser.DomSanitizer.bypassSecurityTrustUrl",
+        "@angular/platform-browser.DomSanitizer.bypassSecurityTrustResourceUrl"]
 args = [0]
 kind = "html"
 description = "Angular DomSanitizer bypass: the value is rendered without sanitising"
 
-# the sanitising sink: sanitize(SecurityContext.HTML, x) returns safe markup
+# the sanitising call: sanitize(SecurityContext.HTML, x) returns safe markup
 [[sanitizer]]
-name = ["sanitizer.sanitize", "domSanitizer.sanitize"]
+call = ["@angular/platform-browser.DomSanitizer.sanitize"]
 kinds = ["html", "xss"]

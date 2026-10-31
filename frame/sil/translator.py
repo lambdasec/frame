@@ -2155,10 +2155,15 @@ class SILTranslator:
                         out.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, wrap,
                                                               at=name))
                 return out
+            self._client_receiver = None
             called = self._request_call(name, state, exp.args)
+            client, self._client_receiver = self._client_receiver, None
             if called is not self._NOT_REQUEST:          # `req.get("Host")`: the request type decides
                 if called:
                     out.append((state.get_taint_info(called), set(wrap)))
+                return out
+            if client and state.is_tainted(client):      # a method of the request's client data
+                out.append((state.get_taint_info(client), set(wrap) | set(state.sanitized.get(client, []))))
                 return out
             spec = self._spec_of_name(name)
             if spec and spec.is_taint_source():
@@ -2671,9 +2676,11 @@ class SILTranslator:
             rest = rest2 if origin else rest
         if not origin:
             return None
-        for key in typed_names(f"{origin}.{rest}", self.program.language or "",
-                               getattr(self.program, "value_returns", None)):
-            spec = self.program.library_specs.get(key)
+        from .packs.apply import pack_spec_for_id
+        named = f"{origin}.{rest}"
+        for key in [named] + typed_names(named, self.program.language or "",
+                                         getattr(self.program, "value_returns", None)):
+            spec = pack_spec_for_id(self.program, key) or self.program.library_specs.get(key)
             if spec is not None:
                 return spec
         return None
@@ -9512,11 +9519,15 @@ class SILTranslator:
             # Extract variables from function/method receiver
             # For method calls like param.split(), extract the receiver variable
             if hasattr(exp, 'func'):
-                func_str = str(exp.func)
+                func_str = str(exp.func).strip('"')            # a callee written as text keeps no quotes
+                self._client_receiver = None
                 called = self._request_call(func_str, self._state, exp.args) if '.' in func_str else self._NOT_REQUEST
+                client, self._client_receiver = self._client_receiver, None
                 if called is not self._NOT_REQUEST:
                     if called:
                         result.append(called)
+                elif client:                                   # a method of the request's client data
+                    result.append(client)
                 elif '.' in func_str:
                     # Method call: extract receiver (e.g., "param.split" -> "param")
                     parts = func_str.strip('"').split('.')

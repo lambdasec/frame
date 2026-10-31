@@ -12,8 +12,8 @@ call = ["fs/promises.readFile", "fs/promises.writeFile", "fs/promises.appendFile
         "fs-extra.readFile", "fs-extra.readFileSync", "fs-extra.writeFile", "fs-extra.writeFileSync",
         "fs-extra.readJson", "fs-extra.readJsonSync", "fs-extra.remove", "fs-extra.removeSync", "fs-extra.outputFile",
         "fs-extra.pathExists", "fs-extra.emptyDir", "fs-extra.ensureFile", "fs-extra.ensureDir",
-        "fs-extra.createReadStream", "fs-extra.createWriteStream"]
-name = ["fs.promises.readFile", "fs.promises.writeFile", "fs.promises.appendFile", "fs.promises.readdir",
+        "fs-extra.createReadStream", "fs-extra.createWriteStream",
+        "fs.promises.readFile", "fs.promises.writeFile", "fs.promises.appendFile", "fs.promises.readdir",
         "fs.promises.unlink", "fs.promises.rm", "fs.promises.stat", "fs.promises.access", "fs.promises.open",
         "fs.promises.copyFile", "fs.promises.mkdir"]
 args = [0]
@@ -21,8 +21,8 @@ kind = "path"
 description = "file system access by path (promise API)"
 
 [[sink]]
-call = ["fs/promises.copyFile", "fs/promises.rename", "fs-extra.copy", "fs-extra.move", "fs-extra.copySync", "fs-extra.moveSync"]
-name = ["fs.promises.copyFile", "fs.promises.rename"]
+call = ["fs/promises.copyFile", "fs/promises.rename", "fs-extra.copy", "fs-extra.move", "fs-extra.copySync", "fs-extra.moveSync",
+        "fs.promises.copyFile", "fs.promises.rename"]
 args = [0, 1]
 kind = "path"
 description = "file system copy / move between paths"

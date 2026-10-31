@@ -9,16 +9,26 @@ references = ["https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
               "https://unpkg.com/@langchain/core@0.3.40/dist/vectorstores.d.ts",
               "https://unpkg.com/@modelcontextprotocol/sdk@1.10.0/dist/esm/client/index.d.ts"]
 
-# Documents a vector store or retriever returns (method names from @langchain/core's VectorStore
-# and BaseRetriever; `retriever.invoke` by the conventional name of the `asRetriever()` value).
+# Documents a vector store or retriever returns: the search methods of any LangChain.js vector
+# store (@langchain/core's VectorStore, implemented by every store package) and `invoke` /
+# `getRelevantDocuments` of a retriever (a class named *Retriever, or what `asRetriever()` returns;
+# a chat model's `invoke` is model output, the llm-sdks pack's).
 [[source]]
-name = ["similaritySearch", "similaritySearchWithScore", "similaritySearchVectorWithScore",
-        "maxMarginalRelevanceSearch", "getRelevantDocuments", "retriever.invoke"]
+call = ["@langchain/**.similaritySearch", "@langchain/**.similaritySearchWithScore",
+        "@langchain/**.similaritySearchVectorWithScore", "@langchain/**.maxMarginalRelevanceSearch",
+        "langchain/**.similaritySearch", "langchain/**.similaritySearchWithScore",
+        "langchain/**.similaritySearchVectorWithScore", "langchain/**.maxMarginalRelevanceSearch",
+        "@langchain/**.asRetriever.invoke", "@langchain/**.asRetriever.getRelevantDocuments",
+        "langchain/**.asRetriever.invoke", "langchain/**.asRetriever.getRelevantDocuments",
+        "@langchain/**.*Retriever.invoke", "@langchain/**.*Retriever.getRelevantDocuments",
+        "langchain/**.*Retriever.invoke", "langchain/**.*Retriever.getRelevantDocuments"]
 kind = "retrieved"
 description = "retrieved documents"
 
 # An MCP client's view of a server: a tool's result, a resource's contents, a prompt it supplies.
 [[source]]
-name = ["client.callTool", "client.readResource", "client.getPrompt"]
+call = ["@modelcontextprotocol/sdk/client/index.js.Client.callTool", "@modelcontextprotocol/sdk/client/index.js.Client.readResource",
+        "@modelcontextprotocol/sdk/client/index.js.Client.getPrompt", "@modelcontextprotocol/sdk/client.Client.callTool",
+        "@modelcontextprotocol/sdk/client.Client.readResource", "@modelcontextprotocol/sdk/client.Client.getPrompt"]
 kind = "retrieved"
 description = "an MCP tool result or resource"

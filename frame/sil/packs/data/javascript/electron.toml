@@ -16,28 +16,37 @@ params = "all"
 params_from = 1
 description = "IPC message from a renderer process"
 
+# A handler's event (an IpcMainEvent / IpcMainInvokeEvent): its `sender` is the renderer's
+# WebContents.
+[[callback_param]]
+registered_via = ["electron.ipcMain.on", "electron.ipcMain.once", "electron.ipcMain.handle",
+                  "electron.ipcMain.handleOnce", "electron.ipcMain.addListener"]
+position = 0
+origin = "electron.IpcMainEvent"
+
 [[sink]]
 call = ["electron.shell.openExternal"]
-name = ["shell.openExternal"]
 args = [0]
 kind = "command"
 description = "shell.openExternal hands the URL to the OS (file://, custom protocols: code execution)"
 
 [[sink]]
 call = ["electron.shell.openPath"]
-name = ["shell.openPath"]
 args = [0]
 kind = "command"
 description = "shell.openPath opens / executes the file"
 
+# A window's (or its WebContents') loadURL navigates it to the URL
+# (https://www.electronjs.org/docs/latest/api/browser-window, .../web-contents).
 [[sink]]
-name = ["loadURL"]
+call = ["electron.BrowserWindow.loadURL", "electron.WebContents.loadURL", "electron.BrowserView.webContents.loadURL"]
 args = [0]
 kind = "redirect"
-description = "BrowserWindow.loadURL navigates the window to the URL"
+description = "loadURL navigates the window to the URL"
 
 [[sink]]
-name = ["webContents.executeJavaScript", "executeJavaScript"]
+call = ["electron.WebContents.executeJavaScript", "electron.webFrame.executeJavaScript",
+        "electron.WebFrameMain.executeJavaScript"]
 args = [0]
 kind = "code"
 description = "runs JavaScript in the page"

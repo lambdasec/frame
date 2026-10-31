@@ -9,6 +9,7 @@ from mcp import ClientSession
 client = Anthropic()
 llm = ChatOpenAI(model="gpt-4o-mini")
 store = Chroma(collection_name="tickets", embedding_function=OpenAIEmbeddings())
+retriever = store.as_retriever()
 
 
 def answer(question):
@@ -20,7 +21,7 @@ def answer(question):
         messages=[{"role": "user", "content": "Tickets:\n" + context + "\n\nQuestion: " + question}])
 
 
-def summarize(retriever, question):
+def summarize(question):
     docs = retriever.invoke(question)
     notes = docs[0].page_content
     messages = [SystemMessage(content="Summarise the notes in the user's message."),

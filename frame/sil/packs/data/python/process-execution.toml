@@ -20,8 +20,9 @@ args = [0]
 description = "the program to run; the remaining arguments are an argument vector"
 
 # loop.subprocess_shell(factory, cmd): the command is the second argument.
+# The loop: `asyncio.get_event_loop()` / `get_running_loop()` / `new_event_loop()` (value-types.toml).
 [[sink]]
-name = ["loop.subprocess_shell", "get_event_loop.subprocess_shell"]
+call = ["asyncio.AbstractEventLoop.subprocess_shell", "asyncio.events.AbstractEventLoop.subprocess_shell"]
 kind = "shell"
 args = [1]
 

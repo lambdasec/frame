@@ -10,15 +10,20 @@ references = ["https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
 
 # Documents a vector store or retriever returns: text someone else wrote (a web page, a ticket, an
 # uploaded file). In the model's system instructions they can rewrite what the model does; at a
-# shell, SQL or exec they are attacker data like any other. Method names from
-# langchain_core.vectorstores.VectorStore and BaseRetriever; `retriever.invoke` is matched by the
-# conventional name of the `as_retriever()` value (an untyped `.invoke` is any Runnable).
+# shell, SQL or exec they are attacker data like any other. The search methods of any LangChain
+# vector store (langchain_core.vectorstores.VectorStore, implemented by every store package) and
+# `invoke` / `get_relevant_documents` of a retriever (a class named *Retriever, or what
+# `as_retriever()` returns; a chat model's `invoke` is model output, the llm-sdks pack's).
 [[source]]
-name = ["similarity_search", "similarity_search_with_score", "similarity_search_with_relevance_scores",
-        "similarity_search_by_vector", "max_marginal_relevance_search", "max_marginal_relevance_search_by_vector",
-        "asimilarity_search", "asimilarity_search_with_score", "asimilarity_search_with_relevance_scores",
-        "amax_marginal_relevance_search", "get_relevant_documents", "aget_relevant_documents",
-        "retriever.invoke", "retriever.ainvoke"]
+call = ["langchain**.similarity_search", "langchain**.similarity_search_with_score",
+        "langchain**.similarity_search_with_relevance_scores", "langchain**.similarity_search_by_vector",
+        "langchain**.max_marginal_relevance_search", "langchain**.max_marginal_relevance_search_by_vector",
+        "langchain**.asimilarity_search", "langchain**.asimilarity_search_with_score",
+        "langchain**.asimilarity_search_with_relevance_scores", "langchain**.amax_marginal_relevance_search",
+        "langchain**.as_retriever.invoke", "langchain**.as_retriever.ainvoke",
+        "langchain**.as_retriever.get_relevant_documents", "langchain**.as_retriever.aget_relevant_documents",
+        "langchain**.*Retriever.invoke", "langchain**.*Retriever.ainvoke",
+        "langchain**.*Retriever.get_relevant_documents", "langchain**.*Retriever.aget_relevant_documents"]
 kind = "retrieved"
 description = "retrieved documents"
 
@@ -28,6 +33,5 @@ description = "retrieved documents"
 call = ["mcp.ClientSession.call_tool", "mcp.ClientSession.read_resource", "mcp.ClientSession.get_prompt",
         "mcp.client.session.ClientSession.call_tool", "mcp.client.session.ClientSession.read_resource",
         "mcp.client.session.ClientSession.get_prompt"]
-name = ["session.call_tool", "session.read_resource", "session.get_prompt"]
 kind = "retrieved"
 description = "an MCP tool result or resource"

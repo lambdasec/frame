@@ -337,15 +337,7 @@ is_sink = "html"
 sink_args = [1]
 description = "insertAdjacentHTML (XSS)"
 
-[[spec]]
-name = "element.innerHTML"
-is_sink = "html"
-description = "element.innerHTML (XSS)"
 
-[[spec]]
-name = "element.outerHTML"
-is_sink = "html"
-description = "element.outerHTML (XSS)"
 
 [[spec]]
 name = "$"
@@ -407,15 +399,7 @@ name = "$.globalEval"
 is_sink = "code"
 description = "jQuery.globalEval (code injection)"
 
-[[spec]]
-name = "script.src"
-is_sink = "code"
-description = "script.src (script injection)"
 
-[[spec]]
-name = "script.text"
-is_sink = "code"
-description = "script.text (script injection)"
 
 [[spec]]
 name = "location.href"
@@ -487,30 +471,10 @@ name = "window.name"
 is_source = "user"
 description = "Window name"
 
-[[spec]]
-name = "snapshot.queryParams"
-is_source = "user"
-description = "Angular route query parameters"
 
-[[spec]]
-name = "snapshot.params"
-is_source = "user"
-description = "Angular route parameters"
 
-[[spec]]
-name = "snapshot.fragment"
-is_source = "user"
-description = "Angular route fragment"
 
-[[spec]]
-name = "event.data"
-is_source = "user"
-description = "postMessage data"
 
-[[spec]]
-name = "message.data"
-is_source = "user"
-description = "Message event data"
 
 [[spec]]
 name = "dangerouslySetInnerHTML"
