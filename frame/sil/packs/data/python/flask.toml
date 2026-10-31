@@ -9,12 +9,17 @@ detect = { imports = ["flask", "quart"] }
 # The request object (werkzeug's Request, which Flask subclasses; Quart keeps the same names, its
 # body accessors awaitable). Inside a request the module-level proxy `flask.request` /
 # `quart.request` is that request, in every function the view calls, whatever a helper names it.
-# The parsed client data: query string, form, combined values, uploads, cookies, headers, the raw
-# body and its JSON, and the parsed Authorization header. Uploaded files are file contents and
-# client-given names; a cookie or the Authorization header is the caller's own credential.
+# The client data: the parsed query string, form, combined values, uploads, cookies, headers, the
+# raw body (also as streams) and its JSON, the parsed Authorization header, the raw query string,
+# the URL's matched variables (`view_args`), and values parsed from headers (User-Agent, Referer,
+# X-Forwarded-For). Uploaded files are file contents and client-given names; a cookie or the
+# Authorization header is the caller's own credential. The path and URL forms (`path`, `url`,
+# `host`...) are not listed: a route's rule fixes the path but for its variables, which are the
+# view's arguments, and Host is the server's own name in a browser's request.
 [[request_type]]
 id = "Request"
-fields = ["args", "form", "values", "files", "cookies", "headers", "data", "json", "authorization"]
+fields = ["args", "form", "values", "files", "cookies", "headers", "data", "json", "authorization",
+          "query_string", "view_args", "stream", "input_stream", "user_agent", "referrer", "access_route"]
 methods = ["get_data", "get_json"]
 kinds = { files = "file", cookies = "principal", authorization = "principal" }
 headers = ["headers"]

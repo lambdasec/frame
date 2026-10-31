@@ -109,7 +109,8 @@ Python has module-level request proxies: `proxies` names the objects that are, i
 ```toml
 [[request_type]]                         # python/flask
 id = "Request"
-fields = ["args", "form", "values", "files", "cookies", "headers", "data", "json", "authorization"]
+fields = ["args", "form", "values", "files", "cookies", "headers", "data", "json", "authorization",
+          "query_string", "view_args", "stream", "input_stream", "user_agent", "referrer", "access_route"]
 methods = ["get_data", "get_json"]
 kinds = { files = "file", cookies = "principal", authorization = "principal" }
 headers = ["headers"]

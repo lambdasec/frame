@@ -283,3 +283,10 @@ def test_flask_session_rows_are_flasks_not_any_session():
            "def name_of(pk):\n    session = Session(engine)\n    user = session.get(User, pk)\n"
            "    sqlite3.connect('x').execute(\"SELECT * FROM t WHERE n = '%s'\" % user.name)\n")
     assert "CWE-89" not in _cwes(orm)
+
+
+@pytest.mark.parametrize("read", ["request.query_string.decode()", "request.user_agent.string",
+                                  "request.referrer", "request.view_args['x']", "request.stream.read()"])
+def test_flask_client_data_beyond_the_parsed_containers(read):
+    code = _FLASK + f"@app.route('/x')\ndef x():\n    os.system({read})\n    return ''\n"
+    assert "CWE-78" in _cwes(code)
