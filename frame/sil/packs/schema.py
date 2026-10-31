@@ -44,7 +44,8 @@ LANGUAGES = CODE_LANGUAGES + IAC_LANGUAGES
 _SOURCE_KINDS = {k.value for k in TaintKind} | {"user_input", "network_input", "file_input"}
 _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
-_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries"}
+_PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries",
+              "request_objects"}
 _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
@@ -413,6 +414,7 @@ class Pack:
     handler_returns: List[HandlerReturn] = field(default_factory=list)
     injected_field_annotations: List[str] = field(default_factory=list)
     dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
+    request_objects: List[str] = field(default_factory=list)   # Python: module-level request proxies (flask.request)
     policies: List[Policy] = field(default_factory=list)
     origin: str = "builtin"              # builtin | path of the pack file
 
@@ -498,6 +500,10 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not isinstance(head["dict_queries"], bool) or language != "python":
             raise _fail(origin, "[pack].dict_queries", "is true or false, in a Python pack")
         pack.dict_queries = head["dict_queries"]
+    if "request_objects" in head:
+        if language != "python":
+            raise _fail(origin, "[pack].request_objects", "is for Python packs (module-level request proxies)")
+        pack.request_objects = _strings(origin, "[pack].request_objects", head["request_objects"], allow_empty=False)
     detect = head.get("detect", {})
     if not isinstance(detect, dict):
         raise _fail(origin, "[pack].detect", "expected a table")

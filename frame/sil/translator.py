@@ -1708,15 +1708,12 @@ class SILTranslator:
         return hits[0] if len(hits) == 1 else None
 
     def _imported_request_objects(self) -> Set[str]:
-        """Names this file imports that are a web request object: the head of a source spec
-        (`request.args.get`) bound by an import (`from flask import request`)."""
+        """Names this file imports that are a web request object (`from flask import request`):
+        the module-level request proxies of the packs applied to it (`[pack] request_objects`)."""
         cache = self.__dict__.get("_request_object_cache")
         if cache is None:
-            heads = {k.split(".", 1)[0] for k, sp in self.program.library_specs.items()
-                     if "." in k and sp.is_source and k.split(".", 1)[0].isidentifier()}
-            cache = {name for name, qualified in self.program.imports.items()
-                     if name in heads and qualified.rsplit(".", 1)[-1] == name
-                     and name in ("request", "req")}
+            proxies = {o for p in getattr(self.program, "active_packs", ()) for o in getattr(p, "request_objects", ())}
+            cache = {name for name, qualified in self.program.imports.items() if str(qualified) in proxies}
             self.__dict__["_request_object_cache"] = cache
         return cache
 
@@ -8907,7 +8904,7 @@ class SILTranslator:
         while isinstance(cur.base, ExpFieldAccess):
             cur = cur.base
         return (isinstance(cur.base, ExpVar)
-                and self._get_var_name(cur.base.var) == "request"
+                and self._get_var_name(cur.base.var) in _request_objects().python_request_names
                 and cur.field_name in _request_objects().server_state)
 
     def _field_path(self, exp: Exp) -> Optional[str]:

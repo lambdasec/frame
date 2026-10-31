@@ -518,11 +518,9 @@ class InterproceduralAnalyzer:
         if alloc_match:
             var_name = alloc_match.group(1)
 
-            # Skip if var_name is a known non-member (e.g., parameters, common locals)
-            if var_name in func.parameters:
-                pass  # It's a parameter, not a member
-            elif var_name in ('temp', 'tmp', 'result', 'ret', 'ptr', 'p', 'i', 'j', 'k', 'n'):
-                pass  # Common local variable names
+            # A parameter or a local the function declares is not a member
+            if var_name in func.parameters or var_name in local_vars:
+                pass
             else:
                 func.heap_ops.append(HeapOperation(
                     effect=HeapEffect.ALLOCATE,

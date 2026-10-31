@@ -11,6 +11,10 @@ client_properties = ["body", "params", "query", "cookies", "headers", "file", "f
 # tainted as a whole, so a read of `request.<one of these>...` is not attacker data.
 server_state = ["user", "session", "auth"]
 
+# The name such a request object goes by (Django's and DRF's convention for a view's first
+# parameter, which helpers keep): a naming convention until request objects are tracked as values.
+python_request_names = ["request"]
+
 # JavaScript naming conventions, used where the frontend has no framework evidence for a handler:
 # the names an Express / Koa / Fastify handler conventionally gives its request object (a value read
 # from `req.x` / `request.x` is request data) and the names of the parameters beside it (a function

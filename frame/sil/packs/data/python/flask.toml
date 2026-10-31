@@ -5,6 +5,9 @@ description = "Flask (and Quart, which keeps Flask's API): route view functions"
 references = ["https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules",
               "https://quart.palletsprojects.com/en/latest/"]
 detect = { imports = ["flask", "quart"] }
+# The module-level request proxy: passed to a helper, it is the client's request whatever the
+# helper names its parameter.
+request_objects = ["flask.request", "quart.request"]
 
 # A view registered with @app.route / @bp.route or a method shortcut (@app.get, Flask 2.0+) receives
 # the URL's variable parts (`/users/<int:id>`) as keyword arguments: every parameter is client data.

@@ -16,7 +16,7 @@ def test_the_shipped_file_loads():
 
 def test_a_name_cannot_be_both(tmp_path):
     bad = tmp_path / "request-objects.toml"
-    bad.write_text('client_properties = ["body", "session"]\nserver_state = ["session"]\n'
+    bad.write_text('client_properties = ["body", "session"]\nserver_state = ["session"]\npython_request_names = ["request"]\n'
                    'js_request_names = ["req"]\njs_handler_names = ["res"]\njs_framework_modules = ["express"]\n'
                    'js_handler_decorators = ["Get"]\njs_request_types = ["Request"]\n')
     with pytest.raises(ValueError, match="both"):
@@ -58,3 +58,29 @@ def view(request):
 @pytest.mark.parametrize("attr, sqli", [("GET", True), ("user", False), ("session", False)])
 def test_python_request_server_state(attr, sqli):
     assert ("CWE-89" in _cwes(_DJANGO % attr, "python", "views.py")) == sqli
+
+
+# A module-level request proxy is pack data ([pack] request_objects), not the name `request`.
+_HELPER = """%s
+import sqlite3
+
+def find(r):
+    sqlite3.connect("x").execute("SELECT * FROM t WHERE n = '%%s'" %% r.args.get("n"))
+
+@app.route("/f")
+def f():
+    find(request)
+"""
+
+
+def test_an_imported_request_proxy_passed_to_a_helper_is_client_data():
+    flask = _HELPER % "from flask import Flask, request\napp = Flask(__name__)"
+    assert "CWE-89" in _cwes(flask, "python", "a.py")
+
+
+def test_request_objects_are_for_python_packs():
+    from frame.sil.packs.schema import PackError, parse_pack
+    with pytest.raises(PackError, match="request_objects"):
+        parse_pack({"pack": {"name": "x", "language": "javascript", "request_objects": ["a.b"]}}, "x.toml")
+    pack = parse_pack({"pack": {"name": "x", "language": "python", "request_objects": ["acme.request"]}}, "x.toml")
+    assert pack.request_objects == ["acme.request"]

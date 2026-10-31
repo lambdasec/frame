@@ -3,6 +3,9 @@ name = "bottle"
 language = "python"
 description = "Bottle routes, request accessors, template(), static_file, redirect"
 detect = { imports = ["bottle"] }
+# The module-level request proxy: passed to a helper, it is the client's request whatever the
+# helper names its parameter.
+request_objects = ["bottle.request"]
 
 # Bottle's `request` is a module-level proxy: `request.query.id`, `request.forms.name`,
 # `request.params.get(...)`, `request.json`, `request.body` are all client data.
