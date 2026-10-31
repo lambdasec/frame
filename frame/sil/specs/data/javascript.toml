@@ -3,57 +3,6 @@
 # Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
 
 [[spec]]
-name = "res.send"
-is_sink = "html"
-json_for_literals = true      # an object or array is sent as application/json
-description = "Express response (XSS)"
-
-[[spec]]
-name = "res.write"
-is_sink = "html"
-description = "Express response write (XSS)"
-
-[[spec]]
-name = "res.end"
-is_sink = "html"
-description = "Express response end (XSS)"
-
-[[spec]]
-name = "res.render"
-is_sink = "html"
-sink_args = [1]
-renders_view = true      # (view, data): only the data the view prints raw is a sink (templates.py)
-description = "Express template render"
-
-[[spec]]
-name = "res.json"
-taint_propagates = [0]
-description = "JSON response (check for sensitive data)"
-
-[[spec]]
-name = "res.redirect"
-is_sink = "redirect"
-description = "Express redirect (open redirect)"
-
-[[spec]]
-name = "res.setHeader"
-is_sink = "header_injection"
-sink_args = [1]
-description = "Set header (CWE-113)"
-
-[[spec]]
-name = "res.set"
-is_sink = "header"
-sink_args = [1]
-description = "Express header injection"
-
-[[spec]]
-name = "ctx.body"
-is_sink = "html"
-json_for_literals = true      # an object or array is sent as application/json
-description = "Koa response body (XSS)"
-
-[[spec]]
 name = "fs.readFile"
 is_sink = "path"
 description = "Node.js file read (path traversal)"
@@ -122,21 +71,6 @@ description = "Node.js read stream (path traversal)"
 name = "fs.createWriteStream"
 is_sink = "path"
 description = "Node.js write stream (path traversal)"
-
-[[spec]]
-name = "res.sendFile"
-is_sink = "path"
-description = "Express sendFile (path traversal)"
-
-[[spec]]
-name = "res.download"
-is_sink = "path"
-description = "Express download (path traversal)"
-
-[[spec]]
-name = "sendFile"
-is_sink = "path"
-description = "Express sendFile (path traversal)"
 
 [[spec]]
 name = "path.join"
@@ -1393,12 +1327,6 @@ description = "CSP header"
 name = "Strict-Transport-Security"
 taint_propagates = [0]
 description = "HSTS header"
-
-[[spec]]
-name = "res.header"
-is_sink = "header_injection"
-sink_args = [1]
-description = "Set header (CWE-113)"
 
 [[spec]]
 name = "169.254.169.254"

@@ -46,19 +46,51 @@ params = "all"
 description = "the route parameter value a router.param middleware receives"
 
 [[sink]]
-name = ["ctx.redirect", "context.redirect"]
+call = ["koa-send", "koa-send.default", "@koa/send"]
+args = [1]
+kind = "path"
+description = "koa-send serves the file at the given path"
+
+# The context is the response too (https://koajs.com/#response): an origin for the calls and
+# properties on it below.
+[[entrypoint]]
+id = "middleware-context"
+registered_via = ["koa.use", "@koa/router.get", "@koa/router.post", "@koa/router.put", "@koa/router.patch", "@koa/router.del", "@koa/router.delete", "@koa/router.all", "@koa/router.head", "@koa/router.options", "@koa/router.use", "koa-router.get", "koa-router.post", "koa-router.put", "koa-router.patch", "koa-router.del", "koa-router.delete", "koa-router.all", "koa-router.head", "koa-router.options", "koa-router.use"]
+param_positions = [0]
+params = "all"
+origin = "koa.Context"
+description = "the context of a Koa middleware or route, as the response"
+
+[[entrypoint]]
+id = "param-middleware-context"
+registered_via = ["@koa/router.param", "koa-router.param"]
+param_positions = [1]
+params = "all"
+origin = "koa.Context"
+description = "the context of a router.param middleware, as the response"
+
+[[sink]]
+call = ["koa.Context.redirect", "koa.Context.response.redirect"]
 args = [0]
 kind = "redirect"
 description = "Koa ctx.redirect (open redirect)"
 
 [[sink]]
-name = ["ctx.attachment", "ctx.set", "ctx.append"]
+call = ["koa.Context.set", "koa.Context.append", "koa.Context.response.set", "koa.Context.response.append"]
 args = [1]
 kind = "header"
-description = "Koa header value"
+description = "Koa response header value"
 
 [[sink]]
-call = ["koa-send", "koa-send.default", "@koa/send"]
-args = [1]
-kind = "path"
-description = "koa-send serves the file at the given path"
+call = ["koa.Context.attachment", "koa.Context.response.attachment"]
+args = [0]
+kind = "header"
+description = "Koa Content-Disposition filename"
+
+# ctx.body = x is the response body (assigning the property is the sink)
+[[sink]]
+call = ["koa.Context.body", "koa.Context.response.body"]
+property = true
+kind = "html"
+json_for_literals = true      # an object or array is serialised as JSON
+description = "Koa response body (XSS)"

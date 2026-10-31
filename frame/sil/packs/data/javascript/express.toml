@@ -132,3 +132,150 @@ params = "typed"
 param_type = ["express.Request"]
 request_type = "request"
 description = "a parameter of type express.Request"
+
+# The response object a handler is handed (http.ServerResponse extended by Express): its position
+# beside the request. What it sends is the sinks below.
+[[entrypoint]]
+id = "handler-response"
+registered_via = ["express.get", "express.post", "express.put", "express.delete", "express.patch", "express.options",
+                 "express.head", "express.all", "express.use", "express.checkout", "express.copy",
+                 "express.lock", "express.merge", "express.mkactivity", "express.mkcol",
+                 "express.move", "express.notify", "express.purge", "express.report",
+                 "express.search", "express.subscribe", "express.trace", "express.unlock",
+                 "express.unsubscribe", "express.Router.get", "express.Router.post",
+                 "express.Router.put", "express.Router.delete", "express.Router.patch",
+                 "express.Router.options", "express.Router.head", "express.Router.all",
+                 "express.Router.use", "express.Router.checkout", "express.Router.copy",
+                 "express.Router.lock", "express.Router.merge", "express.Router.mkactivity",
+                 "express.Router.mkcol", "express.Router.move", "express.Router.notify",
+                 "express.Router.purge", "express.Router.report", "express.Router.search",
+                 "express.Router.subscribe", "express.Router.trace", "express.Router.unlock",
+                 "express.Router.unsubscribe", "express.route.get", "express.route.post",
+                 "express.route.put", "express.route.delete", "express.route.patch",
+                 "express.route.options", "express.route.head", "express.route.all",
+                 "express.route.checkout", "express.route.copy", "express.route.lock",
+                 "express.route.merge", "express.route.mkactivity", "express.route.mkcol",
+                 "express.route.move", "express.route.notify", "express.route.purge",
+                 "express.route.report", "express.route.search", "express.route.subscribe",
+                 "express.route.trace", "express.route.unlock", "express.route.unsubscribe",
+                 "express.Router.route.get", "express.Router.route.post",
+                 "express.Router.route.put", "express.Router.route.delete",
+                 "express.Router.route.patch", "express.Router.route.options",
+                 "express.Router.route.head", "express.Router.route.all",
+                 "express.Router.route.checkout", "express.Router.route.copy",
+                 "express.Router.route.lock", "express.Router.route.merge",
+                 "express.Router.route.mkactivity", "express.Router.route.mkcol",
+                 "express.Router.route.move", "express.Router.route.notify",
+                 "express.Router.route.purge", "express.Router.route.report",
+                 "express.Router.route.search", "express.Router.route.subscribe",
+                 "express.Router.route.trace", "express.Router.route.unlock",
+                 "express.Router.route.unsubscribe"]
+param_positions = [1]
+params = "all"
+exclude_arity = [4]
+origin = "express.Response"
+description = "the response object of an Express route handler or middleware"
+
+[[entrypoint]]
+id = "error-handler-response"
+registered_via = ["express.get", "express.post", "express.put", "express.delete", "express.patch", "express.options",
+                 "express.head", "express.all", "express.use", "express.checkout", "express.copy",
+                 "express.lock", "express.merge", "express.mkactivity", "express.mkcol",
+                 "express.move", "express.notify", "express.purge", "express.report",
+                 "express.search", "express.subscribe", "express.trace", "express.unlock",
+                 "express.unsubscribe", "express.Router.get", "express.Router.post",
+                 "express.Router.put", "express.Router.delete", "express.Router.patch",
+                 "express.Router.options", "express.Router.head", "express.Router.all",
+                 "express.Router.use", "express.Router.checkout", "express.Router.copy",
+                 "express.Router.lock", "express.Router.merge", "express.Router.mkactivity",
+                 "express.Router.mkcol", "express.Router.move", "express.Router.notify",
+                 "express.Router.purge", "express.Router.report", "express.Router.search",
+                 "express.Router.subscribe", "express.Router.trace", "express.Router.unlock",
+                 "express.Router.unsubscribe", "express.route.get", "express.route.post",
+                 "express.route.put", "express.route.delete", "express.route.patch",
+                 "express.route.options", "express.route.head", "express.route.all",
+                 "express.route.checkout", "express.route.copy", "express.route.lock",
+                 "express.route.merge", "express.route.mkactivity", "express.route.mkcol",
+                 "express.route.move", "express.route.notify", "express.route.purge",
+                 "express.route.report", "express.route.search", "express.route.subscribe",
+                 "express.route.trace", "express.route.unlock", "express.route.unsubscribe",
+                 "express.Router.route.get", "express.Router.route.post",
+                 "express.Router.route.put", "express.Router.route.delete",
+                 "express.Router.route.patch", "express.Router.route.options",
+                 "express.Router.route.head", "express.Router.route.all",
+                 "express.Router.route.checkout", "express.Router.route.copy",
+                 "express.Router.route.lock", "express.Router.route.merge",
+                 "express.Router.route.mkactivity", "express.Router.route.mkcol",
+                 "express.Router.route.move", "express.Router.route.notify",
+                 "express.Router.route.purge", "express.Router.route.report",
+                 "express.Router.route.search", "express.Router.route.subscribe",
+                 "express.Router.route.trace", "express.Router.route.unlock",
+                 "express.Router.route.unsubscribe"]
+arity = [4]
+param_positions = [2]
+params = "all"
+origin = "express.Response"
+description = "the response object of Express error-handling middleware"
+
+[[entrypoint]]
+id = "param-callback-response"
+registered_via = ["express.param", "express.Router.param"]
+param_positions = [1]
+params = "all"
+origin = "express.Response"
+description = "the response object of an app.param callback"
+
+# What reaches the client through the response (https://expressjs.com/en/4x/api.html#res).
+[[sink]]
+call = ["express.Response.send"]
+args = [0]
+kind = "html"
+json_for_literals = true      # an object or array is sent as application/json
+description = "Express res.send (XSS)"
+
+[[sink]]
+call = ["express.Response.write", "express.Response.end"]
+args = [0]
+kind = "html"
+description = "Express response write / end (XSS)"
+
+[[sink]]
+call = ["express.Response.render"]
+args = [1]
+kind = "html"
+renders_view = true           # (view, data): only the data the view prints raw is a sink (templates.py)
+description = "Express template render"
+
+[[sink]]
+call = ["express.Response.redirect"]
+args = [0, 1]                 # res.redirect([status,] path)
+kind = "redirect"
+description = "Express redirect (open redirect)"
+
+[[sink]]
+call = ["express.Response.setHeader", "express.Response.header"]
+args = [1]
+kind = "header_injection"
+description = "Express response header (CWE-113)"
+
+[[sink]]
+call = ["express.Response.set", "express.Response.append"]
+args = [1]
+kind = "header"
+description = "Express response header"
+
+[[sink]]
+call = ["express.Response.sendFile", "express.Response.download", "express.Response.attachment"]
+args = [0]
+kind = "path"
+description = "Express file response (path traversal)"
+
+# TypeScript: a parameter declared as Express's Response (NestJS hands one through `@Res()` on the
+# default Express platform) is one.
+[[entrypoint]]
+id = "typed-response"
+method = ["*"]
+params = "typed"
+param_type = ["express.Response"]
+origin = "express.Response"
+description = "a parameter of type express.Response"

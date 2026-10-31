@@ -36,27 +36,45 @@ params = "all"
 request_type = "request"
 description = "the request of a handler a route definition module exports"
 
+[[callback_param]]
+registered_via = ["@hapi/hapi.server.register.plugin.register", "hapi.server.register.plugin.register"]
+position = 0
+origin = "@hapi/hapi.server"
+
+# handler(request, h): the response toolkit (https://hapi.dev/api/#response-toolkit).
+[[entrypoint]]
+id = "route-handler-toolkit"
+registered_via = ["@hapi/hapi.server.route.handler", "@hapi/hapi.server.route.options.handler",
+                  "@hapi/hapi.server.ext", "hapi.server.route.handler", "hapi.server.route.options.handler",
+                  "hapi.server.ext"]
+param_positions = [1]
+params = "all"
+origin = "@hapi/hapi.ResponseToolkit"
+description = "the response toolkit of a hapi route handler"
+
+[[entrypoint]]
+id = "route-module-toolkit"
+exports = ["handler"]
+param_positions = [1]
+params = "all"
+origin = "@hapi/hapi.ResponseToolkit"
+description = "the response toolkit of a handler a route definition module exports"
+
 [[sink]]
-name = ["h.response"]
+call = ["@hapi/hapi.ResponseToolkit.response"]
 args = [0]
 kind = "html"
 json_for_literals = true      # an object or array is serialised as JSON
 description = "hapi response toolkit: the value is the response body"
 
 [[sink]]
-name = ["h.redirect"]
+call = ["@hapi/hapi.ResponseToolkit.redirect"]
 args = [0]
 kind = "redirect"
+description = "hapi h.redirect (open redirect)"
 
 [[sink]]
-name = ["h.file"]
+call = ["@hapi/hapi.ResponseToolkit.file"]
 args = [0]
 kind = "path"
 description = "@hapi/inert h.file"
-
-# server.register({ plugin: { name, register: async (server, options) => ... } }): a plugin's register
-# function receives the server (https://hapi.dev/api/#plugins).
-[[callback_param]]
-registered_via = ["@hapi/hapi.server.register.plugin.register", "hapi.server.register.plugin.register"]
-position = 0
-origin = "@hapi/hapi.server"

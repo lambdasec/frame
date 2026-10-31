@@ -2538,10 +2538,18 @@ class SILTranslator:
         return len(v) >= 2 and v[0] == "/" and v[1] not in "/\\"
 
     # Containers whose members are not the object's own data: storing request data on
-    # them does not make the whole object attacker data.
+    # them does not make the whole object attacker data. The language's own receivers and the
+    # JavaScript runtime's globals; a framework's or library's value (a request object, a name
+    # bound to a library call: `res`, `app`) is such a container too (`_is_framework_value`).
     _NON_AGGREGATE_BASES = frozenset({"this", "self", "cls", "module", "exports", "window", "global",
-                                      "globalThis", "document", "process", "res", "response", "req",
-                                      "request", "app", "console"})
+                                      "globalThis", "document", "process", "console"})
+
+    def _is_framework_value(self, name: str, state: "SymbolicState") -> bool:
+        if self._is_request_value(name, state):
+            return True
+        from .value_origins import origin_in_scope
+        proc = self._cur_proc
+        return proc is not None and origin_in_scope(self.program, proc.name, name) is not None
 
     def _taint_from_embedded_sources(self, instr: Assign, state: SymbolicState) -> None:
         """`filter = { origin: req.body.tags }` lowers to `filter = req.body.tags`: a request
@@ -2559,7 +2567,8 @@ class SILTranslator:
                     source_var=chain, source_location=instr.loc or Location.unknown()))
         if state.is_tainted(target) and ("." in target or "[" in target):
             base = re.split(r"[.\[]", target, maxsplit=1)[0]
-            if base and base not in self._NON_AGGREGATE_BASES and not state.is_tainted(base):
+            if base and base not in self._NON_AGGREGATE_BASES and not state.is_tainted(base) \
+                    and not self._is_framework_value(base, state):
                 info = state.get_taint_info(target)
                 if info is not None:
                     state.add_taint(base, TaintInfo(

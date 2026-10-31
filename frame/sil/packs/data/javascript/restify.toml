@@ -26,8 +26,35 @@ params = "all"
 request_type = "request"
 description = "the request of a Restify handler"
 
+# handler(req, res, next): the response (http://restify.com/docs/response-api/).
+[[entrypoint]]
+id = "handler-response"
+registered_via = ["restify.createServer.get", "restify.createServer.head", "restify.createServer.post", "restify.createServer.put", "restify.createServer.patch", "restify.createServer.del", "restify.createServer.opts", "restify.createServer.use", "restify.createServer.pre"]
+param_positions = [1]
+params = "all"
+origin = "restify.Response"
+description = "the response of a Restify handler"
+
 [[sink]]
-name = ["res.sendRaw"]
+call = ["restify.Response.sendRaw"]
 args = [0]
 kind = "html"
 description = "Restify res.sendRaw writes the body without serialising it"
+
+[[sink]]
+call = ["restify.Response.write", "restify.Response.end"]
+args = [0]
+kind = "html"
+description = "Restify response write / end"
+
+[[sink]]
+call = ["restify.Response.redirect"]
+args = [0]
+kind = "redirect"
+description = "Restify res.redirect (open redirect)"
+
+[[sink]]
+call = ["restify.Response.header", "restify.Response.setHeader"]
+args = [1]
+kind = "header"
+description = "Restify response header"

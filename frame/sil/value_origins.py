@@ -189,7 +189,7 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
     program.value_origins = scopes
 
 
-def origin_in_scope(program, proc_name: str, name: str) -> Optional[str]:
+def origin_in_scope(program, proc_name: str, name: str, imports: bool = True) -> Optional[str]:
     """The origin of `name` as procedure `proc_name` sees it (its own binding, an enclosing
     function's, the module's), else the file's import of that name."""
     scopes = getattr(program, "value_origins", None) or {}
@@ -206,8 +206,33 @@ def origin_in_scope(program, proc_name: str, name: str) -> Optional[str]:
         cur = getattr(proc, "parent", None) if proc is not None else None
         if not cur and proc_name != MODULE and MODULE not in seen:
             cur = MODULE
+    if not imports:
+        return None
     imported = (getattr(program, "imports", None) or {}).get(name)
     return str(imported) if imported is not None else None
+
+
+def same_file_parameter_origins(program) -> Dict[str, Dict[str, str]]:
+    """Within one file: a function's parameter that every call of it (by its plain name) passes a
+    value of the same origin (a handler handing its response to `send(res, x)`): procedure ->
+    parameter -> origin. A parameter some call passes something else has none."""
+    seen: Dict[Tuple[str, int], Set[Optional[str]]] = {}
+    for proc in program.procedures.values():
+        for i in _instrs(proc):
+            if not isinstance(i, Call) or not i.args:
+                continue
+            callee = program.procedures.get(_call_text(i) or "")
+            if callee is None or callee is proc:
+                continue
+            for n, (arg, _) in enumerate(i.args):
+                origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else None
+                seen.setdefault((callee.name, n), set()).add(origin)
+    out: Dict[str, Dict[str, str]] = {}
+    for (name, n), origins in seen.items():
+        proc = program.procedures[name]
+        if len(origins) == 1 and None not in origins and n < len(proc.params):
+            out.setdefault(name, {})[proc.params[n][0].name] = next(iter(origins))
+    return out
 
 
 def link_modules(programs: Dict[str, object], resolve) -> None:
@@ -305,4 +330,4 @@ def typed_names(canonical: str, language: str) -> List[str]:
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 
 
-__all__ = ["annotate", "load", "origin_in_scope", "typed_names"]
+__all__ = ["annotate", "load", "origin_in_scope", "same_file_parameter_origins", "typed_names"]

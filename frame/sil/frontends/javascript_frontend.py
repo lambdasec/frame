@@ -1603,24 +1603,81 @@ class JavaScriptFrontend:
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
         for child in node.children:
-            child = self._unwrap_await(child)
-            if child.type == "call_expression":
-                instrs = self._translate_call_expr(child)
-                self._add_instrs(instrs)
+            self._translate_effect(child)
 
-            elif child.type == "assignment_expression":
-                self._translate_assignment(child)
+    def _translate_effect(self, child: TSNode) -> None:
+        """An expression evaluated for its effects. `a && f()`, `a || f()`, `a ?? f()` and
+        `a ? f() : g()` are the branches they are (an `if`), `(a, b)` is `a` then `b`."""
+        if child is None:
+            return
+        child = self._unwrap_await(child)
+        if child.type == "parenthesized_expression":
+            inner = next((c for c in child.named_children if c.type != "comment"), None)
+            self._translate_effect(inner)
+            return
+        if child.type == "sequence_expression":
+            for part in child.named_children:
+                self._translate_effect(part)
+            return
+        if child.type == "ternary_expression":
+            self._translate_branch_effect(child.child_by_field_name("condition"),
+                                          child.child_by_field_name("consequence"),
+                                          child.child_by_field_name("alternative"))
+            return
+        if child.type == "binary_expression":
+            op = child.child_by_field_name("operator")
+            op_text = self._get_text(op) if op is not None else ""
+            if op_text in ("&&", "||", "??"):
+                left, right = child.child_by_field_name("left"), child.child_by_field_name("right")
+                self._translate_effect(left)            # evaluated first, whatever it is
+                if op_text == "&&":
+                    self._translate_branch_effect(left, right, None)
+                else:                                     # `a || f()` / `a ?? f()`: f() when a is not set
+                    self._translate_branch_effect(left, None, right)
+                return
+        self._translate_simple_effect(child)
 
-            elif child.type == "update_expression":
-                self._translate_update(child)
+    def _translate_branch_effect(self, condition: Optional[TSNode], then_expr: Optional[TSNode],
+                                 else_expr: Optional[TSNode]) -> None:
+        proc = self._current_proc
+        if proc is None or condition is None:
+            return
+        loc = self._get_location(condition)
+        cond_exp = self._translate_expression(condition)
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        for truth, expr in ((True, then_expr), (False, else_expr)):
+            branch = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(branch)
+            if before is not None:
+                before.add_instr(Prune(loc=loc, condition=cond_exp, is_true_branch=truth))
+                proc.connect(before.id, branch.id)
+            self._current_node = branch
+            if expr is not None:
+                self._translate_effect(expr)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
 
-            elif child.type == "augmented_assignment_expression":
-                self._translate_augmented_assignment(child)
+    def _translate_simple_effect(self, child: TSNode) -> None:
+        if child.type == "call_expression":
+            instrs = self._translate_call_expr(child)
+            self._add_instrs(instrs)
 
-            elif child.type == "new_expression":
-                # A bare `new Function(userCode)` statement is a sink; translating
-                # the expression emits the TaintSink as a side effect.
-                self._translate_expression(child)
+        elif child.type == "assignment_expression":
+            self._translate_assignment(child)
+
+        elif child.type == "update_expression":
+            self._translate_update(child)
+
+        elif child.type == "augmented_assignment_expression":
+            self._translate_augmented_assignment(child)
+
+        elif child.type == "new_expression":
+            # A bare `new Function(userCode)` statement is a sink; translating
+            # the expression emits the TaintSink as a side effect.
+            self._translate_expression(child)
 
     def _translate_destructuring(self, pattern: TSNode, value_node: TSNode,
                                  loc: Location) -> None:
@@ -1744,7 +1801,8 @@ class JavaScriptFrontend:
             self._add_instrs(instrs)
         else:
             exp = self._translate_expression(right)
-            self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp))
+            self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=exp,
+                                   literal=right.type if right.type in ("object", "array") else ""))
             # Check if this expression contains a taint source
             taint_instrs = self._check_expression_for_taint_source(right, target_name, loc)
             self._add_instrs(taint_instrs)
@@ -2258,6 +2316,7 @@ class JavaScriptFrontend:
             args=args_exp,
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
+            arg_forms=self._call_arg_forms(func_name, args),
         )
         instrs.append(call_instr)
 
@@ -2479,6 +2538,7 @@ class JavaScriptFrontend:
             args=args_exp,
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
+            arg_forms=self._call_arg_forms(func_name, args),
         )
         instrs.append(call_instr)
 
@@ -2506,7 +2566,37 @@ class JavaScriptFrontend:
         arguments = call_node.child_by_field_name("arguments")
         return list(arguments.named_children) if arguments is not None else []
 
-    def _render_data_exps(self, func_name: str, args: List[TSNode], arg_idx: int) -> Optional[List[Exp]]:
+    def _render_methods(self) -> frozenset:
+        """Method names of the calls the packs and specs say render a view (`renders_view`)."""
+        cached = getattr(self, "_render_method_cache", None)
+        if cached is not None:
+            return cached
+        packs = self.packs if self.packs is not None else default_packs()
+        names = {n.rsplit(".", 1)[-1] for pack in packs.for_language("javascript") for r in pack.rules
+                 if r.role == "sink" and r.renders_view for n in list(r.call) + list(r.name)}
+        names |= {k.rsplit(".", 1)[-1] for k, sp in self.specs.items() if getattr(sp, "renders_view", False)}
+        self._render_method_cache = frozenset(names)
+        return self._render_method_cache
+
+    def _call_arg_forms(self, func_name: str, args: List[TSNode]) -> Optional[dict]:
+        """The argument forms a sink known only later (by the receiver's origin) may choose
+        (`Call.arg_forms`): an object / array literal is JSON for a JSON sender, the data a
+        template prints raw for a render call. Arguments the call's name already narrowed keep
+        their form."""
+        forms: dict = {}
+        method = func_name.rsplit(".", 1)[-1]
+        if method in self._render_methods() and len(args) >= 2 and args[0].type == "string" \
+                and args[1].type == "object" and self._render_data_exps(func_name, args, 1) is None:
+            kept = self._render_data_exps(func_name, args, 1, any_render=True)
+            if kept is not None:
+                forms[1] = ("render", ExpStringConcat(kept) if kept else ExpConst.string(""))
+        for i, a in enumerate(args):
+            if i not in forms and a.type in ("object", "array") and not self._json_for_literals(func_name):
+                forms[i] = ("json", ExpConst.string(""))
+        return forms or None
+
+    def _render_data_exps(self, func_name: str, args: List[TSNode], arg_idx: int,
+                          any_render: bool = False) -> Optional[List[Exp]]:
         """For a `renders_view` call (`res.render("view", { a, b: x })`) whose template is found and
         readable: the data values the template prints without escaping
         (`<%- a %>`, `{{{ a }}}`, `a | safe`). The rest is escaped by the engine
@@ -2514,7 +2604,7 @@ class JavaScriptFrontend:
         template is unknown (every value then stays a sink)."""
         node = args[arg_idx]
         if not (arg_idx == 1 and args[0].type == "string" and node.type == "object"
-                and getattr(self._lookup_call_spec_by_name(func_name), "renders_view", False)):
+                and (any_render or getattr(self._lookup_call_spec_by_name(func_name), "renders_view", False))):
             return None
         from frame.sil.templates import keep_render_arguments
         view = self._get_text(args[0]).strip("'\"`")

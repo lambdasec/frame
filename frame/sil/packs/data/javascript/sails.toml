@@ -41,3 +41,39 @@ name = ["sails.sendNativeQuery", "sendNativeQuery"]
 args = [0]
 kind = "sql"
 description = "Waterline native SQL query"
+
+# Controller actions are (req, res): the response (https://sailsjs.com/documentation/reference/response-res).
+[[entrypoint]]
+id = "controller-action-response"
+module_path = ["**/api/controllers/**"]
+exports = ["*"]
+exclude_method = ["fn"]
+param_positions = [1]
+params = "all"
+origin = "sails.Response"
+description = "the response of a Sails controller action"
+
+[[sink]]
+call = ["sails.Response.send"]
+args = [0]
+kind = "html"
+json_for_literals = true      # an object or array is serialised as JSON
+description = "Sails res.send (XSS)"
+
+[[sink]]
+call = ["sails.Response.write", "sails.Response.end"]
+args = [0]
+kind = "html"
+description = "Sails response write / end"
+
+[[sink]]
+call = ["sails.Response.redirect"]
+args = [0]
+kind = "redirect"
+description = "Sails res.redirect (open redirect)"
+
+[[sink]]
+call = ["sails.Response.set", "sails.Response.setHeader"]
+args = [1]
+kind = "header"
+description = "Sails response header"

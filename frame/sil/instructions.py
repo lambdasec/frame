@@ -470,6 +470,7 @@ class Assign(Instr):
     """
     id: Union[Ident, PVar]  # Destination
     exp: Exp                # Source expression
+    literal: str = ""       # JS/TS: "object" / "array" when the value was written as that literal
 
     # True only for a bare declaration with no initializer (`int x;`), which the
     # frontend lowers to `x = null` exactly like `int *p = NULL;`. The two are
@@ -541,6 +542,10 @@ class Call(Instr):
     # name), already merged over the built-in spec; Program.spec_for_call
     # returns it before any name lookup. See frame/sil/packs.
     pack_spec: Optional[Any] = None
+    # Forms of arguments the frontend could not choose before the call's spec is known: argument
+    # index -> ("json", exp) for an object / array literal a JSON-sending sink serialises, or
+    # ("render", exp) for the data a template prints raw (packs.apply.finish_call_arguments).
+    arg_forms: Optional[dict] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)

@@ -67,7 +67,8 @@ description = "a cipher key, IV or nonce"
 
 [[call]]
 language = "javascript"
-names = ["res.cookie", "response.cookie", "reply.setCookie", "ctx.cookies.set"]
+call = ["express.Response.cookie", "fastify.FastifyReply.setCookie", "koa.Context.cookies.set",
+        "next.NextApiResponse.cookie", "sails.Response.cookie"]   # by the response's origin (the framework packs)
 args = [1]
 description = "a cookie's value"
 

@@ -171,6 +171,7 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
             callbacks[language] = [cb for p in packs.for_language(language) for cb in p.callback_params]
         return callbacks[language]
 
+    renamed: Set[str] = set()
     for _ in range(4):                                    # routes mounted from routes mounted from the app
         found = _parameter_origins(ctx, index, programs)
         for key, program in programs.items():
@@ -192,9 +193,17 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
                     merged.setdefault(name, {}).update(params)
             if merged != current:
                 annotate(program, merged)
+                renamed.add(key)
                 changed = True
         if not changed:
             break
+    # calls renamed by what callers hand in (`after(res, url)` with `res` a response) meet the
+    # packs' rules now
+    from .packs.apply import _detected, reapply_rules
+    for key in renamed:
+        program = programs[key]
+        reapply_rules(program, [p for p in packs_for(program.language).for_language(program.language)
+                                if _detected(p, program)])
     targets: Dict[str, Set[str]] = {}
     for key, program in programs.items():
         for reg in getattr(program, "registrations", ()) or ():

@@ -1,0 +1,49 @@
+[pack]
+name = "node-http"
+language = "javascript"
+description = "Node.js http / https servers: the request listener's request and response"
+detect = { imports = ["http", "https", "node:http", "node:https"] }
+references = ["https://nodejs.org/api/http.html#httpcreateserveroptions-requestlistener",
+              "https://nodejs.org/api/http.html#class-httpincomingmessage",
+              "https://nodejs.org/api/http.html#class-httpserverresponse"]
+
+# What an IncomingMessage holds that the client sent: the request target and headers (the body is
+# its stream's data).
+[[request_type]]
+id = "incoming-message"
+fields = ["url", "headers", "rawHeaders", "trailers", "rawTrailers"]
+
+# http.createServer((req, res) => ...), server.on("request", (req, res) => ...).
+[[entrypoint]]
+id = "request-listener"
+registered_via = ["http.createServer", "https.createServer", "node:http.createServer", "node:https.createServer", "http.Server", "https.Server", "http.createServer.on", "https.createServer.on", "node:http.createServer.on", "node:https.createServer.on", "http.Server.on", "https.Server.on"]
+param_positions = [0]
+params = "all"
+request_type = "incoming-message"
+description = "the request of a Node http server"
+
+[[entrypoint]]
+id = "request-listener-response"
+registered_via = ["http.createServer", "https.createServer", "node:http.createServer", "node:https.createServer", "http.Server", "https.Server", "http.createServer.on", "https.createServer.on", "node:http.createServer.on", "node:https.createServer.on", "http.Server.on", "https.Server.on"]
+param_positions = [1]
+params = "all"
+origin = "http.ServerResponse"
+description = "the response of a Node http server"
+
+[[sink]]
+call = ["http.ServerResponse.write", "http.ServerResponse.end"]
+args = [0]
+kind = "html"
+description = "Node http response body (XSS)"
+
+[[sink]]
+call = ["http.ServerResponse.setHeader", "http.ServerResponse.appendHeader"]
+args = [1]
+kind = "header_injection"
+description = "Node http response header (CWE-113)"
+
+[[sink]]
+call = ["http.ServerResponse.writeHead"]
+args = [1, 2]
+kind = "header_injection"
+description = "Node http response status message / headers"

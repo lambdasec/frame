@@ -132,3 +132,39 @@ description = "next/navigation redirect (open redirect)"
 name = ["get", "getAll", "json", "text", "formData", "arrayBuffer", "toString"]
 receiver = true
 description = "value read from a request / FormData / URLSearchParams"
+
+# pages/api handler(req, res): the response, a Node ServerResponse with Next.js's helpers
+# (https://nextjs.org/docs/pages/building-your-application/routing/api-routes#response-helpers).
+[[entrypoint]]
+id = "api-route-response"
+module_path = ["**/pages/api/**"]
+exports = ["default"]
+param_positions = [1]
+params = "all"
+origin = "next.NextApiResponse"
+description = "the response of a pages/api route"
+
+[[sink]]
+call = ["next.NextApiResponse.send"]
+args = [0]
+kind = "html"
+json_for_literals = true      # an object or array is serialised as JSON
+description = "Next.js res.send (XSS)"
+
+[[sink]]
+call = ["next.NextApiResponse.write", "next.NextApiResponse.end"]
+args = [0]
+kind = "html"
+description = "Next.js response write / end"
+
+[[sink]]
+call = ["next.NextApiResponse.redirect"]
+args = [0, 1]
+kind = "redirect"
+description = "Next.js res.redirect([status,] url)"
+
+[[sink]]
+call = ["next.NextApiResponse.setHeader"]
+args = [1]
+kind = "header_injection"
+description = "Next.js response header"

@@ -220,3 +220,53 @@ def test_malformed_entries_are_errors(body, error):
 def test_package_json_detection_is_for_javascript_packs():
     with pytest.raises(PackError, match="package.json"):
         parse_pack({"pack": {"name": "x", "language": "python", "detect": {"dependencies": ["django"]}}}, "x.toml")
+
+
+# ---- the response side: a handler's response is a value of its framework's response origin ----
+
+HANDLER = "const app = require('express')();\napp.get('/x', (req, res) => {\n  %s\n});\n"
+
+
+@pytest.mark.parametrize("body,cwe,reported", [
+    ("res.send(req.query.a);", "CWE-79", True),
+    ("res.send({ a: req.query.a });", "CWE-79", False),            # an object is sent as JSON
+    ("res.status(200).send(req.query.a);", "CWE-79", True),        # a chain of setters
+    ("res.type('json').send(req.query.a);", "CWE-79", False),      # not an HTML response
+    ("res.redirect(req.query.u);", "CWE-601", True),
+    ("res.setHeader('X', req.query.u);", "CWE-113", True),
+    ("ok && res.send(req.query.a);", "CWE-79", True),              # an effect behind &&
+    ("ok ? res.send(req.query.a) : res.end();", "CWE-79", True),
+    ("foo(res.send(req.query.a));", "CWE-79", True),               # a call inside another
+    ("const out = { send: (x) => x };\n  out.send(req.query.a);", "CWE-79", False),   # not a response
+])
+def test_express_response_sinks(body, cwe, reported):
+    assert bool(_cwe(HANDLER % body, cwe)) == reported
+
+
+def test_a_helper_handed_the_response():
+    code = HANDLER % "after(res, req.query.u);"
+    code = "function after(r, u) { r.redirect(u); }\n" + code
+    assert _cwe(code, "CWE-601") == [1]
+
+
+def test_a_variable_named_res_is_not_a_response():
+    assert not _cwe("function f(req, res) { res.send(req.query.a); }\nf(x, y);\n", "CWE-79")
+
+
+def test_koa_context_body_is_a_property_sink():
+    code = ("const Koa = require('koa');\nconst app = new Koa();\n"
+            "app.use(async (ctx) => {\n  ctx.body = ctx.query.a;\n  ctx.body = { a: ctx.query.a };\n});\n")
+    assert _cwe(code, "CWE-79") == [4]
+
+
+def test_node_http_servers():
+    code = ("const http = require('http');\nhttp.createServer((req, res) => {\n"
+            "  res.end('<p>' + req.url + '</p>');\n  res.end(req.socket.remoteAddress);\n}).listen(80);\n")
+    assert _cwe(code, "CWE-79") == [3]
+
+
+def test_pack_property_sinks_are_named_by_call_id():
+    with pytest.raises(PackError, match="property sink"):
+        _pack('[[sink]]\nname = ["ctx.body"]\nproperty = true\nkind = "html"\n')
+    with pytest.raises(PackError, match="no kind|origin entry point"):
+        _pack('[[entrypoint]]\nmethod = ["*"]\nparams = "all"\norigin = "a.B"\nkind = "user"\n')

@@ -34,7 +34,7 @@ def test_python(body, expected):
     assert cwes(PY + body, "python", "a.py") == expected
 
 
-JS = "const crypto = require('crypto');\nmodule.exports = function f(req, res) {\n"
+JS = "const crypto = require('crypto');\nconst app = require('express')();\napp.get('/x', function f(req, res) {\n"
 
 
 @pytest.mark.parametrize("body,expected", [
@@ -46,7 +46,7 @@ JS = "const crypto = require('crypto');\nmodule.exports = function f(req, res) {
     ("  const d = Math.random() * 100;\n  setTimeout(() => res.end(), d);\n", set()),
 ])
 def test_javascript(body, expected):
-    assert cwes(JS + body + "};\n", "javascript", "a.js") == expected
+    assert cwes(JS + body + "});\n", "javascript", "a.js") == expected
 
 
 JAVA = ("import javax.servlet.http.*;\nimport javax.crypto.spec.*;\n"

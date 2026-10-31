@@ -36,33 +36,51 @@ params = "all"
 request_type = "request"
 description = "the request of a Fastify error handler"
 
+[[callback_param]]
+registered_via = ["fastify.register"]
+position = 0
+origin = "fastify"
+
+# handler(request, reply) / errorHandler(error, request, reply): the reply
+# (https://fastify.dev/docs/latest/Reference/Reply/).
+[[entrypoint]]
+id = "route-reply"
+registered_via = ["fastify.get", "fastify.head", "fastify.post", "fastify.put", "fastify.delete", "fastify.options", "fastify.patch", "fastify.all", "fastify.route.handler", "fastify.route.preHandler",
+                  "fastify.route.preValidation", "fastify.route.onRequest", "fastify.addHook", "fastify.setNotFoundHandler"]
+param_positions = [1]
+params = "all"
+origin = "fastify.FastifyReply"
+description = "the reply of a Fastify route handler or hook"
+
+[[entrypoint]]
+id = "error-handler-reply"
+registered_via = ["fastify.setErrorHandler"]
+param_positions = [2]
+params = "all"
+origin = "fastify.FastifyReply"
+description = "the reply of a Fastify error handler"
+
 [[sink]]
-name = ["reply.send", "res.send"]
+call = ["fastify.FastifyReply.send"]
 args = [0]
 kind = "html"
 json_for_literals = true      # an object or array is serialised as JSON
 description = "Fastify reply.send"
 
 [[sink]]
-name = ["reply.redirect"]
+call = ["fastify.FastifyReply.redirect"]
 args = [0, 1]
 kind = "redirect"
-description = "Fastify reply.redirect"
+description = "Fastify reply.redirect([code,] url)"
 
 [[sink]]
-name = ["reply.sendFile", "reply.download"]
+call = ["fastify.FastifyReply.sendFile", "fastify.FastifyReply.download"]
 args = [0]
 kind = "path"
-description = "@fastify/static sendFile"
+description = "@fastify/static sendFile / download"
 
 [[sink]]
-name = ["reply.header", "reply.headers"]
+call = ["fastify.FastifyReply.header", "fastify.FastifyReply.headers"]
 args = [1]
 kind = "header"
-
-# fastify.register(plugin): a plugin is (instance, opts), the instance a Fastify instance of its own
-# (https://fastify.dev/docs/latest/Reference/Plugins/).
-[[callback_param]]
-registered_via = ["fastify.register"]
-position = 0
-origin = "fastify"
+description = "Fastify reply header"

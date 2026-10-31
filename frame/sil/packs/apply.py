@@ -243,6 +243,7 @@ def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
             spec.is_sink = rule.kind
             spec.sink_args = args
             spec.json_for_literals = spec.json_for_literals or rule.json_for_literals
+            spec.renders_view = spec.renders_view or rule.renders_view
             changed = True
         elif rule.role == "sanitizer":
             spec.is_sanitizer = sorted(set(spec.is_sanitizer) | set(rule.kinds))
@@ -259,6 +260,151 @@ def _merge_spec(base: Optional[ProcSpec], matches: Sequence[Tuple[Pack, Rule]],
         return None
     spec.__post_init__()
     return spec
+
+
+def _apply_property_sinks(program: Program, packs: Sequence[Pack]) -> None:
+    """Sink rules with `property`: assigning that property of a value of that origin is the
+    sink (`ctx.body = x` with ctx a `koa.Context`). The assigned target becomes a TaintSink right
+    after the assignment; `json_for_literals` skips an object / array literal (sent as JSON)."""
+    from ..instructions import TaintSink, resolve_sink_kind
+    from ..types import ExpVar, PVar
+    from ..value_origins import origin_in_scope
+    rules = [r for p in packs for r in p.rules if r.role == "sink" and r.property]
+    if not rules:
+        return
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            out = []
+            for k, instr in enumerate(node.instrs):
+                out.append(instr)
+                if not isinstance(instr, Assign):
+                    continue
+                after = node.instrs[k + 1] if k + 1 < len(node.instrs) else None
+                if isinstance(after, TaintSink) and str(after.exp) == str(instr.id):
+                    continue                                   # applied already
+                target = str(instr.id)
+                head, dot, rest = target.partition(".")
+                origin = origin_in_scope(program, proc.name, head) if dot and head.replace("$", "_").isidentifier() else None
+                if not origin:
+                    continue
+                name = f"{origin}.{rest}"
+                rule = next((r for r in rules if any(fnmatchcase(name, c) for c in r.call)), None)
+                if rule is None or (rule.json_for_literals and getattr(instr, "literal", "")):
+                    continue
+                out.append(TaintSink(loc=instr.loc, exp=ExpVar(PVar(target)), kind=resolve_sink_kind(rule.kind),
+                                     description=rule.description or f"{name} (property sink)"))
+            node.instrs = out
+
+
+def _nested_calls(exp, top: bool = True):
+    """The calls written inside an expression (not the expression itself)."""
+    from ..types import ExpBinOp, ExpCall, ExpFieldAccess, ExpIndex, ExpStringConcat, ExpTernary, ExpUnOp
+    if isinstance(exp, ExpCall):
+        if not top:
+            yield exp
+        for a in exp.args:
+            yield from _nested_calls(a, False)
+        return
+    children = []
+    if isinstance(exp, ExpBinOp):
+        children = [exp.left, exp.right]
+    elif isinstance(exp, ExpUnOp):
+        children = [exp.operand]
+    elif isinstance(exp, ExpTernary):
+        children = [exp.condition, exp.true_exp, exp.false_exp]
+    elif isinstance(exp, ExpStringConcat):
+        children = list(exp.parts)
+    elif isinstance(exp, (ExpFieldAccess, ExpIndex)):
+        children = [exp.base]
+    for c in children:
+        yield from _nested_calls(c, False)
+
+
+def _apply_nested_call_sinks(program: Program, packs: Sequence[Pack]) -> None:
+    """A sink call written inside another expression (`foo(res.send(x))`, `return ok ?
+    res.send(x) : null`) has no Call instruction for the rules to reach: named by its receiver's
+    origin (`express.Response.send`), a sink rule or typed spec row for that name gets a
+    TaintSink for its sink arguments, before the instruction it is written in."""
+    from ..instructions import Return, TaintSink, resolve_sink_kind
+    from ..types import ExpConst, ExpFieldAccess, ExpVar
+    from ..value_origins import origin_in_scope, typed_names
+    index = _RuleIndex()
+    for pack in packs:
+        for rule in pack.rules:
+            if rule.role == "sink" and not rule.property:
+                index.add(pack, rule)
+
+    def text_of(func) -> Optional[str]:
+        if isinstance(func, ExpConst) and isinstance(func.value, str):
+            return func.value.strip('"')
+        if isinstance(func, ExpVar):
+            return str(func.var)
+        if isinstance(func, ExpFieldAccess):
+            base = text_of(func.base)
+            return f"{base}.{func.field_name}" if base else None
+        return None
+
+    modules = {str(v) for v in (program.imports or {}).values()}      # module values: named by the frontend
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            out = []
+            for instr in node.instrs:
+                exps = []
+                if isinstance(instr, Call):
+                    exps = [a for a, _ in instr.args]
+                elif isinstance(instr, Assign):
+                    exps = [instr.exp]
+                elif isinstance(instr, Return):
+                    exps = [instr.value]
+                have = {(str(i.exp), i.description) for i in out if isinstance(i, TaintSink)}
+                for exp in exps:
+                    for call in (_nested_calls(exp, top=False) if exp is not None else ()):
+                        text = text_of(call.func)
+                        head, dot, rest = (text or "").partition(".")
+                        # a receiver known by its value (`res`, `conn`): calls on an import are the
+                        # frontend's, by name
+                        origin = origin_in_scope(program, proc.name, head, imports=False) if dot else None
+                        if not origin or origin in modules:
+                            continue
+                        name = f"{origin}.{rest}"
+                        kind, positions = None, []
+                        matches = index.match(name, text)
+                        if matches:
+                            rule = matches[-1][1]
+                            kind, positions = rule.kind, list(rule.args)
+                        else:
+                            spec = next((program.library_specs[k] for k in typed_names(name, program.language)
+                                         if k in program.library_specs), None)
+                            if spec is not None and spec.is_sink:
+                                kind, positions = spec.is_sink, list(spec.sink_args)
+                        for pos in positions:
+                            if kind and pos < len(call.args) and (str(call.args[pos]), f"{name} (nested call)") not in have:
+                                out.append(TaintSink(loc=instr.loc, exp=call.args[pos], kind=resolve_sink_kind(kind),
+                                                     description=f"{name} (nested call)"))
+                out.append(instr)
+            node.instrs = out
+
+
+def finish_call_arguments(program: Program) -> None:
+    """A call keeps the argument forms its frontend could not choose before the call's spec was
+    known (`Call.arg_forms`: an object literal a JSON sender serialises, the data a template
+    prints raw): once the spec says so, that form is the argument."""
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for i, instr in enumerate(node.instrs):
+                forms = getattr(instr, "arg_forms", None) if isinstance(instr, Call) else None
+                if not forms:
+                    continue
+                spec = program.spec_for_call(instr)
+                if spec is None or not spec.is_sink:
+                    continue
+                args = list(instr.args)
+                for idx, (kind, exp) in forms.items():
+                    if idx < len(args) and ((kind == "json" and spec.json_for_literals)
+                                            or (kind == "render" and spec.renders_view)):
+                        args[idx] = (exp, args[idx][1])
+                if args != list(instr.args):
+                    node.instrs[i] = replace(instr, args=args, arg_forms={})
 
 
 def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
@@ -562,6 +708,43 @@ def _entry_fields(e: Entrypoint, cls: ClassInfo) -> List[str]:
     return list(cls.fields)
 
 
+def _apply_entry_origins(program: Program, packs: Sequence[Pack], only: Optional[Sequence[str]] = None) -> bool:
+    """Entry points with `origin`: the selected parameters hold a value of that origin (a handler's
+    response object, `express.Response`), so calls on them are named after it (value_origins).
+    Run before the rules, which match those names. Returns whether anything changed."""
+    from ..value_origins import annotate, same_file_parameter_origins
+    entries = [(p, e) for p in packs for e in p.entrypoints if e.origin]
+    found: Dict[str, Dict[str, str]] = {}
+    if entries:
+        table = _import_table(program)
+        procs = [program.procedures[n] for n in only if n in program.procedures] if only is not None \
+            else list(program.procedures.values())
+        for proc in procs:
+            for pack, e in entries:
+                if _entry_matches(e, proc, program):
+                    for n in _entry_params(e, proc, program, table):
+                        if "." not in n:
+                            found.setdefault(proc.name, {})[n] = e.origin
+    current = getattr(program, "param_origins", None) or {}
+    merged = {k: dict(v) for k, v in current.items()}
+    for k, v in found.items():
+        merged.setdefault(k, {}).update(v)
+    changed = False
+    for _ in range(4):                      # a helper handed the response, and its helpers
+        if merged != (getattr(program, "param_origins", None) or {}):
+            annotate(program, merged)
+            changed = True
+        more = same_file_parameter_origins(program)
+        nxt = {k: dict(v) for k, v in merged.items()}
+        for k, v in more.items():
+            for param, origin in v.items():
+                nxt.setdefault(k, {}).setdefault(param, origin)
+        if nxt == merged:
+            break
+        merged = nxt
+    return changed
+
+
 def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[Sequence[str]] = None) -> None:
     entries = [(p, e) for p in packs for e in p.entrypoints]
     if not entries:
@@ -583,6 +766,8 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[S
                 continue
             if f"{pack.name}:{e.id}" not in proc.entry_kinds:
                 proc.entry_kinds.append(f"{pack.name}:{e.id}")
+            if e.origin:
+                continue                                    # what a parameter is, not attacker data
             if e.request_type:
                 have = {str(r.var) for r in requests} | set(tainted)
                 requests += [r for r in _request_sources(_entry_params(e, proc, program, table),
@@ -616,10 +801,20 @@ def apply_entrypoints_to(program: Program, names: Sequence[str], packs: Optional
     known = {f"{p.language}/{p.name}" for p in getattr(program, "active_packs", ())}
     new = [p for p in active if f"{p.language}/{p.name}" not in known]
     if new:
-        _apply_rules(program, new)
         program.active_packs = list(getattr(program, "active_packs", [])) + new
         program.packs_applied = list(program.packs_applied) + [f"{p.language}/{p.name}" for p in new]
+    if _apply_entry_origins(program, active, only=names) or new:
+        reapply_rules(program, active)
     _apply_entrypoints(program, active, only=names)
+
+
+def reapply_rules(program: Program, packs: Sequence[Pack]) -> None:
+    """After callee ids changed (parameter origins learned late): the rules for the calls that now
+    have an id, and the argument choices their specs make (`finish_call_arguments`)."""
+    _apply_rules(program, packs)
+    finish_call_arguments(program)
+    _apply_property_sinks(program, packs)
+    _apply_nested_call_sinks(program, packs)
 
 
 def finish_program(program: Program, packs: Optional[PackSet] = None,
@@ -636,7 +831,11 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     active = [p for p in packs.for_language(program.language) if _detected(p, program)]
     if not active:
         return program
+    _apply_entry_origins(program, active)
     _apply_rules(program, active)
+    finish_call_arguments(program)
+    _apply_property_sinks(program, active)
+    _apply_nested_call_sinks(program, active)
     _apply_entrypoints(program, active)
     program.packs_applied = [f"{p.language}/{p.name}" for p in active]
     program.library_facts = {f.name: f for p in active for f in p.functions}   # a later pack wins

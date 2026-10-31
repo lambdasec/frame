@@ -50,10 +50,11 @@ _DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names", "d
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
-               "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives"}
+               "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin"}
 _REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "description", "references"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
-_SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "description"}
+_SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "renders_view",
+              "property", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
 _PROPAGATOR_KEYS = {"call", "name", "from", "to", "receiver", "description"}
 _SETTING_KEYS = {"id", "kind", "keys", "value", "values", "at", "call", "receiver", "description"}
@@ -121,6 +122,7 @@ class Entrypoint:
     field_annotation: List[str] = field(default_factory=list)
     kind: str = "user_input"
     request_type: str = ""               # the selected parameters are request objects of this [[request_type]]
+    origin: str = ""                     # the selected parameters hold a value of this origin (`express.Response`)
     module_path: List[str] = field(default_factory=list)    # globs on the file's path (`**/pages/api/**`)
     exports: List[str] = field(default_factory=list)        # what the module exports it as (`default`, `*`)
     directives: List[str] = field(default_factory=list)     # a directive its module starts with (`use server`)
@@ -146,6 +148,8 @@ class Rule:
     propagate_to: str = "return"
     receiver: bool = False
     json_for_literals: bool = False      # sink: an object / array literal is sent as JSON, not as HTML
+    renders_view: bool = False           # sink: (view, data) renders a template; only raw-printed data is a sink
+    property: bool = False               # sink: assigning the property `call` names is the sink (`ctx.body = x`)
     description: str = ""
     # a sink only where nothing else already makes the call one (generated rules, frame/sca):
     # never replaces a built-in or pack sink kind
@@ -626,6 +630,12 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "fields = \"annotated\" and field_annotation go together")
         e.fields = fields
         e.kind = _source_kind(origin, f"{where}.kind", t.get("kind", "user_input"))
+        if "origin" in t:
+            if not isinstance(t["origin"], str) or not t["origin"]:
+                raise _fail(origin, f"{where}.origin", "needs the value's id (`express.Response`)")
+            if "request_type" in t or "kind" in t:
+                raise _fail(origin, where, "an origin entry point names what a parameter is: no request_type or kind")
+            e.origin = t["origin"]
         if "request_type" in t:
             if t["request_type"] not in pack.request_types:
                 raise _fail(origin, f"{where}.request_type", f"names no [[request_type]] of this pack ({t['request_type']})")
@@ -645,7 +655,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                                        "extends, class_name, method, registered_via, first_param, exports")
         if e.module_path and not e.exports:
             raise _fail(origin, where, "module_path goes with exports (what a file-system convention dispatches to)")
-        if params == "none" and not e.fields and not e.tainted_param_type:
+        if params == "none" and not e.fields and not e.tainted_param_type and not e.origin:
             raise _fail(origin, where, "taints nothing: set params, fields or tainted_param_type")
         pack.entrypoints.append(e)
 
@@ -665,6 +675,14 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                 if not isinstance(t.get("json_for_literals", False), bool):
                     raise _fail(origin, f"{where}.json_for_literals", "must be true or false")
                 r.json_for_literals = t.get("json_for_literals", False)
+                if not isinstance(t.get("renders_view", False), bool):
+                    raise _fail(origin, f"{where}.renders_view", "must be true or false")
+                r.renders_view = t.get("renders_view", False)
+                if not isinstance(t.get("property", False), bool):
+                    raise _fail(origin, f"{where}.property", "must be true or false")
+                r.property = t.get("property", False)
+                if r.property and (not r.call or r.name or "args" in t):
+                    raise _fail(origin, where, "a property sink names the property by `call` id only, with no args")
                 wk = t.get("when_kwarg")
                 if wk is not None:
                     if not (isinstance(wk, dict) and set(wk) == {"name", "value"}
