@@ -58,7 +58,6 @@ description = "HttpHeaders.setLocation sets the Location header of the response"
 
 [[sink]]
 call = ["org.springframework.expression.**.parseExpression", "org.springframework.expression.spel.standard.SpelExpressionParser.parseRaw"]
-name = ["parseExpression"]
 kind = "el"
 description = "SpEL evaluates the expression, which can call arbitrary Java"
 
@@ -73,9 +72,12 @@ call = [
 kind = "ssrf"
 description = "RestTemplate requests the URL"
 
-# WebClient / RestClient / WebTestClient: `client.get().uri(url)`
+# WebClient / RestClient / WebTestClient: `client.get().uri(url)` (the request spec a method call
+# on the client returns)
 [[sink]]
-name = ["uri"]
+call = ["org.springframework.web.reactive.function.client.WebClient.*.uri",
+        "org.springframework.web.client.RestClient.*.uri",
+        "org.springframework.test.web.reactive.server.WebTestClient.*.uri"]
 kind = "ssrf"
 description = "WebClient / RestClient requests the URI"
 

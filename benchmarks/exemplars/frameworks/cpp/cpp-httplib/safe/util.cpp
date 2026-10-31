@@ -8,6 +8,7 @@ std::string html_escape(const std::string &in) {
         case '<': out += "&lt;"; break;
         case '>': out += "&gt;"; break;
         case '"': out += "&quot;"; break;
+        case '\'': out += "&#39;"; break;
         default: out += c;
         }
     }

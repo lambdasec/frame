@@ -25,13 +25,14 @@ params = ["data", "message", "msg"]
 # (propagation through `load` and the accessor is the engine's default).
 
 [[sink]]
-name = ["set_static_file_info", "set_static_file_info_unsafe"]
+call = ["crow::response::set_static_file_info", "crow::response::set_static_file_info_unsafe"]
 args = [0]
 kind = "filesystem"
 description = "Crow serves the named file"
 
 [[sink]]
-name = ["redirect", "redirect_perm"]
+call = ["crow::response::redirect", "crow::response::redirect_perm", "crow::response::moved",
+        "crow::response::moved_perm"]
 args = [0]
 kind = "redirect"
 description = "Crow response redirect target"

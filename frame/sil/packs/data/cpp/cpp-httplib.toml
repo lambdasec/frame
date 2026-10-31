@@ -28,13 +28,13 @@ tainted_param_type = ["httplib::Request", "Request"]
 # Response writers. The body is the page only when the content type says HTML; the
 # frontend suffixes `set_content` calls whose literal type contains "html" with ":html".
 [[sink]]
-name = ["set_content:html"]
+call = ["httplib::Response::set_content:html"]
 args = [0]
 kind = "html"
 description = "cpp-httplib Response::set_content with an HTML content type"
 
 [[sink]]
-name = ["set_redirect"]
+call = ["httplib::Response::set_redirect"]
 args = [0]
 kind = "redirect"
 description = "cpp-httplib Response::set_redirect"
@@ -46,12 +46,8 @@ args = [0]
 kind = "ssrf"
 description = "httplib::Client connects to the host it is constructed with"
 
-# cpp-httplib ships no escaping helper, so handlers define their own. Calls to the
-# conventional names are treated as HTML escaping (the helper's body is not analysed).
-[[sanitizer]]
-name = ["html_escape", "escape_html", "htmlEscape", "escapeHtml", "html_encode", "encode_html", "sanitize_html"]
-kinds = ["html", "xss"]
-description = "conventionally named HTML escaping helper"
+# cpp-httplib ships no escaping helper, so handlers define their own: such a helper is credited
+# by what its body does (frame/sil/analyzers/c_escapers.py), never by its name.
 
 # res.set_content(body, content_type): with an HTML type the call is `set_content:html`.
 [[content_type_call]]

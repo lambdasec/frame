@@ -384,6 +384,36 @@ def annotate_program_calls(program, table: ImportTable,
                     local_names=local_names, local_types=local_types)
                 if instr.canonical is None and program.language == "csharp":
                     instr.canonical = _inherited_member(program, proc, func, table, local_types or {})
+                elif program.language == "java" and "." not in func and proc.class_name:
+                    inherited = _java_inherited_method(program, proc, func, table, local_types or {})
+                    if inherited:
+                        instr.canonical = inherited
+
+
+def _java_inherited_method(program, proc, func: str, table: ImportTable, local_types: Dict[str, str]) -> Optional[str]:
+    """Java: an unqualified call of a method the class does not declare (`redirect(url)` in a Play
+    controller) is the method its nearest base outside this file inherits it from."""
+    if not func.isidentifier():
+        return None
+    infos = getattr(program, "class_info", None) or {}
+
+    def declares(cls: str) -> bool:
+        return any(p.class_name and p.class_name.rsplit(".", 1)[-1] == cls and p.simple_name == func
+                   for p in program.procedures.values())
+    current, seen = proc.class_name.rsplit(".", 1)[-1], set()
+    while current in infos and current not in seen:
+        seen.add(current)
+        if declares(current):
+            return None
+        bases = [b.split("<", 1)[0] for b in infos[current].bases]
+        if not bases:
+            return None
+        if bases[0] in infos:
+            current = bases[0]
+            continue
+        qualified = qualify_type("java", bases[0], table, local_types)
+        return f"{qualified}.{func}" if qualified else None
+    return None
 
 
 def library_base(program, type_name: str, member: str, table: ImportTable,

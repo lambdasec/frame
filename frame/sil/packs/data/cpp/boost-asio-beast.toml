@@ -12,7 +12,10 @@ tainted_param_type = ["*::request", "request"]
 
 # Reads fill the buffer they are given
 [[source]]
-name = ["read_some", "receive", "async_read_some", "async_receive"]
+# On a socket or stream, by its declared type (`tcp::socket`, `ssl::stream<tcp::socket>`,
+# `beast::tcp_stream`): the bytes are the peer's.
+call = ["*socket::read_some", "*socket::receive", "*socket::async_read_some", "*socket::async_receive",
+        "*socket::receive_from", "*socket::async_receive_from", "*stream*::read_some", "*stream*::async_read_some"]
 out_args = [0]
 kind = "network_input"
 description = "Boost.Asio socket read into the supplied buffer"

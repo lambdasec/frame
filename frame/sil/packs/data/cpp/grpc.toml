@@ -17,6 +17,7 @@ extends = ["*::Service", "*::CallbackService", "*::AsyncService", "*.Service"]
 params = ["request", "req"]
 
 [[source]]
-name = ["client_metadata"]
+call = ["grpc::ServerContext::client_metadata", "grpc::CallbackServerContext::client_metadata",
+        "grpc::ServerContextBase::client_metadata"]
 kind = "network_input"
 description = "gRPC call metadata sent by the client"

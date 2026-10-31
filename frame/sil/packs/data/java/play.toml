@@ -23,7 +23,8 @@ tainted_param_type = ["Http.Request", "Request", "Http.RequestHeader", "RequestH
 
 [[sink]]
 call = ["play.mvc.Results.redirect", "play.mvc.Controller.redirect", "play.mvc.Results.temporaryRedirect",
-        "play.mvc.Results.permanentRedirect", "play.mvc.Results.seeOther", "play.mvc.Results.movedPermanently"]
-name = ["redirect"]
+        "play.mvc.Results.permanentRedirect", "play.mvc.Results.seeOther", "play.mvc.Results.movedPermanently",
+        "play.mvc.Controller.temporaryRedirect", "play.mvc.Controller.permanentRedirect", "play.mvc.Controller.seeOther",
+        "play.mvc.Controller.movedPermanently"]
 kind = "redirect"
-description = "redirect to a URL (the inherited Controller.redirect is written unqualified)"
+description = "redirect to a URL (the inherited Controller.redirect, written unqualified, is named after Controller)"

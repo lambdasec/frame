@@ -68,16 +68,32 @@ call = ["QNetworkRequest::setUrl", "QUrl::setUrl", "QUrl::setHost", "QUrl::setPa
 from = [0]
 description = "the receiver now holds the argument"
 
-# QString::toInt() & co. keep the taint (a number still sizes things) but cannot carry a
-# URL / path / SQL / shell payload.
+# QString / QByteArray / QVariant::toInt() & co. (by the receiver's declared type) keep the taint
+# (a number still sizes things) but cannot carry a URL / path / SQL / shell payload.
 [[propagator]]
-name = ["toInt", "toUInt", "toLong", "toULong", "toLongLong", "toULongLong", "toShort", "toUShort",
-        "toDouble", "toFloat"]
+call = ["QString::toInt", "QString::toUInt", "QString::toLong", "QString::toULong", "QString::toLongLong",
+        "QString::toULongLong", "QString::toShort", "QString::toUShort", "QString::toDouble",
+        "QString::toFloat", "QByteArray::toInt", "QByteArray::toUInt", "QByteArray::toLong",
+        "QByteArray::toULong", "QByteArray::toLongLong", "QByteArray::toULongLong", "QByteArray::toShort",
+        "QByteArray::toUShort", "QByteArray::toDouble", "QByteArray::toFloat", "QVariant::toInt",
+        "QVariant::toUInt", "QVariant::toLong", "QVariant::toULong", "QVariant::toLongLong",
+        "QVariant::toULongLong", "QVariant::toShort", "QVariant::toUShort", "QVariant::toDouble",
+        "QVariant::toFloat", "QStringView::toInt", "QStringView::toUInt", "QStringView::toLong",
+        "QStringView::toULong", "QStringView::toLongLong", "QStringView::toULongLong",
+        "QStringView::toShort", "QStringView::toUShort", "QStringView::toDouble", "QStringView::toFloat"]
 receiver = true
 
 [[sanitizer]]
-name = ["toInt", "toUInt", "toLong", "toULong", "toLongLong", "toULongLong", "toShort", "toUShort",
-        "toDouble", "toFloat"]
+call = ["QString::toInt", "QString::toUInt", "QString::toLong", "QString::toULong", "QString::toLongLong",
+        "QString::toULongLong", "QString::toShort", "QString::toUShort", "QString::toDouble",
+        "QString::toFloat", "QByteArray::toInt", "QByteArray::toUInt", "QByteArray::toLong",
+        "QByteArray::toULong", "QByteArray::toLongLong", "QByteArray::toULongLong", "QByteArray::toShort",
+        "QByteArray::toUShort", "QByteArray::toDouble", "QByteArray::toFloat", "QVariant::toInt",
+        "QVariant::toUInt", "QVariant::toLong", "QVariant::toULong", "QVariant::toLongLong",
+        "QVariant::toULongLong", "QVariant::toShort", "QVariant::toUShort", "QVariant::toDouble",
+        "QVariant::toFloat", "QStringView::toInt", "QStringView::toUInt", "QStringView::toLong",
+        "QStringView::toULong", "QStringView::toLongLong", "QStringView::toULongLong",
+        "QStringView::toShort", "QStringView::toUShort", "QStringView::toDouble", "QStringView::toFloat"]
 kinds = ["sql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code",
          "regex", "header", "redirect", "ssrf", "template", "xml", "xxe", "log", "format", "format_string"]
 description = "numeric conversion"

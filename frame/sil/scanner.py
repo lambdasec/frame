@@ -975,7 +975,31 @@ class FrameScanner:
         fe = self._make_frontend(language)
         if fe is not None:
             fe.packs = self.pack_set
+            if language in ("c", "cpp"):
+                fe.project_escapers = getattr(self, "_c_escapers", None) or {}
         return fe
+
+    def _project_c_escapers(self, files) -> Dict[str, set]:
+        """C / C++ escaper functions across the scanned translation units, by symbol name (the
+        linker's identity of an external function); a name two files define differently is left
+        out."""
+        from frame.sil.analyzers.c_escapers import escapers
+        found: Dict[str, set] = {}
+        clash: set = set()
+        for path in files:
+            lang = language_for_file(str(path))
+            if lang not in ("c", "cpp"):
+                continue
+            fe = self._make_frontend(lang)
+            try:
+                source = Path(path).read_bytes()
+            except OSError:
+                continue
+            for name, chars in escapers(fe.parser.parse(source), source).items():
+                if name in found and found[name] != chars:
+                    clash.add(name)
+                found.setdefault(name, set(chars))
+        return {k: v for k, v in found.items() if k not in clash}
 
     def _make_frontend(self, language: str):
         if language == "python":
@@ -1444,12 +1468,14 @@ class FrameScanner:
                 candidates = self._start_project(
                     dir_path, pattern, extensions, excluded_dirs,
                     candidates, only_files is not None, cross_file_limit, project_root)
+            self._c_escapers = self._project_c_escapers(candidates)
             for filepath in candidates:
                 result = self.scan_file(str(filepath))
                 results.append(result)
         finally:
             self.llm_detect = per_file_detect
             self._project = None
+            self._c_escapers = {}
 
         if repo_scale:
             selected = None if only_files is None else {Path(r.filename).resolve() for r in results}

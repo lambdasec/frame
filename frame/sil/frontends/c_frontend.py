@@ -226,8 +226,26 @@ class CFrontend:
             _qualify_content_type_calls(program, self.packs)
         program.import_wildcards = list(includes.wildcards)
         program.language = self.LANGUAGE
+        self._credit_escapers(program, tree, source_code)
         finish_program(program, self.packs, source_code)
         return program
+
+    def _credit_escapers(self, program: Program, tree, source_code: str) -> None:
+        """Functions that escape every HTML-significant character (`analyzers/c_escapers.py`),
+        defined here or, in a directory scan, in another translation unit of the project
+        (`project_escapers`, by symbol name): calls to them sanitize for HTML output."""
+        from frame.sil.analyzers.c_escapers import HTML_SIGNIFICANT, escapers
+        found = dict(getattr(self, "project_escapers", None) or {})
+        found.update(escapers(tree, source_code.encode("utf-8")))
+        for name, chars in found.items():
+            if not HTML_SIGNIFICANT <= set(chars):
+                continue
+            spec = ProcSpec(is_sanitizer=["html", "xss"], taint_propagates=[0],
+                            description="escapes every HTML-significant character")
+            if name in program.procedures:
+                program.procedures[name].spec = spec
+            elif name not in program.library_specs:
+                program.library_specs[name] = spec
 
     def _integer_macros(self, root: TSNode) -> Dict[str, int]:
         """Object-like macros that are one top-level integer constant (`#define SLOTS 32`).
