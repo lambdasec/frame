@@ -132,6 +132,83 @@ param_positions = [0]
 request_type = "HttpRequest"
 description = "the HttpRequest a MiddlewareMixin hook receives"
 
+# Middleware is what settings.MIDDLEWARE names by dotted path: a class Django constructs with
+# get_response and then calls (`__call__(request)`) or whose hooks it calls with the request
+# first, or a factory whose returned function it calls with the request (docs "Middleware").
+[[setting_registration]]
+setting = "MIDDLEWARE"
+registered_as = "django.middleware"
+references = ["https://docs.djangoproject.com/en/stable/topics/http/middleware/"]
+
+[[entrypoint]]
+id = "settings-middleware"
+registered_via = ["django.middleware"]
+method = ["__call__", "process_request", "process_view", "process_exception", "process_response",
+          "process_template_response"]
+param_positions = [0]
+request_type = "HttpRequest"
+description = "the HttpRequest a middleware listed in MIDDLEWARE receives"
+
+[[entrypoint]]
+id = "settings-middleware-function"
+registered_via = ["django.middleware()"]
+param_positions = [0]
+request_type = "HttpRequest"
+description = "the HttpRequest the function a middleware factory returns receives"
+
+# The admin: ModelAdmin (and inline) hooks Django calls with the request, at the position their
+# documented signatures give it; a changelist search term and the object id in the URL are the
+# client's (docs "The Django admin site", ModelAdmin methods).
+[[entrypoint]]
+id = "admin-hook-request"
+extends = ["django.contrib.admin.ModelAdmin", "django.contrib.admin.options.ModelAdmin",
+           "django.contrib.admin.StackedInline", "django.contrib.admin.TabularInline",
+           "django.contrib.admin.options.InlineModelAdmin"]
+method = ["save_model", "delete_model", "delete_queryset", "save_formset", "save_related", "get_ordering",
+          "get_search_results", "get_autocomplete_fields", "get_readonly_fields", "get_prepopulated_fields",
+          "get_list_display", "get_list_display_links", "get_exclude", "get_fields", "get_fieldsets",
+          "get_list_filter", "get_list_select_related", "get_search_fields", "get_sortable_by",
+          "get_inline_instances", "get_inlines", "get_form", "get_formset", "get_formsets_with_inlines",
+          "get_changeform_initial_data", "has_view_permission", "has_add_permission", "has_change_permission",
+          "has_delete_permission", "has_module_permission", "get_queryset", "message_user", "get_paginator",
+          "response_add", "response_change", "response_delete", "get_formset_kwargs", "get_changelist",
+          "get_changelist_form", "get_changelist_formset", "add_view", "change_view", "changelist_view",
+          "delete_view", "history_view", "get_actions", "get_action_choices", "get_extra", "get_min_num",
+          "get_max_num"]
+param_positions = [0]
+request_type = "HttpRequest"
+
+[[entrypoint]]
+id = "admin-formfield-request"
+extends = ["django.contrib.admin.ModelAdmin", "django.contrib.admin.options.ModelAdmin",
+           "django.contrib.admin.StackedInline", "django.contrib.admin.TabularInline",
+           "django.contrib.admin.options.InlineModelAdmin"]
+method = ["formfield_for_foreignkey", "formfield_for_manytomany", "formfield_for_choice_field",
+          "get_deleted_objects"]
+param_positions = [1]
+request_type = "HttpRequest"
+
+[[entrypoint]]
+id = "admin-search-term"
+extends = ["django.contrib.admin.ModelAdmin", "django.contrib.admin.options.ModelAdmin"]
+method = ["get_search_results"]
+param_positions = [2]
+
+[[entrypoint]]
+id = "admin-object-id"
+extends = ["django.contrib.admin.ModelAdmin", "django.contrib.admin.options.ModelAdmin"]
+method = ["change_view", "delete_view", "history_view"]
+param_positions = [1]
+
+# Admin actions: Django calls an @admin.action function as (modeladmin, request, queryset), and a
+# ModelAdmin action method as (self, request, queryset): the request is the second argument.
+[[entrypoint]]
+id = "admin-action-request"
+decorator = ["django.contrib.admin.action", "django.contrib.admin.decorators.action"]
+unbound = true
+param_positions = [1]
+request_type = "HttpRequest"
+
 # A view passed through one of Django's view decorators used as a function (`path("x/",
 # login_required(views.show))`) is still the view: these return a wrapper calling it with the
 # same arguments.

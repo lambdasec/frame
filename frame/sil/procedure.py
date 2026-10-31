@@ -765,6 +765,7 @@ class Program:
     # names bound once to a literal-only collection and never written into (source_facts):
     # a lookup in one yields one of its constants, whatever the key
     constant_tables: Set[str] = field(default_factory=set)
+    module_string_lists: Dict[str, List[str]] = field(default_factory=dict)   # Python: `NAME = ["a.b", ...]`
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
     # C/C++ library facts the applied packs state (`[[function]]`): name -> packs.schema.FunctionFact

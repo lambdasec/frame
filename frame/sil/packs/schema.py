@@ -82,7 +82,7 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "setting_registration", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
@@ -448,6 +448,9 @@ class Pack:
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
     # (controller extension keys, the id the handler is registered as)
     operation_dispatch: List[Tuple[Tuple[str, ...], str]] = field(default_factory=list)
+    # Python: a settings list of dotted paths registers what they name (Django's MIDDLEWARE):
+    # (setting name, the id they are registered as)
+    setting_registrations: List[Tuple[str, str]] = field(default_factory=list)
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -997,6 +1000,16 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        name=_strings(origin, f"{where}.name", t["name"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("setting_registration", [])):
+        where = f"[[setting_registration]] #{i + 1}"
+        _check_keys(origin, where, t, {"setting", "registered_as", "description", "references"})
+        if language != "python":
+            raise _fail(origin, where, "settings of dotted paths are for Python packs")
+        setting, as_ = t.get("setting"), t.get("registered_as")
+        if not (isinstance(setting, str) and setting.isidentifier()) or not (isinstance(as_, str) and as_):
+            raise _fail(origin, where, "needs setting (a module-level name) and registered_as")
+        pack.setting_registrations.append((setting, as_))
 
     for i, t in enumerate(data.get("operation_dispatch", [])):
         where = f"[[operation_dispatch]] #{i + 1}"

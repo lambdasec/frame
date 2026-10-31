@@ -10,7 +10,7 @@ the constant's initialiser, not in the branch condition.
 from __future__ import annotations
 
 import re
-from typing import Dict
+from typing import Dict, List
 
 _PY = re.compile(r"""^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:re\.)?compile\(\s*[rRuU]?(\"\"\"|'''|"|')(.*?)\2""",
                  re.M | re.S)
@@ -147,6 +147,29 @@ def _parse(source: str, language: str):
 def _call_name(n) -> str:
     f = n.child_by_field_name("function")
     return _text(f)
+
+
+def module_string_lists(source: str, language: str) -> Dict[str, List[str]]:
+    """Python: module-level names bound to a list or tuple of string literals (`MIDDLEWARE = [
+    "a.b.C", ...]`), name -> the strings (every such binding, in order)."""
+    if language != "python":
+        return {}
+    root = _parse(source, "python")
+    if root is None:
+        return {}
+    out: Dict[str, List[str]] = {}
+    for stmt in root.named_children:
+        n = stmt.named_children[0] if stmt.type == "expression_statement" and stmt.named_children else None
+        if n is None or n.type != "assignment":
+            continue
+        left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+        if left is None or left.type != "identifier" or right is None or right.type not in ("list", "tuple"):
+            continue
+        items = [c for c in right.named_children if c.type != "comment"]
+        if items and all(c.type == "string" and not any(x.type == "interpolation" for x in c.named_children)
+                         for c in items):
+            out.setdefault(_text(left), []).extend(_text(c)[1:-1] for c in items)
+    return out
 
 
 def constant_tables(source: str, language: str) -> set:

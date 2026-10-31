@@ -327,3 +327,31 @@ def test_connexion_operations_are_what_the_openapi_document_names(tmp_path):
     found = {(r.filename.rsplit("/", 1)[-1], v.line) for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-78"}
     # `user` is the caller connexion's security hands in, not client data; `unrouted` is no operation
     assert found == {("users.py", 4), ("books.py", 4)}
+
+
+def test_django_middleware_is_what_settings_lists(tmp_path):
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "__init__.py").write_text("")
+    (tmp_path / "shop" / "middleware.py").write_text(
+        "import os\nfrom django.http import HttpResponse\n\n"
+        "class Audit:\n    def __init__(self, get_response):\n        self.get_response = get_response\n\n"
+        "    def __call__(self, request):\n        os.system(request.GET['a'])\n        return self.get_response(request)\n\n"
+        "def stamp(get_response):\n    def middleware(request):\n        os.system(request.GET['b'])\n"
+        "        return get_response(request)\n    return middleware\n\n"
+        "class Unlisted:\n    def __call__(self, request):\n        os.system(request.GET['c'])\n")
+    (tmp_path / "shop" / "settings.py").write_text(
+        "MIDDLEWARE = [\n    'django.middleware.common.CommonMiddleware',\n    'shop.middleware.Audit',\n"
+        "    'shop.middleware.stamp',\n]\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = {(r.filename.rsplit("/", 1)[-1], v.line) for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-78"}
+    assert found == {("middleware.py", 9), ("middleware.py", 14)}
+
+
+def test_django_admin_hooks_and_actions():
+    code = ("import os\nfrom django.contrib import admin\n\nclass OrderAdmin(admin.ModelAdmin):\n"
+            "    def get_search_results(self, request, queryset, search_term):\n        os.system(search_term)\n"
+            "        os.system(request.GET['q'])\n        return queryset, False\n\n"
+            "    def formfield_for_foreignkey(self, db_field, request, **kwargs):\n"
+            "        os.system(request.GET['f'])\n\n    def helper(self, value):\n        os.system(value)\n\n"
+            "@admin.action(description='Mark')\ndef mark(modeladmin, request, queryset):\n    os.system(request.POST['m'])\n")
+    assert _lines(code, "CWE-78", "admin.py") == [6, 7, 11, 18]

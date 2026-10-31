@@ -272,4 +272,57 @@ def link_openapi(ctx, index, packs_for: Callable[[str], Any]) -> None:
         apply_entrypoints_to(ctx.programs[key], sorted(names), packs_for("python"))
 
 
-__all__ = ["Registration", "apply_callback_params", "link_openapi", "link_project", "registration_vias"]
+def link_settings(ctx, index, packs_for: Callable[[str], Any]) -> None:
+    """Python settings that register code by dotted path (a pack's `[[setting_registration]]`:
+    Django's `MIDDLEWARE = ["app.middleware.Audit", ...]`): what each path names, resolved the
+    way the settings file imports it. A class's methods are registered as the pack's id (the
+    framework calls them on an instance), a function as the id and the function it returns
+    (a middleware factory's inner function) as the id plus `()`."""
+    from .packs.apply import apply_entrypoints_to
+    from .types import ExpVar
+    from .instructions import Return
+    regs = []
+    for pack in packs_for("python").for_language("python"):
+        if pack.setting_registrations and any(
+                (p.language or "") == "python" and pack in getattr(p, "active_packs", ()) for p in ctx.programs.values()):
+            regs.extend(pack.setting_registrations)
+    if not regs:
+        return
+    targets: Dict[str, Set[str]] = {}
+
+    def register(key: str, proc, via: str) -> None:
+        if via not in proc.registered_via:
+            proc.registered_via.append(via)
+        targets.setdefault(key, set()).add(proc.name)
+
+    for key, program in ctx.programs.items():
+        lists = getattr(program, "module_string_lists", None) or {}
+        importer = index.modules.get(key)
+        for setting, registered_as in regs:
+            for dotted in lists.get(setting, ()):
+                parts = tuple(dotted.split("."))
+                if len(parts) < 2 or not all(p.isidentifier() for p in parts) or importer is None:
+                    continue
+                target = index._resolve_python(importer, parts[:-1], 0)
+                found = ctx.programs.get(target) if target else None
+                if found is None:
+                    continue
+                name = parts[-1]
+                methods = [p for p in found.procedures.values() if p.is_method and p.class_name == name]
+                for m in methods:
+                    register(target, m, registered_as)
+                factory = found.procedures.get(name)
+                if methods or factory is None or factory.is_method:
+                    continue
+                register(target, factory, registered_as)
+                returned = {str(i.value.var) for n in factory.nodes.values() for i in n.instrs
+                            if isinstance(i, Return) and isinstance(i.value, ExpVar)}
+                for p in found.procedures.values():
+                    if p.parent == factory.name and p.simple_name in returned:
+                        register(target, p, registered_as + "()")
+    for key, names in targets.items():
+        apply_entrypoints_to(ctx.programs[key], sorted(names), packs_for("python"))
+
+
+__all__ = ["Registration", "apply_callback_params", "link_openapi", "link_project", "link_settings",
+           "registration_vias"]
