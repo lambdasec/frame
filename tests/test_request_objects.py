@@ -10,17 +10,16 @@ from frame.sil.specs import request_objects
 
 def test_the_shipped_file_loads():
     r = request_objects.load()
-    assert "body" in r.client_properties and "session" not in r.client_properties
-    assert "session" in r.server_state
+    assert "session" in r.server_state and "request" in r.python_request_names
 
 
-def test_a_name_cannot_be_both(tmp_path):
-    bad = tmp_path / "request-objects.toml"
-    bad.write_text('client_properties = ["body", "session"]\nserver_state = ["session"]\npython_request_names = ["request"]\n'
-                   'js_request_names = ["req"]\njs_handler_names = ["res"]\njs_framework_modules = ["express"]\n'
-                   'js_handler_decorators = ["Get"]\njs_request_types = ["Request"]\n')
-    with pytest.raises(ValueError, match="both"):
-        request_objects.load(bad)
+def test_javascript_request_objects_are_pack_data():
+    # what an Express handler's request holds is the express pack's [[request_type]], not a name list
+    from frame.sil.packs.loader import PackSet
+    express = next(p for p in PackSet.build(builtin=True).packs if p.name == "express")
+    request = express.request_types["request"]
+    assert request.is_client_field(("body",)) and not request.is_client_field(("session",))
+    assert request.is_client_method(("get",)) and not request.is_client_method(("isAuthenticated",))
 
 
 def test_unknown_keys_are_an_error(tmp_path):
@@ -36,10 +35,10 @@ def _cwes(code, lang, name):
 
 _HANDLER = """const mysql = require('mysql');
 const db = mysql.createConnection({});
-module.exports = ({ %s }, res, next) => {
+require('express')().use(({ %s }, res, next) => {
   db.query("SELECT * FROM t WHERE n = '" + %s + "'");
   res.end();
-};
+});
 """
 
 

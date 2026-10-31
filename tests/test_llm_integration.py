@@ -15,10 +15,11 @@ from frame.sil.llm_triage import TriageConfig, LLMTriageClient
 from frame.sil.llm_detect import DETECT_SYSTEM
 
 
-# A JS file that is a detection *candidate* (mentions req.query) but has no sink
+# A JS file that is a detection *candidate* (an Express handler reads req.query) but has no sink
 # the symbolic engine recognizes -- so symbolic finds nothing and any finding in
 # the result must have come from the (stubbed) LLM detection layer.
-CANDIDATE_SRC = "const data = req.query.payload;\nprocessData(data);\nsomethingElse(data);\n"
+CANDIDATE_SRC = ("const app = require('express')();\napp.get('/x', (req, res) => {\n"
+                 "  const data = req.query.payload;\n  processData(data);\n  somethingElse(data);\n});\n")
 
 
 def _stub_client(detect_findings, triage_is_tp=True, triage_conf=0.9):

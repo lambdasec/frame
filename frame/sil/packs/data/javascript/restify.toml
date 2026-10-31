@@ -1,8 +1,30 @@
 [pack]
 name = "restify"
 language = "javascript"
-description = "Restify: raw HTML responses"
+description = "Restify: handlers registered on a restify.createServer() server, their request object, raw HTML responses"
 detect = { imports = ["restify"] }
+references = ["http://restify.com/docs/server-api/", "http://restify.com/docs/request-api/",
+              "http://restify.com/docs/plugins-api/"]
+
+# What a handler's request holds that the client chose: route params, the parsed query and body
+# (queryParser / bodyParser), uploaded files, cookies (restify-cookies), headers and the URL, and
+# the Request API's accessors of them.
+[[request_type]]
+id = "request"
+fields = ["params", "query", "body", "files", "cookies", "headers", "rawHeaders", "url"]
+methods = ["header", "trailer", "getQuery", "query", "getPath", "path", "href", "getUrl", "userAgent",
+           "getContentType", "contentType"]
+kinds = { files = "file" }
+
+# server.get / head / post / put / patch / del / opts(path, handler...), server.use / pre(handler):
+# a handler is (req, res, next).
+[[entrypoint]]
+id = "handler"
+registered_via = ["restify.createServer.get", "restify.createServer.head", "restify.createServer.post", "restify.createServer.put", "restify.createServer.patch", "restify.createServer.del", "restify.createServer.opts", "restify.createServer.use", "restify.createServer.pre"]
+param_positions = [0]
+params = "all"
+request_type = "request"
+description = "the request of a Restify handler"
 
 [[sink]]
 name = ["res.sendRaw"]

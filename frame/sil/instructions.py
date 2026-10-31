@@ -77,9 +77,63 @@ class TaintKind(Enum):
     # a length or count a peer sent. It is not text, so it matters only as the size of an
     # allocation (SinkKind.ALLOC_SIZE), and only there.
     WIRE_SIZE = "wire_size"
+    # A web framework's request object as a whole (`req` of an Express handler): not attacker data
+    # itself. Its client properties are (`req.query`, `req.get("Host")`: what the RequestType it
+    # carries lists), its server state is not (`req.session`, `req.user`). Never reported at a sink.
+    REQUEST = "request"
 
     def __str__(self) -> str:
         return self.value
+
+
+@dataclass(frozen=True)
+class RequestType:
+    """What a framework's request object holds (a pack's `[[request_type]]`): the property paths
+    and the method paths whose values are client data. With `all_fields`, every property and
+    method is client data except the names in `server_state` (Django's HttpRequest: everything
+    but `user`, `session`, `auth`). A path that leads into a listed one (`request` for Koa's
+    `ctx.request.body`) is itself a request object, of the type `within` gives."""
+    name: str
+    fields: Tuple[Tuple[str, ...], ...] = ()
+    methods: Tuple[Tuple[str, ...], ...] = ()
+    all_fields: bool = False
+    server_state: Tuple[str, ...] = ()
+    kinds: Tuple[Tuple[Tuple[str, ...], str], ...] = ()     # path -> TaintKind value other than "user"
+
+    def kind_of(self, path: Tuple[str, ...]) -> "TaintKind":
+        """The source kind of client data read at `path` (uploads are file contents)."""
+        for p, k in self.kinds:
+            if path[:len(p)] == p:
+                return TaintKind(k)
+        return TaintKind.USER_INPUT
+
+    def is_client_field(self, path: Tuple[str, ...]) -> bool:
+        """Is the property at `path` (or a value inside it) client data?"""
+        if not path:
+            return False
+        if self.all_fields:
+            return path[0] not in self.server_state
+        return any(path[:len(f)] == f for f in self.fields)
+
+    def is_client_method(self, path: Tuple[str, ...]) -> bool:
+        """Does calling the method at `path` (`("get",)`, `("cookies", "get")`) return client data?"""
+        if not path:
+            return False
+        if self.all_fields:
+            return path[0] not in self.server_state
+        return path in self.methods or self.is_client_field(path[:-1])
+
+    def within(self, path: Tuple[str, ...]) -> Optional["RequestType"]:
+        """The request object at `path` when it leads into a listed field or method (Koa's
+        `ctx.request`), else None."""
+        if not path or self.all_fields:
+            return None
+        fields = tuple(f[len(path):] for f in self.fields if len(f) > len(path) and f[:len(path)] == path)
+        methods = tuple(m[len(path):] for m in self.methods if len(m) > len(path) and m[:len(path)] == path)
+        if not fields and not methods:
+            return None
+        kinds = tuple((p[len(path):], k) for p, k in self.kinds if len(p) > len(path) and p[:len(path)] == path)
+        return RequestType(f"{self.name}.{'.'.join(path)}", fields, methods, kinds=kinds)
 
 
 class SinkKind(Enum):
@@ -549,6 +603,7 @@ class TaintSource(Instr):
     var: Union[Ident, PVar]  # Variable that receives tainted data
     kind: TaintKind          # What kind of source
     description: str = ""    # Human-readable description
+    request: Optional[RequestType] = None   # kind REQUEST: what the request object holds
 
     def __str__(self) -> str:
         return f"taint_source({self.var}, {self.kind.value})"

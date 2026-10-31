@@ -36,7 +36,7 @@ from .types import (
 from .instructions import (
     Instr, Load, Store, Alloc, Free, Prune, Call, Assign,
     TaintSource, TaintSink, Sanitize, AssertSafe, Return,
-    TaintKind, SinkKind, resolve_sink_kind, _SINK_KIND_ALIASES
+    TaintKind, SinkKind, resolve_sink_kind, _SINK_KIND_ALIASES, RequestType
 )
 from .procedure import Procedure, Node, NodeKind, Program, ProcSpec
 from .specs.unpredictable import arguments_for, must_be_unpredictable
@@ -298,6 +298,11 @@ class TaintInfo:
     source_var: str
     source_location: Location
     propagation_path: List[str] = field(default_factory=list)
+    # source_kind REQUEST: what the request object holds (its client properties and methods)
+    request: Optional[RequestType] = None
+    # data read from a request object: the property path read (`("query", "dir")`; a method's last
+    # part ends in "()"), relative to the object a procedure received, for path-aware summaries
+    read: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -414,7 +419,7 @@ class SymbolicState:
             allocated=dict(self.allocated),
             tainted={k: TaintInfo(
                 v.source_kind, v.source_var, v.source_location,
-                list(v.propagation_path)
+                list(v.propagation_path), v.request, v.read
             ) for k, v in self.tainted.items()},
             sanitized={k: list(v) for k, v in self.sanitized.items()},
             freed=set(self.freed),
@@ -608,7 +613,7 @@ class SymbolicState:
                 return
             new_path = info.propagation_path + [to_var]
             self.tainted[to_var] = TaintInfo(
-                info.source_kind, info.source_var, info.source_location, new_path
+                info.source_kind, info.source_var, info.source_location, new_path, info.request, info.read
             )
             # Also propagate sanitization - if source is sanitized, target should be too
             if from_var in self.sanitized:
@@ -680,6 +685,10 @@ class ReturnSummary:
     # Fields of a parameter holding attacker data when the procedure returns
     # (middleware: `req.filter = req.query.filter`): param -> field -> taint.
     param_fields: Dict[str, Dict[str, Tuple[TaintInfo, Set[str]]]] = field(default_factory=dict)
+    # Parameters holding a request object at entry: the paths read off it that reach the return
+    # (`return req.query.dir`), and those whose object itself does (`return req`).
+    param_reads: Dict[str, Set[Tuple[str, ...]]] = field(default_factory=dict)
+    param_whole: Set[str] = field(default_factory=set)
 
     def key(self):
         return (self.source.source_var if self.source else None,
@@ -688,7 +697,9 @@ class ReturnSummary:
                 tuple(sorted((f, p, frozenset(k)) for f, ps in self.stores.items()
                              for p, k in ps.items())),
                 tuple(sorted((p, f, frozenset(k)) for p, fs in self.param_fields.items()
-                             for f, (_, k) in fs.items())))
+                             for f, (_, k) in fs.items())),
+                tuple(sorted((p, frozenset(r)) for p, r in self.param_reads.items())),
+                frozenset(self.param_whole))
 
 
 @dataclass
@@ -1999,6 +2010,8 @@ class SILTranslator:
                 cur = cur.base
             if isinstance(cur, ExpVar):
                 parts.insert(0, self._get_var_name(cur.var))
+            elif isinstance(cur, ExpCall):
+                parts.insert(0, self._call_exp_name(cur) + "()")   # `new Exporter().handle`: the receiver is built here
             return '.'.join(parts)
         return str(exp.func)
 
@@ -2028,12 +2041,16 @@ class SILTranslator:
                 params = self._call_params(callee.proc, name)
                 for arg, param in zip(exp.args, params):
                     if param in summary.params:
-                        out.extend(self._arg_taint_leaves(
-                            arg, state, wrap | frozenset(summary.params[param])))
+                        out.extend(self._summary_param_leaves(summary, param, arg, state, wrap, at=name))
                 for cap in callee.proc.captures:          # a closure returning an enclosing variable
                     if cap in summary.params and cap not in params:
-                        out.extend(self._arg_taint_leaves(
-                            ExpVar(PVar(cap)), state, wrap | frozenset(summary.params[cap])))
+                        out.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, wrap,
+                                                              at=name))
+                return out
+            called = self._request_call(name, state)
+            if called is not self._NOT_REQUEST:          # `req.get("Host")`: the request type decides
+                if called:
+                    out.append((state.get_taint_info(called), set(wrap)))
                 return out
             spec = self.program.get_spec(name)
             if spec and spec.is_taint_source():
@@ -2050,7 +2067,7 @@ class SILTranslator:
             parts = name.split(".")
             if len(parts) > 1 and not (spec and spec.is_taint_sanitizer()):
                 head = parts[0]
-                if state.is_tainted(head):
+                if state.is_tainted(head) and not (len(parts) > 2 and self._is_request_value(head, state)):
                     out.append((state.get_taint_info(head),
                                 set(wrap) | set(state.sanitized.get(head, []))))
                 elif len(parts) > 2 and all(p.isidentifier() for p in parts):
@@ -2073,6 +2090,14 @@ class SILTranslator:
         if isinstance(exp, (ExpFieldAccess, ExpIndex)):
             if isinstance(exp, ExpFieldAccess) and self._is_request_server_state(exp):
                 return out
+            if isinstance(exp, ExpFieldAccess):
+                dotted = self._field_path(exp)
+                resolved = self._request_path(dotted, state) if dotted else self._NOT_REQUEST
+                if resolved is not self._NOT_REQUEST:      # a request object's client data or server state
+                    if resolved:
+                        out.append((state.get_taint_info(resolved),
+                                    set(wrap) | set(state.sanitized.get(resolved, []))))
+                    return out
             members = self._get_embedded_member_sources(exp)
             if members:
                 src, kind = members[0]
@@ -2080,7 +2105,9 @@ class SILTranslator:
                     source_kind=TaintKind(kind) if kind in [t.value for t in TaintKind]
                     else TaintKind.USER_INPUT, source_var=src, source_location=loc), set(wrap)))
                 return out
-            out.extend(self._arg_taint_leaves(exp.base, state, wrap))
+            # a field of a value is never the request object as a whole (only the object's own name is)
+            out.extend(leaf for leaf in self._arg_taint_leaves(exp.base, state, wrap)
+                       if leaf[0].source_kind != TaintKind.REQUEST or isinstance(exp, ExpIndex))
             if isinstance(exp, ExpIndex):
                 out.extend(self._arg_taint_leaves(exp.index, state, wrap))
             return out
@@ -2127,7 +2154,7 @@ class SILTranslator:
                 marker = f"{caller}{callee.ref[0]}::{callee.ref[1]}({param})".lstrip(":")
                 self._ipa.entry_markers[marker] = (callee.ref, param)
                 info = leaves[0][0]
-                entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=(),
                                           source_location=info.source_location,
                                           propagation_path=[marker]), sanitized)
                 self._ipa.dirty.add(callee.ref)
@@ -2536,7 +2563,7 @@ class SILTranslator:
                 info = state.get_taint_info(target)
                 if info is not None:
                     state.add_taint(base, TaintInfo(
-                        source_kind=info.source_kind, source_var=info.source_var,
+                        source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
                         source_location=info.source_location,
                         propagation_path=list(info.propagation_path) + [base]))
 
@@ -2619,7 +2646,7 @@ class SILTranslator:
                     marker = f"{caller}{ref[0]}::{ref[1]}({name})".lstrip(":")
                     self._ipa.entry_markers[marker] = (ref, name)
                     info = leaves[0][0]
-                    entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                    entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=(),
                                              source_location=info.source_location,
                                              propagation_path=[marker]), sanitized)
                     self._ipa.dirty.add(ref)
@@ -2674,6 +2701,10 @@ class SILTranslator:
                 param = origin[1]
                 acc.params[param] = set(kinds) if param not in acc.params \
                     else acc.params[param] & kinds
+                if info.source_kind == TaintKind.REQUEST and not info.read:
+                    acc.param_whole.add(param)            # the request object itself
+                elif info.read:
+                    acc.param_reads.setdefault(param, set()).add(info.read)
             elif info.source_var.startswith(self._SEED_PREFIX):
                 continue
             else:
@@ -2790,7 +2821,7 @@ class SILTranslator:
             key = f"{recv}.{fld}"
             info = leaves[0][0]
             state.add_taint(key, TaintInfo(
-                source_kind=info.source_kind, source_var=info.source_var,
+                source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
                 source_location=info.source_location,
                 propagation_path=list(info.propagation_path) + [key]))
             sanitized = set.intersection(*(k for _, k in leaves))
@@ -2922,7 +2953,7 @@ class SILTranslator:
             return
         info, kinds = known
         state.add_taint(target, TaintInfo(
-            source_kind=info.source_kind, source_var=info.source_var,
+            source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
             source_location=info.source_location,
             propagation_path=list(info.propagation_path) + [f"request attribute \"{key.value}\""]))
         if kinds:
@@ -2964,7 +2995,7 @@ class SILTranslator:
             key = f"{recv}.{proc.simple_name}"
             info = summary.source
             state.add_taint(key, TaintInfo(
-                source_kind=info.source_kind, source_var=info.source_var,
+                source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
                 source_location=info.source_location,
                 propagation_path=list(info.propagation_path) + [key]))
             if summary.source_sanitized:
@@ -2983,7 +3014,7 @@ class SILTranslator:
                 continue
             info, kinds = filled
             state.add_taint(var, TaintInfo(
-                source_kind=info.source_kind, source_var=info.source_var,
+                source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
                 source_location=info.source_location,
                 propagation_path=list(info.propagation_path) + [f"{callee.ref[1]}({param})"]))
             if kinds:
@@ -3019,7 +3050,7 @@ class SILTranslator:
                 marker = f"{caller}{callee.ref[0]}::{callee.ref[1]}({name})".lstrip(":")
                 self._ipa.entry_markers[marker] = (callee.ref, name)
                 info = leaves[0][0]
-                entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var,
+                entry[name] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=(),
                                          source_location=info.source_location,
                                          propagation_path=[marker]), sanitized)
                 self._ipa.dirty.add(callee.ref)
@@ -3041,17 +3072,15 @@ class SILTranslator:
         params = self._call_params(callee.proc, func_name)
         for (arg_exp, _), param in zip(instr.args, params):
             if param in summary.params:
-                leaves.extend((info, kinds | summary.params[param])
-                              for info, kinds in self._arg_taint_leaves(arg_exp, state))
+                leaves.extend(self._summary_param_leaves(summary, param, arg_exp, state, at=ret_var))
         for cap in callee.proc.captures:                  # a closure returning an enclosing variable
             if cap in summary.params and cap not in params:
-                leaves.extend((info, kinds | summary.params[cap])
-                              for info, kinds in self._arg_taint_leaves(ExpVar(PVar(cap)), state))
+                leaves.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, at=ret_var))
         if not leaves:
             return
         info = leaves[0][0]
         state.add_taint(ret_var, TaintInfo(
-            source_kind=info.source_kind, source_var=info.source_var,
+            source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
             source_location=info.source_location,
             propagation_path=list(info.propagation_path) + [ret_var]))
         sanitized = set.intersection(*(k for _, k in leaves))
@@ -3179,6 +3208,18 @@ class SILTranslator:
         Returns:
             Tuple of (checks generated, new state)
         """
+        self._state = state           # request-object reads resolve against it (_request_path)
+        try:
+            return self._execute_instr_in(instr, state, proc_name)
+        finally:
+            self._state = None
+
+    def _execute_instr_in(
+        self,
+        instr: Instr,
+        state: SymbolicState,
+        proc_name: str
+    ) -> Tuple[List[VulnerabilityCheck], SymbolicState]:
         if self._ipa_summarising and self._capture_children:
             self._record_capture_taints(instr, state)
         checks = []
@@ -3234,7 +3275,18 @@ class SILTranslator:
             checks, state = self._exec_free(instr, state, proc_name)
 
         elif isinstance(instr, Call):
+            called = self._request_call(instr.get_full_name(), state)
             checks, state = self._exec_call(instr, state, proc_name)
+            if called is not self._NOT_REQUEST and instr.ret:
+                # a method of a request object: its result is what the request type says, never the
+                # request object itself (default receiver propagation would make it one)
+                ret = str(instr.ret[0])
+                if called:
+                    state.tainted[ret] = TaintInfo(
+                        TaintKind.USER_INPUT, called, state.tainted[called].source_location,
+                        list(state.tainted[called].propagation_path) + [ret])
+                elif self._is_request_value(ret, state):
+                    state.tainted.pop(ret, None)
 
         elif isinstance(instr, Prune):
             state = self._exec_prune(instr, state)
@@ -3942,6 +3994,10 @@ class SILTranslator:
                 v = self._get_var_name(e.var)
                 out[v] = (out[v] & set(wrap)) if v in out else set(wrap)
                 return
+            if isinstance(e, ExpFieldAccess):          # `req.query.name`: the read is tracked under its path
+                dotted = self._field_path(e)
+                if dotted:
+                    out[dotted] = (out[dotted] & set(wrap)) if dotted in out else set(wrap)
             if isinstance(e, ExpCall):
                 spec = self.program.get_spec(self._call_exp_name(e))
                 inner = wrap | frozenset(spec.is_sanitizer) if spec and spec.is_taint_sanitizer() else wrap
@@ -4183,6 +4239,10 @@ class SILTranslator:
                                 if spec.is_sink in ('redirect', 'ssrf') and self._has_local_redirect_prefix(arg_exp):
                                     continue          # "/p/" + id stays on this origin
                                 arg_vars = self._get_exp_vars(arg_exp)
+                                # a closure called in the argument hands back what it captured
+                                # (`db.query(buildQuery())`), as at a TaintSink
+                                arg_vars += [c for c in self._closure_captured_vars(arg_exp, sink_kind)
+                                             if c not in arg_vars]
                                 arg_str = str(arg_exp)
 
                                 # Check for inline .replace() sanitization in argument
@@ -5114,6 +5174,7 @@ class SILTranslator:
             source_kind=instr.kind,
             source_var=var_name,
             source_location=instr.loc,
+            request=getattr(instr, "request", None) if instr.kind == TaintKind.REQUEST else None,
         ))
         return state
 
@@ -5588,6 +5649,10 @@ class SILTranslator:
         # (dropped by translate_procedure).
         weak = taint_info is not None and taint_info.source_kind == TaintKind.WEAK_RANDOM
         if weak != (sink_kind == SinkKind.UNPREDICTABLE):
+            check.kind_mismatch = True
+        # A request object as a whole is not attacker data: only what its type lists is (read from it
+        # by _request_path / _request_call), so the object itself reaching a sink is no finding.
+        if taint_info is not None and taint_info.source_kind == TaintKind.REQUEST:
             check.kind_mismatch = True
         # A number read off the wire is a size, not text: it matters only where it sizes an allocation.
         if taint_info is not None and taint_info.source_kind == TaintKind.WIRE_SIZE \
@@ -8917,6 +8982,124 @@ class SILTranslator:
             return ".".join([self._get_var_name(exp.var)] + parts[::-1])
         return None
 
+    # -- request objects (TaintKind.REQUEST) -----------------------------------------------
+    # A framework's request object is a value the taint state carries (an entry point marks the
+    # handler's parameter; copies, calls and closures pass it on). What reading it gives is its
+    # RequestType's: a client property or method is attacker data, anything else is server state.
+    _NOT_REQUEST = object()
+    _state: Optional["SymbolicState"] = None
+
+    def _request_path(self, path: str, state: Optional["SymbolicState"]):
+        """For a read of the dotted `path` (`req.query.q`) whose nearest tainted prefix is a request
+        object: the name now holding what the read gives (materialised from the request type:
+        client data, or a request sub-object like Koa's `ctx.request`), or None for server state.
+        `_NOT_REQUEST` when no request object is involved (a plain or explicitly stored taint)."""
+        if state is None or not path:
+            return self._NOT_REQUEST
+        parts = path.split(".")
+        for i in range(len(parts) - 1, 0, -1):          # the nearest tainted proper prefix
+            prefix = ".".join(parts[:i])
+            info = state.tainted.get(prefix)
+            if info is None:
+                continue
+            if info.source_kind != TaintKind.REQUEST or info.request is None:
+                return self._NOT_REQUEST
+            if path in state.tainted:                    # stored on the request (`req.filter`) or done
+                return path
+            rest = tuple(parts[i:])
+            if info.request.is_client_field(rest):
+                if path not in state.tainted:
+                    state.tainted[path] = TaintInfo(
+                        info.request.kind_of(rest), path, info.source_location,
+                        list(info.propagation_path) + [path], read=info.read + rest)
+                return path
+            sub = info.request.within(rest)
+            if sub is not None:
+                if path not in state.tainted:
+                    state.tainted[path] = TaintInfo(
+                        TaintKind.REQUEST, path, info.source_location,
+                        list(info.propagation_path) + [path], sub, info.read + rest)
+                return path
+            return None
+        return self._NOT_REQUEST
+
+    def _request_call(self, func_text: str, state: Optional["SymbolicState"]):
+        """For a method call `<receiver>.<m>(...)` on a request object (`req.get("Host")`,
+        `req.isAuthenticated()`): the name holding its result when the request type lists the
+        method as client data (materialised), else None. `_NOT_REQUEST` when the receiver is not
+        a request object (or is client data already: `req.query.q.trim()` keeps its own taint)."""
+        if state is None or "." not in func_text:
+            return self._NOT_REQUEST
+        parts = func_text.strip('"').split(".")
+        if not all(p.isidentifier() or p.startswith("$") for p in parts):
+            return self._NOT_REQUEST
+        for i in range(len(parts) - 1, 0, -1):
+            prefix = ".".join(parts[:i])
+            info = state.tainted.get(prefix)
+            if info is None:
+                continue
+            if info.source_kind != TaintKind.REQUEST or info.request is None:
+                return self._NOT_REQUEST
+            rest = tuple(parts[i:])
+            if info.request.is_client_field(rest[:-1]):
+                self._request_path(".".join(parts[:-1]), state)      # the receiver is client data
+                return self._NOT_REQUEST
+            if info.request.is_client_method(rest):
+                name = f"{'.'.join(parts)}()"
+                if name not in state.tainted:
+                    state.tainted[name] = TaintInfo(
+                        TaintKind.USER_INPUT, name, info.source_location,
+                        list(info.propagation_path) + [name],
+                        read=info.read + rest[:-1] + (rest[-1] + "()",))
+                return name
+            return None
+        return self._NOT_REQUEST
+
+    @staticmethod
+    def _request_read_result(arg: TaintInfo, read: Tuple[str, ...], at: str) -> Optional[TaintInfo]:
+        """What reading `read` (a summary's path) off the request object `arg` gives."""
+        request = arg.request
+        if request is None:
+            return None
+        if read and read[-1].endswith("()"):
+            ok, sub = request.is_client_method(read[:-1] + (read[-1][:-2],)), None
+        else:
+            ok, sub = request.is_client_field(read), request.within(read)
+        name = f"{arg.source_var}.{'.'.join(read)}"
+        if ok:
+            return TaintInfo(request.kind_of(read) if sub is None and not read[-1].endswith("()")
+                             else TaintKind.USER_INPUT, name, arg.source_location,
+                             list(arg.propagation_path) + [at], read=arg.read + read)
+        if sub is not None:
+            return TaintInfo(TaintKind.REQUEST, name, arg.source_location,
+                             list(arg.propagation_path) + [at], sub, arg.read + read)
+        return None
+
+    def _summary_param_leaves(self, summary: "ReturnSummary", param: str, arg_exp: Exp,
+                              state: "SymbolicState", wrap: frozenset = frozenset(),
+                              at: str = "") -> List[Tuple[TaintInfo, Set[str]]]:
+        """The argument's taint the callee's return carries through `param`. A request object
+        passed in gives what the callee reads off it (`return req.query.dir`), or itself only
+        when the callee returns the object (`return req`)."""
+        out: List[Tuple[TaintInfo, Set[str]]] = []
+        kinds = set(summary.params.get(param, set()))
+        for info, k in self._arg_taint_leaves(arg_exp, state, wrap):
+            if info.source_kind != TaintKind.REQUEST:
+                out.append((info, k | kinds))
+                continue
+            reads = summary.param_reads.get(param, set())
+            if param in summary.param_whole or not reads:
+                out.append((info, k | kinds))
+            for read in sorted(reads):
+                got = self._request_read_result(info, read, at)
+                if got is not None:
+                    out.append((got, k | kinds))
+        return out
+
+    def _is_request_value(self, name: str, state: Optional["SymbolicState"]) -> bool:
+        info = state.tainted.get(name) if state is not None else None
+        return info is not None and info.source_kind == TaintKind.REQUEST
+
     def _get_exp_vars(self, exp: Exp) -> List[str]:
         """Get all variable names referenced in expression"""
         if isinstance(exp, ExpVar):
@@ -8950,10 +9133,15 @@ class SILTranslator:
         if isinstance(exp, ExpFieldAccess):
             if self._is_request_server_state(exp):
                 return []
-            names = self._get_exp_vars(exp.base)
+            dotted = self._field_path(exp)
+            state = self._state
+            resolved = self._request_path(dotted, state) if dotted else self._NOT_REQUEST
+            if resolved is not self._NOT_REQUEST:
+                return [resolved] if resolved else []
+            # a field read never carries a request object as a whole (only its own name does)
+            names = [n for n in self._get_exp_vars(exp.base) if not self._is_request_value(n, state)]
             # `req.filter` written earlier (a middleware stores request data on the request)
             # is tracked under its own name: reading it must look that name up too
-            dotted = self._field_path(exp)
             return names + [dotted] if dotted else names
         if isinstance(exp, ExpIndex):
             if self._constant_table_index(exp):
@@ -8970,16 +9158,55 @@ class SILTranslator:
             # For method calls like param.split(), extract the receiver variable
             if hasattr(exp, 'func'):
                 func_str = str(exp.func)
-                if '.' in func_str:
+                called = self._request_call(func_str, self._state) if '.' in func_str else self._NOT_REQUEST
+                if called is not self._NOT_REQUEST:
+                    if called:
+                        result.append(called)
+                elif '.' in func_str:
                     # Method call: extract receiver (e.g., "param.split" -> "param")
                     parts = func_str.strip('"').split('.')
-                    if len(parts) >= 2 and parts[0] and not parts[0][0].isupper():
+                    if len(parts) >= 2 and parts[0] and not parts[0][0].isupper() \
+                            and not (len(parts) > 2 and self._is_request_value(parts[0], self._state)):
                         # Lowercase first char suggests a variable, not a module
                         result.append(parts[0])
+                    if len(parts) > 2 and self._is_request_value(parts[0], self._state):
+                        result.append(".".join(parts[:-1]))          # `req.query.q.trim()`: req.query.q
             for arg in exp.args:
                 result.extend(self._get_exp_vars(arg))
+            result.extend(self._summary_request_reads(exp))
             return result
         return []
+
+    def _summary_request_reads(self, exp: "ExpCall") -> List[str]:
+        """A project function called with a request object (`getDir(req)`): the names holding what
+        its return summary says it hands back of it (`req.query.dir`), materialised in the current
+        state. The argument's own name only carries the object, which is never data."""
+        state = self._state
+        if state is None or not self._ipa_on:
+            return []
+        name = self._call_exp_name(exp)
+        callee = self._resolve_callee(name)
+        summary = self._ipa.return_summaries.get(callee.ref) if callee is not None else None
+        if summary is None or not summary.param_reads:
+            return []
+        out: List[str] = []
+        for arg, param in zip(exp.args, self._call_params(callee.proc, name)):
+            if not isinstance(arg, ExpVar) or param not in summary.param_reads:
+                continue
+            info = state.tainted.get(self._get_var_name(arg.var))
+            if info is None or info.source_kind != TaintKind.REQUEST:
+                continue
+            for read in sorted(summary.param_reads[param]):
+                got = self._request_read_result(info, read, f"{name}()")
+                if got is None:
+                    continue
+                key = f"{name}({self._get_var_name(arg.var)}).{'.'.join(read)}"
+                state.tainted.setdefault(key, got)
+                kinds = summary.params.get(param)              # what every path sanitized it for
+                if kinds:
+                    state.sanitized[key] = sorted(kinds)
+                out.append(key)
+        return out
 
     def _get_sanitizer_calls(self, exp: Exp) -> List[Tuple[str, List[str]]]:
         """

@@ -1,12 +1,40 @@
 [pack]
 name = "sails"
 language = "javascript"
-description = "Sails.js controllers and native queries (the sails global needs no import, so this pack has no detect clause; every rule is keyed on a Sails-only name)"
+description = "Sails.js: controller actions and their request, native queries (Sails provides a global, so a Sails app is known by its package.json)"
+detect = { dependencies = ["sails"] }
+references = ["https://sailsjs.com/documentation/concepts/actions-and-controllers",
+              "https://sailsjs.com/documentation/reference/request-req",
+              "https://sailsjs.com/documentation/reference/waterline-orm/datastores/send-native-query"]
 
-[[source]]
-name = ["req.allParams"]
-kind = "user_input"
-description = "Sails: every request parameter (route, query string, body)"
+# What a Sails request holds that the client chose (an Express request underneath): the URL
+# parts, headers, body, cookies; req.param() / allParams() merge the route, query and body
+# parameters; req.file() is an upload stream. Everything else (session, me, options) is server
+# state.
+[[request_type]]
+id = "request"
+fields = ["body", "cookies", "headers", "hostname", "originalUrl", "params", "path", "query", "subdomains", "url"]
+methods = ["allParams", "file", "get", "param"]
+
+# Actions live in api/controllers/: a controller module's exported actions take (req, res); an
+# actions2 module exports `fn: async function (inputs, exits)`, its inputs the request's.
+[[entrypoint]]
+id = "controller-action"
+module_path = ["**/api/controllers/**"]
+exports = ["*"]
+exclude_method = ["fn"]
+param_positions = [0]
+params = "all"
+request_type = "request"
+description = "the request of a Sails controller action"
+
+[[entrypoint]]
+id = "actions2-inputs"
+module_path = ["**/api/controllers/**"]
+exports = ["fn"]
+param_positions = [0]
+params = "all"
+description = "the inputs of a Sails actions2 action"
 
 [[sink]]
 name = ["sails.sendNativeQuery", "sendNativeQuery"]

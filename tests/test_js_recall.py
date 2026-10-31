@@ -80,13 +80,13 @@ def test_guarded_recursive_merge_is_clean():
 # ---- command injection through argument arrays ----------------------------
 
 def test_spawn_shell_dash_c_tainted_second_element():
-    code = ("const {spawn}=require('child_process');\n"
+    code = ("const {spawn}=require('child_process');\nconst app = require('express')();\n"
             "app.get('/x',(req,res)=>{ spawn('sh',['-c',req.query.cmd]); res.end(); });")
     assert "CWE-78" in cwes(code)
 
 
 def test_spawn_constant_args_are_clean():
-    code = ("const {spawn}=require('child_process');\n"
+    code = ("const {spawn}=require('child_process');\nconst app = require('express')();\n"
             "app.get('/x',(req,res)=>{ spawn('ls',['-l','/tmp']); res.end(); });")
     assert "CWE-78" not in cwes(code)
 
@@ -150,7 +150,7 @@ def test_call_chained_on_sink_call_in_declaration():
     code = ("const { execSync } = require('child_process');\n"
             "function handler(req, res) {\n"
             "  const out = execSync('git log ' + req.query.cmd).toString();\n"
-            "  res.json({ out });\n}\nmodule.exports = handler;")
+            "  res.json({ out });\n}\nrequire('express').Router().get('/log', handler);")
     assert "CWE-78" in cwes(code)
 
 
@@ -244,46 +244,46 @@ def test_session_user_id_is_server_state_not_a_source():
     assert not [v for v in r.vulnerabilities if v.cwe_id == "CWE-943"]
 
 
-# ---- `req` is a guess unless a web framework is in sight --------------------------------------
+# ---- a request is what a framework hands a handler, never a parameter's name -----------------
 
-def _evidence(code, lang="typescript", name="c.ts"):
+def _cmd(code, lang="typescript", name="c.ts"):
     from frame.sil.scanner import FrameScanner
-    r = FrameScanner(language=lang).scan(code, name)
-    return [v.source_evidence for v in r.vulnerabilities if v.source_var.startswith("req")]
+    return [v for v in FrameScanner(language=lang).scan(code, name).vulnerabilities if v.cwe_id == "CWE-78"]
 
 
 SINK = "require('child_process').exec('ls ' + req.query.dir);"
 
 
-def test_req_with_no_framework_is_tagged_as_a_naming_guess():
-    assert _evidence(f"export class C {{ list(req: any) {{ {SINK} }} }}") == ["naming-convention"]
+def test_a_parameter_named_req_is_not_a_source():
+    assert not _cmd(f"export class C {{ list(req: any) {{ {SINK} }} }}")
 
 
-def test_req_in_an_express_file_is_not_tagged():
+def test_an_express_handler_request_is_a_source():
     code = f"import express from 'express';\nconst app = express();\napp.get('/', (req, res) => {{ {SINK} }});"
-    assert _evidence(code, "javascript", "a.js") == [""]
+    assert _cmd(code, "javascript", "a.js")
 
 
-def test_a_typed_request_parameter_counts_as_framework_evidence():
-    assert _evidence(f"export function h(req: Request) {{ {SINK} }}") == [""]
+def test_a_parameter_typed_as_express_request_is_a_request():
+    assert _cmd(f"import {{ Request }} from 'express';\nexport function h(req: Request) {{ {SINK} }}")
+    # the Fetch API's global Request is another type (a Next.js route handler's is the nextjs pack's)
+    assert not _cmd(f"export function h(req: Request) {{ {SINK} }}")
 
 
-def test_framework_anywhere_in_the_project_removes_the_tag(tmp_path):
+def test_a_handler_passing_its_request_to_another_files_method(tmp_path):
     from frame.sil.scanner import FrameScanner
     (tmp_path / "ctl.ts").write_text(f"export class C {{ list(req: any) {{ {SINK} }} }}\n")
     (tmp_path / "app.ts").write_text(
         "import express from 'express';\nimport { C } from './ctl';\nconst app = express();\n"
         "const c = new C();\napp.get('/', (req, res) => c.list(req));\n")
-    s = FrameScanner(verify=False)
-    res = s.scan_directory(str(tmp_path), None)
-    tags = [v.source_evidence for r in res for v in r.vulnerabilities if v.source_var.startswith("req")]
-    assert tags and set(tags) == {""}
+    res = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    assert ("ctl.ts", "CWE-78") in {(r.filename.rsplit("/", 1)[-1], v.cwe_id) for r in res for v in r.vulnerabilities}
 
 
-def test_tag_is_in_the_json_only_when_set():
+def test_findings_carry_no_naming_convention_tag():
     from frame.sil.scanner import FrameScanner
-    r = FrameScanner(language="typescript").scan(f"export class C {{ f(req: any) {{ {SINK} }} }}", "c.ts")
-    assert r.vulnerabilities[0].to_dict()["source_evidence"] == "naming-convention"
+    code = f"import express from 'express';\nconst app = express();\napp.get('/', (req, res) => {{ {SINK} }});"
+    r = FrameScanner(language="javascript").scan(code, "a.js")
+    assert r.vulnerabilities and all("source_evidence" not in v.to_dict() for v in r.vulnerabilities)
 
 
 def _js(code):
@@ -340,8 +340,8 @@ def test_a_regex_literal_named_like_a_password_is_not_a_secret():
 
 
 def test_verifying_an_untrusted_jwt_is_not_a_finding():
-    code = ("const jwt = require('jsonwebtoken');\nfunction auth(req, res, next) {\n"
-            "  req.user = jwt.verify(req.query.token, 'k');\n  next();\n}\n")
+    code = ("const jwt = require('jsonwebtoken');\nconst app = require('express')();\nfunction auth(req, res, next) {\n"
+            "  req.user = jwt.verify(req.query.token, 'k');\n  next();\n}\napp.use(auth);\n")
     assert not any(c == "CWE-863" for _, c in _scan_js(code))
 
 
@@ -360,7 +360,7 @@ def test_create_cipheriv_flags_only_weak_algorithms(alg, flagged):
 
 def test_sink_through_a_member_chain_is_found_in_an_assignment_too():
     code = ("function f(name) { const rows = this.db.query(\"SELECT * FROM u WHERE n = '\" + name + \"'\"); return rows; }\n"
-            "function h(req) { f(req.query.n); }\n")
+            "function h(req) { f(req.query.n); }\nrequire('express')().get('/u', h);\n")
     assert any(c == "CWE-89" for _, c in _scan_js(code))
 
 

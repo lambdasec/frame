@@ -46,10 +46,12 @@ _SINK_KINDS = {k.value for k in SinkKind} | set(_SINK_KIND_ALIASES)
 
 _PACK_KEYS = {"name", "language", "description", "detect", "version", "references", "dict_queries",
               "request_objects"}
-_DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names"}
+_DETECT_KEYS = {"imports", "annotations", "extends", "files", "module_names", "dependencies"}
 _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annotation", "extends",
                "method", "registered_via", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
-               "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description"}
+               "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
+               "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives"}
+_REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "description", "references"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
 _SINK_KEYS = {"call", "name", "args", "arg_names", "kind", "when_kwarg", "json_for_literals", "description"}
 _SANITIZER_KEYS = {"call", "name", "kinds", "description"}
@@ -81,7 +83,7 @@ _TOOL_KEYS = {
 _TOP_KEYS = {"pack", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
-             "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration",
+             "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
              "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # What a [[setting]] reports, and where the setting can be written.
@@ -118,6 +120,13 @@ class Entrypoint:
     fields: str = ""                     # "" | "all" | "annotated" | "settable" (true means "all")
     field_annotation: List[str] = field(default_factory=list)
     kind: str = "user_input"
+    request_type: str = ""               # the selected parameters are request objects of this [[request_type]]
+    module_path: List[str] = field(default_factory=list)    # globs on the file's path (`**/pages/api/**`)
+    exports: List[str] = field(default_factory=list)        # what the module exports it as (`default`, `*`)
+    directives: List[str] = field(default_factory=list)     # a directive its module starts with (`use server`)
+    body_directives: List[str] = field(default_factory=list)  # a directive its own body starts with
+    arity: List[int] = field(default_factory=list)          # only functions with this many parameters
+    exclude_arity: List[int] = field(default_factory=list)  # not functions with this many
     description: str = ""
 
 
@@ -365,6 +374,21 @@ class ToolRegistration:
 
 
 @dataclass
+class CallbackParam:
+    """A framework calls the functions registered through `registered_via` with a value of the
+    origin `origin` at `position` (`[[callback_param]]`): Socket.IO's `io.on("connection",
+    socket => ...)` hands in a socket, `fastify.register(plugin)` the instance. Calls on that
+    parameter are then named after it (`socket.io.Socket.on`), so packs match them. `event`:
+    only when the registration's first argument is one of these literals."""
+    id: str
+    registered_via: List[str]
+    position: int
+    origin: str
+    event: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
 class Policy:
     """An infrastructure misconfiguration (`[[policy]]`, IaC packs only): `when` is a formula in
     the policy language (frame/iac/policy.py) over a resource's views; a resource of one of
@@ -394,6 +418,7 @@ class Pack:
     detect_extends: List[str] = field(default_factory=list)
     detect_files: List[str] = field(default_factory=list)          # file name globs
     detect_module_names: List[str] = field(default_factory=list)   # names assigned at module level
+    detect_dependencies: List[str] = field(default_factory=list)   # npm packages the nearest package.json declares
     entrypoints: List[Entrypoint] = field(default_factory=list)
     rules: List[Rule] = field(default_factory=list)
     settings: List[Setting] = field(default_factory=list)
@@ -401,6 +426,8 @@ class Pack:
     lambda_handlers: List[LambdaHandler] = field(default_factory=list)
     fluents: List[Fluent] = field(default_factory=list)
     tool_registrations: List[ToolRegistration] = field(default_factory=list)
+    request_types: Dict[str, Any] = field(default_factory=dict)    # id -> instructions.RequestType
+    callback_params: List[CallbackParam] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
@@ -421,7 +448,7 @@ class Pack:
     @property
     def has_detect(self) -> bool:
         return bool(self.detect_imports or self.detect_annotations or self.detect_extends
-                    or self.detect_files or self.detect_module_names)
+                    or self.detect_files or self.detect_module_names or self.detect_dependencies)
 
     def applies_to_language(self, language: str) -> bool:
         if self.language == language:
@@ -458,6 +485,11 @@ def _check_keys(origin: str, where: str, table: Dict[str, Any], allowed: set) ->
     unknown = sorted(set(table) - allowed)
     if unknown:
         raise _fail(origin, where, f"unknown key(s) {unknown}; allowed: {sorted(allowed)}")
+
+
+def _taint_kind_value(kind: str) -> str:
+    """A pack's source kind as the TaintKind value (`file_input` is `file`)."""
+    return {"user_input": "user", "network_input": "network", "file_input": "file"}.get(kind, kind)
 
 
 def _sink_kind(origin: str, where: str, value: Any) -> str:
@@ -513,6 +545,41 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     pack.detect_extends = _strings(origin, "detect.extends", detect.get("extends", []))
     pack.detect_files = _strings(origin, "detect.files", detect.get("files", []))
     pack.detect_module_names = _strings(origin, "detect.module_names", detect.get("module_names", []))
+    pack.detect_dependencies = _strings(origin, "detect.dependencies", detect.get("dependencies", []))
+    if pack.detect_dependencies and language not in ("javascript", "typescript"):
+        raise _fail(origin, "detect.dependencies", "reads package.json: for JavaScript packs")
+
+    from frame.sil.instructions import RequestType
+    for i, t in enumerate(data.get("request_type", [])):
+        where = f"[[request_type]] #{i + 1}"
+        _check_keys(origin, where, t, _REQUEST_TYPE_KEYS)
+        rid = t.get("id")
+        if not isinstance(rid, str) or not rid or rid in pack.request_types:
+            raise _fail(origin, f"{where}.id", "a new id is required")
+        fields = _strings(origin, f"{where}.fields", t.get("fields", []), allow_empty=False)
+        methods = _strings(origin, f"{where}.methods", t.get("methods", []))
+        server = _strings(origin, f"{where}.server_state", t.get("server_state", []))
+        if fields == ["*"]:
+            if methods:
+                raise _fail(origin, where, 'with fields = ["*"] every method is client data too: no methods')
+        elif "*" in fields or server:
+            raise _fail(origin, where, 'server_state goes with fields = ["*"] (every property but those)')
+        for path in fields + methods + server:
+            if path != "*" and not all(seg.isidentifier() or seg.startswith("$") for seg in path.split(".")):
+                raise _fail(origin, where, f"{path!r} is not a property path")
+        kinds = t.get("kinds", {})
+        if not isinstance(kinds, dict) or not all(isinstance(k, str) for k in kinds):
+            raise _fail(origin, f"{where}.kinds", "maps property paths to source kinds")
+        for path, kind in kinds.items():
+            if path not in fields:
+                raise _fail(origin, f"{where}.kinds", f"{path!r} is not one of its fields")
+        pack.request_types[rid] = RequestType(
+            name=f"{language}/{name}:{rid}",
+            fields=() if fields == ["*"] else tuple(tuple(f.split(".")) for f in fields),
+            methods=tuple(tuple(m.split(".")) for m in methods),
+            all_fields=fields == ["*"], server_state=tuple(server),
+            kinds=tuple((tuple(path.split(".")), _taint_kind_value(_source_kind(origin, f"{where}.kinds", k)))
+                        for path, k in kinds.items()))
 
     for i, t in enumerate(data.get("entrypoint", [])):
         where = f"[[entrypoint]] #{i + 1}"
@@ -520,7 +587,8 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
         for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "param_annotation", "param_type",
                     "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation", "class_name",
-                    "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "first_param"):
+                    "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "first_param",
+                    "module_path", "exports", "directives", "body_directives"):
             if key in t:
                 setattr(e, key, _strings(origin, f"{where}.{key}", t[key]))
         if "annotation" in t:                                   # alias of decorator
@@ -558,10 +626,25 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             raise _fail(origin, where, "fields = \"annotated\" and field_annotation go together")
         e.fields = fields
         e.kind = _source_kind(origin, f"{where}.kind", t.get("kind", "user_input"))
+        if "request_type" in t:
+            if t["request_type"] not in pack.request_types:
+                raise _fail(origin, f"{where}.request_type", f"names no [[request_type]] of this pack ({t['request_type']})")
+            if "kind" in t:
+                raise _fail(origin, where, "a request_type entry point makes request objects: no kind")
+            e.request_type = t["request_type"]
+        for key in ("arity", "exclude_arity"):
+            if key in t:
+                v = t[key]
+                if not isinstance(v, list) or not v or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0
+                                                               for n in v):
+                    raise _fail(origin, f"{where}.{key}", "must be a list of parameter counts")
+                setattr(e, key, list(v))
         if not (e.decorator or e.class_decorator or e.extends or e.method or e.registered_via or e.class_name
-                or e.first_param):
+                or e.first_param or e.exports or e.directives or e.body_directives):
             raise _fail(origin, where, "needs at least one of decorator/annotation, class_decorator, "
-                                       "extends, class_name, method, registered_via, first_param")
+                                       "extends, class_name, method, registered_via, first_param, exports")
+        if e.module_path and not e.exports:
+            raise _fail(origin, where, "module_path goes with exports (what a file-system convention dispatches to)")
         if params == "none" and not e.fields and not e.tainted_param_type:
             raise _fail(origin, where, "taints nothing: set params, fields or tainted_param_type")
         pack.entrypoints.append(e)
@@ -913,6 +996,24 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if reg.entrypoint and reg.entrypoint not in {e.id for e in pack.entrypoints}:
             raise _fail(origin, f"{where}.entrypoint", f"names no entry point of this pack ({reg.entrypoint})")
         pack.tool_registrations.append(reg)
+
+    for i, t in enumerate(data.get("callback_param", [])):
+        where = f"[[callback_param]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "registered_via", "position", "origin", "event", "description"})
+        if language not in ("javascript", "typescript"):
+            raise _fail(origin, where, "callback parameters are for JavaScript packs")
+        pos = t.get("position")
+        if not isinstance(pos, int) or isinstance(pos, bool) or pos < 0:
+            raise _fail(origin, f"{where}.position", "must be a parameter position (0-based)")
+        if not isinstance(t.get("origin"), str) or not t["origin"]:
+            raise _fail(origin, f"{where}.origin", "needs the value's id (`socket.io.Socket`)")
+        cb = CallbackParam(id=str(t.get("id", f"{name}-callback-{i + 1}")),
+                           registered_via=_strings(origin, f"{where}.registered_via", t.get("registered_via", []),
+                                                   allow_empty=False),
+                           position=pos, origin=t["origin"],
+                           event=_strings(origin, f"{where}.event", t.get("event", [])),
+                           description=str(t.get("description", "")))
+        pack.callback_params.append(cb)
 
     code_tables = [t for t in _TOP_KEYS - {"pack", "policy", "define"} if data.get(t)]
     if language in IAC_LANGUAGES and code_tables:

@@ -1,16 +1,49 @@
 [pack]
 name = "koa"
 language = "javascript"
-description = "Koa middleware and @koa/router handlers (ctx.query / ctx.params / ctx.request.body)"
+description = "Koa middleware and @koa/router / koa-router handlers, and what their context holds"
 detect = { imports = ["koa", "@koa/router", "koa-router", "koa-bodyparser", "@koa/bodyparser", "koa-body"] }
+references = ["https://koajs.com/#context", "https://koajs.com/#request", "https://github.com/koajs/router/blob/master/API.md",
+              "https://github.com/koajs/bodyparser", "https://github.com/koajs/koa-body"]
 
-# Everything on `ctx` is request data: ctx.query, ctx.params, ctx.request.body,
-# ctx.headers, ctx.cookies.get(...), ctx.request.files.
+# A middleware is (ctx, next). What the context holds that the client chose: the request's URL
+# parts, headers and parsed body (ctx.request.body / files from koa-bodyparser and koa-body), the
+# route params (@koa/router), the cookies' values (ctx.cookies.get), and the Node request behind it.
+# Everything else is server state: ctx.state, ctx.session, ctx.app, and ctx.body (the response).
+[[request_type]]
+id = "context"
+fields = ["query", "querystring", "path", "url", "originalUrl", "href", "host", "hostname", "header", "headers",
+          "params", "request.body", "request.files", "request.query", "request.querystring", "request.path",
+          "request.url", "request.originalUrl", "request.href", "request.host", "request.hostname",
+          "request.header", "request.headers", "req.headers", "req.url", "req.rawHeaders"]
+methods = ["get", "request.get", "cookies.get"]
+kinds = { "request.files" = "file" }
+
+# app.use(middleware) on a new Koa(); router.get / post / put / patch / del / delete / all / head /
+# options / use(path, middleware...) on a new Router().
 [[entrypoint]]
-id = "koa-router-handler"
-registered_via = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.del", "*.all", "*.use", "*.param"]
-params = ["ctx", "context"]
-description = "Koa context object"
+id = "middleware"
+registered_via = ["koa.use", "@koa/router.get", "@koa/router.post", "@koa/router.put", "@koa/router.patch", "@koa/router.del", "@koa/router.delete", "@koa/router.all", "@koa/router.head", "@koa/router.options", "@koa/router.use", "koa-router.get", "koa-router.post", "koa-router.put", "koa-router.patch", "koa-router.del", "koa-router.delete", "koa-router.all", "koa-router.head", "koa-router.options", "koa-router.use"]
+param_positions = [0]
+params = "all"
+request_type = "context"
+description = "the context of a Koa middleware or route"
+
+# router.param(name, (value, ctx, next) => ...): the route parameter's value and the context.
+[[entrypoint]]
+id = "param-middleware"
+registered_via = ["@koa/router.param", "koa-router.param"]
+param_positions = [1]
+params = "all"
+request_type = "context"
+description = "the context of a router.param middleware"
+
+[[entrypoint]]
+id = "param-value"
+registered_via = ["@koa/router.param", "koa-router.param"]
+param_positions = [0]
+params = "all"
+description = "the route parameter value a router.param middleware receives"
 
 [[sink]]
 name = ["ctx.redirect", "context.redirect"]

@@ -1,37 +1,112 @@
 [pack]
 name = "nextjs"
 language = "javascript"
-description = "Next.js: app-router route handlers, server actions, getServerSideProps, page props"
-detect = { imports = ["next"] }
+description = "Next.js: pages/api routes, app-router route handlers, server actions, data fetching, page props"
+detect = { imports = ["next"], dependencies = ["next"] }
+references = ["https://nextjs.org/docs/pages/building-your-application/routing/api-routes",
+              "https://nextjs.org/docs/app/building-your-application/routing/route-handlers",
+              "https://nextjs.org/docs/app/api-reference/functions/next-request",
+              "https://nextjs.org/docs/pages/building-your-application/data-fetching/get-server-side-props",
+              "https://nextjs.org/docs/app/api-reference/file-conventions/page",
+              "https://react.dev/reference/rsc/use-server"]
 
-# app/**/route.js: `export async function GET(request)`; the Request carries the URL, headers and body
+# pages/api/**: the default export is the request handler, (req, res) with req a Node
+# IncomingMessage plus Next.js's query, cookies and body.
+[[request_type]]
+id = "api-request"
+fields = ["query", "cookies", "body", "headers", "rawHeaders", "url"]
+
+[[entrypoint]]
+id = "api-route"
+module_path = ["**/pages/api/**"]
+exports = ["default"]
+param_positions = [0]
+params = "all"
+request_type = "api-request"
+description = "the request of a pages/api route"
+
+# app/**/route.js: `export async function GET(request, { params })`; the request is a Web
+# Request (NextRequest): its URL, headers, cookies and body; the second argument's params are
+# the dynamic route segments.
+[[request_type]]
+id = "route-request"
+fields = ["url", "nextUrl.pathname", "nextUrl.search", "nextUrl.searchParams", "nextUrl.href", "headers",
+          "cookies", "body"]
+methods = ["json", "text", "formData", "arrayBuffer", "blob"]
+
+[[request_type]]
+id = "route-context"
+fields = ["params"]
+
 [[entrypoint]]
 id = "route-handler"
-method = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-params = ["request", "req"]
-tainted_param_type = ["next/server.NextRequest", "NextRequest", "Request"]
-description = "Next.js route handler request"
+module_path = ["**/app/**/route.*"]
+exports = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+param_positions = [0]
+params = "all"
+request_type = "route-request"
+description = "the request of an app-router route handler"
 
-# server actions ('use server'): form data posted by the browser
+[[entrypoint]]
+id = "route-handler-params"
+module_path = ["**/app/**/route.*"]
+exports = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+param_positions = [1]
+params = "all"
+request_type = "route-context"
+description = "the dynamic route segments of an app-router route handler"
+
+# Server actions: the exports of a 'use server' module, or a function whose body says so; every
+# argument is what the browser posted.
 [[entrypoint]]
 id = "server-action"
-method = ["*"]
-params = ["formData"]
-tainted_param_type = ["FormData"]
-description = "Next.js server action form data"
+directives = ["use server"]
+exports = ["*"]
+params = "all"
+description = "the arguments of a server action (a 'use server' module's exports)"
 
-# pages router data fetching and app-router pages: context.query / params / searchParams
 [[entrypoint]]
-id = "data-fetching"
-method = ["getServerSideProps", "getStaticProps", "getInitialProps", "generateMetadata", "Page", "page", "Layout"]
-params = ["context", "ctx", "query", "params", "searchParams", "req"]
-description = "Next.js context.query / context.params / searchParams"
+id = "inline-server-action"
+body_directives = ["use server"]
+params = "all"
+description = "the arguments of a function that is a server action ('use server' in its body)"
 
-[[source]]
-name = ["searchParams.get", "searchParams.getAll", "request.cookies.get", "request.headers.get", "req.cookies.get",
-        "req.headers.get", "nextUrl.searchParams.get"]
-kind = "user_input"
-description = "query string / cookie / header of a route-handler request"
+# getServerSideProps(context) / getInitialProps(ctx): the URL's params and query, and the Node
+# request behind it.
+[[request_type]]
+id = "page-context"
+fields = ["params", "query", "resolvedUrl", "asPath", "req.headers", "req.cookies", "req.url", "req.rawHeaders"]
+
+[[entrypoint]]
+id = "server-side-props"
+exports = ["getServerSideProps"]
+param_positions = [0]
+params = "all"
+request_type = "page-context"
+description = "the context of getServerSideProps"
+
+[[entrypoint]]
+id = "initial-props"
+method = ["getInitialProps"]
+param_positions = [0]
+params = "all"
+request_type = "page-context"
+description = "the context of getInitialProps"
+
+# app/**/page.js and layout.js: the default export receives { params, searchParams }, and so does
+# generateMetadata.
+[[request_type]]
+id = "page-props"
+fields = ["params", "searchParams"]
+
+[[entrypoint]]
+id = "page-props"
+module_path = ["**/app/**/page.*", "**/app/**/layout.*"]
+exports = ["default", "generateMetadata"]
+param_positions = [0]
+params = "all"
+request_type = "page-props"
+description = "the route params and search params of an app-router page"
 
 [[source]]
 call = ["next/headers.cookies", "next/headers.headers"]

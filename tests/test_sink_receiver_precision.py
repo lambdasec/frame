@@ -27,10 +27,14 @@ def cwes(code, language, name):
     return {c for c, _ in findings(code, language, name)}
 
 
+# An Express application: its handlers' request objects are what the express pack makes attacker data.
+APP = "const express = require('express');\nconst app = express();\n"
+
+
 # ---- JS: global functions are not methods --------------------------------
 
 def _express(stmt):
-    return ("app.get('/x', function (req, res) {\n"
+    return (APP + "app.get('/x', function (req, res) {\n"
             "  var code = req.query.code;\n"
             f"  {stmt}\n"
             "  res.send('ok');\n"
@@ -60,7 +64,7 @@ def test_js_global_code_sinks_still_flagged(stmt):
 
 def test_js_suffix_matching_still_reaches_member_specs():
     # Non-global specs keep suffix matching (models.sequelize.query -> query).
-    code = ("app.get('/u', function (req, res) {\n"
+    code = (APP + "app.get('/u', function (req, res) {\n"
             "  var id = req.query.id;\n"
             "  models.sequelize.query('SELECT * FROM u WHERE id = ' + id);\n"
             "  res.send('ok');\n"
@@ -315,7 +319,7 @@ def test_weak_messagedigest_still_flagged(call):
 # ---- JS module bindings: calls are named after the module they come from --
 
 def _route(head, stmt):
-    return (head + "app.get('/x', function (req, res) {\n  var c = req.query.c;\n  "
+    return (APP + head + "app.get('/x', function (req, res) {\n  var c = req.query.c;\n  "
             + stmt + "\n  res.send('ok');\n});\n")
 
 
@@ -392,7 +396,7 @@ def _nosql(head, stmt, library=False):
     if library:
         code = head + "module.exports = function (q) {\n  " + stmt + "\n};\n"
     else:
-        code = head + ("app.get('/x', function (req, res) {\n  var q = req.query.q;\n  "
+        code = APP + head + ("app.get('/x', function (req, res) {\n  var q = req.query.q;\n  "
                        + stmt + "\n  res.send('ok');\n});\n")
     r = FrameScanner(language="javascript", library_mode=library).scan(code, "t.js")
     assert not r.errors, r.errors

@@ -3,56 +3,6 @@
 # Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
 
 [[spec]]
-name = "req.body"
-is_source = "user"
-description = "Express request body"
-
-[[spec]]
-name = "req.query"
-is_source = "user"
-description = "Express query parameters"
-
-[[spec]]
-name = "req.params"
-is_source = "user"
-description = "Express route parameters"
-
-[[spec]]
-name = "req.cookies"
-is_source = "user"
-description = "Express cookies"
-
-[[spec]]
-name = "req.headers"
-is_source = "user"
-description = "Express request headers"
-
-[[spec]]
-name = "req.get"
-is_source = "user"
-description = "Express header getter"
-
-[[spec]]
-name = "req.header"
-is_source = "user"
-description = "Express header getter"
-
-[[spec]]
-name = "req.param"
-is_source = "user"
-description = "Express parameter getter"
-
-[[spec]]
-name = "req.files"
-is_source = "file"
-description = "Express file uploads"
-
-[[spec]]
-name = "req.file"
-is_source = "file"
-description = "Express single file upload"
-
-[[spec]]
 name = "res.send"
 is_sink = "html"
 json_for_literals = true      # an object or array is sent as application/json

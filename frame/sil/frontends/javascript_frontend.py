@@ -52,6 +52,9 @@ from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
 from frame.sil.packs import default_packs, finish_program
+from frame.sil.packs.apply import bound_names, _detected as pack_detected
+from frame.sil.value_origins import annotate as annotate_value_origins, origin_in_scope
+from frame.sil.registrations import Registration, apply_callback_params
 from frame.sil.specs.template_engines import load as _template_engines
 from frame.sil.specs.third_party_js import load as _third_party_js
 from frame.sil.loop_exit import body_can_exit_loop
@@ -183,11 +186,7 @@ class JavaScriptFrontend:
 
         self._link_enclosing_procedures(program)
         annotate_program_calls(program, self._imports)
-
-        # One-hop interprocedural taint: a request-derived value passed to a
-        # same-file function taints that function's parameter (e.g. a handler
-        # computes `file` from req and calls a helper verify(file) that sends it).
-        self._propagate_js_interprocedural(tree.root_node, program)
+        annotate_value_origins(program)            # callee ids by value origin, for _record_declarations
 
         # The whole-file ReDoS and prototype-pollution passes are structural
         # heuristics, not taint-gated. On vendored third-party libraries and
@@ -200,6 +199,8 @@ class JavaScriptFrontend:
             self._scan_proto_pollution(tree.root_node, program)
 
         self._record_declarations(tree.root_node, program)
+        packs = self.packs if self.packs is not None else default_packs()
+        apply_callback_params(program, [p for p in packs.for_language(self.language) if pack_detected(p, program)])
         finish_program(program, self.packs, source_code)
         self._entry_taint_into_closures(program)
         return program
@@ -232,7 +233,7 @@ class JavaScriptFrontend:
                     if name in proc.captures and name not in have \
                             and name not in {str(p) for p, _ in proc.params}:
                         node.instrs.insert(0, TaintSource(loc=src.loc, var=src.var, kind=src.kind,
-                                                          description=src.description))
+                                                          description=src.description, request=src.request))
                         have.add(name)
                         changed = True
             if not changed:
@@ -242,52 +243,240 @@ class JavaScriptFrontend:
         """Parameter types (TypeScript), the callees each function is passed to
         (`app.get('/x', handler)`), read from the tree for framework packs."""
         by_span = {p.span: p for p in program.procedures.values() if p.span}
+        program.directives = self._directive_prologue(root)
         stack = [root]
         while stack:
             n = stack.pop()
             stack.extend(n.children)
             if n.type in self._FUNC_LIKE:
                 proc = by_span.get((n.start_byte, n.end_byte))
+                body = n.child_by_field_name("body")
+                if proc is not None and body is not None and body.type == "statement_block":
+                    proc.directives = self._directive_prologue(body)
                 params = n.child_by_field_name("parameters")
                 if proc is None or params is None:
                     continue
-                for ch in params.children:
-                    if ch.type not in ("required_parameter", "optional_parameter"):
-                        continue
-                    pat, ty = ch.child_by_field_name("pattern"), ch.child_by_field_name("type")
-                    if pat is not None and pat.type == "identifier" and ty is not None:
+                for name, _, _, ty in self._parameter_list(params):
+                    if ty is not None:
                         text = self._get_text(ty).lstrip(":").strip().split("<")[0].strip()
                         if text:
-                            proc.param_types[self._get_text(pat)] = text
+                            proc.param_types[name] = text
             elif n.type in ("pair", "variable_declarator"):
                 self._register_graphql_resolvers(n, by_span)
+            if n.type in ("export_statement", "assignment_expression"):
+                self._record_exports(n, by_span, program)
             elif n.type == "call_expression":
                 callee, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
                 if callee is None or args is None:
                     continue
                 callee_text = self._get_text(callee)
+                # the callee by what its receiver is (`app.get` with `app = express()` is
+                # `express.get`), so a pack names a framework's registration, not a variable
+                scope = self._enclosing_proc_name(n, by_span)
+                callee_id = self._value_id(callee, scope, program)
+                vias = [callee_text] + ([callee_id] if callee_id and callee_id != callee_text else [])
+                chain = self._callee_chain(callee)
+                first = next((c for c in args.named_children if c.type != "comment"), None)
+                event = self._get_text(first)[1:-1] if first is not None and first.type == "string" else None
                 for arg_index, a in enumerate(args.named_children):
-                    target = None
-                    if a.type in self._FUNC_LIKE:
-                        target = by_span.get((a.start_byte, a.end_byte))
-                    elif a.type == "identifier":
-                        target = program.procedures.get(self._get_text(a))
-                    if target is not None and callee_text not in target.registered_via:
-                        target.registered_via.append(callee_text)
-                    if target is not None and (callee_text, arg_index) not in target.passed_as:
-                        target.passed_as.append((callee_text, arg_index))
-                    elif a.type == "object":
-                        # `server.route({ handler: (request, h) => ... })`, `fastify.route({ handler() {} })`:
-                        # the function is registered as `<callee>.<property>`.
-                        for prop in a.named_children:
-                            key = prop.child_by_field_name("key") or prop.child_by_field_name("name")
-                            value = prop.child_by_field_name("value") if prop.type == "pair" else prop
-                            if key is None or value is None or value.type not in self._FUNC_LIKE:
-                                continue
-                            fn = by_span.get((value.start_byte, value.end_byte))
-                            via = f"{callee_text}.{self._get_text(key).strip(chr(39) + chr(34))}"
-                            if fn is not None and via not in fn.registered_via:
-                                fn.registered_via.append(via)
+                    elements = [e for e in a.named_children if e.type != "comment"] if a.type == "array" else [a]
+                    for el in elements:                         # `app.get(path, [auth, handler])`
+                        target = None
+                        if el.type in self._FUNC_LIKE:
+                            target = by_span.get((el.start_byte, el.end_byte))
+                        elif el.type == "identifier":
+                            target = program.procedures.get(self._get_text(el))
+                        module = self._required_specifier(el)
+                        if target is not None or module is not None or el.type in ("identifier", "member_expression"):
+                            # kept for callback origins and the project step (receivers handed in,
+                            # handlers elsewhere, `register(require("./routes"))`)
+                            program.registrations.append(Registration(
+                                scope=scope, callee_text=callee_text,
+                                root=chain[0] if chain else None, rest=chain[1] if chain else (),
+                                arg_index=arg_index, target=target.name if target is not None else None,
+                                ref=None if target is not None or module is not None else self._get_text(el),
+                                event=event, module=module))
+                        if target is None:
+                            continue
+                        for via in vias:
+                            if via not in target.registered_via:
+                                target.registered_via.append(via)
+                        if (callee_text, arg_index) not in target.passed_as:
+                            target.passed_as.append((callee_text, arg_index))
+                    # `server.route({ handler: (request, h) => ... })`, `fastify.route({ handler() {} })`,
+                    # `server.route([{ ..., options: { handler } }])`: the function is registered as
+                    # `<callee>.<property path>`.
+                    for obj in ([a] if a.type == "object" else
+                                [e for e in a.named_children if e.type == "object"] if a.type == "array" else []):
+                        self._register_object_functions(obj, vias, by_span, depth=2)
+
+    def _register_object_functions(self, obj: TSNode, vias: List[str], by_span, depth: int) -> None:
+        for prop in obj.named_children:
+            key = prop.child_by_field_name("key") or prop.child_by_field_name("name")
+            value = prop.child_by_field_name("value") if prop.type == "pair" else prop
+            if key is None or value is None:
+                continue
+            prop_name = self._get_text(key).strip(chr(39) + chr(34))
+            if value.type == "object" and depth > 1:
+                self._register_object_functions(value, [f"{b}.{prop_name}" for b in vias], by_span, depth - 1)
+                continue
+            if value.type not in self._FUNC_LIKE:
+                continue
+            fn = by_span.get((value.start_byte, value.end_byte))
+            for base in vias:
+                via = f"{base}.{prop_name}"
+                if fn is not None and via not in fn.registered_via:
+                    fn.registered_via.append(via)
+
+    def _directive_prologue(self, node: TSNode) -> List[str]:
+        """The directives a module or function body starts with (`"use server"`, `"use strict"`):
+        its leading statements that are a lone string literal (ECMAScript directive prologue)."""
+        out: List[str] = []
+        for st in node.named_children:
+            if st.type == "comment":
+                continue
+            if st.type != "expression_statement":
+                break
+            expr = next((c for c in st.named_children if c.type != "comment"), None)
+            if expr is None or expr.type != "string":
+                break
+            out.append(self._get_text(expr)[1:-1])
+        return out
+
+    def _record_exports(self, node: TSNode, by_span, program: Program) -> None:
+        """`Procedure.exported_as`: what the module exports a function as. ES `export default
+        function h`, `export function f`, `export const f = ...`, `export { f as g }`; CommonJS
+        `module.exports = f` (default), `module.exports = { a, b: f }`, `exports.f = ...`."""
+        def proc_of(value: Optional[TSNode]):
+            if value is None:
+                return None
+            if value.type in self._FUNC_LIKE:
+                return by_span.get((value.start_byte, value.end_byte))
+            if value.type == "identifier":
+                return program.procedures.get(self._get_text(value))
+            return None
+
+        def mark(proc, name: str) -> None:
+            if proc is not None and name not in proc.exported_as:
+                proc.exported_as.append(name)
+
+        def members(obj: TSNode) -> None:
+            for m in obj.named_children:
+                if m.type == "pair":
+                    key = m.child_by_field_name("key")
+                    if key is not None:
+                        mark(proc_of(m.child_by_field_name("value")), self._get_text(key).strip("'\""))
+                elif m.type == "shorthand_property_identifier":
+                    mark(program.procedures.get(self._get_text(m)), self._get_text(m))
+                elif m.type == "method_definition":
+                    key = m.child_by_field_name("name")
+                    if key is not None:
+                        mark(by_span.get((m.start_byte, m.end_byte)), self._get_text(key))
+
+        if node.type == "export_statement":
+            default = any(c.type == "default" for c in node.children)
+            decl = node.child_by_field_name("declaration")
+            value = node.child_by_field_name("value")
+            if default:
+                target = decl if decl is not None else value
+                mark(proc_of(target), "default")
+            elif decl is not None and decl.type in ("function_declaration", "generator_function_declaration"):
+                name = decl.child_by_field_name("name")
+                if name is not None:
+                    mark(proc_of(decl), self._get_text(name))
+            elif decl is not None and decl.type in ("lexical_declaration", "variable_declaration"):
+                for d in decl.named_children:
+                    if d.type == "variable_declarator" and d.child_by_field_name("name") is not None:
+                        mark(proc_of(d.child_by_field_name("value")), self._get_text(d.child_by_field_name("name")))
+            for clause in (c for c in node.named_children if c.type == "export_clause"):
+                for spec in clause.named_children:
+                    if spec.type == "export_specifier":
+                        local, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                        if local is not None:
+                            mark(proc_of(local), self._get_text(alias or local))
+            return
+        left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+        if left is None or right is None:
+            return
+        target = self._get_text(left)
+        if target == "module.exports":
+            if right.type == "object":
+                members(right)
+            else:
+                mark(proc_of(right), "default")
+        elif target.startswith(("module.exports.", "exports.")) and target.count(".") == target.startswith("module.") + 1:
+            mark(proc_of(right), target.rsplit(".", 1)[-1])
+
+    def _enclosing_proc_name(self, node: TSNode, by_span) -> str:
+        """The procedure a node is written in (the innermost function around it, else the module)."""
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                proc = by_span.get((cur.start_byte, cur.end_byte))
+                if proc is not None:
+                    return proc.name
+            cur = cur.parent
+        return "<module>"
+
+    def _required_specifier(self, node: TSNode) -> Optional[str]:
+        """`./routes` for `require("./routes")`, else None."""
+        if node.type != "call_expression":
+            return None
+        fn, args = node.child_by_field_name("function"), node.child_by_field_name("arguments")
+        if fn is None or fn.type != "identifier" or self._get_text(fn) != "require" or args is None:
+            return None
+        first = next((c for c in args.named_children if c.type != "comment"), None)
+        return self._get_text(first)[1:-1] if first is not None and first.type == "string" else None
+
+    def _callee_chain(self, node: TSNode) -> Optional[Tuple[str, Tuple[str, ...]]]:
+        """(`app`, ("route", "get")) for `app.route("/x").get`: the name a callee is reached from
+        and the members after it (calls in between are the values they return), else None."""
+        rest: List[str] = []
+        cur = node
+        while True:
+            if cur.type == "identifier":
+                return self._get_text(cur), tuple(reversed(rest))
+            if cur.type == "member_expression":
+                prop = cur.child_by_field_name("property")
+                if prop is None:
+                    return None
+                rest.append(self._get_text(prop))
+                cur = cur.child_by_field_name("object")
+            elif cur.type == "call_expression":
+                cur = cur.child_by_field_name("function")
+            elif cur.type in ("parenthesized_expression", "await_expression", "non_null_expression"):
+                cur = next((c for c in cur.named_children if c.type != "comment"), None)
+            else:
+                return None
+            if cur is None:
+                return None
+
+    def _value_id(self, node: TSNode, scope: str, program: Program) -> Optional[str]:
+        """The callee id of an expression by what its values are (value_origins): `app` bound to
+        `express()` is `express`, `express.Router()` is `express.Router`, `require("koa")` is
+        `koa`, `new Router()` the class Router is imported as. None when anything is unknown."""
+        t = node.type
+        if t in ("parenthesized_expression", "await_expression", "non_null_expression", "as_expression"):
+            inner = next((c for c in node.named_children if c.type != "comment"), None)
+            return self._value_id(inner, scope, program) if inner is not None else None
+        if t == "identifier":
+            return origin_in_scope(program, scope, self._get_text(node))
+        if t == "member_expression":
+            obj, prop = node.child_by_field_name("object"), node.child_by_field_name("property")
+            base = self._value_id(obj, scope, program) if obj is not None else None
+            return f"{base}.{self._get_text(prop)}" if base and prop is not None else None
+        if t == "call_expression":
+            fn, args = node.child_by_field_name("function"), node.child_by_field_name("arguments")
+            if fn is not None and fn.type == "identifier" and self._get_text(fn) == "require" and args is not None:
+                first = next((c for c in args.named_children if c.type != "comment"), None)
+                if first is not None and first.type == "string":
+                    return self._get_text(first)[1:-1] or None
+                return None
+            return self._value_id(fn, scope, program) if fn is not None else None
+        if t == "new_expression":
+            ctor = node.child_by_field_name("constructor")
+            return self._value_id(ctor, scope, program) if ctor is not None else None
+        return None
 
     def _registrations(self):
         packs = self.packs if self.packs is not None else default_packs()
@@ -717,7 +906,8 @@ class JavaScriptFrontend:
         body_node = node.child_by_field_name("body")
         proc.span = (node.start_byte, node.end_byte)
         if body_node is not None:
-            own_params = {str(param) for param, _ in proc.params}
+            own_params = {str(param) for param, _ in proc.params} | {
+                n for _, pattern in self._param_patterns_of(node) for n in bound_names(self._get_text(pattern))}
             outer = (self._enclosing_param_names(node) | self._enclosing_local_names(node)) - own_params
             proc.captures = sorted(outer & self._referenced_identifiers(body_node))
 
@@ -758,27 +948,10 @@ class JavaScriptFrontend:
                         loc=proc.loc, var=PVar(nm),
                         kind=TaintKind.USER_INPUT,
                         description="captured untrusted variable (closure)"))
-        # Express-style request destructuring is a taint source regardless of
-        # library mode: `({ body, params, query }: Request, res, next) => ...`.
-        # `params.file` is then user-controlled just like `req.params.file`.
-        for nm in self._express_request_source_names(node):
-            self._add_instr(TaintSource(
-                loc=proc.loc, var=PVar(nm), kind=TaintKind.USER_INPUT,
-                description="destructured Express request property (user input)"))
-
-        # Closure capture of REQUEST-DERIVED enclosing locals (precise, always on):
-        # e.g. `const id = req.body.id` in a handler, then a `.then(r => db.update(
-        # { _id: id }, ...))` callback whose only sink sits inside the callback.
-        # Unlike library mode this taints only request-derived captures, not all
-        # captured names, so it does not add the library-mode false positives.
-        if body_node is not None and not self.taint_function_params:
-            own = {str(param) for param, _ in proc.params}
-            captured = ((self._enclosing_request_derived_locals(node)
-                         & self._referenced_identifiers(body_node)) - own)
-            for nm in sorted(captured):
-                self._add_instr(TaintSource(
-                    loc=proc.loc, var=PVar(nm), kind=TaintKind.USER_INPUT,
-                    description="captured request-derived variable (closure)"))
+        # Destructuring parameters: each bound name is its part of the `$argN` parameter.
+        for pname, pattern in self._param_patterns_of(node):
+            proc.param_patterns[pname] = self._get_text(pattern)
+            self._bind_pattern(pattern, ExpVar(PVar(pname)), None, proc.loc)
 
         if body_node:
             if body_node.type == "statement_block":
@@ -1238,118 +1411,19 @@ class JavaScriptFrontend:
         proc.connect(entry.id, exit_node.id)
         program.add_procedure(proc)
 
-    def _request_derived_names(self, func_node: TSNode) -> set:
-        """Names in a function that are request-derived: destructured request
-        properties plus locals initialized from a request source (small fixpoint).
-        These are the values whose interprocedural flow we track."""
-        names = set(self._express_request_source_names(func_node))
-        body = func_node.child_by_field_name("body")
-        if body is None:
-            return names
-        for _ in range(4):
-            added = False
-            stack = [body]
-            while stack:
-                c = stack.pop()
-                if c.type == "variable_declarator":
-                    nm = c.child_by_field_name("name")
-                    init = c.child_by_field_name("value")
-                    if (nm is not None and nm.type == "identifier" and init is not None):
-                        name = self._get_text(nm)
-                        if name not in names:
-                            chain = self._get_member_chain(init)
-                            refs = self._referenced_identifiers(init)
-                            if self._is_request_chain(chain) or (refs & names):
-                                names.add(name)
-                                added = True
-                stack.extend(c.children)
-            if not added:
-                break
-        return names
-
-    def _collect_js_calls(self, node: TSNode, calls: list) -> None:
-        """Collect bare-identifier calls: (callee_name, [ids-per-arg])."""
-        if node.type == "call_expression":
-            fn = node.child_by_field_name("function")
-            if fn is not None and fn.type == "identifier":
-                callee = self._get_text(fn)
-                args = node.child_by_field_name("arguments")
-                arg_ids = []
-                if args is not None:
-                    for a in args.children:
-                        if a.type in ("(", ")", ","):
-                            continue
-                        arg_ids.append(self._referenced_identifiers(a))
-                calls.append((callee, arg_ids))
-        for ch in node.children:
-            self._collect_js_calls(ch, calls)
-
-    def _propagate_js_interprocedural(self, root: TSNode, program: Program) -> None:
-        """Taint a same-file function's parameter when a caller passes it a
-        request-derived value (one hop). Mirrors the Java pass; recovers e.g.
-        `verify(file)` where a handler derived `file` from the request."""
-        procs_by_name: Dict[str, Any] = {}
-        for p in program.procedures.values():
-            procs_by_name.setdefault(p.name, p)
-            procs_by_name.setdefault(p.name.split(".")[-1], p)
-
-        func_nodes = []
-        stack = [root]
-        while stack:
-            n = stack.pop()
-            if n.type in self._FUNC_LIKE:
-                func_nodes.append(n)
-            stack.extend(n.children)
-
-        to_taint: Dict[str, set] = {}
-        for fn in func_nodes:
-            derived = self._request_derived_names(fn)
-            if not derived:
-                continue
-            body = fn.child_by_field_name("body")
-            if body is None:
-                continue
-            calls: list = []
-            self._collect_js_calls(body, calls)
-            for callee, arg_ids in calls:
-                cproc = procs_by_name.get(callee)
-                if cproc is None:
-                    continue
-                for j, ids in enumerate(arg_ids):
-                    if (ids & derived) and j < len(cproc.params):
-                        to_taint.setdefault(cproc.name, set()).add(j)
-
-        for pname, idxs in to_taint.items():
-            proc = procs_by_name.get(pname)
-            if proc is None or proc.entry_node is None:
-                continue
-            entry = proc.nodes.get(proc.entry_node)
-            if entry is None:
-                continue
-            for j in sorted(idxs):
-                if j >= len(proc.params):
-                    continue
-                pv = proc.params[j][0]
-                entry.instrs.insert(0, TaintSource(
-                    loc=proc.loc, var=pv, kind=TaintKind.USER_INPUT,
-                    description="Interprocedural: request-derived argument from caller"))
+    def _param_patterns_of(self, func_node: TSNode) -> List[Tuple[str, TSNode]]:
+        params = func_node.child_by_field_name("parameters")
+        if params is None:
+            return []
+        return [(name, pattern) for name, _, pattern, _ in self._parameter_list(params) if pattern is not None]
 
     def _func_param_names(self, func_node: TSNode) -> set:
-        """Identifier names of a function node's formal parameters."""
+        """Names a function node's formal parameters bind (a destructuring one's bound names)."""
         names = set()
         params = func_node.child_by_field_name("parameters")
         if params is not None:
-            for child in params.children:
-                if child.type == "identifier":
-                    names.add(self._get_text(child))
-                elif child.type in ("required_parameter", "optional_parameter"):
-                    pat = child.child_by_field_name("pattern")
-                    if pat is not None:
-                        names.add(self._get_text(pat))
-                elif child.type == "assignment_pattern":
-                    left = child.child_by_field_name("left")
-                    if left is not None:
-                        names.add(self._get_text(left))
+            for name, _, pattern, _ in self._parameter_list(params):
+                names |= set(bound_names(self._get_text(pattern))) if pattern is not None else {name}
         else:
             # Arrow with a single bare identifier parameter: x => ...
             for child in func_node.children:
@@ -1408,51 +1482,6 @@ class JavaScriptFrontend:
                         best = (span, other)
             proc.parent = best[1] if best else None
 
-    def _enclosing_request_derived_locals(self, node: TSNode) -> set:
-        """Enclosing-function locals whose initializer is request-derived.
-
-        A local is request-derived if its initializer references `req.`/`request.`,
-        a destructured request property bound in the same function, or another
-        request-derived local (small fixpoint). These stay tainted when captured
-        by a nested callback -- without tainting every captured name.
-        """
-        names: set = set()
-        cur = node.parent
-        while cur is not None:
-            if cur.type in self._FUNC_LIKE:
-                req_names = set(self._express_request_source_names(cur))
-                body = cur.child_by_field_name("body")
-                if body is not None:
-                    for _ in range(4):  # fixpoint for chained locals
-                        added = False
-                        stack = [body]
-                        while stack:
-                            c = stack.pop()
-                            if c.type == "variable_declarator":
-                                nm = c.child_by_field_name("name")
-                                init = c.child_by_field_name("value")
-                                if (nm is not None and nm.type == "identifier"
-                                        and init is not None):
-                                    name = self._get_text(nm)
-                                    if name not in req_names:
-                                        refs = self._referenced_identifiers(init)
-                                        chain = self._get_member_chain(init)
-                                        if (self._is_request_chain(chain) or (refs & req_names)
-                                                or refs & set(_request_objects().js_request_names)):
-                                            req_names.add(name)
-                                            added = True
-                            stack.extend(c.children)
-                        if not added:
-                            break
-                names |= req_names
-            cur = cur.parent
-        return names
-
-    @staticmethod
-    def _is_request_chain(chain: Optional[str]) -> bool:
-        """`req.query.x`: a member chain rooted at a conventional request name (request-objects.toml)."""
-        return bool(chain) and chain.split(".", 1)[0] in _request_objects().js_request_names and "." in chain
-
     def _referenced_identifiers(self, node: TSNode) -> set:
         """All identifier names referenced in a subtree (bounded walk)."""
         refs = set()
@@ -1464,99 +1493,36 @@ class JavaScriptFrontend:
             stack.extend(cur.children)
         return refs
 
-    def _express_request_source_names(self, node: TSNode) -> set:
-        """Names bound by destructuring an Express Request handler parameter.
+    _PATTERNS = ("object_pattern", "array_pattern")
 
-        Recognizes handlers like ``({ body, params, query }: Request, res, next)``
-        -- returns the destructured request-property names so they can be marked
-        as taint sources. Only fires when the function looks like a request
-        handler (a `Request`-typed param, or a sibling `res`/`response`/`next`),
-        keeping it precise.
-        """
-        params_node = node.child_by_field_name("parameters")
-        if params_node is not None:
-            param_children = list(params_node.children)
-        else:
-            single = node.child_by_field_name("parameter")
-            param_children = [single] if single is not None else []
-
-        destructured: List[TSNode] = []
-        is_handler = False
-        for ch in param_children:
-            if ch.type == "identifier":
-                if self._get_text(ch) in _request_objects().js_handler_names:
-                    is_handler = True
-            elif ch.type in ("required_parameter", "optional_parameter"):
-                typ = ch.child_by_field_name("type")
-                if typ is not None and "Request" in self._get_text(typ):
-                    is_handler = True
-                pat = ch.child_by_field_name("pattern")
-                if pat is not None and pat.type == "object_pattern":
-                    destructured.append(pat)
-                elif pat is not None and pat.type == "identifier" and \
-                        self._get_text(pat) in _request_objects().js_handler_names:
-                    is_handler = True
-            elif ch.type == "object_pattern":
-                destructured.append(ch)
-
-        names: set = set()
-        if not is_handler:
-            return names
-        for pat in destructured:
-            for c in pat.children:
-                nm = None
-                if c.type == "shorthand_property_identifier_pattern":
-                    nm = self._get_text(c)
-                elif c.type == "pair_pattern":
-                    v = c.child_by_field_name("value")
-                    if v is not None:
-                        nm = self._get_text(v)
-                if nm and nm in _request_objects().client_properties:     # specs/data/request-objects.toml
-                    names.add(nm)
-        return names
+    def _parameter_list(self, node: TSNode) -> List[Tuple[str, Typ, Optional[TSNode], Optional[TSNode]]]:
+        """(name, type, destructuring pattern, declared type node) of each formal parameter, in
+        position. A destructuring parameter is one parameter, named `$argN` (N its position)."""
+        out: List[Tuple[str, Typ, Optional[TSNode], Optional[TSNode]]] = []
+        for child in node.named_children:
+            if child.type == "comment":
+                continue
+            pattern, ty, typ = child, None, Typ.unknown_type()
+            if child.type in ("required_parameter", "optional_parameter"):
+                pattern, ty = child.child_by_field_name("pattern"), child.child_by_field_name("type")
+                if pattern is None:
+                    continue
+            if pattern.type == "assignment_pattern":            # a default value: `x = 1`, `{ a } = {}`
+                pattern = pattern.child_by_field_name("left") or pattern
+            if pattern.type == "rest_pattern":
+                inner = next((c for c in pattern.named_children if c.type != "comment"), None)
+                if inner is None:
+                    continue
+                pattern, typ = inner, Typ.list_of(Typ.unknown_type())
+            if pattern.type == "identifier":
+                out.append((self._get_text(pattern), typ, None, ty))
+            elif pattern.type in self._PATTERNS:
+                out.append((f"$arg{len(out)}", typ, pattern, ty))
+        return out
 
     def _translate_parameters(self, node: TSNode) -> List[Tuple[PVar, Typ]]:
         """Translate function parameters"""
-        params = []
-        for child in node.children:
-            if child.type == "identifier":
-                param_name = self._get_text(child)
-                params.append((PVar(param_name), Typ.unknown_type()))
-
-            elif child.type == "required_parameter" or child.type == "optional_parameter":
-                # TypeScript parameter
-                pattern = child.child_by_field_name("pattern")
-                if pattern:
-                    param_name = self._get_text(pattern)
-                    params.append((PVar(param_name), Typ.unknown_type()))
-
-            elif child.type == "assignment_pattern":
-                # Default parameter: name = value
-                left = child.child_by_field_name("left")
-                if left:
-                    param_name = self._get_text(left)
-                    params.append((PVar(param_name), Typ.unknown_type()))
-
-            elif child.type == "rest_pattern":
-                # ...args
-                for c in child.children:
-                    if c.type == "identifier":
-                        param_name = self._get_text(c)
-                        params.append((PVar(param_name), Typ.list_of(Typ.unknown_type())))
-
-            elif child.type == "object_pattern":
-                # Destructured parameter: { a, b }
-                for c in child.children:
-                    if c.type == "shorthand_property_identifier_pattern":
-                        param_name = self._get_text(c)
-                        params.append((PVar(param_name), Typ.unknown_type()))
-                    elif c.type == "pair_pattern":
-                        value = c.child_by_field_name("value")
-                        if value:
-                            param_name = self._get_text(value)
-                            params.append((PVar(param_name), Typ.unknown_type()))
-
-        return params
+        return [(PVar(name), typ) for name, typ, _, _ in self._parameter_list(node)]
 
     def _translate_block(self, node: TSNode) -> None:
         """Translate a block of statements"""

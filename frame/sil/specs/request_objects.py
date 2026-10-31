@@ -1,4 +1,4 @@
-"""Which parts of a web request the client chose and which the server set
+"""Which parts of a Python web request the server set
 (`data/request-objects.toml`). Loaded strictly."""
 
 from __future__ import annotations
@@ -13,18 +13,11 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
     import tomli as tomllib                 # type: ignore[no-redef]
 
 PATH = Path(__file__).parent / "data" / "request-objects.toml"
-_KEYS = ("client_properties", "server_state", "python_request_names", "js_request_names", "js_handler_names", "js_framework_modules",
-         "js_handler_decorators", "js_request_types")
+_KEYS = ("server_state", "python_request_names")
 
 
 class RequestObjects(NamedTuple):
-    client_properties: FrozenSet[str]       # JS: destructured from a handler's request parameter
     server_state: FrozenSet[str]            # Python: request.<attr> the server set
-    js_request_names: tuple = ()            # JS: conventional names of a handler's request object
-    js_handler_names: FrozenSet[str] = frozenset()   # JS: conventional names of its other parameters
-    js_framework_modules: FrozenSet[str] = frozenset()   # JS: imports that show a web framework
-    js_handler_decorators: tuple = ()       # JS: decorators that show a handler (NestJS)
-    js_request_types: tuple = ()            # JS: parameter types that show a request
     python_request_names: FrozenSet[str] = frozenset()   # Python: names server_state applies to
 
 
@@ -34,13 +27,7 @@ def load(path: Path = PATH) -> RequestObjects:
     if set(data) != set(_KEYS) or not all(isinstance(data[k], list) and data[k]
                                           and all(isinstance(n, str) and n for n in data[k]) for k in _KEYS):
         raise ValueError(f"{Path(path).name}: needs exactly {list(_KEYS)}, each a non-empty list of names")
-    both = set(data["client_properties"]) & set(data["server_state"])
-    if both:
-        raise ValueError(f"{Path(path).name}: {sorted(both)} cannot be both client data and server state")
-    return RequestObjects(frozenset(data["client_properties"]), frozenset(data["server_state"]),
-                          tuple(data["js_request_names"]), frozenset(data["js_handler_names"]),
-                          frozenset(data["js_framework_modules"]), tuple(data["js_handler_decorators"]),
-                          tuple(data["js_request_types"]), frozenset(data["python_request_names"]))
+    return RequestObjects(frozenset(data["server_state"]), frozenset(data["python_request_names"]))
 
 
 __all__ = ["PATH", "RequestObjects", "load"]

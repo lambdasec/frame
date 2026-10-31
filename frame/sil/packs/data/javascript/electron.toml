@@ -5,11 +5,15 @@ description = "Electron main process: IPC messages from renderers, shell / windo
 detect = { imports = ["electron"] }
 
 # A renderer (and anything running in it: remote content, an XSS) can send any argument.
+# ipcMain.on / once / handle / handleOnce / addListener(channel, (event, ...args) => ...): the
+# event is the main process's own object; the arguments are what the renderer sent
+# (https://www.electronjs.org/docs/latest/api/ipc-main).
 [[entrypoint]]
 id = "ipc-main"
-registered_via = ["ipcMain.on", "ipcMain.once", "ipcMain.handle", "ipcMain.handleOnce", "ipcMain.addListener"]
+registered_via = ["electron.ipcMain.on", "electron.ipcMain.once", "electron.ipcMain.handle",
+                  "electron.ipcMain.handleOnce", "electron.ipcMain.addListener"]
 params = "all"
-exclude_param = ["event", "_event", "_", "e", "evt"]
+params_from = 1
 description = "IPC message from a renderer process"
 
 [[sink]]

@@ -52,6 +52,28 @@ def _instrs(proc):
         yield from node.instrs
 
 
+def _required_module(call: Call, proc) -> Optional[str]:
+    """`require("express")`: the value is the module itself (CommonJS), named by its specifier."""
+    if _call_text(call) != "require" or len(call.args) != 1:
+        return None
+    arg = call.args[0][0] if isinstance(call.args[0], tuple) else call.args[0]
+    if isinstance(arg, ExpConst) and isinstance(arg.value, str) and arg.value \
+            and not arg.value.startswith((".", "/")):        # a project file: link_modules gives what it exports
+        return arg.value
+    return None
+
+
+def _module_qualified(text: Optional[str], modules: Set[str]) -> Optional[str]:
+    """A call the frontend already names after an imported module (`@hapi/hapi.server` for
+    `Hapi.server(...)` with `Hapi = require("@hapi/hapi")`): that name is what it is."""
+    if not text:
+        return None
+    for m in modules:
+        if text == m or text.startswith(m + "."):
+            return text
+    return None
+
+
 def _definitions(proc) -> Dict[str, int]:
     counts: Dict[str, int] = {}
     for p, _ in proc.params:
@@ -81,12 +103,16 @@ def _expression_call_origin(exp, imports: Dict[str, str]) -> Optional[str]:
     return f"{qualified}.{rest}" if rest else qualified
 
 
-def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str, str]] = None,
+             params: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Origins of the names bound once in `proc`; with `fill`, also give unresolved calls on
-    them their callee id."""
+    them their callee id. `params`: origins of parameters every caller agrees on (a project's
+    `require("./routes")(app)` with `app = express()`), else a parameter has none."""
     imports = imports or {}
+    imported_modules = {v for v in imports.values() if v}
     defs = _definitions(proc)
-    origin: Dict[str, str] = {}
+    origin: Dict[str, str] = dict(params or {})
+    modules: Set[str] = set()          # names holding a module itself (`require("express")`), not a call's result
 
     def of(name: str) -> Optional[str]:
         if name in origin:
@@ -101,33 +127,87 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 if i.canonical is None and fill and text and "." in text and not text.startswith(("this.", "self.")):
                     head, rest = text.split(".", 1)
                     o = of(head)
-                    if o is not None and head.isidentifier():
+                    if o is not None and head.replace("$", "_").isidentifier():
                         i.canonical = f"{o}.{rest}"
                         changed = True
-                r = _ret_name(i)
-                if r and defs.get(r) == 1 and i.canonical and origin.get(r) != i.canonical:
-                    origin[r] = i.canonical
+                elif i.canonical is None and fill and text and text in modules:
+                    i.canonical = origin[text]            # `require("express")()`: calling the module value
                     changed = True
+                r = _ret_name(i)
+                required = _required_module(i, proc)
+                produced = i.canonical or required or _module_qualified(text, imported_modules)
+                if r and defs.get(r) == 1 and produced and origin.get(r) != produced:
+                    origin[r] = produced
+                    changed = True
+                if r and required and defs.get(r) == 1:
+                    modules.add(r)
             elif isinstance(i, Assign) and isinstance(i.exp, (ExpVar, ExpCall)):
                 x = str(i.id)
                 o = of(str(i.exp.var)) if isinstance(i.exp, ExpVar) else _expression_call_origin(i.exp, imports)
                 if o is not None and defs.get(x) == 1 and origin.get(x) != o:
                     origin[x] = o
                     changed = True
+                if isinstance(i.exp, ExpVar) and str(i.exp.var) in modules and defs.get(x) == 1:
+                    modules.add(x)
         if not changed:
             break
     return origin
 
 
-def annotate(program) -> None:
-    """Fill `Call.canonical` from value origins (calls whose callee id the frontend left unset)."""
+def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None) -> None:
+    """Fill `Call.canonical` from value origins (calls whose callee id the frontend left unset),
+    and record each procedure's origins (`Program.value_origins`: procedure -> name -> origin,
+    a nested function seeing its enclosing functions' names). Idempotent; run again with
+    `param_origins` (procedure -> parameter -> origin) once callers are known."""
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    param_origins = param_origins or getattr(program, "param_origins", None) or {}
+    program.param_origins = param_origins
     module = program.procedures.get(MODULE)
-    outer = _origins(module, {}, fill=True, imports=imports) if module is not None else {}
+    scopes: Dict[str, Dict[str, str]] = {}
+    outer = _origins(module, {}, fill=True, imports=imports, params=param_origins.get(MODULE)) \
+        if module is not None else {}
+    scopes[MODULE] = outer
     program.export_origin = outer.get("module.exports")
+
+    def visible(name: str, seen: Set[str]) -> Dict[str, str]:
+        """What a procedure sees from outside: the module's names and its enclosing functions'."""
+        proc = program.procedures.get(name)
+        parent = getattr(proc, "parent", None) if proc is not None else None
+        if not parent or parent not in program.procedures or parent in seen:
+            return dict(outer)
+        out = visible(parent, seen | {name})
+        if parent not in scopes:
+            scopes[parent] = _origins(program.procedures[parent], out, fill=True, imports=imports,
+                                      params=param_origins.get(parent))
+        out.update(scopes[parent])
+        return out
+
     for name, proc in program.procedures.items():
-        if name != MODULE:
-            _origins(proc, outer, fill=True, imports=imports)
+        if name != MODULE and name not in scopes:
+            scopes[name] = _origins(proc, visible(name, set()), fill=True, imports=imports,
+                                    params=param_origins.get(name))
+    program.value_origins = scopes
+
+
+def origin_in_scope(program, proc_name: str, name: str) -> Optional[str]:
+    """The origin of `name` as procedure `proc_name` sees it (its own binding, an enclosing
+    function's, the module's), else the file's import of that name."""
+    scopes = getattr(program, "value_origins", None) or {}
+    seen: Set[str] = set()
+    cur: Optional[str] = proc_name
+    while cur and cur not in seen:
+        seen.add(cur)
+        found = scopes.get(cur, {}).get(name)
+        if found is not None:
+            return found
+        proc = program.procedures.get(cur)
+        if proc is not None and cur != MODULE and name in _definitions(proc):
+            return None                                   # bound here, without an origin
+        cur = getattr(proc, "parent", None) if proc is not None else None
+        if not cur and proc_name != MODULE and MODULE not in seen:
+            cur = MODULE
+    imported = (getattr(program, "imports", None) or {}).get(name)
+    return str(imported) if imported is not None else None
 
 
 def link_modules(programs: Dict[str, object], resolve) -> None:
@@ -225,4 +305,4 @@ def typed_names(canonical: str, language: str) -> List[str]:
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 
 
-__all__ = ["annotate", "load", "typed_names"]
+__all__ = ["annotate", "load", "origin_in_scope", "typed_names"]

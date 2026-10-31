@@ -1,10 +1,7 @@
-# Which parts of a web request object the client chose and which the server set. Read by
-# frame/sil/specs/request_objects.py (strictly).
-
-# Properties of an Express-style request (`req`) holding data the client sent: a handler that
-# destructures its request parameter (`({ body, query }, res) => ...`) receives these as attacker
-# data. `session` is not one: it is what the server stored.
-client_properties = ["body", "params", "query", "cookies", "headers", "file", "files", "param", "signedCookies"]
+# Which parts of a Python web request object the server set, not the client. Read by
+# frame/sil/specs/request_objects.py (strictly). JavaScript request objects are the packs'
+# [[request_type]] entries (what each framework's request holds), applied to the handlers the
+# packs' entry points find.
 
 # Attributes of a Python web request that the server sets, not the client: the authenticated user
 # (Django / DRF), the server-side session, the auth token object. A handler's `request` parameter is
@@ -14,21 +11,3 @@ server_state = ["user", "session", "auth"]
 # The name such a request object goes by (Django's and DRF's convention for a view's first
 # parameter, which helpers keep): a naming convention until request objects are tracked as values.
 python_request_names = ["request"]
-
-# JavaScript naming conventions, used where the frontend has no framework evidence for a handler:
-# the names an Express / Koa / Fastify handler conventionally gives its request object (a value read
-# from `req.x` / `request.x` is request data) and the names of the parameters beside it (a function
-# taking `res`, `response` or `next` is a request handler). Findings resting on them carry
-# `source_evidence: "naming-convention"` unless the project shows a web framework.
-js_request_names = ["req", "request"]
-js_handler_names = ["res", "response", "next"]
-
-# Evidence that a JS/TS file (or project) really is a web application, so a `req.x` read is request
-# data and not a naming coincidence: an import of one of these modules (or a subpath), a decorator of
-# these names (NestJS), or a parameter typed as one of these request types.
-js_framework_modules = ["express", "koa", "koa-router", "@koa/router", "fastify", "hapi", "@hapi/hapi", "restify",
-                        "@nestjs/common", "@nestjs/core", "next", "next/server", "sails", "loopback", "connect",
-                        "polka", "micro", "h3", "hono", "@adonisjs/core", "@feathersjs/feathers", "serverless-http",
-                        "http", "https"]
-js_handler_decorators = ["Controller", "Get", "Post", "Put", "Delete", "Patch", "Req", "Request"]
-js_request_types = ["Request", "NextRequest", "FastifyRequest"]

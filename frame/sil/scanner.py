@@ -247,9 +247,6 @@ class Vulnerability:
     path: Optional[str] = None
     fingerprint: Optional[str] = None
     fingerprint_loose: Optional[str] = None
-    # "naming-convention" when the source is a JS/TS `req.*` name and neither the
-    # file nor the project shows a web framework (see framework_evidence.py).
-    source_evidence: str = ""
     # "test" when the file is test code by its program (frame/sil/test_code.py): a tag, not a filter.
     context: str = ""
     # With --verify-secrets: what the provider said of a provider-format credential
@@ -281,8 +278,6 @@ class Vulnerability:
             "confidence": self.confidence,
             "cwe_id": self.cwe_id,
         }
-        if self.source_evidence:
-            d["source_evidence"] = self.source_evidence
         if self.context:
             d["context"] = self.context
         if self.validity:
@@ -1127,7 +1122,6 @@ class FrameScanner:
 
             # Step 6: Apply confidence-based filtering
             result.vulnerabilities = self._filter_by_confidence(result.vulnerabilities, source_code)
-            self._tag_source_evidence(result.vulnerabilities, source_code)
             self._tag_test_code(result.vulnerabilities, program)
 
             if self.verbose:
@@ -1873,33 +1867,6 @@ class FrameScanner:
             v.context = "test"
             if v.type == VulnType.HARDCODED_SECRET and v.procedure != "<literal>":
                 v.severity = Severity.LOW
-
-    def _tag_source_evidence(self, vulns: List[Vulnerability], source_code: str) -> None:
-        """Mark JS/TS findings whose source is the guessed `req.*` name with no
-        web framework in the file or project (`source_evidence`)."""
-        if self.language not in ("javascript", "typescript") or not vulns:
-            return
-        from frame.sil.framework_evidence import has_framework_evidence, source_is_named_request
-        guessed = [v for v in vulns if source_is_named_request(v.source_var)]
-        if not guessed or has_framework_evidence(source_code):
-            return
-        project = self._project
-        if project is not None:
-            cached = getattr(project, "_framework_evidence", None)
-            if cached is None:
-                cached = False
-                for mod in project.index.modules.values():
-                    try:
-                        if has_framework_evidence(mod.path.read_text(encoding="utf-8", errors="replace")):
-                            cached = True
-                            break
-                    except OSError:
-                        continue
-                project._framework_evidence = cached
-            if cached:
-                return
-        for v in guessed:
-            v.source_evidence = "naming-convention"
 
     def _filter_by_confidence(self, vulns: List[Vulnerability], source_code: str) -> List[Vulnerability]:
         """

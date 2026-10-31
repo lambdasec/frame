@@ -63,7 +63,8 @@ def test_project_modules_do_not_get_named_arguments():
 
 
 @pytest.mark.parametrize("src", [
-    "function f(req) { const x = req.query.p.split(',')[1]; document.write(x); }",
+    "const express = require('express');\nconst app = express();\n"
+    "app.get('/', (req, res) => { const x = req.query.p.split(',')[1]; res.send(x); });",
     "function f() { const x = decodeURIComponent(location.hash.slice(1)); document.write(x); }",
     "function f() { const x = new URLSearchParams(location.search).get('q'); document.write(x); }",
 ])

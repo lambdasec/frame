@@ -84,6 +84,38 @@ params = "all"
 
 `first_param` selects functions by their first parameter's name (after `self`/`cls`): Django calls a view with the `HttpRequest` first and routes by name in `urls.py`, so the built-in `django` pack takes `first_param = ["request"]`. `params_from` keeps only the parameters from a position on: Graphene calls `resolve_<field>(parent, info, **arguments)`, so its pack takes `params_from = 2`. `param_positions` narrows an entry point to parameters by position (0-based), whatever they are called or however they are destructured: a GraphQL resolver is called as `(parent, args, context, info)`, so the built-in `graphql` pack takes `param_positions = [1]`.
 
+In JavaScript, `registered_via` names the call by what its receiver is, not by the variable's name: `app.get(path, handler)` after `const app = express()` is `express.get`, `express.Router()` gives `express.Router.get`, `app.route("/x").get` is `express.route.get` (a value bound once to a library call takes that call's id, `frame/sil/value_origins.py`). In a project the same holds for a routes module that callers hand the application (`require("./routes")(app)`: every resolved caller passes the same kind of value), and for a handler defined in another file (`router.get("/", users.show)`, `app.get("/", handler.show)` with `handler = new Handler()`), resolved through the project index.
+
+A request object is a value, not a name. `[[request_type]]` lists what a framework's request holds that the client chose: `fields` (property paths: `query`, `request.body`), `methods` (method paths whose result is client data: `get`, `cookies.get`), `kinds` for fields of another source kind (`file` for uploads). An entry point with `request_type` makes the selected parameter a request object: reading a listed field or calling a listed method is attacker data, anything else on it (`session`, `user`, `app`) is server state, and the object itself reaching a sink is no finding. It travels through copies, destructuring, helpers (a helper's return summary records which paths it reads) and closures. The built-in `express` pack:
+
+```toml
+[[request_type]]
+id = "request"
+fields = ["params", "query", "body", "cookies", "headers", "rawHeaders", "url", "originalUrl", "path", "hostname",
+          "host", "subdomains", "file", "files"]
+methods = ["get", "header", "param"]
+
+[[entrypoint]]
+id = "handler"
+registered_via = ["express.get", "express.post", "express.use", "express.Router.get", "express.Router.post"]
+param_positions = [0]
+params = "all"
+exclude_arity = [4]                      # (err, req, res, next) is error-handling middleware
+request_type = "request"
+```
+
+`arity` / `exclude_arity` select functions by their parameter count. `module_path` (globs on the file's path) with `exports` (what the module exports the function as: `default`, a name, `*`) selects by a documented file-system convention: Next.js treats the default export of a file under `pages/api/` as a route handler, Sails the actions a module in `api/controllers/` exports. `directives` and `body_directives` select by a directive prologue: a `'use server'` module's exports, or a function whose body starts with `'use server'`, are server actions. A destructuring parameter (`({ body, query }, res) => ...`) is one positional parameter (`$argN`) whose names are bound from it at entry. `detect.dependencies` holds when the nearest `package.json` declares one of the packages (Sails provides a global, so a Sails app is known by its manifest).
+
+`[[callback_param]]` says a framework calls the functions registered through `registered_via` with a value of origin `origin` at `position`, optionally only for `event` (the registration's first literal argument), so calls on that parameter are named after it: Socket.IO's `io.on("connection", socket => ...)` hands in a `socket.io.Socket`, `fastify.register(plugin)` a Fastify instance:
+
+```toml
+[[callback_param]]
+registered_via = ["socket.io.Server.on", "socket.io.on"]
+event = ["connection", "connect"]
+position = 0
+origin = "socket.io.Socket"
+```
+
 JavaScript packs have two more kinds. `[[registration]]` names the functions an application hands to a framework inside an object, for an entry point's `registered_via` to select:
 
 ```toml

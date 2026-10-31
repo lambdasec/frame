@@ -1,17 +1,40 @@
 [pack]
 name = "fastify"
 language = "javascript"
-description = "Fastify route handlers (request.query / params / body / headers, reply.*)"
+description = "Fastify route handlers and hooks on a fastify() instance, and what their request holds"
 detect = { imports = ["fastify"] }
+references = ["https://fastify.dev/docs/latest/Reference/Routes/", "https://fastify.dev/docs/latest/Reference/Request/",
+              "https://fastify.dev/docs/latest/Reference/Hooks/", "https://github.com/fastify/fastify-cookie",
+              "https://github.com/fastify/fastify-multipart"]
 
+# What a request holds that the client chose: the parsed query, body and params, headers, the URL,
+# the host, cookies (@fastify/cookie), uploads (@fastify/multipart's file() / files() / parts()),
+# and the Node request (raw). Everything else (id, log, server, routeOptions) is server state.
+[[request_type]]
+id = "request"
+fields = ["query", "body", "params", "headers", "url", "originalUrl", "hostname", "host", "cookies",
+          "raw.headers", "raw.url", "raw.rawHeaders"]
+methods = ["file", "files", "parts"]
+
+# fastify.get / head / post / put / delete / options / patch / all(path, [opts,] handler),
+# fastify.route({ handler, preHandler, ... }), request hooks: handler(request, reply).
 [[entrypoint]]
-id = "fastify-route"
-registered_via = ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.all", "*.head", "*.options",
-                  "*.route.handler", "*.addHook", "*.setNotFoundHandler", "*.setErrorHandler"]
+id = "route"
+registered_via = ["fastify.get", "fastify.head", "fastify.post", "fastify.put", "fastify.delete", "fastify.options", "fastify.patch", "fastify.all", "fastify.route.handler", "fastify.route.preHandler",
+                  "fastify.route.preValidation", "fastify.route.onRequest", "fastify.addHook", "fastify.setNotFoundHandler"]
+param_positions = [0]
 params = "all"
-exclude_param = ["reply", "res", "response", "done", "next", "instance", "opts", "options"]
-exclude_param_type = ["fastify.FastifyReply", "FastifyReply"]
-description = "Fastify request object (query, params, body, headers, cookies)"
+request_type = "request"
+description = "the request of a Fastify route handler or hook"
+
+# setErrorHandler((error, request, reply) => ...)
+[[entrypoint]]
+id = "error-handler"
+registered_via = ["fastify.setErrorHandler"]
+param_positions = [1]
+params = "all"
+request_type = "request"
+description = "the request of a Fastify error handler"
 
 [[sink]]
 name = ["reply.send", "res.send"]
@@ -36,3 +59,10 @@ description = "@fastify/static sendFile"
 name = ["reply.header", "reply.headers"]
 args = [1]
 kind = "header"
+
+# fastify.register(plugin): a plugin is (instance, opts), the instance a Fastify instance of its own
+# (https://fastify.dev/docs/latest/Reference/Plugins/).
+[[callback_param]]
+registered_via = ["fastify.register"]
+position = 0
+origin = "fastify"

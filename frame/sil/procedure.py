@@ -500,6 +500,9 @@ class Procedure:
     # Declared type of each parameter as written (`Request`, `HttpServletRequest`),
     # for the languages whose syntax declares one.
     param_types: Dict[str, str] = field(default_factory=dict)
+    # A destructuring parameter (`({ body, query: q }) => ...`) is one positional parameter named
+    # `$argN`, its names bound at entry from it; this maps `$argN` to the pattern as written.
+    param_patterns: Dict[str, str] = field(default_factory=dict)
     # Declared class of the variables, parameters and fields this procedure's calls use as
     # receivers (`_repo` -> "UserRepository"), as the frontend can read them; lets a call
     # `_repo.Find(x)` resolve to the method of a class the program defines.
@@ -516,6 +519,11 @@ class Procedure:
     # Callees this function is passed to as an argument (`app.get('/x', handler)`
     # -> ["app.get"]), by their textual names; set by the JS frontend.
     registered_via: List[str] = field(default_factory=list)
+    # What the module exports this procedure as (`default`, `search`): read by entry points that
+    # follow a framework's file-system convention (Next.js pages/api, Sails controllers).
+    exported_as: List[str] = field(default_factory=list)
+    # Directives at the top of its body (`"use server"`); a module's are `Program.directives`.
+    directives: List[str] = field(default_factory=list)
     # The same, with the argument position: ("withName", 1) for `withName(req, (name) => ...)`.
     # Lets a call to a callback PARAMETER inside `withName` resolve to the function passed in.
     passed_as: List[Tuple[str, int]] = field(default_factory=list)
@@ -754,6 +762,12 @@ class Program:
     # The packs (packs.schema.Pack) applied to this program, for the translator's pack kinds
     # (`[[middleware]]`, `[[request_attribute]]`).
     active_packs: List[Any] = field(default_factory=list)
+    # Calls that pass a function to another (`app.get(path, handler)`), kept for the project step
+    # that resolves receivers handed in as parameters and handlers defined in other files
+    # (frame/sil/registrations.py).
+    registrations: List[Any] = field(default_factory=list)
+    # The directive prologue of the module (`"use server"`, `"use strict"`), for JS/TS.
+    directives: List[str] = field(default_factory=list)
     # Class (full name) -> its declared instance fields, for languages that write a
     # field by its bare name (Java, C#). Not `ClassInfo.fields`, which C# keeps for
     # model-bound members only.

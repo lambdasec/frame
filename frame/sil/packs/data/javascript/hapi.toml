@@ -1,20 +1,40 @@
 [pack]
 name = "hapi"
 language = "javascript"
-description = "hapi route handlers (request.query / payload / params / headers, h.response / h.redirect)"
-detect = { imports = ["@hapi/hapi", "hapi"] }
+description = "hapi route handlers and extensions on a Hapi.server(), and what their request holds"
+detect = { imports = ["@hapi/hapi", "hapi"], dependencies = ["@hapi/hapi", "hapi"] }
+references = ["https://hapi.dev/api/#request-properties", "https://hapi.dev/api/#-serverrouteroute",
+              "https://hapi.dev/api/#-serverextevents"]
 
-[[entrypoint]]
-id = "hapi-route-handler"
-registered_via = ["*.route.handler", "*.route.options.handler", "*.ext"]
-params = ["request"]
-description = "hapi request object"
+# What a request holds that the client chose: query, params, payload, headers, cookies (state),
+# the path and URL, the Host / Referer facts (info), and the Node request (raw.req). Everything
+# else is server state: auth, app, plugins, server, route, pre.
+[[request_type]]
+id = "request"
+fields = ["query", "params", "payload", "headers", "state", "path", "url", "info.host", "info.hostname",
+          "info.referrer", "raw.req.headers", "raw.req.url", "raw.req.rawHeaders"]
 
+# server.route({ method, path, handler }) (also options.handler), server.ext(event, (request, h) => ...)
+# on a Hapi.server(); a handler is (request, h).
 [[entrypoint]]
-id = "hapi-handler-name"
-method = ["handler"]
-params = ["request"]
-description = "hapi handler exported as an object method"
+id = "route-handler"
+registered_via = ["@hapi/hapi.server.route.handler", "@hapi/hapi.server.route.options.handler",
+                  "@hapi/hapi.server.ext", "hapi.server.route.handler", "hapi.server.route.options.handler",
+                  "hapi.server.ext"]
+param_positions = [0]
+params = "all"
+request_type = "request"
+description = "the request of a hapi route handler or extension"
+
+# A route definition module (`module.exports = { method, path, handler }`) passed to server.route
+# elsewhere: its handler is the route's.
+[[entrypoint]]
+id = "route-module-handler"
+exports = ["handler"]
+param_positions = [0]
+params = "all"
+request_type = "request"
+description = "the request of a handler a route definition module exports"
 
 [[sink]]
 name = ["h.response"]
@@ -33,3 +53,10 @@ name = ["h.file"]
 args = [0]
 kind = "path"
 description = "@hapi/inert h.file"
+
+# server.register({ plugin: { name, register: async (server, options) => ... } }): a plugin's register
+# function receives the server (https://hapi.dev/api/#plugins).
+[[callback_param]]
+registered_via = ["@hapi/hapi.server.register.plugin.register", "hapi.server.register.plugin.register"]
+position = 0
+origin = "@hapi/hapi.server"

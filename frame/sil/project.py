@@ -1444,6 +1444,13 @@ class ProjectContext:
             mod = index.modules.get(key)
             return index._resolve_js(mod, spec) if mod is not None and mod.family == "javascript" else None
         link_modules(ctx.programs, resolve_module)
+        from frame.sil.registrations import link_project
+        from frame.sil.packs import default_packs
+
+        def packs_for(language: str):
+            fe = frontend_for(language)
+            return getattr(fe, "packs", None) or default_packs()
+        link_project(ctx, index, packs_for)
         ctx.translators = {
             key: SILTranslator(program, verbose=verbose, ipa=ctx.ipa, file_key=key, project=ctx)
             for key, program in ctx.programs.items()}

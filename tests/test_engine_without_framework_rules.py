@@ -131,9 +131,14 @@ app.get('/b', (req, res) => { res.status(200).type('json').send(req.query.q); })
 
 
 def test_without_the_pack_a_chained_send_is_not_resolved(tmp_path):
-    src = "app.get('/a', (req, res) => { res.status(200).send(req.query.q); });\n"
-    assert _js(src) == [(1, "CWE-79")]
-    assert _js(src, builtin=False) == []
+    src = ("const app = require('express')();\n"
+           "app.get('/a', (req, res) => { res.status(200).send(req.query.q); });\n")
+    assert _js(src) == [(2, "CWE-79")]
+    # the request is still attacker data (the express pack), but nothing resolves the chain
+    from frame.sil.packs.loader import BUILTIN_DIR
+    express = BUILTIN_DIR / "javascript" / "express.toml"
+    assert _js(src, packs=[express], builtin=False) == []
+    assert _js(src.replace("res.status(200).send", "res.send"), packs=[express], builtin=False) == [(2, "CWE-79")]
 
 
 def test_a_pack_declares_its_own_fluent_object(tmp_path):

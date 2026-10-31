@@ -59,7 +59,8 @@ def _js_program(src):
 
 def test_candidate_selection():
     """A file is a candidate when its program has a source or a sink (from the specs and packs)."""
-    for src, want in (("const x = req.query.id;", True), ("db.query(stuff);", True),
+    handler = "const app = require('express')();\napp.get('/x', (req, res) => { const x = req.query.id; });"
+    for src, want in ((handler, True), ("db.query(stuff);", True),
                       ("const total = a + b;", False)):
         assert is_detection_candidate(src, False, _js_program(src)) is want, src
     # anything the symbolic pass already flagged is a candidate, and so is an untranslated file

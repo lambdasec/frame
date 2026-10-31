@@ -1,13 +1,116 @@
 [pack]
 name = "socketio"
 language = "javascript"
-description = "Socket.IO / ws event handlers: the payload a client emits is attacker data"
-detect = { imports = ["socket.io", "ws", "engine.io", "uWebSockets.js", "sockjs", "websocket"] }
+description = "Socket.IO, ws, engine.io, SockJS and websocket servers: what a client sends over a socket is attacker data"
+detect = { imports = ["socket.io", "ws", "engine.io", "sockjs", "websocket"] }
+references = ["https://socket.io/docs/v4/server-api/", "https://github.com/websockets/ws/blob/master/doc/ws.md",
+              "https://github.com/socketio/engine.io#server", "https://github.com/sockjs/sockjs-node#server-class",
+              "https://github.com/theturtle32/WebSocket-Node/blob/master/docs/WebSocketServer.md"]
+
+# Socket.IO: `new Server(...)` / `require("socket.io")(...)`; io.on("connection", socket => ...),
+# io.of(ns).on("connection", ...), io.use((socket, next) => ...) hand in the client's socket.
+[[callback_param]]
+registered_via = ["socket.io.Server.on", "socket.io.Server.of.on", "socket.io.on", "socket.io.of.on"]
+event = ["connection", "connect"]
+position = 0
+origin = "socket.io.Socket"
+
+[[callback_param]]
+registered_via = ["socket.io.Server.use", "socket.io.use", "socket.io.Server.of.use", "socket.io.of.use"]
+position = 0
+origin = "socket.io.Socket"
+
+# What the client chose about its connection: the handshake's query, headers, auth payload, URL.
+# Everything else on a socket (id, rooms, data) is the server's.
+[[request_type]]
+id = "socket"
+fields = ["handshake.query", "handshake.headers", "handshake.auth", "handshake.url"]
 
 [[entrypoint]]
-id = "socket-event"
-registered_via = ["socket.on", "socket.once", "socket.onAny", "socket.prependAny", "socket.addListener",
-                  "client.on", "conn.on", "connection.on", "ws.on", "ws.once", "ws.addEventListener", "*.socket.on"]
+id = "socket-handshake"
+registered_via = ["socket.io.Server.on", "socket.io.Server.of.on", "socket.io.on", "socket.io.of.on",
+                  "socket.io.Server.use", "socket.io.use", "socket.io.Server.of.use", "socket.io.of.use"]
+param_positions = [0]
 params = "all"
-exclude_param = ["ack", "callback", "cb", "fn", "next", "done", "socket", "reason", "err", "error", "event"]
-description = "message received from a socket client"
+request_type = "socket"
+description = "the handshake of a Socket.IO connection"
+
+# socket.on(event, (...args, ack) => ...), onAny((event, ...args) => ...): every argument is the
+# client's (an acknowledgement is the client's callback).
+[[entrypoint]]
+id = "socket-event"
+registered_via = ["socket.io.Socket.on", "socket.io.Socket.once", "socket.io.Socket.onAny",
+                  "socket.io.Socket.prependAny", "socket.io.Socket.addListener", "socket.io.Socket.prependListener"]
+params = "all"
+description = "a message a Socket.IO client emitted"
+
+# ws: `new WebSocketServer(...)` / `new WebSocket.Server(...)`; wss.on("connection", (ws, req) => ...):
+# the client's socket and the HTTP upgrade request; ws.on("message", (data, isBinary) => ...).
+[[callback_param]]
+registered_via = ["ws.WebSocketServer.on", "ws.Server.on"]
+event = ["connection"]
+position = 0
+origin = "ws.WebSocket"
+
+[[request_type]]
+id = "upgrade-request"
+fields = ["headers", "rawHeaders", "url"]
+
+[[entrypoint]]
+id = "ws-upgrade-request"
+registered_via = ["ws.WebSocketServer.on", "ws.Server.on"]
+param_positions = [1]
+params = "all"
+request_type = "upgrade-request"
+description = "the HTTP upgrade request of a ws connection"
+
+[[entrypoint]]
+id = "ws-message"
+registered_via = ["ws.WebSocket.on", "ws.WebSocket.once", "ws.WebSocket.addListener", "ws.WebSocket.addEventListener"]
+param_positions = [0]
+params = "all"
+description = "a message a ws client sent"
+
+# engine.io: engine.listen(port) / engine.attach(server) / new engine.Server(); server.on("connection",
+# socket => socket.on("message", data => ...)).
+[[callback_param]]
+registered_via = ["engine.io.listen.on", "engine.io.attach.on", "engine.io.Server.on"]
+event = ["connection"]
+position = 0
+origin = "engine.io.Socket"
+
+[[entrypoint]]
+id = "engine-message"
+registered_via = ["engine.io.Socket.on", "engine.io.Socket.once"]
+param_positions = [0]
+params = "all"
+description = "a message an engine.io client sent"
+
+# SockJS: sockjs.createServer(); server.on("connection", conn => conn.on("data", message => ...)).
+[[callback_param]]
+registered_via = ["sockjs.createServer.on"]
+event = ["connection"]
+position = 0
+origin = "sockjs.Connection"
+
+[[entrypoint]]
+id = "sockjs-data"
+registered_via = ["sockjs.Connection.on", "sockjs.Connection.once"]
+param_positions = [0]
+params = "all"
+description = "data a SockJS client sent"
+
+# websocket (WebSocket-Node): new WebSocketServer(...); server.on("request", request => ...); the
+# connection request.accept(...) returns, connection.on("message", message => ...).
+[[callback_param]]
+registered_via = ["websocket.server.on"]
+event = ["request"]
+position = 0
+origin = "websocket.request"
+
+[[entrypoint]]
+id = "websocket-message"
+registered_via = ["websocket.request.accept.on"]
+param_positions = [0]
+params = "all"
+description = "a message a websocket client sent"

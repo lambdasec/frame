@@ -55,11 +55,52 @@ def _import_values(program: Program) -> List[str]:
     return list(program.imports.values()) + list(program.import_wildcards)
 
 
+_MANIFESTS: Dict[str, frozenset] = {}
+
+
+def _declared_dependencies(program: Program) -> frozenset:
+    """The npm packages the nearest package.json above the program's file declares (dependencies,
+    devDependencies, peerDependencies, optionalDependencies): what the project says it is built on."""
+    import json
+    from pathlib import Path
+    out: set = set()
+    for f in getattr(program, "source_files", ()):
+        d = Path(f).resolve().parent
+        for parent in [d, *d.parents]:
+            key = str(parent)
+            if key in _MANIFESTS:
+                out |= _MANIFESTS[key]
+                break
+            manifest = parent / "package.json"
+            if manifest.is_file():
+                try:
+                    data = json.loads(manifest.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    data = {}
+                names = frozenset(n for k in ("dependencies", "devDependencies", "peerDependencies",
+                                              "optionalDependencies")
+                                  for n in (data.get(k) or {} if isinstance(data, dict) else {}))
+                _MANIFESTS[key] = names
+                out |= names
+                break
+    return frozenset(out)
+
+
 def _detected(pack: Pack, program: Program) -> bool:
     if not pack.has_detect:
         return True
     values = _import_values(program)
     if any(_prefix(p, v) for p in pack.detect_imports for v in values):
+        return True
+    # a file that uses the framework's values without importing it (handed `app` by its caller):
+    # a call or a registration named after them by value origin (value_origins.py)
+    if pack.detect_imports:
+        used = {i.canonical for proc in program.procedures.values() for n in proc.nodes.values()
+                for i in n.instrs if isinstance(i, Call) and i.canonical}
+        used |= {v for proc in program.procedures.values() for v in proc.registered_via}
+        if any(_prefix(p, v) for p in pack.detect_imports for v in used):
+            return True
+    if pack.detect_dependencies and set(pack.detect_dependencies) & _declared_dependencies(program):
         return True
     if pack.detect_annotations:
         names: List[str] = []
@@ -306,6 +347,24 @@ def _simple_method(proc: Procedure) -> str:
     return proc.name.split("#", 1)[0].rsplit(".", 1)[-1]
 
 
+def _path_glob(patterns: Sequence[str], path: str) -> bool:
+    """A file path matches a glob over its trailing path segments (`**` any number of them):
+    `**/pages/api/**` holds for `/srv/app/pages/api/users/[id].js`."""
+    parts = PurePath(path).as_posix().split("/")
+    for pattern in patterns:
+        pat = pattern.split("/")
+
+        def match(i: int, j: int) -> bool:
+            if j == len(pat):
+                return i == len(parts)
+            if pat[j] == "**":
+                return any(match(k, j + 1) for k in range(i, len(parts) + 1))
+            return i < len(parts) and fnmatchcase(parts[i], pat[j]) and match(i + 1, j + 1)
+        if any(match(start, 0) for start in range(len(parts))):
+            return True
+    return False
+
+
 def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
     cls = _simple_class(proc)
     if e.decorator and not any(_glob(e.decorator, a.name, a.canonical) for a in proc.annotations):
@@ -330,6 +389,18 @@ def _entry_matches(e: Entrypoint, proc: Procedure, program: Program) -> bool:
     if e.exclude_modifiers and any(m in proc.modifiers for m in e.exclude_modifiers):
         return False
     if e.exclude_decorator and any(_glob(e.exclude_decorator, a.name, a.canonical) for a in proc.annotations):
+        return False
+    if e.exports and not any(_glob(e.exports, x) for x in proc.exported_as):
+        return False
+    if e.directives and not set(e.directives) & set(getattr(program, "directives", ())):
+        return False
+    if e.body_directives and not set(e.body_directives) & set(getattr(proc, "directives", ())):
+        return False
+    if e.module_path and not any(_path_glob(e.module_path, f) for f in getattr(program, "source_files", ())):
+        return False
+    if e.arity and len(proc.params) not in e.arity:
+        return False
+    if e.exclude_arity and len(proc.params) in e.exclude_arity:
         return False
     if e.first_param:
         names = [p.name for p, _ in proc.params]
@@ -390,13 +461,68 @@ def bound_names(param: str) -> List[str]:
     return out
 
 
+def bound_keys(param: str, path: Tuple[str, ...] = ()) -> List[Tuple[Optional[Tuple[str, ...]], str]]:
+    """(property path, name) for each name an object destructuring pattern binds (`{ body,
+    query: q, headers: { host } }` -> (body) body, (query) q, (headers.host) host); the path is
+    None for a `...rest` element or an array pattern's elements (not read by property)."""
+    p = param.strip()
+    if not p or p[0] != "{":
+        return [(None, n) for n in bound_names(p)] if p and p[0] == "[" else []
+    close = p.rfind("}")
+    inner = p[1:close] if close > 0 else p[1:]
+    out: List[Tuple[Optional[Tuple[str, ...]], str]] = []
+    for part in _split_top(inner):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("..."):
+            name = part[3:].split("=", 1)[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                out.append((None, name))
+            continue
+        head = part.split("=", 1)[0]
+        if ":" in head and head.index(":") < (part.find("{") if "{" in part else len(part)):
+            key, target = part.split(":", 1)
+            key, target = key.strip().strip("'\""), target.strip()
+        else:
+            key = target = head.strip()
+        if not re.fullmatch(r"[A-Za-z_$][\w$]*", key):
+            continue
+        if target[:1] == "{":
+            out.extend(bound_keys(target if target.endswith("}") else target.split("=", 1)[0], path + (key,)))
+        elif target[:1] == "[":
+            out.extend((None, n) for n in bound_names(target))
+        else:
+            name = target.split("=", 1)[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                out.append((path + (key,), name))
+    return out
+
+
+def _request_sources(names: List[str], request, label: str, loc) -> List[TaintSource]:
+    """The request-object entry for the selected parameters (`$argN` for a destructuring one:
+    its bindings then read the request type's fields)."""
+    return [TaintSource(loc=loc, var=PVar(n), kind=TaintKind.REQUEST, request=request,
+                        description=f"{label} entry point (request object)") for n in names if "." not in n]
+
+
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
-    params = [p for i, (p, _) in enumerate(proc.params)
-              if (not e.param_positions or i in e.param_positions) and i >= e.params_from]
-    names = [n for p in params for n in (bound_names(p.name) if p.name[:1] in "{[" else [p.name])]
+    """What an entry point taints of a procedure: parameter names, and for a destructuring
+    parameter (`$argN`, `Procedure.param_patterns`) either the whole parameter or, when names
+    select, the property path each selected name is bound from (`$arg0.body`), so the binding
+    at entry reads the taint."""
     out: List[str] = []
-    for n in names:
-        if n in _IMPLICIT_RECEIVERS or _glob(e.exclude_param, n):
+    for i, (p, _) in enumerate(proc.params):
+        if (e.param_positions and i not in e.param_positions) or i < e.params_from:
+            continue
+        pattern = proc.param_patterns.get(p.name)
+        if pattern is not None and isinstance(e.params, list):
+            for path, name in bound_keys(pattern):
+                if _glob(e.params, name) and not _glob(e.exclude_param, name):
+                    out.append(f"{p.name}.{'.'.join(path)}" if path else p.name)
+            continue
+        n = p.name
+        if n in _IMPLICIT_RECEIVERS or (pattern is None and _glob(e.exclude_param, n)):
             continue
         if _param_type_matches(program, table, proc, n, e.exclude_param_type):
             continue
@@ -436,12 +562,14 @@ def _entry_fields(e: Entrypoint, cls: ClassInfo) -> List[str]:
     return list(cls.fields)
 
 
-def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
+def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[Sequence[str]] = None) -> None:
     entries = [(p, e) for p in packs for e in p.entrypoints]
     if not entries:
         return
     table = _import_table(program)
-    for proc in list(program.procedures.values()):
+    procs = [program.procedures[n] for n in only if n in program.procedures] if only is not None \
+        else list(program.procedures.values())
+    for proc in procs:
         if proc.name.startswith("<") or "<clinit>" in proc.name or "<init>" in proc.name:
             continue
         entry = proc.nodes.get(proc.entry_node)
@@ -449,21 +577,49 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack]) -> None:
             continue
         cls = program.class_info.get(_simple_class(proc) or "")
         tainted: Dict[str, Tuple[Pack, Entrypoint]] = {}
+        requests: List[TaintSource] = []
         for pack, e in entries:
             if not _entry_matches(e, proc, program):
                 continue
             if f"{pack.name}:{e.id}" not in proc.entry_kinds:
                 proc.entry_kinds.append(f"{pack.name}:{e.id}")
+            if e.request_type:
+                have = {str(r.var) for r in requests} | set(tainted)
+                requests += [r for r in _request_sources(_entry_params(e, proc, program, table),
+                                                         pack.request_types[e.request_type],
+                                                         f"{pack.name}: {e.id}", proc.loc)
+                             if str(r.var) not in have]
+                continue
             for n in _entry_params(e, proc, program, table):
                 tainted.setdefault(n, (pack, e))
             if e.fields and cls is not None:
                 for f in _entry_fields(e, cls):
                     tainted.setdefault(f, (pack, e))
+        present = {str(i.var) for i in entry.instrs if isinstance(i, TaintSource)}
+        tainted = {n: v for n, v in tainted.items() if n not in present}
+        requests = [r for r in requests if str(r.var) not in present]
         for n, (pack, e) in reversed(list(tainted.items())):
             kind = TaintKind(_SOURCE_KIND_VALUES.get(e.kind, e.kind))
             entry.instrs.insert(0, TaintSource(
                 loc=proc.loc, var=PVar(n), kind=kind,
                 description=f"{pack.name}: {e.id} entry point (attacker-controlled)"))
+        for src in reversed([r for r in requests if str(r.var) not in tainted]):
+            entry.instrs.insert(0, src)
+
+
+def apply_entrypoints_to(program: Program, names: Sequence[str], packs: Optional[PackSet] = None) -> None:
+    """Apply the entry points of the packs that hold for `program` now to the procedures `names`
+    (a handler whose registration the project step found: frame/sil/registrations.py). A pack
+    that holds only now (the file uses a framework's values it was handed) also gets its rules."""
+    packs = packs if packs is not None else default_packs()
+    active = [p for p in packs.for_language(program.language) if _detected(p, program)]
+    known = {f"{p.language}/{p.name}" for p in getattr(program, "active_packs", ())}
+    new = [p for p in active if f"{p.language}/{p.name}" not in known]
+    if new:
+        _apply_rules(program, new)
+        program.active_packs = list(getattr(program, "active_packs", [])) + new
+        program.packs_applied = list(program.packs_applied) + [f"{p.language}/{p.name}" for p in new]
+    _apply_entrypoints(program, active, only=names)
 
 
 def finish_program(program: Program, packs: Optional[PackSet] = None,

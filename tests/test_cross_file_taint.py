@@ -766,7 +766,8 @@ def test_js_factory_function_returning_a_new_instance(tmp_path):
                    "function createDao() { return new Dao(); }\n"
                    "module.exports = { createDao };\n"),
         "h.js": ("const { createDao } = require('./dao');\nconst dao = createDao();\n"
-                 "function H(req, res) { dao.run(req.query.dir); res.send('ok'); }\n"),
+                 "function H(req, res) { dao.run(req.query.dir); res.send('ok'); }\n"
+                 "require('express')().get('/h', H);\n"),
     })
     assert ("dao.js", "CWE-78") in findings(tmp_path)
 
@@ -801,6 +802,13 @@ def test_python_async_static_dao_like_dvpwa(tmp_path):
     assert ("dao.py", "CWE-89") in findings(tmp_path)
 
 
+def routes_for(module: str, ctor: str, method: str = "show") -> str:
+    """An Express routes file registering `new <ctor>().<method>` (the handler module exports the
+    constructor), as an application wires the handlers a constructor function defines."""
+    return (f"const express = require('express');\nconst {ctor} = require('./{module}');\n"
+            f"const app = express();\nconst handler = new {ctor}();\napp.get('/x', handler.{method});\n")
+
+
 DAO_TS = ("import { exec } from 'child_process';\n"
           "export class Dao {\n"
           "  run(d: string) { exec('ls ' + d); }\n"
@@ -825,7 +833,10 @@ def test_ts_constructor_injected_dependency(tmp_path):
         "export class Service {\n"
         "  constructor(private readonly dao: Dao) {}\n"
         "  handle(req: any) { this.dao.run(req.query.dir); }\n"
-        "}\n")})
+        "}\n"), "routes.ts": (
+        "import express from 'express';\nimport { Dao } from './dao';\nimport { Service } from './svc';\n"
+        "const app = express();\nconst service = new Service(new Dao());\n"
+        "app.get('/s', (req, res) => { service.handle(req); res.send('ok'); });\n")})
     assert ("dao.ts", "CWE-78") in findings(tmp_path)
 
 
@@ -841,7 +852,8 @@ def test_js_constructor_function_dao_like_nodegoat(tmp_path):
                        "function Handler(db) {\n"
                        "  const dao = new Dao(db);\n"
                        "  this.show = (req, res) => { dao.run(req.query.dir, () => res.send('ok')); };\n"
-                       "}\n"),
+                       "}\nmodule.exports = Handler;\n"),
+        "routes.js": routes_for("handler", "Handler"),
     })
     assert ("dao.js", "CWE-78") in findings(tmp_path)
 
@@ -853,7 +865,9 @@ def test_js_constructor_function_dao_with_a_constant_is_clean(tmp_path):
                    "module.exports.Dao = Dao;\n"),
         "handler.js": ("const Dao = require('./dao').Dao;\n"
                        "function Handler(db) {\n  const dao = new Dao(db);\n"
-                       "  this.show = (req, res) => { dao.run('/tmp'); res.send('ok'); };\n}\n"),
+                       "  this.show = (req, res) => { dao.run('/tmp'); res.send('ok'); };\n}\n"
+                       "module.exports = Handler;\n"),
+        "routes.js": routes_for("handler", "Handler"),
     })
     assert ("dao.js", "CWE-78") not in findings(tmp_path)
 
@@ -866,7 +880,9 @@ def test_two_constructor_functions_with_the_same_method_name_are_kept_apart(tmp_
                    "module.exports = { Unsafe, Safe };\n"),
         "h.js": ("const { Safe } = require('./dao');\n"
                  "function H() {\n  const s = new Safe();\n"
-                 "  this.show = (req, res) => { s.go(req.query.dir); res.send('ok'); };\n}\n"),
+                 "  this.show = (req, res) => { s.go(req.query.dir); res.send('ok'); };\n}\n"
+                 "module.exports = H;\n"),
+        "routes.js": routes_for("h", "H"),
     })
     assert ("dao.js", "CWE-78") not in findings(tmp_path)
 
@@ -886,7 +902,9 @@ def test_js_constructor_function_exported_as_the_whole_module(tmp_path):
                    "module.exports = Dao;\n"),
         "h.js": ("const Dao = require('./dao');\n"
                  "function H() {\n  const dao = new Dao();\n"
-                 "  this.show = (req, res) => { dao.run(req.query.dir); res.send('ok'); };\n}\n"),
+                 "  this.show = (req, res) => { dao.run(req.query.dir); res.send('ok'); };\n}\n"
+                 "module.exports = H;\n"),
+        "routes.js": routes_for("h", "H"),
     })
     assert ("dao.js", "CWE-78") in findings(tmp_path)
 

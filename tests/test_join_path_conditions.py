@@ -30,7 +30,7 @@ def f(a, b):
 
 
 def javascript_src(cond):
-    return f"""const cp = require('child_process');
+    return f"""const cp = require('child_process'); const app = require('express')();
 app.get('/x', (req, res) => {{
   const q = req.query.q; const a = Number(req.query.a); const b = req.query.b;
   let x;

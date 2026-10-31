@@ -8,6 +8,29 @@ def case(name, vulnerable, safe):
 
 
 # --------------------------------------------------------------------------------------
+# The applications that register the handlers the cases below define in other files.
+_SEARCH_APP = '''const express = require("express");
+const search = require("./routes/search");
+
+const app = express();
+app.get("/search", search);
+module.exports = app;
+'''
+_USERS_APP = '''const express = require("express");
+const users = require("./controllers/users");
+
+const app = express();
+app.get("/users/:id", users.show);
+module.exports = app;
+'''
+_LOGIN_APP = '''const express = require("express");
+const login = require("./controllers/login");
+
+const app = express();
+app.post("/login", express.json(), login.login);
+module.exports = app;
+'''
+
 _APP = '''const express = require("express");
 const users = require("./routes/users");
 
@@ -104,6 +127,7 @@ exports.show = (req, res) => {
 };
 '''
 case("class_service_constructed_with_db", {
+    "app.js": _USERS_APP,
     "controllers/users.js": _CTRL,
     "db.js": '''const mysql = require("mysql");
 module.exports = mysql.createPool({ host: "db", database: "shop" });
@@ -123,6 +147,7 @@ module.exports = mysql.createPool({ host: "db", database: "shop" });
 module.exports = UserService;
 ''',
 }, {
+    "app.js": _USERS_APP,
     "controllers/users.js": _CTRL,
     "db.js": '''const mysql = require("mysql");
 module.exports = mysql.createPool({ host: "db", database: "shop" });
@@ -153,6 +178,7 @@ exports.login = async (req, res) => {
 };
 '''
 case("nosql_operator_injection_through_helper", {
+    "app.js": _LOGIN_APP,
     "controllers/login.js": _LOGIN,
     "auth.js": '''const { MongoClient } = require("mongodb");
 const client = new MongoClient(process.env.MONGO_URL);
@@ -163,6 +189,7 @@ exports.authenticate = async (creds) => {
 };
 ''',
 }, {
+    "app.js": _LOGIN_APP,
     "controllers/login.js": _LOGIN,
     "auth.js": '''const { MongoClient } = require("mongodb");
 const client = new MongoClient(process.env.MONGO_URL);
@@ -234,6 +261,7 @@ export class UsersRepository {
 
 # --------------------------------------------------------------------------------------
 case("closure_builds_query_from_outer_variable", {
+    "app.js": _SEARCH_APP,
     "routes/search.js": '''const db = require("../db");
 
 module.exports = function search(req, res) {
@@ -246,6 +274,7 @@ module.exports = function search(req, res) {
 module.exports = mysql.createPool({ host: "db", database: "shop" });
 ''',
 }, {
+    "app.js": _SEARCH_APP,
     "routes/search.js": '''const db = require("../db");
 
 module.exports = function search(req, res) {

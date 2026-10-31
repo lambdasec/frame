@@ -571,7 +571,10 @@ function Footer() {
         sc = FrameScanner(language="javascript", verify=False)
 
         def cwes(code):
-            return {v.cwe_id for v in sc.scan(code, "t.js").vulnerabilities}
+            # an Express application and router: the express pack makes their handlers' requests attacker data
+            app = ("const express = require('express');\nconst app = express();\n"
+                   "const router = express.Router();\n")
+            return {v.cwe_id for v in sc.scan(app + code, "t.js").vulnerabilities}
 
         # function callback, command injection via req.body
         assert "CWE-78" in cwes(
@@ -1616,8 +1619,10 @@ class TestJavaScriptTaintRegressions:
     """Regressions for JS/TS taint detection bugs found via the js_sast bench."""
 
     def _scan(self, code, language="javascript"):
+        """`code` registers its handlers on `app`, an Express application."""
         from frame.sil.scanner import scan_code
-        return [v.cwe_id for v in scan_code(code, language).vulnerabilities]
+        app = "const express = require('express');\nconst app = express();\n"
+        return [v.cwe_id for v in scan_code(app + code, language).vulnerabilities]
 
     def test_nested_callback_does_not_overwrite_handler(self):
         # The .then() arrow and the route handler are both anonymous; they must

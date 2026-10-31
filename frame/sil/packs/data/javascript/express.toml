@@ -1,0 +1,134 @@
+[pack]
+name = "express"
+language = "javascript"
+description = "Express: handlers registered on an express() application, an express.Router() or a route, and what their request object holds"
+detect = { imports = ["express"] }
+references = ["https://expressjs.com/en/4x/api.html", "https://expressjs.com/en/5x/api.html",
+              "https://expressjs.com/en/guide/using-middleware.html", "https://expressjs.com/en/guide/error-handling.html",
+              "https://nodejs.org/api/http.html#class-httpincomingmessage", "https://github.com/expressjs/multer"]
+
+# What the request object of a handler holds that the client chose: the parsed URL parts (params,
+# query, path, url, originalUrl), the Host header's name (hostname, host, subdomains), the headers
+# (headers, rawHeaders, get(), header()), the parsed body and cookies (body-parser / express.json,
+# cookie-parser), uploaded files (multer: file, files), and Express 4's req.param(). Everything
+# else on it is server state: session (express-session), user (passport), app, res, route,
+# signedCookies (values the server signed, not ones a client can choose), and the address and
+# protocol facts (ip, ips, protocol, secure), which are not free text.
+[[request_type]]
+id = "request"
+fields = ["params", "query", "body", "cookies", "headers", "rawHeaders", "url", "originalUrl", "path", "hostname",
+          "host", "subdomains", "file", "files"]
+methods = ["get", "header", "param"]
+kinds = { file = "file", files = "file" }      # uploaded files' contents and client-given names
+
+# app.METHOD(path, callback...), app.use([path,] callback...), app.all, router.METHOD / use / all,
+# app.route(path).METHOD: a callback is (req, res, next); an array of callbacks is a series.
+[[entrypoint]]
+id = "handler"
+registered_via = ["express.get", "express.post", "express.put", "express.delete", "express.patch", "express.options",
+                 "express.head", "express.all", "express.use", "express.checkout", "express.copy",
+                 "express.lock", "express.merge", "express.mkactivity", "express.mkcol",
+                 "express.move", "express.notify", "express.purge", "express.report",
+                 "express.search", "express.subscribe", "express.trace", "express.unlock",
+                 "express.unsubscribe", "express.Router.get", "express.Router.post",
+                 "express.Router.put", "express.Router.delete", "express.Router.patch",
+                 "express.Router.options", "express.Router.head", "express.Router.all",
+                 "express.Router.use", "express.Router.checkout", "express.Router.copy",
+                 "express.Router.lock", "express.Router.merge", "express.Router.mkactivity",
+                 "express.Router.mkcol", "express.Router.move", "express.Router.notify",
+                 "express.Router.purge", "express.Router.report", "express.Router.search",
+                 "express.Router.subscribe", "express.Router.trace", "express.Router.unlock",
+                 "express.Router.unsubscribe", "express.route.get", "express.route.post",
+                 "express.route.put", "express.route.delete", "express.route.patch",
+                 "express.route.options", "express.route.head", "express.route.all",
+                 "express.route.checkout", "express.route.copy", "express.route.lock",
+                 "express.route.merge", "express.route.mkactivity", "express.route.mkcol",
+                 "express.route.move", "express.route.notify", "express.route.purge",
+                 "express.route.report", "express.route.search", "express.route.subscribe",
+                 "express.route.trace", "express.route.unlock", "express.route.unsubscribe",
+                 "express.Router.route.get", "express.Router.route.post",
+                 "express.Router.route.put", "express.Router.route.delete",
+                 "express.Router.route.patch", "express.Router.route.options",
+                 "express.Router.route.head", "express.Router.route.all",
+                 "express.Router.route.checkout", "express.Router.route.copy",
+                 "express.Router.route.lock", "express.Router.route.merge",
+                 "express.Router.route.mkactivity", "express.Router.route.mkcol",
+                 "express.Router.route.move", "express.Router.route.notify",
+                 "express.Router.route.purge", "express.Router.route.report",
+                 "express.Router.route.search", "express.Router.route.subscribe",
+                 "express.Router.route.trace", "express.Router.route.unlock",
+                 "express.Router.route.unsubscribe"]
+param_positions = [0]
+params = "all"
+exclude_arity = [4]
+request_type = "request"
+description = "the request object of an Express route handler or middleware"
+
+# Error-handling middleware is the one with four arguments: (err, req, res, next).
+[[entrypoint]]
+id = "error-handler"
+registered_via = ["express.get", "express.post", "express.put", "express.delete", "express.patch", "express.options",
+                 "express.head", "express.all", "express.use", "express.checkout", "express.copy",
+                 "express.lock", "express.merge", "express.mkactivity", "express.mkcol",
+                 "express.move", "express.notify", "express.purge", "express.report",
+                 "express.search", "express.subscribe", "express.trace", "express.unlock",
+                 "express.unsubscribe", "express.Router.get", "express.Router.post",
+                 "express.Router.put", "express.Router.delete", "express.Router.patch",
+                 "express.Router.options", "express.Router.head", "express.Router.all",
+                 "express.Router.use", "express.Router.checkout", "express.Router.copy",
+                 "express.Router.lock", "express.Router.merge", "express.Router.mkactivity",
+                 "express.Router.mkcol", "express.Router.move", "express.Router.notify",
+                 "express.Router.purge", "express.Router.report", "express.Router.search",
+                 "express.Router.subscribe", "express.Router.trace", "express.Router.unlock",
+                 "express.Router.unsubscribe", "express.route.get", "express.route.post",
+                 "express.route.put", "express.route.delete", "express.route.patch",
+                 "express.route.options", "express.route.head", "express.route.all",
+                 "express.route.checkout", "express.route.copy", "express.route.lock",
+                 "express.route.merge", "express.route.mkactivity", "express.route.mkcol",
+                 "express.route.move", "express.route.notify", "express.route.purge",
+                 "express.route.report", "express.route.search", "express.route.subscribe",
+                 "express.route.trace", "express.route.unlock", "express.route.unsubscribe",
+                 "express.Router.route.get", "express.Router.route.post",
+                 "express.Router.route.put", "express.Router.route.delete",
+                 "express.Router.route.patch", "express.Router.route.options",
+                 "express.Router.route.head", "express.Router.route.all",
+                 "express.Router.route.checkout", "express.Router.route.copy",
+                 "express.Router.route.lock", "express.Router.route.merge",
+                 "express.Router.route.mkactivity", "express.Router.route.mkcol",
+                 "express.Router.route.move", "express.Router.route.notify",
+                 "express.Router.route.purge", "express.Router.route.report",
+                 "express.Router.route.search", "express.Router.route.subscribe",
+                 "express.Router.route.trace", "express.Router.route.unlock",
+                 "express.Router.route.unsubscribe"]
+arity = [4]
+param_positions = [1]
+params = "all"
+request_type = "request"
+description = "the request object of Express error-handling middleware"
+
+# app.param(name, callback) / router.param: callback(req, res, next, value, name), value being the
+# route parameter's value from the URL.
+[[entrypoint]]
+id = "param-callback"
+registered_via = ["express.param", "express.Router.param"]
+param_positions = [0]
+params = "all"
+request_type = "request"
+description = "the request object of an app.param callback"
+
+[[entrypoint]]
+id = "param-value"
+registered_via = ["express.param", "express.Router.param"]
+param_positions = [3]
+params = "all"
+description = "the route parameter value an app.param callback receives"
+
+# TypeScript: a parameter declared as Express's Request (`import { Request } from "express"`) is
+# one, wherever the function is and whoever calls it.
+[[entrypoint]]
+id = "typed-request"
+method = ["*"]
+params = "typed"
+param_type = ["express.Request"]
+request_type = "request"
+description = "a parameter of type express.Request"
