@@ -13,22 +13,22 @@ description = "pandas.read_sql runs a SQL string (a table name is also accepted 
 
 # peewee: Database.execute_sql(sql, params), Model.raw(sql), SQL(sql) fragments.
 [[sink]]
-name = ["execute_sql"]
-call = ["peewee.SQL", "peewee.Database.execute_sql"]
+call = ["peewee.SQL", "peewee.Database.execute_sql", "peewee.*Database.execute_sql", "playhouse.**.execute_sql"]
 kind = "sql"
 args = [0]
 
 # pony: Database.select / get / exists / execute / insert take SQL text; Entity.select_by_sql too.
 [[sink]]
-name = ["db.select", "db.get", "db.exists", "db.execute", "pony_db.select", "pony_db.get",
-        "pony_db.exists", "pony_db.execute", "database.select", "database.execute",
-        "select_by_sql", "get_by_sql"]
+call = ["pony.orm.Database.select", "pony.orm.Database.get", "pony.orm.Database.exists", "pony.orm.Database.execute",
+        "pony.orm.core.Database.select", "pony.orm.core.Database.get", "pony.orm.core.Database.exists",
+        "pony.orm.core.Database.execute", "pony.orm.**.Entity.select_by_sql", "pony.orm.**.Entity.get_by_sql"]
 kind = "sql"
 args = [0]
 
 # sqlite3 runs several statements, so injected text is arbitrary SQL.
 [[sink]]
-name = ["executescript"]
+call = ["sqlite3.Connection.executescript", "sqlite3.Cursor.executescript", "connection.executescript",
+        "cursor.executescript"]                  # a typed DB-API connection or cursor (value-types.toml)
 kind = "sql"
 args = [0]
 
@@ -41,7 +41,8 @@ args = [0]
 
 # records / databases (async): db.query("...") and database.fetch_all("...")
 [[sink]]
-name = ["database.fetch_all", "database.fetch_one", "database.execute", "database.fetch_val", "database.iterate"]
+call = ["databases.Database.fetch_all", "databases.Database.fetch_one", "databases.Database.execute",
+        "databases.Database.fetch_val", "databases.Database.iterate", "records.Database.query"]
 kind = "sql"
 args = [0]
 arg_names = ["query"]

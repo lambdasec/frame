@@ -239,6 +239,9 @@ def vulnerable():
     user_id = input()
     query = "SELECT * FROM users WHERE id=" + user_id
     cursor.execute(query)
+
+import sqlite3
+cursor = sqlite3.connect("app.db").cursor()
 """)
             f.flush()
             result = main(["scan", f.name, "--no-verify"])

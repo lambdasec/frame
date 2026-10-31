@@ -16,8 +16,10 @@ def _idor(code, name="a.py"):
 
 FLASK = """from flask import Flask, request, abort
 from flask_login import current_user
-from models import Order
+from flask_sqlalchemy import SQLAlchemy
 app = Flask(__name__)
+db = SQLAlchemy(app)
+class Order(db.Model): pass
 
 @app.route('/o')
 def o():
@@ -50,7 +52,8 @@ def test_a_variable_named_current_user_is_not_the_caller():
 
 def test_a_verified_jwt_identity_scopes_the_selection():
     code = ("from flask import Flask, request\nfrom flask_jwt_extended import get_jwt_identity, jwt_required\n"
-            "from models import Order\napp = Flask(__name__)\n\n@app.route('/o')\n@jwt_required()\ndef o():\n"
+            "from flask_sqlalchemy import SQLAlchemy\napp = Flask(__name__)\ndb = SQLAlchemy(app)\n"
+            "class Order(db.Model): pass\n\n@app.route('/o')\n@jwt_required()\ndef o():\n"
             "    uid = get_jwt_identity()\n"
             "    return str(Order.query.filter_by(user_id=uid, id=request.args['id']).first())\n")
     assert _idor(code) == []
@@ -58,7 +61,8 @@ def test_a_verified_jwt_identity_scopes_the_selection():
 
 
 DJANGO = """from django.urls import path
-from shop.models import Order
+from django.db import models
+class Order(models.Model): pass
 
 def view(request, pk):
     return str({select})
@@ -82,7 +86,10 @@ def test_the_caller_is_not_attacker_data():
 DECORATED = """from functools import wraps
 from flask import Blueprint, request
 import jwt
-from models import User, Txn
+from flask_sqlalchemy import SQLAlchemy
+db = SQLAlchemy()
+class User(db.Model): pass
+class Txn(db.Model): pass
 bp = Blueprint("t", __name__)
 
 def token_required(f):
@@ -108,15 +115,30 @@ def test_a_decorator_hands_the_view_the_caller():
     # record the verified token's identity selects, so comparing the owner with it is a check
     guarded = DECORATED.format(check="if txn.owner_id != me.id:\n        return 'no', 403")
     assert _idor(guarded) == []
-    assert _idor(DECORATED.format(check="pass")) == [19]
+    assert _idor(DECORATED.format(check="pass")) == [22]
 
 
 def test_the_decorator_can_live_in_another_file(tmp_path):
     head, view = DECORATED.split('bp = Blueprint("t", __name__)\n')
-    (tmp_path / "auth.py").write_text(head + view.split("@bp.route")[0])
+    (tmp_path / "auth.py").write_text(head.replace("from flask_sqlalchemy import SQLAlchemy\n", "")
+                                      .replace("db = SQLAlchemy()\nclass User(db.Model): pass\nclass Txn(db.Model): pass\n",
+                                               "from models import User\n") + view.split("@bp.route")[0])
+    (tmp_path / "models.py").write_text("from flask_sqlalchemy import SQLAlchemy\ndb = SQLAlchemy()\n"
+                                        "class User(db.Model): pass\nclass Txn(db.Model): pass\n")
     (tmp_path / "views.py").write_text("from flask import Blueprint\nfrom auth import token_required\n"
                                        "from models import Txn\nbp = Blueprint('t', __name__)\n\n@bp.route"
                                        + view.split("@bp.route")[1].format(
                                            check="if txn.owner_id != me.id:\n        return 'no', 403"))
     results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
     assert not [v for r in results for v in r.vulnerabilities if v.cwe_id == "CWE-639"]
+
+
+def test_verified_claims_are_the_caller_unverified_ones_are_not():
+    code = ("import jwt\nfrom flask import Flask, request\nfrom flask_sqlalchemy import SQLAlchemy\n"
+            "app = Flask(__name__)\ndb = SQLAlchemy(app)\nclass Order(db.Model): pass\n\n@app.route('/o')\ndef o():\n"
+            "    claims = jwt.decode(request.args['t'], 'key', {how})\n"
+            "    return str(Order.query.filter_by(user_id=claims['sub'], id=request.args['id']).first())\n")
+    assert _idor(code.format(how="algorithms=['HS256']")) == []
+    unverified = code.format(how="options={'verify_signature': False}")
+    assert _idor(unverified)                              # whatever the client wrote in the token
+    assert "CWE-347" in {v.cwe_id for v in FrameScanner(language="python", verify=False).scan(unverified, "a.py").vulnerabilities}

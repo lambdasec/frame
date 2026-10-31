@@ -216,8 +216,8 @@ def _py_cwes(code):
 
 
 def test_awaited_statement_call_keeps_its_sink():
-    code = ("from aiohttp.web import Request\n"
-            "async def h(request: Request, cur):\n"
+    code = ("from aiohttp.web import Request; import aiosqlite\n"
+            "async def h(request: Request, cur: aiosqlite.Cursor):\n"
             "    data = await request.post()\n"
             "    await cur.execute(\"SELECT * FROM t WHERE n = '%s'\" % data['n'])\n")
     assert "CWE-89" in _py_cwes(code)

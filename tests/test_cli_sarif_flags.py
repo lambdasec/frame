@@ -36,8 +36,8 @@ def test_sarif_region_has_end_line():
     # A SQL-injection taint flow (no secret-like literal, to avoid tripping
     # push-protection scanners) is enough to exercise the SARIF region.
     src = (
-        "from flask import request\n"
-        "def handler(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def handler(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         "    return db.execute('SELECT * FROM users WHERE id=' + uid)\n"
     )

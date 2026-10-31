@@ -247,7 +247,8 @@ def test_a_guess_never_yields_a_source_sink_or_sanitizer(spec):
     from frame.sil.procedure import Program, ProcSpec
     p = Program(library_specs={"request.get": ProcSpec(**spec), "dict.get": ProcSpec(taint_propagates=[0])},
                 language="python")
-    assert p.get_spec("app.get") is p.library_specs["dict.get"]     # never the request client's sink
+    assert p.get_spec("options.get") is p.library_specs["dict.get"]     # never the request client's sink
+    assert p.get_spec("app.get") is None             # `app` is a type's row head (flask.Flask): by type only
 
 
 def test_malformed_receiver_guesses_are_errors(tmp_path):

@@ -2,8 +2,8 @@
 name = "owasp-benchmark-python"
 language = "python"
 description = "The OWASP Benchmark for Python's own helper library (helpers/utils.py, helpers/separate_request.py): `mysession` is its session store, where the remember-me test cases keep the token they hand out, and `request_wrapper` hands out the request's form fields, query parameters and cookies. Passed to the scanner by the benchmark harness only, as any project teaches Frame its own code (.frame/packs or --pack); never shipped with Frame."
-detect = { imports = ["helpers.utils", "helpers.separate_request"] }
-references = ["https://github.com/OWASP-Benchmark/BenchmarkPython (helpers/utils.py, helpers/separate_request.py)"]
+detect = { imports = ["helpers.utils", "helpers.separate_request", "helpers.ThingFactory", "helpers.db_sqlite", "helpers.ldap"] }
+references = ["https://github.com/OWASP-Benchmark/BenchmarkPython (helpers/utils.py, helpers/separate_request.py, helpers/ThingFactory.py, helpers/db_sqlite.py, helpers/ldap.py)"]
 
 # A value stored in the session store is a session token: it must be unpredictable, so weak-random
 # data there is CWE-338 (the test cases' remember-me key).
@@ -26,3 +26,25 @@ description = "a form field / query parameter of the request the wrapper keeps"
 call = ["helpers.separate_request.request_wrapper.get_cookie"]
 kind = "principal"
 description = "a cookie of the request the wrapper keeps (Flask cookies are the caller's credential)"
+
+# helpers/utils.py: escape_for_html keeps letters, digits and `, . - _ space`, and writes every
+# other character as an HTML entity.
+[[sanitizer]]
+call = ["helpers.utils.escape_for_html"]
+kinds = ["html", "xss"]
+
+# helpers/ThingFactory.py: createThing() returns a Thing1 or Thing2 (by its .ini file); both
+# doSomething(x) return x.
+[[propagator]]
+call = ["helpers.ThingFactory.createThing.doSomething"]
+from = [0]
+
+# helpers/db_sqlite.py: get_connection() returns `sqlite3.connect(DB_PATH)`.
+[[returns]]
+call = "helpers.db_sqlite.get_connection"
+type = "sqlite3.Connection"
+
+# helpers/ldap.py: get_connection() returns a bound `ldap3.Connection`.
+[[returns]]
+call = "helpers.ldap.get_connection"
+type = "ldap3.Connection"

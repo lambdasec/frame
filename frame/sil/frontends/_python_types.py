@@ -100,7 +100,15 @@ class PythonTypeInference:
             base = self.type_of(node.child_by_field_name("value"), scope, cls)
             return f"{base}.[]" if base else None
         if t == "call":
-            return self._callee_type(node.child_by_field_name("function"), scope, cls)
+            callee = self._callee_type(node.child_by_field_name("function"), scope, cls)
+            from frame.sil.value_origins import passes
+            index = passes("python").get(callee or "")
+            if index is not None:                       # `closing(x)` is x
+                args = node.child_by_field_name("arguments")
+                positional = [a for a in (args.named_children if args is not None else ())
+                              if a.type not in ("keyword_argument", "comment")]
+                return self.type_of(positional[index], scope, cls) if index < len(positional) else None
+            return callee
         return None
 
     def _callee_type(self, fn, scope: _Scope, cls: Optional[str]) -> Optional[str]:

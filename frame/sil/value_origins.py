@@ -86,14 +86,17 @@ def _definitions(proc) -> Dict[str, int]:
     return counts
 
 
-def _expression_call_origin(exp, imports: Dict[str, str]) -> Optional[str]:
+def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Dict[str, str]] = None) -> Optional[str]:
     """`new Pool(o)` / `mysql.createPool(o)` written as an expression (no Call instruction): the
-    class or the call id, through the file's imports."""
+    class or the call id, through the file's imports; a call of a function whose returns are one
+    value (`returning`) is that value."""
     if not isinstance(exp, ExpCall):
         return None
     text = _call_text(exp)
     if not text:
         return None
+    if returning and text in returning:
+        return returning[text]
     new = text.startswith("new ")
     name = text[4:] if new else text
     head, _, rest = name.partition(".")
@@ -104,7 +107,8 @@ def _expression_call_origin(exp, imports: Dict[str, str]) -> Optional[str]:
 
 
 def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str, str]] = None,
-             params: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+             params: Optional[Dict[str, str]] = None, python: bool = False,
+             returning: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Origins of the names bound once in `proc`; with `fill`, also give unresolved calls on
     them their callee id. `params`: origins of parameters every caller agrees on (a project's
     `require("./routes")(app)` with `app = express()`), else a parameter has none."""
@@ -112,6 +116,13 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
     imported_modules = {v for v in imports.values() if v}
     defs = _definitions(proc)
     origin: Dict[str, str] = dict(params or {})
+    through = passes("python") if python else {}
+    receivers_ = {p.split(".", 1)[0] for p in origin if "." in p}          # `self` of `self.conn`
+    if python:                                          # a parameter declared as a library type
+        for name, text in (getattr(proc, "param_types", None) or {}).items():
+            head, _, rest = text.partition(".")
+            if name not in origin and head.isidentifier() and head in imports:
+                origin[name] = f"{imports[head]}.{rest}" if rest else imports[head]
     modules: Set[str] = set()          # names holding a module itself (`require("express")`), not a call's result
 
     def of(name: str) -> Optional[str]:
@@ -125,19 +136,36 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
             if isinstance(i, Call):
                 text = _call_text(i)
                 receiver_given = text and text.split(".", 1)[0] in (params or {})   # an entry point's `receiver`
-                if i.canonical is None and fill and text and "." in text \
+                if fill and python and text and "." in text and i.canonical is not None:
+                    head, rest = text.split(".", 1)        # an imported name whose project value is known
+                    known = of(head)
+                    if known and head in imports and known != imports[head] \
+                            and i.canonical == f"{imports[head]}.{rest}":
+                        i.canonical = None
+                parts_ = text.split(".") if text else []
+                field_head = ".".join(parts_[:2]) if len(parts_) > 2 and parts_[0] in receivers_ else None
+                if i.canonical is None and fill and text and field_head and field_head in origin:
+                    _set(i, f"{origin[field_head]}.{'.'.join(parts_[2:])}")   # `self.conn.cursor()`
+                    changed = True
+                elif i.canonical is None and fill and text and "." in text \
                         and (receiver_given or not text.startswith(("this.", "self."))):
                     head, rest = text.split(".", 1)
                     o = of(head)
                     if o is not None and head.replace("$", "_").isidentifier():
-                        i.canonical = f"{o}.{rest}"
+                        _set(i, f"{o}.{rest}")
                         changed = True
                 elif i.canonical is None and fill and text and text in modules:
-                    i.canonical = origin[text]            # `require("express")()`: calling the module value
+                    _set(i, origin[text])                 # `require("express")()`: calling the module value
                     changed = True
                 r = _ret_name(i)
                 required = _required_module(i, proc)
                 produced = i.canonical or required or _module_qualified(text, imported_modules)
+                if python and text and returning and text in returning:     # a function returning one value
+                    produced = returning[text]
+                if python and produced and produced in through and i.args:  # `contextlib.closing(x)` is x
+                    arg = i.args[through[produced]][0] if through[produced] < len(i.args) else None
+                    produced = (of(str(arg.var)) if isinstance(arg, ExpVar) else
+                                _expression_call_origin(arg, imports, returning) if arg is not None else None)
                 if r and defs.get(r) == 1 and produced and origin.get(r) != produced:
                     origin[r] = produced
                     changed = True
@@ -145,7 +173,7 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                     modules.add(r)
             elif isinstance(i, Assign) and isinstance(i.exp, (ExpVar, ExpCall)):
                 x = str(i.id)
-                o = of(str(i.exp.var)) if isinstance(i.exp, ExpVar) else _expression_call_origin(i.exp, imports)
+                o = of(str(i.exp.var)) if isinstance(i.exp, ExpVar) else _expression_call_origin(i.exp, imports, returning)
                 if o is not None and defs.get(x) == 1 and origin.get(x) != o:
                     origin[x] = o
                     changed = True
@@ -153,7 +181,101 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                     modules.add(x)
         if not changed:
             break
+    if fill and python:
+        _fill_by_latest_binding(proc, origin, imports, returning)
     return origin
+
+
+def _set(call, canonical: str) -> None:
+    """A callee id value origins gave: recomputed whenever the origins are (`_reset_filled`)."""
+    call.canonical = canonical
+    call.canonical_by_origin = canonical
+
+
+def _reset_filled(program) -> None:
+    """Before origins are recomputed: the ids they gave go, so better-known origins (a project's
+    imports learned late) rename the calls. A call whose id changes loses the pack spec matched on
+    the old one (`packs.apply.reapply_rules` matches it again)."""
+    for proc in program.procedures.values():
+        for i in _instrs(proc):
+            given = getattr(i, "canonical_by_origin", None)
+            if given is not None and i.canonical == given:
+                i.canonical = None
+                i.canonical_by_origin = None
+                i.stale_pack_spec = getattr(i, "pack_spec", None) is not None
+
+
+def _settle_filled(program) -> bool:
+    """After: drop the pack spec of a call whose id moved. Returns whether any id moved."""
+    moved = False
+    for proc in program.procedures.values():
+        for i in _instrs(proc):
+            if getattr(i, "stale_pack_spec", None) is not None:
+                if i.stale_pack_spec and getattr(i, "canonical_by_origin", None) != getattr(i, "_prev_origin_id", None):
+                    i.pack_spec = None
+                    moved = True
+                i.stale_pack_spec = None
+    return moved
+
+
+def _fill_by_latest_binding(proc, origin: Dict[str, str], imports: Dict[str, str],
+                            returning: Optional[Dict[str, str]]) -> None:
+    """A name bound more than once (`RESPONSE = ""` ... `RESPONSE = make_response(RESPONSE)`):
+    a call on it takes the origin of the binding that reaches it, when that is the latest one
+    in the same block (straight-line code, no path between them rebinding it)."""
+    defs = _definitions(proc)
+    through = passes("python")
+    for node in proc.nodes.values():
+        latest: Dict[str, Optional[str]] = {}
+        for i in node.instrs:
+            if isinstance(i, Call):
+                text = _call_text(i)
+                if i.canonical is None and text and "." in text:
+                    head, rest = text.split(".", 1)
+                    if defs.get(head, 0) > 1 and latest.get(head):
+                        _set(i, f"{latest[head]}.{rest}")
+                r = _ret_name(i)
+                if r:
+                    produced = i.canonical or (returning or {}).get(text or "")
+                    if produced in through:                 # `closing(x)` is x
+                        idx = through[produced]
+                        arg = i.args[idx][0] if idx < len(i.args) else None
+                        produced = (latest.get(str(arg.var)) or origin.get(str(arg.var))) \
+                            if isinstance(arg, ExpVar) else None
+                    latest[r] = produced
+            elif type(i).__name__ == "Assign":
+                x = str(i.id)
+                if isinstance(i.exp, ExpVar):
+                    v = str(i.exp.var)
+                    latest[x] = latest.get(v) or origin.get(v)
+                elif isinstance(i.exp, ExpCall):
+                    latest[x] = _expression_call_origin(i.exp, imports, returning)
+                else:
+                    latest[x] = None
+
+
+def _module_params(program, param_origins, imports: Dict[str, str]) -> Dict[str, str]:
+    """Module-level origins given from outside (a project's imported names), and, in Python, each
+    class of the file whose base has an origin (`class Order(db.Model)` with `db = SQLAlchemy()`,
+    `class Order(models.Model)`): the class is a kind of that base (its class attributes, such as a
+    model's `query` or `objects`, are the base's)."""
+    out = dict(param_origins.get(MODULE) or {})
+    if (getattr(program, "language", "") or "") != "python":
+        return out
+    module = program.procedures.get(MODULE)
+    module_origins: Dict[str, str] = {}
+    if module is not None:
+        module_origins = _origins(module, {}, fill=False, imports=imports, params=dict(out))
+    for name, info in (getattr(program, "class_info", None) or {}).items():
+        if name in out:
+            continue
+        for base in getattr(info, "bases", ()) or ():
+            head, _, rest = base.partition(".")
+            o = module_origins.get(head) or out.get(head) or imports.get(head)
+            if o and head.isidentifier():
+                out[name] = f"{o}.{rest}" if rest else o
+                break
+    return out
 
 
 def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None) -> None:
@@ -162,14 +284,80 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
     a nested function seeing its enclosing functions' names). Idempotent; run again with
     `param_origins` (procedure -> parameter -> origin) once callers are known."""
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    python = (getattr(program, "language", "") or "") == "python"
+    if python:
+        for proc in program.procedures.values():
+            for i in _instrs(proc):
+                if isinstance(i, Call):
+                    i._prev_origin_id = getattr(i, "canonical_by_origin", None)
     param_origins = param_origins or getattr(program, "param_origins", None) or {}
     program.param_origins = param_origins
+    returning: Dict[str, str] = dict(getattr(program, "call_origins", None) or {}) if python else {}
+    for _ in range(3 if python else 1):         # a function returning what another returns
+        scopes = _annotate_scopes(program, param_origins, imports, python, returning)
+        if not python:
+            break
+        fields = _init_field_origins(program, scopes)
+        merged = {k: dict(v) for k, v in param_origins.items()}
+        for name, extra in fields.items():
+            merged.setdefault(name, {}).update({k: v for k, v in extra.items() if k not in merged.get(name, {})})
+        if merged != param_origins:
+            param_origins = merged
+            program.param_origins = merged
+            scopes = _annotate_scopes(program, param_origins, imports, python, returning)
+        found = dict(returning)
+        for name, proc in program.procedures.items():
+            if name == MODULE or proc.is_method or "#" in name:
+                continue
+            values = {scopes.get(name, {}).get(str(i.value.var)) for n in proc.nodes.values() for i in n.instrs
+                      if type(i).__name__ == "Return" and isinstance(getattr(i, "value", None), ExpVar)}
+            if len(values) == 1 and None not in values:
+                found[name] = next(iter(values))
+        if found == returning:
+            break
+        returning = found
+    program.return_origins = {k: v for k, v in returning.items() if k in program.procedures}
+    program.value_origins = scopes
+    if python:
+        program.origins_moved = _settle_filled(program) or getattr(program, "origins_moved", False)
+    program.export_origin = scopes.get(MODULE, {}).get("module.exports")
+
+
+def _init_field_origins(program, scopes) -> Dict[str, Dict[str, str]]:
+    """Python: a field a class's `__init__` sets from a value with an origin (`self.conn = conn`,
+    conn handed a connection by every caller) has it in the class's other methods, under their
+    own receiver's name (`self.conn`)."""
+    out: Dict[str, Dict[str, str]] = {}
+    for init in program.procedures.values():
+        if not init.is_method or init.simple_name != "__init__" or not init.params or not init.class_name:
+            continue
+        receiver = init.params[0][0].name
+        found: Dict[str, str] = {}
+        for i in _instrs(init):
+            target = str(i.id) if type(i).__name__ == "Assign" else ""
+            if target.startswith(receiver + ".") and target.count(".") == 1 and isinstance(i.exp, ExpVar):
+                o = scopes.get(init.name, {}).get(str(i.exp.var))
+                if o:
+                    found[target[len(receiver) + 1:]] = o
+        if not found:
+            continue
+        for proc in program.procedures.values():
+            if proc is init or not proc.is_method or proc.class_name != init.class_name or not proc.params:
+                continue
+            recv = proc.params[0][0].name
+            out[proc.name] = {f"{recv}.{f}": o for f, o in found.items()}
+    return out
+
+
+def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict[str, Dict[str, str]]:
+    if python:
+        _reset_filled(program)
     module = program.procedures.get(MODULE)
     scopes: Dict[str, Dict[str, str]] = {}
-    outer = _origins(module, {}, fill=True, imports=imports, params=param_origins.get(MODULE)) \
-        if module is not None else dict(param_origins.get(MODULE) or {})
+    outer = _origins(module, {}, fill=True, imports=imports, params=_module_params(program, param_origins, imports),
+                     python=python, returning=returning) \
+        if module is not None else _module_params(program, param_origins, imports)
     scopes[MODULE] = outer
-    program.export_origin = outer.get("module.exports")
 
     def visible(name: str, seen: Set[str]) -> Dict[str, str]:
         """What a procedure sees from outside: the module's names and its enclosing functions'."""
@@ -180,15 +368,15 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
         out = visible(parent, seen | {name})
         if parent not in scopes:
             scopes[parent] = _origins(program.procedures[parent], out, fill=True, imports=imports,
-                                      params=param_origins.get(parent))
+                                      params=param_origins.get(parent), python=python, returning=returning)
         out.update(scopes[parent])
         return out
 
     for name, proc in program.procedures.items():
         if name != MODULE and name not in scopes:
-            scopes[name] = _origins(proc, visible(name, set()), fill=True, imports=imports,
-                                    params=param_origins.get(name))
-    program.value_origins = scopes
+            scopes[name] = _origins(proc, visible(name, set()), fill=True, imports=imports, python=python,
+                                    params=param_origins.get(name), returning=returning)
+    return scopes
 
 
 def origin_in_scope(program, proc_name: str, name: str, imports: bool = True) -> Optional[str]:
@@ -247,12 +435,20 @@ def link_python_modules(programs: Dict[str, object], bindings) -> None:
             if (getattr(program, "language", "") or "") != "python":
                 continue
             found: Dict[str, str] = {}
+            calls: Dict[str, str] = {}
             for local, (file, symbol) in bindings(key).items():
                 target = programs.get(file)
                 scopes = getattr(target, "value_origins", None) or {} if target is not None else {}
                 origin = scopes.get(MODULE, {}).get(symbol)
                 if origin and local not in program.procedures:
                     found[local] = origin
+                returned = (getattr(target, "return_origins", None) or {}).get(symbol) if target is not None else None
+                if returned and local not in program.procedures:
+                    calls[local] = returned          # an imported function returning one value
+            if calls != (getattr(program, "call_origins", None) or {}):
+                program.call_origins = calls
+                annotate(program, getattr(program, "param_origins", None) or {})
+                changed = True
             current = getattr(program, "param_origins", None) or {}
             merged = {k: dict(v) for k, v in current.items()}
             module = merged.setdefault(MODULE, {})
@@ -293,14 +489,27 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
 
 # -- what library calls return ------------------------------------------------------------------
 
+_PASSES: Dict[str, Dict[str, int]] = {}
+
+
+def passes(language: str) -> Dict[str, int]:
+    """Call id -> the position of the argument the call returns (`contextlib.closing(x)` is x)."""
+    load()
+    return _PASSES.get("javascript" if (language or "").lower() == "typescript" else (language or "").lower(), {})
+
+
 @lru_cache(maxsize=None)
 def load(path: Path = PATH) -> Dict[str, Tuple[Dict[str, str], Dict[str, Tuple[str, ...]]]]:
     """language -> (call id -> returned type, type or class -> spec receiver names)."""
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     out = {}
     for lang, table in data.items():
-        if not isinstance(table, dict) or set(table) - {"returns", "receivers"}:
-            raise ValueError(f"{Path(path).name}: [{lang}] holds only returns and receivers")
+        if not isinstance(table, dict) or set(table) - {"returns", "receivers", "passes"}:
+            raise ValueError(f"{Path(path).name}: [{lang}] holds only returns, receivers and passes")
+        passes = table.get("passes", {})
+        if not all(isinstance(k, str) and isinstance(v, int) and v >= 0 for k, v in passes.items()):
+            raise ValueError(f"{Path(path).name}: [{lang}.passes] maps call ids to the argument they return")
+        _PASSES[lang] = dict(passes)
         returns, receivers = table.get("returns", {}), table.get("receivers", {})
         if not all(isinstance(k, str) and isinstance(v, str) and v for k, v in returns.items()):
             raise ValueError(f"{Path(path).name}: [{lang}.returns] maps call ids to a type name")
@@ -331,11 +540,22 @@ def _without_arguments(text: str) -> str:
     return "".join(out)
 
 
-def typed_names(canonical: str, language: str) -> List[str]:
+def stand_ins(language: str) -> frozenset:
+    """The receiver names the language's spec table writes typed rows under (`cursor`, `logger`):
+    a row under one applies to a value of a type that names it, never to a variable so called."""
+    lang = "javascript" if (language or "").lower() == "typescript" else (language or "").lower()
+    _, receivers = load().get(lang, ({}, {}))
+    return frozenset(n for names in receivers.values() for n in names)
+
+
+def typed_names(canonical: str, language: str, extra: Optional[Dict[str, str]] = None) -> List[str]:
     """Spec keys for a call id whose receiver is a typed library value (most specific first);
-    empty when no part of the id is a call whose return type is known."""
+    empty when no part of the id is a call whose return type is known. `extra`: more call id ->
+    type facts (a pack's `[[returns]]`: what a project's own helper returns)."""
     lang = "javascript" if (language or "").lower() == "typescript" else (language or "").lower()
     returns, receivers = load().get(lang, ({}, {}))
+    if extra:
+        returns = {**returns, **extra}
     parts = _without_arguments(canonical).split(".")
     typ: Optional[str] = None
     i = 0
@@ -360,4 +580,4 @@ def typed_names(canonical: str, language: str) -> List[str]:
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 
 
-__all__ = ["annotate", "load", "origin_in_scope", "same_file_parameter_origins", "typed_names"]
+__all__ = ["annotate", "load", "origin_in_scope", "same_file_parameter_origins", "stand_ins", "typed_names"]

@@ -19,19 +19,138 @@
 "MySQLdb.connect" = "MySQLdb.Connection"
 "MySQLdb.Connection.cursor" = "MySQLdb.Cursor"
 
+"sqlite3.dbapi2.connect" = "sqlite3.Connection"
+"psycopg2.extensions.connection.cursor" = "psycopg2.cursor"
+# Django: `django.db.connection` (the default database's wrapper) hands out a CursorWrapper.
+"django.db.connection.cursor" = "django.db.backends.utils.CursorWrapper"
+"django.db.connections.cursor" = "django.db.backends.utils.CursorWrapper"
+# SQLAlchemy: create_engine returns an Engine, whose connect() / begin() give a Connection.
+"sqlalchemy.create_engine" = "sqlalchemy.engine.Engine"
+"sqlalchemy.engine.create_engine" = "sqlalchemy.engine.Engine"
+"sqlalchemy.engine.Engine.connect" = "sqlalchemy.engine.Connection"
+"sqlalchemy.engine.Engine.begin" = "sqlalchemy.engine.Connection"
+"sqlalchemy.orm.Session.connection" = "sqlalchemy.engine.Connection"
+"sqlalchemy.orm.session.Session.connection" = "sqlalchemy.engine.Connection"
+# Connection.connection is the driver's own DB-API connection (a pool proxy for it).
+"sqlalchemy.engine.Connection.connection" = "sqlalchemy.pool.PoolProxiedConnection"
+# aiosqlite (asyncio sqlite3): connect gives a Connection whose execute / cursor give a Cursor.
+"aiosqlite.connect" = "aiosqlite.Connection"
+"aiosqlite.Connection.execute" = "aiosqlite.Cursor"
+"aiosqlite.Connection.cursor" = "aiosqlite.Cursor"
+# Flask-SQLAlchemy: `db = SQLAlchemy(app)` exposes the scoped session and the engine; a model
+# class (`class User(db.Model)`) has `query`, a Query on it.
+"flask_sqlalchemy.SQLAlchemy.session" = "sqlalchemy.orm.scoped_session"
+"flask_sqlalchemy.SQLAlchemy.engine" = "sqlalchemy.engine.Engine"
+"flask_sqlalchemy.SQLAlchemy.Model.query" = "flask_sqlalchemy.query.Query"
+# Django: a model class's default manager `objects`.
+"django.db.models.Model.objects" = "django.db.models.Manager"
+# logging.getLogger returns a Logger.
+"logging.getLogger" = "logging.Logger"
+# Flask: make_response returns the app's response class (flask.Response).
+"flask.make_response" = "flask.Response"
+# XML trees: lxml.etree.parse returns an _ElementTree, fromstring / XML an _Element; the
+# standard library's ElementTree likewise.
+"lxml.etree.parse" = "lxml.etree._ElementTree"
+"lxml.etree.fromstring" = "lxml.etree._Element"
+"lxml.etree.XML" = "lxml.etree._Element"
+"lxml.etree._ElementTree.getroot" = "lxml.etree._Element"
+"xml.etree.ElementTree.parse" = "xml.etree.ElementTree.ElementTree"
+"xml.etree.ElementTree.fromstring" = "xml.etree.ElementTree.Element"
+"xml.etree.ElementTree.XML" = "xml.etree.ElementTree.Element"
+"xml.etree.ElementTree.ElementTree.getroot" = "xml.etree.ElementTree.Element"
+# Results: sqlite3's Connection.execute / Cursor.execute return the cursor; SQLAlchemy's execute
+# returns a Result; a Query's filtering methods return a Query; a Manager's a QuerySet.
+"sqlite3.Connection.execute" = "sqlite3.Cursor"
+"sqlite3.Cursor.execute" = "sqlite3.Cursor"
+"sqlalchemy.engine.Connection.execute" = "sqlalchemy.engine.Result"
+"sqlalchemy.orm.Session.execute" = "sqlalchemy.engine.Result"
+"sqlalchemy.orm.scoped_session.execute" = "sqlalchemy.engine.Result"
+"flask_sqlalchemy.query.Query.filter" = "flask_sqlalchemy.query.Query"
+"flask_sqlalchemy.query.Query.filter_by" = "flask_sqlalchemy.query.Query"
+"flask_sqlalchemy.query.Query.order_by" = "flask_sqlalchemy.query.Query"
+"sqlalchemy.orm.Query.filter" = "sqlalchemy.orm.Query"
+"sqlalchemy.orm.Query.filter_by" = "sqlalchemy.orm.Query"
+"sqlalchemy.orm.Query.order_by" = "sqlalchemy.orm.Query"
+"sqlalchemy.orm.Session.query" = "sqlalchemy.orm.Query"
+"sqlalchemy.orm.scoped_session.query" = "sqlalchemy.orm.Query"
+# graphene-sqlalchemy: an SQLAlchemyObjectType's get_query(info) is the model's Query.
+"graphene_sqlalchemy.SQLAlchemyObjectType.get_query" = "sqlalchemy.orm.Query"
+"graphene_sqlalchemy.types.SQLAlchemyObjectType.get_query" = "sqlalchemy.orm.Query"
+"django.db.models.Manager.filter" = "django.db.models.QuerySet"
+"django.db.models.Manager.exclude" = "django.db.models.QuerySet"
+"django.db.models.Manager.all" = "django.db.models.QuerySet"
+"django.db.models.QuerySet.filter" = "django.db.models.QuerySet"
+"django.db.models.QuerySet.exclude" = "django.db.models.QuerySet"
+# open() returns a file object (io: the TextIOWrapper / BufferedReader classes, IOBase).
+"builtins.open" = "io.IOBase"
+"io.open" = "io.IOBase"
+"pathlib.Path.open" = "io.IOBase"
+"codecs.open" = "io.IOBase"
+# asyncpg: connect gives a Connection, create_pool a Pool whose acquire() gives a Connection.
+"asyncpg.connect" = "asyncpg.Connection"
+"asyncpg.create_pool" = "asyncpg.Pool"
+"asyncpg.Pool.acquire" = "asyncpg.Connection"
+"asyncpg.pool.Pool.acquire" = "asyncpg.Connection"
+# aiomysql / aiopg: connect and a pool's acquire give a Connection, whose cursor() a Cursor.
+"aiomysql.connect" = "aiomysql.Connection"
+"aiomysql.create_pool" = "aiomysql.Pool"
+"aiomysql.Pool.acquire" = "aiomysql.Connection"
+"aiomysql.Connection.cursor" = "aiomysql.Cursor"
+"aiopg.connect" = "aiopg.Connection"
+"aiopg.create_pool" = "aiopg.Pool"
+"aiopg.Pool.acquire" = "aiopg.Connection"
+"aiopg.Connection.cursor" = "aiopg.Cursor"
+
+# Calls that return their argument: `with closing(conn) as c` is conn (contextlib docs).
+[python.passes]
+"contextlib.closing" = 0
+"contextlib.nullcontext" = 0
+
 [python.receivers]
-"sqlite3.Connection" = ["connection"]
-"sqlite3.Cursor" = ["cursor"]
-"psycopg2.connection" = ["connection"]
-"psycopg2.cursor" = ["cursor"]
-"psycopg.Connection" = ["connection"]
-"psycopg.Cursor" = ["cursor"]
-"mysql.connector.connection" = ["connection"]
-"mysql.connector.cursor" = ["cursor"]
-"pymysql.Connection" = ["connection"]
-"pymysql.Cursor" = ["cursor"]
-"MySQLdb.Connection" = ["connection"]
-"MySQLdb.Cursor" = ["cursor"]
+"sqlite3.Connection" = ["connection", "conn"]
+"sqlite3.Cursor" = ["cursor", "cur"]
+"psycopg2.connection" = ["connection", "conn"]
+"psycopg2.cursor" = ["cursor", "cur"]
+"psycopg.Connection" = ["connection", "conn"]
+"psycopg.Cursor" = ["cursor", "cur"]
+"mysql.connector.connection" = ["connection", "conn"]
+"mysql.connector.cursor" = ["cursor", "cur"]
+"pymysql.Connection" = ["connection", "conn"]
+"pymysql.Cursor" = ["cursor", "cur"]
+"MySQLdb.Connection" = ["connection", "conn"]
+"MySQLdb.Cursor" = ["cursor", "cur"]
+"django.db.backends.utils.CursorWrapper" = ["cursor", "cur"]
+"sqlalchemy.engine.Engine" = ["engine"]
+"sqlalchemy.engine.Connection" = ["connection", "conn"]
+"sqlalchemy.orm.Session" = ["session"]
+"sqlalchemy.orm.session.Session" = ["session"]
+"sqlalchemy.orm.scoped_session" = ["session"]
+"flask_sqlalchemy.SQLAlchemy" = ["db"]
+"flask_sqlalchemy.query.Query" = ["query"]
+"sqlalchemy.orm.Query" = ["query"]
+"django.db.models.Manager" = ["objects"]
+"logging.Logger" = ["logger"]
+"flask.Response" = ["response"]
+"flask.wrappers.Response" = ["response"]
+"werkzeug.wrappers.Response" = ["response"]
+"django.http.HttpResponse" = ["response"]
+"flask.Flask" = ["app"]
+"ldap3.Connection" = ["conn", "connection"]
+"lxml.etree._ElementTree" = ["etree_tree"]
+"lxml.etree._Element" = ["etree_tree"]
+"xml.etree.ElementTree.ElementTree" = ["etree_tree"]
+"xml.etree.ElementTree.Element" = ["etree_tree"]
+"sqlalchemy.engine.Result" = ["result"]
+"sqlalchemy.pool.PoolProxiedConnection" = ["connection", "conn"]
+"aiosqlite.Connection" = ["connection", "conn"]
+"aiosqlite.Cursor" = ["cursor", "cur"]
+"sqlalchemy.engine.CursorResult" = ["result"]
+"django.db.models.QuerySet" = ["objects"]
+"io.IOBase" = ["file"]
+"asyncpg.Connection" = ["asyncpg_conn"]
+"asyncpg.Pool" = ["asyncpg_conn"]
+"aiomysql.Cursor" = ["cursor", "cur"]
+"aiopg.Cursor" = ["cursor", "cur"]
 
 # mysql and mysql2 (npm; mysql2/promise has the same factories): createConnection returns a
 # Connection, createPool a Pool, both with `query` (the packages' READMEs). A class (`pg.Pool`)

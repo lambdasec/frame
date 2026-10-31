@@ -794,9 +794,10 @@ def test_python_async_static_dao_like_dvpwa(tmp_path):
         "dao.py": ("class Student:\n    @staticmethod\n    async def create(conn, name):\n"
                    "        q = (\"INSERT INTO students (name) VALUES ('%(name)s')\" % {'name': name})\n"
                    "        async with conn.cursor() as cur:\n            await cur.execute(q)\n"),
-        "views.py": ("from aiohttp.web import Request\nfrom dao import Student\n\n"
-                     "async def students(request: Request, conn):\n"
+        "views.py": ("import aiopg\nfrom aiohttp.web import Request\nfrom dao import Student\n\n"
+                     "async def students(request: Request):\n"
                      "    data = await request.post()\n"
+                     "    conn = await aiopg.connect('dbname=s')\n"
                      "    await Student.create(conn, data['name'])\n"),
     })
     assert ("dao.py", "CWE-89") in findings(tmp_path)

@@ -94,7 +94,8 @@ def test_cherrypy_and_bottle_proxies():
 
 
 def test_a_credential_header_is_the_callers_own_identity():
-    base = _FLASK + "from models import Order\n\n@app.route('/o')\ndef o():\n    return str(Order.query.get({}))\n"
+    base = _FLASK + ("from flask_sqlalchemy import SQLAlchemy\ndb = SQLAlchemy(app)\nclass Order(db.Model): pass\n\n"
+                     "@app.route('/o')\ndef o():\n    return str(Order.query.get({}))\n")
     assert "CWE-639" in _cwes(base.format("request.args.get('id')"))
     assert "CWE-639" in _cwes(base.format("request.headers.get('X-Order')"))
     assert "CWE-639" not in _cwes(base.format("request.headers.get('Authorization')"))

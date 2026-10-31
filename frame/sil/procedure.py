@@ -766,6 +766,7 @@ class Program:
     # a lookup in one yields one of its constants, whatever the key
     constant_tables: Set[str] = field(default_factory=set)
     module_string_lists: Dict[str, List[str]] = field(default_factory=dict)   # Python: `NAME = ["a.b", ...]`
+    value_returns: Dict[str, str] = field(default_factory=dict)   # packs' [[returns]]: call id -> type
     # Names ("language/pack") of the framework packs applied to this program.
     packs_applied: List[str] = field(default_factory=list)
     # C/C++ library facts the applied packs state (`[[function]]`): name -> packs.schema.FunctionFact
@@ -1003,7 +1004,7 @@ class Program:
         canonical = getattr(call, "canonical", None)
         if canonical and '.' in func_name:
             from .value_origins import typed_names
-            for key in typed_names(canonical, self.language):
+            for key in typed_names(canonical, self.language, getattr(self, "value_returns", None)):
                 spec = self.library_specs.get(key)
                 if spec is not None:
                     return spec
@@ -1029,6 +1030,22 @@ class Program:
         # Check user procedures first
         if func_name in self.procedures:
             return self.procedures[func_name].spec
+        if (self.language or "") == "python" and "." in func_name:
+            # Python: a row under a type's receiver name (`cursor.execute`) is that type's, found
+            # through the value's type (spec_for_call); a variable of the same name is not one.
+            # Nor does a written name match a row by its trailing part or its method name alone.
+            from .value_origins import stand_ins
+            if func_name.split(".", 1)[0] in stand_ins("python") and func_name.split(".", 1)[0] not in self.imports:
+                return None
+            spec = self.library_specs.get(func_name)
+            if spec is None and guess:
+                from frame.sil.specs.receiver_guesses import guesses
+                method = func_name.rsplit(".", 1)[-1]
+                for prefix in guesses(self.language):
+                    g = self.library_specs.get(f"{prefix}.{method}")
+                    if g and not (g.exact_class or g.is_sink or g.is_source or g.is_sanitizer):
+                        return g
+            return spec
 
         # Check library specs (exact match)
         spec = self.library_specs.get(func_name)

@@ -90,8 +90,10 @@ def get_user():
         from frame.sil.instructions import TaintSink, SinkKind
 
         code = """
+from django.db.models.expressions import RawSQL
+
 def execute_query(query):
-    cursor.execute(query)
+    return RawSQL(query, [])
 """
         frontend = PythonFrontend()
         program = frontend.translate(code, "test.py")
@@ -123,6 +125,9 @@ def vulnerable():
     user_id = input()
     query = "SELECT * FROM users WHERE id=" + user_id
     cursor.execute(query)
+
+import sqlite3
+cursor = sqlite3.connect("app.db").cursor()
 """
         frontend = PythonFrontend()
         program = frontend.translate(code, "test.py")
@@ -201,6 +206,9 @@ class TestFrameScanner:
 def get_user():
     user_id = input()
     cursor.execute("SELECT * FROM users WHERE id=" + user_id)
+
+import sqlite3
+cursor = sqlite3.connect("app.db").cursor()
 """
         scanner = FrameScanner(language="python", verify=False)
         result = scanner.scan(code, "test.py")

@@ -24,6 +24,7 @@ def _real_scan(tmp_path):
         "def get_user():\n"
         "    user_id = input()\n"
         '    cursor.execute("SELECT * FROM users WHERE id=" + user_id)\n'
+        'import sqlite3\ncursor = sqlite3.connect("app.db").cursor()\n'
     )
     f = tmp_path / "app.py"
     f.write_text(src)

@@ -4,16 +4,14 @@ language = "python"
 description = "asyncpg / aiomysql / aiopg query methods"
 detect = { imports = ["asyncpg", "aiomysql", "aiopg"] }
 
-# asyncpg Connection / Pool / Transaction methods run the first argument as SQL. The connection
-# comes from `pool.acquire()` so its type is unknown; the method names are specific enough
-# once the file imports asyncpg.
+# asyncpg Connection / Pool methods run the first argument as SQL (asyncpg API reference); the
+# connection is known by value (`asyncpg.connect`, `create_pool(...).acquire()`, a parameter
+# declared `asyncpg.Pool`). aiomysql and aiopg cursors are DB-API cursors (value-types.toml).
 [[sink]]
-name = ["fetch", "fetchrow", "fetchval", "fetchmany", "copy_from_query", "prepare", "executemany"]
+call = ["asyncpg.Connection.execute", "asyncpg.Connection.executemany", "asyncpg.Connection.fetch",
+        "asyncpg.Connection.fetchrow", "asyncpg.Connection.fetchval", "asyncpg.Connection.copy_from_query",
+        "asyncpg.Connection.prepare", "asyncpg.Connection.cursor", "asyncpg.Pool.execute", "asyncpg.Pool.executemany",
+        "asyncpg.Pool.fetch", "asyncpg.Pool.fetchrow", "asyncpg.Pool.fetchval"]
 kind = "sql"
 args = [0]
 description = "asyncpg runs the string as SQL"
-
-[[sink]]
-name = ["conn.execute", "connection.execute", "pool.execute", "con.execute", "cur.execute", "cursor.execute"]
-kind = "sql"
-args = [0]

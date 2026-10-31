@@ -82,7 +82,7 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "setting_registration", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "setting_registration", "returns", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
@@ -451,6 +451,7 @@ class Pack:
     # Python: a settings list of dotted paths registers what they name (Django's MIDDLEWARE):
     # (setting name, the id they are registered as)
     setting_registrations: List[Tuple[str, str]] = field(default_factory=list)
+    returns: Dict[str, str] = field(default_factory=dict)          # call id -> the type of what it returns
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -1000,6 +1001,14 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        name=_strings(origin, f"{where}.name", t["name"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("returns", [])):
+        where = f"[[returns]] #{i + 1}"
+        _check_keys(origin, where, t, {"call", "type", "description", "references"})
+        call, typ = t.get("call"), t.get("type")
+        if not (isinstance(call, str) and call and isinstance(typ, str) and typ):
+            raise _fail(origin, where, "needs call (an id) and type (what it returns)")
+        pack.returns[call] = typ
 
     for i, t in enumerate(data.get("setting_registration", [])):
         where = f"[[setting_registration]] #{i + 1}"

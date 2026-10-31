@@ -408,6 +408,9 @@ def finish_call_arguments(program: Program) -> None:
 
 
 def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
+    from ..value_origins import typed_names
+    for pack in packs:
+        program.value_returns.update(pack.returns)
     index = _RuleIndex()
     for pack in packs:
         for rule in pack.rules:
@@ -452,6 +455,11 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
                     continue
                 func = _func_text(instr)
                 matches = index.match(instr.canonical, func)
+                if not matches and instr.canonical:             # by the receiver's type (`asyncpg.Pool.fetch`)
+                    for typed in typed_names(instr.canonical, program.language, program.value_returns):
+                        matches = index.match(typed, None)
+                        if matches:
+                            break
                 if not matches:
                     continue
                 spec = _merge_spec(program.spec_for_call(instr), matches, instr)

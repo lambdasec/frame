@@ -21,8 +21,8 @@ def _cwes(code, lang, name):
 
 
 @pytest.mark.parametrize("canonical,lang,expected", [
-    ("sqlite3.connect.cursor.execute", "python", ["sqlite3.Cursor.execute", "cursor.execute"]),
-    ('sqlite3.connect("x").execute', "python", ["sqlite3.Connection.execute", "connection.execute"]),
+    ("sqlite3.connect.cursor.execute", "python", ["sqlite3.Cursor.execute", "cursor.execute", "cur.execute"]),
+    ('sqlite3.connect("x").execute', "python", ["sqlite3.Connection.execute", "connection.execute", "conn.execute"]),
     ("mysql.createPool.query", "typescript", ["mysql.Pool.query", "pool.query"]),
     ("pg.Pool.query", "javascript", ["pg.Pool.query", "pool.query"]),
     ("sqlite3.connect.foo.execute", "python", []),            # an unknown call in between: no type
@@ -83,7 +83,7 @@ def test_value_types_load_strictly(tmp_path):
     with pytest.raises(ValueError, match="maps call ids"):
         load(bad)
     bad.write_text('[python]\nother = {}\n')
-    with pytest.raises(ValueError, match="only returns and receivers"):
+    with pytest.raises(ValueError, match="only returns, receivers and passes"):
         load(bad)
 
 
@@ -118,3 +118,42 @@ def test_aiohttp_client_session_by_value():
     code = ("import aiohttp\n\nasync def fetch(u):\n    async with aiohttp.ClientSession() as session:\n"
             "        async with session.get(u) as r:\n            return await r.text()\n")
     assert [s.is_sink for s in _spec_of(code, "c.py", "session.get")] == ["ssrf"]
+
+
+# ---- Python: a type's rows apply to values of that type, never to a variable's name ----------
+
+_SQLI = "\n    n = input()\n    {recv}.execute(\"SELECT * FROM t WHERE n = '%s'\" % n)\n"
+
+
+@pytest.mark.parametrize("setup, flagged", [
+    ("cursor = sqlite3.connect('x').cursor()", True),                       # bound to a cursor
+    ("def make():\n    return sqlite3.connect('x')\ncursor = make().cursor()", True),  # a function's return
+    ("from contextlib import closing\ncursor = closing(sqlite3.connect('x')).thing.cursor()", False),
+    ("cursor = load_plugin()", False),                                     # just a name
+])
+def test_python_cursor_rows_follow_the_value(setup, flagged):
+    code = "import sqlite3\n" + setup + "\n\ndef q(n):" + _SQLI.format(recv="cursor")
+    assert ("CWE-89" in _cwes(code, "python", "a.py")) == flagged
+
+
+def test_python_annotated_parameter_and_latest_binding():
+    annotated = "import sqlite3\n\ndef q(cur: sqlite3.Cursor, n):" + _SQLI.format(recv="cur")
+    assert "CWE-89" in _cwes(annotated, "python", "a.py")
+    rebound = ("import sqlite3\n\ndef q(n):\n    conn = None\n    conn = sqlite3.connect('x')"
+               + _SQLI.format(recv="conn"))
+    assert "CWE-89" in _cwes(rebound, "python", "a.py")
+
+
+def test_python_constructor_fields_and_model_classes(tmp_path):
+    (tmp_path / "repo.py").write_text("class Repo:\n    def __init__(self, conn):\n        self.conn = conn\n\n"
+                                      "    def find(self, n):\n        cur = self.conn.cursor()\n"
+                                      "        cur.execute(\"SELECT * FROM t WHERE n = '%s'\" % n)\n")
+    (tmp_path / "app.py").write_text("import sqlite3\nfrom flask import Flask, request\nfrom repo import Repo\n"
+                                     "app = Flask(__name__)\nrepo = Repo(sqlite3.connect('x'))\n\n@app.get('/f')\n"
+                                     "def f():\n    return str(repo.find(request.args['n']))\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    assert ("repo.py", "CWE-89") in {(r.filename.rsplit("/", 1)[-1], v.cwe_id) for r in results for v in r.vulnerabilities}
+    program = PythonFrontend().translate("from flask_sqlalchemy import SQLAlchemy\ndb = SQLAlchemy()\n"
+                                         "class Order(db.Model): pass\n\ndef g(i):\n    return Order.query.get(i)\n", "m.py")
+    call = next(c for c in _calls(program).values() if c.get_full_name() == "Order.query.get")
+    assert program.spec_for_call(call).is_sink == "resource_select"

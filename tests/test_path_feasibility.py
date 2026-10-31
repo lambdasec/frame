@@ -29,8 +29,8 @@ def test_dead_path_after_contradictory_guards_is_dropped():
     # The sink is reached only after assuming `uid` both truthy and falsy, which
     # cannot happen: the path is infeasible, so no finding should be reported.
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         "    if uid:\n"
         "        return 'ok'\n"
@@ -44,8 +44,8 @@ def test_dead_path_after_contradictory_guards_is_dropped():
 def test_guarded_live_sink_is_kept():
     # Sink inside `if uid:` -- a single satisfiable guard, genuinely reachable.
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         "    if uid:\n"
         "        db.execute('SELECT * FROM t WHERE id=' + uid)\n"
@@ -56,8 +56,8 @@ def test_guarded_live_sink_is_kept():
 
 def test_plain_unguarded_sink_is_kept():
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         "    db.execute('SELECT * FROM t WHERE id=' + uid)\n"
     )
@@ -66,8 +66,8 @@ def test_plain_unguarded_sink_is_kept():
 
 def test_sink_before_return_is_kept():
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         "    db.execute('SELECT * FROM t WHERE id=' + uid)\n"
         "    return 'x'\n"
@@ -80,8 +80,8 @@ def test_reassigned_variable_guard_does_not_falsely_drop():
     # reassigned between the two branches, so the guards constrain different
     # values. The tainted path (p stays truthy) reaches the sink and must be kept.
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    p = request.args.get('id')\n"
         "    if not p:\n"
         "        p = ''\n"
@@ -95,8 +95,8 @@ def test_bare_truthiness_falsy_guard_is_kept():
     # Sink guarded only by `if not q:` (a falsy truthiness test). Falsy on its own
     # is satisfiable, so the finding must survive.
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    q = request.args.get('id')\n"
         "    if not q:\n"
         "        db.execute('SELECT * FROM t WHERE id=' + q)\n"
@@ -109,8 +109,8 @@ def test_sink_inside_loop_is_kept():
     # constant placeholder. Such constant guards must not make a real in-loop sink
     # look infeasible.
     src = (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    ids = request.args.getlist('id')\n"
         "    for i in ids:\n"
         "        db.execute('SELECT * FROM t WHERE id=' + i)\n"

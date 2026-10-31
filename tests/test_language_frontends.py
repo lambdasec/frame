@@ -279,8 +279,10 @@ def get_input():
         from frame.sil.instructions import TaintSink
 
         code = """
+import os
+
 def execute(query):
-    cursor.execute(query)
+    os.system(query)
 """
         frontend = PythonFrontend()
         program = frontend.translate(code, "test.py")

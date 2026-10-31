@@ -54,22 +54,29 @@ def _instrs(proc):
 
 def _parameter_origins(ctx, index, programs: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, str]]:
     """(file, procedure) -> parameter -> the origin every resolved caller passes for it."""
+    from .value_origins import _expression_call_origin
     seen: Dict[Tuple[str, str, int], Set[Optional[str]]] = {}
     resolved: Dict[Tuple[str, str], Optional[Tuple[str, str]]] = {}
     for key, program in programs.items():
+        imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+        returning = getattr(program, "return_origins", None) or {}
         for proc in program.procedures.values():
             for i in _instrs(proc):
                 if not isinstance(i, Call) or not i.args:
                     continue
                 name = i.get_full_name()
                 if (key, name) not in resolved:
-                    resolved[(key, name)] = ctx.resolve_call(key, name)
+                    resolved[(key, name)] = ctx.resolve_call(key, name) or _constructor(ctx, index, programs, key, name)
                 ref = resolved[(key, name)]
                 if ref is None:
                     continue
+                target = programs.get(ref[0])
+                callee = target.procedures.get(ref[1]) if target is not None else None
+                shift = 1 if callee is not None and _bound(target, callee) else 0   # Python: past `self`
                 for n, (arg, _) in enumerate(i.args):        # every resolved caller votes, unknown ones too
-                    origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else None
-                    seen.setdefault((ref[0], ref[1], n), set()).add(origin)
+                    origin = origin_in_scope(program, proc.name, str(arg.var)) if isinstance(arg, ExpVar) else \
+                        _expression_call_origin(arg, imports, returning)
+                    seen.setdefault((ref[0], ref[1], n + shift), set()).add(origin)
     out: Dict[Tuple[str, str], Dict[str, str]] = {}
     for (file, name, n), origins in seen.items():
         if len(origins) != 1 or None in origins:
@@ -80,6 +87,45 @@ def _parameter_origins(ctx, index, programs: Dict[str, Any]) -> Dict[Tuple[str, 
             continue
         out.setdefault((file, name), {})[proc.params[n][0].name] = next(iter(origins))
     return out
+
+
+def _bound(program, proc) -> bool:
+    from .packs.apply import bound_receiver
+    return bound_receiver(proc, program) is not None
+
+
+def _constructor(ctx, index, programs: Dict[str, Any], key: str, name: str) -> Optional[Tuple[str, str]]:
+    """Python: `SqlDao(conn)` names the `__init__` of the class SqlDao is (this file's, or the one
+    an import binds), when it defines one."""
+    program = programs.get(key)
+    if program is None or (program.language or "") != "python" or "." in name:
+        return None
+    target: Optional[Tuple[str, str]] = None
+    if name in (getattr(program, "class_info", None) or {}):
+        target = (key, name)
+    else:
+        mod = index.modules.get(key)
+        b = mod.bindings.get(name) if mod is not None else None
+        if b is not None and b.symbol is not None:
+            target = index.lookup_class(b.file, b.symbol)
+    for _ in range(8):                                  # the nearest class of the hierarchy defining __init__
+        if target is None or target[0] not in programs:
+            return None
+        init = f"{target[1]}.__init__"
+        if init in programs[target[0]].procedures:
+            return target[0], init
+        info = (getattr(programs[target[0]], "class_info", None) or {}).get(target[1])
+        bases = [b for b in (info.bases if info is not None else ()) if b.isidentifier()]
+        if not bases:
+            return None
+        base, owner = bases[0], target[0]
+        if base in (getattr(programs[owner], "class_info", None) or {}):
+            target = (owner, base)
+        else:
+            mod = index.modules.get(owner)
+            b = mod.bindings.get(base) if mod is not None else None
+            target = index.lookup_class(b.file, b.symbol) if b is not None and b.symbol is not None else None
+    return None
 
 
 def registration_vias(program, reg: Registration) -> List[str]:

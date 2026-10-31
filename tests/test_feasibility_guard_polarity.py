@@ -22,8 +22,8 @@ def _sqli_lines(src):
 
 def _handler(cond, tail=""):
     return (
-        "from flask import request\n"
-        "def h(db):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection):\n"
         "    uid = request.args.get('id')\n"
         f"    if {cond}:\n"
         "        return 'no'\n"
@@ -48,8 +48,8 @@ def _contradictory_src():
     # False edge of `if uid or flag`: uid falsy and flag falsy. False edge of
     # `if not uid`: uid truthy. Together the sink's path is infeasible.
     return (
-        "from flask import request\n"
-        "def h(db, flag):\n"
+        "from flask import request; import sqlite3\n"
+        "def h(db: sqlite3.Connection, flag):\n"
         "    uid = request.args.get('id')\n"
         "    if uid or flag:\n"
         "        return 'no'\n"

@@ -327,6 +327,10 @@ class PythonFrontend:
     def _spec(self, name: str) -> Optional[ProcSpec]:
         """The spec row for a written name, or for what the file's imports make it (`session.get`
         after `from flask import session` is `flask.session.get`)."""
+        from frame.sil.value_origins import stand_ins
+        head = name.split(".", 1)[0]
+        if "." in name and head in stand_ins("python") and head not in self._imports.names:
+            return None                      # a type's row (`cursor.execute`): by the value's type only
         spec = self.specs.get(name)
         if spec is None:
             resolved = self._imports.resolve(name)
@@ -1964,22 +1968,12 @@ class PythonFrontend:
                                             if target_child.type == "identifier":
                                                 alias_name = self._get_text(target_child)
 
-                        if call_node:
+                        if call_node and alias_name:
+                            # `with open(p) as fd`: fd is bound to what the call returns
+                            self._add_instrs(self._translate_call_assignment(alias_name, call_node, loc))
+                        elif call_node:
                             # Translate the call (e.g., open(fileName, 'wb'))
-                            instrs = self._translate_call_expr(call_node)
-                            self._add_instrs(instrs)
-
-                            # If there's an alias, assign the result to it
-                            if alias_name and instrs:
-                                last_instr = instrs[-1]
-                                if hasattr(last_instr, 'ret') and last_instr.ret:
-                                    ret_var = str(last_instr.ret[0])
-                                    assign = Assign(
-                                        Ident(alias_name, self._next_id()),
-                                        ExpVar(PVar(ret_var)),
-                                        loc
-                                    )
-                                    self._add_instr(assign)
+                            self._add_instrs(self._translate_call_expr(call_node))
 
         # Translate the body
         body = node.child_by_field_name("body")

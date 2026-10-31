@@ -4207,10 +4207,16 @@ class SILTranslator:
         # (`identity_arg`), or the record a resource selection scoped by the caller returns
         # (`User.query.get(claims["sub"])` is the caller's own user).
         if spec is not None and instr.ret:
-            idx = spec.identity_arg
-            proves = idx is not None and idx < len(instr.args) and self._carries_identity(instr.args[idx][0], state)
-            if proves or (spec.is_sink == "resource_select" and self._resource_select_principal_scoped(instr, state)):
-                ret_var = str(instr.ret[0])
+            idx, ret_var = spec.identity_arg, str(instr.ret[0])
+            token = [info for info, _ in self._arg_taint_leaves(instr.args[idx][0], state)] \
+                if idx is not None and idx < len(instr.args) else []
+            if token and spec.sink_args == [] and self._usage_sink_applies(spec, instr):
+                # decoded with the signature check off: the claims are whatever the token says
+                info = token[0]
+                state.tainted[ret_var] = TaintInfo(info.source_kind, info.source_var, info.source_location,
+                                                   list(info.propagation_path) + [ret_var], read=info.read)
+            elif token or (spec.is_sink == "resource_select" and self._resource_select_principal_scoped(instr, state)):
+                # a verified token is one the server issued: its claims are the presenter's own identity
                 state.tainted[ret_var] = TaintInfo(TaintKind.IDENTITY, ret_var, instr.loc, [ret_var])
 
         # A call to a procedure of this file: pass its argument taint on, and
@@ -4599,10 +4605,15 @@ class SILTranslator:
                 pass
             elif instr.ret:
                 ret_var = str(instr.ret[0])
+
+                def carries(var: str) -> bool:
+                    # a request object handed to an unknown call does not make its result the
+                    # request (`request_wrapper(request)` returns a wrapper): only data does
+                    return state.is_tainted(var) and state.tainted[var].source_kind != TaintKind.REQUEST
                 for arg_exp, _ in instr.args:
                     arg_vars = self._get_exp_vars(arg_exp)
                     for arg_var in arg_vars:
-                        if state.is_tainted(arg_var):
+                        if carries(arg_var):
                             state.propagate_taint(arg_var, ret_var)
                             break  # One taint source is enough
 
@@ -4611,7 +4622,7 @@ class SILTranslator:
                     parts = func_name.rsplit('.', 1)
                     if len(parts) == 2:
                         receiver_var = parts[0]
-                        if state.is_tainted(receiver_var):
+                        if carries(receiver_var):
                             state.propagate_taint(receiver_var, ret_var)
 
         if instr.ret:
