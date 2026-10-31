@@ -40,13 +40,20 @@ extends = ["tornado.web.RequestHandler", "tornado.websocket.WebSocketHandler"]
 method = ["get", "post", "put", "delete", "patch", "head", "options", "on_message", "open"]
 params = "all"
 
-[[sink]]
-name = ["self.write"]
-kind = "html"
-description = "Tornado RequestHandler.write sends the value as the HTML response"
+# A handler's own methods are RequestHandler's: `self.write(x)` is tornado.web.RequestHandler.write.
+[[entrypoint]]
+id = "request-handler-origin"
+extends = ["tornado.web.RequestHandler", "tornado.websocket.WebSocketHandler"]
+receiver = true
+origin = "tornado.web.RequestHandler"
 
 [[sink]]
-name = ["self.redirect"]
+call = ["tornado.web.RequestHandler.write", "tornado.web.RequestHandler.finish"]
+kind = "html"
+description = "RequestHandler.write / finish(chunk) send the value as the response body (text/html by default)"
+
+[[sink]]
+call = ["tornado.web.RequestHandler.redirect"]
 kind = "redirect"
 
 [[sink]]

@@ -6,25 +6,34 @@ detect = { imports = ["django"] }
 
 # QuerySet.extra() splices where / select / order_by / tables strings into the SQL.
 [[sink]]
-name = ["objects.extra", "queryset.extra", "qs.extra"]
+name = ["objects.extra"]                 # a model's default manager (`Model.objects`), its class unknown
+call = ["**.objects.extra", "**.objects.**.extra", "django.db.models.Manager.**.extra",
+        "django.db.models.QuerySet.**.extra", "django.db.models.Manager.extra", "django.db.models.QuerySet.extra"]
 kind = "sql"
 args = [0]                       # positional `select`; the strings passed by keyword are `arg_names`
 arg_names = ["where", "select", "order_by", "tables", "select_params"]
 description = "QuerySet.extra() is raw SQL"
 
-# A custom Manager/QuerySet method calling the inherited raw()/extra() on itself.
-[[sink]]
-name = ["self.raw", "self.get_queryset().raw", "self.model.objects.raw"]
-kind = "sql"
-args = [0]
-description = "Manager.raw() runs the SQL string it is given"
+# A custom Manager / QuerySet: its methods run on one, so `self.raw(sql)` is Manager.raw.
+[[entrypoint]]
+id = "manager-origin"
+extends = ["django.db.models.Manager", "django.db.models.manager.Manager", "django.db.models.manager.BaseManager"]
+receiver = true
+origin = "django.db.models.Manager"
+
+[[entrypoint]]
+id = "queryset-origin"
+extends = ["django.db.models.QuerySet", "django.db.models.query.QuerySet"]
+receiver = true
+origin = "django.db.models.QuerySet"
 
 [[sink]]
-name = ["self.extra", "self.get_queryset().extra"]
+name = ["objects.raw"]                   # a model's default manager (`Model.objects`), its class unknown
+call = ["django.db.models.Manager.raw", "django.db.models.Manager.**.raw", "django.db.models.QuerySet.raw",
+        "**.objects.raw"]
 kind = "sql"
 args = [0]
-arg_names = ["where", "select", "order_by", "tables"]
-description = "QuerySet.extra() is raw SQL"
+description = "Manager.raw() / QuerySet.raw() runs the SQL string it is given"
 
 [[sink]]
 call = ["django.db.models.expressions.RawSQL", "django.db.models.RawSQL"]

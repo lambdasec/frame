@@ -438,6 +438,13 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
                             spec = _merge_spec(program.library_specs.get(name), [(pack, rule)], None)
                             if spec is not None:
                                 program.library_specs[name] = spec
+    # names meaning one thing throughout the file: its imports, the module-level names bound once,
+    # and builtins (a canonical `builtins.*` id says the file does not rebind the name)
+    file_wide = set(program.imports or {})
+    module = program.procedures.get("<module>")
+    if module is not None:
+        from ..value_origins import _definitions
+        file_wide |= {n for n, count in _definitions(module).items() if count == 1}
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for instr in node.instrs:
@@ -454,9 +461,12 @@ def _apply_rules(program: Program, packs: Sequence[Pack]) -> None:
                 # The same call written inside an expression (no Call instruction) is
                 # looked up by name: make that name resolve to the same spec.
                 # A conditional rule (`when_kwarg`) holds for this call only: registering its spec
-                # by name would hand it to every other call of the same name.
+                # by name would hand it to every other call of the same name. So does a call named
+                # by its receiver's value (`self.raw` on a Manager): only a name whose head is an
+                # import means the same thing wherever it is written.
                 if func and func not in program.library_specs and instr.canonical \
                         and ":" not in instr.canonical and func not in program.procedures \
+                        and (func.split(".", 1)[0] in file_wide or instr.canonical.startswith("builtins.")) \
                         and not any(r.when_kwarg is not None for _, r in matches):
                     program.library_specs[func] = spec
 

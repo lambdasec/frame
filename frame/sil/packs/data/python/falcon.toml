@@ -34,11 +34,6 @@ params = "all"
 params_from = 2
 
 [[sink]]
-name = ["resp.render_body"]
-kind = "html"
-args = [0]
-
-[[sink]]
 call = ["falcon.HTTPFound", "falcon.HTTPMovedPermanently", "falcon.HTTPSeeOther",
         "falcon.HTTPTemporaryRedirect", "falcon.HTTPPermanentRedirect",
         "falcon.redirects.HTTPFound", "falcon.redirects.HTTPMovedPermanently",

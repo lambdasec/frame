@@ -85,3 +85,36 @@ def test_value_types_load_strictly(tmp_path):
     bad.write_text('[python]\nother = {}\n')
     with pytest.raises(ValueError, match="only returns and receivers"):
         load(bad)
+
+
+def _spec_of(code, name, call):
+    program = PythonFrontend().translate(code, name)
+    calls = [i for p in program.procedures.values() for n in p.nodes.values() for i in n.instrs
+             if type(i).__name__ == "Call" and i.get_full_name() == call]
+    return [program.spec_for_call(c) for c in calls]
+
+
+def test_a_handler_instance_is_its_framework_class():
+    # `self.write` is a sink because self is a tornado RequestHandler, not because of its name
+    tornado = ("import tornado.web\n\nclass H(tornado.web.RequestHandler):\n    def get(self):\n"
+               "        self.write('<b>' + self.get_argument('n') + '</b>')\n")
+    assert "CWE-79" in _cwes(tornado, "python", "a.py")
+    other = tornado.replace("(tornado.web.RequestHandler)", "")
+    assert "CWE-79" not in _cwes(other, "python", "a.py")
+
+
+def test_a_custom_manager_runs_raw_sql_on_itself():
+    code = ("from django.db import models\n\nclass M(models.Manager):\n    def find(self, t):\n"
+            "        return self.raw('SELECT 1 WHERE n = ' + t)\n\nclass Plain:\n    def find(self, t):\n"
+            "        return self.raw(t)\n")
+    sinks = [s.is_sink if s else None for s in _spec_of(code, "m.py", "self.raw")]
+    assert sinks == ["sql", None]                  # a `raw` method of any other class is not SQL
+    plain = [p for p in PythonFrontend().translate(code, "m.py").procedures.values() if p.class_name == "Plain"]
+    assert plain and all(i.canonical is None for p in plain for n in p.nodes.values() for i in n.instrs
+                         if type(i).__name__ == "Call")
+
+
+def test_aiohttp_client_session_by_value():
+    code = ("import aiohttp\n\nasync def fetch(u):\n    async with aiohttp.ClientSession() as session:\n"
+            "        async with session.get(u) as r:\n            return await r.text()\n")
+    assert [s.is_sink for s in _spec_of(code, "c.py", "session.get")] == ["ssrf"]

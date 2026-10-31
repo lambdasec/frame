@@ -82,18 +82,19 @@ arg_names = ["text", "body"]
 when_kwarg = { name = "content_type", value = "text/html" }
 description = "a Response served as text/html reflects its body"
 
-# Client: ClientSession().get(url) fetches the URL; the session variable's type is not known to
-# the frontend, so the textual call name is the handle.
+# Client: a ClientSession's request methods fetch the URL (the session known by its value:
+# `async with aiohttp.ClientSession() as session`).
 [[sink]]
-name = ["session.get", "session.post", "session.put", "session.patch", "session.delete", "session.head",
-        "session.options", "client.get", "client.post"]
+call = ["aiohttp.ClientSession.get", "aiohttp.ClientSession.post", "aiohttp.ClientSession.put",
+        "aiohttp.ClientSession.patch", "aiohttp.ClientSession.delete", "aiohttp.ClientSession.head",
+        "aiohttp.ClientSession.options", "aiohttp.client.ClientSession.get", "aiohttp.client.ClientSession.post"]
 kind = "ssrf"
 args = [0]
 arg_names = ["url", "str_or_url"]
 description = "aiohttp ClientSession request to a URL the caller controls"
 
 [[sink]]
-name = ["session.request", "session.ws_connect"]
+call = ["aiohttp.ClientSession.request", "aiohttp.ClientSession.ws_connect"]
 kind = "ssrf"
 args = [1]
 arg_names = ["url"]

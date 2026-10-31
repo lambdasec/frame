@@ -124,7 +124,9 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
         for i in _instrs(proc):
             if isinstance(i, Call):
                 text = _call_text(i)
-                if i.canonical is None and fill and text and "." in text and not text.startswith(("this.", "self.")):
+                receiver_given = text and text.split(".", 1)[0] in (params or {})   # an entry point's `receiver`
+                if i.canonical is None and fill and text and "." in text \
+                        and (receiver_given or not text.startswith(("this.", "self."))):
                     head, rest = text.split(".", 1)
                     o = of(head)
                     if o is not None and head.replace("$", "_").isidentifier():
