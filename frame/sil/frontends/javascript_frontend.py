@@ -1474,7 +1474,19 @@ class JavaScriptFrontend:
 
     # The property names through which a keyed write reaches an object's prototype.
     _PROTO_NAMES = frozenset({"__proto__", "constructor", "prototype"})
-    _MEMBERSHIP_METHODS = frozenset({"includes", "indexOf", "has", "lastIndexOf"})
+    # Calls testing a key against a list (guards.toml: membership, position and key methods) and
+    # a string for a literal (prefix, membership and position methods).
+    @staticmethod
+    def _membership_methods():
+        from frame.sil.specs.guards import load as _guards
+        g = _guards()
+        return g.membership_methods | g.position_methods | g.key_methods
+
+    @staticmethod
+    def _substring_methods():
+        from frame.sil.specs.guards import load as _guards
+        g = _guards()
+        return g.prefix_methods | g.membership_methods | g.position_methods
 
     def _proto_literal(self, node: Optional[TSNode]) -> bool:
         return node is not None and node.type == "string" and self._get_text(node)[1:-1] in self._PROTO_NAMES
@@ -1517,9 +1529,9 @@ class JavaScriptFrontend:
                 if callee is not None and callee.type == "member_expression":
                     prop = callee.child_by_field_name("property")
                     method = self._get_text(prop) if prop is not None else ""
-                    if method in self._MEMBERSHIP_METHODS and self._proto_list(callee.child_by_field_name("object")):
+                    if method in self._membership_methods() and self._proto_list(callee.child_by_field_name("object")):
                         found = True
-                    elif method in ("startsWith", "includes", "indexOf") and any(self._proto_literal(a) for a in arg_nodes):
+                    elif method in self._substring_methods() and any(self._proto_literal(a) for a in arg_nodes):
                         found = True
                 elif callee is not None and callee.type == "identifier" and depth < 2:
                     binds = self._js_bindings(self._tree_root).get(self._get_text(callee), [])

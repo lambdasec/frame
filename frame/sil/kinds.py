@@ -7,10 +7,10 @@ every scan (as a broken built-in pack does)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, FrozenSet, Iterable, Optional
 
 try:                                        # Python 3.11+
     import tomllib
@@ -20,7 +20,8 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 PATH = Path(__file__).parent / "specs" / "data" / "kinds.toml"
 CATEGORIES = ("taint", "memory", "crypto", "secret", "access-control", "hardening",
               "dependency", "iac", "container", "ai")
-_SINK_KEYS = {"kind", "vuln", "aliases"}
+_SINK_KEYS = {"kind", "vuln", "aliases", "guards", "dot_unsafe", "confidentiality"}
+_GUARDS = ("charset", "exact")
 _VULN_KEYS = {"type", "cwe", "category"}
 
 
@@ -30,6 +31,20 @@ class Kinds:
     aliases: Dict[str, str]                 # other spelling -> sink kind
     cwe: Dict[str, str]                     # finding type -> CWE id (types without one are absent)
     category: Dict[str, str]                # finding type -> category
+    guards: Dict[str, str] = field(default_factory=dict)   # sink kind -> "charset" / "exact"
+    dot_unsafe: FrozenSet[str] = frozenset()
+    confidentiality: FrozenSet[str] = frozenset()
+
+    def spellings(self, kinds: Iterable[str]) -> FrozenSet[str]:
+        """The kinds and every alias of them (sanitization sets hold either spelling)."""
+        kinds = set(kinds)
+        return frozenset(kinds | {a for a, k in self.aliases.items() if k in kinds})
+
+    def guard_cleared(self, how: str) -> FrozenSet[str]:
+        """Sink kinds (with their aliases) a guard of strength `how` clears: an exact-value guard
+        clears every kind a character-class one does, and the "exact" ones."""
+        want = {"charset"} if how == "charset" else {"charset", "exact"}
+        return self.spellings(k for k, g in self.guards.items() if g in want)
 
 
 @lru_cache(maxsize=None)
@@ -41,6 +56,8 @@ def load(path: Path = PATH) -> Kinds:
     aliases: Dict[str, str] = {}
     cwe: Dict[str, str] = {}
     category: Dict[str, str] = {}
+    guards: Dict[str, str] = {}
+    dot_unsafe, confidentiality = set(), set()
     for i, v in enumerate(data.get("vuln", [])):
         where = f"{Path(path).name}: vuln {i + 1} ({v.get('type')})"
         if set(v) - _VULN_KEYS or not v.get("type") or v.get("category") not in CATEGORIES:
@@ -62,6 +79,15 @@ def load(path: Path = PATH) -> Kinds:
         if s.get("vuln") is not None and s["vuln"] not in category:
             raise ValueError(f"{where}: unknown finding type {s['vuln']!r}")
         sink_vuln[s["kind"]] = s.get("vuln")
+        if "guards" in s:
+            if s["guards"] not in _GUARDS:
+                raise ValueError(f"{where}: guards must be one of {_GUARDS}")
+            guards[s["kind"]] = s["guards"]
+        for flag, into in (("dot_unsafe", dot_unsafe), ("confidentiality", confidentiality)):
+            if flag in s:
+                if s[flag] is not True:
+                    raise ValueError(f"{where}: {flag} is true or absent")
+                into.add(s["kind"])
         for a in s.get("aliases", []):
             if a in aliases:
                 raise ValueError(f"{where}: alias {a!r} also names {aliases[a]!r}")
@@ -69,7 +95,7 @@ def load(path: Path = PATH) -> Kinds:
     clash = set(aliases) & set(sink_vuln)
     if clash:
         raise ValueError(f"{Path(path).name}: aliases that are kinds themselves: {sorted(clash)}")
-    return Kinds(sink_vuln, aliases, cwe, category)
+    return Kinds(sink_vuln, aliases, cwe, category, guards, frozenset(dot_unsafe), frozenset(confidentiality))
 
 
 def check(sink_kinds: Iterable[str], vuln_types: Iterable[str], kinds: Optional[Kinds] = None) -> None:

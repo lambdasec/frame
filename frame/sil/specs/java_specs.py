@@ -25,12 +25,12 @@ JAVA_SPECS: Dict[str, ProcSpec] = load_table("java")
 # types, permissive verifiers, the javax -> jakarta moves) is data: data/java-types.toml.
 _TYPES_PATH = Path(__file__).parent / "data" / "java-types.toml"
 _TYPE_TABLES = {"type_receivers": list, "supertypes": list, "factory_return_types": str, "return_types": str,
-                "string_method_types": str}
+                "string_method_types": str, "string_static_types": str}
 
 
 def _load_types(path: Path = _TYPES_PATH) -> dict:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta", "java_lang", "project_packages"}
+    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta", "java_lang", "project_packages", "builders", "allocation"}
     if set(data) != expected:
         raise ValueError(f"{path.name}: needs exactly {sorted(expected)}")
     for table, kind in _TYPE_TABLES.items():
@@ -38,10 +38,11 @@ def _load_types(path: Path = _TYPES_PATH) -> dict:
                 isinstance(v, kind) and v and (kind is str or all(isinstance(x, str) and x for x in v))
                 for v in data[table].values()):
             raise ValueError(f"{path.name}: [{table}] values must be non-empty {kind.__name__}s")
-    for table, key in (("verifiers", "permissive"), ("jakarta", "migrated"), ("java_lang", "types"),
-                       ("project_packages", "umbrella_roots")):
-        if set(data[table]) != {key} or not isinstance(data[table][key], list) or not data[table][key]:
-            raise ValueError(f"{path.name}: [{table}] needs exactly {key}, a non-empty list")
+    for table, keys in (("verifiers", {"permissive"}), ("jakarta", {"migrated"}), ("java_lang", {"types"}),
+                        ("project_packages", {"umbrella_roots"}), ("builders", {"types", "self_methods"}),
+                        ("allocation", {"capacity_constructors"})):
+        if set(data[table]) != keys or not all(isinstance(data[table][k], list) and data[table][k] for k in keys):
+            raise ValueError(f"{path.name}: [{table}] needs exactly {sorted(keys)}, each a non-empty list")
     return data
 
 
@@ -51,6 +52,10 @@ JAVA_SUPERTYPES: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["supertypes"
 JAVA_FACTORY_RETURN_TYPES: Dict[str, str] = dict(_TYPES["factory_return_types"])
 JAVA_RETURN_TYPES: Dict[str, str] = dict(_TYPES["return_types"])
 JAVA_STRING_METHOD_TYPES: Dict[str, str] = dict(_TYPES["string_method_types"])
+JAVA_STRING_STATIC_TYPES: Dict[str, str] = dict(_TYPES["string_static_types"])
+JAVA_BUILDER_TYPES = frozenset(_TYPES["builders"]["types"])
+JAVA_BUILDER_SELF_METHODS = frozenset(_TYPES["builders"]["self_methods"])
+JAVA_CAPACITY_CONSTRUCTORS = frozenset(_TYPES["allocation"]["capacity_constructors"])
 PERMISSIVE_VERIFIERS = frozenset(_TYPES["verifiers"]["permissive"])
 JAKARTA_MIGRATED = tuple(_TYPES["jakarta"]["migrated"])
 JAVA_LANG_TYPES = frozenset(_TYPES["java_lang"]["types"])

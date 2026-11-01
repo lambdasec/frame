@@ -8,11 +8,20 @@
 # `x.<method>()` is true only when every character of x is a digit / letter (Python str methods).
 charset_methods = ["isdigit", "isnumeric", "isdecimal", "isalnum", "isalpha"]
 
+# `<function>(c)` is true only for a letter / digit character (C <ctype.h>, C11 7.4.1).
+charset_functions = ["isalnum", "isalpha", "isdigit", "islower", "isupper", "isxdigit"]
+
 # `x.<method>(PREFIX)`: x starts with PREFIX (JS/Java startsWith, Python startswith, C# StartsWith).
 prefix_methods = ["startsWith", "startswith", "StartsWith"]
 
 # `COLLECTION.<method>(x)`: x is an element (JS Array includes, Java Collection contains, C# Contains).
 membership_methods = ["includes", "contains", "Contains"]
+
+# `COLLECTION.<method>(x)`: x's position, -1 when absent (JS Array / String indexOf, lastIndexOf).
+position_methods = ["indexOf", "lastIndexOf"]
+
+# `COLLECTION.<method>(x)`: x is a key / element of a keyed collection (JS Set / Map has).
+key_methods = ["has"]
 
 # `<view>(COLLECTION).includes(x)`: x is a value / key of a constant object (JS Object.values / keys).
 collection_views = ["Object.values", "Object.keys"]
@@ -24,8 +33,11 @@ literal_collection_factories = ["of", "asList", "copyOf"]
 
 # Calls returning a parsed URL whose `host_fields` are its host (urllib.parse urlparse/urlsplit,
 # WHATWG URL, java.net.URL, System.Uri). Also matched by the last part of a dotted callee.
-url_parsers = ["urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL", "new URL.parse"]
+url_parsers = ["urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL", "new URL.parse",
+               "new URI", "new java.net.URI"]
 host_fields = ["hostname", "netloc", "host", "Host"]
+# Getters returning a parsed URL's host (java.net.URL / URI getHost).
+host_getters = ["getHost"]
 
 # Calls returning a normalised path with no `..` left (Node path/fs, os.path, java.io.File,
 # java.nio.file.Path, System.IO.Path). Also matched by the last part of a dotted callee.

@@ -1506,7 +1506,10 @@ class CFrontend:
                                      description=f"every character passed {validated[1]}()"))
 
     # Character-class tests whose characters (letters, digits) are inert for every sink.
-    _CHARSET_TESTS = frozenset({"isalnum", "isalpha", "isdigit", "isxdigit", "isupper", "islower"})
+    @property
+    def _CHARSET_TESTS(self):                          # guards.toml charset_functions (<ctype.h>)
+        from frame.sil.specs.guards import load as _guards
+        return _guards().charset_functions
 
     def _validation_loop_var(self, node: TSNode) -> Optional[Tuple[str, str]]:
         """(s, test) for a loop that visits every character of string s and leaves the path

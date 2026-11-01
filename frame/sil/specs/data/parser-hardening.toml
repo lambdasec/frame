@@ -26,6 +26,13 @@ safe_keyword = "resolve_entities"
 # external general entities off by default (Python 3.7.1+), defusedxml forbids them.
 safe_factories = ["xml.sax.make_parser", "defusedxml.make_parser"]
 
+# Python standard library parse functions taking a parser as their second argument
+# (`xml.dom.minidom.parse(file, parser)`, `xml.sax.parse(source, handler)` -- for sax the handler,
+# whose parser is the module's): data parsed by a hardened parser passed there is safe.
+[stdlib]
+parse_functions = ["xml.dom.minidom.parse", "xml.dom.minidom.parseString", "xml.sax.parse", "xml.sax.parseString"]
+parser_arg = 1
+
 # .NET: `new XmlDocument()` / `new XmlTextReader(x)` are XXE sinks unless configured
 # (`XmlResolver = null`, or `DtdProcessing = Prohibit|Ignore`, or the older `ProhibitDtd = true`);
 # `XmlReader.Create(input, settings)` is one only with settings that parse DTDs and resolve resources.

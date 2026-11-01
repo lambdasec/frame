@@ -2357,7 +2357,7 @@ class SILTranslator:
     _SAFE_REGEX_ATOM = re.compile(
         r"(?:\[(?:A-Z|a-z|0-9|[A-Za-z0-9_]|\\d|\\w|\\\.|\.|-)+\]|\\d|\\w)(?:[+*?]|\{\d+(?:,\d*)?\})?")
     # kinds a dot in the charset (`[a-z0-9.-]`, hostnames) still leaves harmless: not path traversal
-    _DOT_UNSAFE_KINDS = frozenset({"filesystem", "path"})
+    _DOT_UNSAFE_KINDS = _load_kinds().spellings(_load_kinds().dot_unsafe)   # kinds.toml dot_unsafe
 
     @classmethod
     def _safe_charset_regex(cls, pattern: str):
@@ -2641,14 +2641,12 @@ class SILTranslator:
     # edge instead (see _exec_prune / _apply_branch_guards).
     _branch_node_clean = False
 
-    _ALLOWLIST_KINDS = ["filesystem", "path", "command", "shell", "shell_command", "sql", "nosql", "redirect",
-                        "ssrf", "html", "xss", "eval", "code", "ldap", "xpath", "xml", "template", "header",
-                        "regex", "log"]
-    # A value proven to be one of a few constants (membership in a constant collection, an exact
-    # comparison) is not attacker-chosen at all, so it also cannot reach a vulnerable library
-    # function as attacker data. A character class is not enough there (a long digit string is
-    # still a ReDoS input), so these kinds are added for exact-value guards only.
-    _EXACT_VALUE_KINDS = frozenset(_ALLOWLIST_KINDS) | {"vulnerable_dependency"}
+    # The sink kinds a guard clears (kinds.toml `guards`): an allowlist or safe-character guard
+    # clears the "charset" ones; a value proven to be one of a few constants (membership in a
+    # constant collection, an exact comparison) is not attacker-chosen at all, so it also cannot
+    # reach a vulnerable library function as attacker data (the "exact" ones).
+    _ALLOWLIST_KINDS = _load_kinds().guard_cleared("charset")
+    _EXACT_VALUE_KINDS = _load_kinds().guard_cleared("exact")
 
     @staticmethod
     def _has_local_redirect_prefix(exp: Exp) -> bool:
@@ -4548,13 +4546,11 @@ class SILTranslator:
                     hardened_parser = (
                         sink_kind == SinkKind.XML_PARSE and '.' in func_name
                         and func_name.rsplit('.', 1)[0] in state.secure_parsers)
-                    if spec.is_sink == 'xml' and func_name in (
-                        'xml.dom.minidom.parseString', 'xml.dom.minidom.parse',
-                        'xml.sax.parseString', 'xml.sax.parse'
-                    ):
-                        # Check if second argument is a secure parser
-                        if len(instr.args) >= 2:
-                            parser_arg, _ = instr.args[1]
+                    hardening = _parser_hardening()
+                    if spec.is_sink == 'xml' and func_name in hardening.stdlib_parse_functions:
+                        # a secure parser passed in the parser position (parser-hardening.toml [stdlib])
+                        if len(instr.args) > hardening.stdlib_parser_arg:
+                            parser_arg, _ = instr.args[hardening.stdlib_parser_arg]
                             parser_vars = self._get_exp_vars(parser_arg)
                             for pvar in parser_vars:
                                 if pvar in state.secure_parsers:
@@ -6017,8 +6013,7 @@ class SILTranslator:
             check.sink_call = instr.canonical or str(getattr(instr.func, "value", instr.func)).strip('"')
         return check
 
-    _CONFIDENTIALITY_SINKS = frozenset({SinkKind.SENSITIVE_LOG, SinkKind.SENSITIVE_EXPOSURE, SinkKind.SECRET_EXPOSURE,
-                                        SinkKind.ERROR_DISCLOSURE, SinkKind.CREDENTIAL, SinkKind.HARDCODED_SECRET})
+    _CONFIDENTIALITY_SINKS = frozenset(SinkKind(k) for k in _load_kinds().confidentiality)   # kinds.toml
 
     def _usage_sink_applies(self, spec, instr) -> bool:
         """Whether a usage sink (no `sink_args`) holds for this call, by the row's fields."""
@@ -7297,7 +7292,7 @@ class SILTranslator:
             return []
         func = instr.func
         name = (str(func.value) if isinstance(func, ExpConst) else str(func)).strip('"').rsplit("::", 1)[-1]
-        if name not in ("strlen", "wcslen", "strnlen"):
+        if name not in _c_facts.library().string_lengths:
             return []
         proc = self._cur_proc
         buf = self._sole_var(self._cast_strip(instr.args[0][0]))
@@ -9124,7 +9119,7 @@ class SILTranslator:
         inner = self._cast_strip(exp)
         if not (isinstance(inner, ExpCall) and isinstance(inner.func, ExpConst)):
             return False
-        return str(inner.func.value).strip('"') in ("malloc", "calloc", "alloca") \
+        return str(inner.func.value).strip('"') in _c_facts.library().size_only_allocators \
             and self._is_c_lang
 
     def _escaping_arg_vars(self, instr: Instr) -> Set[str]:

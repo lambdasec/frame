@@ -2,7 +2,12 @@
 #
 # [[sink]]: one per SinkKind value (frame/sil/instructions.py). `vuln` is the finding type a
 # flow into it reports (none: a generic taint flow); `aliases` are other spellings spec tables
-# and packs may use for it.
+# and packs may use for it. `guards`: which branch guards clear a value for it, "charset" (an
+# allowlist, a safe-character test or regex, a constant collection) or "exact" (only a guard pinning
+# the value to constants: membership, an exact comparison; a long digit string still reaches a
+# vulnerable library function); no `guards`, none does. `dot_unsafe`: a safe character set that
+# allows `.` does not clear it (`..` in a path). `confidentiality`: the sink discloses a value, so
+# model output (`llm` taint) reaching it is not an injection.
 # [[vuln]]: one per VulnType value (frame/sil/translator.py), with its CWE (where it has one)
 # and its category (findings.CATEGORIES).
 #
@@ -12,24 +17,29 @@
 [[sink]]
 kind = "sql"
 vuln = "sql_injection"
+guards = "charset"
 
 [[sink]]
 kind = "html"
 vuln = "xss"
 aliases = ["html_output"]
+guards = "charset"
 
 [[sink]]
 kind = "shell"
 vuln = "command_injection"
 aliases = ["shell_command"]
+guards = "charset"
 
 [[sink]]
 kind = "ldap"
 vuln = "ldap_injection"
+guards = "charset"
 
 [[sink]]
 kind = "xpath"
 vuln = "xpath_injection"
+guards = "charset"
 
 [[sink]]
 kind = "xml_injection"
@@ -39,10 +49,12 @@ vuln = "xml_injection"
 kind = "eval"
 vuln = "code_injection"
 aliases = ["code"]
+guards = "charset"
 
 [[sink]]
 kind = "template"
 vuln = "template_injection"
+guards = "charset"
 
 [[sink]]
 kind = "prompt"
@@ -52,16 +64,19 @@ aliases = ["llm_prompt", "prompt_injection"]
 [[sink]]
 kind = "nosql"
 vuln = "nosql_injection"
+guards = "charset"
 
 [[sink]]
 kind = "xml"
 vuln = "xxe"
 aliases = ["xxe"]
+guards = "charset"
 
 [[sink]]
 kind = "regex"
 vuln = "regex_dos"
 aliases = ["redos"]
+guards = "charset"
 
 [[sink]]
 kind = "orm"
@@ -75,14 +90,18 @@ vuln = "el_injection"
 kind = "filesystem"
 vuln = "path_traversal"
 aliases = ["file", "path"]
+guards = "charset"
+dot_unsafe = true
 
 [[sink]]
 kind = "redirect"
 vuln = "open_redirect"
+guards = "charset"
 
 [[sink]]
 kind = "ssrf"
 vuln = "ssrf"
+guards = "charset"
 
 [[sink]]
 kind = "authz"
@@ -109,11 +128,13 @@ vuln = "unbounded_allocation"
 kind = "header"
 vuln = "header_injection"
 aliases = ["header_injection"]
+guards = "charset"
 
 [[sink]]
 kind = "secret"
 vuln = "secret_exposure"
 aliases = ["config"]
+confidentiality = true
 
 [[sink]]
 kind = "debug"
@@ -128,6 +149,7 @@ aliases = ["ssl"]
 [[sink]]
 kind = "hardcoded_secret"
 vuln = "hardcoded_secret"
+confidentiality = true
 
 [[sink]]
 kind = "insecure_random"
@@ -140,6 +162,7 @@ vuln = "predictable_value"
 [[sink]]
 kind = "vulnerable_dependency"
 vuln = "vulnerable_dependency"
+guards = "exact"
 
 [[sink]]
 kind = "weak_hash"
@@ -166,6 +189,7 @@ vuln = "weak_rsa_padding"
 kind = "credential"
 vuln = "broken_authentication"
 aliases = ["hardcoded_cred"]
+confidentiality = true
 
 [[sink]]
 kind = "insecure_auth"
@@ -207,23 +231,28 @@ vuln = "csrf"
 kind = "log"
 vuln = "log_injection"
 aliases = ["log_injection"]
+guards = "charset"
 
 [[sink]]
 kind = "sensitive_log"
 vuln = "sensitive_data_logged"
+confidentiality = true
 
 [[sink]]
 kind = "error_disclosure"
 vuln = "error_disclosure"
 aliases = ["exception"]
+confidentiality = true
 
 [[sink]]
 kind = "xss"
 vuln = "xss"
+guards = "charset"
 
 [[sink]]
 kind = "command"
 vuln = "command_injection"
+guards = "charset"
 
 [[sink]]
 kind = "format_string"
@@ -273,6 +302,7 @@ vuln = "race_condition"
 kind = "sensitive_exposure"
 vuln = "sensitive_data_exposure"
 aliases = ["network"]
+confidentiality = true
 
 [[sink]]
 kind = "privilege"

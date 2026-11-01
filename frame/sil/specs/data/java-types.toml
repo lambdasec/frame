@@ -262,3 +262,23 @@ types = ["Boolean", "Byte", "CharSequence", "Character", "Class", "ClassLoader",
 # roots, whose second segment names an umbrella organisation (org.apache.<project>).
 [project_packages]
 umbrella_roots = ["org", "net", "io"]
+
+# java.lang.String's static methods returning a String (String.valueOf, format, join).
+[string_static_types]
+valueOf = "String"
+format = "String"
+join = "String"
+
+# Builders whose mutators return the builder itself (java.lang.AbstractStringBuilder), so a chain of
+# them is a sequence of calls on the first receiver.
+[builders]
+types = ["StringBuilder", "StringBuffer"]
+self_methods = ["append", "insert", "appendCodePoint", "reverse", "replace", "delete", "deleteCharAt", "concat"]
+
+# Constructors whose single int argument is an initial capacity: an attacker-chosen one makes the
+# JVM allocate that much up front (CWE-770). Each class's Javadoc names the (int) constructor.
+[allocation]
+capacity_constructors = ["ArrayList", "Vector", "ArrayDeque", "PriorityQueue", "HashMap", "LinkedHashMap", "HashSet",
+    "LinkedHashSet", "Hashtable", "ConcurrentHashMap", "WeakHashMap", "IdentityHashMap", "StringBuilder",
+    "StringBuffer", "ByteArrayOutputStream", "CharArrayWriter", "ArrayBlockingQueue", "LinkedBlockingQueue",
+    "LinkedBlockingDeque"]

@@ -20,6 +20,7 @@ _SHAPE = {
     "xxe": {"features": dict, "access_attributes": list, "parser_products": list},
     "lxml": {"parse_functions": list, "parser": str, "parser_arg": int, "parser_keyword": str, "safe_keyword": str,
              "safe_factories": list},
+    "stdlib": {"parse_functions": list, "parser_arg": int},
     "dotnet": {"parser_types": list, "reader_factory": str, "resolver_property": str, "dtd_property": str,
                "dtd_parse": list, "dtd_safe": list, "prohibit_dtd_property": str},
     "deserialization": {"unsafe_types": list, "xstream": dict, "jackson": dict, "snakeyaml": dict},
@@ -50,6 +51,8 @@ class ParserHardening(NamedTuple):
     jackson_methods: FrozenSet[str] = frozenset()
     yaml_methods: FrozenSet[str] = frozenset()
     dotnet: Dict[str, object] = {}
+    stdlib_parse_functions: FrozenSet[str] = frozenset()
+    stdlib_parser_arg: int = 1
 
 
 def _check(name: str, where: str, table, shape) -> None:
@@ -70,8 +73,8 @@ def _check(name: str, where: str, table, shape) -> None:
 def load(path: Path = PATH) -> ParserHardening:
     name = Path(path).name
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    if set(data) != {"xxe", "lxml", "dotnet", "deserialization"}:
-        raise ValueError(f"{name}: needs exactly [xxe], [lxml], [dotnet] and [deserialization]")
+    if set(data) != {"xxe", "lxml", "stdlib", "dotnet", "deserialization"}:
+        raise ValueError(f"{name}: needs exactly [xxe], [lxml], [stdlib], [dotnet] and [deserialization]")
     for where, shape in _SHAPE.items():
         table = data
         for part in where.split("."):
@@ -97,7 +100,9 @@ def load(path: Path = PATH) -> ParserHardening:
         yaml_safe_constructors=frozenset(de["snakeyaml"]["safe_constructors"]),
         xstream_methods=frozenset(de["xstream"]["methods"]), jackson_methods=frozenset(de["jackson"]["methods"]),
         yaml_methods=frozenset(de["snakeyaml"]["methods"]),
-        dotnet=dict(data["dotnet"]))
+        dotnet=dict(data["dotnet"]),
+        stdlib_parse_functions=frozenset(data["stdlib"]["parse_functions"]),
+        stdlib_parser_arg=data["stdlib"]["parser_arg"])
 
 
 __all__ = ["PATH", "ParserHardening", "load"]

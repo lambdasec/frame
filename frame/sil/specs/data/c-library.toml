@@ -34,6 +34,14 @@ container_lookups = ["at", "contains", "count", "equal_range", "find", "lower_bo
 # Copies with no size limit: the destination (argument 0) receives as much as the source holds.
 unbounded_copies = ["gets", "sprintf", "strcat", "strcpy", "wcscat", "wcscpy"]
 
+# A string's length (C11 7.24.6.3, 7.29.4.6.1, POSIX strnlen): `n = strlen(buf)` is at most buf's
+# capacity minus one.
+string_lengths = ["strlen", "strnlen", "wcslen"]
+
+# Allocators whose arguments only say how much (C11 7.22.3.1/7.22.3.4, alloca): the result is new
+# memory, never derived from an argument (realloc's and strdup's are).
+size_only_allocators = ["alloca", "calloc", "malloc"]
+
 # Copies (destination argument 0, source argument 1) whose source size the memory analysis
 # compares with the destination's.
 copies = ["memcpy", "memmove", "strcat", "strcpy", "wcscat", "wcscpy"]

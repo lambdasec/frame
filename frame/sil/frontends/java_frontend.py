@@ -60,7 +60,9 @@ from frame.sil.specs.weak_algorithms import weak_algorithm
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
     JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES,
-    JAVA_LANG_TYPES, UMBRELLA_PACKAGE_ROOTS)
+    JAVA_LANG_TYPES, UMBRELLA_PACKAGE_ROOTS, JAVA_STRING_STATIC_TYPES, JAVA_BUILDER_TYPES,
+    JAVA_BUILDER_SELF_METHODS, JAVA_CAPACITY_CONSTRUCTORS)
+from frame.sil.specs.guards import load as _guards
 
 
 _QUALIFIED_CLASS = re.compile(r"(?:[a-z_][a-z0-9_]*\.)+[A-Z][A-Za-z0-9_$]*$")
@@ -1091,8 +1093,8 @@ class JavaFrontend:
                 return "int"
             if self._arg_type(obj, depth + 1) == "String":
                 return self._STRING_METHOD_TYPES.get(name)
-            if self._get_text(obj) == "String" and name in ("valueOf", "format", "join"):
-                return "String"
+            if self._get_text(obj) == "String" and name in JAVA_STRING_STATIC_TYPES:
+                return JAVA_STRING_STATIC_TYPES[name]
             return JAVA_FACTORY_RETURN_TYPES.get(name)
         return None
 
@@ -1123,11 +1125,7 @@ class JavaFrontend:
     # Constructors whose single int argument is a capacity: an attacker-chosen one makes the JVM
     # allocate that much up front (CWE-770). With any other argument (a collection, a String)
     # they copy, so the sink applies only when the argument is known to be integral.
-    _CAPACITY_TYPES = frozenset({
-        "ArrayList", "Vector", "ArrayDeque", "PriorityQueue", "HashMap", "LinkedHashMap", "HashSet",
-        "LinkedHashSet", "Hashtable", "ConcurrentHashMap", "WeakHashMap", "IdentityHashMap",
-        "StringBuilder", "StringBuffer", "ByteArrayOutputStream", "CharArrayWriter",
-        "ArrayBlockingQueue", "LinkedBlockingQueue", "LinkedBlockingDeque"})
+    _CAPACITY_TYPES = JAVA_CAPACITY_CONSTRUCTORS       # java-types.toml [allocation]
     _INTEGRAL = frozenset({"int", "long", "short", "byte", "char", "Integer", "Long", "Short", "Byte", "Character"})
 
     def _allocation_size_sinks(self, node: TSNode) -> List[Instr]:
@@ -1561,9 +1559,8 @@ class JavaFrontend:
 
     # Methods that return the receiver (or a view of it), so a chain of them is a sequence of
     # calls on the first receiver.
-    _BUILDER_METHODS = frozenset({"append", "insert", "appendCodePoint", "reverse", "replace",
-                                  "delete", "deleteCharAt", "concat"})
-    _BUILDER_TYPES = frozenset({"StringBuilder", "StringBuffer"})
+    _BUILDER_METHODS = JAVA_BUILDER_SELF_METHODS       # java-types.toml [builders]
+    _BUILDER_TYPES = JAVA_BUILDER_TYPES
 
     def _builder_chain_root(self, node: TSNode, loc: Location, pre: List[Instr]) -> Optional[str]:
         """For `root.append(a).append(b)` (node = the chain up to the last builder call) where root
@@ -2986,9 +2983,10 @@ class JavaFrontend:
         shape the translator's allow-list guard (`HOSTS.contains(new URL(u).getHost())`) reads."""
         name = node.child_by_field_name("name")
         obj = node.child_by_field_name("object")
-        if (name is None or obj is None or self._get_text(name) != "getHost"
+        guards = _guards()
+        if (name is None or obj is None or self._get_text(name) not in guards.host_getters
                 or obj.type != "object_creation_expression"
-                or self._get_text(obj.child_by_field_name("type")) not in ("URL", "URI", "java.net.URL", "java.net.URI")):
+                or f"new {self._get_text(obj.child_by_field_name('type'))}" not in guards.url_parsers):
             return None
         if node.child_by_field_name("arguments") is not None and node.child_by_field_name("arguments").named_child_count:
             return None

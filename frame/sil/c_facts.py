@@ -85,7 +85,7 @@ def dereferences() -> Dict[str, List[int]]:
 
 LIBRARY_PATH = Path(__file__).parent / "specs" / "data" / "c-library.toml"
 _LIB_LISTS = ("non_retaining", "bare_out_params", "string_compares", "length_sinks", "container_lookups",
-              "unbounded_copies", "copies")
+              "unbounded_copies", "copies", "string_lengths", "size_only_allocators")
 _LIB_MAPS = ("bounded_copies", "format_functions")
 _BUFFER_KEYS = {"name", "element_writes", "element_reads", "bounded_write", "bounded_reads", "literal_copy"}
 
@@ -100,6 +100,8 @@ class Library(NamedTuple):
     container_lookups: FrozenSet[str]
     unbounded_copies: FrozenSet[str]
     copies: FrozenSet[str]
+    string_lengths: FrozenSet[str]
+    size_only_allocators: FrozenSet[str]
     bounded_copies: Dict[str, int]          # name -> size argument
     format_functions: Dict[str, int]        # name -> format argument
     element_writes: Dict[str, List[Access]]

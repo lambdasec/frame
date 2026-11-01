@@ -17,7 +17,8 @@ PATH = Path(__file__).parent / "data" / "guards.toml"
 HOW = ("full", "prefix", "search")
 _LISTS = ("charset_methods", "prefix_methods", "membership_methods", "collection_views",
           "literal_collection_types", "literal_collection_factories", "url_parsers", "host_fields",
-          "path_normalizers", "path_separators")
+          "path_normalizers", "path_separators", "charset_functions", "position_methods", "key_methods",
+          "host_getters")
 _REGEX = {"compiled_methods", "literal_methods", "subject_methods", "matcher", "matcher_methods", "function"}
 _FUNCTION = {"names", "pattern_arg", "subject_arg", "how"}
 
@@ -46,6 +47,10 @@ class Guards(NamedTuple):
     matcher: str
     matcher_methods: Dict[str, str]
     regex_functions: Tuple[RegexFunction, ...]
+    charset_functions: FrozenSet[str] = frozenset()
+    position_methods: FrozenSet[str] = frozenset()
+    key_methods: FrozenSet[str] = frozenset()
+    host_getters: FrozenSet[str] = frozenset()
 
     def regex_function(self, name: str):
         return next((f for f in self.regex_functions if name in f.names), None)
