@@ -46,9 +46,13 @@ def test_object_literal_handlers_are_registered_via_the_callee_and_key():
 
 
 def test_graphql_resolver_maps_register_their_functions():
-    p, _ = _calls("const resolvers = { Query: { a: (parent, args) => 1 }, Book: { b: (parent, args) => 2 } };", proc="")
+    src = ("const { ApolloServer } = require('@apollo/server');\n"
+           "const resolvers = { Query: { a: (parent, args) => 1 }, Book: { b: (parent, args) => 2 } };\n")
+    p, _ = _calls(src + "const server = new ApolloServer({ typeDefs: '', resolvers });", proc="")
     via = [pr.registered_via for pr in p.procedures.values() if pr.registered_via]
     assert len(via) == 2 and all(v == ["graphql.resolver"] for v in via)
+    p, _ = _calls(src, proc="")                               # a map handed to no server registers nothing
+    assert not any(pr.registered_via for pr in p.procedures.values())
 
 
 def test_options_object_of_a_package_call_becomes_named_arguments():

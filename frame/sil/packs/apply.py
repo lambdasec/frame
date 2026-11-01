@@ -722,9 +722,10 @@ def bound_keys(param: str, path: Tuple[str, ...] = ()) -> List[Tuple[Optional[Tu
 
 def _request_sources(names: List[str], request, label: str, loc) -> List[TaintSource]:
     """The request-object entry for the selected parameters (`$argN` for a destructuring one:
-    its bindings then read the request type's fields)."""
+    its bindings then read the request type's fields), or for a name a destructuring parameter
+    binds when the entry point selects it (`({ req }) => ...`: `$arg0.req`)."""
     return [TaintSource(loc=loc, var=PVar(n), kind=TaintKind.REQUEST, request=request,
-                        description=f"{label} entry point (request object)") for n in names if "." not in n]
+                        description=f"{label} entry point (request object)") for n in names]
 
 
 def _route_variables(e: Entrypoint, proc: Procedure) -> Optional[Set[str]]:
@@ -1053,8 +1054,12 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     if globals_:                                    # `sails.getDatastore()`: the framework's own global
         program.global_origins = globals_
         _value_origins(program, getattr(program, "param_origins", None))
+    from ..registrations import apply_context_origins, context_links, refresh_registered_via
+    links = context_links({"": program})                # what a server's context function returns
+    if links:
+        apply_context_origins({"": program}, links)
+        program.context_handler_links = [(c[1], h[1], i) for c, h, i in links]
     _apply_entry_origins(program, active)
-    from ..registrations import refresh_registered_via
     refresh_registered_via(program)
     _apply_rules(program, active)
     program.di_services = registered_services(program, active)

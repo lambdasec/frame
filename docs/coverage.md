@@ -145,14 +145,27 @@ position = 0
 origin = "socket.io.Socket"
 ```
 
-JavaScript packs have two more kinds. `[[registration]]` names the functions an application hands to a framework inside an object, for an entry point's `registered_via` to select:
+JavaScript packs have two more kinds. `[[registration]]` names the functions an application hands to a framework inside a value it passes to one of the framework's calls, for an entry point's `registered_via` to select. The value is followed through names bound to it, arrays, spreads and other modules' exports, never found by an object key or a variable's name:
 
 ```toml
-[[registration]]                         # Query: { user(parent, args) {...} }, or const resolvers = { User: {...} }
-keys = ["Query", "Mutation", "Subscription"]
-containers = ["*resolvers"]              # case-insensitive globs on the enclosing object's name
+[[registration]]                         # new ApolloServer({ typeDefs, resolvers }): Query.books, User.posts
+call = ["@apollo/server.ApolloServer", "@graphql-tools/schema.makeExecutableSchema"]
+option = "resolvers"                     # that key of the options object at `arg` (default 0)
+depth = 2                                # object levels from the value to the functions
+leaf_keys = ["resolve", "subscribe"]     # or a field's config object one level further
 registered_as = "graphql.resolver"
+
+[[registration]]                         # startStandaloneServer(server, { context: async ({ req }) => ({...}) })
+call = ["@apollo/server/standalone.startStandaloneServer"]
+arg = 1
+option = "context"                       # depth 0: the value is the function itself
+registered_as = "graphql.context.http"
+server_arg = 0                           # the server it serves
+context_of = "graphql.resolver"          # its result is that server's resolvers' third argument
+context_param = 2
 ```
+
+What a context function returns reaches each resolver field by field: `ctx.db` holds the pool the context put there (so `ctx.db.query(q)` is that driver's sink) and `ctx.tenant` the header it read, while a field holding a constant is no attacker data. Another server's context reaches none of these resolvers.
 
 `[[fluent]]` names methods that return the object they configure, so a call at the end of a chain is matched as if made on the object itself. With `roots`, a call of a root starts such a chain and calls on it are named `<name>.<method>`. A pack holding `[[fluent]]` entries has no `detect` (the object is often a parameter of a file that imports nothing):
 

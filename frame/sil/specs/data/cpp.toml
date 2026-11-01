@@ -1486,31 +1486,6 @@ is_sink = "assertion"
 description = "assert (disabled in release CWE-617)"
 
 [[spec]]
-name = "password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "passwd"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "secret"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded secret (CWE-798)"
-
-[[spec]]
-name = "api_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "private_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded key (CWE-798)"
-
-[[spec]]
 name = "SSL_CTX_set_options"
 is_sink = "ssl"
 sink_args = [0, 1]
@@ -4283,56 +4258,6 @@ description = "assert (disabled in release CWE-617)"
 name = "::assert"
 is_sink = "assertion"
 description = "assert (disabled in release CWE-617)"
-
-[[spec]]
-name = "std::password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "::password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "std::passwd"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "::passwd"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "std::secret"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded secret (CWE-798)"
-
-[[spec]]
-name = "::secret"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded secret (CWE-798)"
-
-[[spec]]
-name = "std::api_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "::api_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "std::private_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded key (CWE-798)"
-
-[[spec]]
-name = "::private_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded key (CWE-798)"
 
 [[spec]]
 name = "std::SSL_CTX_set_options"

@@ -689,6 +689,9 @@ class ReturnSummary:
     # (`return req.query.dir`), and those whose object itself does (`return req`).
     param_reads: Dict[str, Set[Tuple[str, ...]]] = field(default_factory=dict)
     param_whole: Set[str] = field(default_factory=set)
+    # Fields of the returned value holding attacker data (`return { token: req.headers.x }`):
+    # field -> taint, with the kinds every path sanitized it for.
+    return_fields: Dict[str, Tuple[TaintInfo, Set[str]]] = field(default_factory=dict)
 
     def key(self):
         return (self.source.source_var if self.source else None,
@@ -699,7 +702,8 @@ class ReturnSummary:
                 tuple(sorted((p, f, frozenset(k)) for p, fs in self.param_fields.items()
                              for f, (_, k) in fs.items())),
                 tuple(sorted((p, frozenset(r)) for p, r in self.param_reads.items())),
-                frozenset(self.param_whole))
+                frozenset(self.param_whole),
+                tuple(sorted((f, frozenset(k)) for f, (_, k) in self.return_fields.items())))
 
 
 @dataclass
@@ -734,6 +738,10 @@ class IPAState:
     # Python decorators of the project: decorator -> the functions it wraps (`@token_required`),
     # which its wrapper calls through the decorator's parameter (`f(user, *args)`).
     decorated: Dict[ProcRef, List["Callee"]] = field(default_factory=dict)
+    # A framework passes what a function returns to others at a parameter (an Apollo server's
+    # context function, its resolvers' third argument): handler -> [(function, parameter index)]
+    # (registrations.context_links).
+    context_sources: Dict[ProcRef, List[Tuple[ProcRef, int]]] = field(default_factory=dict)
 
 
 # The fixpoint analyses each procedure once, then again only when something it
@@ -902,6 +910,10 @@ class SILTranslator:
         self._ipa = ipa if ipa is not None else IPAState()
         self._file_key = file_key
         self._project = project
+        for ctx_fn, handler, index in getattr(self.program, "context_handler_links", ()) or ():
+            sources = self._ipa.context_sources.setdefault((file_key, handler), [])
+            if ((file_key, ctx_fn), index) not in sources:
+                sources.append(((file_key, ctx_fn), index))
         self.vulnerability_checks: List[VulnerabilityCheck] = []
         # Cache for procedures that always return constants
         self._constant_return_procs: Dict[str, bool] = {}
@@ -1639,6 +1651,8 @@ class SILTranslator:
         lang = (getattr(self.program, "language", "") or "").lower()
         if lang not in self._ENTRY_TAINT_LANGUAGES:
             return False
+        if any(h[0] == self._file_key for h in self._ipa.context_sources):
+            return True                                  # a framework hands one function's result to others
         def nested_calls(e):
             if isinstance(e, ExpCall):
                 yield self._call_exp_name(e)
@@ -2861,7 +2875,8 @@ class SILTranslator:
             elif isinstance(e, ExpCast):
                 stack.append(e.exp)
 
-    def _accumulate_return(self, value: Exp, state: SymbolicState, proc_name: str) -> None:
+    def _accumulate_return(self, value: Exp, state: SymbolicState, proc_name: str,
+                           fields: Optional[str] = None) -> None:
         """Fold what this return hands back into the procedure's summary."""
         acc = self._return_acc
         for info, kinds in self._arg_taint_leaves(value, state):
@@ -2882,6 +2897,15 @@ class SILTranslator:
                     acc.source = info
                 acc.source_sanitized = set(kinds) if acc.source_sanitized is None \
                     else acc.source_sanitized & kinds
+        if fields:                                       # `return { token: req.headers.x }` (lowered as fields)
+            prefix = fields + "."
+            for key, info in state.tainted.items():
+                fld = key[len(prefix):] if key.startswith(prefix) else ""
+                if not _PLAIN_LOCAL.match(fld or "-") or info.source_var.startswith(self._SEED_PREFIX):
+                    continue
+                kinds = set(state.sanitized.get(key, []))
+                known = acc.return_fields.get(fld)
+                acc.return_fields[fld] = (info, kinds) if known is None else (known[0], known[1] & kinds)
 
     # `this.f`, `self.f`, `this->f`: a field of the receiver.
     _RECEIVER_FIELD = re.compile(r"(?:this|self)(?:\.|->)([A-Za-z_$][\w$]*)$")
@@ -3324,6 +3348,20 @@ class SILTranslator:
                 state.add_taint(name, info)
                 if sanitized:
                     state.add_sanitization(name, sorted(sanitized))
+        # A framework hands this procedure what another returns (an Apollo context function's
+        # fields, every resolver's third argument).
+        given: Set[str] = set()                         # parameters a framework fills: never seeded
+        for ctx_ref, index in self._ipa.context_sources.get((self._file_key, proc.name), ()):
+            if index >= len(proc.params):
+                continue
+            self._ipa.callers.setdefault(ctx_ref, set()).add((self._file_key, proc.name))
+            summary = self._ipa.return_summaries.get(ctx_ref)
+            target = proc.params[index][0].name
+            given.add(target)
+            for fld, (info, kinds) in (summary.return_fields.items() if summary else ()):
+                state.add_taint(f"{target}.{fld}", info)
+                if kinds:
+                    state.add_sanitization(f"{target}.{fld}", sorted(kinds))
         # A handler registered on an app (`app.get(path, handler)`) receives the request
         # fields that app's middleware set (`_record_middleware`).
         if proc.params and proc.passed_as:
@@ -3339,9 +3377,14 @@ class SILTranslator:
         # not a caller has passed attacker data yet. Seeds are never reported
         # (summary-phase checks are discarded) nor passed on as entry taint.
         if self._ipa_summarising:
+            entry_node = proc.nodes.get(proc.entry_node)
+            stated = {str(i.var) for i in (entry_node.instrs if entry_node is not None else ())
+                      if isinstance(i, TaintSource)}
             for param, _ in proc.params:
                 if param.name in entry or param.name in ("self", "cls", "this"):
                     continue
+                if param.name in given or any(v == param.name or v.startswith(param.name + ".") for v in stated):
+                    continue                              # an entry point says what it holds (`$arg0.req`)
                 marker = f"{self._file_key}::{proc.name}({param.name})"
                 self._ipa.entry_markers[marker] = ((self._file_key, proc.name), param.name)
                 state.add_taint(param.name, TaintInfo(
@@ -5773,7 +5816,7 @@ class SILTranslator:
         checks: List[VulnerabilityCheck] = []
         self._record_secure_parser_return(instr, state, proc_name)
         if self._return_acc is not None and instr.value is not None:
-            self._accumulate_return(instr.value, state, proc_name)
+            self._accumulate_return(instr.value, state, proc_name, getattr(instr, "fields", None))
         if self._ipa_summarising:
             self._accumulate_param_fields(state)
         if self._is_c_lang:

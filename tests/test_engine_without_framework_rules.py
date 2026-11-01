@@ -174,6 +174,7 @@ const resolvers = {
     who(req, args) { exec(req.cmd); },
   },
 };
+const server = new ApolloServer({ typeDefs: "", resolvers });
 """
     assert _js(src) == [(5, "CWE-78")]
 
@@ -181,7 +182,8 @@ const resolvers = {
 @pytest.mark.parametrize("body, error", [
     ('[[fluent]]\nmethods = []\n', "methods must not be empty"),
     ('[[fluent]]\nroots = ["$"]\nmethods = ["find"]\n', "roots and name go together"),
-    ('[[registration]]\nkeys = ["Query"]\n', "needs registered_as"),
+    ('[[registration]]\nregistered_as = "graphql.resolver"\n', "needs call"),
+    ('[[registration]]\ncall = ["a.B"]\nregistered_as = "x"\ncontext_param = 2\n', "go with context_of"),
     ('[[entrypoint]]\nmethod = ["*"]\nparams = "all"\nparam_positions = [-1]\n', "param_positions"),
 ])
 def test_new_pack_keys_are_validated(tmp_path, body, error):

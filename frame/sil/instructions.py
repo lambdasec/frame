@@ -786,6 +786,9 @@ class Return(Instr):
     Optional return value for non-void functions.
     """
     value: Optional[Exp] = None
+    # JS: a returned object literal's fields are also written on this temporary (`$retN.token =
+    # ...`), so what each field holds is known (ReturnSummary.return_fields).
+    fields: Optional[str] = None
 
     def __str__(self) -> str:
         if self.value:

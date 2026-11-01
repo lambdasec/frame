@@ -1549,6 +1549,8 @@ class ProjectContext:
         from frame.sil.registrations import link_openapi, link_settings
         link_openapi(ctx, index, packs_for)
         link_settings(ctx, index, packs_for)
+        from frame.sil.registrations import link_object_registrations
+        link_object_registrations(ctx, index, packs_for)
         csharp = [p for p in ctx.programs.values() if (p.language or "") == "csharp"]
         if csharp:                                       # DI registrations in one file, handlers in another
             from frame.sil.packs.apply import drop_service_parameters

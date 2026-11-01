@@ -54,6 +54,9 @@ from frame.sil.metadata import (
 from frame.sil.packs import default_packs, finish_program
 from frame.sil.packs.apply import bound_names, _detected as pack_detected
 from frame.sil.value_origins import annotate as annotate_value_origins, origin_in_scope
+from frame.sil.registrations import ObjectRegistration, registered_at
+
+_PLAIN_NAME = re.compile(r"[A-Za-z_$][\w$]*$")
 from frame.sil.registrations import Registration, apply_callback_params
 from frame.sil.specs.template_engines import load as _template_engines
 from frame.sil.specs.third_party_js import load as _third_party_js
@@ -209,6 +212,7 @@ class JavaScriptFrontend:
             self._scan_proto_pollution(tree.root_node, program)
 
         self._record_declarations(tree.root_node, program)
+        self._record_object_exports(tree.root_node, {p.span: p for p in program.procedures.values() if p.span}, program)
         packs = self.packs if self.packs is not None else default_packs()
         apply_callback_params(program, [p for p in packs.for_language(self.language) if pack_detected(p, program)])
         finish_program(program, self.packs, source_code)
@@ -271,8 +275,8 @@ class JavaScriptFrontend:
                         text = self._get_text(ty).lstrip(":").strip().split("<")[0].strip()
                         if text:
                             proc.param_types[name] = text
-            elif n.type in ("pair", "variable_declarator"):
-                self._register_graphql_resolvers(n, by_span)
+            if n.type in ("call_expression", "new_expression"):
+                self._object_registrations(n, by_span, program, root)
             if n.type in ("export_statement", "assignment_expression"):
                 self._record_exports(n, by_span, program)
             elif n.type == "call_expression":
@@ -492,38 +496,239 @@ class JavaScriptFrontend:
         packs = self.packs if self.packs is not None else default_packs()
         return [r for pack in packs.for_language("javascript") for r in pack.registrations]
 
-    def _register_graphql_resolvers(self, node: TSNode, by_span) -> None:
-        """The packs' `[[registration]]` entries: the functions of an object under one of their
-        `keys` (`Query: { ... }`), or of any object inside one bound to a name matching their
-        `containers` (`const resolvers = { User: { ... } }`; case-insensitive globs), are
-        registered as their `registered_as` ("graphql.resolver")."""
+    # -- functions handed to a framework inside a value ([[registration]]) ------------------------
+    #
+    # `new ApolloServer({ resolvers })`: the functions are found in the value the call is given,
+    # followed through names bound to it, arrays, spreads and other modules' exports.
+
+    _WRAPPERS = ("parenthesized_expression", "await_expression", "non_null_expression", "as_expression",
+                 "satisfies_expression")
+    _MAX_OBJECT_DEPTH = 4
+
+    def _unwrap(self, node: Optional[TSNode]) -> Optional[TSNode]:
+        while node is not None and node.type in self._WRAPPERS:
+            node = next((c for c in node.named_children if c.type != "comment"), None)
+        return node
+
+    def _js_bindings(self, root: TSNode) -> Dict[str, list]:
+        """What each name of the file is bound to, from the syntax tree: ("value", node),
+        ("function", node), ("module", specifier, export) or ("namespace", specifier)."""
+        cached = getattr(self, "_bindings_cache", None)
+        if cached is not None and cached[0] is root:
+            return cached[1]
+        out: Dict[str, list] = {}
+        text = self._get_text
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "variable_declarator":
+                name, value = n.child_by_field_name("name"), n.child_by_field_name("value")
+                if name is None:
+                    continue
+                if name.type == "identifier":
+                    out.setdefault(text(name), []).append(("value", value) if value is not None else ("none",))
+                elif name.type == "object_pattern":
+                    spec = self._required_specifier(self._unwrap(value)) if value is not None else None
+                    for prop in name.named_children:
+                        if prop.type == "shorthand_property_identifier_pattern":
+                            out.setdefault(text(prop), []).append(("module", spec, text(prop)) if spec else ("none",))
+                        elif prop.type == "pair_pattern":
+                            k, v = prop.child_by_field_name("key"), prop.child_by_field_name("value")
+                            if k is not None and v is not None and v.type == "identifier":
+                                out.setdefault(text(v), []).append(("module", spec, text(k)) if spec else ("none",))
+            elif n.type in ("function_declaration", "generator_function_declaration"):
+                name = n.child_by_field_name("name")
+                if name is not None:
+                    out.setdefault(text(name), []).append(("function", n))
+            elif n.type == "import_statement":
+                src = n.child_by_field_name("source")
+                clause = next((c for c in n.named_children if c.type == "import_clause"), None)
+                if src is None or clause is None:
+                    continue
+                spec = text(src)[1:-1]
+                for c in clause.named_children:
+                    if c.type == "identifier":
+                        out.setdefault(text(c), []).append(("module", spec, "default"))
+                    elif c.type == "namespace_import":
+                        ident = next((x for x in c.named_children if x.type == "identifier"), None)
+                        if ident is not None:
+                            out.setdefault(text(ident), []).append(("namespace", spec))
+                    elif c.type == "named_imports":
+                        for sp in c.named_children:
+                            if sp.type == "import_specifier":
+                                nm, al = sp.child_by_field_name("name"), sp.child_by_field_name("alias")
+                                if nm is not None:
+                                    out.setdefault(text(al or nm), []).append(("module", spec, text(nm)))
+        self._bindings_cache = (root, out)
+        return out
+
+    def _object_functions(self, value: Optional[TSNode], by_span, root: TSNode, path: Tuple[str, ...] = (),
+                          seen: Optional[set] = None):
+        """The functions a value holds, with the object keys leading to each: ("proc", procedure,
+        path), and ("module", specifier, export, path) for a part another module exports. Names
+        are followed only when the file binds them once."""
+        seen = set() if seen is None else seen
+        value = self._unwrap(value)
+        if value is None or len(path) > self._MAX_OBJECT_DEPTH or (value.start_byte, value.end_byte) in seen:
+            return
+        seen.add((value.start_byte, value.end_byte))
+        t = value.type
+        if t in self._FUNC_LIKE:
+            fn = by_span.get((value.start_byte, value.end_byte))
+            if fn is not None:
+                yield ("proc", fn, path)
+        elif t in ("identifier", "shorthand_property_identifier"):
+            yield from self._name_functions(self._get_text(value), by_span, root, path, seen)
+        elif t == "member_expression":
+            obj, prop = self._unwrap(value.child_by_field_name("object")), value.child_by_field_name("property")
+            if obj is None or prop is None:
+                return
+            member = self._get_text(prop)
+            spec = self._required_specifier(obj)
+            if spec:
+                yield ("module", spec, member, path)
+            elif obj.type == "identifier":
+                binds = self._js_bindings(root).get(self._get_text(obj), [])
+                if len(binds) == 1 and binds[0][0] == "namespace":
+                    yield ("module", binds[0][1], member, path)
+                elif len(binds) == 1 and binds[0][0] == "value":
+                    held = self._unwrap(binds[0][1])
+                    spec = self._required_specifier(held) if held is not None else None
+                    if spec:
+                        yield ("module", spec, member, path)
+                    else:
+                        for item in self._object_functions(held, by_span, root, (), seen):
+                            if item[-1][:1] == (member,):          # the member's part of that object
+                                yield item[:-1] + (path + item[-1][1:],)
+        elif t == "call_expression":
+            spec = self._required_specifier(value)
+            if spec:
+                yield ("module", spec, "default", path)
+        elif t == "array":
+            for el in value.named_children:
+                yield from self._object_functions(el, by_span, root, path, seen)
+        elif t == "object":
+            for m in value.named_children:
+                if m.type == "spread_element":
+                    inner = next((c for c in m.named_children if c.type != "comment"), None)
+                    yield from self._object_functions(inner, by_span, root, path, seen)
+                elif m.type == "method_definition":
+                    key = m.child_by_field_name("name")
+                    fn = by_span.get((m.start_byte, m.end_byte))
+                    if key is not None and fn is not None:
+                        yield ("proc", fn, path + (self._get_text(key).strip("'\""),))
+                elif m.type == "pair":
+                    key, v = m.child_by_field_name("key"), m.child_by_field_name("value")
+                    if key is not None and v is not None and key.type != "computed_property_name":
+                        yield from self._object_functions(v, by_span, root, path + (self._get_text(key).strip("'\""),), seen)
+                elif m.type == "shorthand_property_identifier":
+                    yield from self._name_functions(self._get_text(m), by_span, root, path + (self._get_text(m),), seen)
+
+    def _name_functions(self, name: str, by_span, root: TSNode, path, seen):
+        binds = self._js_bindings(root).get(name, [])
+        if len(binds) != 1:
+            return
+        b = binds[0]
+        if b[0] == "value":
+            yield from self._object_functions(b[1], by_span, root, path, seen)
+        elif b[0] == "function":
+            fn = by_span.get((b[1].start_byte, b[1].end_byte))
+            if fn is not None:
+                yield ("proc", fn, path)
+        elif b[0] == "module" and b[1]:
+            yield ("module", b[1], b[2], path)
+
+    def _server_key(self, call: TSNode, arg_nodes: List[TSNode], server_arg: Optional[int], root: TSNode) -> Optional[str]:
+        """The server a registration belongs to: the call itself, or the value at `server_arg` (a
+        name bound once to the call that made it)."""
+        if server_arg is None:
+            return str(call.start_byte)
+        if server_arg >= len(arg_nodes):
+            return None
+        a = self._unwrap(arg_nodes[server_arg])
+        if a is not None and a.type == "identifier":
+            binds = self._js_bindings(root).get(self._get_text(a), [])
+            a = self._unwrap(binds[0][1]) if len(binds) == 1 and binds[0][0] == "value" else None
+        return str(a.start_byte) if a is not None and a.type in ("new_expression", "call_expression") else None
+
+    def _object_registrations(self, call: TSNode, by_span, program: Program, root: TSNode) -> None:
+        """The packs' `[[registration]]` entries on this call: the functions in the value it is
+        handed (`new ApolloServer({ resolvers })`) are registered as `registered_as`; parts
+        another module exports are left to the project step (`Program.object_registrations`)."""
         regs = self._registrations()
         if not regs:
             return
-        if node.type == "pair":
-            key_node, value = node.child_by_field_name("key"), node.child_by_field_name("value")
-        else:
-            key_node, value = node.child_by_field_name("name"), node.child_by_field_name("value")
-        if key_node is None or value is None or value.type != "object":
+        fn = call.child_by_field_name("function" if call.type == "call_expression" else "constructor")
+        args = call.child_by_field_name("arguments")
+        if fn is None or args is None:
             return
-        key = self._get_text(key_node).strip("'\"")
-
-        def functions(obj, via):
-            for member in obj.named_children:
-                fn_node = member.child_by_field_name("value") if member.type == "pair" else member
-                if fn_node is not None and fn_node.type in self._FUNC_LIKE:
-                    fn = by_span.get((fn_node.start_byte, fn_node.end_byte))
-                    if fn is not None and via not in fn.registered_via:
-                        fn.registered_via.append(via)
-
+        callee_id = self._value_id(fn, self._enclosing_proc_name(call, by_span), program)
+        if not callee_id:
+            return
+        from frame.sil.packs.apply import _glob_to_regex
+        arg_nodes = [a for a in args.named_children if a.type != "comment"]
         for reg in regs:
-            if key in reg.keys:
-                functions(value, reg.registered_as)
-            elif any(fnmatch.fnmatchcase(key.lower(), c.lower()) for c in reg.containers):
-                for member in value.named_children:
-                    inner = member.child_by_field_name("value") if member.type == "pair" else None
-                    if inner is not None and inner.type == "object":
-                        functions(inner, reg.registered_as)
+            if not any(re.fullmatch(_glob_to_regex(g), callee_id) for g in reg.call) or reg.arg >= len(arg_nodes):
+                continue
+            value = arg_nodes[reg.arg]
+            items = list(self._object_functions(value, by_span, root))
+            if reg.option:                                # the option's part of the options object
+                items = [i[:-1] + (i[-1][1:],) for i in items if i[-1][:1] == (reg.option,)]
+            server = self._server_key(call, arg_nodes, reg.server_arg, root)
+            for item in items:
+                if item[0] == "module":
+                    _, spec, export, path = item
+                    if len(path) <= reg.depth:
+                        program.object_registrations.append(ObjectRegistration(
+                            registered_as=reg.registered_as, depth=reg.depth - len(path),
+                            leaf_keys=tuple(reg.leaf_keys), specifier=spec, export=export, server=server,
+                            context_of=reg.context_of, context_param=reg.context_param))
+                    continue
+                proc, path = item[1], item[2]
+                if not registered_at(path, reg.depth, reg.leaf_keys):
+                    continue
+                if reg.registered_as not in proc.registered_via:
+                    proc.registered_via.append(reg.registered_as)
+                if server is not None:
+                    program.server_handlers.setdefault(server, {}).setdefault(reg.registered_as, [])
+                    if proc.name not in program.server_handlers[server][reg.registered_as]:
+                        program.server_handlers[server][reg.registered_as].append(proc.name)
+                    if reg.context_of:
+                        program.context_links.append((proc.name, server, reg.context_of, reg.context_param))
+
+    def _record_object_exports(self, root: TSNode, by_span, program: Program) -> None:
+        """`Program.object_exports`: export name -> the functions the exported value holds, with
+        their paths (`module.exports = { Query: {...} }`, `export default resolvers`,
+        `export const resolvers = ...`, `exports.x = ...`), for a registration in another file."""
+        def record(name: str, value: Optional[TSNode]) -> None:
+            items = list(self._object_functions(value, by_span, root))
+            if items:
+                program.object_exports.setdefault(name, []).extend(items)
+        for n in root.named_children:
+            node = n.named_children[0] if n.type == "expression_statement" and n.named_children else n
+            if node.type == "export_statement":
+                default = any(c.type == "default" for c in node.children)
+                decl, value = node.child_by_field_name("declaration"), node.child_by_field_name("value")
+                if default:
+                    record("default", value if value is not None else decl)
+                elif decl is not None and decl.type in ("lexical_declaration", "variable_declaration"):
+                    for d in decl.named_children:
+                        if d.type == "variable_declarator" and d.child_by_field_name("name") is not None:
+                            record(self._get_text(d.child_by_field_name("name")), d.child_by_field_name("value"))
+                for clause in (c for c in node.named_children if c.type == "export_clause"):
+                    for spec in clause.named_children:
+                        local, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                        if spec.type == "export_specifier" and local is not None:
+                            record(self._get_text(alias or local), local)
+            elif node.type == "assignment_expression":
+                left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+                target = self._get_text(left) if left is not None else ""
+                if target == "module.exports":
+                    record("default", right)
+                elif target.startswith(("module.exports.", "exports.")) and \
+                        target.count(".") == target.startswith("module.") + 1:
+                    record(target.rsplit(".", 1)[-1], right)
 
     def _is_vendored_or_minified(self) -> bool:
         """True for third-party libraries and minified/generated JS bundles (third-party-js.toml)."""
@@ -2896,6 +3101,9 @@ class JavaScriptFrontend:
         `return db.query(q)`) is also emitted as a call statement, so specs (sinks,
         sources, sanitizers) and framework packs apply to it as to a standalone call."""
         inner = self._unwrap_await(node)
+        literal = self._unwrap(node)
+        if literal is not None and literal.type == "object":
+            self._returned_fields_var = self._returned_object(literal, loc)
         if inner is not None and inner.type == "call_expression":
             # the call as a statement (a Call instruction for specs, packs and canonical ids) ...
             spec = self._lookup_call_spec(self._get_call_name(inner), inner)
@@ -2905,10 +3113,45 @@ class JavaScriptFrontend:
         # ... and the returned value as the expression, so argument -> result propagation is unchanged
         return self._translate_expression(node)
 
+    def _returned_object(self, obj: TSNode, loc: Location) -> str:
+        """`return { token: req.headers.x, db }`: each field written on a temporary (`$retN.token =
+        ...`), named by the Return (`Return.fields`), so what each field holds is known to a caller
+        the framework passes it to (`ReturnSummary.return_fields`). The returned value itself is
+        the object's expression as before."""
+        name = f"$ret{self._ident_counter}"
+        self._ident_counter += 1
+        proc = self._current_proc
+        written: Dict[str, str] = {}
+        for m in obj.named_children:
+            if m.type == "pair":
+                key, value = m.child_by_field_name("key"), m.child_by_field_name("value")
+                if key is None or value is None or key.type == "computed_property_name":
+                    continue
+                fld = self._get_text(key).strip("'\"")
+            elif m.type == "shorthand_property_identifier":
+                fld, value = self._get_text(m), m
+            else:
+                continue
+            if not _PLAIN_NAME.match(fld):
+                continue
+            self._add_instr(Assign(loc=loc, id=PVar(f"{name}.{fld}"), exp=self._translate_expression(value)))
+            held = self._unwrap(value)
+            if held is not None and held.type in ("identifier", "shorthand_property_identifier", "member_expression"):
+                written[fld] = self._get_text(held)
+        if proc is not None:
+            for fld, text in written.items():
+                if proc.returned_fields.get(fld, text) != text:
+                    proc.returned_fields[fld] = ""         # two paths return different things
+                else:
+                    proc.returned_fields[fld] = text
+        return name
+
     def _add_return_value(self, body_node: TSNode) -> None:
         """`() => expr`: the expression body is the returned value."""
         loc = self._get_location(body_node)
-        self._add_instr(Return(loc=loc, value=self._return_value_exp(body_node, loc)))
+        self._returned_fields_var = None
+        value = self._return_value_exp(body_node, loc)
+        self._add_instr(Return(loc=loc, value=value, fields=self._returned_fields_var))
 
     def _translate_return(self, node: TSNode) -> None:
         """Translate return statement"""
@@ -2929,10 +3172,12 @@ class JavaScriptFrontend:
                             self._add_return_value(body_node)
                     return  # Don't add another return statement
                 else:
+                    self._returned_fields_var = None
                     value_exp = self._return_value_exp(child, loc)
                 break
 
-        self._add_instr(Return(loc=loc, value=value_exp))
+        self._add_instr(Return(loc=loc, value=value_exp, fields=getattr(self, "_returned_fields_var", None)))
+        self._returned_fields_var = None
 
     def _translate_if(self, node: TSNode) -> None:
         """Translate if statement"""

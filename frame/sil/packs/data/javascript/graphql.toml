@@ -1,16 +1,57 @@
 [pack]
 name = "graphql"
 language = "javascript"
-description = "GraphQL resolvers (Apollo Server, graphql-tools, graphql-yoga, mercurius): args are attacker data"
+description = "GraphQL servers (Apollo Server, graphql-tools, graphql-yoga schemas, Apollo subgraphs): resolver args and the context function's request"
+references = ["https://www.apollographql.com/docs/apollo-server/data/resolvers",
+              "https://www.apollographql.com/docs/apollo-server/data/context",
+              "https://the-guild.dev/graphql/tools/docs/generate-schema"]
 
-# Resolver maps (Apollo Server, graphql-tools, graphql-yoga, mercurius): the functions under the root
-# operation types, and every type's field resolvers inside an object named `resolvers` (or
-# `userResolvers`...), are resolvers.
+# A resolver map is the `resolvers` option of the call that builds the schema: functions two levels
+# in (`Query.books`, `User.posts`), or a field's `resolve` / `subscribe`. Apollo Server 4
+# (@apollo/server), Apollo Server 2/3 (apollo-server and its integrations), graphql-tools'
+# makeExecutableSchema, graphql-yoga's createSchema, Apollo Federation's buildSubgraphSchema.
 [[registration]]
 id = "resolver-map"
-keys = ["Query", "Mutation", "Subscription"]
-containers = ["*resolvers"]
+call = ["@apollo/server.ApolloServer", "apollo-server*.ApolloServer", "@graphql-tools/schema.makeExecutableSchema",
+        "graphql-tools.makeExecutableSchema", "graphql-yoga.createSchema", "@apollo/subgraph.buildSubgraphSchema"]
+option = "resolvers"
+depth = 2
+leaf_keys = ["resolve", "subscribe"]      # a field's config object (graphql-tools IFieldResolverOptions)
 registered_as = "graphql.resolver"
+
+# The context function's result is every resolver's third argument (parent, args, context, info).
+# Apollo Server 4: the integration's `context` option, for the server passed beside it; the
+# standalone server hands it the Node request, the Express middleware Express's.
+[[registration]]
+id = "standalone-context"
+call = ["@apollo/server/standalone.startStandaloneServer"]
+arg = 1
+option = "context"
+registered_as = "graphql.context.http"
+server_arg = 0
+context_of = "graphql.resolver"
+context_param = 2
+
+[[registration]]
+id = "express-context"
+call = ["@apollo/server/express4.expressMiddleware", "@as-integrations/express4.expressMiddleware",
+        "@as-integrations/express5.expressMiddleware"]
+arg = 1
+option = "context"
+registered_as = "graphql.context.express"
+server_arg = 0
+context_of = "graphql.resolver"
+context_param = 2
+
+# Apollo Server 2/3: the constructor's own `context` option; apollo-server and
+# apollo-server-express call it with the Express request.
+[[registration]]
+id = "apollo3-context"
+call = ["apollo-server.ApolloServer", "apollo-server-express.ApolloServer"]
+option = "context"
+registered_as = "graphql.context.express"
+context_of = "graphql.resolver"
+context_param = 2
 
 # A resolver is called as (parent, args, context, info) (graphql-js, GraphQLFieldResolver): the
 # client's input is `args`, the second parameter, however it is named or destructured.
@@ -20,3 +61,33 @@ registered_via = ["graphql.resolver"]
 params = "all"
 param_positions = [1]
 description = "GraphQL resolver arguments"
+
+# The context function receives `{ req, res }`.
+[[request_type]]
+id = "incoming-message"
+fields = ["url", "headers", "rawHeaders", "trailers", "rawTrailers"]
+description = "Node's http.IncomingMessage (as the node-http pack)"
+
+[[request_type]]
+id = "express-request"
+fields = ["params", "query", "body", "cookies", "headers", "rawHeaders", "url", "originalUrl", "path", "hostname",
+          "host", "subdomains", "file", "files"]
+methods = ["get", "header", "param"]
+kinds = { file = "file", files = "file" }
+description = "Express's request (as the express pack)"
+
+[[entrypoint]]
+id = "standalone-context-request"
+registered_via = ["graphql.context.http"]
+param_positions = [0]
+params = ["req"]
+request_type = "incoming-message"
+description = "the request an Apollo standalone server hands its context function"
+
+[[entrypoint]]
+id = "express-context-request"
+registered_via = ["graphql.context.express"]
+param_positions = [0]
+params = ["req"]
+request_type = "express-request"
+description = "the Express request Apollo's Express integration hands its context function"

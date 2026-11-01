@@ -814,31 +814,6 @@ description = "Crypto getRandomValues (secure)"
 
 
 [[spec]]
-name = "password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "passwd"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "apiKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "api_key"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "token"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded token (CWE-798)"
-
-[[spec]]
 name = "bcrypt.hash"
 is_sanitizer = ["password"]
 description = "bcrypt password hashing (safe)"

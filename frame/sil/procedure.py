@@ -518,6 +518,10 @@ class Procedure:
     # The same, with the argument position: ("withName", 1) for `withName(req, (name) => ...)`.
     # Lets a call to a callback PARAMETER inside `withName` resolve to the function passed in.
     passed_as: List[Tuple[str, int]] = field(default_factory=list)
+    # JS: what the fields of a returned object literal are (`return { db: pool }`: db -> "pool"),
+    # for values a framework passes on (registrations.context_links); a field written another way
+    # is absent, and one returned differently on two paths is dropped.
+    returned_fields: Dict[str, str] = field(default_factory=dict)
     # Pack entry points this procedure is (`"mcp-servers:tool"`), set by packs.apply.
     entry_kinds: List[str] = field(default_factory=list)
     # Python: the body has an `assert` statement of its own (pytest's tests; frame/sil/test_code.py).
@@ -759,6 +763,16 @@ class Program:
     # that resolves receivers handed in as parameters and handlers defined in other files
     # (frame/sil/registrations.py).
     registrations: List[Any] = field(default_factory=list)
+    # JavaScript `[[registration]]` values (frame/sil/registrations.py): parts of a registered value
+    # another module exports (`ObjectRegistration`), the functions each server was handed (server
+    # -> registered_as -> procedures), context functions (procedure, server, context_of, param), and
+    # the functions each export of this module holds (export -> ("proc", proc, path) / module parts).
+    object_registrations: List[Any] = field(default_factory=list)
+    server_handlers: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+    context_links: List[Tuple[str, str, str, int]] = field(default_factory=list)
+    object_exports: Dict[str, List[Any]] = field(default_factory=dict)
+    # (context function, handler, parameter) within this file (registrations.context_links).
+    context_handler_links: List[Tuple[str, str, int]] = field(default_factory=list)
     # The directive prologue of the module (`"use server"`, `"use strict"`), for JS/TS.
     directives: List[str] = field(default_factory=list)
     # Class (full name) -> its declared instance fields, for languages that write a

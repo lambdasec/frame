@@ -1148,26 +1148,6 @@ is_sink = "info_disclosure"
 description = "Exception message (CWE-209)"
 
 [[spec]]
-name = "password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "apiKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "secretKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded secret (CWE-798)"
-
-[[spec]]
-name = "connectionString"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded connection string (CWE-798)"
-
-[[spec]]
 name = "ServerCertificateValidationCallback"
 is_sink = "cert_validation"
 sink_args = []

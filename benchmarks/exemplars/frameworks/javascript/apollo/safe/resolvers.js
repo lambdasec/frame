@@ -10,6 +10,9 @@ const resolvers = {
     bookByTitle: (_, { title }) => {
       return reporting.query('SELECT * FROM books WHERE title = ?', [title]);
     },
+    report: (_, { name }, { reports, tenant }) => {
+      return reports.query('SELECT * FROM reports WHERE tenant = ? AND name = ?', [tenant, name]);
+    },
   },
   Mutation: {
     importBook: async (parent, args) => {

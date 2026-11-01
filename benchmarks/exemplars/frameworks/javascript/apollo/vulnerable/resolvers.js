@@ -10,6 +10,9 @@ const resolvers = {
     bookByTitle: (_, { title }) => {
       return reporting.query("SELECT * FROM books WHERE title = '" + title + "'");  // frame-expect: CWE-89
     },
+    report: (_, { name }, { reports, tenant }) => {
+      return reports.query("SELECT * FROM reports WHERE tenant = '" + tenant + "' AND name = ?", [name]);  // frame-expect: CWE-89
+    },
   },
   Mutation: {
     importBook: async (parent, args) => {

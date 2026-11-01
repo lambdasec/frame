@@ -214,6 +214,8 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 elif isinstance(base, ExpVar) and str(base.var) in modules:
                     head = origin.get(str(base.var))
                 o = f"{head}.{i.exp.field_name}" if head else None
+                if o is None and isinstance(base, ExpVar):  # a field whose value is known (`db = $arg2.db`)
+                    o = of(f"{base.var}.{i.exp.field_name}")
                 if o and defs.get(x) == 1 and origin.get(x) != o:
                     origin[x] = o
                     changed = True

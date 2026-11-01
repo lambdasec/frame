@@ -47,6 +47,140 @@ class Registration:
     module: Optional[str] = None        # the handler is `require("<module>")`, a file's export
 
 
+@dataclass(frozen=True)
+class ObjectRegistration:
+    """A `[[registration]]` whose value (or part of it) another module exports
+    (`new ApolloServer({ resolvers })` with `resolvers = require("./resolvers")`): the functions
+    `depth` levels into that export are registered as `registered_as` (`link_object_registrations`)."""
+    registered_as: str
+    depth: int
+    leaf_keys: Tuple[str, ...]
+    specifier: str
+    export: str
+    server: Optional[str] = None
+    context_of: str = ""
+    context_param: int = 0
+
+
+def registered_at(path: Tuple[str, ...], depth: int, leaf_keys) -> bool:
+    """Is a function at `path` in a registered value one a registration of `depth` names (or a
+    leaf object's `leaf_keys` member one level further: a GraphQL field's `resolve`)?"""
+    return len(path) == depth or (len(path) == depth + 1 and bool(path) and path[-1] in leaf_keys)
+
+
+def _exported(index, programs: Dict[str, Any], from_key: str, spec: str, export: str,
+              seen: Set[Tuple[str, str]]):
+    """(file, procedure, path) of each function the export `export` of module `spec` (as `from_key`
+    imports it) holds (`Program.object_exports`), through modules it takes parts from."""
+    mod = index.modules.get(from_key) if index is not None else None
+    target = index._resolve_js(mod, spec) if mod is not None and mod.family == "javascript" else None
+    if target is None or target not in programs or (target, export) in seen:
+        return
+    seen.add((target, export))
+    exports = getattr(programs[target], "object_exports", None) or {}
+    items = exports.get(export)
+    if items is None and export != "default":            # `const { resolvers } = require(...)` of module.exports = {...}
+        items = [i[:-1] + (i[-1][1:],) for i in exports.get("default", []) if i[-1][:1] == (export,)]
+    for item in items or ():
+        if item[0] == "proc":
+            yield target, item[1].name, item[2]
+        else:
+            _, inner_spec, inner_export, path = item
+            for f, n, p in _exported(index, programs, target, inner_spec, inner_export, seen):
+                yield f, n, path + p
+
+
+def _object_registration_targets(programs: Dict[str, Any], index):
+    """(registering file, registration, (file, procedure)) for each function another module's
+    export holds that a registration names."""
+    for key, program in programs.items():
+        for reg in getattr(program, "object_registrations", ()) or ():
+            for f, n, path in _exported(index, programs, key, reg.specifier, reg.export, set()):
+                if registered_at(path, reg.depth, reg.leaf_keys):
+                    yield key, reg, (f, n)
+
+
+def link_object_registrations(ctx, index, packs_for: Callable[[str], Any]) -> None:
+    """Project step: the functions a registered value takes from another module
+    (`new ApolloServer({ resolvers: require("./resolvers") })`) are registered there, and the
+    packs' entry points are applied to them in their own file."""
+    from .packs.apply import apply_entrypoints_to
+    programs = {k: p for k, p in ctx.programs.items() if (p.language or "") in ("javascript", "typescript")}
+    targets: Dict[str, Set[str]] = {}
+    for _, reg, (f, n) in _object_registration_targets(programs, index):
+        proc = programs[f].procedures.get(n)
+        if proc is not None and reg.registered_as not in proc.registered_via:
+            proc.registered_via.append(reg.registered_as)
+            targets.setdefault(f, set()).add(n)
+    for f, names in targets.items():
+        program = programs[f]
+        apply_entrypoints_to(program, sorted(names), packs_for(program.language))
+    links = context_links(programs, index)
+    for f in apply_context_origins(programs, links):
+        from .packs.apply import _detected, reapply_rules
+        program = programs[f]
+        reapply_rules(program, [p for p in packs_for(program.language).for_language(program.language)
+                                if _detected(p, program)])
+    for c, h, param in links:
+        sources = ctx.ipa.context_sources.setdefault(h, [])
+        if (c, param) not in sources:
+            sources.append((c, param))
+
+
+def context_links(programs: Dict[str, Any], index=None) -> List[Tuple[Tuple[str, str], Tuple[str, str], int]]:
+    """(context function, handler, parameter): the functions registered `context_of` on a server
+    receive what its context function returns at that parameter (Apollo: every resolver's third
+    argument). Servers are the calls the registrations were made on, so another server's
+    context reaches none of these handlers."""
+    handlers: Dict[Tuple[str, str], Dict[str, List[Tuple[str, str]]]] = {}
+    contexts: List[Tuple[Tuple[str, str], Tuple[str, str], str, int]] = []
+    for key, program in programs.items():
+        for server, by_as in (getattr(program, "server_handlers", None) or {}).items():
+            for as_, names in by_as.items():
+                handlers.setdefault((key, server), {}).setdefault(as_, []).extend((key, n) for n in names)
+        for name, server, of, param in getattr(program, "context_links", ()) or ():
+            contexts.append(((key, name), (key, server), of, param))
+    if index is not None:
+        for key, reg, ref in _object_registration_targets(programs, index):
+            if reg.server is None:
+                continue
+            handlers.setdefault((key, reg.server), {}).setdefault(reg.registered_as, []).append(ref)
+            if reg.context_of:
+                contexts.append((ref, (key, reg.server), reg.context_of, reg.context_param))
+    out: List[Tuple[Tuple[str, str], Tuple[str, str], int]] = []
+    for c, server, of, param in contexts:
+        for h in handlers.get(server, {}).get(of, ()):
+            if (c, h, param) not in out:
+                out.append((c, h, param))
+    return out
+
+
+def apply_context_origins(programs: Dict[str, Any], links) -> Set[str]:
+    """What a context function's returned fields are (`{ db: pool }`) is what the handlers'
+    parameter holds there (`ctx.db` a pool): parameter origins, then value origins again. The
+    files whose origins changed."""
+    changed: Set[str] = set()
+    for (cf, cn), (hf, hn), param in links:
+        cprog, hprog = programs.get(cf), programs.get(hf)
+        cproc = cprog.procedures.get(cn) if cprog is not None else None
+        hproc = hprog.procedures.get(hn) if hprog is not None else None
+        if cproc is None or hproc is None or param >= len(hproc.params):
+            continue
+        name = hproc.params[param][0].name
+        current = getattr(hprog, "param_origins", None) or {}
+        for fld, text in cproc.returned_fields.items():
+            origin = origin_in_scope(cprog, cn, text) if text else None
+            key = f"{name}.{fld}"
+            if origin and current.get(hn, {}).get(key) != origin:
+                current = {k: dict(v) for k, v in current.items()}
+                current.setdefault(hn, {})[key] = origin
+                hprog.param_origins = current
+                changed.add(hf)
+    for f in changed:
+        annotate(programs[f], programs[f].param_origins)
+    return changed
+
+
 def _instrs(proc):
     for node in proc.nodes.values():
         yield from node.instrs

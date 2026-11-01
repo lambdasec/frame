@@ -74,7 +74,8 @@ _JAVA_KIND_KEYS = {
     "injected_field": {"id", "annotations", "description"},
 }
 _DEFERRED_KEYS = {"id", "methods", "description"}
-_REGISTRATION_KEYS = {"id", "keys", "containers", "registered_as", "description"}
+_REGISTRATION_KEYS = {"id", "call", "arg", "option", "depth", "leaf_keys", "registered_as", "server_arg", "context_of",
+                      "context_param", "description", "references"}
 _FLUENT_KEYS = {"id", "methods", "roots", "name", "content_type", "content_type_header", "description"}
 _TOOL_KEYS = {
     "python": {"id", "entrypoint", "decorator", "call", "name_kwarg", "text_kwargs", "when_kwargs", "docstring",
@@ -212,14 +213,27 @@ class LambdaHandler:
 
 @dataclass
 class Registration:
-    """JavaScript: functions an application hands to a framework by putting them in an object
-    under one of `keys` (`Query: { user(parent, args) {...} }`), or one level deeper in an object
-    bound to a name matching `containers` (`const resolvers = { Query: {...} }`), are registered
-    as `registered_as`, for an `[[entrypoint]] registered_via` to select (`[[registration]]`)."""
+    """JavaScript: functions an application hands a framework inside a value it passes to one of
+    the framework's calls (`[[registration]]`): `new ApolloServer({ resolvers })` registers the
+    functions two object levels into its `resolvers` option (`Query.books`), each as
+    `registered_as`, for an `[[entrypoint]] registered_via` to select. The value is followed
+    through names bound to it, arrays, spreads and modules that export it, never found by a key
+    or a variable's name. `depth = 0`: the value itself is the function (`context: ({ req }) => ...`).
+
+    A function registered with `context_of` returns what the framework passes the functions
+    registered as `context_of` on the same server at parameter `context_param` (Apollo's context
+    object is every resolver's third argument). The server is the call itself, or the value at
+    argument `server_arg` (`startStandaloneServer(server, { context })`)."""
     id: str
-    keys: List[str]
+    call: List[str]                      # callee ids (globs): `@apollo/server.ApolloServer`
     registered_as: str
-    containers: List[str] = field(default_factory=list)
+    arg: int = 0                         # the argument holding the value (or the options object)
+    option: str = ""                     # the key of that options object holding the value
+    depth: int = 0                       # object levels from the value to the functions
+    leaf_keys: List[str] = field(default_factory=list)   # at the last level, an object's functions under these keys
+    server_arg: Optional[int] = None
+    context_of: str = ""
+    context_param: int = 0
     description: str = ""
 
 
@@ -1117,17 +1131,25 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         _check_keys(origin, where, t, _REGISTRATION_KEYS)
         if language != "javascript":
             raise _fail(origin, where, "registrations are for JavaScript packs")
-        for key in ("keys", "registered_as"):
-            if key not in t:
+        for key in ("call", "registered_as"):
+            if not t.get(key):
                 raise _fail(origin, where, f"needs {key}")
-        reg = Registration(id=str(t.get("id", f"{name}-registration-{i + 1}")),
-                           keys=_strings(origin, f"{where}.keys", t["keys"]),
-                           registered_as=str(t["registered_as"]),
-                           containers=_strings(origin, f"{where}.containers", t.get("containers", [])),
-                           description=str(t.get("description", "")))
-        if not reg.keys or not reg.registered_as:
-            raise _fail(origin, where, "keys and registered_as must not be empty")
-        pack.registrations.append(reg)
+        ints = {}
+        for key, default in (("arg", 0), ("depth", 0), ("server_arg", None), ("context_param", 0)):
+            v = t.get(key, default)
+            if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 0):
+                raise _fail(origin, f"{where}.{key}", "must be a position or a count (0 or more)")
+            ints[key] = v
+        if ("context_param" in t or "server_arg" in t) and not t.get("context_of"):
+            raise _fail(origin, where, "server_arg and context_param go with context_of")
+        if t.get("context_of") and ints["depth"] != 0:
+            raise _fail(origin, where, "a context function is the value itself: depth = 0")
+        pack.registrations.append(Registration(
+            id=str(t.get("id", f"{name}-registration-{i + 1}")), call=_strings(origin, f"{where}.call", t["call"]),
+            registered_as=str(t["registered_as"]), arg=ints["arg"], option=str(t.get("option", "")),
+            depth=ints["depth"], leaf_keys=_strings(origin, f"{where}.leaf_keys", t.get("leaf_keys", [])),
+            server_arg=ints["server_arg"], context_of=str(t.get("context_of", "")),
+            context_param=ints["context_param"], description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("fluent", [])):
         where = f"[[fluent]] #{i + 1}"

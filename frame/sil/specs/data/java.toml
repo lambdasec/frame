@@ -1876,26 +1876,6 @@ is_sink = "ssl"
 description = "Custom trust manager (CWE-295)"
 
 [[spec]]
-name = "password"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded password (CWE-798)"
-
-[[spec]]
-name = "apiKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded API key (CWE-798)"
-
-[[spec]]
-name = "secretKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded secret (CWE-798)"
-
-[[spec]]
-name = "privateKey"
-is_sink = "hardcoded_cred"
-description = "Potential hardcoded private key (CWE-798)"
-
-[[spec]]
 name = "0.0.0.0"
 is_sink = "ssrf"
 description = "All interfaces (SSRF)"
