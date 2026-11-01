@@ -167,13 +167,14 @@ def test_java_type_facts():
     from frame.sil.metadata import _java_lang
     from frame.sil.specs import java_specs as j
     assert {"String", "Error", "Void"} <= j.JAVA_LANG_TYPES and _java_lang() == j.JAVA_LANG_TYPES
-    assert "*Statement" in j.NAME_ONLY_RECEIVERS["execute"] and "RowSet" in j.NAME_ONLY_NOT_RECEIVERS
+    assert "ServletRequest" in j.JAVA_SUPERTYPES["HttpServletRequest"]
     assert "org" in j.UMBRELLA_PACKAGE_ROOTS
 
 
 @pytest.mark.parametrize("receiver,sink", [("Statement", True), ("JdbcTemplate", True), ("Executor", False),
                                            ("PreparedQuery", False)])
 def test_execute_is_sql_only_on_statement_like_receivers(receiver, sink):
+    """By the receiver's type (Statement's and JdbcTemplate's rows), never a type-name pattern."""
     code = ("import java.sql.*;\nimport java.util.concurrent.*;\nimport javax.servlet.http.*;\n"
             "class A {\n  void f(HttpServletRequest req, %s s) throws Exception {\n"
             '    s.execute("SELECT * FROM t WHERE n = \'" + req.getParameter("n") + "\'");\n  }\n}\n') % receiver

@@ -1037,6 +1037,28 @@ class Program:
 
         from .value_origins import by_name
         language = self.language or ""
+        if language == "java":
+            # Java: a written name finds a source or sink only when it names a class (or a plain
+            # function); a variable's name or a trailing method name finds at most a propagator or
+            # sanitizer (sources and sinks are reached through the receiver's declared type).
+            from .frontends.java_frontend import _names_a_class, _source_or_sink, _without_package
+            spec = self.library_specs.get(func_name) or self.library_specs.get(_without_package(func_name))
+            if spec is not None and (_names_a_class(func_name) or not _source_or_sink(spec)):
+                return spec
+            if func_name.startswith(('super().', 'super.')) or '.' not in func_name:
+                return None
+            parts = func_name.split('.')
+            for i in range(1, len(parts)):
+                spec = self.library_specs.get('.'.join(parts[i:]))
+                if spec is not None and not _source_or_sink(spec):
+                    return spec
+            if guess and not parts[-2][:1].isupper():   # a guessed receiver: a propagation row only
+                from frame.sil.specs.receiver_guesses import guesses
+                for prefix in guesses(language):
+                    g = self.library_specs.get(f"{prefix}.{parts[-1]}")
+                    if g and not (g.exact_class or _source_or_sink(g) or g.is_sanitizer):
+                        return g
+            return None
         # Check library specs (exact match)
         spec = self.library_specs.get(func_name) if by_name(func_name, language) else None
         if spec:

@@ -12,12 +12,7 @@ HttpServletRequestWrapper = ["request"]
 HttpServletResponse = ["response"]
 ServletResponse = ["response"]
 HttpSession = ["session"]
-Session = ["session"]
-StatelessSession = ["session"]
 XPath = ["xpath"]
-InitialDirContext = ["dirContext"]
-LdapContext = ["dirContext"]
-InitialLdapContext = ["dirContext"]
 SpelExpressionParser = ["expressionParser"]
 CloseableHttpClient = ["httpClient"]
 HttpsURLConnection = ["httpURLConnection"]
@@ -37,6 +32,23 @@ ServletResponseWrapper = ["ServletResponse"]
 HttpServletResponseWrapper = ["ServletResponseWrapper", "HttpServletResponse"]
 PreparedStatement = ["Statement"]
 CallableStatement = ["PreparedStatement"]
+# JNDI / LDAP (javax.naming): InitialDirContext extends InitialContext implements DirContext;
+# DirContext extends Context; InitialLdapContext extends InitialDirContext implements LdapContext.
+DirContext = ["Context"]
+InitialContext = ["Context"]
+InitialDirContext = ["InitialContext", "DirContext"]
+LdapContext = ["DirContext"]
+InitialLdapContext = ["InitialDirContext", "LdapContext"]
+# Hibernate 5.2+: Session extends EntityManager.
+Session = ["EntityManager"]
+# java.lang / java.io / java.sql / javax.servlet exceptions (a catch parameter is always a Throwable).
+Exception = ["Throwable"]
+Error = ["Throwable"]
+RuntimeException = ["Exception"]
+IOException = ["Exception"]
+SQLException = ["Exception"]
+ServletException = ["Exception"]
+NamingException = ["Exception"]
 
 # Documented return types of factory methods, so `var b = f.newDocumentBuilder()` has a type (a
 # `var` initialised by `new T(...)` needs no entry).
@@ -151,6 +163,23 @@ createDefault = "CloseableHttpClient"
 "DSL.using" = "org.jooq.DSLContext"
 # JDK
 "Runtime.getRuntime" = "java.lang.Runtime"
+"Object.getClass" = "java.lang.Class"
+"Class.getClassLoader" = "java.lang.ClassLoader"
+"Thread.currentThread" = "java.lang.Thread"
+"Thread.getContextClassLoader" = "java.lang.ClassLoader"
+# JDBC (java.sql): connections and the statements they make
+"DriverManager.getConnection" = "java.sql.Connection"
+"DataSource.getConnection" = "java.sql.Connection"
+"Connection.createStatement" = "java.sql.Statement"
+"Connection.prepareStatement" = "java.sql.PreparedStatement"
+"Connection.prepareCall" = "java.sql.CallableStatement"
+"Statement.executeQuery" = "java.sql.ResultSet"
+"Statement.getConnection" = "java.sql.Connection"
+# Servlet responses
+"ServletResponse.getWriter" = "java.io.PrintWriter"
+"HttpServletResponse.getWriter" = "java.io.PrintWriter"
+"ServletResponse.getOutputStream" = "javax.servlet.ServletOutputStream"
+"HttpServletResponse.getOutputStream" = "javax.servlet.ServletOutputStream"
 
 # Result types of java.lang.String methods, by method name (`s.trim()` is a String, `s.length()` an
 # int), for overload resolution by argument type.
@@ -200,20 +229,6 @@ types = ["Boolean", "Byte", "CharSequence", "Character", "Class", "ClassLoader",
          "Error", "Exception", "Float", "Integer", "Iterable", "Long", "Math", "Number", "Object", "Process",
          "ProcessBuilder", "Record", "Runnable", "Runtime", "Short", "String", "StringBuffer", "StringBuilder",
          "System", "Thread", "Throwable", "Void"]
-
-# A bare method name that is a library sink only on some receiver types (`execute` runs SQL on a
-# JDBC statement or a Spring template, not on an Executor or a Command): the receiver's simple type
-# name must match one of the globs, and not be one of `not_receivers` (Vert.x SQL client types).
-[name_only]
-not_receivers = ["PreparedQuery", "RowSet", "SqlResult"]
-
-[name_only.receivers]
-execute = ["*Statement", "*Template", "*Connection", "*Operations", "*Session", "*Manager", "*Runner", "*Context",
-           "*Client"]
-evaluate = ["*XPath*", "*Xpath*"]
-compile = ["*XPath*", "*Xpath*"]
-search = ["*Context*", "*Ldap*", "*LDAP*", "*Dir*"]
-lookup = ["*Ldap*", "*LDAP*", "*Dir*"]
 
 # Two packages are one project's when they share their first two segments, or three under these
 # roots, whose second segment names an umbrella organisation (org.apache.<project>).

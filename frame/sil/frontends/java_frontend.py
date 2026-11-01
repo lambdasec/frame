@@ -60,7 +60,27 @@ from frame.sil.specs.weak_algorithms import weak_algorithm
 from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
     JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES,
-    JAVA_LANG_TYPES, NAME_ONLY_RECEIVERS, NAME_ONLY_NOT_RECEIVERS, UMBRELLA_PACKAGE_ROOTS)
+    JAVA_LANG_TYPES, UMBRELLA_PACKAGE_ROOTS)
+
+
+_QUALIFIED_CLASS = re.compile(r"(?:[a-z_][a-z0-9_]*\.)+[A-Z][A-Za-z0-9_$]*$")
+
+
+def _without_package(written: str) -> str:
+    """`java.nio.ByteBuffer.allocate` -> `ByteBuffer.allocate`: rows name classes, not packages."""
+    return re.sub(r"^(?:[a-z_][a-z0-9_]*\.)+(?=[A-Z])", "", written)
+
+
+def _source_or_sink(spec: ProcSpec) -> bool:
+    return bool(spec.is_source or spec.is_sink)
+
+
+def _names_a_class(written: str) -> bool:
+    """Is a written callee headed by a class (or is it a plain function / constructor)?"""
+    if written.startswith(("new ", "@")) or "." not in written:
+        return True
+    head = written.split(".", 1)[0]
+    return head[:1].isupper() or bool(re.match(r"(?:[a-z_][a-z0-9_]*\.)+[A-Z]", written))
 
 
 class JavaFrontend:
@@ -344,6 +364,7 @@ class JavaFrontend:
                         if st:
                             self._field_static_types[fname] = st
         self._var_types = dict(self._field_types)
+        self._var_chains = {}
         self._static_types = dict(self._field_static_types)
         # Return types of the class's methods, by name (overloads may differ).
         self._class_method_returns = {}
@@ -387,6 +408,7 @@ class JavaFrontend:
                     # Handle inner classes
                     self._translate_class(child, program)
             self._var_types = dict(self._field_types)
+            self._var_chains = {}
             # Field-initializer translation: aggressive mode only (pair with LLM
             # triage, which tells a real secret from a benign config constant).
             if _aggressive_detectors():
@@ -878,6 +900,7 @@ class JavaFrontend:
         self._constant_values = {}  # Reset constant tracking for each method
         self._loaded_properties = self._properties_loads(node)
         self._var_types = self._method_var_types(node)
+        self._var_chains = {}
 
         # Create entry node
         entry = proc.new_node(NodeKind.ENTRY)
@@ -921,6 +944,7 @@ class JavaFrontend:
         self._current_proc = proc
         self._node_counter = 0
         self._var_types = self._method_var_types(node)
+        self._var_chains = {}
 
         entry = proc.new_node(NodeKind.ENTRY)
         proc.add_node(entry)
@@ -1219,6 +1243,7 @@ class JavaFrontend:
                             instrs = self._translate_call_assignment(var_name, value_node, loc)
                             self._add_instrs(instrs)
                         elif value_node.type == "object_creation_expression":
+                            self._note_binding(var_name, None)
                             instrs = self._translate_object_creation_assignment(var_name, value_node, loc)
                             self._add_instrs(instrs)
                         elif value_node.type == "lambda_expression" and self._program is not None:
@@ -1226,6 +1251,7 @@ class JavaFrontend:
                             self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.string(lam)))
                             self._add_instrs(self._invoke_lambda(lam, value_node, "", loc))
                         else:
+                            self._note_binding(var_name, None)
                             exp = self._translate_expression(value_node)
                             self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
                             # Track constant values for dead path elimination
@@ -1252,6 +1278,8 @@ class JavaFrontend:
 
         target = self._get_text(left)
         loc = self._get_location(node)
+        if right.type != "method_invocation":
+            self._note_binding(target, None)
 
         if right.type == "method_invocation":
             instrs = self._translate_call_assignment(target, right, loc)
@@ -1339,7 +1367,12 @@ class JavaFrontend:
                 record(n.child_by_field_name("name"),
                        typer(n.child_by_field_name("type")))
             elif t == "catch_formal_parameter":
-                record(n.child_by_field_name("name"), None)
+                # a catch parameter is a Throwable (JLS 14.20); a multi-catch one is typed by the lub,
+                # of which Throwable is the part known here
+                ctype = next((c for c in n.children if c.type == "catch_type"), None)
+                parts = [c for c in (ctype.named_children if ctype is not None else ())]
+                name = next((c for c in n.children if c.type == "identifier"), None)
+                record(name, typer(parts[0]) if len(parts) == 1 else "Throwable")
             elif t == "inferred_parameters":
                 for p in n.named_children:
                     record(p, None)
@@ -1450,6 +1483,10 @@ class JavaFrontend:
         if obj.type == "identifier":
             text = self._get_text(obj)
             owner = self._var_types.get(text) or (text if text[:1].isupper() else None)
+        elif obj.type == "field_access" and _QUALIFIED_CLASS.match(self._get_text(obj)):
+            owner = self._get_text(obj).rsplit(".", 1)[-1]          # `java.sql.DriverManager.getConnection()`
+        elif obj.type == "this":
+            owner = "Object"                                         # `this.getClass()`
         elif obj.type == "method_invocation":
             owner = self._call_result_type(obj)
         elif obj.type == "object_creation_expression":
@@ -1616,6 +1653,11 @@ class JavaFrontend:
         # A receiver of one of the project's own classes (`service.search(q)`), or a class that is
         # not what a bare method name (`search`, `execute`, `evaluate`) is about, is not that
         # library API: only a spec keyed on the type or on the exact written name applies.
+        method = method_name.rsplit(".", 1)[-1]
+        for key in self._value_keys(call_node):         # `response.getWriter().println(x)`
+            spec = self.specs.get(f"{key}.{method}")
+            if spec is not None:
+                return spec
         vetoed = self._name_spec_vetoed(method_name, recv_type)
         by_name = (lambda: self.specs.get(method_name)) if vetoed \
             else (lambda: self._lookup_spec_by_name(method_name))
@@ -1625,18 +1667,40 @@ class JavaFrontend:
                                      by_name, type_spec_receivers)
         return by_name()
 
+    def _value_keys(self, call_node: Optional[TSNode]) -> List[str]:
+        """Spec keys for a receiver that is the value a typed call made (`response.getWriter()`, or
+        a local bound to it on every assignment): `ServletResponse.getWriter()` for each spec
+        receiver of the call's type, so a row names that value, not every PrintWriter."""
+        obj = call_node.child_by_field_name("object") if call_node is not None else None
+        made = None
+        if obj is not None and obj.type == "method_invocation":
+            name = obj.child_by_field_name("name")
+            owner = self._receiver_type(obj)
+            made = (owner, self._get_text(name)) if owner and name is not None else None
+        elif obj is not None and obj.type == "identifier":
+            held = self._var_chains.get(self._get_text(obj))
+            made = next(iter(held)) if held and len(held) == 1 and None not in held else None
+        if made is None:
+            return []
+        owner, method = made
+        return [f"{r}.{method}()" for r in type_spec_receivers(owner.split("<", 1)[0].rsplit(".", 1)[-1])]
+
+    def _note_binding(self, target: str, call_node: Optional[TSNode]) -> None:
+        """What `target` is bound to: the typed call that made it, or None (anything else)."""
+        made = None
+        if call_node is not None and call_node.type == "method_invocation":
+            name = call_node.child_by_field_name("name")
+            owner = self._receiver_type(call_node)
+            made = (owner, self._get_text(name)) if owner and name is not None else None
+        self._var_chains.setdefault(target, set()).add(made)
+
     def _name_spec_vetoed(self, method_name: str, recv_type: Optional[str]) -> bool:
         """The receiver's type is known and is not what a bare-name spec (`search`, `execute`) is
         about: that call is a project method or another library's method of the same name. Only a
         spec keyed on the type applies (the caller already tried those)."""
         if '.' not in method_name:
             return False
-        if recv_type and (self._is_project_type(recv_type) or self._not_a_name_only_receiver(recv_type, method_name)):
-            return True
-        # a class used as the qualifier (`Pattern.compile`, `Velocity.evaluate`)
-        head = method_name.rsplit(".", 1)[0]
-        return (not recv_type and head[:1].isupper() and "." not in head and head not in self._var_types
-                and self._not_a_name_only_receiver(head, method_name))
+        return bool(recv_type and self._is_project_type(recv_type))
 
     def _set_neutral_spec(self, call: Call, call_node: TSNode, method_name: str, nargs: int) -> None:
         """A configured deserialiser's call is neutral for good (`pack_spec`, ahead of any pack rule);
@@ -1744,15 +1808,6 @@ class JavaFrontend:
                               receiver=self._call_receiver(method_name))]
         return []
 
-    # A bare method name that is a sink only on some library types (`execute` runs SQL on a JDBC
-    # statement / template, not on a Vert.x query, an Executor or a Command): java-types.toml [name_only].
-    def _not_a_name_only_receiver(self, recv_type: str, method_name: str) -> bool:
-        globs = NAME_ONLY_RECEIVERS.get(method_name.rsplit(".", 1)[-1])
-        if globs is None:
-            return False
-        simple = recv_type.rsplit(".", 1)[-1]
-        return not any(fnmatchcase(simple, g) for g in globs) or simple in NAME_ONLY_NOT_RECEIVERS
-
     def _is_project_type(self, type_name: str) -> bool:
         """True when `type_name` is known to be one of this project's own classes: declared in
         this file, or neither imported nor java.lang and no wildcard import could supply it (same
@@ -1784,20 +1839,18 @@ class JavaFrontend:
         return shared >= (3 if own[0] in UMBRELLA_PACKAGE_ROOTS else 2)
 
     def _lookup_spec_by_name(self, method_name: str) -> Optional[ProcSpec]:
-        """Name-based lookup (receiver type unknown, or no typed spec)."""
-
-        # Try exact match first
-        spec = self.specs.get(method_name)
-        if spec:
+        """Name-based lookup (receiver type unknown, or no typed spec). The written name finds a
+        source or sink only when it names a class (`Runtime.getRuntime().exec`, `Paths.get`,
+        `new File`, a package-qualified call) or a plain function; a variable's name
+        (`documentBuilder.parse`) or a bare method name on any receiver finds at most a
+        propagator or sanitizer."""
+        spec = self.specs.get(method_name) or self.specs.get(_without_package(method_name))
+        if spec and (_names_a_class(method_name) or not _source_or_sink(spec)):
             return spec
-
-        # Try just the method name (after the last dot)
         if '.' in method_name:
-            short_name = method_name.rsplit('.', 1)[1]
-            spec = self.specs.get(short_name)
-            if spec:
+            spec = self.specs.get(method_name.rsplit('.', 1)[1])
+            if spec and not _source_or_sink(spec):
                 return spec
-
         return None
 
     def _translate_call_assignment(
@@ -1810,6 +1863,7 @@ class JavaFrontend:
         instrs = []
 
         pre, method_name = self._hoist_creation_receiver(call_node, loc)
+        self._note_binding(target, call_node)
         args = self._get_method_args(call_node)
         instrs, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
         lams = self._last_lambdas
@@ -2046,6 +2100,7 @@ class JavaFrontend:
         self._current_proc = proc
         self._node_counter = 0
         self._var_types = local_types
+        self._var_chains = {}
         self._constant_values = {}
         self._loaded_properties = self._properties_loads(node)
         self._in_call_args = False

@@ -7,6 +7,85 @@
 # method, reached through a receiver's declared type and its supertypes (java-types.toml
 # [supertypes]), never through a variable's name or a bare method name.
 
+# Servlet response output: the writer / stream the response hands out (`response.getWriter()`,
+# or a local bound once to it), not every PrintWriter. Keys are the call that made the value.
+[[spec]]
+name = "Context.lookup"
+is_sink = "ldap"
+description = "JNDI lookup of a name (CWE-90/JNDI injection)"
+
+[[spec]]
+name = "ClassLoader.getResource"
+is_sink = "filesystem"
+description = "Classpath resource by name"
+
+[[spec]]
+name = "ClassLoader.getResourceAsStream"
+is_sink = "filesystem"
+description = "Classpath resource by name"
+
+[[spec]]
+name = "Throwable.getMessage"
+is_sink = "info_disclosure"
+description = "Exception message (information exposure)"
+
+[[spec]]
+name = "ServletResponse.getWriter().print"
+is_sink = "html"
+description = "Servlet response body (print)"
+
+[[spec]]
+name = "ServletResponse.getWriter().println"
+is_sink = "html"
+description = "Servlet response body (println)"
+
+[[spec]]
+name = "ServletResponse.getWriter().append"
+is_sink = "html"
+description = "Servlet response body (append)"
+
+[[spec]]
+name = "ServletResponse.getWriter().printf"
+is_sink = "html"
+sink_args = [0, 1]
+description = "Servlet response body (printf)"
+
+[[spec]]
+name = "ServletResponse.getWriter().format"
+is_sink = "html"
+sink_args = [0, 1]
+description = "Servlet response body (format)"
+
+[[spec]]
+name = "ServletResponse.getWriter().write"
+is_sink = "html"
+description = "Servlet response body (write)"
+
+[[spec]]
+name = "ExternalContext.getResponseOutputWriter().write"
+is_sink = "html"
+description = "JSF response body (ExternalContext.getResponseOutputWriter)"
+
+[[spec]]
+name = "ExternalContext.getResponseOutputWriter().append"
+is_sink = "html"
+description = "JSF response body (ExternalContext.getResponseOutputWriter)"
+
+[[spec]]
+name = "ServletResponse.getOutputStream().print"
+is_sink = "html"
+description = "Servlet response body stream (print)"
+
+[[spec]]
+name = "ServletResponse.getOutputStream().println"
+is_sink = "html"
+description = "Servlet response body stream (println)"
+
+[[spec]]
+name = "ServletResponse.getOutputStream().write"
+is_sink = "html"
+description = "Servlet response body stream (write)"
+
 [[spec]]
 name = "ServletRequest.getParameter"
 is_source = "user"
@@ -111,106 +190,19 @@ taint_from_receiver = true
 description = "getAttribute() - propagates receiver taint"
 
 [[spec]]
-name = "getWriter"
-taint_propagates = [0]
-description = "Servlet response writer"
-
-[[spec]]
-name = "getOutputStream"
-taint_propagates = [0]
-description = "Servlet response output stream"
-
-[[spec]]
-name = "print"
-is_sink = "html"
-description = "PrintWriter.print (XSS)"
-
-[[spec]]
-name = "println"
-is_sink = "html"
-description = "PrintWriter.println (XSS)"
-
-[[spec]]
-name = "printf"
-is_sink = "html"
-sink_args = [0, 1]
-description = "PrintWriter.printf (XSS)"
-
-[[spec]]
-name = "format"
-is_sink = "html"
-sink_args = [0, 1]
-description = "PrintWriter.format (XSS)"
-
-[[spec]]
-name = "write"
-is_sink = "html"
-description = "Writer.write (XSS)"
-
-[[spec]]
-name = "getWriter().print"
-is_sink = "html"
-description = "PrintWriter.print (XSS)"
-
-[[spec]]
-name = "getWriter().println"
-is_sink = "html"
-description = "PrintWriter.println (XSS)"
-
-[[spec]]
-name = "getWriter().printf"
-is_sink = "html"
-sink_args = [0, 1]
-description = "PrintWriter.printf (XSS)"
-
-[[spec]]
-name = "getWriter().format"
-is_sink = "html"
-sink_args = [0, 1]
-description = "PrintWriter.format (XSS)"
-
-[[spec]]
-name = "getWriter().write"
-taint_propagates = [0]
-description = "Response write"
-
-[[spec]]
-name = "sendRedirect"
+name = "HttpServletResponse.sendRedirect"
 is_sink = "redirect"
 description = "Servlet redirect (open redirect)"
 
 [[spec]]
-name = "getRequestDispatcher"
+name = "ServletRequest.getRequestDispatcher"
 is_sink = "path"
 description = "Request dispatcher (path injection)"
 
 [[spec]]
-name = "forward"
+name = "RequestDispatcher.forward"
 taint_propagates = [0]
 description = "Forward request"
-
-[[spec]]
-name = "putValue"
-is_sink = "trust_boundary"
-sink_args = [1]
-description = "HttpSession.putValue (trust boundary violation)"
-
-[[spec]]
-name = "setAttribute"
-is_sink = "trust_boundary"
-sink_args = [1]
-description = "HttpSession.setAttribute (trust boundary violation)"
-
-[[spec]]
-name = "session.putValue"
-is_sink = "trust_boundary"
-sink_args = [1]
-description = "Session.putValue (trust boundary violation)"
-
-[[spec]]
-name = "session.setAttribute"
-taint_propagates = [0, 1]
-description = "Session attribute set"
 
 [[spec]]
 name = "HttpSession.putValue"
@@ -231,13 +223,6 @@ description = "Secure cookie flag"
 
 [[spec]]
 name = "Cookie.setSecure"
-is_sink = "insecure_cookie"
-sink_args = []
-sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
-description = "Cookie.setSecure (insecure cookie)"
-
-[[spec]]
-name = "cookie.setSecure"
 is_sink = "insecure_cookie"
 sink_args = []
 sink_if_arg_literal = ["false", "False"]   # only an explicit secure=False / setSecure(false)
@@ -280,12 +265,12 @@ is_source = "user"
 description = "Spring matrix variable"
 
 [[spec]]
-name = "model.addAttribute"
+name = "Model.addAttribute"
 taint_propagates = [1]
 description = "Spring model attribute"
 
 [[spec]]
-name = "modelAndView.addObject"
+name = "ModelAndView.addObject"
 taint_propagates = [1]
 description = "Spring ModelAndView object"
 
@@ -298,11 +283,6 @@ description = "Spring ResponseEntity"
 name = "ResponseEntity.body"
 is_sink = "html"
 description = "Spring response body"
-
-[[spec]]
-name = "redirect:"
-is_sink = "redirect"
-description = "Spring redirect"
 
 [[spec]]
 name = "RedirectView"
@@ -320,182 +300,152 @@ is_sink = "redirect"
 description = "Spring ModelAndView (open redirect)"
 
 [[spec]]
-name = "restTemplate.getForObject"
+name = "RestTemplate.getForObject"
 is_sink = "ssrf"
 description = "Spring RestTemplate GET (SSRF)"
 
 [[spec]]
-name = "restTemplate.postForObject"
+name = "RestTemplate.postForObject"
 is_sink = "ssrf"
 description = "Spring RestTemplate POST (SSRF)"
 
 [[spec]]
-name = "restTemplate.exchange"
+name = "RestTemplate.exchange"
 is_sink = "ssrf"
 description = "Spring RestTemplate exchange (SSRF)"
 
 [[spec]]
-name = "restTemplate.getForEntity"
+name = "RestTemplate.getForEntity"
 is_sink = "ssrf"
 description = "Spring RestTemplate GET entity (SSRF)"
 
 [[spec]]
-name = "webClient.get"
+name = "WebClient.get"
 is_sink = "ssrf"
 description = "Spring WebClient GET (SSRF)"
 
 [[spec]]
-name = "webClient.post"
+name = "WebClient.post"
 is_sink = "ssrf"
 description = "Spring WebClient POST (SSRF)"
 
 [[spec]]
-name = "jdbcTemplate.query"
+name = "JdbcTemplate.query"
 is_sink = "sql"
 description = "Spring JdbcTemplate query (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.queryForObject"
+name = "JdbcTemplate.queryForObject"
 is_sink = "sql"
 description = "Spring JdbcTemplate queryForObject (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.queryForList"
+name = "JdbcTemplate.queryForList"
 is_sink = "sql"
 description = "Spring JdbcTemplate queryForList (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.queryForRowSet"
+name = "JdbcTemplate.queryForRowSet"
 is_sink = "sql"
 description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.queryForMap"
+name = "JdbcTemplate.queryForMap"
 is_sink = "sql"
 description = "Spring JdbcTemplate queryForMap (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.update"
+name = "JdbcTemplate.update"
 is_sink = "sql"
 description = "Spring JdbcTemplate update (SQL injection)"
 
 [[spec]]
-name = "jdbcTemplate.execute"
+name = "JdbcTemplate.execute"
 is_sink = "sql"
 description = "Spring JdbcTemplate execute (SQL injection)"
 
 [[spec]]
-name = "queryForObject"
-is_sink = "sql"
-description = "JdbcTemplate queryForObject (SQL injection)"
-
-[[spec]]
-name = "queryForList"
-is_sink = "sql"
-description = "JdbcTemplate queryForList (SQL injection)"
-
-[[spec]]
-name = "queryForRowSet"
-is_sink = "sql"
-description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
-
-[[spec]]
-name = "queryForMap"
-is_sink = "sql"
-description = "JdbcTemplate queryForMap (SQL injection)"
-
-[[spec]]
-name = "namedParameterJdbcTemplate.query"
+name = "NamedParameterJdbcTemplate.query"
 is_sink = "sql"
 description = "Spring NamedParameterJdbcTemplate (SQL injection)"
 
 [[spec]]
-name = "namedParameterJdbcTemplate.update"
+name = "NamedParameterJdbcTemplate.update"
 is_sink = "sql"
 description = "Spring NamedParameterJdbcTemplate (SQL injection)"
 
 [[spec]]
-name = "executeQuery"
+name = "Statement.executeQuery"
 is_sink = "sql"
 description = "JDBC executeQuery (SQL injection)"
 
 [[spec]]
-name = "executeUpdate"
+name = "Statement.executeUpdate"
 is_sink = "sql"
 description = "JDBC executeUpdate (SQL injection)"
 
 [[spec]]
-name = "execute"
+name = "Statement.execute"
 is_sink = "sql"
 description = "JDBC execute (SQL injection)"
 
 [[spec]]
-name = "addBatch"
+name = "Statement.addBatch"
 is_sink = "sql"
 description = "JDBC addBatch (SQL injection)"
 
 [[spec]]
-name = "prepareStatement"
-is_sanitizer = ["sql"]
-description = "Connection.prepareStatement (parameterized)"
-
-[[spec]]
-name = "prepareCall"
+name = "Connection.prepareCall"
 is_sink = "sql"
 description = "JDBC prepareCall (SQL injection)"
 
 [[spec]]
-name = "nativeSQL"
+name = "Connection.nativeSQL"
 is_sink = "sql"
 description = "JDBC nativeSQL (SQL injection)"
 
 [[spec]]
-name = "createStatement"
+name = "Connection.createStatement"
 taint_propagates = [0]
 description = "JDBC createStatement"
 
 [[spec]]
-name = "connection.createStatement"
-taint_propagates = [0]
-description = "JDBC createStatement"
-
-[[spec]]
-name = "connection.prepareStatement"
+name = "Connection.prepareStatement"
 is_sink = "sql"
 description = "JDBC prepareStatement"
 
 [[spec]]
-name = "createQuery"
+name = "EntityManager.createQuery"
 is_sink = "sql"
 description = "JPA createQuery (HQL/JPQL injection)"
 
 [[spec]]
-name = "createNativeQuery"
+name = "EntityManager.createNativeQuery"
 is_sink = "sql"
 description = "JPA createNativeQuery (SQL injection)"
 
 [[spec]]
-name = "criteriaBuilder.equal"
+name = "CriteriaBuilder.equal"
 taint_propagates = [1]
 description = "JPA Criteria equal"
 
 [[spec]]
-name = "criteriaBuilder.like"
+name = "CriteriaBuilder.like"
 taint_propagates = [1]
 description = "JPA Criteria like"
 
 [[spec]]
-name = "session.createQuery"
+name = "Session.createQuery"
 is_sink = "sql"
 description = "Hibernate createQuery (HQL injection)"
 
 [[spec]]
-name = "session.createSQLQuery"
+name = "Session.createSQLQuery"
 is_sink = "sql"
 description = "Hibernate createSQLQuery (SQL injection)"
 
 [[spec]]
-name = "session.createNativeQuery"
+name = "Session.createNativeQuery"
 is_sink = "sql"
 description = "Hibernate createNativeQuery (SQL injection)"
 
@@ -652,12 +602,12 @@ sink_args = [0, 1]
 description = "Files.move (path traversal)"
 
 [[spec]]
-name = "getResource"
+name = "Class.getResource"
 is_sink = "filesystem"
 description = "ClassLoader.getResource (path traversal)"
 
 [[spec]]
-name = "getResourceAsStream"
+name = "Class.getResourceAsStream"
 is_sink = "filesystem"
 description = "ClassLoader.getResourceAsStream (path traversal)"
 
@@ -668,19 +618,7 @@ sink_args = [0, 1]
 description = "Runtime.exec (command injection)"
 
 [[spec]]
-name = "runtime.exec"
-is_sink = "command"
-sink_args = [0, 1]
-description = "Runtime.exec (command injection)"
-
-[[spec]]
 name = "Runtime.getRuntime().exec"
-is_sink = "command"
-sink_args = [0, 1]
-description = "Runtime.exec (command injection)"
-
-[[spec]]
-name = "r.exec"
 is_sink = "command"
 sink_args = [0, 1]
 description = "Runtime.exec (command injection)"
@@ -698,49 +636,28 @@ sink_args = [0, 1, 2, 3]
 description = "ProcessBuilder (command injection)"
 
 [[spec]]
-name = "processBuilder.command"
+name = "ProcessBuilder.command"
 is_sink = "command"
 description = "ProcessBuilder.command (command injection)"
 
 [[spec]]
-name = "search"
-is_sink = "ldap"
-sink_args = [1]
-description = "LDAP search (LDAP injection)"
-
-[[spec]]
-name = "lookup"
-is_sink = "ldap"
-description = "LDAP lookup (LDAP injection)"
-
-[[spec]]
-name = "dirContext.search"
+name = "DirContext.search"
 is_sink = "ldap"
 sink_args = [1]
 description = "DirContext.search (LDAP injection)"
 
 [[spec]]
-name = "ldapTemplate.search"
+name = "LdapTemplate.search"
 is_sink = "ldap"
 description = "LdapTemplate.search (LDAP injection)"
 
 [[spec]]
-name = "evaluate"
+name = "XPath.evaluate"
 is_sink = "xpath"
 description = "XPath.evaluate (XPath injection)"
 
 [[spec]]
-name = "compile"
-is_sink = "xpath"
-description = "XPath.compile (XPath injection)"
-
-[[spec]]
-name = "xpath.evaluate"
-is_sink = "xpath"
-description = "XPath.evaluate (XPath injection)"
-
-[[spec]]
-name = "xpath.compile"
+name = "XPath.compile"
 is_sink = "xpath"
 description = "XPath.compile (XPath injection)"
 
@@ -797,11 +714,6 @@ description = "Unmarshaller.unmarshal (XXE)"
 name = "ObjectInputStream"
 is_sink = "deserialize"
 description = "ObjectInputStream (unsafe deserialization)"
-
-[[spec]]
-name = "readObject"
-is_sink = "deserialize"
-description = "ObjectInputStream.readObject (unsafe deserialization)"
 
 [[spec]]
 name = "objectInputStream.readObject"
@@ -915,59 +827,39 @@ is_sink = "ssrf"
 description = "HttpPost (SSRF)"
 
 [[spec]]
-name = "logger.info"
+name = "Logger.info"
 is_sink = "log"
 description = "Logger.info (log injection)"
 
 [[spec]]
-name = "logger.warning"
+name = "Logger.warning"
 is_sink = "log"
 description = "Logger.warning (log injection)"
 
 [[spec]]
-name = "logger.severe"
+name = "Logger.severe"
 is_sink = "log"
 description = "Logger.severe (log injection)"
 
 [[spec]]
-name = "logger.fine"
+name = "Logger.fine"
 is_sink = "log"
 description = "Logger.fine (log injection)"
 
 [[spec]]
-name = "log.info"
-is_sink = "log"
-description = "Log4j info (log injection)"
-
-[[spec]]
-name = "log.warn"
+name = "Logger.warn"
 is_sink = "log"
 description = "Log4j warn (log injection)"
 
 [[spec]]
-name = "log.error"
+name = "Logger.error"
 is_sink = "log"
 description = "Log4j error (log injection)"
 
 [[spec]]
-name = "log.debug"
+name = "Logger.debug"
 is_sink = "log"
 description = "Log4j debug (log injection)"
-
-[[spec]]
-name = "slf4j.info"
-is_sink = "log"
-description = "SLF4J info (log injection)"
-
-[[spec]]
-name = "slf4j.warn"
-is_sink = "log"
-description = "SLF4J warn (log injection)"
-
-[[spec]]
-name = "slf4j.error"
-is_sink = "log"
-description = "SLF4J error (log injection)"
 
 [[spec]]
 name = "Class.forName"
@@ -975,7 +867,7 @@ is_sink = "code"
 description = "Class.forName (class injection)"
 
 [[spec]]
-name = "loadClass"
+name = "ClassLoader.loadClass"
 is_sink = "code"
 description = "ClassLoader.loadClass (class injection)"
 
@@ -990,12 +882,7 @@ is_sink = "code"
 description = "Class.getDeclaredMethod with a chosen name (reflection injection)"
 
 [[spec]]
-name = "scriptEngine.eval"
-is_sink = "code"
-description = "ScriptEngine.eval (code injection)"
-
-[[spec]]
-name = "engine.eval"
+name = "ScriptEngine.eval"
 is_sink = "code"
 description = "ScriptEngine.eval (code injection)"
 
@@ -1626,28 +1513,6 @@ taint_propagates = [0]
 description = "Jackson writeValue"
 
 [[spec]]
-name = "exec"
-is_sink = "command"
-sink_args = [0, 1]
-description = "Runtime.exec (command injection)"
-
-[[spec]]
-name = "getRuntime().exec"
-is_sink = "command"
-sink_args = [0, 1]
-description = "Runtime.exec (command injection)"
-
-[[spec]]
-name = "command"
-is_sink = "command"
-description = "ProcessBuilder.command (command injection)"
-
-[[spec]]
-name = "pb.command"
-is_sink = "command"
-description = "ProcessBuilder.command (command injection)"
-
-[[spec]]
 name = "Jwts.parser"
 is_sink = "auth"
 description = "JWT parser - verify signature (CWE-347)"
@@ -1698,20 +1563,8 @@ taint_propagates = [0]
 description = "HTTP session"
 
 [[spec]]
-name = "session.getAttribute"
-description = "Session attribute (server state)"
-
-[[spec]]
 name = "HttpSession.getAttribute"
 description = "Session attribute (server state)"
-
-[[spec]]
-name = "request.getAttribute"
-description = "Request attribute (server state)"
-
-[[spec]]
-name = "request.setAttribute"
-description = "Request attribute (request scope)"
 
 [[spec]]
 name = "ServletRequest.setAttribute"
@@ -1720,11 +1573,6 @@ description = "Request attribute (request scope)"
 [[spec]]
 name = "ServletRequest.getAttribute"
 description = "Request attribute (server state)"
-
-[[spec]]
-name = "session.invalidate"
-taint_propagates = [0]
-description = "Session invalidation"
 
 [[spec]]
 name = "@PreAuthorize"
@@ -1767,22 +1615,17 @@ is_sink = "cors"
 description = "CORS configuration (CWE-942)"
 
 [[spec]]
-name = "addAllowedOrigin"
+name = "CorsConfiguration.addAllowedOrigin"
 is_sink = "cors"
 description = "CORS allowed origin (CWE-942)"
 
 [[spec]]
-name = "printStackTrace"
+name = "Throwable.printStackTrace"
 is_sink = "info_disclosure"
 description = "Stack trace print (CWE-209)"
 
 [[spec]]
-name = "e.getMessage"
-is_sink = "info_disclosure"
-description = "Exception message (CWE-209)"
-
-[[spec]]
-name = "getStackTrace"
+name = "Throwable.getStackTrace"
 is_sink = "info_disclosure"
 description = "Get stack trace (CWE-209)"
 
@@ -1797,13 +1640,13 @@ is_sink = "ssl"
 description = "Allow all hostnames (CWE-295)"
 
 [[spec]]
-name = "setHostnameVerifier"
+name = "HttpsURLConnection.setHostnameVerifier"
 is_sink = "cert_validation"
 permissive_callback_arg = 0
 description = "Hostname verifier accepts every host (CWE-295)"
 
 [[spec]]
-name = "setDefaultHostnameVerifier"
+name = "HttpsURLConnection.setDefaultHostnameVerifier"
 is_sink = "cert_validation"
 permissive_callback_arg = 0
 description = "Hostname verifier accepts every host (CWE-295)"
@@ -1812,11 +1655,6 @@ description = "Hostname verifier accepts every host (CWE-295)"
 name = "X509TrustManager"
 is_sink = "ssl"
 description = "Custom trust manager (CWE-295)"
-
-[[spec]]
-name = "0.0.0.0"
-is_sink = "ssrf"
-description = "All interfaces (SSRF)"
 
 [[spec]]
 name = "MessageDigest.getInstance"
@@ -1989,31 +1827,6 @@ taint_propagates = [0]
 description = "Authentication manager"
 
 [[spec]]
-name = "catch (Exception e)"
-is_sink = "exception"
-description = "Generic exception catch (CWE-396)"
-
-[[spec]]
-name = "catch (Throwable t)"
-is_sink = "exception"
-description = "Throwable catch (CWE-396)"
-
-[[spec]]
-name = "e.printStackTrace()"
-is_sink = "exception"
-description = "printStackTrace only (CWE-390)"
-
-[[spec]]
-name = "finally"
-taint_propagates = [0]
-description = "Finally block (check resource cleanup)"
-
-[[spec]]
-name = "try-with-resources"
-taint_propagates = [0]
-description = "Try-with-resources"
-
-[[spec]]
 name = "System.exit"
 noreturn = true
 is_sink = "exception"
@@ -2040,62 +1853,16 @@ taint_propagates = [0]
 description = "Output stream write"
 
 [[spec]]
-name = "X-Frame-Options"
-taint_propagates = [0]
-description = "X-Frame-Options header"
-
-[[spec]]
-name = "X-Content-Type-Options"
-taint_propagates = [0]
-description = "X-Content-Type-Options header"
-
-[[spec]]
-name = "Content-Security-Policy"
-taint_propagates = [0]
-description = "CSP header"
-
-[[spec]]
-name = "Strict-Transport-Security"
-taint_propagates = [0]
-description = "HSTS header"
-
-[[spec]]
-name = "setHeader"
+name = "HttpServletResponse.setHeader"
 is_sink = "header_injection"
 sink_args = [1]
 description = "Set header (CWE-113)"
 
 [[spec]]
-name = "addHeader"
+name = "HttpServletResponse.addHeader"
 is_sink = "header_injection"
 sink_args = [1]
 description = "Add header (CWE-113)"
-
-[[spec]]
-name = "response.setHeader"
-is_sink = "header_injection"
-sink_args = [1]
-description = "Response header (CWE-113)"
-
-[[spec]]
-name = "169.254.169.254"
-is_sink = "ssrf"
-description = "Cloud metadata (SSRF)"
-
-[[spec]]
-name = "metadata.google.internal"
-is_sink = "ssrf"
-description = "GCP metadata (SSRF)"
-
-[[spec]]
-name = "localhost"
-is_sink = "ssrf"
-description = "Localhost (SSRF)"
-
-[[spec]]
-name = "127.0.0.1"
-is_sink = "ssrf"
-description = "Loopback (SSRF)"
 
 [[spec]]
 name = "Pattern.compile"
@@ -2106,21 +1873,6 @@ description = "Pattern compile (potential ReDoS CWE-1333)"
 name = "Pattern.matches"
 is_sink = "redos"
 description = "Pattern matches (potential ReDoS)"
-
-[[spec]]
-name = ".matches"
-is_sink = "redos"
-description = "String matches (potential ReDoS)"
-
-[[spec]]
-name = ".replaceAll"
-is_sink = "redos"
-description = "String replaceAll (potential ReDoS)"
-
-[[spec]]
-name = ".split"
-is_sink = "redos"
-description = "String split (potential ReDoS)"
 
 [[spec]]
 name = "DataInputStream.readInt"
@@ -2346,3 +2098,18 @@ description = "IntBuffer.allocate(capacity)"
 name = "LongBuffer.allocate"
 is_sink = "alloc_size"
 description = "LongBuffer.allocate(capacity)"
+
+[[spec]]
+name = "StatelessSession.createQuery"
+is_sink = "sql"
+description = "Hibernate StatelessSession query (HQL)"
+
+[[spec]]
+name = "StatelessSession.createSQLQuery"
+is_sink = "sql"
+description = "Hibernate StatelessSession native SQL"
+
+[[spec]]
+name = "StatelessSession.createNativeQuery"
+is_sink = "sql"
+description = "Hibernate StatelessSession native SQL"

@@ -111,7 +111,8 @@ def test_type_map_records_declarations_and_drops_conflicts():
     assert types["xs"] == "List"
     assert types["it"] == "Item"
     assert types["r"] == "Reader"
-    for untyped in ("n", "arr", "dup", "q", "e"):
+    assert types["e"] == "IOException"          # a catch parameter (a Throwable, JLS 14.20)
+    for untyped in ("n", "arr", "dup", "q"):
         assert untyped not in types, untyped
     assert "s" not in types  # declared in a nested class body
 

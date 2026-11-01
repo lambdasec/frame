@@ -6,6 +6,7 @@ The table itself is data: `data/java.toml` (one `[[spec]]` per call name, in loo
 order), loaded by `frame/sil/specs/tables.py`. Edit the TOML, then run the benchmark sweep.
 """
 
+import re
 from pathlib import Path
 from typing import Dict
 
@@ -29,7 +30,7 @@ _TYPE_TABLES = {"type_receivers": list, "supertypes": list, "factory_return_type
 
 def _load_types(path: Path = _TYPES_PATH) -> dict:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta", "java_lang", "name_only", "project_packages"}
+    expected = set(_TYPE_TABLES) | {"verifiers", "jakarta", "java_lang", "project_packages"}
     if set(data) != expected:
         raise ValueError(f"{path.name}: needs exactly {sorted(expected)}")
     for table, kind in _TYPE_TABLES.items():
@@ -37,10 +38,6 @@ def _load_types(path: Path = _TYPES_PATH) -> dict:
                 isinstance(v, kind) and v and (kind is str or all(isinstance(x, str) and x for x in v))
                 for v in data[table].values()):
             raise ValueError(f"{path.name}: [{table}] values must be non-empty {kind.__name__}s")
-    receivers = data["name_only"].get("receivers") if isinstance(data["name_only"], dict) else None
-    if set(data["name_only"]) != {"receivers", "not_receivers"} or not isinstance(receivers, dict) or not all(
-            isinstance(v, list) and v and all(isinstance(g, str) and g for g in v) for v in receivers.values()):
-        raise ValueError(f"{path.name}: [name_only] needs receivers (method = [type globs]) and not_receivers")
     for table, key in (("verifiers", "permissive"), ("jakarta", "migrated"), ("java_lang", "types"),
                        ("project_packages", "umbrella_roots")):
         if set(data[table]) != {key} or not isinstance(data[table][key], list) or not data[table][key]:
@@ -57,8 +54,6 @@ JAVA_STRING_METHOD_TYPES: Dict[str, str] = dict(_TYPES["string_method_types"])
 PERMISSIVE_VERIFIERS = frozenset(_TYPES["verifiers"]["permissive"])
 JAKARTA_MIGRATED = tuple(_TYPES["jakarta"]["migrated"])
 JAVA_LANG_TYPES = frozenset(_TYPES["java_lang"]["types"])
-NAME_ONLY_RECEIVERS: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["name_only"]["receivers"].items()}
-NAME_ONLY_NOT_RECEIVERS = frozenset(_TYPES["name_only"]["not_receivers"])
 UMBRELLA_PACKAGE_ROOTS = frozenset(_TYPES["project_packages"]["umbrella_roots"])
 
 
@@ -69,7 +64,9 @@ UMBRELLA_PACKAGE_ROOTS = frozenset(_TYPES["project_packages"]["umbrella_roots"])
 def type_spec_receivers(type_name: str) -> tuple:
     """Spec receiver names under which a call on a `type_name` value is looked
     up: the type itself, its decapitalised form (DocumentBuilder ->
-    documentBuilder, SAXParser -> saxParser, URL -> url) and any alias."""
+    documentBuilder, SAXParser -> saxParser, URL -> url) and any alias. A package-qualified
+    type (`javax.servlet.http.HttpServletRequest`) is looked up by its class name."""
+    type_name = re.sub(r"^(?:[a-z_][a-z0-9_]*\.)+(?=[A-Z])", "", type_name.split("<", 1)[0])
     upper = len(type_name) - len(type_name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
     if upper == len(type_name):
         decap = type_name.lower()
