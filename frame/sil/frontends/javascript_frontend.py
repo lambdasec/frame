@@ -1738,9 +1738,10 @@ class JavaScriptFrontend:
                              if p.type not in ("comment",)] if params is not None else []
                     if params is not None and params.type == "identifier":
                         plist = [params]
-                    if position is not None and position < len(plist) and plist[position].type == "identifier" \
-                            and self._value_kind(callee.child_by_field_name("object")) == "Array":
-                        names.add(self._get_text(plist[position]))
+                    index_name = self._simple_parameter_name(plist[position]) \
+                        if position is not None and position < len(plist) else None
+                    if index_name is not None and self._value_kind(callee.child_by_field_name("object")) == "Array":
+                        names.add(index_name)
             cur = cur.parent
         return names
 
@@ -2331,7 +2332,9 @@ class JavaScriptFrontend:
             if module is not None:
                 return self._module_kind(module)
             bound = self._resolve_binding(node)
-            return self._value_kind(bound, depth + 1) if bound is not None else None
+            if bound is not None:
+                return self._value_kind(bound, depth + 1)
+            return self._parameter_kind(node, depth)
         if t == "member_expression":
             obj, prop = node.child_by_field_name("object"), node.child_by_field_name("property")
             if obj is None or prop is None:
@@ -2347,6 +2350,153 @@ class JavaScriptFrontend:
         if t == "call_expression":
             return self._call_result_kind(node, depth)
         return None
+
+    # -- what a parameter is, when the file proves it ----------------------------------------------
+
+    def _declaring_scope(self, ident: TSNode, name: str):
+        """The nearest enclosing function scope (or the program) declaring `name`; None when
+        nothing in the file declares it."""
+        scope = ident.parent
+        while scope is not None:
+            if scope.type in self._FUNCTION_SCOPES and self._declares(scope, name):
+                return scope
+            scope = scope.parent
+        return None
+
+    def _parameter_kind(self, ident: TSNode, depth: int) -> Optional[str]:
+        """"Array" for a parameter the file proves is one, else None: a rest parameter; a
+        TypeScript annotation `T[]`, `readonly T[]`, `Array<T>`, `ReadonlyArray<T>` or a tuple; an
+        `Array.isArray(x)` test around this use, or one that leaves the function when it fails;
+        or, for a function the file does not export or hand out, every call passing an Array.
+        Only for a parameter nothing in the function reassigns."""
+        name = self._get_text(ident)
+        scope = self._declaring_scope(ident, name)
+        if scope is None or depth > 4:
+            return None
+        params = scope.child_by_field_name("parameters") or scope.child_by_field_name("parameter")
+        if params is None:
+            return None
+        plist = [params] if params.type == "identifier" else [c for c in params.named_children if c.type != "comment"]
+        index, param = next(((i, c) for i, c in enumerate(plist) if self._binds_parameter(c, name)), (None, None))
+        if param is None:
+            return None
+        body = scope.child_by_field_name("body")
+        if body is not None and self._assigns(body, name):
+            return None
+        if param.type == "rest_pattern":
+            return "Array"
+        annotation = param.child_by_field_name("type") if param.type in ("required_parameter", "optional_parameter") else None
+        if annotation is not None:
+            return "Array" if self._array_annotation(annotation) else None
+        if param.type not in ("identifier", "required_parameter"):
+            return None                                    # a default value or a pattern: unknown
+        if self._array_tested(ident, name, scope):
+            return "Array"
+        return self._kind_at_every_call(scope, index, depth)
+
+    @staticmethod
+    def _simple_parameter_name(param: TSNode) -> Optional[str]:
+        """The name a plain parameter binds (`i`, TypeScript `i: number`); None for a pattern, a
+        default value or a rest parameter."""
+        if param.type == "required_parameter" and param.child_by_field_name("value") is None:
+            param = param.child_by_field_name("pattern")
+        return param.text.decode("utf-8", "replace") if param is not None and param.type == "identifier" else None
+
+    @staticmethod
+    def _binds_parameter(param: TSNode, name: str) -> bool:
+        if param.type == "identifier":
+            return param.text.decode("utf-8", "replace") == name
+        inner = param.child_by_field_name("pattern") if param.type in ("required_parameter", "optional_parameter") else (
+            param.named_children[0] if param.type == "rest_pattern" and param.named_children else None)
+        return inner is not None and inner.type == "identifier" and inner.text.decode("utf-8", "replace") == name
+
+    @staticmethod
+    def _array_annotation(annotation: TSNode) -> bool:
+        node = annotation.named_children[0] if annotation.type == "type_annotation" and annotation.named_children else annotation
+        if node.type == "readonly_type" and node.named_children:
+            node = node.named_children[0]
+        if node.type in ("array_type", "tuple_type"):
+            return True
+        if node.type == "generic_type":
+            head = node.named_children[0] if node.named_children else None
+            return head is not None and head.text in (b"Array", b"ReadonlyArray")
+        return False
+
+    def _is_array_test(self, cond: Optional[TSNode], name: str) -> Optional[bool]:
+        """True for `Array.isArray(name)`, False for its negation, None for anything else."""
+        while cond is not None and cond.type == "parenthesized_expression" and cond.named_children:
+            cond = cond.named_children[0]
+        if cond is None:
+            return None
+        if cond.type == "unary_expression" and self._get_text(cond).startswith("!"):
+            inner = self._is_array_test(cond.child_by_field_name("argument"), name)
+            return None if inner is None else not inner
+        if cond.type == "call_expression":
+            fn, args = cond.child_by_field_name("function"), cond.child_by_field_name("arguments")
+            if fn is not None and self._get_text(fn) == "Array.isArray" and args is not None \
+                    and args.named_child_count == 1 and self._get_text(args.named_children[0]) == name:
+                return True
+        return None
+
+    def _array_tested(self, use: TSNode, name: str, scope: TSNode) -> bool:
+        cur = use
+        while cur is not None and cur != scope:
+            parent = cur.parent
+            if parent is not None and parent.type == "if_statement" and cur == parent.child_by_field_name("consequence") \
+                    and self._is_array_test(parent.child_by_field_name("condition"), name) is True:
+                return True                                # inside `if (Array.isArray(x)) { ... }`
+            if parent is not None and parent.type == "statement_block":
+                for stmt in parent.named_children:         # an earlier `if (!Array.isArray(x)) return;`
+                    if stmt.start_byte >= cur.start_byte:
+                        break
+                    if stmt.type == "if_statement" and stmt.child_by_field_name("alternative") is None \
+                            and self._is_array_test(stmt.child_by_field_name("condition"), name) is False \
+                            and self._always_leaves(stmt.child_by_field_name("consequence")):
+                        return True
+            cur = parent
+        return False
+
+    @staticmethod
+    def _always_leaves(block: Optional[TSNode]) -> bool:
+        if block is None:
+            return False
+        last = block.named_children[-1] if block.type == "statement_block" and block.named_children else block
+        return last.type in ("return_statement", "throw_statement")
+
+    def _kind_at_every_call(self, fn: TSNode, index: int, depth: int) -> Optional[str]:
+        """The kind every call of `fn` passes at `index`, when the file holds all its calls: the
+        function is bound once by name and that name is used only as a callee (never exported,
+        stored, or passed on)."""
+        if fn.type in ("function_declaration", "generator_function_declaration"):
+            name_node = fn.child_by_field_name("name")
+        elif fn.parent is not None and fn.parent.type == "variable_declarator" and fn.parent.child_by_field_name("value") == fn:
+            name_node = fn.parent.child_by_field_name("name")
+        else:
+            return None
+        if name_node is None or name_node.type != "identifier" or fn.parent.type == "export_statement" \
+                or (fn.parent.parent is not None and fn.parent.parent.parent is not None
+                    and fn.parent.parent.parent.type == "export_statement"):
+            return None
+        name = self._get_text(name_node)
+        if len(self._js_bindings(self._tree_root).get(name, [])) != 1:
+            return None
+        home = self._declaring_scope(name_node, name)
+        kinds = set()
+        for n in self._descendants_js(self._tree_root):
+            if n.type == "shorthand_property_identifier" and self._get_text(n) == name:
+                return None                                # `{ g }`: stored or exported
+            if n.type != "identifier" or n == name_node or self._get_text(n) != name:
+                continue
+            call = n.parent
+            if call is None or call.type != "call_expression" or call.child_by_field_name("function") != n \
+                    or self._declaring_scope(n, name) != home:
+                return None                                # handed out, or a different binding
+            args = call.child_by_field_name("arguments")
+            argv = [a for a in (args.named_children if args is not None else ()) if a.type != "comment"]
+            if index >= len(argv) or any(a.type == "spread_element" for a in argv[:index + 1]):
+                return None
+            kinds.add(self._value_kind(argv[index], depth + 1))
+        return "Array" if kinds == {"Array"} else None
 
     def _call_result_kind(self, call: TSNode, depth: int) -> Optional[str]:
         func = call.child_by_field_name("function")
