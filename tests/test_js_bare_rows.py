@@ -33,3 +33,33 @@ def test_globals_and_module_values(setup, body, cwe):
 ])
 def test_a_name_alone_is_no_sink(setup, body, cwe):
     assert cwe not in _cwes(setup, body)
+
+
+# --- the prototype-pollution pass reads a module's guard from the syntax tree ---------------------
+
+MERGE = """function merge(target, source) {
+  for (const key in source) {
+    %s
+    target[key] = source[key];
+  }
+  return target;
+}
+module.exports = merge;
+"""
+
+
+@pytest.mark.parametrize("guard, flagged", [
+    ("", True),
+    ("if (key === '__proto__' || key === 'constructor') continue;", False),
+    ("if (BLOCKED.includes(key)) continue;", False),
+    ("if (!isSafe(key)) continue;", False),
+    ("// a comment naming '__proto__' === key guards nothing", True),
+])
+def test_a_guard_is_a_comparison_in_the_code(guard, flagged):
+    code = ("const BLOCKED = ['__proto__', 'constructor', 'prototype'];\n"
+            "function isSafe(k) { return k !== '__proto__'; }\n") + MERGE % guard
+    if "BLOCKED" not in guard and "isSafe" not in guard:
+        code = MERGE % guard
+    found = {v.cwe_id for v in FrameScanner(language="javascript", verify=False, library_mode=True)
+             .scan(code, "lib/merge.js").vulnerabilities}
+    assert ("CWE-1321" in found) == flagged

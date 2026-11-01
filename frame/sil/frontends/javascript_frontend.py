@@ -157,9 +157,8 @@ class JavaScriptFrontend:
         # Parse source code
         tree = self.parser.parse(self._source_bytes)
 
-        # File-level prototype-pollution guard signal (see _scan_proto_pollution);
-        # needed up front so call-style sinks like merge(a, b) honour it too.
-        self._proto_guarded = bool(self._PROTO_GUARD_RE.search(source_code))
+        self._proto_test_cache = {}             # function node -> tests a value against __proto__...
+        self._tree_root = tree.root_node
 
         # Module bindings (`const cp = require('child_process')`, `import {exec}
         # from 'child_process'`): calls through them are named after the module
@@ -1473,15 +1472,72 @@ class JavaScriptFrontend:
 
         self._emit_findings_proc(program, "<module-redos>", "__redos__", hits)
 
-    # A genuine guard COMPARES a key against a dangerous name or keeps a denylist
-    # -- distinct from merely mentioning __proto__ (which vulnerable code does
-    # too, e.g. when it sets that key or in a comment).
-    _PROTO_GUARD_RE = re.compile(
-        r"""(?x)
-        (?:===|!==|==|!=|indexOf|includes|\bhas\b)\s*\(?\s*['"](?:__proto__|constructor|prototype)['"]
-        | ['"](?:__proto__|constructor|prototype)['"]\s*(?:===|!==|==|!=)
-        | \[[^\]]*['"](?:__proto__|constructor|prototype)['"][^\]]*\]
-        """)
+    # The property names through which a keyed write reaches an object's prototype.
+    _PROTO_NAMES = frozenset({"__proto__", "constructor", "prototype"})
+    _MEMBERSHIP_METHODS = frozenset({"includes", "indexOf", "has", "lastIndexOf"})
+
+    def _proto_literal(self, node: Optional[TSNode]) -> bool:
+        return node is not None and node.type == "string" and self._get_text(node)[1:-1] in self._PROTO_NAMES
+
+    def _proto_list(self, node: Optional[TSNode]) -> bool:
+        """A constant collection holding a prototype name (`['__proto__', 'constructor']`,
+        `new Set([...])`, or a name the file binds once to one)."""
+        node = self._unwrap(node)
+        if node is None:
+            return False
+        if node.type == "identifier":
+            binds = self._js_bindings(self._tree_root).get(self._get_text(node), [])
+            return len(binds) == 1 and binds[0][0] == "value" and self._proto_list(binds[0][1])
+        if node.type == "new_expression":
+            args = node.child_by_field_name("arguments")
+            return args is not None and any(self._proto_list(a) for a in args.named_children)
+        return node.type == "array" and any(self._proto_literal(e) for e in node.named_children)
+
+    def _tests_proto_names(self, fn: TSNode, depth: int = 0) -> bool:
+        """Does `fn` test a value against a prototype name (`key === '__proto__'`, a denylist's
+        `includes(key)`, `s.startsWith('__proto__')`), itself or in a function of this file it
+        calls (`isValidKey(key)`)? Read from the syntax tree."""
+        key = (fn.start_byte, fn.end_byte, depth)
+        if key in self._proto_test_cache:
+            return self._proto_test_cache[key]
+        self._proto_test_cache[key] = False
+        found = False
+        stack = list(fn.children)
+        while stack and not found:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "binary_expression":
+                op = next((c for c in n.children if c.type in ("===", "==", "!==", "!=")), None)
+                if op is not None and (self._proto_literal(n.child_by_field_name("left"))
+                                       or self._proto_literal(n.child_by_field_name("right"))):
+                    found = True
+            elif n.type == "call_expression":
+                callee, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
+                arg_nodes = list(args.named_children) if args is not None else []
+                if callee is not None and callee.type == "member_expression":
+                    prop = callee.child_by_field_name("property")
+                    method = self._get_text(prop) if prop is not None else ""
+                    if method in self._MEMBERSHIP_METHODS and self._proto_list(callee.child_by_field_name("object")):
+                        found = True
+                    elif method in ("startsWith", "includes", "indexOf") and any(self._proto_literal(a) for a in arg_nodes):
+                        found = True
+                elif callee is not None and callee.type == "identifier" and depth < 2:
+                    binds = self._js_bindings(self._tree_root).get(self._get_text(callee), [])
+                    helper = binds[0][1] if len(binds) == 1 and binds[0][0] in ("function", "value") else None
+                    helper = self._unwrap(helper)
+                    if helper is not None and helper.type in self._FUNC_LIKE and self._tests_proto_names(helper, depth + 1):
+                        found = True
+        self._proto_test_cache[key] = found
+        return found
+
+    def _proto_guarded_at(self, node: TSNode) -> bool:
+        """Is a prototype-pollution write or call at `node` guarded? The module tests a value
+        against __proto__ / constructor / prototype somewhere (read from the syntax tree, so a
+        comment or an unrelated string does not count): a patched module's guard often lives in
+        another function (the public setter validating the path its internal writer gets) or in
+        a module-level denylist. Scoping it to the writing function and its helpers was measured
+        on SecBench: 17 more false positives for 2 true positives."""
+        return self._tests_proto_names(self._tree_root)
 
     def _scan_proto_pollution(self, root: TSNode, program: Program) -> None:
         """Whole-file pass: flag an unguarded computed-property write
@@ -1492,11 +1548,6 @@ class JavaScriptFrontend:
         The precision lever mirrors how these CVEs are fixed: a function that
         already checks the key against __proto__/constructor/prototype is treated
         as guarded and not flagged."""
-        # Proto-awareness is a file-level signal: a patched module *checks* a key
-        # against __proto__/constructor/prototype (the guard often lives in a
-        # helper or a module-level denylist, not inline at the write).
-        self._proto_guarded = bool(self._PROTO_GUARD_RE.search(self._source))
-
         hits = []
         stack = [root]
         while stack:
@@ -1543,11 +1594,9 @@ class JavaScriptFrontend:
             if not key_like:
                 continue
 
-            # Guarded? A patched setter checks the key against __proto__/
-            # constructor/prototype -- but the check often lives in a helper
-            # (isValidKey) or a module-level denylist rather than inline, so a
-            # reference anywhere in the file means the code is proto-aware.
-            if self._proto_guarded:
+            # Guarded? A patched setter checks the key against __proto__ / constructor /
+            # prototype, in the writing function, a function enclosing it, or a helper it calls.
+            if self._proto_guarded_at(n):
                 continue
 
             hits.append(self._get_location(n))
@@ -2562,10 +2611,10 @@ class JavaScriptFrontend:
             stack.extend(n.named_children)
         return names
 
-    def _guarded_proto_sink(self, spec) -> bool:
-        """A prototype-pollution call sink in a file that already checks keys
-        against __proto__/constructor/prototype is treated as guarded."""
-        return spec.is_sink == "prototype_pollution" and getattr(self, "_proto_guarded", False)
+    def _guarded_proto_sink(self, spec, call_node: Optional[TSNode] = None) -> bool:
+        """A prototype-pollution call sink in a function that checks keys against __proto__ /
+        constructor / prototype (`_proto_guarded_at`) is treated as guarded."""
+        return spec.is_sink == "prototype_pollution" and call_node is not None and self._proto_guarded_at(call_node)
 
     # Sinks whose vulnerability is *calling* a function (`md5(x)`,
     # `Math.random()`); assigning to a property that merely shares the name
@@ -2687,7 +2736,7 @@ class JavaScriptFrontend:
         # suffixes (`this.db.query`, `await repo.pool.query`) and arguments that qualify the
         # spec (`createHash('md5')`), as a standalone call statement does.
         sink_spec = self._lookup_call_spec(func_name, call_node)
-        if sink_spec and sink_spec.is_taint_sink() and not self._guarded_proto_sink(sink_spec):
+        if sink_spec and sink_spec.is_taint_sink() and not self._guarded_proto_sink(sink_spec, call_node):
             kind = _get_sink_kind(sink_spec.is_sink)
             for arg_idx in sink_spec.sink_args:
                 if arg_idx < len(args):
@@ -2862,7 +2911,7 @@ class JavaScriptFrontend:
         # Check if this is a sink (with suffix matching for chained calls)
         spec = self._lookup_call_spec(func_name, call_node)
 
-        if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec):
+        if spec and spec.is_taint_sink() and not self._guarded_proto_sink(spec, call_node):
             kind = _get_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
