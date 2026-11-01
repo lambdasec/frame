@@ -36,3 +36,10 @@ call = ["@mikro-orm/*.EntityManager.execute", "@mikro-orm/*.SqlEntityManager.exe
 args = [0]
 kind = "sql"
 description = "MikroORM native SQL"
+
+# DataSource.transaction / EntityManager.transaction call back with the transaction's
+# EntityManager, after an optional isolation level (typeorm.io/docs/advanced-topics/transactions).
+[[callback_param]]
+registered_via = ["typeorm.DataSource.transaction", "typeorm.EntityManager.transaction"]
+position = 0
+origin = "typeorm.EntityManager"

@@ -42,6 +42,47 @@ args = [0]
 kind = "sql"
 description = "SQLite statement"
 
+# Callbacks the libraries call with a value of their own (the parameter's name decides nothing).
+# knex: `knex.transaction(async (trx) => ...)`; the handler's transaction is used as the knex
+# instance it came from (knexjs.org/guide/transactions.html).
+# The instance is named as the sinks below name it: `knex` for `require("knex")(config)` bound
+# directly, `knex()` for `knex(config)` on the module.
+[[callback_param]]
+registered_via = ["knex.transaction"]
+position = 0
+origin = "knex"
+
+[[callback_param]]
+registered_via = ["knex().transaction"]
+position = 0
+origin = "knex()"
+
+# pg-promise: a Database's task / tx / taskIf / txIf call back with a Task, which has the
+# Database's query methods (and its own task / tx, which nest); an optional name or options
+# argument comes first (vitaly-t.github.io/pg-promise/Database.html#task, Task.html).
+[[callback_param]]
+registered_via = ["pg-promise().task", "pg-promise().tx", "pg-promise().taskIf", "pg-promise().txIf"]
+position = 0
+origin = "pg-promise()"
+
+# Pools that hand out a connection to a callback: mysql / mysql2 `pool.getConnection((err, conn) => ...)`,
+# node-postgres `pool.connect((err, client, release) => ...)` (the promise forms are typed in
+# value-types.toml).
+[[callback_param]]
+registered_via = ["mysql.Pool.getConnection"]
+position = 1
+origin = "mysql.Pool.getConnection"
+
+[[callback_param]]
+registered_via = ["mysql2.Pool.getConnection"]
+position = 1
+origin = "mysql2.Pool.getConnection"
+
+[[callback_param]]
+registered_via = ["pg.Pool.connect", "pg-pool.connect"]
+position = 1
+origin = "pg.Pool.connect"
+
 # knex: `require("knex")(config)` is the instance; `knex.raw(sql)` and the *Raw builder methods
 # of the query builders it makes (`knex("users").whereRaw(sql)`) take SQL fragments.
 [[sink]]

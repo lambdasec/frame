@@ -178,6 +178,8 @@
 "mysql2/promise.createConnection" = "mysql2.Connection"
 "mysql2/promise.createPool" = "mysql2.Pool"
 "mysql2.Pool.getConnection" = "mysql2.Connection"
+# mysql: pool.getConnection(callback(err, connection)) hands out a pooled Connection.
+"mysql.Pool.getConnection" = "mysql.Connection"
 # node-postgres (node-postgres.com/apis/pool): pool.connect() resolves to a PoolClient.
 "pg.Pool.connect" = "pg.PoolClient"
 "pg-pool.connect" = "pg.PoolClient"
