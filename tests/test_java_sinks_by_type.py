@@ -50,3 +50,15 @@ def test_a_local_rebound_to_something_else_is_not_the_response_writer():
     body = ("PrintWriter out = response.getWriter();\n    if (v.isEmpty()) out = new PrintWriter(new StringWriter());\n"
             "    out.println(v);")
     assert "CWE-79" not in _found(body)
+
+
+@pytest.mark.parametrize("body, cwe, found", [
+    # ESAPI's encoder, reached through ESAPI.encoder()'s type
+    ("response.getWriter().println(org.owasp.esapi.ESAPI.encoder().encodeForHTML(v));", "CWE-79", False),
+    ("org.owasp.esapi.Encoder enc = org.owasp.esapi.ESAPI.encoder();\n    response.getWriter().println(enc.encodeForHTML(v));",
+     "CWE-79", False),
+    # a project method named like a library sanitizer sanitizes nothing
+    ("Formatter f = new Formatter();\n    response.getWriter().println(f.encodeForHTML(v));", "CWE-79", True),
+])
+def test_sanitizers_by_type_not_by_name(body, cwe, found):
+    assert (cwe in _found(body)) == found

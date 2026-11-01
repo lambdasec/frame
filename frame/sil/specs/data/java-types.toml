@@ -167,6 +167,8 @@ createDefault = "CloseableHttpClient"
 "Class.getClassLoader" = "java.lang.ClassLoader"
 "Thread.currentThread" = "java.lang.Thread"
 "Thread.getContextClassLoader" = "java.lang.ClassLoader"
+# OWASP ESAPI: ESAPI.encoder() is the configured org.owasp.esapi.Encoder
+"ESAPI.encoder" = "org.owasp.esapi.Encoder"
 # JDBC (java.sql): connections and the statements they make
 "DriverManager.getConnection" = "java.sql.Connection"
 "DataSource.getConnection" = "java.sql.Connection"

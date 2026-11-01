@@ -56,7 +56,8 @@ _SETTING_SINK_KINDS = {"cookie_secure": "insecure_cookie", "cookie_httponly": "i
 
 
 def _source_or_sink(spec: ProcSpec) -> bool:
-    return bool(spec.is_source or spec.is_sink)
+    """A row that decides a flow (a source, a sink or a sanitizer), as opposed to a propagator."""
+    return bool(spec.is_source or spec.is_sink or spec.is_sanitizer)
 
 
 class CSharpFrontend:

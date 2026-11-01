@@ -1067,14 +1067,16 @@ class Program:
             from .metadata import csharp_without_namespace
             spec = self.library_specs.get(func_name) or self.library_specs.get(csharp_without_namespace(func_name))
             head = func_name.split(".", 1)[0]
-            if spec is not None and ("." not in func_name or head[:1].isupper() or not (spec.is_source or spec.is_sink)):
+            if spec is not None and ("." not in func_name or head[:1].isupper()
+                                     or not (spec.is_source or spec.is_sink or spec.is_sanitizer)):
                 return spec
             parts = func_name.split('.')
             for i in range(1, len(parts)):
                 spec = self.library_specs.get('.'.join(parts[i:]))
                 # C# web sources are member paths (`x.PostedFile.FileName`, `ctx.Request.Query`), read
                 # by their trailing members as the frontend's member sources are; sinks need a type
-                if spec is not None and not spec.is_sink and (not spec.is_source or parts[i][:1].isupper()):
+                if spec is not None and not spec.is_sink and not spec.is_sanitizer \
+                        and (not spec.is_source or parts[i][:1].isupper()):
                     return spec
             if guess and len(parts) > 1:
                 from frame.sil.specs.receiver_guesses import guesses

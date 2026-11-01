@@ -72,7 +72,9 @@ def _without_package(written: str) -> str:
 
 
 def _source_or_sink(spec: ProcSpec) -> bool:
-    return bool(spec.is_source or spec.is_sink)
+    """A row that decides a flow (a source, a sink or a sanitizer), as opposed to a propagator:
+    such a row is found only through a type, a class or a plain function, never a bare name."""
+    return bool(spec.is_source or spec.is_sink or spec.is_sanitizer)
 
 
 def _names_a_class(written: str) -> bool:

@@ -963,11 +963,6 @@ is_sanitizer = ["redirect"]
 description = "Url.IsLocalUrl (local redirect check)"
 
 [[spec]]
-name = "IsLocalUrl"
-is_sanitizer = ["redirect"]
-description = "IsLocalUrl (local redirect check)"
-
-[[spec]]
 name = "Url.Content"
 is_sanitizer = ["redirect"]
 description = "Url.Content (app-relative URL)"
@@ -1213,7 +1208,7 @@ is_sanitizer = ["password"]
 description = "ASP.NET password hasher"
 
 [[spec]]
-name = "HashPassword"
+name = "PasswordHasher.HashPassword"
 is_sanitizer = ["password"]
 description = "Password hashing"
 

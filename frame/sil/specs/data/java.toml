@@ -887,62 +887,107 @@ is_sink = "code"
 description = "ScriptEngine.eval (code injection)"
 
 [[spec]]
-name = "encodeForHTML"
+name = "Encoder.encodeForHTML"
 is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForHTML (XSS)"
 
 [[spec]]
-name = "encodeForJavaScript"
+name = "Encoder.encodeForJavaScript"
 is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForJavaScript (XSS)"
 
 [[spec]]
-name = "encodeForCSS"
+name = "Encoder.encodeForCSS"
 is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForCSS (XSS)"
 
 [[spec]]
-name = "encodeForURL"
+name = "ESAPI.encoder().encodeForCSS"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForCSS (XSS)"
+
+[[spec]]
+name = "Encoder.encodeForURL"
 is_sanitizer = ["url", "redirect"]
 description = "ESAPI encodeForURL"
 
 [[spec]]
-name = "encodeForXML"
+name = "ESAPI.encoder().encodeForURL"
+is_sanitizer = ["url", "redirect"]
+description = "ESAPI encodeForURL"
+
+[[spec]]
+name = "Encoder.encodeForXML"
 is_sanitizer = ["xml", "xxe"]
 description = "ESAPI encodeForXML"
 
 [[spec]]
-name = "encodeForXMLAttribute"
+name = "ESAPI.encoder().encodeForXML"
+is_sanitizer = ["xml", "xxe"]
+description = "ESAPI encodeForXML"
+
+[[spec]]
+name = "Encoder.encodeForXMLAttribute"
 is_sanitizer = ["xml", "xxe"]
 description = "ESAPI encodeForXMLAttribute"
 
 [[spec]]
-name = "encodeForXPath"
+name = "ESAPI.encoder().encodeForXMLAttribute"
+is_sanitizer = ["xml", "xxe"]
+description = "ESAPI encodeForXMLAttribute"
+
+[[spec]]
+name = "Encoder.encodeForXPath"
 is_sanitizer = ["xpath"]
 description = "ESAPI encodeForXPath"
 
 [[spec]]
-name = "encodeForSQL"
+name = "ESAPI.encoder().encodeForXPath"
+is_sanitizer = ["xpath"]
+description = "ESAPI encodeForXPath"
+
+[[spec]]
+name = "Encoder.encodeForSQL"
 is_sanitizer = ["sql"]
 description = "ESAPI encodeForSQL"
 
 [[spec]]
-name = "encodeForLDAP"
+name = "ESAPI.encoder().encodeForSQL"
+is_sanitizer = ["sql"]
+description = "ESAPI encodeForSQL"
+
+[[spec]]
+name = "Encoder.encodeForLDAP"
 is_sanitizer = ["ldap"]
 description = "ESAPI encodeForLDAP"
 
 [[spec]]
-name = "encodeForDN"
+name = "ESAPI.encoder().encodeForLDAP"
+is_sanitizer = ["ldap"]
+description = "ESAPI encodeForLDAP"
+
+[[spec]]
+name = "Encoder.encodeForDN"
 is_sanitizer = ["ldap"]
 description = "ESAPI encodeForDN"
 
 [[spec]]
-name = "encodeForOS"
+name = "ESAPI.encoder().encodeForDN"
+is_sanitizer = ["ldap"]
+description = "ESAPI encodeForDN"
+
+[[spec]]
+name = "Encoder.encodeForOS"
 is_sanitizer = ["command", "shell", "shell_command"]
 description = "ESAPI encodeForOS (command injection)"
 
 [[spec]]
-name = "encodeForBase64"
+name = "ESAPI.encoder().encodeForOS"
+is_sanitizer = ["command", "shell", "shell_command"]
+description = "ESAPI encodeForOS (command injection)"
+
+[[spec]]
+name = "Encoder.encodeForBase64"
 is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForBase64"
 
@@ -952,7 +997,12 @@ is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForBase64"
 
 [[spec]]
-name = "encodeForHTMLAttribute"
+name = "Encoder.encodeForHTMLAttribute"
+is_sanitizer = ["html", "xss"]
+description = "ESAPI encodeForHTMLAttribute"
+
+[[spec]]
+name = "ESAPI.encoder().encodeForHTMLAttribute"
 is_sanitizer = ["html", "xss"]
 description = "ESAPI encodeForHTMLAttribute"
 
@@ -1002,26 +1052,6 @@ is_sanitizer = ["url"]
 description = "OWASP Encode.forUriComponent"
 
 [[spec]]
-name = "forHtml"
-is_sanitizer = ["html", "xss"]
-description = "OWASP Encode.forHtml"
-
-[[spec]]
-name = "forHtmlContent"
-is_sanitizer = ["html", "xss"]
-description = "OWASP Encode.forHtmlContent"
-
-[[spec]]
-name = "forHtmlAttribute"
-is_sanitizer = ["html", "xss"]
-description = "OWASP Encode.forHtmlAttribute"
-
-[[spec]]
-name = "forJavaScript"
-is_sanitizer = ["html", "xss"]
-description = "OWASP Encode.forJavaScript"
-
-[[spec]]
 name = "StringEscapeUtils.escapeHtml4"
 is_sanitizer = ["html", "xss"]
 description = "Apache StringEscapeUtils.escapeHtml4"
@@ -1042,77 +1072,52 @@ is_sanitizer = ["sql"]
 description = "Apache StringEscapeUtils.escapeSql"
 
 [[spec]]
-name = "escapeHtml4"
-is_sanitizer = ["html", "xss"]
-description = "Apache StringEscapeUtils.escapeHtml4"
-
-[[spec]]
-name = "escapeHtml"
-is_sanitizer = ["html", "xss"]
-description = "Apache StringEscapeUtils.escapeHtml"
-
-[[spec]]
-name = "escapeXml"
-is_sanitizer = ["html", "xml", "xss"]
-description = "Apache StringEscapeUtils.escapeXml"
-
-[[spec]]
-name = "escapeSql"
-is_sanitizer = ["sql"]
-description = "Apache StringEscapeUtils.escapeSql"
-
-[[spec]]
 name = "HtmlUtils.htmlEscape"
 is_sanitizer = ["html", "xss"]
 description = "Spring HtmlUtils.htmlEscape"
 
 [[spec]]
-name = "htmlEscape"
-is_sanitizer = ["html", "xss"]
-description = "Spring HtmlUtils.htmlEscape"
-
-[[spec]]
-name = "setString"
+name = "PreparedStatement.setString"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setString"
 
 [[spec]]
-name = "setInt"
+name = "PreparedStatement.setInt"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setInt"
 
 [[spec]]
-name = "setLong"
+name = "PreparedStatement.setLong"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setLong"
 
 [[spec]]
-name = "setFloat"
+name = "PreparedStatement.setFloat"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setFloat"
 
 [[spec]]
-name = "setDouble"
+name = "PreparedStatement.setDouble"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setDouble"
 
 [[spec]]
-name = "setBoolean"
+name = "PreparedStatement.setBoolean"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setBoolean"
 
 [[spec]]
-name = "setDate"
+name = "PreparedStatement.setDate"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setDate"
 
 [[spec]]
-name = "setTimestamp"
+name = "PreparedStatement.setTimestamp"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setTimestamp"
 
 [[spec]]
-name = "setObject"
+name = "PreparedStatement.setObject"
 is_sanitizer = ["sql"]
 description = "PreparedStatement.setObject"
 
