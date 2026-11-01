@@ -207,7 +207,8 @@ class JavaScriptFrontend:
         # (the code is not the application's own and is never going to be fixed
         # here), so -- like mainstream SAST tools -- we skip these heuristics on
         # such files. Taint-based detection still runs everywhere.
-        if not self._is_vendored_or_minified():
+        # In library mode the scanned library is the code under analysis, wherever it lives.
+        if getattr(self, "taint_function_params", False) or not self._is_vendored_or_minified():
             self._scan_redos(tree.root_node, program)
             self._scan_proto_pollution(tree.root_node, program)
 
@@ -2125,11 +2126,9 @@ class JavaScriptFrontend:
         if not args or args[0].type != "string":
             return None
         value = self._get_text(args[0]).strip("'\"`").lower()
-        parts = func_name.split(".")
-        for i in range(len(parts)):
-            for prefix, spec in table.get(".".join(parts[i:]), ()):
-                if value.startswith(prefix):
-                    return spec
+        for prefix, spec in table.get(func_name, ()):      # the call as named after its module
+            if value.startswith(prefix):
+                return spec
         return None
 
     def _safe_options(self, func_name: str, call_node: Optional[TSNode]) -> bool:
@@ -2177,6 +2176,9 @@ class JavaScriptFrontend:
             if spec:
                 if spec.global_only and not self._may_be_global('.'.join(parts[:i])):
                     return None
+                if '.' not in key and (spec.is_sink or spec.is_source) \
+                        and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:
+                    return None              # a global / module function, as a method only of the global object
                 return spec
         return None
 
@@ -2187,13 +2189,9 @@ class JavaScriptFrontend:
         return self.specs.get(key) if by_name(key, self.language) else None
 
     def _may_be_global(self, receiver: str) -> bool:
-        """Can `receiver` be the global object (or a module bound outside this
-        file)? Yes for window/global/globalThis and for a bare name the file
-        never declares; no for a local, parameter, function or class, for a
-        member chain (`self.req`), and for a literal (`/re/`)."""
-        if receiver in GLOBAL_OBJECTS:
-            return True
-        return receiver.isidentifier() and receiver not in getattr(self, "_declared_names", {})
+        """Is `receiver` the global object (window / global / globalThis)? A name the file never
+        declares could be anything, so it is not taken to be the global object."""
+        return receiver in GLOBAL_OBJECTS
 
     # -- what kind of value a receiver is -----------------------------------------
 

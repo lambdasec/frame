@@ -4583,6 +4583,10 @@ class SILTranslator:
                                 # (`db.query(buildQuery())`), as at a TaintSink
                                 arg_vars += [c for c in self._closure_captured_vars(arg_exp, sink_kind)
                                              if c not in arg_vars]
+                                # a tainted field path written in the argument (`self.options.additional`),
+                                # as at a TaintSink
+                                arg_vars += [c for c in self._field_chains(arg_exp)
+                                             if c in state.tainted and c not in arg_vars]
                                 arg_str = str(arg_exp)
 
                                 # Check for inline .replace() sanitization in argument

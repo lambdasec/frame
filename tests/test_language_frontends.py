@@ -576,8 +576,8 @@ function Footer() {
 
         def cwes(code):
             # an Express application and router: the express pack makes their handlers' requests attacker data
-            app = ("const express = require('express');\nconst app = express();\n"
-                   "const router = express.Router();\nconst db = require('mysql').createPool({});\n")
+            app = ("const express = require('express');\nconst app = express();\nconst cp = require('child_process');\n"
+                   "const fs = require('fs');\nconst router = express.Router();\nconst db = require('mysql').createPool({});\n")
             return {v.cwe_id for v in sc.scan(app + code, "t.js").vulnerabilities}
 
         # function callback, command injection via req.body

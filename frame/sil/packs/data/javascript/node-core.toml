@@ -37,7 +37,7 @@ kind = "command"
 description = "with { shell: true } the command line and its arguments are parsed by the shell"
 
 [[sink]]
-call = ["shelljs.exec", "shelljs.cd", "shell.exec", "execa.command", "execa.commandSync", "execa.shell", "execa.shellSync",
+call = ["shelljs.exec", "shelljs.cd", "execa.command", "execa.commandSync", "execa.shell", "execa.shellSync",
         "exec-sh", "exec-sh.promise", "child-process-promise.exec", "node-cmd.run", "node-cmd.runSync", "shelljs.cat",
         "shelljs.grep", "shelljs.sed"]
 args = [0]

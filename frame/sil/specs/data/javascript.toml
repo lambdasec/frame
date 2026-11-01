@@ -251,11 +251,6 @@ is_sink = "code"
 description = "new vm.Script compiles its argument as JavaScript (code injection)"
 
 [[spec]]
-name = "runInContext"
-is_sink = "code"
-description = "runInContext (code injection)"
-
-[[spec]]
 name = "__redos__"
 is_sink = "regex"
 sink_args = []
@@ -736,11 +731,6 @@ description = "Passport authentication"
 
 
 [[spec]]
-name = "stack"
-is_sink = "info_disclosure"
-description = "Stack trace exposure (CWE-209)"
-
-[[spec]]
 name = "console.error"
 is_sink = "info_disclosure"
 description = "Console error (may leak info CWE-209)"
@@ -767,29 +757,19 @@ is_sink = "weak_hash"
 description = "SHA1 hash (CWE-328)"
 
 [[spec]]
-name = "createCipheriv('des"
+name = "crypto.createCipheriv('des"
 is_sink = "weak_crypto"
 description = "DES encryption (CWE-327)"
 
 [[spec]]
-name = "createCipheriv('des3"
+name = "crypto.createCipheriv('des3"
 is_sink = "weak_crypto"
 description = "3DES encryption (CWE-327)"
 
 [[spec]]
-name = "createCipheriv('rc4"
+name = "crypto.createCipheriv('rc4"
 is_sink = "weak_crypto"
 description = "RC4 encryption (CWE-327)"
-
-[[spec]]
-name = "aes-128-ecb"
-is_sink = "weak_crypto"
-description = "AES ECB mode (CWE-327)"
-
-[[spec]]
-name = "aes-256-ecb"
-is_sink = "weak_crypto"
-description = "AES ECB mode (CWE-327)"
 
 [[spec]]
 name = "Math.random"
@@ -837,14 +817,6 @@ description = "scrypt password hashing (safe)"
 name = "pbkdf2"
 is_sanitizer = ["password"]
 description = "PBKDF2 password hashing"
-
-[[spec]]
-name = "maxAge"
-is_sink = "session"
-description = "Session max age config"
-
-
-
 
 [[spec]]
 name = "express-rate-limit"
@@ -944,12 +916,6 @@ is_sink = "ssrf"
 description = "GCP metadata (SSRF)"
 
 [[spec]]
-name = "localhost"
-is_sink = "ssrf"
-description = "Localhost access (SSRF)"
-
-
-[[spec]]
 name = "__proto__"
 is_sink = "prototype_pollution"
 description = "Prototype access (CWE-1321)"
@@ -977,17 +943,31 @@ is_sink = "prototype_pollution"
 sink_args = [0, 1, 2, 3]
 description = "Lodash defaultsDeep (prototype pollution)"
 
+# The lodash package (`require("lodash")`, or the per-method packages `lodash.merge`...): calls on
+# its value are named after the module (lodash's deep assignments, CVE-2018-16487, CVE-2019-10744).
+[[spec]]
+name = "lodash.merge"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Lodash merge (prototype pollution)"
+
+[[spec]]
+name = "lodash.mergeWith"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Lodash mergeWith (prototype pollution)"
+
+[[spec]]
+name = "lodash.defaultsDeep"
+is_sink = "prototype_pollution"
+sink_args = [0, 1, 2, 3]
+description = "Lodash defaultsDeep (prototype pollution)"
+
 [[spec]]
 name = "$.extend"
 is_sink = "prototype_pollution"
 sink_args = [0, 1, 2, 3]
 description = "jQuery extend (prototype pollution)"
-
-[[spec]]
-name = "merge"
-is_sink = "prototype_pollution"
-sink_args = [0, 1, 2, 3]
-description = "Deep merge (potential pollution)"
 
 [[spec]]
 name = "deepmerge"

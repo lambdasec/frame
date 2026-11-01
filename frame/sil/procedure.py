@@ -1104,6 +1104,9 @@ class Program:
                 if spec:
                     if spec.global_only and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:
                         return None
+                    if language in ("javascript", "typescript") and '.' not in suffix \
+                            and (spec.is_sink or spec.is_source) and '.'.join(parts[:i]) not in GLOBAL_OBJECTS:
+                        return None      # a global / module function, as a method only of the global object
                     return spec
 
             method_name = parts[-1]
