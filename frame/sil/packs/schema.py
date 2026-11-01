@@ -50,7 +50,7 @@ _ENTRY_KEYS = {"id", "decorator", "annotation", "class_decorator", "class_annota
                "method", "registered_via", "event", "class_name", "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "param_positions", "params_from", "first_param", "params", "param_annotation", "param_type", "exclude_param",
                "exclude_param_type", "tainted_param_type", "fields", "field_annotation", "kind", "description",
                "request_type", "arity", "exclude_arity", "module_path", "exports", "directives", "body_directives", "origin",
-               "receiver", "unbound", "route_syntax", "route_args"}
+               "receiver", "unbound", "route_syntax", "route_args", "exclude_services", "exclude_param_annotation"}
 _REQUEST_TYPE_KEYS = {"id", "fields", "methods", "server_state", "kinds", "objects", "headers", "sessions",
                       "identities", "proxies", "origin", "description", "references"}
 _SOURCE_KEYS = {"call", "name", "kind", "out_args", "description"}
@@ -84,7 +84,7 @@ _TOOL_KEYS = {
 }
 _TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "setting_registration", "returns", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
-             "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check",
+             "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
              "policy", "define"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
@@ -122,6 +122,7 @@ class Entrypoint:
     param_type: List[str] = field(default_factory=list)
     exclude_param: List[str] = field(default_factory=list)
     exclude_param_type: List[str] = field(default_factory=list)
+    exclude_param_annotation: List[str] = field(default_factory=list)   # not parameters with these ([FromServices])
     tainted_param_type: List[str] = field(default_factory=list)  # request objects: taint the whole param
     fields: str = ""                     # "" | "all" | "annotated" | "settable" (true means "all")
     field_annotation: List[str] = field(default_factory=list)
@@ -132,6 +133,7 @@ class Entrypoint:
     route_syntax: str = ""               # "werkzeug": only the parameters the route rule's `<converter:name>` names
     route_args: List[str] = field(default_factory=list)   # the decorator arguments holding the rule ("0", "rule")
     origin: str = ""                     # the selected parameters hold a value of this origin (`express.Response`)
+    exclude_services: bool = False       # C#: not a parameter whose type the app registers as a DI service
     module_path: List[str] = field(default_factory=list)    # globs on the file's path (`**/pages/api/**`)
     exports: List[str] = field(default_factory=list)        # what the module exports it as (`default`, `*`)
     directives: List[str] = field(default_factory=list)     # a directive its module starts with (`use server`)
@@ -276,6 +278,21 @@ class HandlerReturn:
     class_decorator: List[str] = field(default_factory=list)
     exclude_decorator: List[str] = field(default_factory=list)
     return_type: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
+class ServiceRegistration:
+    """C#: a call that registers a dependency-injection service (`services.AddScoped<IRepo, Repo>()`,
+    `AddDbContext<AppDb>()`): a handler parameter of that type is supplied by the container, not
+    bound from the request (`[[service_registration]]`, read by entry points with
+    `exclude_services`). The service is the `type_arg`-th type argument, the type of a `typeof(T)`
+    at argument `typeof_arg`, or one of the fixed types the call always registers (`registers`)."""
+    id: str
+    call: List[str]                      # callee ids (globs)
+    type_arg: Optional[int] = None
+    typeof_arg: Optional[int] = None
+    registers: List[str] = field(default_factory=list)
     description: str = ""
 
 
@@ -454,6 +471,7 @@ class Pack:
     setting_registrations: List[Tuple[str, str]] = field(default_factory=list)
     returns: Dict[str, str] = field(default_factory=dict)          # call id -> the type of what it returns
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
+    service_registrations: List[ServiceRegistration] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
     option_calls: List[OptionCall] = field(default_factory=list)
@@ -677,7 +695,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         _check_keys(origin, where, t, _ENTRY_KEYS)
         e = Entrypoint(id=str(t.get("id", f"{name}-entry-{i + 1}")), description=str(t.get("description", "")))
         for key in ("decorator", "class_decorator", "extends", "method", "registered_via", "event", "param_annotation", "param_type",
-                    "exclude_param", "exclude_param_type", "tainted_param_type", "field_annotation", "class_name",
+                    "exclude_param", "exclude_param_type", "exclude_param_annotation", "tainted_param_type", "field_annotation", "class_name",
                     "modifiers", "exclude_modifiers", "exclude_decorator", "exclude_method", "first_param",
                     "module_path", "exports", "directives", "body_directives"):
             if key in t:
@@ -723,6 +741,12 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             if "request_type" in t or "kind" in t:
                 raise _fail(origin, where, "an origin entry point names what a parameter is: no request_type or kind")
             e.origin = t["origin"]
+        if "exclude_services" in t:
+            if not isinstance(t["exclude_services"], bool):
+                raise _fail(origin, f"{where}.exclude_services", "must be true or false")
+            if language != "csharp":
+                raise _fail(origin, f"{where}.exclude_services", "is for C# packs (dependency injection)")
+            e.exclude_services = t["exclude_services"]
         for key in ("receiver", "unbound"):
             if key in t:
                 if not isinstance(t[key], bool):
@@ -1009,6 +1033,25 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         pack.same_origin_checks.append(SameOriginCheck(id=str(t.get("id", f"{name}-same-origin-{i + 1}")),
                                                        call=_strings(origin, f"{where}.call", t["call"]),
                                                        description=str(t.get("description", ""))))
+
+    for i, t in enumerate(data.get("service_registration", [])):
+        where = f"[[service_registration]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "call", "type_arg", "typeof_arg", "registers", "description"})
+        if language != "csharp":
+            raise _fail(origin, where, "service registrations are for C# packs")
+        if not t.get("call"):
+            raise _fail(origin, where, "needs call (the registering method's callee ids)")
+        for key in ("type_arg", "typeof_arg"):
+            v = t.get(key)
+            if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 0):
+                raise _fail(origin, f"{where}.{key}", "must be a position (0-based)")
+        registers = _strings(origin, f"{where}.registers", t.get("registers", []))
+        if t.get("type_arg") is None and t.get("typeof_arg") is None and not registers:
+            raise _fail(origin, where, "registers nothing: set type_arg, typeof_arg or registers")
+        pack.service_registrations.append(ServiceRegistration(
+            id=str(t.get("id", f"{name}-service-{i + 1}")), call=_strings(origin, f"{where}.call", t["call"]),
+            type_arg=t.get("type_arg"), typeof_arg=t.get("typeof_arg"), registers=registers,
+            description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("returns", [])):
         where = f"[[returns]] #{i + 1}"

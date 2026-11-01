@@ -159,6 +159,12 @@ def registration_vias(program, reg: Registration) -> List[str]:
             origin = origin_in_scope(program, reg.scope, f"{reg.root}.{reg.rest[0]}", imports=False)
             if origin:
                 vias.append(".".join((origin,) + reg.rest[1:]))
+    from .value_origins import typed_names
+    for via in vias[1:]:                                 # `WebApplication.CreateBuilder.Build.MapGet` is
+        for typed in typed_names(via, program.language or "",   # `WebApplication.MapGet`
+                                 getattr(program, "value_returns", None)):
+            if typed not in vias:
+                vias.append(typed)
     return vias
 
 

@@ -5,15 +5,45 @@ description = "ASP.NET Core Minimal APIs: the lambda / method passed to MapGet, 
 # No `detect`: a .NET 6+ Program.cs commonly has no using directives at all (implicit usings).
 
 # app.MapGet("/x", (string q, HttpRequest req) => ...): every bindable parameter comes from the
-# route, query string, headers or body. Services (DI), the HttpContext and value types are not data.
+# route, query string, headers or body. The Map* methods are extension methods of
+# IEndpointRouteBuilder (EndpointRouteBuilderExtensions), which the application (WebApplication) and
+# route groups (RouteGroupBuilder) implement; the receiver is known by its declared type or its value.
+# Services (DI), the HttpContext and value types are not data.
 [[entrypoint]]
 id = "minimal-api-handler"
-registered_via = ["*.MapGet", "*.MapPost", "*.MapPut", "*.MapDelete", "*.MapPatch", "*.MapMethods", "*.Map",
-                  "*.MapFallback"]
+registered_via = [
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapGet",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapPost",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapPut",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapDelete",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapPatch",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapMethods",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.Map",
+    "Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapFallback",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapGet",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapPost",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapPut",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapDelete",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapPatch",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapMethods",
+    "Microsoft.AspNetCore.Builder.WebApplication.Map",
+    "Microsoft.AspNetCore.Builder.WebApplication.MapFallback",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapGet",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapPost",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapPut",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapDelete",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapPatch",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapMethods",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.Map",
+    "Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapFallback"]
 params = "all"
-exclude_param_type = ["HttpContext", "*Context", "HttpResponse", "ILogger", "ILogger<*>", "I*Service", "I*Repository", "I*Context", "I*Manager", "I*Factory", "I*Provider",
-                      "I*Client", "I*Options*", "IConfiguration", "IWebHostEnvironment", "IHostEnvironment", "IMediator", "IMapper",
-                      "CancellationToken", "ClaimsPrincipal", "LinkGenerator", "*Service", "*Repository",
-                      "*Factory", "*Options", "int", "long", "short", "byte", "bool", "double", "float",
-                      "decimal", "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 tainted_param_type = ["HttpRequest", "Microsoft.AspNetCore.Http.HttpRequest"]

@@ -297,3 +297,57 @@
 "NHibernate.ISessionFactory.OpenStatelessSession" = "NHibernate.IStatelessSession"
 "System.IO.Compression.ZipFile.OpenRead" = "System.IO.Compression.ZipArchive"
 "System.IO.Compression.ZipFile.Open" = "System.IO.Compression.ZipArchive"
+# ASP.NET Core CORS (src/Middleware/CORS/src/PublicAPI.Shipped.txt): every CorsPolicyBuilder
+# configuration method returns the builder, so a chain stays one.
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.WithOrigins" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.WithHeaders" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.WithExposedHeaders" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.WithMethods" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.AllowCredentials" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.DisallowCredentials" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.AllowAnyOrigin" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.AllowAnyMethod" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.AllowAnyHeader" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.SetPreflightMaxAge" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.SetIsOriginAllowed" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.SetIsOriginAllowedToAllowWildcardSubdomains" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"
+
+# ASP.NET Core hosting and routing (src/DefaultBuilder/src, src/Http/Routing/src PublicAPI.Shipped.txt):
+# a minimal API's application and its route groups. MapGroup is an extension method of
+# IEndpointRouteBuilder, which WebApplication and RouteGroupBuilder implement; the endpoint
+# conventions (`RequireAuthorization<TBuilder>(this TBuilder)`) return the builder they are called on.
+"Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder" = "Microsoft.AspNetCore.Builder.WebApplicationBuilder"
+"Microsoft.AspNetCore.Builder.WebApplication.Create" = "Microsoft.AspNetCore.Builder.WebApplication"
+"Microsoft.AspNetCore.Builder.WebApplicationBuilder.Build" = "Microsoft.AspNetCore.Builder.WebApplication"
+"Microsoft.AspNetCore.Builder.WebApplication.MapGroup" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.IEndpointRouteBuilder.MapGroup" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.MapGroup" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.RequireAuthorization" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.AllowAnonymous" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.RequireCors" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.WithTags" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.WithMetadata" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.WithGroupName" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+"Microsoft.AspNetCore.Routing.RouteGroupBuilder.AddEndpointFilter" = "Microsoft.AspNetCore.Routing.RouteGroupBuilder"
+
+# Microsoft.Extensions.DependencyInjection: the application builder's service collection, and the
+# registration methods that return it (so `.AddScoped<A>().AddScoped<B>()` stays one).
+"Microsoft.AspNetCore.Builder.WebApplicationBuilder.Services" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddScoped" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddTransient" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddSingleton" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddDbContext" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddDbContextPool" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddCors" = "Microsoft.Extensions.DependencyInjection.IServiceCollection"
+
+# The parameters of the delegate a library method takes (`Action<CorsOptions>`): a lambda passed
+# at argument `arg` (as written; an extension method's `this` is the receiver) gets these types
+# for the parameters it does not declare. Ids are the receiver's type and the method, as the C#
+# frontend writes an extension method's call (`services.AddCors(...)` on an IServiceCollection).
+# WebApplication implements IApplicationBuilder (Microsoft.AspNetCore.Builder.WebApplication).
+[csharp.delegates]
+"Microsoft.Extensions.DependencyInjection.IServiceCollection.AddCors" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions"] }
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions.AddPolicy" = { arg = 1, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
+"Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions.AddDefaultPolicy" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
+"Microsoft.AspNetCore.Builder.IApplicationBuilder.UseCors" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
+"Microsoft.AspNetCore.Builder.WebApplication.UseCors" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }

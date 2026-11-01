@@ -305,6 +305,13 @@ class ProjectIndex:
             elif n.type == "identifier":
                 mod.java_mentions.add(_text(n))
             stack.extend(n.children)
+        from .dotnet_project import usings_for
+        project = usings_for(str(mod.path))             # the project's implicit and global usings
+        for ns in project.wildcards:
+            if self._CS + ns not in mod.java_wildcards:
+                mod.java_wildcards.append(self._CS + ns)
+        for alias, target in project.aliases.items():
+            mod.java_imports.setdefault(alias, self._CS + target)
 
     @staticmethod
     def _java_types_in(node: Any) -> List[Any]:
@@ -1542,6 +1549,12 @@ class ProjectContext:
         from frame.sil.registrations import link_openapi, link_settings
         link_openapi(ctx, index, packs_for)
         link_settings(ctx, index, packs_for)
+        csharp = [p for p in ctx.programs.values() if (p.language or "") == "csharp"]
+        if csharp:                                       # DI registrations in one file, handlers in another
+            from frame.sil.packs.apply import drop_service_parameters
+            services = set().union(*(getattr(p, "di_services", None) or set() for p in csharp))
+            for program in csharp:
+                drop_service_parameters(program, services)
         ctx.translators = {
             key: SILTranslator(program, verbose=verbose, ipa=ctx.ipa, file_key=key, project=ctx)
             for key, program in ctx.programs.items()}

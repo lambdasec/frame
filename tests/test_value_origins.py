@@ -83,7 +83,7 @@ def test_value_types_load_strictly(tmp_path):
     with pytest.raises(ValueError, match="maps call ids"):
         load(bad)
     bad.write_text('[python]\nother = {}\n')
-    with pytest.raises(ValueError, match="only returns, receivers and passes"):
+    with pytest.raises(ValueError, match="only returns, receivers, passes and delegates"):
         load(bad)
 
 

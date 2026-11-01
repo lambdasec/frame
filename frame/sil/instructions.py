@@ -607,6 +607,9 @@ class Call(Instr):
     # index -> ("json", exp) for an object / array literal a JSON-sending sink serialises, or
     # ("render", exp) for the data a template prints raw (packs.apply.finish_call_arguments).
     arg_forms: Optional[dict] = None
+    # The type arguments written on a generic method call (C# `services.AddScoped<IRepo, Repo>()`),
+    # as written; None when the call has none.
+    type_args: Optional[List[str]] = None
 
     def __str__(self) -> str:
         args_str = ", ".join(f"{e}" for e, t in self.args)

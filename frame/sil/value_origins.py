@@ -697,6 +697,7 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
 # -- what library calls return ------------------------------------------------------------------
 
 _PASSES: Dict[str, Dict[str, int]] = {}
+_DELEGATES: Dict[str, Dict[str, Tuple[int, Tuple[str, ...]]]] = {}
 
 
 def passes(language: str) -> Dict[str, int]:
@@ -705,18 +706,32 @@ def passes(language: str) -> Dict[str, int]:
     return _PASSES.get("javascript" if (language or "").lower() == "typescript" else (language or "").lower(), {})
 
 
+def delegate_params(language: str, call_id: str, arg: int) -> Tuple[str, ...]:
+    """The parameter types of the delegate a library call takes at argument `arg` (C#
+    `services.AddCors(options => ...)`: `CorsOptions`); empty when the data says nothing."""
+    load()
+    entry = _DELEGATES.get((language or "").lower(), {}).get(call_id)
+    return entry[1] if entry is not None and entry[0] == arg else ()
+
+
 @lru_cache(maxsize=None)
 def load(path: Path = PATH) -> Dict[str, Tuple[Dict[str, str], Dict[str, Tuple[str, ...]]]]:
     """language -> (call id -> returned type, type or class -> spec receiver names)."""
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     out = {}
     for lang, table in data.items():
-        if not isinstance(table, dict) or set(table) - {"returns", "receivers", "passes"}:
-            raise ValueError(f"{Path(path).name}: [{lang}] holds only returns, receivers and passes")
+        if not isinstance(table, dict) or set(table) - {"returns", "receivers", "passes", "delegates"}:
+            raise ValueError(f"{Path(path).name}: [{lang}] holds only returns, receivers, passes and delegates")
         passes = table.get("passes", {})
         if not all(isinstance(k, str) and isinstance(v, int) and v >= 0 for k, v in passes.items()):
             raise ValueError(f"{Path(path).name}: [{lang}.passes] maps call ids to the argument they return")
         _PASSES[lang] = dict(passes)
+        delegates = table.get("delegates", {})
+        if not all(isinstance(v, dict) and set(v) == {"arg", "params"} and isinstance(v["arg"], int)
+                   and v["arg"] >= 0 and isinstance(v["params"], list) and v["params"]
+                   and all(isinstance(t, str) and t for t in v["params"]) for v in delegates.values()):
+            raise ValueError(f"{Path(path).name}: [{lang}.delegates] maps call ids to {{arg, params}}")
+        _DELEGATES[lang] = {k: (v["arg"], tuple(v["params"])) for k, v in delegates.items()}
         returns, receivers = table.get("returns", {}), table.get("receivers", {})
         if not all(isinstance(k, str) and isinstance(v, str) and v for k, v in returns.items()):
             raise ValueError(f"{Path(path).name}: [{lang}.returns] maps call ids to a type name")
@@ -795,5 +810,5 @@ def typed_names(canonical: str, language: str, extra: Optional[Dict[str, str]] =
     return [f"{typ}.{method}"] + [f"{r}.{method}" for r in receivers.get(typ, ())]
 
 
-__all__ = ["annotate", "by_name", "load", "origin_in_scope", "same_file_parameter_origins", "stand_ins",
+__all__ = ["annotate", "by_name", "delegate_params", "load", "origin_in_scope", "same_file_parameter_origins", "stand_ins",
            "typed_names"]

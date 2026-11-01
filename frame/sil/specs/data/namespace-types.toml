@@ -50,7 +50,10 @@
 "Microsoft.AspNetCore.Mvc" = ["Controller", "ControllerBase", "IUrlHelper", "RedirectResult", "LocalRedirectResult",
                               "ContentResult"]
 "Microsoft.AspNetCore.Mvc.RazorPages" = ["PageModel"]
-"Microsoft.AspNetCore.Cors.Infrastructure" = ["CorsPolicyBuilder"]
+"Microsoft.AspNetCore.Cors.Infrastructure" = ["CorsPolicyBuilder", "CorsOptions", "CorsPolicy"]
+"Microsoft.Extensions.DependencyInjection" = ["IServiceCollection"]
+"Microsoft.AspNetCore.Builder" = ["IApplicationBuilder", "WebApplication", "WebApplicationBuilder", "RouteHandlerBuilder"]
+"Microsoft.AspNetCore.Routing" = ["IEndpointRouteBuilder", "RouteGroupBuilder"]
 "Npgsql" = ["NpgsqlConnection"]
 "MySql.Data.MySqlClient" = ["MySqlConnection"]
 "MySqlConnector" = ["MySqlConnection"]

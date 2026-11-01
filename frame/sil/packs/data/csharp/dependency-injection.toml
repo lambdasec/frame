@@ -1,0 +1,38 @@
+[pack]
+name = "dependency-injection"
+language = "csharp"
+description = "Microsoft.Extensions.DependencyInjection: the services an app registers, which handlers receive from the container"
+# No `detect`: every entry names the registering method by its id.
+
+# A handler parameter whose type the app registers is filled by the container, not bound from the
+# request (minimal APIs, API controllers since .NET 7, SignalR hub methods: entry points with
+# `exclude_services`). The ids are the receiver type and the method, as the C# frontend names an
+# extension method's call. The service is TService, the first type argument, or the first
+# argument's `typeof(T)` (dotnet/runtime v8.0.0 ServiceCollectionServiceExtensions and
+# ServiceCollectionDescriptorExtensions).
+[[service_registration]]
+id = "service-lifetimes"
+call = ["Microsoft.Extensions.DependencyInjection.IServiceCollection.AddScoped",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.AddTransient",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.AddSingleton",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.TryAddScoped",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.TryAddTransient",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.TryAddSingleton"]
+type_arg = 0
+typeof_arg = 0
+
+# Entity Framework Core (EntityFrameworkServiceCollectionExtensions): AddDbContext<TContext> and
+# AddDbContextPool<TContext> register the context.
+[[service_registration]]
+id = "ef-core-context"
+call = ["Microsoft.Extensions.DependencyInjection.IServiceCollection.AddDbContext",
+        "Microsoft.Extensions.DependencyInjection.IServiceCollection.AddDbContextPool"]
+type_arg = 0
+
+# Microsoft.Extensions.Http (HttpClientFactoryServiceCollectionExtensions): every AddHttpClient
+# registers IHttpClientFactory; AddHttpClient<TClient> also registers the typed client TClient.
+[[service_registration]]
+id = "http-client-factory"
+call = ["Microsoft.Extensions.DependencyInjection.IServiceCollection.AddHttpClient"]
+type_arg = 0
+registers = ["IHttpClientFactory"]

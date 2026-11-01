@@ -1108,11 +1108,6 @@ is_sink = "cors"
 description = "CORS enabled (CWE-942)"
 
 [[spec]]
-name = "AllowAnyOrigin"
-is_sink = "cors"
-description = "CORS any origin (CWE-942)"
-
-[[spec]]
 name = "WithOrigins"
 is_sink = "cors"
 description = "CORS origins (CWE-942)"

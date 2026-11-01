@@ -121,9 +121,18 @@ class CSharpFrontend:
         program.syntax_error_line = first_syntax_error_line(tree.root_node)
 
         self._imports, self._local_types = self._collect_declarations(tree.root_node)
+        from frame.sil.dotnet_project import usings_for
+        project = usings_for(filename)                  # implicit and global usings of the .csproj
+        for ns in project.wildcards:
+            if ns not in self._imports.wildcards:
+                self._imports.wildcards.append(ns)
+        for alias, target in project.aliases.items():
+            if self._imports.resolve(alias) is None:
+                self._imports.bind(alias, target)
         program.imports = self._imports.as_dict()
         self._proc_types = {}
         self._hoisted = {}
+        self._scopes: List[Tuple[int, int, Procedure]] = []    # (start, end, procedure): registrations' scope
 
         self._translate_compilation_unit(tree.root_node, program)
         self._record_method_group_registrations(tree.root_node, program)
@@ -227,6 +236,7 @@ class CSharpFrontend:
     def _annotate_calls(self, program: Program) -> None:
         """Fill `Call.canonical` from the receiver's declared type (C# calls carry no
         receiver type of their own; nothing else reads what is computed here)."""
+        from frame.sil.value_origins import typed_names
         for proc in program.procedures.values():
             types = {**self._class_fields_of.get(proc.class_name or "", {}),
                      **self._proc_types.get(id(proc), {})}
@@ -239,6 +249,14 @@ class CSharpFrontend:
                     if not isinstance(instr, Call) or instr.canonical is not None:
                         continue
                     func = str(getattr(instr.func, "value", instr.func))
+                    built = re.match(r"new ([A-Za-z_][\w.]*)\s*\([^()]*\)\.(.+)$", func)
+                    if built:                                     # `new CorsPolicyBuilder().AllowAnyOrigin()`
+                        q = qualify_type("csharp", built.group(1), self._imports, self._local_types)
+                        chain = built.group(2)
+                        if q and q not in self._local_types.values() and \
+                                ("." not in chain or typed_names(f"{q}.{chain}", "csharp")):
+                            instr.canonical = f"{q}.{chain}"
+                        continue
                     head, dot, rest = func.partition(".")
                     receiver = None
                     if not dot:
@@ -260,6 +278,10 @@ class CSharpFrontend:
                         lib = self._library_base(program, types[head], rest.split(".", 1)[0])
                         if lib:
                             instr.canonical = f"{lib}.{rest}"
+                            continue
+                        q = qualify_type("csharp", types[head], self._imports, self._local_types)
+                        if q and typed_names(f"{q}.{rest}", "csharp"):
+                            instr.canonical = f"{q}.{rest}"          # `policy.AllowAnyHeader().AllowAnyOrigin()`
                             continue
                     elif head[:1].isupper() and qualify_type("csharp", head, self._imports, self._local_types):
                         q = qualify_type("csharp", head, self._imports, self._local_types)
@@ -365,6 +387,7 @@ class CSharpFrontend:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}.{proc.name}"
                         program.add_procedure(proc)
+                        self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
                 elif child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                     # a nested type: its members belong to Outer.Inner
@@ -379,6 +402,7 @@ class CSharpFrontend:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}..ctor"
                         program.add_procedure(proc)
+                        self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
                 elif child.type == "property_declaration":
                     # Properties can have getters/setters
@@ -633,15 +657,49 @@ class CSharpFrontend:
                         if p.name == text or p.name.endswith("." + text)]
                 if len(hits) != 1:
                     continue
-                callee = callee or self._get_method_name(n)
-                if callee and callee not in hits[0].registered_via:
-                    hits[0].registered_via.append(callee)
+                arg_index = [c for c in args.children if c.type == "argument"].index(a) if a.type == "argument" else 0
+                self._register(n, arg_index, hits[0], self._scope_of(n), program)
+
+    def _scope_of(self, node: TSNode) -> Optional[Procedure]:
+        """The innermost procedure translated from source enclosing `node`."""
+        inside = [(e - b, p) for b, e, p in self._scopes if b <= node.start_byte and node.end_byte <= e]
+        return min(inside, key=lambda t: t[0])[1] if inside else None
+
+    def _register(self, call: TSNode, arg_index: int, target: Procedure, scope: Optional[Procedure],
+                  program: Program) -> None:
+        """`app.MapGet("/x", handler)`: the handler is registered with the call as written, with
+        the receiver's declared type (`IEndpointRouteBuilder.MapGet`), and, once value origins are
+        known, with the receiver's origin (`registrations.refresh_registered_via`)."""
+        from frame.sil.registrations import Registration
+        callee = self._get_method_name(call)
+        if not callee:
+            return
+        vias = [callee] + (self._call_ids(callee, scope) if scope is not None else [])
+        for via in vias:
+            if via not in target.registered_via:
+                target.registered_via.append(via)
+        parts = callee.split(".")
+        if scope is not None and len(parts) > 1 and all(x.isidentifier() for x in parts):
+            program.registrations.append(Registration(
+                scope=scope.name, callee_text=callee, root=parts[0], rest=tuple(parts[1:]),
+                arg_index=arg_index, target=target.name))
 
     def _translate_lambdas(self, owner_node: TSNode, owner: Procedure, program: Program) -> None:
         owner_types = self._proc_types.get(id(owner), {})
         for lam, call in self._lambda_args(owner_node):
-            proc = self._translate_lambda(lam, call, owner.name, owner.class_name, owner_types, program)
+            delegate = self._delegate_types(lam, call, owner)
+            proc = self._translate_lambda(lam, call, owner.name, owner.class_name, owner_types, program, delegate)
             if proc is not None:
+                positions = [c for c in (call.child_by_field_name("arguments").children
+                                         if call.child_by_field_name("arguments") is not None else ())
+                             if c.type == "argument"]
+                proc.registered_via = []
+                saved, owner.class_name = owner.class_name, owner.class_name or self._current_class
+                try:
+                    self._register(call, positions.index(lam.parent) if lam.parent in positions else 0,
+                                   proc, owner, program)
+                finally:
+                    owner.class_name = saved
                 # the enclosing variables the lambda reads: attacker data they hold reaches its body
                 proc.parent = owner.name
                 body = lam.child_by_field_name("body") or lam
@@ -650,8 +708,26 @@ class CSharpFrontend:
                 proc.captures = sorted(enclosing & used)
                 self._translate_lambdas(lam, proc, program)
 
+    def _delegate_types(self, lam: TSNode, call: TSNode, owner: Procedure) -> Tuple[str, ...]:
+        """The parameter types the library method a lambda is passed to gives it
+        (`services.AddCors(options => ...)`: CorsOptions; value-types.toml `[csharp.delegates]`)."""
+        from frame.sil.value_origins import delegate_params
+        args = call.child_by_field_name("arguments")
+        positions = [a for a in (args.children if args is not None else ()) if a.type == "argument"]
+        if lam.parent not in positions:
+            return ()
+        arg = positions.index(lam.parent)
+        saved = owner.class_name
+        owner.class_name = owner.class_name or self._current_class
+        try:
+            ids = self._call_ids(self._get_method_name(call) or "", owner)
+        finally:
+            owner.class_name = saved
+        return next((t for t in (delegate_params("csharp", i, arg) for i in ids) if t), ())
+
     def _translate_lambda(self, lam: TSNode, call: TSNode, owner_name: str, class_name: Optional[str],
-                          outer_types: Dict[str, str], program: Program) -> Optional[Procedure]:
+                          outer_types: Dict[str, str], program: Program,
+                          delegate: Tuple[str, ...] = ()) -> Optional[Procedure]:
         params: List[Tuple[PVar, Typ]] = []
         ptypes: Dict[str, str] = {}
         pann: Dict[str, list] = {}
@@ -676,6 +752,8 @@ class CSharpFrontend:
                     tn = prm.child_by_field_name("type")
                     if tn is not None:
                         ptypes[pname] = self._get_text(tn).split("<")[0].rstrip("?").strip()
+        for (pv, _), typ in zip(params, delegate):         # the types the delegate gives undeclared ones
+            ptypes.setdefault(pv.name, typ)
         base = f"{owner_name}.lambda_L{lam.start_point[0] + 1}"
         name = base
         if program.has_procedure(name):
@@ -689,7 +767,7 @@ class CSharpFrontend:
         callee = self._get_method_name(call)
         proc.registered_via = [callee] if callee else []
         proc.has_varargs = False
-        types = {**outer_types, **self._declared_types(lam)}
+        types = {**outer_types, **ptypes, **self._declared_types(lam)}
         self._proc_types[id(proc)] = types
         saved_xml = self._xml_flags
         self._xml_flags = self._collect_xml_flags(lam)
@@ -716,6 +794,7 @@ class CSharpFrontend:
         self._current_proc, self._current_node, self._node_counter = saved
         self._xml_flags = saved_xml
         program.add_procedure(proc)
+        self._scopes.append((lam.start_byte, lam.end_byte, proc))
         return proc
 
     def _translate_lambda_expression_body(self, body: TSNode) -> None:
@@ -760,6 +839,7 @@ class CSharpFrontend:
         self._current_proc = None
         program.add_procedure(proc)
         for gs in statements:
+            self._scopes.append((gs.start_byte, gs.end_byte, proc))
             self._translate_lambdas(gs, proc, program)
 
     def _has_params_array(self, node: TSNode) -> bool:
@@ -1524,7 +1604,8 @@ class CSharpFrontend:
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(method_name),
             args=args_exp,
-            kwarg_names=self._named_arg_names(call_node)
+            kwarg_names=self._named_arg_names(call_node),
+            type_args=self._type_args(call_node),
         )
         instrs.append(call_instr)
         instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret_id)))
@@ -1663,7 +1744,8 @@ class CSharpFrontend:
                 instrs.append(Call(loc=loc, ret=None, func=ExpConst.string(name),
                                    args=[(self._translate_expression(a), Typ.unknown_type())
                                          for a in self._get_method_args(recv)],
-                                   kwarg_names=self._named_arg_names(recv)))
+                                   kwarg_names=self._named_arg_names(recv),
+                                   type_args=self._type_args(recv)))
                 spec = self._lookup_spec(name)
                 if spec and spec.is_taint_sink():
                     kind = resolve_sink_kind(spec.is_sink)
@@ -1702,7 +1784,8 @@ class CSharpFrontend:
             ret=None,
             func=ExpConst.string(method_name),
             args=args_exp,
-            kwarg_names=self._named_arg_names(call_node)
+            kwarg_names=self._named_arg_names(call_node),
+            type_args=self._type_args(call_node),
         )
         instrs.append(call_instr)
 
@@ -2069,6 +2152,11 @@ class CSharpFrontend:
         if node.type == "identifier":
             return ExpVar(PVar(self._get_text(node)))
 
+        elif node.type == "typeof_expression":
+            # `typeof(T)`: a constant naming a type (DI registrations read it, packs.apply._typeof_type)
+            t = node.child_by_field_name("type") or next((c for c in node.named_children), None)
+            return ExpCall(ExpConst.string("typeof"), [ExpConst.string(self._get_text(t) if t is not None else "")])
+
         elif node.type in ("integer_literal", "real_literal"):
             text = self._get_text(node)
             try:
@@ -2245,12 +2333,13 @@ class CSharpFrontend:
     # Helpers
     # =========================================================================
 
-    def _call_ids(self, func: str) -> List[str]:
-        """While translating: the ids a call written `func` has (the receiver's declared type, or
-        the library base a member is inherited from), with the typed names they reach
-        (`Url.IsLocalUrl` in a Controller: `Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl`)."""
+    def _call_ids(self, func: str, proc: Optional[Procedure] = None) -> List[str]:
+        """While translating: the ids a call written `func` in `proc` (default: the procedure being
+        translated) has (the receiver's declared type, or the library base a member is inherited
+        from), with the typed names they reach (`Url.IsLocalUrl` in a Controller:
+        `Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl`)."""
         from frame.sil.value_origins import typed_names
-        proc, program = self._current_proc, getattr(self, "_program", None)
+        proc, program = proc or self._current_proc, getattr(self, "_program", None)
         if proc is None or program is None or "." not in func:
             return []
         head, rest = func.split(".", 1)
@@ -2335,6 +2424,15 @@ class CSharpFrontend:
             return self._strip_generics(self._get_text(expr))
 
         return ""
+
+    def _type_args(self, call_node: TSNode) -> Optional[List[str]]:
+        """`AddScoped<IRepo, Repo>()`: the type arguments of a generic method call, as written."""
+        func = call_node.child_by_field_name("function")
+        name = func.child_by_field_name("name") if func is not None and func.type == "member_access_expression" else func
+        if name is None or name.type != "generic_name":
+            return None
+        targs = next((c for c in name.children if c.type == "type_argument_list"), None)
+        return [self._get_text(t) for t in targs.named_children] if targs is not None else None
 
     def _strip_generics(self, name: str) -> str:
         """`conn.Query<Product>` names the method `conn.Query`: type arguments do not select a spec."""

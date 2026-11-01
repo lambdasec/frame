@@ -10,7 +10,7 @@ id = "mvc5-action"
 extends = ["Controller", "ApiController", "System.Web.Mvc.Controller", "System.Web.Http.ApiController"]
 method = ["*"]
 params = "all"
-exclude_param_type = ["CancellationToken", "*Context", "*Service", "*Repository",
+exclude_param_type = ["CancellationToken",
                       "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
                       "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
 
@@ -60,7 +60,7 @@ modifiers = ["public"]
 exclude_modifiers = ["static"]
 exclude_decorator = ["NonAction", "NonActionAttribute", "System.Web.Mvc.NonAction*", "System.Web.Http.NonAction*"]
 params = "all"
-exclude_param_type = ["CancellationToken", "*Context", "*Service", "*Repository",
+exclude_param_type = ["CancellationToken",
                       "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
                       "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
 

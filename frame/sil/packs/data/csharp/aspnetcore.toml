@@ -13,9 +13,15 @@ extends = ["ControllerBase", "Controller", "Microsoft.AspNetCore.Mvc.ControllerB
            "Microsoft.AspNetCore.Mvc.Controller"]
 annotation = ["Http*", "Route", "AcceptVerbs", "Microsoft.AspNetCore.Mvc.Http*"]
 params = "all"
-exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
-                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
-                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 # Conventional actions: ASP.NET Core treats a class as a controller when its name ends in
 # "Controller", it derives from such a class, or it carries [Controller]; every public, non-static
@@ -30,9 +36,15 @@ modifiers = ["public"]
 exclude_modifiers = ["static"]
 exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
 params = "all"
-exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
-                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
-                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 [[entrypoint]]
 id = "mvc-derived-controller-action"
@@ -43,9 +55,15 @@ modifiers = ["public"]
 exclude_modifiers = ["static"]
 exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
 params = "all"
-exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
-                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
-                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 [[entrypoint]]
 id = "mvc-attributed-controller-action"
@@ -57,9 +75,15 @@ modifiers = ["public"]
 exclude_modifiers = ["static"]
 exclude_decorator = ["NonAction", "NonActionAttribute", "Microsoft.AspNetCore.Mvc.NonAction*"]
 params = "all"
-exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
-                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
-                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 # Explicit binding attributes are attacker data wherever they appear (any class: model binding
 # fills a [From*] parameter whatever the controller derives from, POCO controllers included).
@@ -68,7 +92,9 @@ id = "mvc-bound-parameter"
 method = ["*"]
 params = "annotated"
 param_annotation = ["FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeader",
-                    "Microsoft.AspNetCore.Mvc.From*"]
+                    "Microsoft.AspNetCore.Mvc.FromQuery*", "Microsoft.AspNetCore.Mvc.FromRoute*",
+                    "Microsoft.AspNetCore.Mvc.FromBody*", "Microsoft.AspNetCore.Mvc.FromForm*",
+                    "Microsoft.AspNetCore.Mvc.FromHeader*"]
 
 # Razor Pages: handler methods (OnGet, OnPostLogin, OnGetExport...) take route / query / form values as
 # parameters, and [BindProperty] / [From*] properties are filled from the request before the handler runs.
@@ -79,9 +105,15 @@ method = ["On[A-Z]*"]
 params = "all"
 fields = "annotated"
 field_annotation = ["BindProperty*", "From*", "TempData*", "*.BindProperty*", "*.From*", "*.TempData*"]
-exclude_param_type = ["ILogger<*>", "CancellationToken", "*Context", "*Service", "*Repository",
-                      "int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
-                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_param_type = ["HttpContext", "HttpResponse", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 # [BindProperties] on a page model binds every public settable property.
 [[entrypoint]]
@@ -97,8 +129,15 @@ id = "signalr-hub-method"
 extends = ["Hub", "Hub<*>", "DynamicHub", "Microsoft.AspNetCore.SignalR.Hub", "Microsoft.AspNetCore.SignalR.Hub<*>"]
 method = ["*"]
 params = "all"
-exclude_param_type = ["Exception", "CancellationToken", "int", "long", "short", "byte", "bool", "double", "float",
-                      "decimal", "char", "Guid", "DateTime", "DateTimeOffset", "TimeSpan"]
+exclude_param_type = ["Exception", "HttpContext", "CancellationToken", "ClaimsPrincipal", "ILogger",
+                      "ILogger<*>", "ILoggerFactory", "IConfiguration", "IWebHostEnvironment",
+                      "IHostEnvironment", "IHostApplicationLifetime", "IServiceProvider",
+                      "IOptions<*>", "IHttpContextFactory", "LinkGenerator", "int", "long", "short",
+                      "byte", "bool", "double", "float", "decimal", "char", "Guid", "DateTime",
+                      "DateTimeOffset", "TimeSpan"]
+exclude_services = true
+exclude_param_annotation = ["FromServices", "FromKeyedServices", "Microsoft.AspNetCore.Mvc.FromServices*",
+                            "Microsoft.Extensions.DependencyInjection.FromKeyedServices*"]
 
 # Blazor components: [Parameter] / [SupplyParameterFromQuery] / [CascadingParameter] properties are set from
 # the URL, the query string or a parent component, before the lifecycle methods run.
@@ -157,9 +196,11 @@ kinds = ["xss"]
 call = ["Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl", "Microsoft.AspNetCore.Mvc.IUrlHelper.Content"]
 kinds = ["redirect"]
 
-# CORS: AllowAnyOrigin() on a policy lets any site call the API with the user's credentials.
+# CORS: AllowAnyOrigin() on a policy lets any site call the API with the user's credentials. The
+# builder is the parameter of the lambda `AddPolicy` / `AddDefaultPolicy` / `UseCors` take
+# (value-types.toml `[csharp.delegates]`), or one the code constructs.
 [[sink]]
-name = ["AllowAnyOrigin"]
+call = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.AllowAnyOrigin"]
 args = []
 kind = "cors"
 description = "CORS policy that allows any origin"

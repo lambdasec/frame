@@ -309,7 +309,15 @@ namespace App.Data
 ''',
 })
 
-# 5 -- minimal API calling a static helper
+# 5 -- minimal API calling a static helper. Program.cs has no using for ASP.NET Core: the Web SDK's
+# implicit usings (the project file) bring WebApplication in.
+_MIN_PROJECT = '''<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>
+'''
 _MIN_PROGRAM = '''using App.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -320,6 +328,7 @@ app.MapGet("/users", (string name) => Users.Find(name));
 app.Run();
 '''
 case("minimal_api_static_helper", {
+    "App.csproj": _MIN_PROJECT,
     "Program.cs": _MIN_PROGRAM,
     "Data/Users.cs": '''using System.Data.SqlClient;
 
@@ -338,6 +347,7 @@ namespace App.Data
 }
 ''',
 }, {
+    "App.csproj": _MIN_PROJECT,
     "Program.cs": _MIN_PROGRAM,
     "Data/Users.cs": '''using System.Data.SqlClient;
 

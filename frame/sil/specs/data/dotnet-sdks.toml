@@ -1,0 +1,23 @@
+# The namespaces a .NET SDK imports into every C# file of a project with `<ImplicitUsings>` set to
+# `enable` or `true` (frame/sil/dotnet_project.py). From dotnet/sdk v8.0.100:
+#   src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.Sdk.CSharp.props (every SDK),
+#   src/WebSdk/Web/Targets/Sdk.Server.props (Microsoft.NET.Sdk.Web),
+#   src/WebSdk/Worker/Targets/Microsoft.NET.Sdk.Worker.props (Microsoft.NET.Sdk.Worker),
+#   src/BlazorWasmSdk/Sdk/Sdk.props (Microsoft.NET.Sdk.BlazorWebAssembly).
+# `System.Net.Http` is conditioned there on a target framework other than .NET Framework, which
+# implicit usings (.NET 6 and later) always are. Each SDK lists its own additions; `base` is added
+# for every SDK named here.
+
+base = ["System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
+        "System.Threading", "System.Threading.Tasks"]
+
+[sdk]
+"Microsoft.NET.Sdk" = []
+"Microsoft.NET.Sdk.Web" = ["System.Net.Http.Json", "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting",
+                           "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing",
+                           "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection",
+                           "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging"]
+"Microsoft.NET.Sdk.Worker" = ["Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection",
+                              "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging"]
+"Microsoft.NET.Sdk.BlazorWebAssembly" = ["Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection",
+                                         "Microsoft.Extensions.Logging"]

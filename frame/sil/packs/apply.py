@@ -745,6 +745,74 @@ def _route_variables(e: Entrypoint, proc: Procedure) -> Optional[Set[str]]:
     return None
 
 
+def _simple_type(name: str) -> str:
+    """`Shop.Data.IRepository<Order>` -> `IRepository`: a type as written, without namespace or arguments."""
+    return name.split("<", 1)[0].strip().rstrip("?").rsplit(".", 1)[-1]
+
+
+def _typeof_type(exp) -> Optional[str]:
+    """The type a C# `typeof(T)` argument names, as the frontend lowers it."""
+    from ..types import ExpCall as _ExpCall
+    if isinstance(exp, _ExpCall) and getattr(exp.func, "value", None) == "typeof" and len(exp.args) == 1:
+        return getattr(exp.args[0], "value", None) or None
+    return None
+
+
+def registered_services(program: Program, packs: Sequence[Pack]) -> Set[str]:
+    """The DI service types the program's calls register (`[[service_registration]]`), simple names."""
+    regs = [r for p in packs for r in getattr(p, "service_registrations", ())]
+    if not regs:
+        return set()
+    from ..value_origins import typed_names
+    patterns = [(re.compile(_glob_to_regex(g)), r) for r in regs for g in r.call]
+    out: Set[str] = set()
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                if not isinstance(instr, Call) or not instr.canonical:
+                    continue
+                ids = [instr.canonical] + typed_names(instr.canonical, program.language or "",
+                                                      getattr(program, "value_returns", None))
+                for rx, r in patterns:
+                    if not any(rx.fullmatch(i) for i in ids):
+                        continue
+                    out.update(_simple_type(t) for t in r.registers)
+                    if r.type_arg is not None and instr.type_args and r.type_arg < len(instr.type_args):
+                        out.add(_simple_type(instr.type_args[r.type_arg]))
+                    if r.typeof_arg is not None and r.typeof_arg < len(instr.args):
+                        named = _typeof_type(instr.args[r.typeof_arg][0])
+                        if named:
+                            out.add(_simple_type(named))
+    return out
+
+
+def _is_service(program: Program, proc: Procedure, name: str) -> bool:
+    written = proc.param_types.get(name)
+    services = (getattr(program, "di_services", None) or set()) | (getattr(program, "project_services", None) or set())
+    return bool(written) and _simple_type(written) in services
+
+
+def drop_service_parameters(program: Program, services: Set[str]) -> None:
+    """Project step (C#): the services the whole project registers. A handler parameter of such a
+    type, which an `exclude_services` entry point tainted before the registrations in other files
+    were known, is the container's value, not the request's."""
+    program.project_services = set(services)
+    entries = {f"{p.name}:{e.id}" for p in (getattr(program, "active_packs", None) or ())
+               for e in p.entrypoints if e.exclude_services}
+    if not entries:
+        return
+    for proc in program.procedures.values():
+        if not entries & set(proc.entry_kinds):
+            continue
+        entry = proc.nodes.get(proc.entry_node)
+        if entry is None:
+            continue
+        params = {pv.name for pv, _ in proc.params}
+        entry.instrs = [i for i in entry.instrs
+                        if not (isinstance(i, TaintSource) and str(i.var) in params
+                                and "entry point" in (i.description or "") and _is_service(program, proc, str(i.var)))]
+
+
 def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: ImportTable) -> List[str]:
     """What an entry point taints of a procedure: parameter names, and for a destructuring
     parameter (`$argN`, `Procedure.param_patterns`) either the whole parameter or, when names
@@ -769,6 +837,11 @@ def _entry_params(e: Entrypoint, proc: Procedure, program: Program, table: Impor
         if n in _IMPLICIT_RECEIVERS or (pattern is None and _glob(e.exclude_param, n)):
             continue
         if _param_type_matches(program, table, proc, n, e.exclude_param_type):
+            continue
+        if e.exclude_services and _is_service(program, proc, n):
+            continue                                     # the container's value (a registered service)
+        if e.exclude_param_annotation and any(_glob(e.exclude_param_annotation, a.name, a.canonical)
+                                              for a in proc.param_annotations.get(n, ())):
             continue
         take = False
         if _param_type_matches(program, table, proc, n, e.tainted_param_type):
@@ -984,6 +1057,7 @@ def finish_program(program: Program, packs: Optional[PackSet] = None,
     from ..registrations import refresh_registered_via
     refresh_registered_via(program)
     _apply_rules(program, active)
+    program.di_services = registered_services(program, active)
     finish_call_arguments(program)
     _apply_property_sinks(program, active)
     _apply_nested_call_sinks(program, active)
