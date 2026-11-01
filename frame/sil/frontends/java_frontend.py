@@ -1823,8 +1823,8 @@ class JavaFrontend:
         imported = self._imports.names.get(simple)
         if imported is not None:
             return self._same_project_package(imported.rsplit(".", 1)[0])
-        if self._spec_receivers & set(type_spec_receivers(simple)):
-            return False                                   # a library type the specs know by name
+        if self._spec_receivers & (set(type_spec_receivers(simple)) - {"Object"}):
+            return False                                   # a library type the specs know by name (every class is an Object)
         return not self._imports.wildcards or all(
             self._same_project_package(w) for w in self._imports.wildcards)
 
@@ -1849,11 +1849,7 @@ class JavaFrontend:
         spec = self.specs.get(method_name) or self.specs.get(_without_package(method_name))
         if spec and (_names_a_class(method_name) or not _source_or_sink(spec)):
             return spec
-        if '.' in method_name:
-            spec = self.specs.get(method_name.rsplit('.', 1)[1])
-            if spec and not _source_or_sink(spec):
-                return spec
-        return None
+        return None                      # a method name alone names no library row
 
     def _translate_call_assignment(
         self,

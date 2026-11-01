@@ -77,4 +77,8 @@ def type_spec_receivers(type_name: str) -> tuple:
     own = (type_name, decap) + JAVA_TYPE_RECEIVERS.get(type_name, ())
     for parent in JAVA_SUPERTYPES.get(type_name, ()):     # rows written on the declaring supertype
         own += tuple(r for r in type_spec_receivers(parent) if r not in own)
+    if "." in type_name:                                  # a nested type (`Map.Entry`) by its own name too
+        own += tuple(r for r in type_spec_receivers(type_name.rsplit(".", 1)[-1]) if r not in own)
+    if type_name != "Object" and "Object" not in own:     # every class is an Object (JLS 4.3.2)
+        own += ("Object",)
     return own

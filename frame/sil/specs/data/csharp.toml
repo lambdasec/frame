@@ -299,42 +299,42 @@ is_sink = "sql"
 description = "FullTextSqlQuery (SQL injection CWE-89)"
 
 [[spec]]
-name = "FromSqlInterpolated"
+name = "RelationalQueryableExtensions.FromSqlInterpolated"
 taint_propagates = [0]
 description = "EF FromSqlInterpolated (parameterized)"
 
 [[spec]]
-name = "ExecuteSqlInterpolated"
+name = "RelationalDatabaseFacadeExtensions.ExecuteSqlInterpolated"
 taint_propagates = [0]
 description = "EF ExecuteSqlInterpolated (parameterized)"
 
 [[spec]]
-name = "Where"
+name = "Enumerable.Where"
 taint_propagates = [0]
 description = "EF LINQ Where"
 
 [[spec]]
-name = "Select"
+name = "Enumerable.Select"
 taint_propagates = [0]
 description = "EF LINQ Select"
 
 [[spec]]
-name = "FirstOrDefault"
+name = "Enumerable.FirstOrDefault"
 taint_propagates = [0]
 description = "EF LINQ FirstOrDefault"
 
 [[spec]]
-name = "SingleOrDefault"
+name = "Enumerable.SingleOrDefault"
 taint_propagates = [0]
 description = "EF LINQ SingleOrDefault"
 
 [[spec]]
-name = "ToList"
+name = "Enumerable.ToList"
 taint_propagates = [0]
 description = "EF LINQ ToList"
 
 [[spec]]
-name = "ToListAsync"
+name = "EntityFrameworkQueryableExtensions.ToListAsync"
 taint_propagates = [0]
 description = "EF LINQ ToListAsync"
 
@@ -1243,21 +1243,6 @@ taint_propagates = [0]
 description = "Cookie options"
 
 [[spec]]
-name = "HttpOnly"
-taint_propagates = [0]
-description = "HttpOnly flag"
-
-[[spec]]
-name = "Secure"
-taint_propagates = [0]
-description = "Secure flag"
-
-[[spec]]
-name = "SameSite"
-taint_propagates = [0]
-description = "SameSite flag"
-
-[[spec]]
 name = "SessionOptions"
 taint_propagates = [0]
 description = "Session options"
@@ -1289,19 +1274,9 @@ is_sink = "exception"
 description = "Fail fast (CWE-705)"
 
 [[spec]]
-name = "finally"
-taint_propagates = [0]
-description = "Finally block"
-
-[[spec]]
 name = "IDisposable"
 taint_propagates = [0]
 description = "Disposable pattern"
-
-[[spec]]
-name = "using"
-taint_propagates = [0]
-description = "Using statement"
 
 [[spec]]
 name = "Dispose"
@@ -1342,26 +1317,6 @@ description = "Content result"
 name = "ObjectResult"
 taint_propagates = [0]
 description = "Object result"
-
-[[spec]]
-name = "X-Frame-Options"
-taint_propagates = [0]
-description = "X-Frame-Options header"
-
-[[spec]]
-name = "X-Content-Type-Options"
-taint_propagates = [0]
-description = "X-Content-Type-Options header"
-
-[[spec]]
-name = "Content-Security-Policy"
-taint_propagates = [0]
-description = "CSP header"
-
-[[spec]]
-name = "Strict-Transport-Security"
-taint_propagates = [0]
-description = "HSTS header"
 
 [[spec]]
 name = "Response.Headers.Add"

@@ -55,3 +55,12 @@ def test_a_package_qualified_call_and_a_constructed_value_have_ids():
            for i in n.instrs if type(i).__name__ == "Call"}
     assert ids["org.acme.Db.TEMPLATE.query"] == "org.acme.Db.TEMPLATE.query"
     assert ids["w.read"] == "org.acme.Wrapper.read"
+
+
+def test_jdk_propagation_by_type_and_object_as_every_supertype():
+    from frame.sil.specs.java_specs import type_spec_receivers
+    assert type_spec_receivers("ArrayList")[-3:] == ("Collection", "collection", "Object")
+    assert "Entry" in type_spec_receivers("Map.Entry")
+    body = ('java.util.List<String> args = new java.util.ArrayList<String>();\n    args.add("echo " + request.getParameter("a"));\n'
+            '    String v = args.get(0).substring(0);')
+    assert _sqli("HttpServletRequest", body)

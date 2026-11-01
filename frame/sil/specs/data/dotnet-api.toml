@@ -46,6 +46,17 @@ ExecuteSqlRawAsync = "RelationalDatabaseFacadeExtensions"
 ExecuteSqlCommand = "RelationalDatabaseFacadeExtensions"
 ExecuteSqlCommandAsync = "RelationalDatabaseFacadeExtensions"
 SqlQueryRaw = "RelationalDatabaseFacadeExtensions"
+FromSqlInterpolated = "RelationalQueryableExtensions"
+ExecuteSqlInterpolated = "RelationalDatabaseFacadeExtensions"
+ToListAsync = "EntityFrameworkQueryableExtensions"
+
+# LINQ (System.Linq.Enumerable; IQueryable's Queryable has the same names and the same flow).
+[extension_methods."System.Linq"]
+Where = "Enumerable"
+Select = "Enumerable"
+FirstOrDefault = "Enumerable"
+SingleOrDefault = "Enumerable"
+ToList = "Enumerable"
 
 # Members that install a TLS server-certificate validation callback (ServicePointManager,
 # HttpClientHandler, HttpWebRequest), and the built-in validator that accepts every certificate.

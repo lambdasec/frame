@@ -180,16 +180,6 @@ taint_from_receiver = true
 description = "Enumeration element (the receiver's)"
 
 [[spec]]
-name = "getValue"
-taint_from_receiver = true
-description = "getValue() - propagates receiver taint"
-
-[[spec]]
-name = "getAttribute"
-taint_from_receiver = true
-description = "getAttribute() - propagates receiver taint"
-
-[[spec]]
 name = "HttpServletResponse.sendRedirect"
 is_sink = "redirect"
 description = "Servlet redirect (open redirect)"
@@ -215,11 +205,6 @@ name = "HttpSession.setAttribute"
 is_sink = "trust_boundary"
 sink_args = [1]
 description = "HttpSession.setAttribute (trust boundary violation)"
-
-[[spec]]
-name = "setSecure"
-taint_propagates = [0]
-description = "Secure cookie flag"
 
 [[spec]]
 name = "Cookie.setSecure"
@@ -1122,41 +1107,6 @@ is_sanitizer = ["sql"]
 description = "PreparedStatement.setObject"
 
 [[spec]]
-name = "concat"
-taint_propagates = [0]
-description = "String.concat"
-
-[[spec]]
-name = "substring"
-taint_propagates = [0]
-description = "String.substring"
-
-[[spec]]
-name = "replace"
-taint_propagates = [0]
-description = "String.replace"
-
-[[spec]]
-name = "replaceAll"
-taint_propagates = [0]
-description = "String.replaceAll"
-
-[[spec]]
-name = "toLowerCase"
-taint_propagates = [0]
-description = "String.toLowerCase"
-
-[[spec]]
-name = "toUpperCase"
-taint_propagates = [0]
-description = "String.toUpperCase"
-
-[[spec]]
-name = "trim"
-taint_propagates = [0]
-description = "String.trim"
-
-[[spec]]
 name = "String.format"
 taint_propagates = [0, 1, 2, 3, 4, 5]
 description = "String.format"
@@ -1180,31 +1130,6 @@ description = "StringBuilder.append"
 name = "StringBuffer.append"
 taint_propagates = [0]
 description = "StringBuffer.append"
-
-[[spec]]
-name = "toString"
-taint_propagates = [0]
-description = "Object.toString"
-
-[[spec]]
-name = "getBytes"
-taint_propagates = [0]
-description = "String.getBytes"
-
-[[spec]]
-name = "toCharArray"
-taint_propagates = [0]
-description = "String.toCharArray"
-
-[[spec]]
-name = "split"
-taint_propagates = [0]
-description = "String.split"
-
-[[spec]]
-name = "valueOf"
-taint_propagates = [0]
-description = "String.valueOf"
 
 [[spec]]
 name = "Integer.parseInt"
@@ -1275,97 +1200,6 @@ description = "Float.parseFloat (a number)"
 name = "Float.valueOf"
 is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "trust_boundary", "shell_command"]
 description = "Float.valueOf (a number)"
-
-[[spec]]
-name = "add"
-taint_propagates = [0]
-taint_from_receiver = true
-description = "List.add"
-
-[[spec]]
-name = "addAll"
-taint_propagates = [0]
-taint_from_receiver = true
-description = "List.addAll"
-
-[[spec]]
-name = "set"
-taint_propagates = [1]
-taint_from_receiver = true
-description = "List.set"
-
-[[spec]]
-name = "put"
-taint_propagates = [1]
-taint_from_receiver = true
-description = "Map.put"
-
-[[spec]]
-name = "putAll"
-taint_propagates = [0]
-taint_from_receiver = true
-description = "Map.putAll"
-
-[[spec]]
-name = "get"
-taint_from_receiver = true
-description = "List.get"
-
-[[spec]]
-name = "getOrDefault"
-taint_propagates = [1]
-taint_from_receiver = true
-description = "Map.getOrDefault"
-
-[[spec]]
-name = "remove"
-taint_from_receiver = true
-description = "List.remove"
-
-[[spec]]
-name = "poll"
-taint_from_receiver = true
-description = "Queue.poll"
-
-[[spec]]
-name = "peek"
-taint_from_receiver = true
-description = "Queue.peek"
-
-[[spec]]
-name = "pop"
-taint_from_receiver = true
-description = "Stack.pop"
-
-[[spec]]
-name = "first"
-taint_from_receiver = true
-description = "List.first"
-
-[[spec]]
-name = "last"
-taint_from_receiver = true
-description = "List.last"
-
-[[spec]]
-name = "iterator"
-taint_from_receiver = true
-description = "Collection.iterator"
-
-[[spec]]
-name = "next"
-taint_from_receiver = true
-description = "Iterator.next"
-
-[[spec]]
-name = "toArray"
-taint_from_receiver = true
-description = "Collection.toArray"
-
-[[spec]]
-name = "stream"
-taint_from_receiver = true
-description = "Collection.stream"
 
 [[spec]]
 name = "StringWriter.write"
@@ -1448,16 +1282,6 @@ taint_propagates = [0]
 description = "URLEncoder.encode"
 
 [[spec]]
-name = "decode"
-taint_propagates = [0]
-description = "URL decode"
-
-[[spec]]
-name = "encode"
-taint_propagates = [0]
-description = "URL encode"
-
-[[spec]]
 name = "Base64.getDecoder().decode"
 taint_propagates = [0]
 description = "Base64 decode"
@@ -1478,16 +1302,6 @@ taint_propagates = [0]
 description = "Base64 encode"
 
 [[spec]]
-name = "decodeBase64"
-taint_propagates = [0]
-description = "Base64 decode"
-
-[[spec]]
-name = "encodeBase64"
-taint_propagates = [0]
-description = "Base64 encode"
-
-[[spec]]
 name = "Hex.decode"
 taint_propagates = [0]
 description = "Hex decode"
@@ -1498,26 +1312,6 @@ taint_propagates = [0]
 description = "Hex encode"
 
 [[spec]]
-name = "parseObject"
-taint_propagates = [0]
-description = "JSON parse"
-
-[[spec]]
-name = "toJSONString"
-taint_propagates = [0]
-description = "JSON stringify"
-
-[[spec]]
-name = "readValue"
-taint_propagates = [0]
-description = "Jackson readValue"
-
-[[spec]]
-name = "writeValueAsString"
-taint_propagates = [0]
-description = "Jackson writeValue"
-
-[[spec]]
 name = "Jwts.parser"
 is_sink = "auth"
 description = "JWT parser - verify signature (CWE-347)"
@@ -1526,36 +1320,6 @@ description = "JWT parser - verify signature (CWE-347)"
 name = "JWT.decode"
 taint_propagates = [0]
 description = "JWT.decode (propagates token taint)"
-
-[[spec]]
-name = "getHeaderClaim"
-taint_from_receiver = true
-description = "JWT header claim (propagates taint)"
-
-[[spec]]
-name = "getClaim"
-taint_from_receiver = true
-description = "JWT claim (propagates taint)"
-
-[[spec]]
-name = "asString"
-taint_from_receiver = true
-description = "Claim.asString (propagates taint)"
-
-[[spec]]
-name = "asInt"
-taint_from_receiver = true
-description = "Claim.asInt (propagates taint)"
-
-[[spec]]
-name = "asLong"
-taint_from_receiver = true
-description = "Claim.asLong (propagates taint)"
-
-[[spec]]
-name = "asBoolean"
-taint_from_receiver = true
-description = "Claim.asBoolean (propagates taint)"
 
 [[spec]]
 name = "JWTVerifier"
@@ -1593,21 +1357,6 @@ description = "Spring Secured"
 name = "@RolesAllowed"
 taint_propagates = [0]
 description = "Roles allowed"
-
-[[spec]]
-name = "hasRole"
-taint_propagates = [0]
-description = "Role check"
-
-[[spec]]
-name = "hasAuthority"
-taint_propagates = [0]
-description = "Authority check"
-
-[[spec]]
-name = "isAuthenticated"
-taint_propagates = [0]
-description = "Authentication check"
 
 [[spec]]
 name = "@CrossOrigin"
@@ -1807,19 +1556,9 @@ is_sink = "weak_password_hash"
 description = "SHA for passwords (CWE-916)"
 
 [[spec]]
-name = "setMaxInactiveInterval"
-taint_propagates = [0]
-description = "Session timeout"
-
-[[spec]]
 name = "JSESSIONID"
 taint_propagates = [0]
 description = "Session ID"
-
-[[spec]]
-name = "setHttpOnly"
-taint_propagates = [0]
-description = "HttpOnly cookie flag"
 
 [[spec]]
 name = "UsernamePasswordAuthenticationToken"
@@ -2118,3 +1857,242 @@ description = "Hibernate StatelessSession native SQL"
 name = "StatelessSession.createNativeQuery"
 is_sink = "sql"
 description = "Hibernate StatelessSession native SQL"
+
+# JDK and library propagation on the declaring type (java-types.toml [supertypes]; every class is an
+# Object), never on a bare method name of any receiver.
+[[spec]]
+name = "String.concat"
+taint_propagates = [0]
+description = "String.concat"
+
+[[spec]]
+name = "String.substring"
+taint_propagates = [0]
+description = "String.substring"
+
+[[spec]]
+name = "String.replace"
+taint_propagates = [0]
+description = "String.replace"
+
+[[spec]]
+name = "String.replaceAll"
+taint_propagates = [0]
+description = "String.replaceAll"
+
+[[spec]]
+name = "String.toLowerCase"
+taint_propagates = [0]
+description = "String.toLowerCase"
+
+[[spec]]
+name = "String.toUpperCase"
+taint_propagates = [0]
+description = "String.toUpperCase"
+
+[[spec]]
+name = "String.trim"
+taint_propagates = [0]
+description = "String.trim"
+
+[[spec]]
+name = "String.getBytes"
+taint_propagates = [0]
+description = "String.getBytes"
+
+[[spec]]
+name = "String.toCharArray"
+taint_propagates = [0]
+description = "String.toCharArray"
+
+[[spec]]
+name = "String.split"
+taint_propagates = [0]
+description = "String.split"
+
+[[spec]]
+name = "Object.toString"
+taint_propagates = [0]
+description = "Object.toString"
+
+[[spec]]
+name = "Collection.add"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "List.add"
+
+[[spec]]
+name = "Collection.addAll"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "List.addAll"
+
+[[spec]]
+name = "Collection.remove"
+taint_from_receiver = true
+description = "List.remove"
+
+[[spec]]
+name = "Collection.toArray"
+taint_from_receiver = true
+description = "Collection.toArray"
+
+[[spec]]
+name = "Collection.stream"
+taint_from_receiver = true
+description = "Collection.stream"
+
+[[spec]]
+name = "Collection.iterator"
+taint_from_receiver = true
+description = "Collection.iterator"
+
+[[spec]]
+name = "List.get"
+taint_from_receiver = true
+description = "List.get"
+
+[[spec]]
+name = "List.set"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "List.set"
+
+[[spec]]
+name = "Map.put"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "Map.put"
+
+[[spec]]
+name = "Map.putAll"
+taint_propagates = [0]
+taint_from_receiver = true
+description = "Map.putAll"
+
+[[spec]]
+name = "Map.get"
+taint_from_receiver = true
+description = "List.get"
+
+[[spec]]
+name = "Map.getOrDefault"
+taint_propagates = [1]
+taint_from_receiver = true
+description = "Map.getOrDefault"
+
+[[spec]]
+name = "Map.remove"
+taint_from_receiver = true
+description = "List.remove"
+
+[[spec]]
+name = "Queue.poll"
+taint_from_receiver = true
+description = "Queue.poll"
+
+[[spec]]
+name = "Queue.peek"
+taint_from_receiver = true
+description = "Queue.peek"
+
+[[spec]]
+name = "Deque.pop"
+taint_from_receiver = true
+description = "Stack.pop"
+
+[[spec]]
+name = "Deque.peek"
+taint_from_receiver = true
+description = "Queue.peek"
+
+[[spec]]
+name = "Deque.poll"
+taint_from_receiver = true
+description = "Queue.poll"
+
+[[spec]]
+name = "SortedSet.first"
+taint_from_receiver = true
+description = "List.first"
+
+[[spec]]
+name = "SortedSet.last"
+taint_from_receiver = true
+description = "List.last"
+
+[[spec]]
+name = "Iterator.next"
+taint_from_receiver = true
+description = "Iterator.next"
+
+[[spec]]
+name = "Cookie.getValue"
+taint_from_receiver = true
+description = "getValue() - propagates receiver taint"
+
+[[spec]]
+name = "Entry.getValue"
+taint_from_receiver = true
+description = "getValue() - propagates receiver taint"
+
+[[spec]]
+name = "JSON.parseObject"
+taint_propagates = [0]
+description = "JSON parse"
+
+[[spec]]
+name = "JSON.toJSONString"
+taint_propagates = [0]
+description = "JSON stringify"
+
+[[spec]]
+name = "ObjectMapper.readValue"
+taint_propagates = [0]
+description = "Jackson readValue"
+
+[[spec]]
+name = "ObjectMapper.writeValueAsString"
+taint_propagates = [0]
+description = "Jackson writeValue"
+
+[[spec]]
+name = "Base64.decodeBase64"
+taint_propagates = [0]
+description = "Base64 decode"
+
+[[spec]]
+name = "Base64.encodeBase64"
+taint_propagates = [0]
+description = "Base64 encode"
+
+[[spec]]
+name = "DecodedJWT.getClaim"
+taint_from_receiver = true
+description = "JWT claim (propagates taint)"
+
+[[spec]]
+name = "DecodedJWT.getHeaderClaim"
+taint_from_receiver = true
+description = "JWT header claim (propagates taint)"
+
+[[spec]]
+name = "Claim.asString"
+taint_from_receiver = true
+description = "Claim.asString (propagates taint)"
+
+[[spec]]
+name = "Claim.asInt"
+taint_from_receiver = true
+description = "Claim.asInt (propagates taint)"
+
+[[spec]]
+name = "Claim.asLong"
+taint_from_receiver = true
+description = "Claim.asLong (propagates taint)"
+
+[[spec]]
+name = "Claim.asBoolean"
+taint_from_receiver = true
+description = "Claim.asBoolean (propagates taint)"
+

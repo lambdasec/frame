@@ -1517,8 +1517,7 @@ class CSharpFrontend:
         cls = self._extension_class(method)
         if cls is not None and self.specs.get(f"{cls}.{method}") is not None:
             return self.specs.get(f"{cls}.{method}")
-        spec = self.specs.get(method)
-        return spec if spec is not None and not _source_or_sink(spec) else None
+        return None                       # a bare method name on another receiver is not that row's
 
     def _member_type(self, chain: str, declared: Dict[str, str]) -> Optional[str]:
         """The type of `head.Member` where head is declared and Member comes from its library base
