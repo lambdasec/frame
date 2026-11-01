@@ -16,7 +16,7 @@ each tool does and why.
 - **Java** (10 cases keyed before the Java feature existed; Frame's first run found 1/10): Frame **10/10 with 0 false alarms**; CodeQL 10/10 with 3; Semgrep/OpenGrep taint rules 1/10 (stock packs 8/10, but 7 safe twins flagged).
 - **Four deliberately vulnerable apps** at pinned commits: Frame found **10/10** of the cross-file vulnerabilities in the answer key;
   CodeQL 7/10 (it misses dvpwa's static async DAO and NodeGoat's DAOs); Semgrep and OpenGrep intrafile taint rules 0/10, OpenGrep's interfile build 3/10.
-- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 52 real, 1 false, 7 debatable of 60
+- **Precision, labelled by hand** (every Frame and CodeQL report on those apps): Frame 51 real, 1 false, 7 debatable of 59
   (98%); CodeQL 38 real, 2 false, 3 debatable, 14 hardening-only of 57 (95%).
 - **The app authors' own answer key** (vulnerable-node ships `sast/ground-truth.yaml`): Frame 9/12 seeds and 0 of 2 clean seeds flagged; CodeQL 8/12 and 1 of 2.
 - Not run: Semgrep Pro, Snyk Code, SonarQube, Checkmarx and other commercial tools (they need an account or server;
@@ -149,7 +149,7 @@ The expected sinks, each confirmed by reading source and sink:
 
 - **vulpy** `bad/libuser.py` lines 12, 25, 53: SQL built with `format`/`%` in helpers that `mod_user.py` feeds from `request.form`.
 - **dvpwa** `sqli/dao/student.py:45`: `Student.create`, a static async method, formats `name` into an INSERT; the value is aiohttp `await request.post()` in `views.py`.
-- **vulnerable-node** `model/db.js` lines 14, 26, 101 (SQL injection, including an `ORDER BY` column) and `model/merge.js` (prototype pollution via a recursive merge fed `req.body` from `routes/account.js`).
+- **vulnerable-node** `model/db.js` lines 14, 26, 101 (SQL injection, including an `ORDER BY` column) and `model/merge.js` (prototype pollution via a recursive merge fed `req.body` from `routes/account.js`). Its recursive `merge(target[key], source[key])` call (line 12) is no longer a separate report: it was one because the call's name is `merge`; the write that pollutes (line 14) is reported by the structural pass.
 - **NodeGoat** `app/data/user-dao.js` lines 91, 104: `findOne({userName})` with the value straight from `req.body` (NoSQL operator injection).
 - Not scored either way: `benefits-dao.js:24` (request value inside `$set`; debatable) and `good/libuser.py:61` in vulpy.
 
@@ -163,9 +163,9 @@ Every report Frame and CodeQL make on the four apps, labelled by reading the cod
 |---|---|---|---|---|---|---|---|---|---|
 | `vulpy` | 5 | 5 | 0 | 0 | 9 | 5 | 1 | 3 | 0 |
 | `dvpwa` | 3 | 2 | 0 | 1 | 1 | 1 | 0 | 0 | 0 |
-| `vulnerable-node` | 38 | 33 | 1 | 4 | 46 | 31 | 1 | 0 | 14 |
+| `vulnerable-node` | 37 | 32 | 1 | 4 | 46 | 31 | 1 | 0 | 14 |
 | `NodeGoat` | 14 | 12 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
-| **all four** | 60 | 52 | 1 | 7 | 57 | 38 | 2 | 3 | 14 |
+| **all four** | 59 | 51 | 1 | 7 | 57 | 38 | 2 | 3 | 14 |
 
 Frame's precision on the labelled reports is 98%; CodeQL's is 95% (advisory queries excluded; Frame's count includes its three hardening findings: two `debug=True` and one `secure: false`). Both are lists of what each tool
 reported, not recall: neither is exhaustive. The other tools' extra reports in the real-app table above are not labelled.

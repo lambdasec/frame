@@ -17,11 +17,11 @@
     "total": 3
    },
    "vulnerable-node": {
-    "TP": 33,
+    "TP": 32,
     "FP": 1,
     "DEBATABLE": 4,
     "ADVISORY": 0,
-    "total": 38
+    "total": 37
    },
    "NodeGoat": {
     "TP": 12,
@@ -187,13 +187,6 @@
      "id": "CWE-89",
      "label": "TP",
      "note": "cross-file ORDER BY"
-    },
-    {
-     "file": "model/merge.js",
-     "line": 12,
-     "id": "CWE-1321",
-     "label": "TP",
-     "note": "cross-file prototype pollution"
     },
     {
      "file": "model/merge.js",

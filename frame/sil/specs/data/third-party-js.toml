@@ -2,9 +2,10 @@
 # code. The whole-file ReDoS and prototype-pollution passes (structural, not taint-gated) skip them;
 # taint analysis runs everywhere. Read by the JS frontend through frame/sil/specs/third_party_js.py.
 
-# Path parts (directories) that hold copies of libraries or build output (case-insensitive).
-directories = ["lib", "libs", "vendor", "vendors", "plugin", "plugins", "external", "third_party", "third-party",
-               "thirdparty", "bower_components", "node_modules", "jspm_packages", "dist", "build", "min"]
+# Path parts (directories) that hold copies of other packages or build output (case-insensitive).
+# `lib`, `libs` and `plugins` are not among them: in a Node application they hold its own code.
+directories = ["vendor", "vendors", "external", "third_party", "third-party", "thirdparty", "bower_components",
+               "node_modules", "jspm_packages", "dist", "build", "min"]
 # File-name markers of a minified or bundled file.
 minified_markers = [".min."]
 minified_suffixes = [".bundle.js", ".map"]

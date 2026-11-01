@@ -994,6 +994,9 @@ class Program:
         # looked up under the value's type (specs/data/value-types.toml), and never under a
         # guessed receiver name, since what the receiver is is known.
         canonical = getattr(call, "canonical", None)
+        if canonical and (self.language or "") in ("javascript", "typescript") \
+                and canonical in self.library_specs and canonical != func_name:
+            return self.library_specs[canonical]   # a module's value bound in a function (`node-serialize.unserialize`)
         if canonical and '.' in func_name:
             from .value_origins import typed_names
             for key in typed_names(canonical, self.language, getattr(self, "value_returns", None)):
