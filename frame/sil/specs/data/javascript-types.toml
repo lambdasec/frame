@@ -64,3 +64,20 @@ Buffer = "Buffer"
 "Buffer.concat" = "Buffer"
 String = "String"
 Number = "Number"
+
+# Array.prototype iteration methods (ECMAScript): the position of the callback parameter that is the
+# element's index, a number (`arr.forEach((v, i) => ...)`); on a value known to be an Array only (a
+# Map's forEach hands its key there).
+[array_index_params]
+forEach = 1
+map = 1
+filter = 1
+some = 1
+every = 1
+find = 1
+findIndex = 1
+findLast = 1
+findLastIndex = 1
+flatMap = 1
+reduce = 2
+reduceRight = 2

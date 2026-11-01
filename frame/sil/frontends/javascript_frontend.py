@@ -1577,6 +1577,8 @@ class JavaScriptFrontend:
             # "__proto__"; attacker-controlled member keys are still caught by the
             # taint-based sinks.
             path_keys = self._enclosing_path_key_vars(n)
+            if index.type == "identifier" and key_txt in self._array_index_names(n):
+                continue  # an Array iteration callback's index: a number, never "__proto__"
             key_like = (
                 key_txt in loop_vars
                 or key_txt in params
@@ -1703,6 +1705,31 @@ class JavaScriptFrontend:
                 if child.type == "identifier":
                     names.add(self._get_text(child))
                     break
+        return names
+
+    def _array_index_names(self, node: TSNode) -> set:
+        """Parameters of enclosing callbacks that are an element's index: the callback is passed to
+        an Array.prototype iteration method (javascript-types.toml [array_index_params]) of a
+        receiver known to be an Array (`_value_kind`)."""
+        names = set()
+        cur = node.parent
+        while cur is not None:
+            if cur.type in self._FUNC_LIKE:
+                arg = cur.parent
+                call = arg.parent if arg is not None and arg.type == "arguments" else None
+                callee = call.child_by_field_name("function") if call is not None and call.type == "call_expression" else None
+                if callee is not None and callee.type == "member_expression":
+                    prop = callee.child_by_field_name("property")
+                    position = self._TYPES.array_index_params.get(self._get_text(prop)) if prop is not None else None
+                    params = cur.child_by_field_name("parameters")
+                    plist = [p for p in (params.named_children if params is not None else ())
+                             if p.type not in ("comment",)] if params is not None else []
+                    if params is not None and params.type == "identifier":
+                        plist = [params]
+                    if position is not None and position < len(plist) and plist[position].type == "identifier" \
+                            and self._value_kind(callee.child_by_field_name("object")) == "Array":
+                        names.add(self._get_text(plist[position]))
+            cur = cur.parent
         return names
 
     def _enclosing_param_names(self, node: TSNode) -> set:
