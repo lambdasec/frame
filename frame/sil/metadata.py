@@ -219,6 +219,17 @@ def _wildcard_types() -> Dict[str, Dict[str, FrozenSet[str]]]:
         out[lang] = {pkg: frozenset(v) for pkg, v in table.items()}
     return out
 
+def csharp_without_namespace(written: str, extra: Iterable[str] = ()) -> str:
+    """`System.IO.File.ReadAllText` -> `File.ReadAllText`: the longest namespace prefix the
+    namespace tables (or `extra`, a file's usings) know, dropped; anything else unchanged."""
+    known = set(_wildcard_types().get("csharp", {})) | set(extra)
+    parts = written.split(".")
+    for i in range(len(parts) - 2, 0, -1):
+        if ".".join(parts[:i]) in known:
+            return ".".join(parts[i:])
+    return written
+
+
 _CSHARP_SYSTEM = frozenset("Console Convert Math Environment Activator GC Buffer String Object".split())
 
 

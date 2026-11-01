@@ -43,7 +43,7 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
 from frame.sil.metadata import (
-    Annotation, ClassInfo, ImportTable, _inherited_member, canonical_call, library_base, parse_annotation,
+    Annotation, ClassInfo, ImportTable, _inherited_member, canonical_call, csharp_without_namespace, library_base, parse_annotation,
     qualify_type,
 )
 from frame.sil.packs import finish_program
@@ -53,6 +53,10 @@ from frame.sil.specs.passthrough import load as _passthrough
 
 # a pack [[setting]]'s kind -> the sink kind its finding is reported under
 _SETTING_SINK_KINDS = {"cookie_secure": "insecure_cookie", "cookie_httponly": "insecure_cookie_httponly"}
+
+
+def _source_or_sink(spec: ProcSpec) -> bool:
+    return bool(spec.is_source or spec.is_sink)
 
 
 class CSharpFrontend:
@@ -219,11 +223,29 @@ class CSharpFrontend:
                         creation = next((c for c in self._descendants_of(d)
                                          if c.type == "object_creation_expression"), None)
                         t = type_text(creation.child_by_field_name("type")) if creation is not None else ""
+                        if not t:
+                            t = self._call_result_type(d, found) or ""
                     add(self._get_text(nm) if nm is not None else "", t)
             stack.extend(n.children)
         for c in conflicts:
             found.pop(c, None)
         return found
+
+    def _call_result_type(self, declarator: TSNode, known: Dict[str, str]) -> Optional[str]:
+        """`var cmd = _db.CreateCommand();`: the documented return type of a call on a receiver of
+        known type (value-types.toml [csharp.returns]), as a simple name."""
+        call = next((c for c in declarator.named_children if c.type == "invocation_expression"), None)
+        fn = call.child_by_field_name("function") if call is not None else None
+        if fn is None or fn.type != "member_access_expression":
+            return None
+        obj, name = fn.child_by_field_name("expression"), fn.child_by_field_name("name")
+        if obj is None or name is None or obj.type != "identifier":
+            return None
+        owner = known.get(self._get_text(obj)) or self._class_fields_of.get(self._current_class or "", {}).get(self._get_text(obj))
+        qualified = qualify_type("csharp", owner, self._imports, self._local_types) if owner else None
+        from frame.sil.value_origins import load as _value_types
+        returned = _value_types().get("csharp", ({}, {}))[0].get(f"{qualified}.{self._get_text(name)}") if qualified else None
+        return returned.rsplit(".", 1)[-1] if returned else None
 
     @staticmethod
     def _descendants_of(node: TSNode):
@@ -1262,8 +1284,8 @@ class CSharpFrontend:
             recv_chain = self._get_member_chain(recv_node)
             recv_type = self._receiver_types().get(recv_chain, recv_chain)
             self._add_instrs(self._config_flag_instrs(recv_type, self._get_text(prop), right, loc))
-        sink_kind_str = _dotnet().assignment_sinks.get(self._get_text(prop)) if prop else None
-        if sink_kind_str is None and prop is not None:
+        sink_kind_str = None
+        if prop is not None:                       # a property that is a sink on its declared type
             recv = self._get_member_chain(left.child_by_field_name("expression"))
             rtype = self._proc_types.get(id(self._current_proc), {}).get(recv, "") if self._current_proc else ""
             sink_kind_str = self._typed_prop_sink(rtype, self._get_text(prop))
@@ -1474,16 +1496,66 @@ class CSharpFrontend:
         """The library spec of a call: the written name (`File.ReadAllText`), then the declared type of
         the receiver (`_http.GetStringAsync` with `HttpClient _http` -> `HttpClient.GetStringAsync`),
         then the bare method name (`context.Database.ExecuteSqlCommand` -> `ExecuteSqlCommand`)."""
-        spec = self.specs.get(name)
-        if spec or "." not in name:
-            return spec
+        declared = self._receiver_types()
+        spec = self.specs.get(name) or self.specs.get(csharp_without_namespace(name, self._imports.wildcards))
+        if "." not in name:
+            # an unqualified call is a constructor / function the row names (`SqlCommand`), the
+            # class's own method, or one it inherits (`Redirect(url)` in a Controller)
+            base = self._inherited_base(name)
+            inherited = self._typed_row(base, name) if base else None
+            return inherited or spec
         recv, _, method = name.rpartition(".")
-        rtype = self._receiver_types().get(recv)
+        head = name.split(".", 1)[0]
+        if spec is not None and (not _source_or_sink(spec) or head not in declared):
+            return spec                   # a type or an inherited member (`File.ReadAllText`, `Request.Query`)
+        rtype = declared.get(recv) or self._member_type(recv, declared)
         if rtype:
-            spec = self.specs.get(f"{rtype}.{method}")
+            spec = self._typed_row(rtype, method)
             if spec and not (spec.is_taint_source() and not spec.is_taint_sink()):
                 return spec               # (typed receivers add sinks / sanitizers, never new sources)
-        return self.specs.get(method)
+        cls = self._extension_class(method)
+        if cls is not None and self.specs.get(f"{cls}.{method}") is not None:
+            return self.specs.get(f"{cls}.{method}")
+        spec = self.specs.get(method)
+        return spec if spec is not None and not _source_or_sink(spec) else None
+
+    def _member_type(self, chain: str, declared: Dict[str, str]) -> Optional[str]:
+        """The type of `head.Member` where head is declared and Member comes from its library base
+        (`_db.Database` of an `AppDb : DbContext` is a DatabaseFacade / an EF6 Database), from
+        value-types.toml [csharp.returns]."""
+        head, _, member = chain.partition(".")
+        if not member or "." in member or head not in declared or self._program is None:
+            return None
+        base = library_base(self._program, declared[head], member, self._imports, self._local_types)
+        if base is None:
+            base = qualify_type("csharp", declared[head], self._imports, self._local_types)
+        from frame.sil.value_origins import load as _value_types
+        returns = _value_types().get("csharp", ({}, {}))[0]
+        return returns.get(f"{base}.{member}") if base else None
+
+    def _typed_row(self, type_name: str, method: str) -> Optional[ProcSpec]:
+        """The row of `method` on the type or its nearest documented supertype (dotnet-api.toml)."""
+        for t in _dotnet().lineage(type_name):
+            spec = self.specs.get(f"{t}.{method}")
+            if spec is not None:
+                return spec
+        return None
+
+    def _extension_class(self, method: str) -> Optional[str]:
+        """The static class declaring the extension method `method` that this file's usings bring in
+        (exactly one), as C# binds it."""
+        hits = {table[method] for ns, table in _dotnet().extension_methods.items()
+                if method in table and ns in self._imports.wildcards}
+        return next(iter(hits)) if len(hits) == 1 else None
+
+    def _inherited_base(self, method: str) -> Optional[str]:
+        """The library base class an unqualified call's method comes from (the class does not
+        declare it), as its simple name."""
+        cls = self._current_class or ""
+        if not cls or method in self._declared_methods.get(cls, set()) or self._program is None:
+            return None
+        base = library_base(self._program, cls, method, self._imports, self._local_types)
+        return base.rsplit(".", 1)[-1] if base else None
 
     def _sanitizer_spec(self, name: str) -> bool:
         spec = self._lookup_spec(name)
@@ -1648,7 +1720,9 @@ class CSharpFrontend:
         init = node.child_by_field_name("initializer")
         if init:
             for child in init.children:
-                if child.type == "assignment_expression":
+                if child.type == "object_creation_expression":   # `new List<T> { new T { Sql = q } }`
+                    instrs.extend(self._translate_object_creation(child, None, self._get_location(child)))
+                elif child.type == "assignment_expression":
                     rhs = child.child_by_field_name("right")
                     if rhs:
                         self._translate_expression(rhs)
@@ -2409,7 +2483,7 @@ class CSharpFrontend:
         func = node.child_by_field_name("function")
         if func:
             name = self._strip_generics(self._get_text(func))
-            spec = self.specs.get(name) or self.specs.get(name.rsplit(".", 1)[-1])
+            spec = self._lookup_spec(name) if self._current_proc is not None else self.specs.get(name)
             pos = getattr(spec, "content_type_arg", None)
             if pos is not None:
                 args = self._get_method_args(node)

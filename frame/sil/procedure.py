@@ -1059,6 +1059,30 @@ class Program:
                     if g and not (g.exact_class or _source_or_sink(g) or g.is_sanitizer):
                         return g
             return None
+        if language == "csharp":
+            # C#: the frontend resolves sources and sinks by declared type, inherited member and
+            # extension method; a written name here finds one only when its head is not a local
+            # (`File.ReadAllText`, `Request.Query`), and a trailing part or method name at most a
+            # propagator or sanitizer.
+            from .metadata import csharp_without_namespace
+            spec = self.library_specs.get(func_name) or self.library_specs.get(csharp_without_namespace(func_name))
+            head = func_name.split(".", 1)[0]
+            if spec is not None and ("." not in func_name or head[:1].isupper() or not (spec.is_source or spec.is_sink)):
+                return spec
+            parts = func_name.split('.')
+            for i in range(1, len(parts)):
+                spec = self.library_specs.get('.'.join(parts[i:]))
+                # C# web sources are member paths (`x.PostedFile.FileName`, `ctx.Request.Query`), read
+                # by their trailing members as the frontend's member sources are; sinks need a type
+                if spec is not None and not spec.is_sink and (not spec.is_source or parts[i][:1].isupper()):
+                    return spec
+            if guess and len(parts) > 1:
+                from frame.sil.specs.receiver_guesses import guesses
+                for prefix in guesses(language):
+                    g = self.library_specs.get(f"{prefix}.{parts[-1]}")
+                    if g and not (g.exact_class or g.is_source or g.is_sink or g.is_sanitizer):
+                        return g
+            return None
         # Check library specs (exact match)
         spec = self.library_specs.get(func_name) if by_name(func_name, language) else None
         if spec:

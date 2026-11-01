@@ -213,18 +213,18 @@ is_sink = "html"
 description = "ASP.NET Response.Write (XSS)"
 
 [[spec]]
-name = "Content"
+name = "ControllerBase.Content"
 is_sink = "html"
 content_type_arg = 1      # Content(body, "application/json"): not HTML unless the type says so
 description = "ASP.NET Content() response (XSS)"
 
 [[spec]]
-name = "Redirect"
+name = "ControllerBase.Redirect"
 is_sink = "redirect"
 description = "ASP.NET Redirect (open redirect)"
 
 [[spec]]
-name = "RedirectToAction"
+name = "ControllerBase.RedirectToAction"
 is_sink = "redirect"
 description = "ASP.NET RedirectToAction"
 
@@ -249,32 +249,32 @@ is_sink = "html"
 description = "ASP.NET Html.Raw (XSS)"
 
 [[spec]]
-name = "FromSqlRaw"
+name = "RelationalQueryableExtensions.FromSqlRaw"
 is_sink = "sql"
 description = "EF FromSqlRaw (SQL injection)"
 
 [[spec]]
-name = "ExecuteSqlRaw"
+name = "RelationalDatabaseFacadeExtensions.ExecuteSqlRaw"
 is_sink = "sql"
 description = "EF ExecuteSqlRaw (SQL injection)"
 
 [[spec]]
-name = "ExecuteSqlRawAsync"
+name = "RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync"
 is_sink = "sql"
 description = "EF ExecuteSqlRawAsync (SQL injection)"
 
 [[spec]]
-name = "ExecuteSqlCommand"
+name = "RelationalDatabaseFacadeExtensions.ExecuteSqlCommand"
 is_sink = "sql"
 description = "EF ExecuteSqlCommand (SQL injection)"
 
 [[spec]]
-name = "ExecuteSqlCommandAsync"
+name = "RelationalDatabaseFacadeExtensions.ExecuteSqlCommandAsync"
 is_sink = "sql"
 description = "EF ExecuteSqlCommandAsync (SQL injection)"
 
 [[spec]]
-name = "FromSql"
+name = "RelationalQueryableExtensions.FromSql"
 is_sink = "sql"
 description = "EF FromSql (SQL injection)"
 
@@ -284,17 +284,12 @@ is_sink = "sql"
 description = "ObjectContext.CreateQuery (SQL injection CWE-89)"
 
 [[spec]]
-name = "CreateQuery"
-is_sink = "sql"
-description = "ObjectContext.CreateQuery (SQL injection CWE-89)"
-
-[[spec]]
-name = "ExecuteStoreCommand"
+name = "ObjectContext.ExecuteStoreCommand"
 is_sink = "sql"
 description = "ExecuteStoreCommand (SQL injection CWE-89)"
 
 [[spec]]
-name = "ExecuteStoreQuery"
+name = "ObjectContext.ExecuteStoreQuery"
 is_sink = "sql"
 description = "ExecuteStoreQuery (SQL injection CWE-89)"
 
@@ -349,39 +344,29 @@ is_sink = "sql"
 description = "SqlCommand (SQL injection)"
 
 [[spec]]
-name = "ExecuteReader"
+name = "DbCommand.ExecuteReader"
 is_sink = "sql"
 description = "ExecuteReader (SQL injection)"
 
 [[spec]]
-name = "ExecuteNonQuery"
+name = "DbCommand.ExecuteNonQuery"
 is_sink = "sql"
 description = "ExecuteNonQuery (SQL injection)"
 
 [[spec]]
-name = "ExecuteScalar"
+name = "DbCommand.ExecuteScalar"
 is_sink = "sql"
 description = "ExecuteScalar (SQL injection)"
 
 [[spec]]
-name = "ExecuteReaderAsync"
+name = "DbCommand.ExecuteReaderAsync"
 is_sink = "sql"
 description = "ExecuteReaderAsync (SQL injection)"
 
 [[spec]]
-name = "ExecuteNonQueryAsync"
+name = "DbCommand.ExecuteNonQueryAsync"
 is_sink = "sql"
 description = "ExecuteNonQueryAsync (SQL injection)"
-
-[[spec]]
-name = "CommandText"
-is_sink = "sql"
-description = "CommandText assignment (SQL injection)"
-
-[[spec]]
-name = "Sql"
-is_sink = "sql"
-description = "EF migration Sql() raw statement (SQL injection)"
 
 [[spec]]
 name = "Parameters.Add"
@@ -518,16 +503,6 @@ is_sink = "command"
 description = "ProcessStartInfo.Arguments (command injection)"
 
 [[spec]]
-name = "cmd.exe"
-is_sink = "command"
-description = "cmd.exe execution"
-
-[[spec]]
-name = "/bin/bash"
-is_sink = "command"
-description = "bash execution"
-
-[[spec]]
 name = "HttpClient.GetAsync"
 is_sink = "ssrf"
 description = "HttpClient.GetAsync (SSRF)"
@@ -615,11 +590,6 @@ is_sink = "xml_injection"
 description = "XmlWriter.WriteRaw (XML injection CWE-91)"
 
 [[spec]]
-name = "WriteRaw"
-is_sink = "xml_injection"
-description = "XmlWriter.WriteRaw (XML injection CWE-91)"
-
-[[spec]]
 name = "XslCompiledTransform.Load"
 is_sink = "xxe"
 description = "XslCompiledTransform.Load (XXE)"
@@ -631,12 +601,12 @@ sink_args = [0, 1]
 description = "XslCompiledTransform.Transform (XXE)"
 
 [[spec]]
-name = "SelectSingleNode"
+name = "XmlNode.SelectSingleNode"
 is_sink = "xpath"
 description = "SelectSingleNode (XPath injection)"
 
 [[spec]]
-name = "SelectNodes"
+name = "XmlNode.SelectNodes"
 is_sink = "xpath"
 description = "SelectNodes (XPath injection)"
 
@@ -644,11 +614,6 @@ description = "SelectNodes (XPath injection)"
 name = "XPathNavigator.Evaluate"
 is_sink = "xpath"
 description = "XPathNavigator.Evaluate (XPath injection)"
-
-[[spec]]
-name = "Compile"
-is_sink = "xpath"
-description = "XPathNavigator.Compile (XPath injection)"
 
 [[spec]]
 name = "BinaryFormatter"
@@ -786,31 +751,6 @@ name = "Regex.IsMatch"
 is_sink = "regex"
 sink_args = [1]
 description = "Regex.IsMatch (the pattern is attacker-controlled: ReDoS)"
-
-[[spec]]
-name = "logger.LogInformation"
-is_sink = "log"
-description = "ILogger.LogInformation (log injection)"
-
-[[spec]]
-name = "logger.LogWarning"
-is_sink = "log"
-description = "ILogger.LogWarning (log injection)"
-
-[[spec]]
-name = "logger.LogError"
-is_sink = "log"
-description = "ILogger.LogError (log injection)"
-
-[[spec]]
-name = "logger.LogDebug"
-is_sink = "log"
-description = "ILogger.LogDebug (log injection)"
-
-[[spec]]
-name = "logger.LogCritical"
-is_sink = "log"
-description = "ILogger.LogCritical (log injection)"
 
 [[spec]]
 name = "Logger.Info"
@@ -1043,11 +983,6 @@ is_sink = "auth"
 description = "JWT token handler (CWE-347)"
 
 [[spec]]
-name = "ValidateToken"
-is_sink = "auth"
-description = "Token validation (CWE-347)"
-
-[[spec]]
 name = "SecurityTokenDescriptor"
 taint_propagates = [0]
 description = "Token descriptor"
@@ -1103,12 +1038,7 @@ taint_propagates = [0]
 description = "Role check"
 
 [[spec]]
-name = "EnableCors"
-is_sink = "cors"
-description = "CORS enabled (CWE-942)"
-
-[[spec]]
-name = "WithOrigins"
+name = "CorsPolicyBuilder.WithOrigins"
 is_sink = "cors"
 description = "CORS origins (CWE-942)"
 
@@ -1116,11 +1046,6 @@ description = "CORS origins (CWE-942)"
 name = "CorsPolicy"
 is_sink = "cors"
 description = "CORS policy (CWE-942)"
-
-[[spec]]
-name = "IsDevelopment"
-is_sink = "config"
-description = "Development mode check"
 
 [[spec]]
 name = "UseDeveloperExceptionPage"
@@ -1258,16 +1183,6 @@ sink_args = []
 description = "ECB cipher mode (CWE-327)"
 
 [[spec]]
-name = "KeySize = 1024"
-is_sink = "weak_crypto"
-description = "Weak key size 1024 (CWE-326)"
-
-[[spec]]
-name = "KeySize = 512"
-is_sink = "weak_crypto"
-description = "Weak key size 512 (CWE-326)"
-
-[[spec]]
 name = "RNGCryptoServiceProvider"
 is_sanitizer = ["random"]
 description = "Secure random"
@@ -1328,12 +1243,6 @@ is_sink = "weak_password_hash"
 description = "Weak hash for password (CWE-916)"
 
 [[spec]]
-name = "Cookie"
-is_sink = "header_injection"
-sink_args = [1]
-description = "Cookie value (header manipulation CWE-113)"
-
-[[spec]]
 name = "CookieOptions"
 taint_propagates = [0]
 description = "Cookie options"
@@ -1372,21 +1281,6 @@ description = "User manager"
 name = "IdentityResult"
 taint_propagates = [0]
 description = "Identity result"
-
-[[spec]]
-name = "catch (Exception)"
-is_sink = "exception"
-description = "Generic exception catch (CWE-396)"
-
-[[spec]]
-name = "catch (Exception ex)"
-is_sink = "exception"
-description = "Generic exception catch (CWE-396)"
-
-[[spec]]
-name = "catch { }"
-is_sink = "exception"
-description = "Empty catch block (CWE-390)"
 
 [[spec]]
 name = "Environment.Exit"
@@ -1492,31 +1386,6 @@ is_sink = "header_injection"
 description = "Response headers (CWE-113)"
 
 [[spec]]
-name = "169.254.169.254"
-is_sink = "ssrf"
-description = "Cloud metadata (SSRF)"
-
-[[spec]]
-name = "metadata.google.internal"
-is_sink = "ssrf"
-description = "GCP metadata (SSRF)"
-
-[[spec]]
-name = "localhost"
-is_sink = "ssrf"
-description = "Localhost (SSRF)"
-
-[[spec]]
-name = "127.0.0.1"
-is_sink = "ssrf"
-description = "Loopback (SSRF)"
-
-[[spec]]
-name = "0.0.0.0"
-is_sink = "ssrf"
-description = "All interfaces (SSRF)"
-
-[[spec]]
 name = "Uri"
 taint_propagates = [0]
 description = "URI construction"
@@ -1552,17 +1421,12 @@ is_sink = "code"
 description = "Expression compilation"
 
 [[spec]]
-name = "DynamicInvoke"
+name = "Delegate.DynamicInvoke"
 is_sink = "code"
 description = "Dynamic invocation"
 
 [[spec]]
 name = "AppDomain.ExecuteAssembly"
-is_sink = "code"
-description = "AppDomain.ExecuteAssembly (CWE-94)"
-
-[[spec]]
-name = "ExecuteAssembly"
 is_sink = "code"
 description = "AppDomain.ExecuteAssembly (CWE-94)"
 
@@ -1617,7 +1481,7 @@ is_sink = "code"
 description = "PowerShell execution (CWE-94)"
 
 [[spec]]
-name = "AddScript"
+name = "PowerShell.AddScript"
 is_sink = "code"
 description = "PowerShell.AddScript (CWE-94)"
 
@@ -1817,29 +1681,6 @@ sink_args = []
 description = "new XmlDocument() loaded without secure settings (XXE, CWE-611)"
 
 [[spec]]
-name = "CompileAssemblyFromSource"
-is_sink = "code"
-sink_args = [1]
-description = "CodeDom CompileAssemblyFromSource (code injection)"
-
-[[spec]]
-name = "CompileAssemblyFromFile"
-is_sink = "code"
-sink_args = [1]
-description = "CodeDom CompileAssemblyFromFile (code injection)"
-
-[[spec]]
-name = "CompileAssemblyFromDom"
-is_sink = "code"
-sink_args = [1]
-description = "CodeDom CompileAssemblyFromDom (code injection)"
-
-[[spec]]
-name = "WriteRawValue"
-is_sink = "code"
-description = "JsonWriter.WriteRawValue(raw) (JSON injection)"
-
-[[spec]]
 name = "JsonTextWriter.WriteRawValue"
 is_sink = "code"
 description = "WriteRawValue (JSON injection)"
@@ -1853,246 +1694,6 @@ description = "Response.Redirect (open redirect)"
 name = "HttpResponse.Redirect"
 is_sink = "redirect"
 description = "Response.Redirect (open redirect)"
-
-[[spec]]
-name = "log.Info"
-is_sink = "log"
-description = "log.Info (log injection)"
-
-[[spec]]
-name = "log.InfoFormat"
-is_sink = "log"
-description = "log.InfoFormat (log injection)"
-
-[[spec]]
-name = "log.Warn"
-is_sink = "log"
-description = "log.Warn (log injection)"
-
-[[spec]]
-name = "log.WarnFormat"
-is_sink = "log"
-description = "log.WarnFormat (log injection)"
-
-[[spec]]
-name = "log.Error"
-is_sink = "log"
-description = "log.Error (log injection)"
-
-[[spec]]
-name = "log.ErrorFormat"
-is_sink = "log"
-description = "log.ErrorFormat (log injection)"
-
-[[spec]]
-name = "log.Debug"
-is_sink = "log"
-description = "log.Debug (log injection)"
-
-[[spec]]
-name = "log.DebugFormat"
-is_sink = "log"
-description = "log.DebugFormat (log injection)"
-
-[[spec]]
-name = "log.Fatal"
-is_sink = "log"
-description = "log.Fatal (log injection)"
-
-[[spec]]
-name = "log.FatalFormat"
-is_sink = "log"
-description = "log.FatalFormat (log injection)"
-
-[[spec]]
-name = "log.Trace"
-is_sink = "log"
-description = "log.Trace (log injection)"
-
-[[spec]]
-name = "log.Log"
-is_sink = "log"
-description = "log.Log (log injection)"
-
-[[spec]]
-name = "logger.Info"
-is_sink = "log"
-description = "logger.Info (log injection)"
-
-[[spec]]
-name = "logger.InfoFormat"
-is_sink = "log"
-description = "logger.InfoFormat (log injection)"
-
-[[spec]]
-name = "logger.Warn"
-is_sink = "log"
-description = "logger.Warn (log injection)"
-
-[[spec]]
-name = "logger.WarnFormat"
-is_sink = "log"
-description = "logger.WarnFormat (log injection)"
-
-[[spec]]
-name = "logger.Error"
-is_sink = "log"
-description = "logger.Error (log injection)"
-
-[[spec]]
-name = "logger.ErrorFormat"
-is_sink = "log"
-description = "logger.ErrorFormat (log injection)"
-
-[[spec]]
-name = "logger.Debug"
-is_sink = "log"
-description = "logger.Debug (log injection)"
-
-[[spec]]
-name = "logger.DebugFormat"
-is_sink = "log"
-description = "logger.DebugFormat (log injection)"
-
-[[spec]]
-name = "logger.Fatal"
-is_sink = "log"
-description = "logger.Fatal (log injection)"
-
-[[spec]]
-name = "logger.FatalFormat"
-is_sink = "log"
-description = "logger.FatalFormat (log injection)"
-
-[[spec]]
-name = "logger.Trace"
-is_sink = "log"
-description = "logger.Trace (log injection)"
-
-[[spec]]
-name = "logger.Log"
-is_sink = "log"
-description = "logger.Log (log injection)"
-
-[[spec]]
-name = "_log.Info"
-is_sink = "log"
-description = "_log.Info (log injection)"
-
-[[spec]]
-name = "_log.InfoFormat"
-is_sink = "log"
-description = "_log.InfoFormat (log injection)"
-
-[[spec]]
-name = "_log.Warn"
-is_sink = "log"
-description = "_log.Warn (log injection)"
-
-[[spec]]
-name = "_log.WarnFormat"
-is_sink = "log"
-description = "_log.WarnFormat (log injection)"
-
-[[spec]]
-name = "_log.Error"
-is_sink = "log"
-description = "_log.Error (log injection)"
-
-[[spec]]
-name = "_log.ErrorFormat"
-is_sink = "log"
-description = "_log.ErrorFormat (log injection)"
-
-[[spec]]
-name = "_log.Debug"
-is_sink = "log"
-description = "_log.Debug (log injection)"
-
-[[spec]]
-name = "_log.DebugFormat"
-is_sink = "log"
-description = "_log.DebugFormat (log injection)"
-
-[[spec]]
-name = "_log.Fatal"
-is_sink = "log"
-description = "_log.Fatal (log injection)"
-
-[[spec]]
-name = "_log.FatalFormat"
-is_sink = "log"
-description = "_log.FatalFormat (log injection)"
-
-[[spec]]
-name = "_log.Trace"
-is_sink = "log"
-description = "_log.Trace (log injection)"
-
-[[spec]]
-name = "_log.Log"
-is_sink = "log"
-description = "_log.Log (log injection)"
-
-[[spec]]
-name = "_logger.Info"
-is_sink = "log"
-description = "_logger.Info (log injection)"
-
-[[spec]]
-name = "_logger.InfoFormat"
-is_sink = "log"
-description = "_logger.InfoFormat (log injection)"
-
-[[spec]]
-name = "_logger.Warn"
-is_sink = "log"
-description = "_logger.Warn (log injection)"
-
-[[spec]]
-name = "_logger.WarnFormat"
-is_sink = "log"
-description = "_logger.WarnFormat (log injection)"
-
-[[spec]]
-name = "_logger.Error"
-is_sink = "log"
-description = "_logger.Error (log injection)"
-
-[[spec]]
-name = "_logger.ErrorFormat"
-is_sink = "log"
-description = "_logger.ErrorFormat (log injection)"
-
-[[spec]]
-name = "_logger.Debug"
-is_sink = "log"
-description = "_logger.Debug (log injection)"
-
-[[spec]]
-name = "_logger.DebugFormat"
-is_sink = "log"
-description = "_logger.DebugFormat (log injection)"
-
-[[spec]]
-name = "_logger.Fatal"
-is_sink = "log"
-description = "_logger.Fatal (log injection)"
-
-[[spec]]
-name = "_logger.FatalFormat"
-is_sink = "log"
-description = "_logger.FatalFormat (log injection)"
-
-[[spec]]
-name = "_logger.Trace"
-is_sink = "log"
-description = "_logger.Trace (log injection)"
-
-[[spec]]
-name = "_logger.Log"
-is_sink = "log"
-description = "_logger.Log (log injection)"
 
 [[spec]]
 name = "Log.Info"
@@ -2194,62 +1795,226 @@ name = "Logger.Log"
 is_sink = "log"
 description = "Logger.Log (log injection)"
 
+
+# Loggers by their libraries' types: Microsoft.Extensions.Logging ILogger (and ILogger<T>), log4net
+# ILog, NLog Logger / ILogger, Serilog ILogger. A logger is known by its declared type, never by a
+# variable called `logger` or `_log`.
 [[spec]]
-name = "_logger.Value.Info"
+name = "ILogger.LogInformation"
 is_sink = "log"
-description = "_logger.Value.Info (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.InfoFormat"
+name = "ILogger.LogWarning"
 is_sink = "log"
-description = "_logger.Value.InfoFormat (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.Warn"
+name = "ILogger.LogError"
 is_sink = "log"
-description = "_logger.Value.Warn (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.WarnFormat"
+name = "ILogger.LogDebug"
 is_sink = "log"
-description = "_logger.Value.WarnFormat (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.Error"
+name = "ILogger.LogCritical"
 is_sink = "log"
-description = "_logger.Value.Error (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.ErrorFormat"
+name = "ILogger.LogTrace"
 is_sink = "log"
-description = "_logger.Value.ErrorFormat (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.Debug"
+name = "ILogger.Log"
 is_sink = "log"
-description = "_logger.Value.Debug (log injection)"
+description = "Microsoft.Extensions.Logging log message"
 
 [[spec]]
-name = "_logger.Value.DebugFormat"
+name = "ILog.Info"
 is_sink = "log"
-description = "_logger.Value.DebugFormat (log injection)"
+description = "log4net log message"
 
 [[spec]]
-name = "_logger.Value.Fatal"
+name = "ILog.InfoFormat"
 is_sink = "log"
-description = "_logger.Value.Fatal (log injection)"
+description = "log4net log message"
 
 [[spec]]
-name = "_logger.Value.FatalFormat"
+name = "ILog.Warn"
 is_sink = "log"
-description = "_logger.Value.FatalFormat (log injection)"
+description = "log4net log message"
 
 [[spec]]
-name = "_logger.Value.Trace"
+name = "ILog.WarnFormat"
 is_sink = "log"
-description = "_logger.Value.Trace (log injection)"
+description = "log4net log message"
 
 [[spec]]
-name = "_logger.Value.Log"
+name = "ILog.Error"
 is_sink = "log"
-description = "_logger.Value.Log (log injection)"
+description = "log4net log message"
+
+[[spec]]
+name = "ILog.ErrorFormat"
+is_sink = "log"
+description = "log4net log message"
+
+[[spec]]
+name = "ILog.Debug"
+is_sink = "log"
+description = "log4net log message"
+
+[[spec]]
+name = "ILog.DebugFormat"
+is_sink = "log"
+description = "log4net log message"
+
+[[spec]]
+name = "ILog.Fatal"
+is_sink = "log"
+description = "log4net log message"
+
+[[spec]]
+name = "ILog.FatalFormat"
+is_sink = "log"
+description = "log4net log message"
+
+[[spec]]
+name = "ILogger.Info"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Warn"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Error"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Debug"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Fatal"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Trace"
+is_sink = "log"
+description = "NLog log message"
+
+[[spec]]
+name = "ILogger.Information"
+is_sink = "log"
+description = "Serilog log message"
+
+[[spec]]
+name = "ILogger.Warning"
+is_sink = "log"
+description = "Serilog log message"
+
+[[spec]]
+name = "ILogger.Verbose"
+is_sink = "log"
+description = "Serilog log message"
+
+[[spec]]
+name = "CodeDomProvider.CompileAssemblyFromSource"
+is_sink = "code"
+description = "CodeDom compiles source text"
+
+[[spec]]
+name = "CodeDomProvider.CompileAssemblyFromFile"
+is_sink = "code"
+description = "CodeDom compiles source files"
+
+[[spec]]
+name = "CodeDomProvider.CompileAssemblyFromDom"
+is_sink = "code"
+description = "CodeDom compiles a code graph"
+
+[[spec]]
+name = "JsonWriter.WriteRawValue"
+is_sink = "code"
+description = "Json.NET writes raw JSON"
+
+[[spec]]
+name = "XPathExpression.Compile"
+is_sink = "xpath"
+description = "XPath expression compiled from text"
+
+[[spec]]
+name = "MigrationBuilder.Sql"
+is_sink = "sql"
+description = "EF migration raw SQL"
+
+[[spec]]
+name = "JwtSecurityTokenHandler.ValidateToken"
+is_sink = "auth"
+description = "JWT validation"
+
+[[spec]]
+name = "SecurityTokenHandler.ValidateToken"
+is_sink = "auth"
+description = "token validation"
+
+[[spec]]
+name = "ISession.CreateQuery"
+is_sink = "sql"
+description = "NHibernate HQL query"
+
+[[spec]]
+name = "ISession.CreateSQLQuery"
+is_sink = "sql"
+description = "NHibernate native SQL query"
+
+
+# Razor Pages: PageModel declares its own result helpers (Microsoft.AspNetCore.Mvc.RazorPages).
+[[spec]]
+name = "PageModel.Redirect"
+is_sink = "redirect"
+description = "Razor page redirect"
+
+[[spec]]
+name = "PageModel.Content"
+is_sink = "html"
+description = "Razor page content result"
+
+# SQL Server Management Objects (Microsoft.SqlServer.Management.Common.ServerConnection): the batch
+# methods run T-SQL text.
+[[spec]]
+name = "ServerConnection.ExecuteNonQuery"
+is_sink = "sql"
+description = "SMO ServerConnection.ExecuteNonQuery (T-SQL text)"
+
+[[spec]]
+name = "ServerConnection.ExecuteReader"
+is_sink = "sql"
+description = "SMO ServerConnection.ExecuteReader (T-SQL text)"
+
+[[spec]]
+name = "ServerConnection.ExecuteScalar"
+is_sink = "sql"
+description = "SMO ServerConnection.ExecuteScalar (T-SQL text)"
+
+[[spec]]
+name = "ServerConnection.ExecuteWithResults"
+is_sink = "sql"
+description = "SMO ServerConnection.ExecuteWithResults (T-SQL text)"
+
+# System.Xml.XPath.XPathNavigator.Compile(xpath) parses an XPath expression.
+[[spec]]
+name = "XPathNavigator.Compile"
+is_sink = "xpath"
+description = "XPath expression compiled from text"

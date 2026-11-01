@@ -66,3 +66,5 @@
 "Microsoft.EntityFrameworkCore" = ["DbContext"]
 "System.Data.Entity" = ["DbContext", "Database"]
 "NHibernate" = ["ISession", "IStatelessSession", "ISessionFactory"]
+"Microsoft.SqlServer.Management.Smo" = ["Server", "Database"]
+"Microsoft.SqlServer.Management.Common" = ["ServerConnection"]

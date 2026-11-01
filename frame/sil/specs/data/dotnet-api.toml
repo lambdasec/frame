@@ -12,6 +12,41 @@ dangerous_values = ["HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMo
 # (the source rows are written against the conventional property name).
 request_types = ["HttpRequest", "HttpRequestBase", "HttpRequestMessage"]
 
+# Documented supertypes (simple names): a call on a value of the type is also looked up under each
+# supertype's rows, so a row is written once on the type that declares the member. ADO.NET providers'
+# commands derive from System.Data.Common.DbCommand (which implements IDbCommand); XmlDocument and
+# XmlElement from XmlNode; ASP.NET Core's Controller from ControllerBase; CodeDomProvider's
+# compilers; Json.NET's writers from JsonWriter.
+[supertypes]
+SqlCommand = ["DbCommand"]
+NpgsqlCommand = ["DbCommand"]
+MySqlCommand = ["DbCommand"]
+SqliteCommand = ["DbCommand"]
+SQLiteCommand = ["DbCommand"]
+OleDbCommand = ["DbCommand"]
+OdbcCommand = ["DbCommand"]
+OracleCommand = ["DbCommand"]
+SqlCeCommand = ["DbCommand"]
+DbCommand = ["IDbCommand"]
+XmlDocument = ["XmlNode"]
+XmlElement = ["XmlNode"]
+Controller = ["ControllerBase"]
+CSharpCodeProvider = ["CodeDomProvider"]
+VBCodeProvider = ["CodeDomProvider"]
+JsonTextWriter = ["JsonWriter"]
+
+# Extension methods by the namespace that brings them into scope and the static class that declares
+# them: C# binds `x.FromSqlRaw(sql)` to the extension method of that name the file's usings make
+# visible (EF Core: RelationalQueryableExtensions, RelationalDatabaseFacadeExtensions).
+[extension_methods."Microsoft.EntityFrameworkCore"]
+FromSqlRaw = "RelationalQueryableExtensions"
+FromSql = "RelationalQueryableExtensions"
+ExecuteSqlRaw = "RelationalDatabaseFacadeExtensions"
+ExecuteSqlRawAsync = "RelationalDatabaseFacadeExtensions"
+ExecuteSqlCommand = "RelationalDatabaseFacadeExtensions"
+ExecuteSqlCommandAsync = "RelationalDatabaseFacadeExtensions"
+SqlQueryRaw = "RelationalDatabaseFacadeExtensions"
+
 # Members that install a TLS server-certificate validation callback (ServicePointManager,
 # HttpClientHandler, HttpWebRequest), and the built-in validator that accepts every certificate.
 [certificate_callbacks]
@@ -24,17 +59,41 @@ accept_all = ["DangerousAcceptAnyServerCertificateValidator"]
 types = ["RSACryptoServiceProvider", "DSACryptoServiceProvider", "RSACng", "DSACng"]
 minimum = 2048
 
-# Property assignments whose value reaches a sink on any receiver (`cmd.CommandText = sql`,
-# EF `MigrationStatement.Sql`, `element.InnerHtml`).
-[assignment_sinks]
-CommandText = "sql"
-Sql = "sql"
-InnerHtml = "html"
-InnerHTML = "html"
 
 # Properties that are a sink only on one declared type (`FileName` elsewhere is just a name). With
 # `when`, only if the same object initializer sets `property` to a literal containing `contains`
 # (`new ContentResult { Content = x, ContentType = "text/html" }`; the default is text/plain).
+[[typed_property_sink]]
+type = "DbCommand"
+property = "CommandText"
+kind = "sql"
+
+[[typed_property_sink]]
+type = "IDbCommand"
+property = "CommandText"
+kind = "sql"
+
+[[typed_property_sink]]
+type = "SqlOperation"
+property = "Sql"
+kind = "sql"
+
+# EF6 migrations (System.Data.Entity.Migrations.Sql.MigrationStatement.Sql): the statement's SQL text.
+[[typed_property_sink]]
+type = "MigrationStatement"
+property = "Sql"
+kind = "sql"
+
+[[typed_property_sink]]
+type = "HtmlContainerControl"
+property = "InnerHtml"
+kind = "html"
+
+[[typed_property_sink]]
+type = "HtmlGenericControl"
+property = "InnerHtml"
+kind = "html"
+
 [[typed_property_sink]]
 type = "ProcessStartInfo"
 property = "FileName"

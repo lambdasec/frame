@@ -5,19 +5,23 @@ description = "Dapper: Query / Execute extension methods on an IDbConnection tak
 detect = { imports = ["Dapper"] }
 
 # The SQL text is argument 0; the parameters object (`new { id }`) is the safe way to pass values.
-# Dapper's methods extend IDbConnection, so they are called on a connection: the interface, the
-# DbConnection base, or a provider's connection class (each provider's type, by declared type).
+# Dapper's methods (Dapper.SqlMapper) extend IDbConnection, so they are called on a connection: the
+# interface, the DbConnection base, or an ADO.NET provider's connection class, by declared type
+# (never a type merely named like one: a SignalR HubConnection is not a database).
+# Dapper's Query* / Execute* (Query, QueryFirstOrDefaultAsync, Execute, ExecuteScalar, ExecuteReader...).
 [[sink]]
-call = ["**Connection.Query", "**Connection.QueryAsync", "**Connection.QueryFirst", "**Connection.QueryFirstAsync",
-        "**Connection.QueryFirstOrDefault", "**Connection.QueryFirstOrDefaultAsync", "**Connection.QuerySingle",
-        "**Connection.QuerySingleAsync", "**Connection.QuerySingleOrDefault", "**Connection.QuerySingleOrDefaultAsync",
-        "**Connection.QueryMultiple", "**Connection.QueryMultipleAsync", "**Connection.ExecuteScalar",
-        "**Connection.ExecuteScalarAsync", "Dapper.SqlMapper.Query", "Dapper.SqlMapper.QueryAsync"]
+call = ["System.Data.IDbConnection.Query*", "System.Data.IDbConnection.Execute*",
+        "System.Data.Common.DbConnection.Query*", "System.Data.Common.DbConnection.Execute*",
+        "System.Data.SqlClient.SqlConnection.Query*", "System.Data.SqlClient.SqlConnection.Execute*",
+        "Microsoft.Data.SqlClient.SqlConnection.Query*", "Microsoft.Data.SqlClient.SqlConnection.Execute*",
+        "Npgsql.NpgsqlConnection.Query*", "Npgsql.NpgsqlConnection.Execute*",
+        "MySql.Data.MySqlClient.MySqlConnection.Query*", "MySql.Data.MySqlClient.MySqlConnection.Execute*",
+        "MySqlConnector.MySqlConnection.Query*", "MySqlConnector.MySqlConnection.Execute*",
+        "Microsoft.Data.Sqlite.SqliteConnection.Query*", "Microsoft.Data.Sqlite.SqliteConnection.Execute*",
+        "System.Data.SQLite.SQLiteConnection.Query*", "System.Data.SQLite.SQLiteConnection.Execute*",
+        "Oracle.ManagedDataAccess.Client.OracleConnection.Query*", "Oracle.ManagedDataAccess.Client.OracleConnection.Execute*",
+        "System.Data.OleDb.OleDbConnection.Query*", "System.Data.OleDb.OleDbConnection.Execute*",
+        "System.Data.Odbc.OdbcConnection.Query*", "System.Data.Odbc.OdbcConnection.Execute*",
+        "Dapper.SqlMapper.Query", "Dapper.SqlMapper.QueryAsync"]
 kind = "sql"
-description = "Dapper query: the first argument is SQL text"
-
-# `Execute` and `ExecuteReader` are common method names, so they are matched only on a database connection.
-[[sink]]
-call = ["**Connection.Execute", "**Connection.ExecuteAsync", "**Connection.ExecuteReader", "**Connection.ExecuteReaderAsync"]
-kind = "sql"
-description = "Dapper Execute on a database connection: the first argument is SQL text"
+description = "Dapper query / execute: the first argument is SQL text"

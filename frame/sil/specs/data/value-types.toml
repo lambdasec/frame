@@ -299,6 +299,20 @@
 "NHibernate.ISessionFactory.OpenStatelessSession" = "NHibernate.IStatelessSession"
 "System.IO.Compression.ZipFile.OpenRead" = "System.IO.Compression.ZipArchive"
 "System.IO.Compression.ZipFile.Open" = "System.IO.Compression.ZipArchive"
+# SQL Server Management Objects: a Server's ConnectionContext is its ServerConnection.
+"Microsoft.SqlServer.Management.Smo.Server.ConnectionContext" = "Microsoft.SqlServer.Management.Common.ServerConnection"
+# ADO.NET: a connection's CreateCommand returns its provider's command (System.Data.Common.DbConnection
+# and each provider's override).
+"System.Data.SqlClient.SqlConnection.CreateCommand" = "System.Data.SqlClient.SqlCommand"
+"Microsoft.Data.SqlClient.SqlConnection.CreateCommand" = "Microsoft.Data.SqlClient.SqlCommand"
+"System.Data.Common.DbConnection.CreateCommand" = "System.Data.Common.DbCommand"
+"System.Data.IDbConnection.CreateCommand" = "System.Data.IDbCommand"
+"Npgsql.NpgsqlConnection.CreateCommand" = "Npgsql.NpgsqlCommand"
+"MySql.Data.MySqlClient.MySqlConnection.CreateCommand" = "MySql.Data.MySqlClient.MySqlCommand"
+"MySqlConnector.MySqlConnection.CreateCommand" = "MySqlConnector.MySqlCommand"
+"Microsoft.Data.Sqlite.SqliteConnection.CreateCommand" = "Microsoft.Data.Sqlite.SqliteCommand"
+"System.Data.SQLite.SQLiteConnection.CreateCommand" = "System.Data.SQLite.SQLiteCommand"
+
 # ASP.NET Core CORS (src/Middleware/CORS/src/PublicAPI.Shipped.txt): every CorsPolicyBuilder
 # configuration method returns the builder, so a chain stays one.
 "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder.WithOrigins" = "Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"

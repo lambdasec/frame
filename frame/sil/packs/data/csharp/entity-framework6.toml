@@ -11,3 +11,11 @@ call = ["System.Data.Entity.Database.SqlQuery", "System.Data.Entity.DbContext.Da
         "System.Data.Entity.DbSet.SqlQuery", "System.Data.Entity.DbSet`1.SqlQuery"]
 kind = "sql"
 description = "EF6 raw SQL query: the first argument is SQL text"
+
+# Database.ExecuteSqlCommand(sql, params) runs the text as given (EF6 System.Data.Entity.Database).
+[[sink]]
+call = ["System.Data.Entity.Database.ExecuteSqlCommand", "System.Data.Entity.Database.ExecuteSqlCommandAsync",
+        "System.Data.Entity.DbContext.Database.ExecuteSqlCommand",
+        "System.Data.Entity.DbContext.Database.ExecuteSqlCommandAsync"]
+kind = "sql"
+description = "EF6 raw SQL command: the first argument is SQL text"

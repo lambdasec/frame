@@ -1325,7 +1325,8 @@ class TestCSharpTaintEngine:
         return {v.cwe_id for v in res.vulnerabilities}
 
     def test_sql_from_request_source(self):
-        code = 'class C { void f(){ var id=Request.QueryString["id"]; cmd.ExecuteReader("SELECT "+id); } }'
+        code = ('using System.Data.SqlClient;\nclass C { void f(SqlConnection conn){ var id=Request.QueryString["id"]; '
+                'var cmd = new SqlCommand("SELECT "+id, conn); cmd.ExecuteReader(); } }')
         assert "CWE-89" in self._cwes(code)
 
     def test_command_from_request_source(self):
@@ -1340,7 +1341,8 @@ class TestCSharpTaintEngine:
         assert "CWE-328" in self._cwes('class C { void f(){ new MD5CryptoServiceProvider(); } }')
 
     def test_constant_arg_not_flagged(self):
-        code = 'class C { void f(){ var x="const"; cmd.ExecuteReader(x); } }'
+        code = ('using System.Data.SqlClient;\nclass C { void f(SqlConnection conn){ var x="const"; '
+                'var cmd = new SqlCommand(x, conn); cmd.ExecuteReader(); } }')
         assert "CWE-89" not in self._cwes(code)
 
 
