@@ -28,10 +28,27 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import z3
 
 from .policy import (BoolOp, Compare, Default, Expr, Internet, Literal, Not, Number, Path, Present,
-                     Quantifier, StartsWith)
+                     Quantifier, StartsWith, InPorts, Lower)
 
 DocPath = Tuple[Union[str, int], ...]
 RELATED = "resources"                # `some p in resources["aws_s3_bucket_acl"]: ...`
+
+
+def _port_matches(value, port: int) -> bool:
+    """Firewall rules' port syntax: a number (22 or "22"), a range "A-B", or "*" for every port."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == port
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    if v == "*":
+        return True
+    if v.isdigit():
+        return int(v) == port
+    lo, sep, hi = v.partition("-")
+    return bool(sep) and lo.strip().isdigit() and hi.strip().isdigit() and int(lo) <= port <= int(hi)
 
 
 @dataclass(frozen=True)
@@ -207,6 +224,9 @@ class _Evaluator:
                     return float(v.strip()), why
                 return _ABSENT, why                     # not a number: no comparison holds
             return v, why
+        if isinstance(o, Lower):
+            v, why = self.operand(o.operand, env)
+            return (v.lower() if isinstance(v, str) else v), why
         if isinstance(o, Default):
             r = self.resolve(o.path, env)
             if isinstance(r, _Absent):
@@ -320,6 +340,14 @@ class _Evaluator:
             if isinstance(a, Unknown):
                 return z3.PrefixOf(z3.StringVal(e.prefix), _z3_const(a, z3.StringSort())), why
             return (isinstance(a, str) and a.startswith(e.prefix)), why
+        if isinstance(e, InPorts):
+            port, why_p = self.operand(e.port, env)
+            a, why = self.operand(e.operand, env)
+            if not isinstance(port, int) or isinstance(port, bool):
+                return False, why_p                  # a define called with something else
+            if isinstance(a, Unknown):
+                return z3.Bool(f"in_ports{port}:{a.key}"), why
+            return _port_matches(a, port), why
         if isinstance(e, Internet):
             from .addresses import may_reach
             a, why = self.operand(e.operand, env)
@@ -329,7 +357,7 @@ class _Evaluator:
                 return False, why
             reach = may_reach(a, e.family)
             if reach is None:                        # a CIDR with host bits: not decided
-                self.unknowns.add(f"whether AWS accepts {a}")
+                self.unknowns.add(f"whether the provider accepts {a}")
                 return self.fresh_bool("cidr"), why
             return reach, why
         if isinstance(e, Not):

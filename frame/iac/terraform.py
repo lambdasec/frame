@@ -515,12 +515,35 @@ class _Reader:
 _FACTS = Path(__file__).parent / "data" / "terraform-facts.toml"
 
 
-def _id_aliases() -> Dict[str, str]:
+def _facts_data() -> Dict[str, Any]:
     try:
         import tomllib
     except ModuleNotFoundError:             # pragma: no cover - 3.10
         import tomli as tomllib             # type: ignore[no-redef]
     data = tomllib.loads(_FACTS.read_text(encoding="utf-8"))
+    if set(data) - {"id_alias", "version_dependent_default"}:
+        raise ValueError(f"{_FACTS.name}: unknown table(s) {sorted(set(data) - {'id_alias', 'version_dependent_default'})}")
+    for i, e in enumerate(data.get("version_dependent_default", [])):
+        if set(e) != {"type", "arguments", "references"} or not e["arguments"] or not e["references"]:
+            raise ValueError(f"{_FACTS.name}: version_dependent_default {i + 1} needs exactly type, arguments, "
+                             "references (non-empty)")
+    return data
+
+
+def _version_dependent(resources) -> None:
+    """An argument whose default differs between provider releases, left out, is unknown: which
+    release applies is not in the files (a version constraint admits several)."""
+    defaults = {}
+    for e in _facts_data().get("version_dependent_default", []):
+        defaults.setdefault(e["type"], []).extend(e["arguments"])
+    for address, doc, block, _f, _lines in resources:
+        for arg in defaults.get(block.labels[0], ()):
+            if arg not in doc:
+                doc[arg] = Unknown(f"{address}.{arg}", f"{address}.{arg} (left out; its default depends on the provider version)")
+
+
+def _id_aliases() -> Dict[str, str]:
+    data = _facts_data()
     out = {}
     for i, e in enumerate(data.get("id_alias", [])):
         if set(e) != {"type", "argument", "reference"}:
@@ -590,6 +613,7 @@ def read(paths: List[Tuple[Path, str]], root: Path) -> ReadResult:
         inst.values = _tfvars(d, reader.warnings, reader.root)
         inst.prepare()
         resources = inst.resources()
+        _version_dependent(resources)
         related = _related(resources)
         constraints = _constraints(related)
         _network_reach(resources, related, constraints)

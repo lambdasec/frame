@@ -1,0 +1,138 @@
+# Google Cloud resources in Terraform (hashicorp/google provider). Attribute names and defaults are
+# the provider's (github.com/hashicorp/terraform-provider-google, website/docs/r/*.html.markdown and
+# the resource schemas); what a setting means is Google Cloud's (docs.cloud.google.com).
+# `internet(c)`: some address in CIDR c can send from the internet (frame/iac/addresses.py);
+# `in_ports(p, n)`: the port or range p (`22`, `1000-2000`) contains port n.
+
+[pack]
+name = "google"
+language = "terraform"
+description = "Google Cloud: firewall exposure, public Cloud SQL networks, public buckets"
+references = ["https://registry.terraform.io/providers/hashicorp/google/latest/docs"]
+
+# --- VPC firewall rules ----------------------------------------------------------------------
+# `direction` defaults to INGRESS, `disabled` to false, `priority` to 1000 (0-65535, a lower number
+# first; a DENY overrides an ALLOW of the same priority). Only `source_ranges` can match internet
+# traffic: source tags and service accounts stand for instances' internal addresses. A protocol is
+# a name (tcp, udp, icmp, esp, ah, sctp, ipip, all) or its IANA number; `ports` applies to tcp and
+# udp, and a rule without `ports` covers every port. An ALLOW is open when no DENY ahead of it in
+# the same network covers that port from every internet address, for every instance (no targets).
+#   https://docs.cloud.google.com/firewall/docs/firewalls#priority_order_for_firewall_rules
+#   https://docs.cloud.google.com/firewall/docs/firewalls#sources-for-rules
+
+[[define]]
+name = "fw_ingress"
+params = ["f"]
+body = '''default(f.direction, "INGRESS") == "INGRESS" and default(f.disabled, false) == false'''
+
+[[define]]
+name = "fw_from_internet"
+params = ["f"]
+body = '''some c in f.source_ranges: internet(c)'''
+
+[[define]]
+name = "fw_port"
+params = ["a", "n"]
+body = '''
+a.protocol in ["all", "tcp", "6", 6] and (a.protocol == "all" or absent(a.ports) or (some p in a.ports: in_ports(p, n)))
+'''
+
+[[define]]
+name = "fw_every_port"
+params = ["a"]
+body = '''
+a.protocol == "all" or (a.protocol in ["tcp", "6", 6] and (absent(a.ports) or (some p in a.ports: p == "0-65535")))
+'''
+
+# d is a DENY of port n (every port when n is -1) from the whole internet, for every instance,
+# that applies before the ALLOW f.
+[[define]]
+name = "fw_denied_before"
+params = ["d", "f", "n"]
+body = '''
+fw_ingress(d) and d.network == f.network and default(d.priority, 1000) <= default(f.priority, 1000)
+and absent(d.target_tags) and absent(d.target_service_accounts)
+and (some c in d.source_ranges: c == "0.0.0.0/0")
+and ((some c in d.source_ranges: c == "::/0") or (every c in f.source_ranges: not internet(c, 6)))
+and (some x in d.deny: (n == -1 and fw_every_port(x)) or (n != -1 and fw_port(x, n)))
+'''
+
+[[define]]
+name = "fw_open"
+params = ["f", "n"]
+body = '''
+fw_ingress(f) and fw_from_internet(f) and (some a in f.allow: fw_port(a, n))
+and not (some d in resources["google_compute_firewall"]: fw_denied_before(d, f, n))
+'''
+
+[[policy]]
+id = "gcp-firewall-admin-from-internet"
+title = "Firewall rule lets the internet reach SSH or RDP"
+severity = "high"
+cwe = "CWE-284"
+resources = ["google_compute_firewall"]
+when = '''fw_open(self, 22) or fw_open(self, 3389)'''
+references = ["https://docs.cloud.google.com/firewall/docs/firewalls",
+              "https://docs.cloud.google.com/security-command-center/docs/concepts-vulnerabilities-findings#firewall-findings"]
+
+[[policy]]
+id = "gcp-firewall-all-from-internet"
+title = "Firewall rule lets the internet reach every port"
+severity = "high"
+cwe = "CWE-284"
+resources = ["google_compute_firewall"]
+overrides = ["gcp-firewall-admin-from-internet"]
+when = '''
+fw_ingress(self) and fw_from_internet(self) and (some a in self.allow: fw_every_port(a))
+and not (some d in resources["google_compute_firewall"]: fw_denied_before(d, self, -1))
+'''
+references = ["https://docs.cloud.google.com/firewall/docs/firewalls"]
+
+# --- Cloud SQL -------------------------------------------------------------------------------
+# `ipv4_enabled` (default true in the provider's schema) gives the instance a public IPv4 address;
+# `authorized_networks` are the CIDRs allowed to connect to it.
+#   https://docs.cloud.google.com/sql/docs/mysql/authorize-networks
+
+[[policy]]
+id = "gcp-sql-public-network"
+title = "Cloud SQL instance accepts connections from the internet"
+severity = "high"
+cwe = "CWE-284"
+resources = ["google_sql_database_instance"]
+when = '''
+some s in self.settings: some ip in s.ip_configuration: default(ip.ipv4_enabled, true) == true
+    and (some n in ip.authorized_networks: n.value in ["0.0.0.0/0", "::/0"])
+'''
+references = ["https://docs.cloud.google.com/sql/docs/mysql/authorize-networks"]
+
+# --- Cloud Storage ---------------------------------------------------------------------------
+# allUsers is "anyone who is on the internet", allAuthenticatedUsers every Google account. A grant
+# to either is overridden when the bucket enforces public access prevention
+# (`public_access_prevention = "enforced"`; "inherited", the default, follows an organization
+# policy outside these files).
+#   https://docs.cloud.google.com/iam/docs/principals-overview
+#   https://docs.cloud.google.com/storage/docs/public-access-prevention
+
+[[define]]
+name = "public_principal"
+params = ["m"]
+body = '''m in ["allUsers", "allAuthenticatedUsers"]'''
+
+[[define]]
+name = "bucket_enforces"
+params = ["name"]
+body = '''some b in resources["google_storage_bucket"]: (b.name == name or b.id == name) and b.public_access_prevention == "enforced"'''
+
+[[policy]]
+id = "gcp-bucket-public"
+title = "Cloud Storage bucket is granted to everyone on the internet"
+severity = "high"
+cwe = "CWE-732"
+resources = ["google_storage_bucket_iam_member", "google_storage_bucket_iam_binding",
+             "google_storage_bucket_access_control", "google_storage_default_object_access_control"]
+when = '''
+(public_principal(self.member) or (some m in self.members: public_principal(m)) or public_principal(self.entity))
+and not bucket_enforces(self.bucket)
+'''
+references = ["https://docs.cloud.google.com/storage/docs/public-access-prevention",
+              "https://docs.cloud.google.com/storage/docs/access-control/making-data-public"]

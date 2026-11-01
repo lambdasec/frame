@@ -415,6 +415,19 @@ def test_go_govulncheck_walkthrough(tmp_path):
         assert line in out and line in readme, (line, out[-1500:])
 
 
+def test_iac_multicloud_walkthrough(tmp_path):
+    work = tmp_path / "iac-multicloud"
+    shutil.copytree(EXAMPLES / "iac-multicloud", work)
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    out = frame(work, env, "iac", ".")
+    lines = [l for l in readme.split("```console")[1].split("```")[0].splitlines() if l.strip() and not l.startswith("$")]
+    assert len(lines) == 7          # five findings, the summary, the undecided container
+    for line in lines:
+        assert line in out, (line, out)
+    assert "jump" not in out and "staging" not in out and "reports_public" not in out
+
+
 def test_iac_walkthrough(tmp_path):
     work = tmp_path / "iac"
     shutil.copytree(EXAMPLES / "iac", work)

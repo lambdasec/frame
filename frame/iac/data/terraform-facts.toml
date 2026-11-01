@@ -9,3 +9,24 @@
 type = "aws_s3_bucket"
 argument = "bucket"
 reference = "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#id-1"
+
+# google_storage_bucket: the provider sets the id from the API's, and "for buckets, the id and name
+# properties are the same".
+[[id_alias]]
+type = "google_storage_bucket"
+argument = "name"
+reference = "https://docs.cloud.google.com/storage/docs/json_api/v1/buckets"
+
+# Arguments whose default differs between provider releases: left out, the value is unknown (a
+# version constraint such as `>= 2.0.0` admits releases that disagree), so a policy reading it is
+# undecided rather than decided by one release's default.
+#
+# azurerm_storage_account `allow_nested_items_to_be_public`: "Defaults to `true`" in the docs of
+# v3.117.0 and v4.0.0, "Defaults to `false`" on main; 2.x and early 3.x name it
+# `allow_blob_public_access` ("Defaults to `false`").
+
+[[version_dependent_default]]
+type = "azurerm_storage_account"
+arguments = ["allow_nested_items_to_be_public"]
+references = ["https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.0.0/website/docs/r/storage_account.html.markdown",
+              "https://github.com/hashicorp/terraform-provider-azurerm/blob/main/website/docs/r/storage_account.html.markdown"]

@@ -19,8 +19,11 @@ Grammar (keywords are lower case; `#` starts a comment):
     collection := path ('+' path)*                      -- lists are concatenated
     atom       := 'present' '(' path ')' | 'absent' '(' path ')'
                 | 'starts_with' '(' operand ',' STRING ')'
+                | 'in_ports' '(' operand ',' operand ')'   -- a port or range (`22`, `1000-2000`,
+                                                        -- `*`) contains a port number
                 | operand OP operand                    -- == != < <= > >= in, not in
-    operand    := path | literal | 'default' '(' path ',' literal ')'
+    operand    := path | literal | 'default' '(' path ',' literal ')' | 'number' '(' operand ')'
+                | 'lower' '(' operand ')'               -- a string in lower case (case-insensitive enums)
     path       := NAME ('.' NAME | '[' STRING ']' | '[' INT ']')*
     literal    := STRING | NUMBER | 'true' | 'false' | '[' literal (',' literal)* ']'
 
@@ -73,7 +76,14 @@ class Number:
     operand: Any
 
 
-Operand = Union[Path, Literal, Default, Number]
+@dataclass(frozen=True)
+class Lower:
+    """`lower(x)`: a string x in lower case, for values the platform reads in any case (Azure's
+    rule protocols and directions under provider 2.x)."""
+    operand: Any
+
+
+Operand = Union[Path, Literal, Default, Number, Lower]
 
 
 @dataclass(frozen=True)
@@ -93,6 +103,14 @@ class Present:
 class StartsWith:
     operand: Operand
     prefix: str
+
+
+@dataclass(frozen=True)
+class InPorts:
+    """`in_ports(x, n)`: x, a port (`22`, 22), a range `A-B` or `*` as firewall rules write them,
+    contains port n (a number, or a define's parameter that is one)."""
+    operand: "Operand"
+    port: "Operand"
 
 
 @dataclass(frozen=True)
@@ -130,13 +148,13 @@ class Quantifier:
     body: "Expr"
 
 
-Expr = Union[Compare, Present, StartsWith, Internet, Call, Not, BoolOp, Quantifier]
+Expr = Union[Compare, Present, StartsWith, InPorts, Internet, Call, Not, BoolOp, Quantifier]
 
 
 # --- tokenizer ---------------------------------------------------------------------------
 
 _KEYWORDS = {"and", "or", "not", "some", "every", "in", "true", "false", "present", "absent",
-             "default", "starts_with", "internet", "number"}
+             "default", "starts_with", "internet", "number", "in_ports", "lower"}
 _OPERATORS = ("==", "!=", "<=", ">=", "<", ">")
 _PUNCT = "().,[]:+"
 
@@ -308,6 +326,16 @@ class _Parser:
                     args.append(self.operand())
             self.expect("P", ")")
             return Call(name, tuple(args))
+        if self.at("KW", "in_ports"):
+            self.take()
+            self.expect("P", "(")
+            operand = self.operand()
+            self.expect("P", ",")
+            port = self.operand()
+            self.expect("P", ")")
+            if isinstance(port, Literal) and (not isinstance(port.value, int) or isinstance(port.value, bool)):
+                raise PolicyError(f"in_ports(): the port is a number, not {port.value!r}")
+            return InPorts(operand, port)
         if self.at("KW", "starts_with"):
             self.take()
             self.expect("P", "(")
@@ -332,12 +360,12 @@ class _Parser:
         return Compare(op, left, self.operand())
 
     def operand(self) -> Operand:
-        if self.at("KW", "number"):
-            self.take()
+        if self.at("KW", "number") or self.at("KW", "lower"):
+            kind = Number if self.take()[1] == "number" else Lower
             self.expect("P", "(")
             inner = self.operand()
             self.expect("P", ")")
-            return Number(inner)
+            return kind(inner)
         if self.at("KW", "default"):
             self.take()
             self.expect("P", "(")
@@ -399,7 +427,7 @@ def roots(expr: Expr, bound: Tuple[str, ...] = ()) -> set:
     out: set = set()
 
     def operand(o: Optional[Operand], b) -> None:
-        if isinstance(o, Number):
+        if isinstance(o, (Number, Lower)):
             return operand(o.operand, b)
         p = o.path if isinstance(o, Default) else o
         if isinstance(p, Path) and p.root not in b:
@@ -413,6 +441,9 @@ def roots(expr: Expr, bound: Tuple[str, ...] = ()) -> set:
             operand(e.path, b)
         elif isinstance(e, (StartsWith, Internet)):
             operand(e.operand, b)
+        elif isinstance(e, InPorts):
+            operand(e.operand, b)
+            operand(e.port, b)
         elif isinstance(e, Call):
             for a in e.args:
                 operand(a, b)
@@ -440,8 +471,8 @@ def inline(expr: Expr, defines: dict) -> Expr:
     counter = [0]
 
     def sub_operand(o, env):
-        if isinstance(o, Number):
-            return Number(sub_operand(o.operand, env))
+        if isinstance(o, (Number, Lower)):
+            return type(o)(sub_operand(o.operand, env))
         p = o.path if isinstance(o, Default) else o
         if not isinstance(p, Path) or p.root not in env:
             return o
@@ -464,6 +495,8 @@ def inline(expr: Expr, defines: dict) -> Expr:
             return Present(new, e.negate)
         if isinstance(e, StartsWith):
             return StartsWith(sub_operand(e.operand, env), e.prefix)
+        if isinstance(e, InPorts):
+            return InPorts(sub_operand(e.operand, env), sub_operand(e.port, env))
         if isinstance(e, Internet):
             return Internet(sub_operand(e.operand, env), e.family)
         if isinstance(e, Not):
@@ -496,4 +529,4 @@ def inline(expr: Expr, defines: dict) -> Expr:
 
 
 __all__ = ["BoolOp", "Call", "Compare", "Default", "Expr", "Internet", "Literal", "Not", "Number", "Path", "PolicyError",
-           "Present", "Quantifier", "StartsWith", "inline", "parse", "roots"]
+           "Present", "Quantifier", "StartsWith", "InPorts", "Lower", "inline", "parse", "roots"]

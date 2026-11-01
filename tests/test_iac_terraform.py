@@ -341,7 +341,16 @@ def test_terragoat():
         ("aws-ebs-unencrypted", "aws_ebs_volume.web_host_storage"),
         ("aws-sg-admin-from-internet", "aws_security_group.web-node"),
         # both instances sit in the public subnet behind that group: SSH is reachable end to end
-        ("aws-ec2-admin-reachable", "aws_instance.web_host"), ("aws-ec2-admin-reachable", "aws_instance.db_app")}
+        ("aws-ec2-admin-reachable", "aws_instance.web_host"), ("aws-ec2-admin-reachable", "aws_instance.db_app"),
+        # Azure and Google Cloud, as checkov 3.4.0's CKV_AZURE_9/10/39 and CKV_GCP_2/3/11/28 see them (the SSH
+        # and RDP checks of one resource are one finding here; allow_all opens every port, which absorbs them).
+        # checkov's CKV_AZURE_190 (an account not forbidding public blobs) is a setting, not an exposure:
+        # TerraGoat has no container, so nothing is public.
+        ("azure-nsg-admin-from-internet", "azurerm_network_security_group.bad_sg"),
+        ("azure-custom-role-all-actions", "azurerm_role_definition.example"),
+        ("gcp-firewall-all-from-internet", "google_compute_firewall.allow_all"),
+        ("gcp-sql-public-network", "google_sql_database_instance.master_instance"),
+        ("gcp-bucket-public", "google_storage_bucket_iam_binding.allow_public_read")}
 
 
 # --- addresses -------------------------------------------------------------------------------

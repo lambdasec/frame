@@ -245,4 +245,4 @@ def test_a_cidr_with_host_bits_is_undecided():
     run = scan(FIXTURES / "aws-cloudformation-templates" / "EC2" / "EC2InstanceWithSecurityGroupSample.yaml")
     assert not run.findings
     assert [(u["rule"], u["depends_on"]) for u in run.undecided] == [
-        ("aws-sg-admin-from-internet", ["whether AWS accepts 192.168.1.0/0"])]
+        ("aws-sg-admin-from-internet", ["whether the provider accepts 192.168.1.0/0"])]

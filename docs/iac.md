@@ -1,6 +1,6 @@
 # Infrastructure as code
 
-`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards), Dockerfiles, Terraform and CloudFormation (AWS). Helm rendering and full network reachability follow ([roadmap](roadmap.md)).
+`frame iac` reads the infrastructure files in a repository into one model of resources and decides each policy on each resource with Z3. This release reads Kubernetes manifests (checked against the Pod Security Standards), Dockerfiles, Terraform (AWS, Azure, Google Cloud) and CloudFormation (AWS). Helm rendering and full network reachability follow ([roadmap](roadmap.md)).
 
 ```console
 $ frame iac .
@@ -88,6 +88,29 @@ Relations between resources (this public access block is for that bucket) are eq
 
 On TerraGoat these policies report the same resources as checkov's equivalent checks (CKV_AWS_24, 25, 277, 17, 16, 3; for S3 and IAM, CKV_AWS_20, 57, 62 and 1 report nothing there either). On terraform-aws-rds both report the same two databases; checkov also reports two inside a wrapper module whose `for_each` is empty by default (there are no such instances), and Frame leaves the read replica undecided (its source database comes from a module output that may be null).
 
+### Azure and Google Cloud
+
+The `azure` and `google` packs (`packs/data/terraform/azure.toml`, `google.toml`) take attribute names and defaults from the providers' own documentation and schemas, and what a setting means from Microsoft's and Google's. A walkthrough: [examples/iac-multicloud](../examples/iac-multicloud/README.md).
+
+| Policy | Check | Severity |
+|---|---|---|
+| `azure-nsg-admin-from-internet` | a network security group rule (inline or `azurerm_network_security_rule`) lets the internet reach SSH or RDP | high |
+| `azure-nsg-all-from-internet` | a rule lets the internet reach every port | high |
+| `azure-db-firewall-internet` | a SQL, PostgreSQL, MySQL, Synapse, Cosmos DB for PostgreSQL or Redis firewall rule admits 0.0.0.0 to 255.255.255.255 | high |
+| `azure-storage-container-public` | a blob container allows anonymous reads in an account that lets it | high |
+| `azure-storage-http` | a storage account accepts plain HTTP | medium |
+| `azure-custom-role-all-actions` | a custom role allows every action (`*`) | high |
+| `gcp-firewall-admin-from-internet` | a VPC firewall rule lets the internet reach SSH or RDP | high |
+| `gcp-firewall-all-from-internet` | a rule lets the internet reach every port | high |
+| `gcp-sql-public-network` | a Cloud SQL instance with a public address authorizes 0.0.0.0/0 or ::/0 | high |
+| `gcp-bucket-public` | a bucket IAM grant or ACL to `allUsers` / `allAuthenticatedUsers` the bucket does not override | high |
+
+**Rule order decides, as the clouds document it.** An Azure NSG [applies rules in priority order, lower numbers first, and stops at the first match](https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview#security-rules), so an Allow from the internet is reported only when no Deny with a lower number covers the same port from every address to every destination. A source of `*`, `Any`, `0.0.0.0/0` or the [`Internet` service tag](https://learn.microsoft.com/en-us/azure/virtual-network/service-tags-overview#available-service-tags) is the internet; other CIDRs are decided by `internet()`. Provider 2.x read a rule's protocol, direction and access in any case (TerraGoat writes `"TCP"`), so they are compared in lower case. In Google Cloud [a deny overrides an allow only at the same priority, else the lower number wins](https://docs.cloud.google.com/firewall/docs/firewalls); a rule's `priority` defaults to 1000, `direction` to INGRESS. Only `source_ranges` match internet traffic (source tags and service accounts stand for instances' internal addresses), a rule without `ports` covers every port, and a deny counts only if it applies to every instance (no `target_tags` or `target_service_accounts`) in the same network.
+
+**Defaults are the providers', and a default that changed is undecided.** Cloud SQL's `ipv4_enabled` is `Default: true` in the provider's schema, so an instance that leaves it out has a public address. A container is public only with `container_access_type` `blob` or `container` in an account that allows nested items to be public; `allow_nested_items_to_be_public` defaulted to `true` in provider 3.117 and 4.0 and defaults to `false` now, so an account that leaves it out makes the container undecided (`version_dependent_default` in `data/terraform-facts.toml`: a left-out argument whose default differs between releases is unknown). A grant to [`allUsers` ("anyone who is on the internet")](https://docs.cloud.google.com/iam/docs/principals-overview) is overridden when the bucket enforces [public access prevention](https://docs.cloud.google.com/storage/docs/public-access-prevention); `inherited`, the default, follows an organization policy outside the files and is reported. A bucket's id is its name (the Cloud Storage API: "for buckets, the id and name properties are the same").
+
+On TerraGoat's Azure and Google Cloud modules these policies report the resources checkov 3.4.0's equivalent checks report (CKV_AZURE_9, 10, 39; CKV_GCP_2, 3, 11, 28), the SSH and RDP checks of one resource being one finding here. checkov's CKV_AZURE_190 (an account not forbidding public blobs) is a setting rather than an exposure; TerraGoat has no container, so nothing is public.
+
 **CloudFormation.** A YAML or JSON template (`AWSTemplateFormatVersion`, or `Resources` whose entries have `AWS::`-style types) is read as a deployment that takes every parameter's `Default` would see it (`frame/iac/cloudformation.py`). YAML is read as YAML 1.1 without the timestamp tag, as [CloudFormation reads it](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-formats.html) (a bare `yes` is true; `2010-09-09` is a string). The intrinsic functions are evaluated as the template reference defines them when their inputs are known: `Ref` to a parameter (its default, as a string; list types split), `Fn::Sub`, `Fn::Join`, `Fn::Select`, `Fn::Split`, `Fn::FindInMap`, `Fn::Base64`, `Fn::If`, and the `Conditions` (a resource whose condition is false is not created; `AWS::NoValue` removes a property). A resource's physical id (`Ref`), `Fn::GetAtt`, `Fn::ImportValue`, pseudo parameters and a parameter without a default are unknown; a tag that is not CloudFormation's (`!Rain::Embed`) makes its value unknown; a transform's additions are not read (a warning names the template). The AWS pack (`packs/data/cloudformation/aws.toml`) has the same seven policies as Terraform's, with CloudFormation's property names; a Block Public Access setting left out of a written `PublicAccessBlockConfiguration` is unknown, since its default is not documented (`data/cloudformation-facts.toml`).
 
 On the 280 templates of aws-cloudformation/aws-cloudformation-templates Frame reads every template (warnings only for transforms). On the 44 where either tool reports something, every one of checkov's 31 equivalent findings is a Frame finding except a read replica, which takes its source's encryption; Frame adds four load balancer groups open on every port. A sample whose SSH default is `192.168.1.0/0` (all addresses, if AWS accepts a CIDR with host bits set) is undecided: whether AWS takes its network or refuses it is not documented.
@@ -130,6 +153,8 @@ references = ["https://kubernetes.io/docs/concepts/configuration/manage-resource
 | `starts_with(x, "prefix")` | string prefix |
 | `number(x)` | x as a number, a decimal string included (CloudFormation's parameter values are strings) |
 | `internet(c)`, `internet(c, 4)` | CIDR or address c contains an address the internet can send from (of IP version 4 or 6) |
+| `in_ports(p, n)` | the port or range p as firewall rules write it (`22`, `"22"`, `"1000-2000"`, `"*"`) contains port n |
+| `lower(x)` | the string x in lower case, for values a platform reads in any case |
 | `name(a, b)` | a `[[define]]` of the pack, inlined |
 | `default(p, v)` | p's value, or v when p is missing |
 | `and`, `or`, `not`, `( )` | as usual |

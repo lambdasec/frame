@@ -1,0 +1,188 @@
+# Azure resources in Terraform (hashicorp/azurerm provider). Attribute names and defaults are the
+# provider's (github.com/hashicorp/terraform-provider-azurerm, website/docs/r/*.html.markdown); what
+# a setting means is Azure's (learn.microsoft.com). `internet(c)`: some address in CIDR c can send
+# from the internet (frame/iac/addresses.py); `in_ports(p, n)`: the port or range p (`22`,
+# `1000-2000`, `*`) contains port n.
+
+[pack]
+name = "azure"
+language = "terraform"
+description = "Azure: network exposure, databases open to the internet, public storage, owner-like roles"
+references = ["https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs"]
+
+# --- network security groups -----------------------------------------------------------------
+# A rule's source is a CIDR, an address, `*` / `Any` (every address) or a service tag; the
+# `Internet` tag is "the IP address space that's outside the virtual network and reachable by the
+# public internet". Plural `source_address_prefixes` take no tags. Ports are `80`, `10000-10005` or
+# `*`. Provider 2.x read protocol, direction and access in any case (`validation.StringInSlice(...,
+# true)` with `suppress.CaseDifferenceV2Only`), 3.x and later only as written here; both are compared
+# in lower case. Rules apply in priority order (a lower number first) and the first match decides, so an
+# Allow is open only when no Deny of a lower number covers the same traffic from the whole
+# internet; a priority number is unique within a group. Rules are written inline
+# (azurerm_network_security_group `security_rule`) or as azurerm_network_security_rule resources,
+# never both for one group.
+#   https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview#security-rules
+#   https://learn.microsoft.com/en-us/azure/virtual-network/service-tags-overview#available-service-tags
+
+[[define]]
+name = "every_address"
+params = ["a"]
+body = '''lower(a) in ["*", "any", "internet", "0.0.0.0/0"]'''
+
+[[define]]
+name = "nsg_from_internet"
+params = ["r"]
+body = '''
+every_address(r.source_address_prefix) or internet(r.source_address_prefix)
+or (some c in r.source_address_prefixes: every_address(c) or internet(c))
+'''
+
+[[define]]
+name = "nsg_port"
+params = ["r", "n"]
+body = '''lower(r.protocol) in ["tcp", "*"] and (in_ports(r.destination_port_range, n) or (some p in r.destination_port_ranges: in_ports(p, n)))'''
+
+[[define]]
+name = "nsg_every_port"
+params = ["r"]
+body = '''
+lower(r.protocol) in ["tcp", "*"] and (r.destination_port_range in ["*", "0-65535"]
+    or (some p in r.destination_port_ranges: p in ["*", "0-65535"]))
+'''
+
+[[define]]
+name = "nsg_inbound"
+params = ["r", "access"]
+body = '''lower(r.direction) == "inbound" and lower(r.access) == access'''
+
+# A Deny covering port n from every internet address to every destination, ahead of r.
+[[define]]
+name = "nsg_denied_before"
+params = ["d", "r", "n"]
+body = '''
+nsg_inbound(d, "deny") and d.priority < r.priority and nsg_port(d, n)
+and every_address(d.source_address_prefix) and lower(default(d.destination_address_prefix, "*")) in ["*", "any"]
+'''
+
+# A Deny covering every port from every internet address to every destination, ahead of r.
+[[define]]
+name = "nsg_all_denied_before"
+params = ["d", "r"]
+body = '''
+nsg_inbound(d, "deny") and d.priority < r.priority and nsg_every_port(d)
+and every_address(d.source_address_prefix) and lower(default(d.destination_address_prefix, "*")) in ["*", "any"]
+'''
+
+[[define]]
+name = "same_nsg"
+params = ["a", "b"]
+body = '''a.network_security_group_name == b.network_security_group_name and a.resource_group_name == b.resource_group_name'''
+
+[[define]]
+name = "nsg_open_inline"
+params = ["g", "n"]
+body = '''
+some r in g.security_rule: nsg_from_internet(r) and nsg_inbound(r, "allow") and nsg_port(r, n)
+    and not (some d in g.security_rule: nsg_denied_before(d, r, n))
+'''
+
+[[define]]
+name = "nsg_open_rule"
+params = ["r", "n"]
+body = '''
+nsg_from_internet(r) and nsg_inbound(r, "allow") and nsg_port(r, n)
+and not (some d in resources["azurerm_network_security_rule"]: same_nsg(d, r) and nsg_denied_before(d, r, n))
+'''
+
+[[policy]]
+id = "azure-nsg-admin-from-internet"
+title = "Network security group lets the internet reach SSH or RDP"
+severity = "high"
+cwe = "CWE-284"
+resources = ["azurerm_network_security_group", "azurerm_network_security_rule"]
+when = '''
+nsg_open_inline(self, 22) or nsg_open_inline(self, 3389) or nsg_open_rule(self, 22) or nsg_open_rule(self, 3389)
+'''
+references = ["https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview#security-rules",
+              "https://learn.microsoft.com/en-us/azure/defender-for-cloud/recommendations-reference-networking"]
+
+[[policy]]
+id = "azure-nsg-all-from-internet"
+title = "Network security group lets the internet reach every port"
+severity = "high"
+cwe = "CWE-284"
+resources = ["azurerm_network_security_group", "azurerm_network_security_rule"]
+overrides = ["azure-nsg-admin-from-internet"]
+when = '''
+(some r in self.security_rule: nsg_from_internet(r) and nsg_inbound(r, "allow") and nsg_every_port(r)
+    and not (some d in self.security_rule: nsg_all_denied_before(d, r)))
+or (nsg_from_internet(self) and nsg_inbound(self, "allow") and nsg_every_port(self)
+    and not (some d in resources["azurerm_network_security_rule"]: same_nsg(d, self) and nsg_all_denied_before(d, self)))
+'''
+references = ["https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview#security-rules"]
+
+# --- database firewalls ----------------------------------------------------------------------
+# A server firewall rule allows the addresses from start to end; 0.0.0.0 to 0.0.0.0 is Azure's
+# "Allow access to Azure services", 0.0.0.0 to 255.255.255.255 every IPv4 address.
+#   https://learn.microsoft.com/en-us/azure/azure-sql/database/firewall-configure
+
+[[policy]]
+id = "azure-db-firewall-internet"
+title = "Database firewall rule admits every IPv4 address"
+severity = "high"
+cwe = "CWE-284"
+resources = ["azurerm_mssql_firewall_rule", "azurerm_sql_firewall_rule", "azurerm_postgresql_flexible_server_firewall_rule",
+             "azurerm_mysql_flexible_server_firewall_rule", "azurerm_synapse_firewall_rule",
+             "azurerm_cosmosdb_postgresql_firewall_rule", "azurerm_redis_firewall_rule"]
+when = '''
+(self.start_ip_address == "0.0.0.0" and self.end_ip_address == "255.255.255.255")
+or (self.start_ip == "0.0.0.0" and self.end_ip == "255.255.255.255")
+'''
+references = ["https://learn.microsoft.com/en-us/azure/azure-sql/database/firewall-configure"]
+
+# --- storage ---------------------------------------------------------------------------------
+# A container is public only with `container_access_type` "blob" or "container" (default
+# "private") in an account that allows it: `allow_nested_items_to_be_public`, whose default changed
+# between provider releases (true in 3.117 and 4.0, false now: frame/iac/data/terraform-facts.toml),
+# so left out it is undecided; 2.x and early 3.x write `allow_blob_public_access` (default false).
+# HTTPS only: `https_traffic_only_enabled` (provider 4.x; `enable_https_traffic_only` in 3.x),
+# default true.
+#   https://learn.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-configure
+
+[[define]]
+name = "container_of"
+params = ["c", "a"]
+body = '''c.storage_account_id == a.id or c.storage_account_name == a.name'''
+
+[[policy]]
+id = "azure-storage-container-public"
+title = "Storage container allows anonymous reads"
+severity = "high"
+cwe = "CWE-732"
+resources = ["azurerm_storage_container"]
+when = '''
+self.container_access_type in ["blob", "container"]
+and (some a in resources["azurerm_storage_account"]: container_of(self, a)
+    and (a.allow_nested_items_to_be_public == true or a.allow_blob_public_access == true))
+'''
+references = ["https://learn.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-configure"]
+
+[[policy]]
+id = "azure-storage-http"
+title = "Storage account accepts unencrypted HTTP"
+severity = "medium"
+cwe = "CWE-319"
+resources = ["azurerm_storage_account"]
+when = '''default(self.https_traffic_only_enabled, true) == false or default(self.enable_https_traffic_only, true) == false'''
+references = ["https://learn.microsoft.com/en-us/azure/storage/common/storage-require-secure-transfer"]
+
+# --- roles -----------------------------------------------------------------------------------
+
+[[policy]]
+id = "azure-custom-role-all-actions"
+title = "Custom role allows every action"
+severity = "high"
+cwe = "CWE-269"
+resources = ["azurerm_role_definition"]
+when = '''some p in self.permissions: some a in p.actions: a == "*"'''
+references = ["https://learn.microsoft.com/en-us/azure/role-based-access-control/role-definitions#actions"]
