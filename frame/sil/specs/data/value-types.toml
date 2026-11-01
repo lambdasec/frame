@@ -295,6 +295,17 @@
 "System.Web.HttpContext.Server" = "System.Web.HttpServerUtility"
 "Microsoft.EntityFrameworkCore.DbContext.Database" = "Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade"
 "System.Data.Entity.DbContext.Database" = "System.Data.Entity.Database"
+# Members leading to request data: a controller's / page's user and route data, a page's context,
+# a WebForms FileUpload control's posted file (System.Web.UI.WebControls.FileUpload.PostedFile).
+"Microsoft.AspNetCore.Mvc.ControllerBase.User" = "System.Security.Claims.ClaimsPrincipal"
+"Microsoft.AspNetCore.Mvc.Controller.User" = "System.Security.Claims.ClaimsPrincipal"
+"Microsoft.AspNetCore.Mvc.ControllerBase.RouteData" = "Microsoft.AspNetCore.Routing.RouteData"
+"Microsoft.AspNetCore.Mvc.Controller.RouteData" = "Microsoft.AspNetCore.Routing.RouteData"
+"Microsoft.AspNetCore.Http.HttpContext.User" = "System.Security.Claims.ClaimsPrincipal"
+"System.Web.UI.Page.Context" = "System.Web.HttpContext"
+"System.Web.Mvc.Controller.HttpContext" = "System.Web.HttpContextBase"
+"System.Web.HttpContextBase.Request" = "System.Web.HttpRequestBase"
+"System.Web.UI.WebControls.FileUpload.PostedFile" = "System.Web.HttpPostedFile"
 "NHibernate.ISessionFactory.OpenSession" = "NHibernate.ISession"
 "NHibernate.ISessionFactory.OpenStatelessSession" = "NHibernate.IStatelessSession"
 "System.IO.Compression.ZipFile.OpenRead" = "System.IO.Compression.ZipArchive"

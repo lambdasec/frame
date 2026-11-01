@@ -9796,10 +9796,18 @@ class SILTranslator:
                 parts.insert(0, self._get_var_name(cur.var))
             # Longest matching prefix wins (req.query before req). A read off a request object is
             # its request type's to decide (`request.session` is server state), not a row's.
+            typed = getattr(self._cur_proc, "member_sources", None) \
+                if (getattr(self.program, "language", "") or "") == "csharp" else None
             for i in range(len(parts), 0, -1) if not self._rooted_at_request(parts) else ():
-                spec = self._spec_of_name('.'.join(parts[:i]))
+                chain = '.'.join(parts[:i])
+                if typed is not None:                    # C#: what the frontend resolved by type
+                    if chain in typed:
+                        result.append((chain, typed[chain]))
+                        break
+                    continue
+                spec = self._spec_of_name(chain)
                 if spec and spec.is_taint_source():
-                    result.append(('.'.join(parts[:i]), spec.is_source))
+                    result.append((chain, spec.is_source))
                     break
             result.extend(self._get_embedded_member_sources(exp.base, _in_call))
         elif isinstance(exp, ExpBinOp):

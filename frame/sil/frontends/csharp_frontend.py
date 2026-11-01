@@ -393,6 +393,11 @@ class CSharpFrontend:
                     pn, pt = member.child_by_field_name("name"), member.child_by_field_name("type")
                     if pn is not None and pt is not None:
                         fields[self._get_text(pn)] = self._get_text(pt).split("<")[0].rstrip("?").strip()
+            if any(c.type == "modifier" and self._get_text(c) == "partial" for c in node.children):
+                # the class's other parts (a WebForms page's designer file declares its controls)
+                from frame.sil.dotnet_project import partial_fields
+                for name, typ in partial_fields(self._filename, self._current_namespace or "", class_name).items():
+                    fields.setdefault(name, typ.removeprefix("global::"))
             self._class_fields_of[full_class_name] = fields
             program.declared_fields[full_class_name] = set(fields)
             self._declared_methods[full_class_name] = {
@@ -410,6 +415,7 @@ class CSharpFrontend:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}.{proc.name}"
                         program.add_procedure(proc)
+                        self._record_member_sources(child, proc)
                         self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
                 elif child.type in ("class_declaration", "struct_declaration", "record_declaration"):
@@ -425,6 +431,7 @@ class CSharpFrontend:
                         proc.class_name = full_class_name
                         proc.name = f"{full_class_name}..ctor"
                         program.add_procedure(proc)
+                        self._record_member_sources(child, proc)
                         self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
                 elif child.type == "property_declaration":
@@ -817,6 +824,7 @@ class CSharpFrontend:
         self._current_proc, self._current_node, self._node_counter = saved
         self._xml_flags = saved_xml
         program.add_procedure(proc)
+        self._record_member_sources(lam, proc)
         self._scopes.append((lam.start_byte, lam.end_byte, proc))
         return proc
 
@@ -862,6 +870,7 @@ class CSharpFrontend:
         self._current_proc = None
         program.add_procedure(proc)
         for gs in statements:
+            self._record_member_sources(gs, proc)
             self._scopes.append((gs.start_byte, gs.end_byte, proc))
             self._translate_lambdas(gs, proc, program)
 
@@ -1153,16 +1162,6 @@ class CSharpFrontend:
                     return self._get_member_chain(c)
         return ""
 
-    def _request_chain(self, chain: str) -> str:
-        """`req.Query` where `req` is declared as an HttpRequest reads like `Request.Query`
-        (the source specs are written against the conventional property name)."""
-        head, dot, rest = chain.partition(".")
-        if dot and head != "Request" and self._current_proc is not None:
-            types = self._proc_types.get(id(self._current_proc), {})
-            if types.get(head) in _dotnet().request_types:
-                return f"Request.{rest}"
-        return chain
-
     def _source_accesses(self, node: Optional[TSNode]):
         """Property / indexer accesses a value expression is made of, looking through casts, parentheses,
         `a ?? b`, `c ? a : b`, `x + y` and pass-through methods (`.ToString()`, `.Trim()`...;
@@ -1200,29 +1199,58 @@ class CSharpFrontend:
                     yield from self._source_accesses(fn.child_by_field_name("expression"))
 
     def _member_source_spec(self, node: TSNode) -> Optional[ProcSpec]:
+        """The source a property / indexer access reads (`Request.Query["a"]`, `ctx.Request.Form`,
+        `uploadFile.PostedFile.FileName`), by type: the head's declared, field or inherited type
+        (or a type named statically: `HttpContext.Current`), then each member's documented type
+        ([csharp.returns]), until a (type, member) that is a source row. A chain is recorded on
+        the procedure (`Procedure.member_sources`) so the translator reads inline uses the same way."""
         if node is None or node.type not in ("member_access_expression", "element_access_expression"):
             return None
         chain = self._get_member_chain(node)
         if not chain:
             return None
-        chain = self._request_chain(chain)
-        if chain == "Request" and node.type == "element_access_expression":
-            chain = "Request.Item"            # classic ASP.NET: Request["id"] searches query, form, cookies
-        spec = self.specs.get(chain)
-        if not spec and '.' in chain:
-            parts = chain.split('.')
-            for i in range(1, len(parts)):
-                spec = self.specs.get('.'.join(parts[i:]))
-                if spec:
-                    break
-            if not spec:
-                # a property of a source (`Request.Path.Value`, `Request.Host.Value`) reads the source
-                for i in range(len(parts) - 1, 1, -1):
-                    spec = self.specs.get('.'.join(parts[:i]))
-                    if spec and spec.is_taint_source():
-                        break
-                    spec = None
-        return spec if spec and spec.is_taint_source() else None
+        parts = chain.split(".") + (["Item"] if node.type == "element_access_expression" and "." not in chain else [])
+        spec = self._typed_member_source(parts)
+        if spec is not None and self._current_proc is not None:
+            self._current_proc.member_sources[chain] = spec.is_source
+        return spec
+
+    def _record_member_sources(self, node: TSNode, proc: Procedure) -> None:
+        """Every property / indexer access written in `node` that reads a source, by type, on
+        `proc.member_sources` (inline reads in expressions are the translator's)."""
+        saved = self._current_proc
+        self._current_proc = proc
+        try:
+            for n in self._descendants_of(node):
+                if n.type in ("member_access_expression", "element_access_expression"):
+                    self._member_source_spec(n)
+        finally:
+            self._current_proc = saved
+
+    def _typed_member_source(self, parts: List[str]) -> Optional[ProcSpec]:
+        from frame.sil.value_origins import load as _value_types
+        returns = _value_types().get("csharp", ({}, {}))[0]
+        declared = self._receiver_types()
+        head, rest = parts[0], parts[1:]
+        owner = None                                       # the qualified type the walk is at
+        if head in declared:
+            owner = qualify_type("csharp", declared[head], self._imports, self._local_types) or declared[head]
+        elif self._program is not None and self._current_class:
+            base = library_base(self._program, self._current_class, head, self._imports, self._local_types)
+            owner = returns.get(f"{base}.{head}") if base else None
+        if owner is None and head[:1].isupper():
+            static = qualify_type("csharp", head, self._imports, self._local_types)
+            if static is not None:                         # `HttpContext.Current.Request`: a type's static member
+                owner = static
+        for member in rest:
+            if owner is None:
+                return None
+            for t in _dotnet().lineage(owner):
+                spec = self.specs.get(f"{t}.{member}")
+                if spec is not None and spec.is_taint_source():
+                    return spec
+            owner = returns.get(f"{owner}.{member}")
+        return None
 
     def _source_in(self, value_node: Optional[TSNode]) -> Optional[ProcSpec]:
         for access in self._source_accesses(value_node):

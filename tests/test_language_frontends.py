@@ -1325,16 +1325,16 @@ class TestCSharpTaintEngine:
         return {v.cwe_id for v in res.vulnerabilities}
 
     def test_sql_from_request_source(self):
-        code = ('using System.Data.SqlClient;\nclass C { void f(SqlConnection conn){ var id=Request.QueryString["id"]; '
+        code = ('using System.Data.SqlClient;\nusing System.Web.Mvc;\nclass C : Controller { void f(SqlConnection conn){ var id=Request.QueryString["id"]; '
                 'var cmd = new SqlCommand("SELECT "+id, conn); cmd.ExecuteReader(); } }')
         assert "CWE-89" in self._cwes(code)
 
     def test_command_from_request_source(self):
-        code = 'class C { void f(){ var u=Request.Form["u"]; Process.Start("cmd "+u); } }'
+        code = 'using System.Diagnostics;\nusing System.Web.Mvc;\nclass C : Controller { void f(){ var u=Request.Form["u"]; Process.Start("cmd "+u); } }'
         assert "CWE-78" in self._cwes(code)
 
     def test_ldap_via_constructor_sink(self):
-        code = 'class C { void f(){ var u=Request.Form["u"]; var s=new DirectorySearcher("(cn="+u+")"); } }'
+        code = 'using System.DirectoryServices;\nusing System.Web.Mvc;\nclass C : Controller { void f(){ var u=Request.Form["u"]; var s=new DirectorySearcher("(cn="+u+")"); } }'
         assert "CWE-90" in self._cwes(code)
 
     def test_weak_crypto_constructor_usage_sink(self):

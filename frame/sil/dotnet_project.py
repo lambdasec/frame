@@ -196,4 +196,80 @@ def usings_for(cs_path: str) -> ProjectUsings:
     return _usings_of(project) if project is not None else _NONE
 
 
-__all__ = ["ProjectUsings", "project_file", "usings_for"]
+__all__ = ["ProjectUsings", "partial_fields", "project_file", "usings_for"]
+
+
+# -- the other parts of a partial class -------------------------------------------------------------
+
+@lru_cache(maxsize=64)
+def _partial_fields_in(folder: Path) -> Dict[Tuple[str, str], Dict[str, str]]:
+    """(namespace, class) -> field / property name -> declared type, for every `partial` class
+    declared under `folder` (bin/obj and nested projects skipped)."""
+    try:
+        import tree_sitter_c_sharp
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return {}
+    parser = Parser(Language(tree_sitter_c_sharp.language()))
+    out: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for dirpath, dirnames, filenames in os.walk(folder):
+        here = Path(dirpath)
+        if here != folder and any(f.endswith(".csproj") for f in filenames):
+            dirnames[:] = []
+            continue
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for name in filenames:
+            if not name.endswith(".cs"):
+                continue
+            try:
+                data = (here / name).read_bytes()
+            except OSError:
+                continue
+            if b"partial" not in data:
+                continue                                   # cheap filter; the parser decides
+            text = lambda n: data[n.start_byte:n.end_byte].decode("utf-8", "replace")
+            stack = [(parser.parse(data).root_node, "")]
+            while stack:
+                node, ns = stack.pop()
+                for c in node.named_children:
+                    if c.type in ("namespace_declaration", "file_scoped_namespace_declaration"):
+                        nm = c.child_by_field_name("name")
+                        inner = f"{ns}.{text(nm)}" if ns and nm is not None else (text(nm) if nm is not None else ns)
+                        body = c.child_by_field_name("body")
+                        stack.append((body if body is not None else c, inner))
+                    elif c.type == "declaration_list":
+                        stack.append((c, ns))
+                    elif c.type == "class_declaration" and any(m.type == "modifier" and text(m) == "partial"
+                                                               for m in c.children):
+                        cname = c.child_by_field_name("name")
+                        fields = out.setdefault((ns, text(cname) if cname is not None else ""), {})
+                        body = c.child_by_field_name("body")
+                        for member in (body.named_children if body is not None else ()):
+                            typ = member.child_by_field_name("type")
+                            if member.type == "field_declaration":
+                                decl = next((x for x in member.named_children if x.type == "variable_declaration"), None)
+                                typ = decl.child_by_field_name("type") if decl is not None else None
+                                for v in (decl.named_children if decl is not None else ()):
+                                    vn = v.child_by_field_name("name") or next(
+                                        (x for x in v.children if x.type == "identifier"), None)
+                                    if v.type == "variable_declarator" and vn is not None and typ is not None:
+                                        fields[text(vn)] = text(typ).split("<", 1)[0].strip()
+                            elif member.type == "property_declaration" and typ is not None:
+                                pn = member.child_by_field_name("name")
+                                if pn is not None:
+                                    fields[text(pn)] = text(typ).split("<", 1)[0].strip()
+    return out
+
+
+def partial_fields(cs_path: str, namespace: str, class_name: str) -> Dict[str, str]:
+    """The fields and properties another part of the partial class `namespace.class_name` declares
+    (a WebForms page's designer file declares its controls): the parts the compiler merges are
+    the project's files (the `.csproj` folder, else the file's own folder)."""
+    project = project_file(cs_path)
+    try:
+        folder = project.parent if project is not None else Path(cs_path).resolve().parent
+    except OSError:
+        return {}
+    if not Path(cs_path).is_file():
+        return {}
+    return dict(_partial_fields_in(folder).get((namespace, class_name), {}))

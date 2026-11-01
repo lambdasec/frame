@@ -36,9 +36,11 @@
 "System.Text.Encodings.Web" = ["HtmlEncoder", "JavaScriptEncoder", "UrlEncoder"]
 "System.Text.RegularExpressions" = ["Regex"]
 "System.Collections.Specialized" = ["NameValueCollection"]
-"System.Web" = ["HttpRequest", "HttpResponse", "HttpContext", "HttpServerUtility", "HttpUtility", "HttpCookie",
+"System.Web" = ["HttpRequest", "HttpResponse", "HttpContext", "HttpServerUtility", "HttpUtility", "HttpCookie", "HttpPostedFile",
+                "HttpPostedFileBase", "HttpContextBase",
                 "HttpRequestBase", "HttpResponseBase", "HttpServerUtilityBase"]
 "System.Web.UI" = ["Page"]
+"System.Web.UI.WebControls" = ["FileUpload", "TextBox"]
 "System.Web.Mvc" = ["Controller"]
 "System.Web.Security.AntiXss" = ["AntiXssEncoder"]
 "Microsoft.Security.Application" = ["Encoder"]

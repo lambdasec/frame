@@ -48,3 +48,34 @@ def test_the_type_facts_are_data():
     assert d.lineage("NpgsqlCommand") == ("NpgsqlCommand", "DbCommand", "IDbCommand")
     assert d.extension_methods["Microsoft.EntityFrameworkCore"]["FromSqlRaw"] == "RelationalQueryableExtensions"
     assert d.typed_sink("SqlCommand", "CommandText").kind == "sql"
+
+
+# --- member-path sources by type -------------------------------------------------------------------
+
+def _cmd(src):
+    return "CWE-78" in {v.cwe_id for v in FrameScanner(language="csharp", verify=False).scan(src, "C.cs").vulnerabilities}
+
+
+@pytest.mark.parametrize("cls, read, flagged", [
+    (": Controller", 'Request.Query["c"]', True),                  # the controller's inherited Request
+    (": Controller", 'HttpContext.Request.Query["c"]', True),
+    ("", 'Request.Query["c"]', False),                              # no such member: not a request
+    ("", 'new Holder().Request.Query["c"]', False),                 # a member named Request of something else
+])
+def test_request_reads_by_the_members_types(cls, read, flagged):
+    src = ("using System.Diagnostics;\nusing Microsoft.AspNetCore.Mvc;\n"
+           "public class Holder { public Bag Request { get; set; } }\n"
+           f"public class C {cls} {{\n  public void A() {{ Process.Start(\"sh\", \"-c \" + {read}); }}\n}}\n")
+    assert _cmd(src) == flagged
+
+
+def test_a_control_declared_in_another_part_of_the_partial_class(tmp_path):
+    (tmp_path / "Upload.aspx.designer.cs").write_text(
+        "namespace Site {\n  public partial class Upload {\n"
+        "    protected global::System.Web.UI.WebControls.FileUpload uploadFile;\n  }\n}\n")
+    page = tmp_path / "Upload.aspx.cs"
+    page.write_text("using System.Diagnostics;\nusing System.Web.UI;\nnamespace Site {\n"
+                    "  public partial class Upload : Page {\n    protected void Go(object s, System.EventArgs e) {\n"
+                    "      Process.Start(\"sh\", \"-c \" + uploadFile.PostedFile.FileName);\n    }\n  }\n}\n")
+    found = {v.cwe_id for v in FrameScanner(language="csharp", verify=False).scan_file(str(page)).vulnerabilities}
+    assert "CWE-78" in found

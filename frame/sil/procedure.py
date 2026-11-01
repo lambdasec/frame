@@ -522,6 +522,9 @@ class Procedure:
     # for values a framework passes on (registrations.context_links); a field written another way
     # is absent, and one returned differently on two paths is dropped.
     returned_fields: Dict[str, str] = field(default_factory=dict)
+    # C#: member chains the frontend resolved by type to a source (`Request.Query` in a controller,
+    # `uploadFile.PostedFile.FileName`): chain -> source kind, for inline reads in expressions.
+    member_sources: Dict[str, str] = field(default_factory=dict)
     # Pack entry points this procedure is (`"mcp-servers:tool"`), set by packs.apply.
     entry_kinds: List[str] = field(default_factory=list)
     # Python: the body has an `assert` statement of its own (pytest's tests; frame/sil/test_code.py).
@@ -1076,10 +1079,8 @@ class Program:
             parts = func_name.split('.')
             for i in range(1, len(parts)):
                 spec = self.library_specs.get('.'.join(parts[i:]))
-                # C# web sources are member paths (`x.PostedFile.FileName`, `ctx.Request.Query`), read
-                # by their trailing members as the frontend's member sources are; sinks need a type
-                if spec is not None and not spec.is_sink and not spec.is_sanitizer \
-                        and (not spec.is_source or parts[i][:1].isupper()):
+                # sources are member chains the frontend typed (Procedure.member_sources)
+                if spec is not None and not (spec.is_sink or spec.is_sanitizer or spec.is_source):
                     return spec
             if guess and len(parts) > 1:
                 from frame.sil.specs.receiver_guesses import guesses

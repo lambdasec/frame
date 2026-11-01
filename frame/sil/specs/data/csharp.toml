@@ -88,62 +88,122 @@ is_sink = "ssrf"
 description = "WebClient.DownloadString (SSRF)"
 
 [[spec]]
-name = "Request.Query"
+name = "HttpRequest.Query"
 is_source = "user"
 description = "ASP.NET request query string"
 
 [[spec]]
-name = "Request.Form"
+name = "HttpRequestBase.Query"
+is_source = "user"
+description = "ASP.NET request query string"
+
+[[spec]]
+name = "HttpRequest.Form"
 is_source = "user"
 description = "ASP.NET request form data"
 
 [[spec]]
-name = "Request.Headers"
+name = "HttpRequestBase.Form"
+is_source = "user"
+description = "ASP.NET request form data"
+
+[[spec]]
+name = "HttpRequest.Headers"
 is_source = "user"
 description = "Request headers (user-controlled)"
 
 [[spec]]
-name = "Request.Cookies"
+name = "HttpRequestBase.Headers"
+is_source = "user"
+description = "Request headers (user-controlled)"
+
+[[spec]]
+name = "HttpRequest.Cookies"
 is_source = "user"
 description = "ASP.NET request cookies"
 
 [[spec]]
-name = "Request.Body"
+name = "HttpRequestBase.Cookies"
+is_source = "user"
+description = "ASP.NET request cookies"
+
+[[spec]]
+name = "HttpRequest.Body"
 is_source = "user"
 description = "ASP.NET request body"
 
 [[spec]]
-name = "Request.Path"
+name = "HttpRequestBase.Body"
+is_source = "user"
+description = "ASP.NET request body"
+
+[[spec]]
+name = "HttpRequest.Path"
 is_source = "user"
 description = "ASP.NET request path"
 
 [[spec]]
-name = "Request.QueryString"
+name = "HttpRequestBase.Path"
+is_source = "user"
+description = "ASP.NET request path"
+
+[[spec]]
+name = "HttpRequest.QueryString"
 is_source = "user"
 description = "ASP.NET query string"
 
 [[spec]]
-name = "Request.Params"
+name = "HttpRequestBase.QueryString"
+is_source = "user"
+description = "ASP.NET query string"
+
+[[spec]]
+name = "HttpRequest.Params"
 is_source = "user"
 description = "ASP.NET combined query/form/cookie/server-variable collection"
 
 [[spec]]
-name = "Request.ServerVariables"
+name = "HttpRequestBase.Params"
+is_source = "user"
+description = "ASP.NET combined query/form/cookie/server-variable collection"
+
+[[spec]]
+name = "HttpRequest.ServerVariables"
 is_source = "user"
 description = "ASP.NET server variables (headers, path info)"
 
 [[spec]]
-name = "Request.Item"
+name = "HttpRequestBase.ServerVariables"
+is_source = "user"
+description = "ASP.NET server variables (headers, path info)"
+
+[[spec]]
+name = "HttpRequest.Item"
 is_source = "user"
 description = "ASP.NET Request.Item indexer"
 
 [[spec]]
-name = "Request.Host"
+name = "HttpRequestBase.Item"
+is_source = "user"
+description = "ASP.NET Request.Item indexer"
+
+[[spec]]
+name = "HttpRequest.Host"
 is_source = "user"
 description = "ASP.NET Host header (attacker-controlled)"
 
 [[spec]]
-name = "Request.RouteValues"
+name = "HttpRequestBase.Host"
+is_source = "user"
+description = "ASP.NET Host header (attacker-controlled)"
+
+[[spec]]
+name = "HttpRequest.RouteValues"
+is_source = "user"
+description = "ASP.NET route values"
+
+[[spec]]
+name = "HttpRequestBase.RouteValues"
 is_source = "user"
 description = "ASP.NET route values"
 
@@ -1023,7 +1083,7 @@ is_source = "user"
 description = "Claims principal"
 
 [[spec]]
-name = "User.Identity"
+name = "ClaimsPrincipal.Identity"
 is_source = "user"
 description = "User identity"
 
@@ -1504,32 +1564,52 @@ sink_args = [1]
 description = "CodeDom compile (code injection)"
 
 [[spec]]
-name = "PostedFile.FileName"
+name = "HttpPostedFile.FileName"
 is_source = "user"
 description = "Uploaded file name (user-controlled)"
 
 [[spec]]
-name = "Request.Url"
+name = "HttpPostedFileBase.FileName"
+is_source = "user"
+description = "Uploaded file name (user-controlled)"
+
+[[spec]]
+name = "HttpRequest.Url"
 is_source = "user"
 description = "Request URL (user-controlled)"
 
 [[spec]]
-name = "Request.Url.Authority"
+name = "HttpRequestBase.Url"
 is_source = "user"
-description = "Request URL authority (user-controlled)"
+description = "Request URL (user-controlled)"
 
 [[spec]]
-name = "Request.RawUrl"
+name = "HttpRequest.RawUrl"
 is_source = "user"
 description = "Request raw URL (user-controlled)"
 
 [[spec]]
-name = "Request.UrlReferrer"
+name = "HttpRequestBase.RawUrl"
+is_source = "user"
+description = "Request raw URL (user-controlled)"
+
+[[spec]]
+name = "HttpRequest.UrlReferrer"
 is_source = "user"
 description = "Request referrer (user-controlled)"
 
 [[spec]]
-name = "Request.UserAgent"
+name = "HttpRequestBase.UrlReferrer"
+is_source = "user"
+description = "Request referrer (user-controlled)"
+
+[[spec]]
+name = "HttpRequest.UserAgent"
+is_source = "user"
+description = "Request user-agent (user-controlled)"
+
+[[spec]]
+name = "HttpRequestBase.UserAgent"
 is_source = "user"
 description = "Request user-agent (user-controlled)"
 
