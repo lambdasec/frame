@@ -23,6 +23,7 @@ pack asks, so recording it must not change a single finding.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -388,6 +389,8 @@ def annotate_program_calls(program, table: ImportTable,
                     inherited = _java_inherited_method(program, proc, func, table, local_types or {})
                     if inherited:
                         instr.canonical = inherited
+                if instr.canonical is None and program.language == "java":
+                    instr.canonical = _java_qualified_member(proc, func)
 
 
 def _java_inherited_method(program, proc, func: str, table: ImportTable, local_types: Dict[str, str]) -> Optional[str]:
@@ -414,6 +417,20 @@ def _java_inherited_method(program, proc, func: str, table: ImportTable, local_t
         qualified = qualify_type("java", bases[0], table, local_types)
         return f"{qualified}.{func}" if qualified else None
     return None
+
+
+_JAVA_QUALIFIED = re.compile(r"(?:[a-z_][a-z0-9_]*\.)+[A-Z][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$")
+
+
+def _java_qualified_member(proc, func: str) -> Optional[str]:
+    """Java: a call written through a package-qualified class (`org.acme.Db.TEMPLATE.query`,
+    `java.util.Objects.hash`) is that class's member, as the compiler reads it, unless the head is
+    a name the method declares (a local or parameter shadows the package)."""
+    if not _JAVA_QUALIFIED.match(func):
+        return None
+    head = func.split(".", 1)[0]
+    declared = {str(p) for p, _ in proc.params} | set(getattr(proc, "var_types", None) or {})
+    return None if head in declared else func
 
 
 def library_base(program, type_name: str, member: str, table: ImportTable,

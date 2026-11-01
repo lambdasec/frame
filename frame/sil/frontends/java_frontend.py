@@ -1181,11 +1181,12 @@ class JavaFrontend:
                 next((c for c in cur.named_children), None)
         return cur if cur is not None and cur.type == "method_invocation" else None
 
-    @staticmethod
-    def _peel_cast_chain(node: Optional[TSNode]) -> Optional[TSNode]:
+    def _peel_cast_chain(self, node: Optional[TSNode]) -> Optional[TSNode]:
         """`(Article) em.createQuery(q).getSingleResult()` -> the call: a cast around a CHAINED
-        call changes nothing about the data, and the call must be lowered as a call. (A cast
-        around a plain `map.get(k)` is left alone: it is analysed in its cast form.)"""
+        call changes nothing about the data, and the call must be lowered as a call; so must a
+        call on a receiver whose declared type has a spec row for the method
+        (`(String) names.nextElement()` on an Enumeration). (A cast around a plain `map.get(k)` is
+        left alone: it is analysed in its cast form.)"""
         cur = node
         while cur is not None and cur.type in ("cast_expression", "parenthesized_expression"):
             inner = cur.child_by_field_name("value") if cur.type == "cast_expression" else \
@@ -1194,6 +1195,11 @@ class JavaFrontend:
         if cur is not None and cur.type == "method_invocation":
             obj = cur.child_by_field_name("object")
             if obj is not None and obj.type == "method_invocation":
+                return cur
+            name = cur.child_by_field_name("name")
+            recv_type = self._receiver_type(cur) if obj is not None and name is not None else None
+            if recv_type and any(f"{r}.{self._get_text(name)}" in self.specs
+                                 for r in type_spec_receivers(recv_type.rsplit(".", 1)[-1])):
                 return cur
         return node
 
@@ -1791,14 +1797,6 @@ class JavaFrontend:
             spec = self.specs.get(short_name)
             if spec:
                 return spec
-
-        # Try common patterns
-        for prefix in ['request.', 'response.', 'session.', 'connection.', 'statement.']:
-            if method_name.endswith('.' + method_name.rsplit('.', 1)[-1]):
-                candidate = prefix + method_name.rsplit('.', 1)[-1]
-                spec = self.specs.get(candidate)
-                if spec:
-                    return spec
 
         return None
 

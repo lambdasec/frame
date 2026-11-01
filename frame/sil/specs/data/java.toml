@@ -2,115 +2,103 @@
 # with the ProcSpec fields (frame/sil/procedure.py) that differ from their defaults.
 # Loaded by frame/sil/specs/tables.py. Edit here; run the benchmark sweep after a change.
 
+
+# Servlet requests (javax.servlet / jakarta.servlet API): rows on the interface that declares the
+# method, reached through a receiver's declared type and its supertypes (java-types.toml
+# [supertypes]), never through a variable's name or a bare method name.
+
 [[spec]]
-name = "getParameter"
+name = "ServletRequest.getParameter"
 is_source = "user"
 description = "Servlet request parameter"
 
 [[spec]]
-name = "getParameterValues"
+name = "ServletRequest.getParameterValues"
 is_source = "user"
 description = "Servlet request parameter array"
 
 [[spec]]
-name = "getParameterMap"
+name = "ServletRequest.getParameterMap"
 is_source = "user"
 description = "Servlet request parameter map"
 
 [[spec]]
-name = "getParameterNames"
+name = "ServletRequest.getParameterNames"
 is_source = "user"
 description = "Servlet request parameter names"
 
 [[spec]]
-name = "getHeader"
-is_source = "user"
-description = "Servlet request header"
-
-[[spec]]
-name = "getHeaders"
-is_source = "user"
-description = "Servlet request headers"
-
-[[spec]]
-name = "getHeaderNames"
-is_source = "user"
-description = "Servlet request header names"
-
-[[spec]]
-name = "getCookies"
-is_source = "user"
-description = "Servlet cookies"
-
-[[spec]]
-name = "getQueryString"
-is_source = "user"
-description = "Servlet query string"
-
-[[spec]]
-name = "getPathInfo"
-is_source = "user"
-description = "Servlet path info"
-
-[[spec]]
-name = "getRequestURI"
-is_source = "user"
-description = "Servlet request URI"
-
-[[spec]]
-name = "getRequestURL"
-is_source = "user"
-description = "Servlet request URL"
-
-[[spec]]
-name = "getInputStream"
+name = "ServletRequest.getInputStream"
 is_source = "user"
 description = "Servlet input stream"
 
 [[spec]]
-name = "getReader"
+name = "ServletRequest.getReader"
 is_source = "user"
 description = "Servlet reader"
 
 [[spec]]
-name = "getServletPath"
+name = "ServletRequest.getRemoteAddr"
+is_source = "network"
+description = "Remote IP address"
+
+[[spec]]
+name = "ServletRequest.getRemoteHost"
+is_source = "network"
+description = "Remote hostname"
+
+[[spec]]
+name = "HttpServletRequest.getHeader"
+is_source = "user"
+description = "Servlet request header"
+
+[[spec]]
+name = "HttpServletRequest.getHeaders"
+is_source = "user"
+description = "Servlet request headers"
+
+[[spec]]
+name = "HttpServletRequest.getHeaderNames"
+is_source = "user"
+description = "Servlet request header names"
+
+[[spec]]
+name = "HttpServletRequest.getCookies"
+is_source = "user"
+description = "Servlet cookies"
+
+[[spec]]
+name = "HttpServletRequest.getQueryString"
+is_source = "user"
+description = "Servlet query string"
+
+[[spec]]
+name = "HttpServletRequest.getPathInfo"
+is_source = "user"
+description = "Servlet path info"
+
+[[spec]]
+name = "HttpServletRequest.getRequestURI"
+is_source = "user"
+description = "Servlet request URI"
+
+[[spec]]
+name = "HttpServletRequest.getRequestURL"
+is_source = "user"
+description = "Servlet request URL"
+
+[[spec]]
+name = "HttpServletRequest.getServletPath"
 is_source = "user"
 description = "Servlet path"
 
-[[spec]]
-name = "request.getParameter"
-is_source = "user"
-description = "HTTP request parameter"
+# What an Enumeration / a Cookie hands out is what it holds (a request's header values, a cookie's
+# value): the receiver's taint, not a source of its own.
 
 [[spec]]
-name = "request.getHeader"
-is_source = "user"
-description = "HTTP request header"
-
-[[spec]]
-name = "request.getCookies"
-is_source = "user"
-description = "HTTP cookies"
-
-[[spec]]
-name = "request.getInputStream"
-is_source = "user"
-description = "HTTP input stream"
-
-[[spec]]
-name = "getTheParameter"
-is_source = "user"
-description = "OWASP Benchmark wrapper - getParameter"
-
-[[spec]]
-name = "getTheValue"
-is_source = "user"
-description = "OWASP Benchmark wrapper - getValue"
-
-[[spec]]
-name = "getTheName"
-is_source = "user"
-description = "OWASP Benchmark wrapper - getName"
+name = "Enumeration.nextElement"
+taint_from_receiver = true
+description = "Enumeration element (the receiver's)"
 
 [[spec]]
 name = "getValue"
@@ -118,24 +106,9 @@ taint_from_receiver = true
 description = "getValue() - propagates receiver taint"
 
 [[spec]]
-name = "nextElement"
-is_source = "user"
-description = "Enumeration element (from headers/params)"
-
-[[spec]]
 name = "getAttribute"
 taint_from_receiver = true
 description = "getAttribute() - propagates receiver taint"
-
-[[spec]]
-name = "getRemoteAddr"
-is_source = "network"
-description = "Remote IP address"
-
-[[spec]]
-name = "getRemoteHost"
-is_source = "network"
-description = "Remote hostname"
 
 [[spec]]
 name = "getWriter"
@@ -408,41 +381,6 @@ description = "Spring JdbcTemplate update (SQL injection)"
 
 [[spec]]
 name = "jdbcTemplate.execute"
-is_sink = "sql"
-description = "Spring JdbcTemplate execute (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.query"
-is_sink = "sql"
-description = "Spring JdbcTemplate query (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.queryForObject"
-is_sink = "sql"
-description = "Spring JdbcTemplate queryForObject (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.queryForList"
-is_sink = "sql"
-description = "Spring JdbcTemplate queryForList (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.queryForRowSet"
-is_sink = "sql"
-description = "Spring JdbcTemplate queryForRowSet (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.queryForMap"
-is_sink = "sql"
-description = "Spring JdbcTemplate queryForMap (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.update"
-is_sink = "sql"
-description = "Spring JdbcTemplate update (SQL injection)"
-
-[[spec]]
-name = "JDBCtemplate.execute"
 is_sink = "sql"
 description = "Spring JdbcTemplate execute (SQL injection)"
 

@@ -23,7 +23,7 @@ JAVA_SPECS: Dict[str, ProcSpec] = load_table("java")
 # The Java type model (receiver aliases, factory and chain return types, String method result
 # types, permissive verifiers, the javax -> jakarta moves) is data: data/java-types.toml.
 _TYPES_PATH = Path(__file__).parent / "data" / "java-types.toml"
-_TYPE_TABLES = {"type_receivers": list, "factory_return_types": str, "return_types": str,
+_TYPE_TABLES = {"type_receivers": list, "supertypes": list, "factory_return_types": str, "return_types": str,
                 "string_method_types": str}
 
 
@@ -50,6 +50,7 @@ def _load_types(path: Path = _TYPES_PATH) -> dict:
 
 _TYPES = _load_types()
 JAVA_TYPE_RECEIVERS: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["type_receivers"].items()}
+JAVA_SUPERTYPES: Dict[str, tuple] = {k: tuple(v) for k, v in _TYPES["supertypes"].items()}
 JAVA_FACTORY_RETURN_TYPES: Dict[str, str] = dict(_TYPES["factory_return_types"])
 JAVA_RETURN_TYPES: Dict[str, str] = dict(_TYPES["return_types"])
 JAVA_STRING_METHOD_TYPES: Dict[str, str] = dict(_TYPES["string_method_types"])
@@ -76,4 +77,7 @@ def type_spec_receivers(type_name: str) -> tuple:
         decap = type_name[:upper - 1].lower() + type_name[upper - 1:]
     else:
         decap = type_name[:1].lower() + type_name[1:]
-    return (type_name, decap) + JAVA_TYPE_RECEIVERS.get(type_name, ())
+    own = (type_name, decap) + JAVA_TYPE_RECEIVERS.get(type_name, ())
+    for parent in JAVA_SUPERTYPES.get(type_name, ()):     # rows written on the declaring supertype
+        own += tuple(r for r in type_spec_receivers(parent) if r not in own)
+    return own

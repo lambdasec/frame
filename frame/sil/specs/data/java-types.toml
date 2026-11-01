@@ -23,6 +23,21 @@ CloseableHttpClient = ["httpClient"]
 HttpsURLConnection = ["httpURLConnection"]
 Logger = ["log"]
 
+# Documented supertypes of library types (simple names, as in [type_receivers]): a call on a value of
+# the type is also looked up under each supertype's spec keys, so a row is written once on the type
+# that declares the method (`ServletRequest.getParameter` serves an HttpServletRequest). Servlet API
+# (javax.servlet / jakarta.servlet), JDBC (java.sql), Spring's multipart request.
+[supertypes]
+HttpServletRequest = ["ServletRequest"]
+ServletRequestWrapper = ["ServletRequest"]
+HttpServletRequestWrapper = ["ServletRequestWrapper", "HttpServletRequest"]
+MultipartHttpServletRequest = ["HttpServletRequest"]
+HttpServletResponse = ["ServletResponse"]
+ServletResponseWrapper = ["ServletResponse"]
+HttpServletResponseWrapper = ["ServletResponseWrapper", "HttpServletResponse"]
+PreparedStatement = ["Statement"]
+CallableStatement = ["PreparedStatement"]
+
 # Documented return types of factory methods, so `var b = f.newDocumentBuilder()` has a type (a
 # `var` initialised by `new T(...)` needs no entry).
 [factory_return_types]

@@ -1,0 +1,37 @@
+[pack]
+name = "owasp-benchmark-java"
+language = "java"
+description = "The OWASP Benchmark for Java's own helper classes (org.owasp.benchmark.helpers): SeparateClassRequest hands out the request's parameters and cookies, DatabaseHelper.JDBCtemplate is a Spring JdbcTemplate, Utils.encodeForHTML escapes for HTML. Passed to the scanner by the benchmark harness only, as any project teaches Frame its own code (.frame/packs or --pack); never shipped with Frame."
+# No `detect`: the test cases name the helpers fully qualified, without imports; every rule is a
+# callee id under org.owasp.benchmark.helpers.
+references = ["https://github.com/OWASP-Benchmark/BenchmarkJava (src/main/java/org/owasp/benchmark/helpers: SeparateClassRequest.java, DatabaseHelper.java, Utils.java)"]
+
+# SeparateClassRequest(request): getTheParameter(p) returns request.getParameter(p), getTheCookie(c)
+# the named cookie's value; getTheValue(p) returns the constant "bar" (a safe source: no rule).
+[[source]]
+call = ["org.owasp.benchmark.helpers.SeparateClassRequest.getTheParameter",
+        "org.owasp.benchmark.helpers.SeparateClassRequest.getTheCookie"]
+kind = "user_input"
+description = "a parameter / cookie of the request the wrapper keeps"
+
+# DatabaseHelper.JDBCtemplate is `public static org.springframework.jdbc.core.JdbcTemplate`: its
+# query methods take SQL text first.
+[[sink]]
+call = ["org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.query",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForObject",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForList",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForRowSet",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForMap",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForLong",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.queryForInt",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.update",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.batchUpdate",
+        "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.execute"]
+args = [0]
+kind = "sql"
+description = "the Benchmark's JdbcTemplate (SQL text)"
+
+# Utils.encodeForHTML(param) returns ESAPI's HTML encoding of the parameter.
+[[sanitizer]]
+call = ["org.owasp.benchmark.helpers.Utils.encodeForHTML"]
+kinds = ["html", "xss"]

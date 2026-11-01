@@ -190,6 +190,8 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 r = _ret_name(i)
                 required = _required_module(i, proc)
                 produced = i.canonical or required or _module_qualified(text, imported_modules)
+                if produced and produced.endswith(".<init>"):   # Java / C# `new X(...)`: an X
+                    produced = produced[:-len(".<init>")]
                 if text and returning and text in returning:                # a function returning one value
                     produced = returning[text]
                 if python and produced and produced in through and i.args:  # `contextlib.closing(x)` is x
