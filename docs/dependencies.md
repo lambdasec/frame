@@ -435,4 +435,4 @@ Exit status for `frame deps`: 0 clean, 1 a vulnerability at or above `--fail-on`
 - Transitive use through another library is invisible to reachability, so `installed` never means unreachable.
 - Without a lockfile, a resolved graph or `--resolve`, a manifest gives declared versions only (Gradle may resolve a higher one), and no transitive dependencies.
 - Vulnerable functions are known for some advisories only (OSV's Go and RustSec symbols, curated entries, and functions mined from fix commits, growing weekly). Without them, a vulnerability stops at `imported`.
-- `--apply` writes Python, npm, Maven, Gradle, .NET and Go manifests; other ecosystems are listed as manual or re-locked only.
+- `--apply` writes Python, npm, Maven, Gradle, .NET, Go, Cargo (`Cargo.toml`) and Composer (`composer.json`) manifests; the others (RubyGems, Hex, Pub, Swift) are listed as manual, since their manifests are code or indentation-sensitive and Frame never approximates an edit.

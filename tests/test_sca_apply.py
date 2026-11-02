@@ -128,6 +128,37 @@ def test_nuget_and_go_edits(tmp_path):
     assert "golang.org/x/net v0.23.0 // indirect" in out["go.mod"] and not manual
 
 
+def test_cargo_and_composer_edits(tmp_path):
+    out, manual = edited(tmp_path, {
+        "Cargo.toml": ('[package]\nname = "app"\n\n[dependencies]\n'
+                       'serde = "1.0.130"\ntime = { version = "^0.3.1", features = ["std"] }\n'
+                       'regex = "~1.5.4"\n[dev-dependencies]\ntokio = "1.0"\n'),
+        "composer.json": '{\n    "require": {\n        "guzzlehttp/guzzle": "^7.0",\n        "monolog/monolog": "2.1.0"\n    }\n}\n',
+    }, [
+        P("crates.io", "serde", "1.0.130", "1.0.200", "raise-requirement", "Cargo.lock"),
+        P("crates.io", "time", "0.3.1", "0.3.36", "raise-requirement", "Cargo.lock"),
+        P("crates.io", "regex", "1.5.4", "1.10.2", "raise-requirement", "Cargo.lock"),
+        P("Packagist", "guzzlehttp/guzzle", "7.0.0", "7.9.2", "raise-requirement", "composer.lock"),
+        P("Packagist", "monolog/monolog", "2.1.0", "2.9.3", "raise-requirement", "composer.lock"),
+    ])
+    assert 'serde = "1.0.200"' in out["Cargo.toml"]                 # bare (caret) kept bare
+    assert 'version = "^0.3.36"' in out["Cargo.toml"] and 'features = ["std"]' in out["Cargo.toml"]
+    assert 'regex = "~1.10.2"' in out["Cargo.toml"]                 # tilde kept
+    assert '"guzzlehttp/guzzle": "^7.9.2"' in out["composer.json"]
+    assert '"monolog/monolog": "2.9.3"' in out["composer.json"] and not manual
+
+
+def test_cargo_section_and_workspace_dependencies_are_manual(tmp_path):
+    out, manual = edited(tmp_path, {
+        "Cargo.toml": '[dependencies.serde]\nversion = "1.0.130"\nfeatures = ["derive"]\n\n[dependencies]\nrand.workspace = true\n',
+    }, [
+        P("crates.io", "serde", "1.0.130", "1.0.200", "raise-requirement", "Cargo.lock"),
+        P("crates.io", "rand", "0.8.0", "0.8.5", "raise-requirement", "Cargo.lock"),
+    ])
+    assert out.get("Cargo.toml", "1.0.130").count("1.0.130")  # unchanged
+    assert len(manual) == 2 and all("by hand" in m for m in manual)
+
+
 def test_dry_run_writes_nothing(tmp_path):
     (tmp_path / "requirements.txt").write_text("django==3.2.0\n")
     out = apply_plan([P("PyPI", "django", "3.2.0", "3.2.25", "raise-requirement", "requirements.txt")], tmp_path)

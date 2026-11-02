@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from frame.sca.model import GO, MAVEN, NPM, NUGET, PYPI, normalize_name
+from frame.sca.model import CARGO, GO, MAVEN, NPM, NUGET, PACKAGIST, PYPI, normalize_name
 from frame.sca.ranges import satisfies
 
 TIMEOUT = 900
@@ -334,6 +334,55 @@ def _go_edit(files: _Files, rel: str, p: dict) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------------------------
+# Cargo (crates.io) and Composer (Packagist)
+
+def _cargo_edit(files: _Files, rel: str, p: dict) -> Optional[str]:
+    """Raise a crate's requirement in Cargo.toml. Only the two forms whose version is one
+    literal string are edited (`name = "1.2"`, `name = { version = "1.2", ... }`), the operator
+    kept (`^` `~` `=`, a bare requirement Cargo reads as caret); a `[dependencies.name]` block, a
+    workspace inheritance (`name.workspace = true`), or the crate written more than once is
+    manual, never approximated."""
+    text = files.get(rel)
+    if text is None:
+        return f"{p['package']}: no Cargo.toml beside {p['path']}"
+    name, target = p["package"], p["target"]
+    n = re.escape(name)
+    string_form = re.compile(r'(?m)^(\s*' + n + r'\s*=\s*)"([^"]*)"\s*$')
+    table_form = re.compile(r'(?m)^(\s*' + n + r'\s*=\s*\{[^}\n]*?\bversion\s*=\s*)"([^"]*)"')
+    hits = string_form.findall(text) + table_form.findall(text)
+    if len(hits) != 1:
+        if re.search(r'(?m)^\s*\[[^\]\n]*\bdependencies\.' + n + r'\b', text) or \
+                re.search(r'(?m)^\s*' + n + r'\.workspace\s*=', text):
+            return f"{name}: declared as a section or workspace dependency in {rel}; raise it by hand"
+        return (f"{name}: not a single plain version requirement in {rel}; raise it by hand"
+                if hits else f"{name}: no version requirement found in {rel}")
+    sub = lambda m: m.group(1) + '"' + _npm_spec_like(m.group(2), target) + '"'
+    new = string_form.sub(sub, text, count=1) if string_form.search(text) else table_form.sub(sub, text, count=1)
+    files.set(rel, new, f"{name}: require {target}")
+    return None
+
+
+def _composer_edit(files: _Files, rel: str, p: dict) -> Optional[str]:
+    """Raise a package's constraint in composer.json (JSON, like package.json)."""
+    text = files.get(rel)
+    if text is None:
+        return f"{p['package']}: no composer.json beside {p['path']}"
+    data = json.loads(text)
+    name, target = p["package"], p["target"]
+    found = False
+    for section in ("require", "require-dev"):
+        deps = data.get(section) or {}
+        if name in deps:
+            deps[name] = _npm_spec_like(str(deps[name]), target)
+            found = True
+    if not found:
+        return f"{name}: not required in {rel}"
+    new = json.dumps(data, indent=_json_indent(text), ensure_ascii=False) + ("\n" if text.endswith("\n") else "")
+    files.set(rel, new, f"{name}: require {target}")
+    return None
+
+
+# ---------------------------------------------------------------------------------------------
 # Gradle
 
 def _gradle_edit(files: _Files, root: Path, rel: str, p: dict) -> Optional[str]:
@@ -431,6 +480,10 @@ def edits(plans: List[dict], root: Path) -> Tuple[_Files, List[str]]:
             problem = _nuget_edit(files, Path(home), root, p)
         elif eco == GO:
             problem = _go_edit(files, rel_in("go.mod"), p)
+        elif eco == CARGO:
+            problem = _cargo_edit(files, rel_in("Cargo.toml"), p)
+        elif eco == PACKAGIST:
+            problem = _composer_edit(files, rel_in("composer.json"), p)
         else:
             problem = f"{p['package']}: editing {eco} manifests is not supported yet"
         if problem:
