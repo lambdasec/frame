@@ -2390,9 +2390,20 @@ class JavaScriptFrontend:
             return "Array" if self._array_annotation(annotation) else None
         if param.type not in ("identifier", "required_parameter"):
             return None                                    # a default value or a pattern: unknown
-        if self._array_tested(ident, name, scope):
-            return "Array"
+        if self._kinds().entails_kind(ident, "Array", scope):
+            return "Array"                                 # the path's type tests prove it (_js_kinds)
         return self._kind_at_every_call(scope, index, depth)
+
+    def _kinds(self):
+        """Kind facts over this file (frontends/_js_kinds.py), built once per translation."""
+        from frame.sil.frontends._js_kinds import Kinds, Module
+        cached = getattr(self, "_kinds_cache", None)
+        if cached is None or cached[0] is not self._tree_root:
+            import os
+            path = os.path.abspath(self._filename) if self._filename and not self._filename.startswith("<") else ""
+            cached = (self._tree_root, Kinds(Module(self._tree_root, path)))
+            self._kinds_cache = cached
+        return cached[1]
 
     @staticmethod
     def _simple_parameter_name(param: TSNode) -> Optional[str]:
@@ -2421,47 +2432,6 @@ class JavaScriptFrontend:
             head = node.named_children[0] if node.named_children else None
             return head is not None and head.text in (b"Array", b"ReadonlyArray")
         return False
-
-    def _is_array_test(self, cond: Optional[TSNode], name: str) -> Optional[bool]:
-        """True for `Array.isArray(name)`, False for its negation, None for anything else."""
-        while cond is not None and cond.type == "parenthesized_expression" and cond.named_children:
-            cond = cond.named_children[0]
-        if cond is None:
-            return None
-        if cond.type == "unary_expression" and self._get_text(cond).startswith("!"):
-            inner = self._is_array_test(cond.child_by_field_name("argument"), name)
-            return None if inner is None else not inner
-        if cond.type == "call_expression":
-            fn, args = cond.child_by_field_name("function"), cond.child_by_field_name("arguments")
-            if fn is not None and self._get_text(fn) == "Array.isArray" and args is not None \
-                    and args.named_child_count == 1 and self._get_text(args.named_children[0]) == name:
-                return True
-        return None
-
-    def _array_tested(self, use: TSNode, name: str, scope: TSNode) -> bool:
-        cur = use
-        while cur is not None and cur != scope:
-            parent = cur.parent
-            if parent is not None and parent.type == "if_statement" and cur == parent.child_by_field_name("consequence") \
-                    and self._is_array_test(parent.child_by_field_name("condition"), name) is True:
-                return True                                # inside `if (Array.isArray(x)) { ... }`
-            if parent is not None and parent.type == "statement_block":
-                for stmt in parent.named_children:         # an earlier `if (!Array.isArray(x)) return;`
-                    if stmt.start_byte >= cur.start_byte:
-                        break
-                    if stmt.type == "if_statement" and stmt.child_by_field_name("alternative") is None \
-                            and self._is_array_test(stmt.child_by_field_name("condition"), name) is False \
-                            and self._always_leaves(stmt.child_by_field_name("consequence")):
-                        return True
-            cur = parent
-        return False
-
-    @staticmethod
-    def _always_leaves(block: Optional[TSNode]) -> bool:
-        if block is None:
-            return False
-        last = block.named_children[-1] if block.type == "statement_block" and block.named_children else block
-        return last.type in ("return_statement", "throw_statement")
 
     def _kind_at_every_call(self, fn: TSNode, index: int, depth: int) -> Optional[str]:
         """The kind every call of `fn` passes at `index`, when the file holds all its calls: the
