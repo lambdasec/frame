@@ -28,8 +28,9 @@ The engine audit that removed every framework and benchmark heuristic from the c
 - Follow an OpenAI `{"role": "system"}` chat message built as a dict inside a list in the Python frontend.
 - Carry JavaScript kind facts through function returns and across the call sites of exported functions.
 - Scan `.cshtml` / `.razor`, and apply a pack rule to a procedure defined in the same file.
+- `--apply` for the ecosystems still marked manual, and IaC network reachability for databases and load balancers.
 
-**Data growth** (no code, as OSV and upstreams grow): more advisory vulnerable-function mappings, more vendored C/C++ libraries, more curated configuration mitigations; `--apply` for the ecosystems still marked manual; IaC network reachability for databases and load balancers.
+**Data**: the advisory database (daily) and vulnerable-function mappings (weekly) are rebuilt by jobs on their own. Vendored C/C++ libraries and curated configuration mitigations grow by hand, each entry added from the advisory text and upstream source.
 
 **Phase 5: autonomous pentesting.** Turn the inventory, the routes from entrypoint packs, and the reachable SAST and SCA findings into an attack plan for `frame exploit` against a live, authorized target, with a frontier or local model. Then black-box support (crawling and OpenAPI import, authentication and sessions for IDOR, parallel hypotheses, an independent validator for every claimed exploit, and scope and safety controls), measured on XBOW's validation benchmark and CVE-Bench, blind and primed with Frame's findings.
 
