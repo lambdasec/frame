@@ -572,25 +572,43 @@ def _constraints(related: Dict[str, List[Any]]) -> List[Any]:
     return out
 
 
+_LB_TYPES = ("aws_lb", "aws_alb", "aws_elb")
+_DB_TYPES = ("aws_db_instance", "aws_rds_cluster_instance")
+
+
 def _network_reach(resources, related, constraints) -> None:
-    """`internet_reach` on every aws_instance: per port of data/aws-network.toml, True, False or
-    unknown (frame/iac/aws_network.py)."""
-    instances = [(a, d) for a, d, b, _, _ in resources if b.labels[0] == "aws_instance"]
-    if not instances:
+    """`internet_reach` on every aws_instance (admin ports), load balancer (admin ports through an
+    internet-facing LB's security group) and database (its engine's port): True, False or unknown
+    (frame/iac/aws_network.py, data/aws-network.toml)."""
+    want = _LB_TYPES + _DB_TYPES + ("aws_instance",)
+    targets = [(a, d, b.labels[0]) for a, d, b, _, _ in resources if b.labels[0] in want]
+    if not targets:
         return
     try:
         import tomllib
     except ModuleNotFoundError:             # pragma: no cover - 3.10
         import tomli as tomllib             # type: ignore[no-redef]
-    from .aws_network import instance_reach
-    ports = tomllib.loads((Path(__file__).parent / "data" / "aws-network.toml").read_text())["ports"]
-    for address, doc in instances:
+    from .aws_network import db_reach, instance_reach, lb_reach
+    data = tomllib.loads((Path(__file__).parent / "data" / "aws-network.toml").read_text())
+    ports, db_ports = data["ports"], data["db_ports"]
+
+    def record(address, doc, named_ports, fn):
         reach = {}
-        for name, port in ports.items():
-            verdict = instance_reach(doc, related, constraints, int(port))
+        for name, port in named_ports:
+            verdict = fn(doc, related, constraints, int(port))
             reach[name] = verdict if verdict is not None else Unknown(
                 f"{address}.internet_reach.{name}", f"the network path to {address} (port {port})")
         doc["internet_reach"] = reach
+
+    for address, doc, rtype in targets:
+        if rtype == "aws_instance":
+            record(address, doc, list(ports.items()), instance_reach)
+        elif rtype in _LB_TYPES:
+            record(address, doc, list(ports.items()), lb_reach)
+        else:
+            engine = doc.get("engine")
+            port = db_ports.get(engine.lower()) if isinstance(engine, str) else None
+            record(address, doc, [("db", port)] if port else [], db_reach)
 
 
 def _related(resources: List[Tuple[str, Dict[str, Any], Block, _File, Dict]]) -> Dict[str, List[Any]]:

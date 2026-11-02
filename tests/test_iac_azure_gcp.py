@@ -173,3 +173,50 @@ def test_azure_rule_values_in_any_case(tmp_path):
     """Provider 2.x reads protocol / direction / access in any case (TerraGoat writes "TCP")."""
     rule = ALLOW_SSH.format(src="*").replace('"Tcp"', '"TCP"').replace('"Inbound"', '"inbound"')
     assert [r for r, _ in _rules(tmp_path, _nsg(rule))] == ["azure-nsg-admin-from-internet"]
+
+
+# --- AWS load-balancer and database reachability (frame/iac/aws_network.py) -------------------------
+
+def _aws_rules(tmp_path, text):
+    (tmp_path / "main.tf").write_text(text)
+    run = scan(tmp_path)
+    return {f.rule for f in run.findings}, {u["rule"] for u in run.undecided}
+
+
+OPEN_SG = ('resource "aws_security_group" "open" {\n  ingress { from_port = 22\n    to_port = 22\n'
+           '    protocol = "tcp"\n    cidr_blocks = ["0.0.0.0/0"] }\n}\n')
+VPC_SG = ('resource "aws_security_group" "vpc" {\n  ingress { from_port = 3306\n    to_port = 3306\n'
+          '    protocol = "tcp"\n    cidr_blocks = ["10.0.0.0/16"] }\n}\n')
+
+
+def test_internet_facing_lb_with_an_open_security_group_is_reachable(tmp_path):
+    found, _ = _aws_rules(tmp_path, OPEN_SG +
+        'resource "aws_lb" "l" {\n  internal = false\n  security_groups = [aws_security_group.open.id]\n}\n')
+    assert "aws-lb-admin-reachable" in found
+
+
+def test_an_internal_lb_is_not_reachable(tmp_path):
+    found, _ = _aws_rules(tmp_path, OPEN_SG +
+        'resource "aws_lb" "l" {\n  internal = true\n  security_groups = [aws_security_group.open.id]\n}\n')
+    assert "aws-lb-admin-reachable" not in found
+
+
+def test_a_public_db_with_an_internet_open_sg_is_reachable(tmp_path):
+    found, _ = _aws_rules(tmp_path, OPEN_SG.replace("22", "3306") +
+        'resource "aws_db_instance" "d" {\n  engine = "mysql"\n  publicly_accessible = true\n'
+        '  vpc_security_group_ids = [aws_security_group.open.id]\n}\n')
+    assert "aws-db-reachable" in found
+
+
+def test_a_public_db_whose_sg_allows_only_the_vpc_is_not_reachable(tmp_path):
+    found, _ = _aws_rules(tmp_path, VPC_SG +
+        'resource "aws_db_instance" "d" {\n  engine = "mysql"\n  publicly_accessible = true\n'
+        '  vpc_security_group_ids = [aws_security_group.vpc.id]\n}\n')
+    assert "aws-db-reachable" not in found
+
+
+def test_a_private_db_is_not_reachable_even_with_an_open_sg(tmp_path):
+    found, _ = _aws_rules(tmp_path, OPEN_SG.replace("22", "3306") +
+        'resource "aws_db_instance" "d" {\n  engine = "mysql"\n  publicly_accessible = false\n'
+        '  vpc_security_group_ids = [aws_security_group.open.id]\n}\n')
+    assert "aws-db-reachable" not in found

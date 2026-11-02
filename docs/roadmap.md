@@ -25,8 +25,6 @@ The engine audit that removed every framework and benchmark heuristic from the c
 
 **Precision and recall polish** (small, measured on the benchmark sweep):
 - Apply a pack rule to a procedure defined in the same file.
-- Carry JavaScript kind facts through function returns and across the call sites of exported functions.
-- IaC network reachability for databases and load balancers.
 
 **Data**: the advisory database (daily) and vulnerable-function mappings (weekly) are rebuilt by jobs on their own. Vendored C/C++ libraries and curated configuration mitigations grow by hand, each entry added from the advisory text and upstream source.
 

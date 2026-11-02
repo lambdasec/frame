@@ -383,6 +383,62 @@ def _path(ctx: _Ctx, inst, s, port):
                   _instance_sgs_allow(ctx, inst, s.get("vpc_id"), port))
 
 
+def _sgs_allow(ctx: _Ctx, ids, port):
+    """Whether one of the security groups `ids` (an explicit list of ids) admits the internet on
+    `port`; a group outside the configuration is unknown. No group listed: nothing is admitted."""
+    if ids is None or ids == []:
+        return z3.BoolVal(False)
+    if isinstance(ids, Unknown):
+        return ctx.fresh("security groups")
+    groups = ctx.docs("aws_security_group")
+    terms = []
+    for sid in ids:
+        known = [z3.And(_eq(sid, g.get("id")), _sg_allows(ctx, g, port)) for g in groups]
+        outside = z3.And([z3.Not(_eq(sid, g.get("id"))) for g in groups]) if groups else z3.BoolVal(True)
+        terms.append(z3.Or(z3.Or(known) if known else z3.BoolVal(False),
+                           z3.And(outside, ctx.fresh("a security group outside the configuration"))))
+    return z3.Or(terms) if terms else z3.BoolVal(False)
+
+
+def _decide(ctx: _Ctx, constraints: List[Any], body) -> Optional[bool]:
+    """True when `body` holds for some internet source and client port whatever the unknowns are,
+    False when it can never hold, None when it depends on values the files do not give."""
+    full = z3.And(_reachable(ctx.src, 32), ctx.sport >= 0, ctx.sport <= 65535, body)
+    s = z3.Solver()
+    s.set("timeout", 10000)
+    s.add(*constraints)
+    s.add(full)
+    if s.check() == z3.unsat:
+        return False
+    s = z3.Solver()
+    s.set("timeout", 10000)
+    s.add(*constraints)
+    s.add(z3.Not(z3.Exists([ctx.src, ctx.sport], full)))
+    return True if s.check() == z3.unsat else None
+
+
+def lb_reach(lb: Dict[str, Any], related: Dict[str, List[Any]], constraints: List[Any],
+             port: int) -> Optional[bool]:
+    """The internet can reach `port` through an internet-facing load balancer's security group:
+    `internal` is false (the default) and a listed security group admits the internet on `port`.
+    This is the security-group boundary of a public load balancer, not a claim about a backend."""
+    ctx = _Ctx(related, constraints)
+    internal = _bool(lb.get("internal"), False, ctx, "internet-facing load balancer")
+    return _decide(ctx, constraints, z3.And(z3.Not(internal), _sgs_allow(ctx, lb.get("security_groups"), z3.IntVal(port))))
+
+
+def db_reach(db: Dict[str, Any], related: Dict[str, List[Any]], constraints: List[Any],
+             port: int) -> Optional[bool]:
+    """The internet can reach a database: `publicly_accessible` is true and a listed security
+    group admits the internet on the engine's `port`."""
+    ctx = _Ctx(related, constraints)
+    pub = _bool(db.get("publicly_accessible"), False, ctx, "publicly accessible")
+    ids = db.get("vpc_security_group_ids")
+    if ids is None:
+        ids = db.get("security_group_ids")
+    return _decide(ctx, constraints, z3.And(pub, _sgs_allow(ctx, ids, z3.IntVal(port))))
+
+
 def instance_reach(inst: Dict[str, Any], related: Dict[str, List[Any]], constraints: List[Any],
                    port: int) -> Optional[bool]:
     """True: the internet can reach `port` on the instance whatever the unknowns are; False: it

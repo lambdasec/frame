@@ -220,3 +220,26 @@ when = '''self.internet_reach.ssh == true or self.internet_reach.rdp == true'''
 references = ["https://docs.aws.amazon.com/vpc/latest/userguide/route-tables-priority.html",
               "https://docs.aws.amazon.com/vpc/latest/userguide/nacl-rules.html",
               "https://docs.aws.amazon.com/vpc/latest/userguide/subnet-route-tables.html"]
+
+# frame/iac/aws_network.py decides these the same way as the instance: an internet-facing load
+# balancer (`internal` false) whose security group admits the internet to SSH or RDP, and a
+# database (`publicly_accessible` true) whose security group admits the internet on its engine's
+# port. Both are the security-group boundary of a public resource, not a claim about a backend.
+
+[[policy]]
+id = "aws-lb-admin-reachable"
+title = "A public load balancer's security group lets the internet reach SSH or RDP"
+severity = "high"
+cwe = "CWE-284"
+resources = ["aws_lb", "aws_alb", "aws_elb"]
+when = '''self.internet_reach.ssh == true or self.internet_reach.rdp == true'''
+references = ["https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-update-security-groups.html"]
+
+[[policy]]
+id = "aws-db-reachable"
+title = "The internet can reach this database"
+severity = "critical"
+cwe = "CWE-284"
+resources = ["aws_db_instance", "aws_rds_cluster_instance"]
+when = '''self.internet_reach.db == true'''
+references = ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html#USER_VPC.Hiding"]

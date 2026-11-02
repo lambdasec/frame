@@ -3,3 +3,17 @@
 [ports]
 ssh = 22
 rdp = 3389
+
+# A load balancer and a database are checked for reachability on these ports too. A load balancer
+# is checked on the admin ports above (an internet-facing LB whose security group admits the
+# internet to SSH/RDP). A database is checked on its engine's port (`internet_reach.db`).
+[db_ports]
+mysql = 3306
+mariadb = 3306
+postgres = 5432
+postgresql = 5432
+aurora = 3306
+aurora-mysql = 3306
+aurora-postgresql = 5432
+oracle = 1521
+sqlserver = 1433

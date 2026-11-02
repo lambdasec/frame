@@ -342,6 +342,10 @@ def test_terragoat():
         ("aws-sg-admin-from-internet", "aws_security_group.web-node"),
         # both instances sit in the public subnet behind that group: SSH is reachable end to end
         ("aws-ec2-admin-reachable", "aws_instance.web_host"), ("aws-ec2-admin-reachable", "aws_instance.db_app"),
+        # the ELB is internet-facing and its security group (web-node) opens SSH to the world; the
+        # RDS instance is publicly_accessible but its security group admits 3306 only from the VPC
+        # CIDR, so it is not internet-reachable (aws-rds-public still flags the setting above)
+        ("aws-lb-admin-reachable", "aws_elb.weblb"),
         # Azure and Google Cloud, as checkov 3.4.0's CKV_AZURE_9/10/39 and CKV_GCP_2/3/11/28 see them (the SSH
         # and RDP checks of one resource are one finding here; allow_all opens every port, which absorbs them).
         # checkov's CKV_AZURE_190 (an account not forbidding public blobs) is a setting, not an exposure:
