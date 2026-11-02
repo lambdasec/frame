@@ -351,6 +351,16 @@ type = "idor"
 cwe = "CWE-639"
 category = "access-control"
 
+# A resource operation reachable by a handler that has no authorization gate and
+# no authenticated identity in scope: the caller is not even known, let alone
+# checked. Distinct from idor (CWE-639), where the caller IS authenticated but the
+# operation is not scoped to them. Set by relabelling an idor check in an ungated,
+# unauthenticated handler (translator `_relabel_missing_authorization`).
+[[vuln]]
+type = "missing_authorization"
+cwe = "CWE-862"
+category = "access-control"
+
 [[vuln]]
 type = "header_injection"
 cwe = "CWE-113"

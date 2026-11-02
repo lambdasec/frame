@@ -14,6 +14,17 @@ detect = { imports = ["flask_login", "flask_jwt_extended", "flask_jwt"] }
 [[identity]]
 proxies = ["flask_login.current_user", "flask_jwt_extended.current_user", "flask_jwt.current_identity"]
 
+# Decorators that authenticate the caller before the view runs: Flask-Login's @login_required,
+# Flask-JWT-Extended's @jwt_required (and the websocket/refresh variants), Flask-JWT's @jwt_required.
+# A view carrying one is a gated handler, so a resource operation it reaches is not a
+# missing-authorization flaw (it may still be an idor if the operation is not scoped to the caller).
+[[auth_gate]]
+decorator = ["flask_login.login_required", "flask_login.fresh_login_required",
+             "flask_jwt_extended.jwt_required", "flask_jwt_extended.jwt_refresh_token_required",
+             "flask_jwt_extended.fresh_jwt_required", "flask_jwt.jwt_required"]
+references = ["https://flask-login.readthedocs.io/en/latest/#flask_login.login_required",
+              "https://flask-jwt-extended.readthedocs.io/en/stable/api.html"]
+
 [[source]]
 call = ["flask_jwt_extended.get_jwt_identity", "flask_jwt_extended.get_current_user", "flask_jwt_extended.get_jwt"]
 kind = "identity"

@@ -83,7 +83,7 @@ _TOOL_KEYS = {
     "javascript": {"id", "entrypoint", "method", "name_arg", "description_arg", "config_arg", "name_field",
                    "text_fields", "handler_arg", "handler_field", "description"},
 }
-_TOP_KEYS = {"pack", "wrapper", "identity", "operation_dispatch", "setting_registration", "returns", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
+_TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "setting_registration", "returns", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
@@ -476,6 +476,7 @@ class Pack:
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     wrappers: List[str] = field(default_factory=list)              # Python: calls returning a view wrapped
+    auth_gates: List[str] = field(default_factory=list)            # decorators/annotations that authenticate a handler
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
     # (controller extension keys, the id the handler is registered as)
@@ -1111,6 +1112,15 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if language != "python":
             raise _fail(origin, where, "wrappers are for Python packs (a handler wrapped by a decorator call)")
         pack.wrappers += _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
+
+    # An authorization gate: a decorator / annotation / attribute whose presence on a handler (or
+    # its class) means the framework authenticates or authorizes the caller before the body runs
+    # (`login_required`, `@PreAuthorize`, `[Authorize]`). A handler carrying one is gated; one that
+    # reaches a resource operation with no gate and no identity is a missing-authorization finding.
+    for i, t in enumerate(data.get("auth_gate", [])):
+        where = f"[[auth_gate]] #{i + 1}"
+        _check_keys(origin, where, t, {"decorator", "description", "references"})
+        pack.auth_gates += _strings(origin, f"{where}.decorator", t.get("decorator", []), allow_empty=False)
 
     for i, t in enumerate(data.get("deferred_call", [])):
         where = f"[[deferred_call]] #{i + 1}"

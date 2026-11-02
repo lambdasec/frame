@@ -75,6 +75,7 @@ class VulnType(Enum):
     CORS_MISCONFIGURATION = "cors_misconfiguration"  # CWE-942
     UNVERIFIED_SIGNATURE = "unverified_signature"    # CWE-347
     IDOR = "idor"                               # CWE-639
+    MISSING_AUTHORIZATION = "missing_authorization"  # CWE-862
 
     # A02: Security Misconfiguration
     HEADER_INJECTION = "header_injection"       # CWE-113
@@ -948,6 +949,8 @@ class SILTranslator:
         # The procedure currently being executed (gives detectors access to its
         # fixed-array declarations for heap-origin reasoning).
         self._cur_proc: Optional[Procedure] = None
+        self._identity_in_proc: bool = False               # an authenticated caller value seen in this proc
+        self._handler_authz: Dict[str, Tuple[bool, bool, Location]] = {}  # handler -> (protected, touches resource, loc)
         self._ownership_guards: Dict[str, Set[str]] = {}   # procedure -> objects checked against the caller
         # CWE-401 leak bookkeeping: allocation identity -> its source location, so
         # a leak reported when an allocation is lost or outlives its scope points
@@ -1363,6 +1366,9 @@ class SILTranslator:
             self._prepared = False
 
         self.vulnerability_checks = []
+        # Per entry-point handler: (protected, reaches_resource, location). Filled as each handler
+        # is translated; read by _missing_authorization_checks after the whole program is walked.
+        self._handler_authz: Dict[str, Tuple[bool, bool, Location]] = {}
         self._prepare()
 
         # Inter-procedural summaries first, to a fixpoint (`run_ipa_fixpoint`).
@@ -1385,6 +1391,8 @@ class SILTranslator:
             summary = self._proc_summaries.get(proc_name)
             if summary and summary.is_constructor and proc.class_name:
                 self._extract_constructor_taints(proc)
+
+        self.vulnerability_checks.extend(self._missing_authorization_checks())
 
         if self.verbose:
             print(f"[Translator] Generated {len(self.vulnerability_checks)} vulnerability checks")
@@ -1426,6 +1434,10 @@ class SILTranslator:
         """
         checks = []
         self._cur_proc = proc
+        # Did an authenticated-caller value (IDENTITY / PRINCIPAL) appear anywhere in this
+        # procedure? If not, and the handler carries no authorization gate, a resource operation
+        # it reaches is a missing-authorization finding, not an idor (_relabel_missing_authorization).
+        self._identity_in_proc = False
         self._ownership_guards[proc.name] = set()      # objects compared with the caller (this walk)
         # CWE-338 by destination: does this function's name say its result must be unpredictable?
         self._unpredictable_output = must_be_unpredictable(proc.simple_name.rsplit("::", 1)[-1])
@@ -1637,6 +1649,15 @@ class SILTranslator:
         checks.extend(self._excessive_allocation_checks(proc))
         checks.extend(self._incorrect_permission_checks(proc))
 
+        # Record this handler's authorization posture for the program-level consistency check
+        # (_missing_authorization_checks). Only entry-point handlers; the fact is overwritten on
+        # each pass, so the final reporting pass wins.
+        store = getattr(self, "_handler_authz", None)
+        if getattr(proc, "entry_kinds", None) and isinstance(store, dict):
+            protected = self._proc_is_auth_gated(proc) or self._identity_in_proc
+            store[proc.name] = (protected, self._proc_reaches_resource(proc),
+                                proc.loc or Location.unknown())
+
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
@@ -1793,6 +1814,10 @@ class SILTranslator:
             if name.split(".", 1)[0] in rebound:
                 continue
             if rtype is None:                        # an identity proxy (`flask_login.current_user`)
+                # NB: do not mark the handler as identity-using here -- importing the extension
+                # seeds the proxy into EVERY handler whether or not it authorizes. The flag is set
+                # only where the caller's identity is actually used (a principal-scoped selection,
+                # an ownership guard, or a materialised read of request.user / a verified token).
                 state.add_taint(name, TaintInfo(TaintKind.IDENTITY, name, proc.loc or Location.unknown()))
                 continue
             state.add_taint(name, TaintInfo(TaintKind.REQUEST, name, proc.loc or Location.unknown(),
@@ -4512,6 +4537,7 @@ class SILTranslator:
             elif token or (spec.is_sink == "resource_select" and self._resource_select_principal_scoped(instr, state)):
                 # a verified token is one the server issued: its claims are the presenter's own identity
                 state.tainted[ret_var] = TaintInfo(TaintKind.IDENTITY, ret_var, instr.loc, [ret_var])
+                self._identity_in_proc = True
 
         # A call to a procedure of this file: pass its argument taint on, and
         # take the result's taint from the callee's return summary (or, before
@@ -4605,6 +4631,8 @@ class SILTranslator:
             if spec.is_taint_source() and instr.ret and not self._spec_sources_off:
                 ret_var = str(instr.ret[0])
                 source_kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+                if source_kind in (TaintKind.IDENTITY, TaintKind.PRINCIPAL):
+                    self._identity_in_proc = True     # the caller's own authenticated identity (get_jwt_identity)
                 state.add_taint(ret_var, TaintInfo(
                     source_kind=source_kind,
                     source_var=ret_var,
@@ -5971,6 +5999,7 @@ class SILTranslator:
                 if isinstance(side, ExpFieldAccess) and isinstance(side.base, ExpVar) \
                         and not self._carries_identity(side, state) and self._carries_identity(other, state):
                     guarded.add(self._get_var_name(side.base.var))
+                    self._identity_in_proc = True   # the handler compares an owner against the caller
 
     def _filter_post_hoc_ownership_checks(self, proc, checks):
         """Drop IDOR checks whose fetched object is validated by a post-hoc
@@ -6037,7 +6066,108 @@ class SILTranslator:
             for attr in parts[1:]:
                 receiver = ExpFieldAccess(receiver, attr)
             exps.append(receiver)
-        return any(self._carries_identity(e, state) for e in exps)
+        scoped = any(self._carries_identity(e, state) for e in exps)
+        if scoped:
+            self._identity_in_proc = True     # the handler uses the caller's identity to scope
+        return scoped
+
+    _RESOURCE_SINK_KINDS = frozenset({"resource_select", "resource_modify", "sql", "nosql", "orm"})
+
+    def _proc_reaches_resource(self, proc) -> bool:
+        """Does this handler perform a resource / database operation (a call resolved to a
+        resource-selection, SQL, NoSQL or ORM sink)? Used by the authorization-consistency check
+        to compare only handlers that actually touch data."""
+        for instr in proc.get_all_instrs():
+            if not isinstance(instr, Call):
+                continue
+            spec = self.program.spec_for_call(instr)
+            if spec is None:
+                name = instr.get_full_name().strip('"') if hasattr(instr, "get_full_name") else ""
+                spec = self._spec_of_name(name) if name else None
+            if spec is not None and getattr(spec, "is_sink", None) in self._RESOURCE_SINK_KINDS:
+                return True
+        return False
+
+    def _missing_authorization_checks(self) -> List["VulnerabilityCheck"]:
+        """Missing function-level authorization (CWE-862) by the application's OWN convention: among
+        a program's entry-point handlers that touch a resource, when a clear majority are protected
+        (an authorization gate or the authenticated caller in scope) and a minority are not, the
+        unprotected ones are the deviant handlers that skipped the check their peers apply.
+
+        Relative to the app's convention, so it needs no notion of which endpoints are 'meant' to be
+        public and does not fire on an app with no authorization at all. A handler already carrying
+        an access-control finding (idor) is left to that finding, not reported twice."""
+        store = getattr(self, "_handler_authz", None)
+        if not store:
+            return []
+        sensitive = [(name, prot, loc) for name, (prot, reaches, loc) in store.items() if reaches]
+        protected = [x for x in sensitive if x[1]]
+        unprotected = [x for x in sensitive if not x[1]]
+        # A strong, established convention only: at least two protected peers, and the protected
+        # handlers a strict majority. Otherwise the app has no clear authorization norm to deviate
+        # from, and silence is correct.
+        if len(protected) < 2 or len(protected) <= len(unprotected):
+            return []
+        already = {c.procedure_name for c in self.vulnerability_checks
+                   if c.vuln_type in (VulnType.IDOR, VulnType.AUTHORIZATION_BYPASS)}
+        out = []
+        for name, _prot, loc in unprotected:
+            if name in already:
+                continue
+            handler = name.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+            out.append(VulnerabilityCheck(
+                formula=Sink(Var(handler), "authz"),
+                vuln_type=VulnType.MISSING_AUTHORIZATION,
+                location=loc,
+                description=(f"Handler '{handler}' performs a resource operation with no "
+                            f"authorization gate or authenticated caller, while peer handlers in "
+                            f"this application enforce one"),
+                source_var="",
+                sink_type="authz",
+                procedure_name=name,
+            ))
+        return out
+
+    @staticmethod
+    def _annotation_names(ann) -> Tuple[str, ...]:
+        """The names an annotation answers to: as written and resolved, each whole and by last
+        dotted segment (`login_required`, `flask_login.login_required`)."""
+        out = set()
+        for raw in (getattr(ann, "canonical", None), getattr(ann, "name", None)):
+            if raw:
+                out.add(raw)
+                out.add(raw.rsplit(".", 1)[-1])
+        return tuple(out)
+
+    def _proc_is_auth_gated(self, proc) -> bool:
+        """A handler is gated when it, or the class that declares it, carries an authorization-gate
+        annotation from an applied pack (`[[auth_gate]]`: `login_required`, `@PreAuthorize`,
+        `[Authorize]`). A gate means the framework authenticates/authorizes the caller before the
+        body runs, so a resource operation the body reaches is not a missing-authorization flaw."""
+        gates = self._pack_entries("auth_gates")
+        if not gates:
+            return False
+        gate_set = set(gates) | {g.rsplit(".", 1)[-1] for g in gates}
+        anns = list(getattr(proc, "annotations", ()) or [])
+        cls = self._proc_class_info(proc)
+        if cls is not None:
+            anns += list(getattr(cls, "annotations", ()) or [])
+        return any(n in gate_set for a in anns for n in self._annotation_names(a))
+
+    def _proc_class_info(self, proc):
+        """The ClassInfo of the class that declares `proc`, if its name is `Class.method` /
+        `Class::method` and the program recorded that class."""
+        info = getattr(self.program, "class_info", None)
+        if not info:
+            return None
+        name = getattr(proc, "name", "") or ""
+        for sep in ("::", "."):
+            if sep in name:
+                cls = name.rsplit(sep, 1)[0].rsplit(sep, 1)[-1]
+                if cls in info:
+                    return info[cls]
+        return None
+
 
     def _create_taint_check(
         self,
@@ -9454,6 +9584,7 @@ class SILTranslator:
             if info.request.is_identity(rest):           # `request.user`: the authenticated caller
                 state.tainted[path] = TaintInfo(TaintKind.IDENTITY, path, info.source_location,
                                                 list(info.propagation_path) + [path])
+                self._identity_in_proc = True
                 return path
             if info.request.is_client_field(rest):
                 if path not in state.tainted:
@@ -9483,6 +9614,7 @@ class SILTranslator:
         if name not in state.tainted:
             state.tainted[name] = TaintInfo(TaintKind.PRINCIPAL, name, info.source_location,
                                             list(info.propagation_path) + [name], read=info.read + rest)
+            self._identity_in_proc = True
         return name
 
     # MutableMapping's storing methods (Python's data model; `x[k] = v` is `x.__setitem__(k, v)`):
@@ -9563,6 +9695,7 @@ class SILTranslator:
                 name = f"{'.'.join(parts)}()"
                 state.tainted.setdefault(name, TaintInfo(TaintKind.IDENTITY, name, info.source_location,
                                                          list(info.propagation_path) + [name]))
+                self._identity_in_proc = True
                 return name
             if info.request.is_client_method(rest):
                 name = f"{'.'.join(parts)}()"

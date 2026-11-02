@@ -4,6 +4,16 @@ language = "python"
 description = "Django ORM escape hatches, template compilation and raw SQL"
 detect = { imports = ["django"] }
 
+# Decorators that authenticate / authorize the caller before the view runs. A view carrying one is
+# a gated handler, so a resource operation it reaches is not a missing-authorization flaw (it may
+# still be an idor if the operation is not scoped to the caller). login_not_required is NOT a gate.
+[[auth_gate]]
+decorator = ["django.contrib.auth.decorators.login_required",
+             "django.contrib.auth.decorators.permission_required",
+             "django.contrib.auth.decorators.user_passes_test",
+             "django.contrib.admin.views.decorators.staff_member_required"]
+references = ["https://docs.djangoproject.com/en/stable/topics/auth/default/#the-login-required-decorator"]
+
 # QuerySet.extra() splices where / select / order_by / tables strings into the SQL.
 [[sink]]
 # A model's manager (`Model.objects`, typed by the model's base class, value-types.toml) and the
