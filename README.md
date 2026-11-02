@@ -115,7 +115,7 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 | [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles, Terraform and CloudFormation, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
-| [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | Where Frame is going: SAST gaps, the knowledge base, SCA, secrets and IaC, AI app security, autonomous pentesting |
+| [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | What is built, and what is next: precision polish, data growth, and autonomous pentesting |
 | [Examples](https://github.com/lambdasec/frame/blob/main/examples/README.md) | Runnable walkthroughs with real output: dependencies end to end, mitigations, adapting to a breaking upgrade, secrets, Kubernetes, AI apps and MCP servers |
 | [Exemplars](https://github.com/lambdasec/frame/blob/main/benchmarks/exemplars/README.md) | The quickstart app, a vulnerable and safe app per framework, and the cross-file comparison |
 | Open datasets | Framework packs and spec tables, [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb); the OSV advisory database rebuilt daily, [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) |
