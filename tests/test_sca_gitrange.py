@@ -154,6 +154,27 @@ def test_live_commits_on_the_default_branch_agree_with_osv(tmp_path, url, repo):
     advs = table("GIT", {repo: by.get(repo, [])})["packages"][repo]
     anc = git_ancestry(checkout)
     mine = {i for a in advs for i in [a["id"], *a.get("aliases", [])]}
+    def schema_says_fixed(c, rec):
+        """The schema's own evaluation (osv-schema "Evaluation") of a range whose only `introduced` is
+        0: a commit is no longer affected once any `fixed` commit is its ancestor (or itself). Asked of
+        git directly, independently of Frame."""
+        for af in rec.get("affected", []):
+            for rg in af.get("ranges", []):
+                if rg.get("type") != "GIT" or repo not in rg.get("repo", ""):
+                    continue
+                ev = rg.get("events", [])
+                if [e["introduced"] for e in ev if "introduced" in e] != ["0"]:
+                    return False
+                fixed = [e["fixed"] for e in ev if "fixed" in e]
+                return any(subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor", f, c]).returncode == 0
+                           for f in fixed)
+        return False
+
+    by_id = {r["id"]: r for r in records}
     for c in sample:
         ours = {i for a in advs if commit_affected(c, a.get("commits", []), anc) for i in [a["id"], *a.get("aliases", [])]}
-        assert ours & ids == truth[c] & mine, (c, sorted(truth[c] - ours), sorted(ours - truth[c]))
+        # OSV's commit index lists the ancestors of each `fixed` commit, so with two fixes on one line of
+        # history (a fix commit, then the release merge a CPE range names: libexpat's CVE-2026-56408) it
+        # still counts commits after the first fix; the schema's evaluation does not, and neither does Frame
+        index_only = {i for i in (truth[c] & mine) - ours if i in by_id and schema_says_fixed(c, by_id[i])}
+        assert ours & ids == (truth[c] & mine) - index_only, (c, sorted(truth[c] - ours), sorted(ours - truth[c]))

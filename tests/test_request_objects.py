@@ -232,14 +232,20 @@ def test_a_benchmark_helper_is_not_engine_knowledge():
     ('[[request_type]]\nid = "r"\n', "holds nothing"),
 ])
 def test_malformed_request_types(text, message):
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:             # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
     data = tomllib.loads('[pack]\nname = "x"\nlanguage = "javascript"\n' + text)
     with pytest.raises(PackError, match=message):
         parse_pack(data, "x.toml")
 
 
 def test_receiver_entries_are_python_and_take_no_positions():
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:             # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
     head = '[pack]\nname = "x"\nlanguage = "%s"\n[[request_type]]\nid = "r"\nfields = ["a"]\n'
     with pytest.raises(PackError, match="Python packs"):
         parse_pack(tomllib.loads(head % "javascript" + '[[entrypoint]]\nmethod = ["get"]\nreceiver = true\n'

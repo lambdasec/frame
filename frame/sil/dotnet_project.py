@@ -15,7 +15,10 @@ are not followed); the project file is evaluated after it, so its `ImplicitUsing
 from __future__ import annotations
 
 import os
-import tomllib
+try:                                        # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                 # pragma: no cover - 3.10
+    import tomli as tomllib                 # type: ignore[no-redef]
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from functools import lru_cache

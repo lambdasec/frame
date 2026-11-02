@@ -8,7 +8,10 @@ import pytest
 
 from frame.sil.dotnet_project import project_file, usings_for
 from frame.sil.frontends.csharp_frontend import CSharpFrontend
-import tomllib
+try:                                        # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                 # pragma: no cover - 3.10
+    import tomli as tomllib                 # type: ignore[no-redef]
 
 from frame.sil.packs.schema import PackError, parse_pack
 from frame.sil.scanner import FrameScanner
