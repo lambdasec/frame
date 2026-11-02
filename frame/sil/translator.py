@@ -2455,6 +2455,9 @@ class SILTranslator:
             return {v: facts[0][v] & facts[1][v] for v in common}
         if isinstance(exp, ExpBinOp) and exp.op in ("in", "not in"):
             if truth != (exp.op == "in"):
+                # the value does NOT contain the left operand: `"../" in x` rejected, `"'" not in x`
+                if isinstance(exp.left, ExpConst) and isinstance(exp.left.value, str) and isinstance(exp.right, ExpVar):
+                    return {str(exp.right.var): frozenset({cls._LACKS + exp.left.value})}
                 return {}
             return cls._member_fact(exp.left, exp.right)
         if isinstance(exp, ExpBinOp) and exp.op in ("==", "!="):
@@ -2472,6 +2475,70 @@ class SILTranslator:
     # (or does not start) with the literal. A same-origin path starts with "/" and not with "//"
     # (RFC 3986 4.2: "//" begins a network-path reference, another host).
     _STARTS, _NOT_STARTS = "@starts:", "@not-starts:"
+    # A substring a guard proved the value does not contain (`"'" in x` / `"../" in x` rejected on
+    # the path). On its own it proves nothing (an absolute path has no `..`, a value in a
+    # double-quoted context is not helped by lacking `'`); `_lacks_context_sanitization` turns it
+    # into a real sanitization only where the string the value is built into puts the danger out
+    # of reach: under a constant path prefix (filesystem) or inside a quote of that kind (sql, xpath).
+    _LACKS = "@lacks:"
+
+    @classmethod
+    def _concat_parts(cls, exp) -> list:
+        """A string built by `+` or an f-string (ExpBinOp `+`/`++`, ExpStringConcat) flattened to
+        its ordered parts."""
+        parts: list = []
+
+        def go(e):
+            if isinstance(e, ExpStringConcat):
+                for p in e.parts:
+                    go(p)
+            elif isinstance(e, ExpBinOp) and e.op in ("+", "++"):
+                go(e.left)
+                go(e.right)
+            else:
+                parts.append(e)
+        go(exp)
+        return parts
+
+    def _lacks_markers(self, state: "SymbolicState", var: str) -> Set[str]:
+        return {m[len(self._LACKS):] for m in state.asserted_safe.get(var, []) if m.startswith(self._LACKS)}
+
+    def _part_has_taint(self, exp, state: "SymbolicState") -> bool:
+        return any(state.is_tainted(v) for v in self._get_exp_vars(exp))
+
+    def _lacks_context_sanitization(self, exp, state: "SymbolicState") -> List[str]:
+        """Sink kinds a value built by `exp` is safe for because a guard proved its tainted parts
+        lack a dangerous substring and the surrounding string puts that substring out of reach: no
+        `../` after a constant (non-attacker) path prefix cannot traverse (filesystem); no `'` / `"`
+        inside a quote of that kind cannot break out (sql, xpath). A kind is cleared only when EVERY
+        tainted part of the string is out of reach for it, so one guarded part never excuses another."""
+        parts = self._concat_parts(exp)
+        if len(parts) < 2:
+            return []
+        tainted = [i for i, p in enumerate(parts) if self._part_has_taint(p, state)]
+        if not tainted:
+            return []
+        cleared: Set[str] = {"filesystem", "sql", "xpath"}
+        for i in tainted:
+            p = parts[i]
+            lacks = self._lacks_markers(state, str(p.var)) if isinstance(p, ExpVar) else set()
+            part: Set[str] = set()
+            before = parts[:i]
+            if any(".." in s for s in lacks) and before and not any(self._part_has_taint(b, state) for b in before) \
+                    and any((isinstance(b, ExpConst) and isinstance(b.value, str) and b.value.strip("/\\"))
+                            or isinstance(b, (ExpVar, ExpFieldAccess)) for b in before):
+                part.add("filesystem")                    # no `..`, bounded by a constant prefix
+            prev = parts[i - 1] if i > 0 else None
+            nxt = parts[i + 1] if i + 1 < len(parts) else None
+            for qc in ("'", '"'):
+                if any(s == qc for s in lacks) \
+                        and isinstance(prev, ExpConst) and isinstance(prev.value, str) and prev.value.endswith(qc) \
+                        and isinstance(nxt, ExpConst) and isinstance(nxt.value, str) and nxt.value.startswith(qc):
+                    part.update(("sql", "xpath"))         # no quote char, inside a quoted literal
+            cleared &= part
+            if not cleared:
+                break
+        return list(cleared)
 
     @classmethod
     def _literal_prefix_test(cls, exp):
@@ -3933,9 +4000,21 @@ class SILTranslator:
         # If a source variable is asserted safe for a sink type, the target inherits that
         for src_var in source_vars:
             if src_var in state.asserted_safe:
-                src_safe = state.asserted_safe[src_var]
+                # `@lacks:` is a fact about that one variable, re-derived at each use, never
+                # inherited by a value built from it (the surrounding text may add the substring).
+                raw = state.asserted_safe[src_var]
+                src_safe = [m for m in raw if not m.startswith(self._LACKS)]
+                if raw and not src_safe:
+                    continue                              # safe only via @lacks: do not inherit
                 existing = state.asserted_safe.get(target, [])
                 state.asserted_safe[target] = list(set(existing) | set(src_safe))
+
+        # A value built by concatenation whose tainted part a guard proved lacks a dangerous
+        # substring is safe where the surrounding string puts it out of reach (filesystem under a
+        # constant prefix, sql/xpath inside a quoted literal).
+        context_safe = self._lacks_context_sanitization(instr.exp, state)
+        if context_safe:
+            state.add_sanitization(target, context_safe)
 
         # Check for embedded taint sink calls in the expression
         # E.g., RESPONSE = (RESPONSE + eval(bar)) should detect eval as a sink
@@ -4647,6 +4726,11 @@ class SILTranslator:
                                                     continue
                                                 if self._copy_size_sink(func_name, spec.is_sink) and \
                                                         self._alloc_size_is_bounded(arg_var, state):
+                                                    continue
+                                                # A dangerous substring a guard ruled out, placed out
+                                                # of reach by the argument string (`open(PREFIX + x)`).
+                                                if self._sanitizes_kind(
+                                                        self._lacks_context_sanitization(arg_exp, state), sink_kind):
                                                     continue
                                                 check = self._create_taint_check(
                                                     instr, state, proc_name,
@@ -5507,7 +5591,11 @@ class SILTranslator:
                 kinds = set(kinds)
                 if self._same_origin_path(kinds):           # `/x` and not `//host`
                     state.asserted_safe.setdefault(var, []).append("redirect")
-                kinds = {k for k in kinds if not k.startswith((self._STARTS, self._NOT_STARTS))}
+                for lack in {k for k in kinds if k.startswith(self._LACKS)}:
+                    marks = state.asserted_safe.setdefault(var, [])
+                    if lack not in marks:                   # resolved to a real kind at the concat
+                        marks.append(lack)
+                kinds = {k for k in kinds if not k.startswith((self._STARTS, self._NOT_STARTS, self._LACKS))}
                 if self._CONTAINED in kinds:
                     kinds.discard(self._CONTAINED)
                     if self._is_normalized_path(var, state):
@@ -5638,6 +5726,10 @@ class SILTranslator:
                 # A copy length checked on the path (`if (len > MAX) return;`), likewise.
                 if self._copy_size_sink(instr.call or "", instr.kind.value) \
                         and self._alloc_size_is_bounded(var, state):
+                    continue
+                # A dangerous substring a guard ruled out, put out of reach by the string the value
+                # is built into inline at the sink (`open(PREFIX + "/" + x)`, `"...'" + x + "'..."`).
+                if self._sanitizes_kind(self._lacks_context_sanitization(instr.exp, state), instr.kind):
                     continue
                 if not state.is_sanitized_for(var, instr.kind.value):
                     if not state.is_asserted_safe_for(var, instr.kind.value):
