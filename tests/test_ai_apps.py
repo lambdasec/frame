@@ -81,6 +81,29 @@ def test_a_role_content_system_message_is_the_system_prompt(role, expected):
     assert got == [11] * expected
 
 
+PY_CHAT_INLINE = '''from flask import Flask, request
+from openai import OpenAI
+
+app = Flask(__name__)
+client = OpenAI()
+
+
+@app.get("/a")
+def a():
+    tone = request.args.get("tone")
+    return client.chat.completions.create(model="m", messages=[
+        {"role": "user", "content": "hi"},
+        {"role": "system", "content": f"Answer in a {tone} tone."},
+    ]).choices[0].message.content
+'''
+
+
+def test_a_system_message_dict_inline_in_the_call_and_not_first_in_the_list():
+    """The dict is written inline in the messages=[...] argument, and is not the list's first
+    element: the frontend reads the syntax tree, so its position does not matter."""
+    assert [line for t, line, _ in findings(PY_CHAT_INLINE) if t == "prompt_injection"] == [13]
+
+
 def test_a_role_that_is_not_a_literal_is_not_assumed_to_be_system():
     code = PY_CHAT.replace('"role": "%s"', '"role": request.args.get("role")')
     assert not any(t == "prompt_injection" for t, _, _ in findings(code))

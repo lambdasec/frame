@@ -25,7 +25,6 @@ The engine audit that removed every framework and benchmark heuristic from the c
 
 **Precision and recall polish** (small, measured on the benchmark sweep):
 - A quote- and prefix-context check at the sink, so a value guarded by a substring test (`"'" in x`, `"../" in x`) is cleared only where it lands inside a quoted literal or under a constant path prefix, not by the guard alone.
-- Follow an OpenAI `{"role": "system"}` chat message built as a dict inside a list in the Python frontend.
 - Carry JavaScript kind facts through function returns and across the call sites of exported functions.
 - Scan `.cshtml` / `.razor`, and apply a pack rule to a procedure defined in the same file.
 - `--apply` for the ecosystems still marked manual, and IaC network reachability for databases and load balancers.
