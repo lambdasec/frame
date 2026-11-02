@@ -29,6 +29,8 @@ Frame knows what makes data safe (parameterised queries, `shlex.quote`, `basenam
 
 Every pack is proven by a vulnerable app and its safe twin, scanned through the real CLI in the test suite: 80+ apps and 400+ labelled flaws in [`benchmarks/exemplars/frameworks/`](../benchmarks/exemplars/frameworks).
 
+Razor pages (`.cshtml`, `.razor`) are scanned through the C# engine: the page is transpiled to the C# that Razor compiles it to (code blocks, `@functions` / `@code`, `@expr`, `@Html.Raw`, `@model` / `@inject`), so request data written raw (`@Html.Raw(Request.Query["q"])`) is XSS while an encoded `@expr` is not, and a sink inside a `@{ ... }` block is found like any other C#.
+
 ## Teach it your own framework
 
 An in-house web stack needs one TOML file, not a fork:

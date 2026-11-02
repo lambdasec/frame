@@ -24,7 +24,7 @@ The engine audit that removed every framework and benchmark heuristic from the c
 ## What's next
 
 **Precision and recall polish** (small, measured on the benchmark sweep):
-- Scan `.cshtml` / `.razor`, and apply a pack rule to a procedure defined in the same file.
+- Apply a pack rule to a procedure defined in the same file.
 - Carry JavaScript kind facts through function returns and across the call sites of exported functions.
 - IaC network reachability for databases and load balancers.
 

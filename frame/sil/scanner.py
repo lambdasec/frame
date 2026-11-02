@@ -646,6 +646,8 @@ EXTENSION_LANGUAGES: Dict[str, str] = {
     '.hxx': 'cpp',
     '.h++': 'cpp',
     '.cs': 'csharp',
+    '.cshtml': 'razor',
+    '.razor': 'razor',
 }
 
 # Constructs a C compiler rejects: a `.h` that uses one is a C++ header, and
@@ -1027,6 +1029,9 @@ class FrameScanner:
         elif language == "csharp":
             from frame.sil.frontends.csharp_frontend import CSharpFrontend
             return CSharpFrontend()
+        elif language == "razor":
+            from frame.sil.frontends.razor_frontend import RazorFrontend
+            return RazorFrontend()
         else:
             # No symbolic frontend for this language. Return None rather than raise:
             # under --ai the scan still runs the language-agnostic LLM-detect layer
