@@ -188,5 +188,98 @@
     "https://github.com/alibaba/fastjson/wiki/fastjson_safemode (since 1.2.68; the three ways)"
    ]
   }
+ ],
+ "GHSA-xw7x-h9fj-p2c7": [
+  {
+   "package": "io.opentelemetry.javaagent:opentelemetry-javaagent",
+   "versions": "[1.0.0,)",
+   "complete": true,
+   "summary": "disable the agent's RMI instrumentation (otel.instrumentation.rmi.enabled=false), which registers the deserializing endpoint",
+   "ways": [
+    {
+     "kind": "jvm-property",
+     "key": "otel.instrumentation.rmi.enabled",
+     "value": "false"
+    },
+    {
+     "kind": "env",
+     "key": "OTEL_INSTRUMENTATION_RMI_ENABLED",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://github.com/open-telemetry/opentelemetry-java-instrumentation/security/advisories/GHSA-xw7x-h9fj-p2c7 (Workarounds: \"Set the following system property to disable the RMI integration: -Dotel.instrumentation.rmi.enabled=false\")",
+    "open-telemetry/opentelemetry-java-instrumentation@v1.0.0 and v2.26.0: RmiContextPropagationInstrumentationModule is super(\"rmi\", \"rmi-context-propagation\"); v1.0.0 Config.isInstrumentationPropertyEnabled reads otel.instrumentation.<name>.enabled (any false name disables, default on) and NamingConvention.ENV_VAR maps OTEL_INSTRUMENTATION_RMI_ENABLED to it; v2.26.0 ConfigPropertiesAgentDistributionConfig returns the first name with a value (rmi), from ConfigProperties, which reads system properties and normalised environment variables"
+   ]
+  }
+ ],
+ "GHSA-h8w2-rv57-vc6f": [
+  {
+   "package": "com.splunk:splunk-otel-javaagent",
+   "versions": "[1.0.0,)",
+   "complete": true,
+   "summary": "disable the agent's RMI instrumentation (otel.instrumentation.rmi.enabled=false), which registers the deserializing endpoint",
+   "ways": [
+    {
+     "kind": "jvm-property",
+     "key": "otel.instrumentation.rmi.enabled",
+     "value": "false"
+    },
+    {
+     "kind": "env",
+     "key": "OTEL_INSTRUMENTATION_RMI_ENABLED",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://github.com/signalfx/splunk-otel-java/security/advisories/GHSA-h8w2-rv57-vc6f (Workarounds: \"Set the following system property to disable the RMI integration: -Dotel.instrumentation.rmi.enabled=false\")",
+    "signalfx/splunk-otel-java@v1.0.0: gradle/dependencies.gradle builds on opentelemetryJavaagent 1.2.0 (the upstream agent, whose RMI module and enable flag are as below)",
+    "open-telemetry/opentelemetry-java-instrumentation@v1.0.0 and v2.26.0: RmiContextPropagationInstrumentationModule is super(\"rmi\", \"rmi-context-propagation\"); v1.0.0 Config.isInstrumentationPropertyEnabled reads otel.instrumentation.<name>.enabled (any false name disables, default on) and NamingConvention.ENV_VAR maps OTEL_INSTRUMENTATION_RMI_ENABLED to it; v2.26.0 ConfigPropertiesAgentDistributionConfig returns the first name with a value (rmi), from ConfigProperties, which reads system properties and normalised environment variables"
+   ]
+  }
+ ],
+ "GHSA-579q-h82j-r5v2": [
+  {
+   "package": "com.datadoghq:dd-java-agent",
+   "versions": "[0.40.0,)",
+   "complete": true,
+   "summary": "disable the tracer's RMI integration (DD_INTEGRATION_RMI_ENABLED=false), which registers the deserializing endpoint; DD_TRACE_RMI_ENABLED=true set as well takes precedence in 1.x",
+   "ways": [
+    {
+     "kind": "env",
+     "key": "DD_INTEGRATION_RMI_ENABLED",
+     "value": "false"
+    },
+    {
+     "kind": "jvm-property",
+     "key": "dd.integration.rmi.enabled",
+     "value": "false"
+    }
+   ],
+   "references": [
+    "https://github.com/DataDog/dd-trace-java/security/advisories/GHSA-579q-h82j-r5v2 (Workarounds: \"Set the following environment variable to disable the RMI integration: DD_INTEGRATION_RMI_ENABLED=false\")",
+    "DataDog/dd-trace-java@v0.40.0: RmiServerContextInstrumentation and RmiClientContextInstrumentation are super(\"rmi\", ...); Config.integrationEnabled ANDs integration.<name>.enabled over the names, read from dd.<name> system properties, then DD_<NAME> environment variables",
+    "DataDog/dd-trace-java@v1.60.2: java-rmi-1.1 RmiServerContextInstrumentation is super(\"rmi\", ...); InstrumenterConfig.isIntegrationEnabled ANDs trace.<name>.enabled with the aliases trace.integration.<name>.enabled and integration.<name>.enabled"
+   ]
+  }
+ ],
+ "GHSA-3cjc-vhfm-ffp2": [
+  {
+   "package": "org.apache.dolphinscheduler:dolphinscheduler",
+   "versions": "[3.1.0,3.2.0)",
+   "complete": true,
+   "summary": "expose only the health, metrics and prometheus actuator endpoints (management.endpoints.web.exposure.include=health,metrics,prometheus)",
+   "ways": [
+    {
+     "kind": "spring-property",
+     "key": "management.endpoints.web.exposure.include",
+     "value": "health,metrics,prometheus"
+    }
+   ],
+   "references": [
+    "https://github.com/advisories/GHSA-3cjc-vhfm-ffp2 (CVE-2025-62188, also reported as CVE-2023-48796: \"restrict the exposed management endpoints by setting the following environment variable: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,metrics,prometheus\", or the same in application.yaml)",
+    "apache/dolphinscheduler@3.1.0: the api, master, worker and alert servers' application.yaml set management.endpoints.web.exposure.include: '*' (Spring Boot actuator; the environment variable binds to it by relaxed binding)"
+   ]
+  }
  ]
 }

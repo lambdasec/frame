@@ -341,3 +341,50 @@ def test_two_advisories_one_setting_is_written_once(tmp_path):
     changes, manual = propose(fs, tmp_path)
     assert not manual and [(c.path, c.after) for c in changes] == [
         ("src/main/resources/fastjson.properties", "fastjson.parser.safeMode=true\n")]
+
+
+# -- Java agents' RMI integrations and DolphinScheduler's actuator exposure (advisories' workarounds) --
+
+@pytest.mark.parametrize("adv, package, version, files, via", [
+    ("GHSA-xw7x-h9fj-p2c7", "io.opentelemetry.javaagent:opentelemetry-javaagent", "2.20.0",
+     {"Dockerfile": "FROM eclipse-temurin:21\nENV JAVA_TOOL_OPTIONS=\"-javaagent:/otel.jar -Dotel.instrumentation.rmi.enabled=false\"\n"},
+     "JAVA_TOOL_OPTIONS"),
+    ("GHSA-xw7x-h9fj-p2c7", "io.opentelemetry.javaagent:opentelemetry-javaagent", "1.32.0",
+     {"docker-compose.yml": "services:\n  app:\n    image: app\n    environment:\n      OTEL_INSTRUMENTATION_RMI_ENABLED: \"false\"\n"},
+     "Compose"),
+    ("GHSA-h8w2-rv57-vc6f", "com.splunk:splunk-otel-javaagent", "2.10.0",
+     {"start.sh": "#!/bin/sh\nexec java -javaagent:splunk-otel-javaagent.jar -Dotel.instrumentation.rmi.enabled=false -jar app.jar\n"},
+     "java command line"),
+    ("GHSA-579q-h82j-r5v2", "com.datadoghq:dd-java-agent", "1.40.0",
+     {".env": "DD_INTEGRATION_RMI_ENABLED=false\n"}, ".env"),
+    ("GHSA-3cjc-vhfm-ffp2", "org.apache.dolphinscheduler:dolphinscheduler", "3.1.9",
+     {"docker-compose.yml": "services:\n  api:\n    image: apache/dolphinscheduler-api:3.1.9\n    environment:\n"
+                            "      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics,prometheus\n"},
+     "Compose"),
+])
+def test_agent_and_actuator_workarounds_are_found_where_they_are_set(tmp_path, adv, package, version, files, via):
+    write(tmp_path, files)
+    fs = [finding(adv, package, version)]
+    annotate(fs, tmp_path, None)
+    [m] = fs[0]["mitigations"]
+    assert m["complete"] and m["applied"], m
+    assert m["applied"][0]["via"] == via
+
+
+@pytest.mark.parametrize("adv, package, version, files", [
+    ("GHSA-579q-h82j-r5v2", "com.datadoghq:dd-java-agent", "1.40.0", {".env": "DD_INTEGRATION_RMI_ENABLED=true\n"}),
+    ("GHSA-3cjc-vhfm-ffp2", "org.apache.dolphinscheduler:dolphinscheduler", "3.1.9",      # the shipped default
+     {"conf/application.yaml": "management:\n  endpoints:\n    web:\n      exposure:\n        include: '*'\n"}),
+])
+def test_the_unsafe_value_is_not_the_workaround(tmp_path, adv, package, version, files):
+    write(tmp_path, files)
+    fs = [finding(adv, package, version)]
+    annotate(fs, tmp_path, None)
+    assert fs[0]["mitigations"][0]["applied"] == []
+
+
+def test_versions_where_the_setting_does_not_exist_get_no_mitigation(tmp_path):
+    fs = [finding("GHSA-579q-h82j-r5v2", "com.datadoghq:dd-java-agent", "0.39.0"),        # no RMI integration yet
+          finding("GHSA-3cjc-vhfm-ffp2", "org.apache.dolphinscheduler:dolphinscheduler", "3.2.0")]
+    annotate(fs, tmp_path, None)
+    assert all("mitigations" not in f for f in fs)
