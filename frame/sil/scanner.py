@@ -877,6 +877,7 @@ class FrameScanner:
         llm_detect: bool = False,
         llm_config: Any = None,
         llm_repo_scale: bool = False,
+        hunt_authz: bool = False,
         respect_suppressions: bool = True,
         disabled_rules: Optional[Iterable[str]] = None,
         packs: Optional[Iterable[str]] = None,
@@ -925,7 +926,13 @@ class FrameScanner:
         # instead of one per file. Opt-in, so per-file behaviour (and every
         # benchmark number measured against it) is unchanged by default.
         self.llm_repo_scale = llm_repo_scale
+        # Agentic authorization / business-logic hunting (frame/sil/llm_hunt.py): a
+        # repo-scale LLM pass whose tools are the engine's own handler facts. Opt-in;
+        # off by default so the symbolic layer and every benchmark number are unchanged.
+        self.hunt_authz = hunt_authz
         self._llm_config = llm_config
+        self._hunt_programs: List[Any] = []  # translated programs collected for the hunt engine facts
+        self._collecting_hunt_programs = False
         self._llm_client = None
         self.library_mode = library_mode
         self.secret_verifier: Any = None
@@ -1108,6 +1115,11 @@ class FrameScanner:
             if translator is None:
                 translator = SILTranslator(program, verbose=self.verbose)
             checks = translator.translate_program()
+            # Retain the translated program (it carries the per-handler authorization
+            # facts) for a repo-scale authorization hunt. Works in every mode -- project
+            # or single-file -- because it is collected here, per file.
+            if self.hunt_authz and self._collecting_hunt_programs:
+                self._hunt_programs.append(program)
 
             if self.verbose:
                 print(f"[Scanner] Generated {len(checks)} potential vulnerabilities")
@@ -1465,6 +1477,9 @@ class FrameScanner:
         per_file_detect = self.llm_detect
         if repo_scale:
             self.llm_detect = False          # suppress the per-file LLM pass
+        if self.hunt_authz:                  # collect each file's program as it is scanned
+            self._hunt_programs = []
+            self._collecting_hunt_programs = True
 
         try:
             candidates = self._candidate_files(dir_path, pattern, extensions,
@@ -1479,12 +1494,18 @@ class FrameScanner:
                 results.append(result)
         finally:
             self.llm_detect = per_file_detect
+            self._collecting_hunt_programs = False
             self._project = None
             self._c_escapers = {}
 
         if repo_scale:
             selected = None if only_files is None else {Path(r.filename).resolve() for r in results}
             results = self._apply_repo_scale_detect(dir_path, results, excluded_dirs, selected)
+
+        if self.hunt_authz:
+            selected = None if only_files is None else {Path(r.filename).resolve() for r in results}
+            results = self._apply_hunt_authz(dir_path, results, excluded_dirs, selected)
+            self._hunt_programs = []
 
         return results
 
@@ -1685,13 +1706,65 @@ class FrameScanner:
                 result.vulnerabilities.append(vuln)
         return results
 
+    def _apply_hunt_authz(self, dir_path: Path,
+                          results: List[ScanResult],
+                          excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset(),
+                          selected: Optional[set] = None
+                          ) -> List[ScanResult]:
+        """Run one repository-wide agentic authorization / business-logic hunt and merge
+        its findings. The agent reasons over the engine's own handler facts (the project
+        program, captured as `self._hunt_program`) where a frontend exists, and falls back
+        to a grep/read_file hunt otherwise. Findings are the LLM tier (`llm_verified` /
+        `llm_detect`), attached to the file they name. Fail-safe: any error leaves the
+        symbolic results untouched -- a broken LLM tier must never drop proven findings.
+        """
+        try:
+            from frame.sil.llm_hunt import hunt_authz
+            from frame.sil.llm_triage import TriageConfig
+        except ImportError:
+            return results
+        try:
+            config = self._llm_config or TriageConfig.from_env()
+            if not getattr(config, "base_url", "") or not getattr(config, "model", ""):
+                if self.verbose:
+                    print("[Scanner] hunt-authz requested but no endpoint/model.")
+                return results
+            resolved_root = dir_path.resolve()
+            symbolic = [v for r in results for v in r.vulnerabilities]
+            found = hunt_authz(self._hunt_programs, symbolic, str(resolved_root),
+                               config, self._llm_client, language=self.language)
+        except Exception as e:
+            if self.verbose:
+                print(f"[Scanner] hunt-authz failed: {e}")
+            return results
+
+        by_file = {r.filename: r for r in results}
+        for vuln in found or []:
+            target = getattr(vuln, "location", "") or ""
+            if not target:
+                continue
+            if selected is not None and Path(target).resolve() not in selected:
+                continue
+            result = by_file.get(target)
+            if result is None:
+                if self._is_excluded_dir_member(Path(target), resolved_root, excluded_dirs):
+                    continue
+                result = ScanResult(filename=target)
+                by_file[target] = result
+                results.append(result)
+            # Additive, and never a duplicate of an existing finding at the same line+CWE.
+            if not any(v.cwe_id == vuln.cwe_id and v.line == vuln.line
+                       for v in result.vulnerabilities):
+                result.vulnerabilities.append(vuln)
+        return results
+
     def _default_repo_root(self, dir_path: Path) -> None:
         """Point the LLM layer's investigation tools at the directory being scanned.
 
         Only fills in a root that is not already configured, so an explicit
         FRAME_LLM_REPO_ROOT still wins. No-op when the LLM layer is off.
         """
-        if not (self.llm_detect or self.llm_triage):
+        if not (self.llm_detect or self.llm_triage or self.hunt_authz):
             return
         try:
             from frame.sil.llm_triage import TriageConfig

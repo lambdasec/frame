@@ -286,6 +286,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--llm-detect` / `--llm-triage` | only one of the two |
 | `--model MODEL` | override `FRAME_LLM_MODEL` |
 | `--repo-scale` | one LLM session for the whole repository (with `--ai` or `--llm-detect`) |
+| `--hunt-authz` | agentic hunt for authorization / business-logic flaws over the engine's handler facts; corroborated findings are `llm-verified`, else `llm-detected` (needs an LLM endpoint) |
 
 ### `frame verify <findings.json>`
 

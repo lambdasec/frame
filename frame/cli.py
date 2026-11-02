@@ -298,6 +298,15 @@ def create_parser() -> argparse.ArgumentParser:
              "file. Far faster and cheaper on real projects, and lets the model "
              "follow flows across files. Requires --ai or --llm-detect."
     )
+    scan_parser.add_argument(
+        "--hunt-authz",
+        action="store_true",
+        help="Agentic hunt for authorization and business-logic flaws (IDOR, missing "
+             "authorization, privilege escalation, mass assignment, client-controlled "
+             "server values). The agent reasons over the engine's handler facts; a "
+             "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
+             "LLM endpoint (FRAME_LLM_*)."
+    )
 
     # === EXPLOIT command ===
     exploit_parser = subparsers.add_parser(

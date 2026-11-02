@@ -153,3 +153,46 @@ def test_cross_language_fallback_runs_without_a_frontend(tmp_path):
                      max_steps=5, language="php")
     # engine_backed was claimed, but there is no engine fact to corroborate -> llm_detect.
     assert _cwes(out) == [("CWE-862", "llm_detect")]
+
+
+# ---- scanner integration -------------------------------------------------------
+
+def test_scanner_hunt_authz_flows_into_results(tmp_path):
+    """FrameScanner(hunt_authz=True) runs the hunt repo-scale and merges its tiered
+    findings. The engine backs the claim (the handler reaches a resource and is not
+    protected while its peer is caller-scoped) -> llm_verified."""
+    import json as _json
+    from frame.sil.scanner import FrameScanner
+    from frame.sil.llm_triage import TriageConfig, LLMTriageClient
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask, jsonify\n"
+        "from flask_login import login_required, current_user\n"
+        "from flask_sqlalchemy import SQLAlchemy\n"
+        "app = Flask(__name__)\ndb = SQLAlchemy(app)\nclass Doc(db.Model): pass\n"
+        "@app.route('/mine')\n@login_required\ndef mine():\n"
+        "    return jsonify(Doc.query.filter_by(owner_id=current_user.id).all())\n"
+        "@app.route('/all')\ndef all_docs():\n"
+        "    return jsonify(Doc.query.filter_by(status='any').all())\n")
+    cfg = TriageConfig(base_url="x", model="m")
+    c = LLMTriageClient(cfg)
+    seq = {"i": 0}
+    script = [
+        {"content": "", "tool_calls": [{"id": "1", "function": {
+            "name": "list_handlers", "arguments": "{}"}}]},
+        {"content": _json.dumps({"reasoning": "x", "findings": [
+            {"reasoning": "all_docs has no auth while its peer is caller-scoped",
+             "handler": "all_docs", "file": "app.py", "line": 13,
+             "mechanism": "missing_authorization", "cwe": "CWE-862",
+             "confidence": 0.8, "engine_backed": True}]}), "tool_calls": []},
+    ]
+    def chat(messages, tools=None):
+        m = script[min(seq["i"], len(script) - 1)]
+        seq["i"] += 1
+        return m
+    c.chat_raw = chat
+    sc = FrameScanner(language="python", verify=False, hunt_authz=True, llm_config=cfg)
+    sc._llm_client = c
+    res = sc.scan_directory(str(tmp_path), None, project_root=str(tmp_path))
+    hunt = [(v.cwe_id, v.source_var) for r in res for v in r.vulnerabilities
+            if v.source_var in ("llm_verified", "llm_detect")]
+    assert hunt == [("CWE-862", "llm_verified")]

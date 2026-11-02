@@ -76,24 +76,20 @@ def _rel(path: str, root: str) -> str:
     return path or ""
 
 
-def build_index(program, symbolic_findings: Optional[list], repo_root: str) -> EngineIndex:
-    """Collect the engine facts for the hunting agent from a translated program.
+def build_index(programs, symbolic_findings: Optional[list], repo_root: str) -> EngineIndex:
+    """Collect the engine facts for the hunting agent from one or more translated
+    programs (a project has one program per file).
 
     `symbolic_findings` is the scan's own Vulnerability list (what Frame proved), used
     to tell the agent what is already covered and to corroborate its claims.
     """
+    if programs is None:
+        progs: list = []
+    elif isinstance(programs, (list, tuple, set)):
+        progs = [p for p in programs if p is not None]
+    else:
+        progs = [programs]
     idx = EngineIndex(repo_root=repo_root or "")
-    authz = getattr(program, "handler_authz", None) or {}
-    # All sinks in the program, so we can attribute them to a handler by line range.
-    sinks_by_file: Dict[str, List[Dict[str, Any]]] = {}
-    for proc in getattr(program, "procedures", {}).values():
-        for node in getattr(proc, "nodes", {}).values():
-            for instr in getattr(node, "instrs", []):
-                if type(instr).__name__ == "TaintSink":
-                    loc = getattr(instr, "loc", None)
-                    kind = getattr(getattr(instr, "kind", None), "value", None)
-                    if loc is not None and kind:
-                        sinks_by_file.setdefault(loc.file, []).append({"kind": kind, "line": loc.line})
 
     findings = []
     for v in (symbolic_findings or []):
@@ -102,20 +98,32 @@ def build_index(program, symbolic_findings: Optional[list], repo_root: str) -> E
                          "type": getattr(getattr(v, "type", None), "value", str(getattr(v, "type", "")))})
     idx.findings = findings
 
-    procs = getattr(program, "procedures", {})
-    for name, (protected, reaches, loc) in authz.items():
-        proc = procs.get(name)
-        span = getattr(proc, "span", None) if proc is not None else None
-        start = loc.line if loc is not None else 0
-        end = span[1] if (span and len(span) == 2) else start
-        f = loc.file if loc is not None else ""
-        rel = _rel(f, repo_root)
-        in_range = [s for s in sinks_by_file.get(f, []) if start <= s["line"] <= (end or start)]
-        proven = [x for x in findings if x["file"] == rel and start <= (x["line"] or 0) <= (end or start)]
-        idx.handlers.append(HandlerFact(
-            name=name, file=rel, line=start, end_line=end or start,
-            protected=bool(protected), reaches_resource=bool(reaches),
-            sinks=in_range, proven=proven))
+    for program in progs:
+        authz = getattr(program, "handler_authz", None) or {}
+        # Sinks in this program, attributed to a handler by line range.
+        sinks_by_file: Dict[str, List[Dict[str, Any]]] = {}
+        for proc in getattr(program, "procedures", {}).values():
+            for node in getattr(proc, "nodes", {}).values():
+                for instr in getattr(node, "instrs", []):
+                    if type(instr).__name__ == "TaintSink":
+                        loc = getattr(instr, "loc", None)
+                        kind = getattr(getattr(instr, "kind", None), "value", None)
+                        if loc is not None and kind:
+                            sinks_by_file.setdefault(loc.file, []).append({"kind": kind, "line": loc.line})
+        procs = getattr(program, "procedures", {})
+        for name, (protected, reaches, loc) in authz.items():
+            proc = procs.get(name)
+            span = getattr(proc, "span", None) if proc is not None else None
+            start = loc.line if loc is not None else 0
+            end = span[1] if (span and len(span) == 2) else start
+            f = loc.file if loc is not None else ""
+            rel = _rel(f, repo_root)
+            in_range = [s for s in sinks_by_file.get(f, []) if start <= s["line"] <= (end or start)]
+            proven = [x for x in findings if x["file"] == rel and start <= (x["line"] or 0) <= (end or start)]
+            idx.handlers.append(HandlerFact(
+                name=name, file=rel, line=start, end_line=end or start,
+                protected=bool(protected), reaches_resource=bool(reaches),
+                sinks=in_range, proven=proven))
     return idx
 
 
@@ -282,10 +290,11 @@ def _findings_to_vulns(findings: list, index: EngineIndex) -> list:
     return out
 
 
-def hunt_authz(program, symbolic_findings: Optional[list], repo_root: str,
+def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
                config: LLMConfig, client: Optional[LLMClient] = None,
                max_steps: Optional[int] = None, language: str = "") -> list:
-    """Run one agentic authorization / business-logic hunt.
+    """Run one agentic authorization / business-logic hunt. `programs` is the project's
+    translated programs (one per file), a single program, or None.
 
     Engine-backed where a frontend exists: the agent queries the handler facts and a
     corroborated claim is tiered `llm_verified`. Where there is no frontend for the
@@ -293,7 +302,7 @@ def hunt_authz(program, symbolic_findings: Optional[list], repo_root: str,
     hunt over the repository -- every finding is then `llm_detect` (no engine to
     corroborate). Returns [] only when there is nothing to work with at all.
     """
-    index = build_index(program, symbolic_findings, repo_root)
+    index = build_index(programs, symbolic_findings, repo_root)
     if client is None:
         client = LLMClient(config)
     if index.handlers:

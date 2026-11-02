@@ -244,6 +244,15 @@ def create_parser() -> argparse.ArgumentParser:
              "file. Far faster and cheaper on real projects, and lets the model "
              "follow flows across files. Requires --ai or --llm-detect."
     )
+    scan_parser.add_argument(
+        "--hunt-authz",
+        action="store_true",
+        help="Agentic hunt for authorization and business-logic flaws (IDOR, missing "
+             "authorization, privilege escalation, mass assignment, client-controlled "
+             "server values). The agent reasons over the engine's handler facts; a "
+             "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
+             "LLM endpoint (FRAME_LLM_*)."
+    )
 
     return parser
 
@@ -538,6 +547,7 @@ def cmd_scan(args) -> int:
             llm_detect=ai or getattr(args, "llm_detect", False),
             llm_triage=ai or getattr(args, "llm_triage", False),
             llm_repo_scale=getattr(args, "repo_scale", False),
+            hunt_authz=getattr(args, "hunt_authz", False),
             respect_suppressions=not getattr(args, "no_suppress", False),
             disabled_rules=disabled_rules,
             packs=pack_paths,
