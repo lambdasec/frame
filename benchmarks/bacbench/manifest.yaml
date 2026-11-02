@@ -1,0 +1,44 @@
+# BAC-Bench (ABSENTIA) run manifest for Frame.
+#
+# BAC-Bench is an external, public benchmark of 30 disclosed broken-access-control
+# advisories across 25 open-source web applications and nine frameworks (18 Python,
+# 9 TypeScript, 3 JavaScript), each pinned to a vulnerable and a fixing commit. It is
+# published with the ABSENTIA paper (arXiv:2610.00977). Frame does NOT vendor the
+# applications; prepare.py clones each upstream repo at the pinned commits.
+#
+# This manifest pins the DATASET (the Absentia repository revision we read the records
+# from) so the case set is reproducible. The records themselves -- repos, commits,
+# routes, expected CWEs, source locations -- are the dataset's, read from its JSONL.
+#
+# Published reference results on BAC-Bench (for orientation, not a claim Frame reproduces
+# them): ABSENTIA 19/30 (17 paired with the fixed commit); an unstructured agent on the
+# same model 3/30; CodeQL and Semgrep 0/30.
+
+benchmark: bacbench
+version: "1.0.0"
+
+dataset:
+  repository: avduarte333/Absentia
+  commit: 80e30361ebe3d6a779886ecb42a8ecbe7e75a561
+  records: data/authz_instances.jsonl
+  note: >
+    The source of truth for the cases. Each record pins an upstream application repo and a
+    vulnerable + fixing commit; the applications are cloned by prepare.py, never vendored.
+
+# Both tiers Frame reports, scored separately (never merged):
+#   frame_symbolic  - FrameScanner(verify=True): the sound authz findings (idor CWE-639,
+#                     missing authorization CWE-862 by handler consistency).
+#   frame_hunt      - FrameScanner(hunt_authz=True): the agentic authorization / business-
+#                     logic hunt, engine-backed where a frontend exists. Needs FRAME_LLM_*.
+systems:
+  - frame_symbolic
+  - frame_hunt
+
+# Scoring is recall on the vulnerable commit plus a paired patched-commit differential
+# (credited paired only when the finding is gone at the fixed commit). Positive-only: other
+# findings in the same application are not counted as false positives (benchmarks/bacbench
+# README; match.py approximates the dataset's prose match_criteria by CWE family + location).
+scoring:
+  unit: advisory_at_vulnerable_commit
+  paired_requires_clean_fixed_commit: true
+  positive_only: true
