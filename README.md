@@ -22,10 +22,10 @@ Where a team runs Semgrep for code, Snyk or Endor Labs for dependencies, gitleak
 
 - **Code, across files, in five languages**: Python, JavaScript/TypeScript, Java, C# and C/C++. A request that enters a controller and reaches a query three files away is one finding, not a lead. 80+ vulnerability classes, from SQL injection and SSRF to IDOR and C/C++ memory safety, each proved by taint or by the separation logic engine. [70+ framework packs](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) (Flask, Django, Spring, ASP.NET, Express, and more), plus your own stack in one TOML file.
 - **Dependencies, by reachability**: lockfiles of 11 ecosystems plus C/C++ and vendored copies, matched against OSV offline, ranked by whether attacker data actually reaches the vulnerable function, with upgrades Frame plans, applies and verifies against your tests, plus licence policy, SBOM and VEX.
-- **Secrets, including git history**: credential-named values and 15 providers' key formats (AWS, GitHub, Stripe, OpenAI, and more), in code and in every commit the history ever added, with optional live verification against the provider's own API so a real leak is told from a test fixture.
+- **[Secrets](https://github.com/lambdasec/frame/blob/main/docs/secrets.md), including git history**: credential-named values and 15 providers' key formats (AWS, GitHub, Stripe, OpenAI, and more), in code and in every commit the history ever added, with optional live verification against the provider's own API so a real leak is told from a test fixture.
 - **Infrastructure as code**: Kubernetes against the Pod Security Standards (matching the admission controller's own evaluator), Dockerfiles as BuildKit parses them, Terraform as HCL evaluates it (AWS, Azure, Google Cloud), and CloudFormation with its intrinsic functions. Every policy is decided with Z3, and what depends on values the files do not give is reported as undecided, not guessed.
 - **Containers**: OS packages read from an image's layers (Debian, Ubuntu, Alpine, RHEL and more) and matched against the distributions' own advisories.
-- **AI applications**: prompt injection, model output reaching a sink, and MCP servers, including hidden instructions in tool metadata that the person approving the tool cannot see. ([OWASP LLM Top 10](https://github.com/lambdasec/frame/blob/main/docs/coverage.md#what-it-detects).)
+- **[AI applications](https://github.com/lambdasec/frame/blob/main/docs/llm-security.md)**: prompt injection, model output reaching a sink, and MCP servers, including hidden instructions in tool metadata that the person approving the tool cannot see, mapped to the OWASP LLM Top 10.
 
 ## Why it is different
 
@@ -109,7 +109,9 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 |---|---|
 | [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, secrets and git history, suppressions, configuration, every command and flag, environment variables, Python API |
 | [Dependencies](https://github.com/lambdasec/frame/blob/main/docs/dependencies.md) | Supported ecosystems, advisories, reachability, upgrade plans, code mitigation, licences, SBOM, VEX, container images, CI |
-| [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, every vulnerability class including secrets and AI apps |
+| [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, every vulnerability class |
+| [Secrets](https://github.com/lambdasec/frame/blob/main/docs/secrets.md) | Hardcoded credentials by name and by provider format, git-history scanning, live verification |
+| [AI app security](https://github.com/lambdasec/frame/blob/main/docs/llm-security.md) | Prompt injection, model output as taint, MCP tools and tool-metadata attacks, the OWASP LLM Top 10 |
 | [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles, Terraform and CloudFormation, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
