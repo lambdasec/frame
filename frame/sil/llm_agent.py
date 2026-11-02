@@ -52,7 +52,12 @@ INVESTIGATION_TOOLS = [
                        "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
 ]
 
-_GREP_EXTS = (".java", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".py", ".cs", ".c", ".cpp", ".go")
+# Every language Frame's LLM detection can run over (a superset of the symbolic
+# frontends: the agent must be able to grep PHP / Ruby / Rust etc. where there is no
+# frontend but the LLM tier still applies). Keep in step with llm_detect._LANGUAGE_EXTENSIONS.
+_GREP_EXTS = (".java", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".py", ".cs",
+              ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".go", ".php", ".rb", ".rs",
+              ".kt", ".kts")
 
 
 def _safe_path(repo_root: str, path: str) -> Optional[str]:

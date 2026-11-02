@@ -1393,6 +1393,12 @@ class SILTranslator:
                 self._extract_constructor_taints(proc)
 
         self.vulnerability_checks.extend(self._missing_authorization_checks())
+        # Publish the per-handler authorization facts on the program so the agentic
+        # hunting layer (llm_hunt) can query them as sound engine facts.
+        try:
+            setattr(self.program, "handler_authz", dict(self._handler_authz))
+        except (AttributeError, TypeError):
+            pass
 
         if self.verbose:
             print(f"[Translator] Generated {len(self.vulnerability_checks)} vulnerability checks")
