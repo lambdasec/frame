@@ -323,8 +323,11 @@ class ProcSpec:
         return self.is_source is not None
 
     def is_taint_sink(self) -> bool:
-        """Check if this function is a taint sink"""
-        return self.is_sink is not None
+        """Check if this function is a taint sink. `resource_modify` is excluded: it is a structural
+        marker that a call mutates a resource (read by the authorization-consistency check via the
+        raw is_sink string), never a taint sink -- writing attacker data to a resource is normal and
+        must not raise a finding on its own."""
+        return self.is_sink is not None and self.is_sink != "resource_modify"
 
     def is_taint_sanitizer(self) -> bool:
         """Check if this function sanitizes taint"""

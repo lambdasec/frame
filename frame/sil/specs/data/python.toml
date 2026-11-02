@@ -233,6 +233,55 @@ name = "objects.filter"
 is_sink = "resource_select"
 description = "Django ORM filter selection (IDOR)"
 
+# State-changing resource operations (resource_modify): a structural marker that a handler mutates a
+# resource, so the authorization-consistency check (CWE-862) compares mutation endpoints too. Not a
+# taint sink -- writing user data to a resource is normal. Keyed on the same typed receivers as the
+# resource_select rows above (the model manager `objects`, a SQLAlchemy `query` / `session`).
+[[spec]]
+name = "objects.create"
+is_sink = "resource_modify"
+description = "Django ORM create"
+
+[[spec]]
+name = "objects.update"
+is_sink = "resource_modify"
+description = "Django ORM bulk update"
+
+[[spec]]
+name = "objects.bulk_create"
+is_sink = "resource_modify"
+description = "Django ORM bulk create"
+
+[[spec]]
+name = "objects.get_or_create"
+is_sink = "resource_modify"
+description = "Django ORM get or create"
+
+[[spec]]
+name = "objects.update_or_create"
+is_sink = "resource_modify"
+description = "Django ORM update or create"
+
+[[spec]]
+name = "query.delete"
+is_sink = "resource_modify"
+description = "SQLAlchemy / Django queryset delete"
+
+[[spec]]
+name = "query.update"
+is_sink = "resource_modify"
+description = "SQLAlchemy / Django queryset update"
+
+[[spec]]
+name = "session.add"
+is_sink = "resource_modify"
+description = "SQLAlchemy session add (persist)"
+
+[[spec]]
+name = "session.delete"
+is_sink = "resource_modify"
+description = "SQLAlchemy session delete"
+
 [[spec]]
 name = "subprocess.run"
 is_sink = "command"

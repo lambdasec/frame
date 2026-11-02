@@ -47,6 +47,16 @@ def test_no_authorization_convention_stays_silent():
     assert _cwes(HEAD + body) == []
 
 
+def test_a_mutation_endpoint_is_compared_too():
+    # A state-changing handler (session.add, no attacker-id select) counts as touching a resource
+    # via the resource_modify marker, so it is flagged when its scoped-read peers are protected.
+    deviant = ("\n@app.route('/c', methods=['POST'])\ndef c():\n"
+               "    d = Doc(name=request.args['n'])\n    db.session.add(d)\n    db.session.commit()\n"
+               "    return 'ok'\n")
+    out = _cwes(HEAD + SCOPED_A + SCOPED_B + deviant)
+    assert out == [(19, "CWE-862")]
+
+
 def test_a_single_protected_peer_is_not_a_convention():
     # One protected handler is not a strong enough norm (needs >= 2 protected, a strict majority).
     deviant = ("\n@app.route('/c')\ndef c():\n"

@@ -112,6 +112,12 @@ aliases = ["auth"]
 kind = "resource_select"
 vuln = "idor"
 
+# A state-changing resource operation (ORM create / update / delete). Not a taint sink (ProcSpec.
+# is_taint_sink excludes it): it only marks a handler as mutating a resource, so the authorization-
+# consistency check compares mutation endpoints too, not just reads. No finding type of its own.
+[[sink]]
+kind = "resource_modify"
+
 [[sink]]
 kind = "cors"
 vuln = "cors_misconfiguration"

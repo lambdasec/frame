@@ -231,6 +231,8 @@ class SinkKind(Enum):
     SSRF = "ssrf"               # Server-side request forgery (CWE-918)
     AUTHZ_CHECK = "authz"       # Authorization bypass (CWE-863)
     RESOURCE_SELECT = "resource_select"  # Object-level resource selection by id -- IDOR/BOLA (CWE-639)
+    RESOURCE_MODIFY = "resource_modify"  # A state-changing resource op (ORM create/update/delete); a
+    # structural marker for the authorization-consistency check, never itself a taint finding.
     CORS = "cors"               # CORS misconfiguration (CWE-942)
     UNVERIFIED_SIGNATURE = "unverified_signature"   # a token decoded with its signature check off (CWE-347)
 
