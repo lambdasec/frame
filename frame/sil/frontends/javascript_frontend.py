@@ -2497,7 +2497,40 @@ class JavaScriptFrontend:
         module = name.split(".")[0] if "." in name else None
         if module is not None and name in getattr(self, "_imported_names", {}).values():
             return self._module_kind(module)
+        # a call to a function the file defines: the kind of its return, when every return agrees
+        if func.type == "identifier":
+            return self._function_return_kind(self._get_text(func), depth)
         return None
+
+    def _function_return_kind(self, name: str, depth: int) -> Optional[str]:
+        """The kind a function this file defines returns, when every non-null `return` returns a
+        value of the same known kind (`function toArr(s){ return s.split(','); }` is Array). The
+        function is found by a binding unique in the file (never a parameter or an import), so it
+        is not confused with another `name`; recursion is bounded by `depth`."""
+        if depth > 4:
+            return None
+        binds = self._js_bindings(self._tree_root).get(name, [])
+        if len(binds) != 1 or binds[0][0] != "function":
+            return None
+        body = binds[0][1].child_by_field_name("body")
+        if body is None:
+            return None
+        kinds = set()
+        stack = [body]
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNC_LIKE and n is not binds[0][1]:
+                continue                                 # a nested function's return is its own
+            if n.type == "return_statement":
+                arg = n.named_children[0] if n.named_children else None
+                if arg is None:
+                    continue                             # bare `return;` yields undefined, ignore
+                k = self._value_kind(arg, depth + 1)
+                if k is None:
+                    return None                          # one unknown return: the result is unknown
+                kinds.add(k)
+            stack.extend(n.named_children)
+        return next(iter(kinds)) if len(kinds) == 1 else None
 
     def _object_property(self, obj: TSNode, key: str) -> Optional[TSNode]:
         for pair in obj.named_children:

@@ -99,3 +99,15 @@ def test_conditions_the_model_does_not_read_prove_nothing_and_never_break_the_sc
     code = ("var out = {};\nfunction f(xs, a, b, t) {\n  if (a === b) return;\n  if (typeof xs === t) return;\n"
             "  if (xs.length !== a) throw new Error('x');\n  xs.forEach((v, i) => { out[i] = v; });\n}\nmodule.exports = f;\n")
     assert _pp(code)
+
+
+@pytest.mark.parametrize("helper, flagged", [
+    ("function toArr(s) { return s.split(','); }", False),              # returns an Array
+    ("function toArr(s) { return [s]; }", False),
+    ("function toArr(s) { return s; }", True),                          # unknown return
+    ("function toArr(s) { if (s) return s.split(','); return new Map(); }", True),  # returns disagree
+])
+def test_kind_through_a_function_return(helper, flagged):
+    code = ("var out = {};\n" + helper + "\nfunction f(s) { toArr(s).forEach((v, i) => { out[i] = v; }); }\n"
+            "module.exports = f;\n")
+    assert _pp(code) == flagged
