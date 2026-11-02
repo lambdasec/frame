@@ -459,6 +459,146 @@
     "tif_read.c"
    ],
    "reference": "https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz (libtiff/tiffvers.h)"
+  },
+  {
+   "name": "harfbuzz",
+   "repo": "github.com/harfbuzz/harfbuzz",
+   "tag": "{V}",
+   "header": "hb-version.h",
+   "version": {
+    "macro": "HB_VERSION_STRING"
+   },
+   "companions": [
+    "hb-common.cc",
+    "hb-buffer.cc"
+   ],
+   "reference": "https://github.com/harfbuzz/harfbuzz/blob/8.3.0/src/hb-version.h"
+  },
+  {
+   "name": "oniguruma",
+   "repo": "github.com/kkos/oniguruma",
+   "tag": "v{V}",
+   "header": "oniguruma.h",
+   "version": {
+    "parts": [
+     "ONIGURUMA_VERSION_MAJOR",
+     "ONIGURUMA_VERSION_MINOR",
+     "ONIGURUMA_VERSION_TEENY"
+    ]
+   },
+   "companions": [
+    "regcomp.c",
+    "regexec.c"
+   ],
+   "reference": "https://github.com/kkos/oniguruma/blob/v6.9.8/src/oniguruma.h"
+  },
+  {
+   "name": "xz",
+   "repo": "github.com/tukaani-project/xz",
+   "tag": "v{V}",
+   "header": "version.h",
+   "version": {
+    "parts": [
+     "LZMA_VERSION_MAJOR",
+     "LZMA_VERSION_MINOR",
+     "LZMA_VERSION_PATCH"
+    ],
+    "release": {
+     "LZMA_VERSION_STABILITY": [
+      "LZMA_VERSION_STABILITY_STABLE"
+     ]
+    }
+   },
+   "companions": [
+    "../../common/common.c",
+    "../../lzma/lzma_decoder.c"
+   ],
+   "reference": "https://github.com/tukaani-project/xz/blob/v5.4.6/src/liblzma/api/lzma/version.h"
+  },
+  {
+   "name": "libwebp",
+   "repo": "github.com/webmproject/libwebp",
+   "tag": "v{V}",
+   "header": [
+    "vp8i_dec.h",
+    "vp8i.h"
+   ],
+   "version": {
+    "parts": [
+     "DEC_MAJ_VERSION",
+     "DEC_MIN_VERSION",
+     "DEC_REV_VERSION"
+    ]
+   },
+   "companions": [
+    "vp8_dec.c",
+    "vp8l_dec.c",
+    "vp8.c",
+    "vp8l.c"
+   ],
+   "reference": "https://github.com/webmproject/libwebp/blob/v1.3.2/src/dec/vp8i_dec.h"
+  },
+  {
+   "name": "libtomcrypt",
+   "repo": "github.com/libtom/libtomcrypt",
+   "tag": [
+    "v{V}",
+    "{V}"
+   ],
+   "header": "tomcrypt.h",
+   "version": {
+    "macro": "SCRYPT"
+   },
+   "companions": [
+    "../misc/crypt/crypt.c",
+    "../ciphers/aes/aes.c"
+   ],
+   "reference": "https://github.com/libtom/libtomcrypt/blob/v1.18.2/src/headers/tomcrypt.h"
+  },
+  {
+   "name": "lwip",
+   "repo": "github.com/lwip-tcpip/lwip",
+   "tag": [
+    "STABLE-{V_}_RELEASE",
+    "STABLE-{V_}",
+    "{V}"
+   ],
+   "header": "init.h",
+   "version": {
+    "parts": [
+     "LWIP_VERSION_MAJOR",
+     "LWIP_VERSION_MINOR",
+     "LWIP_VERSION_REVISION"
+    ],
+    "release": {
+     "LWIP_VERSION_RC": [
+      "LWIP_RC_RELEASE"
+     ]
+    }
+   },
+   "companions": [
+    "../../core/init.c",
+    "../../core/tcp.c"
+   ],
+   "reference": "https://github.com/lwip-tcpip/lwip/blob/STABLE-2_1_3_RELEASE/src/include/lwip/init.h"
+  },
+  {
+   "name": "mruby",
+   "repo": "github.com/mruby/mruby",
+   "tag": "{V}",
+   "header": "version.h",
+   "version": {
+    "parts": [
+     "MRUBY_RELEASE_MAJOR",
+     "MRUBY_RELEASE_MINOR",
+     "MRUBY_RELEASE_TEENY"
+    ]
+   },
+   "companions": [
+    "../../src/vm.c",
+    "../../src/state.c"
+   ],
+   "reference": "https://github.com/mruby/mruby/blob/3.2.0/include/mruby/version.h"
   }
  ]
 }

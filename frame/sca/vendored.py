@@ -6,7 +6,9 @@ Each library Frame knows is a curated entry in `data/vendored.json`:
 
     header       the file that declares the version (one name, or several a release may use)
     version      `macro` (one string macro) or `parts` (macros joined with `.`), read from the
-                 header's syntax tree (tree-sitter), never from text matched loosely
+                 header's syntax tree (tree-sitter), never from text matched loosely; `release`
+                 ({macro: [values]}) where the header says whether it is a release (xz's
+                 LZMA_VERSION_STABILITY, lwIP's LWIP_VERSION_RC): any other value is a pre-release
     companions   the library's own sources, relative to the header: one must be there, so a lone
                  header copied in to build against a system library is not a vendored library
     repo, tags   the upstream repository and its release-tag forms (`v{V}`, `curl-{V_}` with `.`
@@ -44,6 +46,7 @@ class Library:
     companions: Tuple[str, ...]
     reference: str
     exclude_tags: Tuple[str, ...] = ()      # tags a form misreads (`LIBXML2_6_0` is 2.6.0, not 6.0)
+    release: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()   # macro -> the values a release has
 
 
 @lru_cache(maxsize=1)
@@ -55,7 +58,8 @@ def libraries() -> Tuple[Library, ...]:
         tags = e["tag"] if isinstance(e["tag"], list) else [e["tag"]]
         out.append(Library(e["name"], e["repo"], tuple(tags), tuple(headers), e["version"].get("macro", ""),
                            tuple(e["version"].get("parts", ())), tuple(e["companions"]), e["reference"],
-                           tuple(e.get("exclude_tags", {}))))
+                           tuple(e.get("exclude_tags", {})),
+                           tuple((m, tuple(v)) for m, v in e["version"].get("release", {}).items())))
     return tuple(out)
 
 
@@ -105,9 +109,13 @@ def _literal(value: str) -> Optional[str]:
 def version_of(lib: Library, source: bytes) -> Optional[str]:
     d = defines(source)
     if lib.macro:
-        return _literal(d.get(lib.macro, "")) or None
-    parts = [_literal(d.get(m, "")) for m in lib.parts]
-    return ".".join(p for p in parts) if parts and all(p is not None and p.isdigit() for p in parts) else None
+        version = _literal(d.get(lib.macro, "")) or None
+    else:
+        parts = [_literal(d.get(m, "")) for m in lib.parts]
+        version = ".".join(p for p in parts) if parts and all(p is not None and p.isdigit() for p in parts) else None
+    if version is not None and any(d.get(m, "").strip() not in values for m, values in lib.release):
+        return f"{version}-prerelease"             # the header says so: no release tag names it
+    return version
 
 
 def _header_index() -> Dict[str, List[Library]]:

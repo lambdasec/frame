@@ -141,8 +141,10 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
                           capture_output=True, text=True, timeout=300).stdout
     assert f"refs/tags/{h['tag']}" in refs
     # without its header, the same sources are known by their blob ids (sqlite's amalgamation is
-    # generated, so its repository has no sqlite3.c to fingerprint)
-    if name != "sqlite":
+    # generated, so its repository has no sqlite3.c to fingerprint; libtomcrypt's .gitattributes has
+    # `/** export-subst`, so its release archives' files are not its repository's blobs: a copy from a
+    # checkout is known by its files, one from an archive only by its header)
+    if name not in ("sqlite", "libtomcrypt"):
         (tmp_path / h["header"]).unlink()
         from frame.sca.vendored import SOURCE_SUFFIXES, identify_by_fingerprint
         sources = [p for p in tmp_path.rglob("*") if p.suffix in SOURCE_SUFFIXES]
@@ -304,3 +306,26 @@ def test_a_copy_whose_header_was_read_is_not_reported_again(tmp_path, two_dir_li
     header = DependencyFile("third_party/zstd/lib/zstd.h", GIT, "vendored")
     header.add(Package(GIT, LIBS["zstd"].repo, "1.5.6", direct=True, repo=LIBS["zstd"].repo))
     assert V.identify_by_fingerprint(sources, tmp_path, [header]) == ([], [])
+
+
+@pytest.mark.parametrize("name, text, release", [
+    ("xz", "#define LZMA_VERSION_MAJOR 5\n#define LZMA_VERSION_MINOR 7\n#define LZMA_VERSION_PATCH 2\n"
+           "#define LZMA_VERSION_STABILITY LZMA_VERSION_STABILITY_BETA\n", False),          # v5.7.2beta
+    ("xz", "#define LZMA_VERSION_MAJOR 5\n#define LZMA_VERSION_MINOR 4\n#define LZMA_VERSION_PATCH 6\n"
+           "#define LZMA_VERSION_STABILITY LZMA_VERSION_STABILITY_STABLE\n", True),
+    ("lwip", "#define LWIP_VERSION_MAJOR 2\n#define LWIP_VERSION_MINOR 2\n#define LWIP_VERSION_REVISION 0\n"
+             "#define LWIP_VERSION_RC 1\n", False),                                          # STABLE-2_2_0_RC1
+])
+def test_a_header_that_says_it_is_a_pre_release_is_not_matched(tmp_path, name, text, release):
+    from frame.sca.vendored import version_of
+    version = version_of(LIBS[name], text.encode())
+    assert (version is not None and "-" not in version) == release, version
+
+
+def test_generic_header_names_need_their_library_s_own_sources(tmp_path):
+    """xz and mruby keep their version in `version.h`, lwIP in `init.h`: only the companions decide."""
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include" / "version.h").write_text(HEADERS["mruby"]["text"])
+    (tmp_path / "include" / "init.h").write_text(HEADERS["lwip"]["text"])
+    files, warnings = find_vendored(tmp_path)
+    assert files == [] and warnings == []
