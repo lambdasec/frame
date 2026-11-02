@@ -1904,6 +1904,14 @@ class SILTranslator:
         """The procedure a call makes: one of this file's (which wins over an
         import of the same name), else -- in a project -- a function of another
         file the call's name resolves to through the imports."""
+        # A pack or library rule that names this call a source, sink or sanitizer decides it, even
+        # when the callee is a project procedure Frame could summarise (a pack tagging the team's
+        # own render/query/exec helper): apply the rule at the call site, do not summarise the body.
+        # library_specs holds the name-keyed rule even when a procedure of the same name exists
+        # (get_spec would return the procedure's own, empty spec first).
+        named = self.program.library_specs.get(func_name)
+        if named is not None and (named.is_taint_source() or named.is_taint_sink() or named.is_taint_sanitizer()):
+            return None
         local = self._same_file_proc(func_name)
         if local is not None:
             return Callee((self._file_key, local.name), local) if self._plain_callee(local) else None

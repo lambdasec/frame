@@ -23,9 +23,6 @@ The engine audit that removed every framework and benchmark heuristic from the c
 
 ## What's next
 
-**Precision and recall polish** (small, measured on the benchmark sweep):
-- Apply a pack rule to a procedure defined in the same file.
-
 **Data**: the advisory database (daily) and vulnerable-function mappings (weekly) are rebuilt by jobs on their own. Vendored C/C++ libraries and curated configuration mitigations grow by hand, each entry added from the advisory text and upstream source.
 
 **Phase 5: autonomous pentesting.** Turn the inventory, the routes from entrypoint packs, and the reachable SAST and SCA findings into an attack plan for `frame exploit` against a live, authorized target, with a frontier or local model. Then black-box support (crawling and OpenAPI import, authentication and sessions for IDOR, parallel hypotheses, an independent validator for every claimed exploit, and scope and safety controls), measured on XBOW's validation benchmark and CVE-Bench, blind and primed with Frame's findings.

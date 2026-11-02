@@ -1021,9 +1021,16 @@ class Program:
         return self._get_spec(func_name, guess)
 
     def _get_spec(self, func_name: str, guess: bool = True) -> Optional[ProcSpec]:
-        # Check user procedures first
+        # Check user procedures first -- but a pack or library rule that names this call a source,
+        # sink or sanitizer wins over the procedure's own (empty) spec, so a pack can tag a
+        # project's own helper (render/query/clean) and have it apply to the same-file definition.
         if func_name in self.procedures:
-            return self.procedures[func_name].spec
+            own = self.procedures[func_name].spec
+            lib = self.library_specs.get(func_name)
+            if lib is not None and (lib.is_taint_source() or lib.is_taint_sink() or lib.is_taint_sanitizer()) \
+                    and not (own.is_taint_source() or own.is_taint_sink() or own.is_taint_sanitizer()):
+                return lib
+            return own
         if (self.language or "") == "python" and "." in func_name:
             # Python: a row under a type's receiver name (`cursor.execute`) is that type's, found
             # through the value's type (spec_for_call); a variable of the same name is not one.
