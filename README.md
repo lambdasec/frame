@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/lambdasec/frame/main/assets/logo.svg" alt="Frame" width="400">
   <p align="center">
-    <strong>Sound static analysis and LLM reasoning, in one security agent</strong>
+    <strong>The sound, open SAST for modern apps: code, dependencies, secrets, infrastructure and AI, in one tool</strong>
   </p>
   <p align="center">
     <a href="https://github.com/lambdasec/frame/actions/workflows/tests.yml"><img src="https://github.com/lambdasec/frame/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
@@ -12,21 +12,27 @@
   </p>
 </p>
 
-Frame finds vulnerabilities by **following attacker data through your code**, across functions, files and layers, and proves each finding with a solver instead of pattern-matching. An optional LLM layer adds recall, then exploits and fixes what was found.
+Frame finds vulnerabilities by **following attacker data through your code**, across functions, files and layers, and **proves each finding with a solver** instead of pattern-matching. One open tool covers what a modern app needs scanned: the code, its dependencies, its secrets, its infrastructure and its AI calls. It runs offline, and the same soundness that keeps false alarms down lets it prove a fix actually removed the bug.
 
 <p align="center"><img src="https://raw.githubusercontent.com/lambdasec/frame/main/assets/chart-ai-sast.svg" alt="XBOW / ZeroPath AI-SAST benchmark: Frame 78.8% technical and 87.5% business-logic detection, level with ZeroPath and ahead of Semgrep, Snyk and Bearer" width="760"></p>
 
-## Why Frame?
+Where a team runs Semgrep for code, Snyk or Endor Labs for dependencies, gitleaks for secrets and checkov for infrastructure, Frame is one tool that does all of it, proves what it reports, and stays free and local. It is a genuine alternative to Semgrep, Snyk, Endor Labs, Veracode and ZeroPath: open where they are closed, sound where they pattern-match, and complete where they cover one layer. The numbers are in [Benchmarks](#benchmarks).
 
-- **Five languages**: Python, JavaScript/TypeScript, Java, C# and C/C++.
-- **Cross-file by default**: a request that enters a controller and reaches a query three files away is one finding.
-- **70+ framework packs**: Flask to Spring to ASP.NET to Express, plus your own stack in one TOML file.
-- **Dependencies too**: lockfiles of 11 ecosystems plus C/C++, matched against OSV offline, ranked by whether attacker data reaches the vulnerable function, with upgrades it plans, applies and verifies against your tests, licence policy, SBOM and VEX.
-- **Infrastructure too**: Kubernetes manifests checked against the Pod Security Standards (matching the admission controller's own evaluator), Dockerfiles read exactly as BuildKit reads them, Terraform evaluated as HCL evaluates it, and CloudFormation templates with their intrinsic functions; every policy decided with Z3, and what depends on values the files do not give reported as undecided, not guessed.
-- **Built for guardrails**: scan only what changed, baseline what you accept, verify that a fix removed the bug.
-- **Wherever you work**: a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
-- **Its own separation logic engine** on Z3: entailment, frame inference, bi-abduction and countermodels.
-- **Runs on open models**, local or hosted, for detection, triage, exploitation and fixing.
+## What Frame scans
+
+- **Code, across files, in five languages**: Python, JavaScript/TypeScript, Java, C# and C/C++. A request that enters a controller and reaches a query three files away is one finding, not a lead. 80+ vulnerability classes, from SQL injection and SSRF to IDOR and C/C++ memory safety, each proved by taint or by the separation logic engine. [70+ framework packs](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) (Flask, Django, Spring, ASP.NET, Express, and more), plus your own stack in one TOML file.
+- **Dependencies, by reachability**: lockfiles of 11 ecosystems plus C/C++ and vendored copies, matched against OSV offline, ranked by whether attacker data actually reaches the vulnerable function, with upgrades Frame plans, applies and verifies against your tests, plus licence policy, SBOM and VEX.
+- **Secrets, including git history**: credential-named values and 15 providers' key formats (AWS, GitHub, Stripe, OpenAI, and more), in code and in every commit the history ever added, with optional live verification against the provider's own API so a real leak is told from a test fixture.
+- **Infrastructure as code**: Kubernetes against the Pod Security Standards (matching the admission controller's own evaluator), Dockerfiles as BuildKit parses them, Terraform as HCL evaluates it (AWS, Azure, Google Cloud), and CloudFormation with its intrinsic functions. Every policy is decided with Z3, and what depends on values the files do not give is reported as undecided, not guessed.
+- **Containers**: OS packages read from an image's layers (Debian, Ubuntu, Alpine, RHEL and more) and matched against the distributions' own advisories.
+- **AI applications**: prompt injection, model output reaching a sink, and MCP servers, including hidden instructions in tool metadata that the person approving the tool cannot see. ([OWASP LLM Top 10](https://github.com/lambdasec/frame/blob/main/docs/coverage.md#what-it-detects).)
+
+## Why it is different
+
+- **Sound, not pattern-based**: findings are proved by a solver (its own [separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) on Z3: entailment, frame inference, bi-abduction, countermodels), so there are fewer false alarms and a fix can be proved to remove the bug.
+- **Open rules and advisories, as data**: framework packs and the full advisory database ship as versioned public datasets, [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb) and [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) (rebuilt daily), updated between releases and pinnable for air-gapped CI. Nothing in them runs.
+- **Built for the AI-coding era**: scan only what changed, baseline what you accept, and `verify` that a fix removed the bug; a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
+- **Runs on open models, local or hosted**: an optional LLM layer adds recall for business-logic and authorization flaws, triages, and proposes fixes the sound core then verifies; it works with any OpenAI-compatible model, including on-device.
 
 ## Quick start
 
@@ -62,7 +68,7 @@ Scanned 4 files: 2 findings (2 critical)
 
 Use a placeholder query, or wrap the value in `int()`, and the finding goes away.
 
-For dependencies:
+For dependencies (advisories come from [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories), cached once, then offline):
 
 ```bash
 frame kb pull --advisories            # cache the advisories once (then everything runs offline)
@@ -71,7 +77,14 @@ frame deps --vulns --apply --relock   # upgrade, re-lock, report what is left
 frame scan . --sca                    # attacker data reaching a vulnerable function, at the call site
 ```
 
-For infrastructure: `frame iac .` (or `frame scan . --iac`).
+For secrets, infrastructure and a repo inventory:
+
+```bash
+frame scan . --verify-secrets         # credentials in code, checked live against the provider
+frame history .                        # credentials anywhere in the git history
+frame iac .                            # Kubernetes, Dockerfiles, Terraform, CloudFormation (or frame scan . --iac)
+frame inventory .                      # languages, frameworks, dependencies, IaC, containers, AI SDKs, MCP tools
+```
 
 ## Benchmarks
 
@@ -94,15 +107,16 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 
 | | |
 |---|---|
-| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, suppressions, configuration, every command and flag, environment variables, Python API |
-| [Dependencies](https://github.com/lambdasec/frame/blob/main/docs/dependencies.md) | Supported ecosystems, advisories, reachability, upgrade plans, code mitigation, licences, SBOM, VEX, CI |
-| [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, vulnerability classes |
+| [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, GitHub Action, pre-commit hook and MCP server, baselines and `verify`, secrets and git history, suppressions, configuration, every command and flag, environment variables, Python API |
+| [Dependencies](https://github.com/lambdasec/frame/blob/main/docs/dependencies.md) | Supported ecosystems, advisories, reachability, upgrade plans, code mitigation, licences, SBOM, VEX, container images, CI |
+| [Coverage](https://github.com/lambdasec/frame/blob/main/docs/coverage.md) | Cross-file resolution per language, supported frameworks, writing a pack, every vulnerability class including secrets and AI apps |
 | [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles, Terraform and CloudFormation, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, exploit and fix with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
 | [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | Where Frame is going: SAST gaps, the knowledge base, SCA, secrets and IaC, AI app security, autonomous pentesting |
 | [Examples](https://github.com/lambdasec/frame/blob/main/examples/README.md) | Runnable walkthroughs with real output: dependencies end to end, mitigations, adapting to a breaking upgrade, secrets, Kubernetes, AI apps and MCP servers |
 | [Exemplars](https://github.com/lambdasec/frame/blob/main/benchmarks/exemplars/README.md) | The quickstart app, a vulnerable and safe app per framework, and the cross-file comparison |
+| Open datasets | Framework packs and spec tables, [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb); the OSV advisory database rebuilt daily, [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) |
 
 ## Contributing
 

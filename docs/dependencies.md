@@ -94,7 +94,7 @@ A walkthrough with real output: [examples/container-image](../examples/container
 
 ## Advisories
 
-Advisories come from [OSV](https://osv.dev), published daily as the `lambdasec/frame-advisories` dataset with the vulnerable functions mined from fix commits. Pull them once, then whenever you want them fresh:
+Advisories come from [OSV](https://osv.dev), published daily as the [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) dataset with the vulnerable functions mined from fix commits. Pull them once, then whenever you want them fresh:
 
 ```bash
 frame kb pull --advisories                  # the ecosystems this project uses

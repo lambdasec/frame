@@ -167,7 +167,7 @@ Every file Frame reads from a project:
 
 ## Knowledge base
 
-Framework packs and vulnerability advisories arrive as data, between Frame releases. `frame kb pull` downloads the packs for the languages a project uses, and `frame kb pull --advisories` the advisories for the ecosystems its dependencies use. Every file is checked against the manifest's SHA-256 and cached (`~/.cache/frame/kb`, or `FRAME_KB_CACHE`); scans read the cache and never go to the network (with no packs cached they use the ones built into Frame).
+Framework packs and vulnerability advisories arrive as data, between Frame releases, from two public datasets: [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb) (packs and spec tables) and [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) (the OSV advisory database, rebuilt daily). `frame kb pull` downloads the packs for the languages a project uses, and `frame kb pull --advisories` the advisories for the ecosystems its dependencies use. Every file is checked against the manifest's SHA-256 and cached (`~/.cache/frame/kb`, or `FRAME_KB_CACHE`); scans read the cache and never go to the network (with no packs cached they use the ones built into Frame).
 
 ```bash
 frame kb pull --lock              # this project's languages; pin the revision in .frame/kb.lock
