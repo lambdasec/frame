@@ -117,3 +117,38 @@ def test_run_agent_writes_a_durable_trace(tmp_path):
     # per-call timing sidecar was written
     calls = [json.loads(ln) for ln in open(p + ".calls.jsonl")]
     assert calls and calls[0]["cached_tokens"] == 5
+
+
+# ---- offline deterministic replay ----------------------------------------------
+
+def test_replay_client_reproduces_a_recorded_run(tmp_path):
+    from frame.sil.llm_trace import ReplayClient
+    # 1) record a run with a scripted client.
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    seq = {"i": 0}
+    script = [
+        {"content": "", "tool_calls": [{"id": "1", "function": {"name": "look", "arguments": "{}"}}]},
+        {"content": "FINAL", "tool_calls": []},
+    ]
+    def chat(messages, tools=None):
+        m = script[min(seq["i"], len(script) - 1)]; seq["i"] += 1
+        return m
+    c.chat_raw = chat
+    p = str(tmp_path / "rec.jsonl")
+    tool_calls_made = []
+    def exec_tool(name, args):
+        tool_calls_made.append(name)
+        return "observed"
+    res1 = run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+                     c, tools=[], exec_tool=exec_tool, max_steps=5,
+                     finalize=lambda s: s, trace=TraceWriter(p, "rec"))
+    assert res1.result == "FINAL" and tool_calls_made == ["look"]
+
+    # 2) replay from the trace: no model, tools re-run, same result.
+    replayed_tools = []
+    res2 = run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+                     ReplayClient(p), tools=[],
+                     exec_tool=lambda n, a: replayed_tools.append(n) or "observed",
+                     max_steps=5, finalize=lambda s: s)
+    assert res2.result == "FINAL"            # deterministic, no model call
+    assert replayed_tools == ["look"]        # the tool re-ran against the same model decision

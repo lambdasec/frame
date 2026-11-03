@@ -156,3 +156,35 @@ class TraceWriter:
                 os.fsync(fh.fileno())
         except OSError:
             pass            # a tracing failure must never break the run
+
+
+# ---- offline deterministic replay ----------------------------------------------
+
+class ReplayClient:
+    """Feeds the assistant turns of a saved trace back into `run_agent`, in order, with no
+    model call -- so a recorded run replays deterministically. The tools re-run (against the
+    same model decisions), which makes this a regression test for the harness and tools, and
+    a way to debug a run offline. `chat_raw` returns None once the saved turns are exhausted."""
+
+    def __init__(self, trace_path: str):
+        _, msgs = read_stf(trace_path)
+        self._assistants = [m for m in msgs if m.get("role") == "assistant"]
+        self._i = 0
+        self.config = None
+        self.last_call: Dict[str, Any] = {"status": "replay"}
+        self.stats: Dict[str, Any] = {"calls": 0}
+
+    def chat_raw(self, messages, tools=None):
+        if self._i >= len(self._assistants):
+            return None
+        m = self._assistants[self._i]
+        self._i += 1
+        self.stats["calls"] += 1
+        out = {"content": m.get("content") or ""}
+        if m.get("tool_calls"):
+            out["tool_calls"] = m["tool_calls"]
+        return out
+
+    def complete(self, messages, **kw):
+        m = self.chat_raw(messages)
+        return (m or {}).get("content") or ""
