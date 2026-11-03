@@ -53,7 +53,39 @@ def _normalized(result, root: Path) -> list:
     return out
 
 
-def _scan(checkout: Path, language: str, system: str, cap: int = 0) -> list:
+def _hunt_grep(checkout: Path, language: str, cap: int = 0) -> list:
+    """Run the authorization hunt WITHOUT a full engine pre-scan: the agent greps/reads the
+    repository itself (the cross-language fallback). Fast on large monorepos -- where scanning
+    hundreds of files to build engine facts eats the time budget before the agent runs -- at
+    the cost of the engine-backed tier (every finding is llm_detect). Produces the full
+    trajectory for analysis."""
+    from frame.sil.llm_hunt import hunt_authz
+    from frame.sil.llm_triage import TriageConfig
+    lang = _LANG.get(language, "python")
+    use_alarm = cap > 0 and hasattr(signal, "SIGALRM")
+    if use_alarm:
+        signal.signal(signal.SIGALRM, lambda s, f: (_ for _ in ()).throw(_Timeout()))
+        signal.alarm(cap)
+    try:
+        vulns = hunt_authz([], [], str(checkout), TriageConfig.from_env(), None, language=lang)
+    finally:
+        if use_alarm:
+            signal.alarm(0)
+    root = checkout.resolve()
+    out = []
+    for v in vulns:
+        try:
+            rel = str(Path(v.location).resolve().relative_to(root))
+        except ValueError:
+            rel = v.location
+        out.append({"file": rel, "line": v.line, "cwe": v.cwe_id or "",
+                    "type": getattr(v.type, "value", str(v.type)),
+                    "tier": "llm", "source_var": v.source_var})
+    return out
+
+
+def _scan(checkout: Path, language: str, system: str, cap: int = 0,
+          cross_file: bool = True) -> list:
     from frame.sil import FrameScanner
     lang = _LANG.get(language, "python")
     hunt = system == "frame_hunt"
@@ -66,7 +98,8 @@ def _scan(checkout: Path, language: str, system: str, cap: int = 0) -> list:
         signal.signal(signal.SIGALRM, _fire)
         signal.alarm(cap)
     try:
-        for res in sc.scan_directory(str(checkout), None, project_root=str(checkout)):
+        for res in sc.scan_directory(str(checkout), None, project_root=str(checkout),
+                                     cross_file=cross_file):
             findings.extend(_normalized(res, checkout.resolve()))
     finally:
         if use_alarm:
@@ -88,6 +121,9 @@ def main() -> int:
                          "<system>/traj/<case>/<checkout>/ (frame_hunt only)")
     ap.add_argument("--resume", action="store_true",
                     help="skip cases whose result file already exists (resume an interrupted run)")
+    ap.add_argument("--hunt-grep-mode", action="store_true",
+                    help="frame_hunt: skip the engine pre-scan; the agent greps/reads the repo "
+                         "itself (fast on large monorepos; findings are llm_detect, no engine tier)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -131,7 +167,14 @@ def main() -> int:
                     os.environ.pop("FRAME_LLM_TRAJECTORY_DIR", None)
                 t0 = time.time()
                 try:
-                    findings = _scan(p, c["language"], system, args.per_case_timeout)
+                    if system == "frame_hunt" and args.hunt_grep_mode:
+                        findings = _hunt_grep(p, c["language"], args.per_case_timeout)
+                    else:
+                        # The hunt reasons over handler facts, not a full cross-file taint build;
+                        # scanning the whole monorepo cross-file eats the time budget before the
+                        # agent loop runs on large apps, so the hunt pre-scan skips cross-file.
+                        findings = _scan(p, c["language"], system, args.per_case_timeout,
+                                         cross_file=(system != "frame_hunt"))
                     rec["scans"][which] = {"findings": findings,
                                            "wall_clock_seconds": round(time.time() - t0, 2)}
                 except _Timeout:
