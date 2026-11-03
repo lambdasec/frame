@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, Optional
 from frame.sil.llm_client import LLMClient, LLMConfig, _extract_json_object
 from frame.sil.llm_agent import run_agent, INVESTIGATION_TOOLS, _repo_exec
 from frame.sil.llm_detect import _repo_inventory
+from frame.sil.llm_trace import TraceWriter, read_stf
 
 
 # ---- Engine facts the agent can query ------------------------------------------
@@ -324,6 +325,9 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
             "facts (if any), handler_facts and read_file to judge intent, then report real "
             "findings as the JSON object.")},
     ]
+    # Durable trace + resume (opt-in via FRAME_LLM_TRAJECTORY_DIR). A saved trace lets an
+    # interrupted hunt continue from its last step instead of restarting.
+    trace, messages = _setup_trace(repo_root, messages)
     steps = max_steps if max_steps is not None else max(1, getattr(config, "max_tool_steps", 30))
     res = run_agent(
         messages, client, tools=HUNT_TOOLS, exec_tool=hunt_exec(index),
@@ -331,5 +335,28 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
         finalize=lambda content: _findings_to_vulns(
             (_extract_json_object(content) or {}).get("findings") or [], index),
         final_nudge="Report the findings now as the JSON object.",
-        compact_at_chars=getattr(config, "agent_context_budget_chars", 80000))
+        compact_at_chars=getattr(config, "agent_context_budget_chars", 80000),
+        trace=trace)
     return res.result or []
+
+
+def _setup_trace(repo_root: str, messages: List[Dict[str, Any]]):
+    """When FRAME_LLM_TRAJECTORY_DIR is set, return (TraceWriter, starting messages): a
+    fresh trace keeps `messages`; an existing one is resumed (its messages replace the
+    fresh ones, dropping a trailing assistant tool-call with no result so the sequence
+    stays valid). Otherwise (None, messages)."""
+    tdir = os.environ.get("FRAME_LLM_TRAJECTORY_DIR", "")
+    if not tdir:
+        return None, messages
+    path = os.path.join(tdir, "hunt.jsonl")
+    writer = TraceWriter(path, session_id="authz-hunt", name="Frame authorization hunt")
+    if writer.resumed:
+        try:
+            _, prior = read_stf(path)
+        except OSError:
+            prior = []
+        while prior and prior[-1].get("role") == "assistant" and prior[-1].get("tool_calls"):
+            prior.pop()                 # interrupted mid-tool -> re-derive from the last clean turn
+        if prior:
+            messages = prior
+    return writer, messages

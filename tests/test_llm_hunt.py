@@ -196,3 +196,51 @@ def test_scanner_hunt_authz_flows_into_results(tmp_path):
     hunt = [(v.cwe_id, v.source_var) for r in res for v in r.vulnerabilities
             if v.source_var in ("llm_verified", "llm_detect")]
     assert hunt == [("CWE-862", "llm_verified")]
+
+
+# ---- trajectory persistence + resume -------------------------------------------
+
+def test_hunt_writes_a_trace_when_env_set(tmp_path, monkeypatch):
+    import json as _json, os as _os
+    from frame.sil.llm_trace import read_stf
+    tdir = tmp_path / "traj"; tdir.mkdir()
+    monkeypatch.setenv("FRAME_LLM_TRAJECTORY_DIR", str(tdir))
+    c = _client([
+        _tool("list_handlers"),
+        _final([{"reasoning": "x", "handler": "Docs.del_doc", "file": "app.py", "line": 11,
+                 "mechanism": "missing_authorization", "cwe": "CWE-862", "confidence": 0.8,
+                 "engine_backed": True}]),
+    ])
+    out = hunt_authz(_prog(), [], repo_root="", config=LLMConfig(), client=c, max_steps=5)
+    assert _cwes(out) == [("CWE-862", "llm_verified")]
+    header, msgs = read_stf(str(tdir / "hunt.jsonl"))
+    assert header["harness"] == "frame"
+    roles = [m["role"] for m in msgs]
+    assert roles[:2] == ["system", "user"] and "tool" in roles and roles[-1] == "assistant"
+
+
+def test_hunt_resumes_from_a_saved_trace(tmp_path, monkeypatch):
+    # A pre-existing trace (ending at a tool result) is resumed: the agent continues and
+    # the header is not duplicated.
+    import json as _json
+    from frame.sil.llm_trace import TraceWriter, read_stf
+    tdir = tmp_path / "traj"; tdir.mkdir()
+    p = str(tdir / "hunt.jsonl")
+    w = TraceWriter(p, "authz-hunt", name="prior")
+    w.start()
+    w.append_message({"role": "system", "content": "sys"})
+    w.append_message({"role": "user", "content": "handlers..."})
+    w.append_message({"role": "assistant", "content": "",
+                      "tool_calls": [{"id": "1", "function": {"name": "list_handlers", "arguments": "{}"}}]})
+    w.append_message({"role": "tool", "tool_call_id": "1", "content": "[]"})
+    monkeypatch.setenv("FRAME_LLM_TRAJECTORY_DIR", str(tdir))
+    c = _client([_final([{"reasoning": "y", "handler": "Docs.del_doc", "file": "app.py",
+                          "line": 11, "mechanism": "missing_authorization", "cwe": "CWE-862",
+                          "confidence": 0.8, "engine_backed": True}])])
+    out = hunt_authz(_prog(), [], repo_root="", config=LLMConfig(), client=c, max_steps=5)
+    assert _cwes(out) == [("CWE-862", "llm_verified")]
+    headers = [1 for ln in open(p) if _json.loads(ln).get("type") == "session"]
+    assert len(headers) == 1                       # not duplicated on resume
+    _, msgs = read_stf(p)
+    assert msgs[0]["content"] == "sys"             # prior messages preserved
+    assert msgs[-1]["role"] == "assistant"         # new final turn appended
