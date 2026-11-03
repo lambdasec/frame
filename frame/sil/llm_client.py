@@ -83,6 +83,10 @@ class LLMConfig:
     max_context_chars: int = 6000   # hard cap on a code snippet (~1.5k tok)
     drop_threshold: float = 0.75    # triage drops only false-positives at/above this confidence
     exploit_max_steps: int = 250    # exploitation: tool-loop turns against a live target (compaction keeps long runs in-context)
+    # Authorization hunt: a deep investigation, like exploitation -- a real agentic run takes
+    # hundreds of turns (OptiQ coding runs 200+), so 30 (the detect/triage budget) truncates it
+    # mid-investigation before it concludes with findings. Dedupe + prompt caching keep it cheap.
+    hunt_max_steps: int = 200
     triage_agentic: bool = False    # triage: escalate uncertain verdicts to an investigation loop
     # Streaming (recommended for cloud): read the response as it is generated, so a slow
     # generation does not trip a whole-response read timeout, and time-to-first-token is
@@ -105,6 +109,7 @@ class LLMConfig:
             agent_context_budget_chars=int(os.environ.get("FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS", "80000")),
             agent_retries=int(os.environ.get("FRAME_LLM_AGENT_RETRIES", "2")),
             exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "250")),
+            hunt_max_steps=int(os.environ.get("FRAME_LLM_HUNT_MAX_STEPS", "200")),
             triage_agentic=os.environ.get("FRAME_LLM_TRIAGE_AGENTIC", "").lower() in ("1", "true", "yes"),
             stream=os.environ.get("FRAME_LLM_STREAM", "").lower() in ("1", "true", "yes"),
             stream_stall_timeout=int(os.environ.get("FRAME_LLM_STREAM_STALL", "60")),

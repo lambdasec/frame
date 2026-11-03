@@ -328,7 +328,7 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
     # Durable trace + resume (opt-in via FRAME_LLM_TRAJECTORY_DIR). A saved trace lets an
     # interrupted hunt continue from its last step instead of restarting.
     trace, messages = _setup_trace(repo_root, messages)
-    steps = max_steps if max_steps is not None else max(1, getattr(config, "max_tool_steps", 30))
+    steps = max_steps if max_steps is not None else max(1, getattr(config, "hunt_max_steps", 200))
     res = run_agent(
         messages, client, tools=HUNT_TOOLS, exec_tool=hunt_exec(index),
         max_steps=steps,
