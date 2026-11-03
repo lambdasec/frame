@@ -177,15 +177,28 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
               stall_nudge: str = DEFAULT_STALL,
               final_nudge: str = DEFAULT_FINAL,
               compact_at_chars: Optional[int] = None,
-              keep_recent: int = 6) -> AgentResult:
+              keep_recent: int = 6,
+              trace: Optional[Any] = None) -> AgentResult:
     """Drive `client` through a tool loop over `messages`.
 
     Exactly one of `finalize` (self-terminating: parse the model's no-tool-call
     output) or `check_done` (oracle-terminating: external success check, non-None
     to stop) should be supplied. When `compact_at_chars` is set, the transcript is
     summarized down once it exceeds that many characters, so long runs stay inside
-    the context window. Returns an AgentResult.
+    the context window. When `trace` (a llm_trace.TraceWriter) is given, every message
+    is appended and flushed to disk as it appears and every call's timing/usage is
+    logged, so a stall is diagnosable and an interrupted run can resume. Returns an
+    AgentResult.
     """
+    def _t_msg():
+        if trace is not None:
+            trace.append_message(messages[-1])
+
+    if trace is not None:
+        trace.start()
+        if not getattr(trace, "resumed", False):   # a resumed trace already holds these
+            for _m in messages:
+                trace.append_message(_m)
     step = 0
     for step in range(1, max_steps + 1):
         # Oracle-driven agents: did the previous action achieve the objective?
@@ -204,11 +217,15 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             if finalize is not None:
                 return AgentResult(finalize(""), False, step, messages)
             messages.append({"role": "user", "content": "(no response) Continue: call a tool now."})
+            _t_msg()
             continue
 
         tool_calls = msg.get("tool_calls") or []
         messages.append({"role": "assistant", "content": msg.get("content") or "",
                          **({"tool_calls": tool_calls} if tool_calls else {})})
+        _t_msg()
+        if trace is not None:
+            trace.append_call(getattr(client, "last_call", {}))
 
         if tool_calls:
             for tc in tool_calls:
@@ -220,6 +237,7 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
                 out = exec_tool(fn.get("name", ""), args)
                 messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                                  "content": (out or "")[:max_tool_output]})
+                _t_msg()
             continue
 
         # No tool call.
@@ -228,6 +246,7 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
         # Oracle-driven agent narrated without acting -> push a concrete step
         # (the oracle is re-checked at the top of the next iteration).
         messages.append({"role": "user", "content": stall_nudge})
+        _t_msg()
 
     # Budget exhausted.
     if finalize is not None:

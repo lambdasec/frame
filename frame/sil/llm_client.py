@@ -151,6 +151,9 @@ class LLMClient:
         self._custom_call_fn = call_fn   # set only in tests / SDK swaps
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
+        # Timing + token usage of the most recent chat_raw call, for the agent timing log
+        # (latency, prompt/cached/completion/reasoning tokens, cost, status, retries).
+        self.last_call: Dict[str, Any] = {}
         if getattr(config, "cache_path", ""):
             try:
                 with open(config.cache_path, encoding="utf-8") as fh:
@@ -324,14 +327,34 @@ class LLMClient:
         data = json.dumps(body).encode("utf-8")
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
         for i in range(attempts):
+            t0 = time.time()
             try:
                 self.stats["calls"] += 1
                 req = urllib.request.Request(url, data=data, headers=headers)
                 out = json.loads(self._urlopen_read(req).decode("utf-8"))
+                self.last_call = self._usage_record(out, time.time() - t0, i)
                 return out["choices"][0]["message"]
-            except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
+            except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError) as exc:
                 self.stats["errors"] += 1
+                self.last_call = {"status": "error", "error": type(exc).__name__,
+                                  "latency_s": round(time.time() - t0, 2), "retries": i}
                 if i + 1 < attempts:      # transient blip -> back off and retry
                     time.sleep(1.5 * (i + 1))
                     continue
                 return None
+
+    @staticmethod
+    def _usage_record(resp: Dict[str, Any], latency_s: float, retries: int) -> Dict[str, Any]:
+        """Per-call usage/timing from a response. `prompt_tokens` ALREADY includes cached
+        tokens (OptiQ/DeepSeek), so cache-hit rate is cached/prompt -- never add them."""
+        u = resp.get("usage") or {}
+        pd = u.get("prompt_tokens_details") or {}
+        cd = u.get("completion_tokens_details") or {}
+        rec: Dict[str, Any] = {"status": "ok", "latency_s": round(latency_s, 2), "retries": retries,
+                               "prompt_tokens": u.get("prompt_tokens"),
+                               "cached_tokens": pd.get("cached_tokens"),
+                               "completion_tokens": u.get("completion_tokens"),
+                               "reasoning_tokens": cd.get("reasoning_tokens")}
+        if "cost" in u:
+            rec["cost"] = u.get("cost")
+        return rec
