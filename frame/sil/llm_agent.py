@@ -113,62 +113,36 @@ def investigation_exec(repo_root: str,
 
 # ---- Context compaction (keeps long sessions inside the window) ----------------
 
-_PROGRESS_MARKER = "[PROGRESS NOTES]"
-
-_COMPACT_SYSTEM = (
-    "You are compacting an agent's working transcript so it fits the context window. "
-    "Summarize everything below into a dense progress log the agent can act on: what "
-    "it has tried, the key results and observations, hypotheses confirmed or ruled "
-    "out (dead-ends and WHY they died), the current state, and the most promising "
-    "open leads. Be concrete -- name endpoints, parameters, payloads, and error "
-    "signatures. Output only the summary.")
+_ELIDED = "[earlier tool result elided to save context]"
 
 
 def _context_chars(messages: List[Dict[str, Any]]) -> int:
     return sum(len(str(m.get("content") or "")) for m in messages)
 
 
-def _compact_messages(messages: List[Dict[str, Any]], client,
+def _compact_messages(messages: List[Dict[str, Any]], client=None,
                       keep_recent: int = 6) -> List[Dict[str, Any]]:
-    """Replace the middle of a long transcript with a single PROGRESS-NOTES summary,
-    preserving the system prompt (messages[0]) and the last `keep_recent` turns.
-
-    Mirrors Mythos's durable ledger + dead-end cache. The summary is produced by
-    `client.complete`; if that fails or is empty the transcript is returned unchanged
-    (skip this round rather than drop context). Any leading orphaned tool result in
-    the kept tail (its assistant turn was compacted away) is dropped so the message
-    sequence stays valid for the API.
-    """
-    # Keep a STABLE prefix: the system prompt and the task framing (messages[0:2]) are
-    # byte-identical across every compaction, so a prefix-caching endpoint keeps hitting
-    # them; only the volatile middle is summarized. (Keeping just messages[0] re-broke the
-    # cache after the system message on every compaction.)
+    """Shrink a long transcript by replacing OLD tool-result content with a short placeholder,
+    keeping the stable prefix (system + task, messages[0:2]) and the last `keep_recent` turns in
+    full. No model call -- unlike a summary this is cheap, deterministic, and preserves the
+    cached prefix (the big, stable task prompt keeps hitting the provider cache), as OptiQ does.
+    Tool results (file contents, grep dumps) are the bulk of a long run; the assistant turns
+    (reasoning + tool calls) are small and kept, so the record of WHAT was done stays intact and
+    every tool_call_id still pairs with its result. `client` is unused (kept for signature)."""
     prefix = 2 if len(messages) >= 2 and messages[1].get("role") in ("user", "system") else 1
     if len(messages) <= keep_recent + prefix:
         return messages
     head = messages[:prefix]
     middle = messages[prefix:len(messages) - keep_recent]
     tail = messages[len(messages) - keep_recent:]
-    lines: List[str] = []
+    compacted: List[Dict[str, Any]] = []
     for m in middle:
-        content = str(m.get("content") or "")
-        for tc in (m.get("tool_calls") or []):
-            fn = tc.get("function", {}) or {}
-            content += f" [call {fn.get('name', '')} {fn.get('arguments', '') or ''}]"
-        lines.append(f"{m.get('role', '?')}: {content.strip()}")
-    try:
-        summary = client.complete(
-            [{"role": "system", "content": _COMPACT_SYSTEM},
-             {"role": "user", "content": "\n".join(lines)}],
-            max_tokens=getattr(getattr(client, "config", None), "max_tokens", 4096))
-    except Exception:
-        return messages
-    if not summary:
-        return messages
-    while tail and tail[0].get("role") == "tool":   # drop orphaned tool result
-        tail = tail[1:]
-    notes = {"role": "user", "content": f"{_PROGRESS_MARKER}\n{summary}"}
-    return head + [notes] + tail
+        if m.get("role") == "tool" and len(str(m.get("content") or "")) > len(_ELIDED):
+            gist = str(m.get("content") or "")[:60].replace("\n", " ")
+            compacted.append({**m, "content": f"{_ELIDED} (was: {gist}...)"})
+        else:
+            compacted.append(m)
+    return head + compacted + tail
 
 
 # ---- The loop ------------------------------------------------------------------

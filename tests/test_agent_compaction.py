@@ -14,8 +14,8 @@ from frame.sil.llm_client import LLMConfig
 
 
 class _StubClient:
-    """chat_raw always calls the `run` tool (the loop keeps going); complete returns
-    a canned progress summary and counts its calls."""
+    """chat_raw always calls the `run` tool (the loop keeps going). complete counts calls --
+    placeholder compaction must NOT call it (no model round-trip)."""
 
     def __init__(self, config=None):
         self.config = config or LLMConfig(base_url="x", model="m")
@@ -27,25 +27,35 @@ class _StubClient:
 
     def complete(self, messages, **kw):
         self.completes += 1
-        return "SUMMARY OF PROGRESS: tried probe, no crash yet; dead-end X ruled out."
+        return "unexpected model call"
 
 
-# --- A1: compaction helper ------------------------------------------------------
+# --- A1: placeholder compaction helper ------------------------------------------
 
-def test_compact_messages_keeps_stable_prefix_then_notes():
-    from frame.sil.llm_agent import _compact_messages
+def test_compact_messages_elides_old_tool_output_no_model_call():
+    from frame.sil.llm_agent import _compact_messages, _ELIDED
     c = _StubClient()
     sys_msg = {"role": "system", "content": "SYSTEM PROMPT"}
     task = {"role": "user", "content": "THE TASK"}
-    msgs = [sys_msg, task] + [{"role": "user", "content": f"turn {i}"} for i in range(1, 21)]
+    # alternating assistant tool-call + big tool result, then recent turns
+    middle = []
+    for i in range(1, 11):
+        middle.append({"role": "assistant", "content": "", "tool_calls": [
+            {"id": str(i), "function": {"name": "read_file", "arguments": "{}"}}]})
+        middle.append({"role": "tool", "tool_call_id": str(i), "content": "X" * 5000})
+    msgs = [sys_msg, task] + middle + [{"role": "user", "content": f"recent {i}"} for i in range(6)]
     out = _compact_messages(msgs, c, keep_recent=6)
-    # system + task are the byte-identical cached prefix across every compaction.
-    assert out[0] is sys_msg and out[1] is task
-    assert "[PROGRESS NOTES]" in out[2]["content"]             # notes come AFTER the prefix
-    assert "SUMMARY OF PROGRESS" in out[2]["content"]
-    assert c.completes == 1
+    assert c.completes == 0                                    # NO model call (cheap)
+    assert out[0] is sys_msg and out[1] is task                # stable cached prefix preserved
     assert out[-6:] == msgs[-6:]                               # last K turns kept verbatim
-    assert len(out) == 9                                       # system + task + notes + 6
+    assert len(out) == len(msgs)                               # structure kept (ids still pair)
+    # old big tool results are now placeholders; assistant turns (what was done) are kept
+    tool_contents = [m["content"] for m in out if m.get("role") == "tool"]
+    assert all(_ELIDED in c for c in tool_contents)
+    assert any(m.get("tool_calls") for m in out)               # the tool-call record survives
+    # it actually shrank the transcript
+    from frame.sil.llm_agent import _context_chars
+    assert _context_chars(out) < _context_chars(msgs) / 2
 
 
 def test_compact_messages_noop_when_short():
@@ -59,19 +69,20 @@ def test_compact_messages_noop_when_short():
 # --- A1: compaction inside the loop bounds context ------------------------------
 
 def test_run_agent_bounds_context_with_compaction():
-    # Each step appends ~2 messages; over 50 steps that's ~100 without compaction.
-    # With a small budget the transcript must stay bounded and the system prompt
-    # must survive every compaction.
+    # Each step appends a big tool result; with a small budget the transcript's CHAR size
+    # must stay bounded (old tool outputs elided to placeholders), the system prompt must
+    # survive, and no model summarization call is made.
+    from frame.sil.llm_agent import _context_chars, _ELIDED
     c = _StubClient()
-    big = "X" * 500
-    r = run_agent([{"role": "system", "content": "S"}], c,
+    big = "X" * 2000
+    r = run_agent([{"role": "system", "content": "S"}, {"role": "user", "content": "TASK"}], c,
                   tools=[], exec_tool=lambda n, a: big,
-                  max_steps=50, check_done=lambda: None,
-                  compact_at_chars=3000, keep_recent=6)
-    assert len(r.transcript) < 30                              # bounded, not ~100
-    assert any("[PROGRESS NOTES]" in str(m.get("content", "")) for m in r.transcript)
-    assert r.transcript[0]["content"] == "S"                  # system survived compaction
-    assert c.completes >= 1                                    # compaction actually fired
+                  max_steps=40, check_done=lambda: None,
+                  compact_at_chars=6000, keep_recent=6)
+    assert _context_chars(r.transcript) < 6000 + 2000 * 8      # bounded, not ~40*2000
+    assert any(_ELIDED in str(m.get("content", "")) for m in r.transcript)  # old results elided
+    assert r.transcript[0]["content"] == "S"                   # system survived compaction
+    assert c.completes == 0                                    # placeholder compaction: no model call
 
 
 # --- A2: raised budgets ---------------------------------------------------------
@@ -80,7 +91,7 @@ def test_raised_budget_defaults():
     cfg = LLMConfig()
     assert cfg.exploit_max_steps == 250
     assert cfg.max_tool_steps == 30
-    assert cfg.agent_context_budget_chars == 80000
+    assert cfg.agent_context_budget_chars == 400000
 
 
 def test_from_env_budget_defaults(monkeypatch):
@@ -90,7 +101,7 @@ def test_from_env_budget_defaults(monkeypatch):
     cfg = LLMConfig.from_env()
     assert cfg.exploit_max_steps == 250
     assert cfg.max_tool_steps == 30
-    assert cfg.agent_context_budget_chars == 80000
+    assert cfg.agent_context_budget_chars == 400000
 
 
 # --- A3: self-correcting exploit prompt -----------------------------------------

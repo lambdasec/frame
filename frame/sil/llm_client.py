@@ -59,11 +59,12 @@ class LLMConfig:
     # verdict: a reasoning model spends output tokens thinking *before* it emits a
     # tool call, so a small budget truncates it mid-thought and no tool call appears.
     agent_max_tokens: int = 16000
-    # When the running transcript (sum of message content) exceeds this, run_agent
-    # compacts older turns into a PROGRESS-NOTES summary and keeps only recent turns.
-    # This is what makes long, persistent probing sessions feasible without blowing
-    # the context window -- raise it for models with larger contexts.
-    agent_context_budget_chars: int = 80000
+    # When the running transcript (sum of message content) exceeds this, run_agent elides
+    # OLD tool-result content to short placeholders (keeping the stable task prefix and recent
+    # turns), so long persistent sessions stay inside the context window. Set HIGH: a large
+    # stable task prompt (e.g. a big handler inventory) is cached and cheap, so compact only
+    # when the growing tail is genuinely large, not on the fixed prefix. ~100k tokens.
+    agent_context_budget_chars: int = 400000
     # Retries for the agentic transport on transient network errors (flaky links).
     agent_retries: int = 2
     # Structured output. "json_object" is widely supported (incl. local
@@ -106,7 +107,7 @@ class LLMConfig:
             temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
             max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "4096")),
             agent_max_tokens=int(os.environ.get("FRAME_LLM_AGENT_MAX_TOKENS", "16000")),
-            agent_context_budget_chars=int(os.environ.get("FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS", "80000")),
+            agent_context_budget_chars=int(os.environ.get("FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS", "400000")),
             agent_retries=int(os.environ.get("FRAME_LLM_AGENT_RETRIES", "2")),
             exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "250")),
             hunt_max_steps=int(os.environ.get("FRAME_LLM_HUNT_MAX_STEPS", "200")),
