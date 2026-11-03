@@ -183,7 +183,8 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
               final_nudge: str = DEFAULT_FINAL,
               compact_at_chars: Optional[int] = None,
               keep_recent: int = 6,
-              trace: Optional[Any] = None) -> AgentResult:
+              trace: Optional[Any] = None,
+              dedupe_tools: Optional[set] = None) -> AgentResult:
     """Drive `client` through a tool loop over `messages`.
 
     Exactly one of `finalize` (self-terminating: parse the model's no-tool-call
@@ -193,8 +194,13 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
     the context window. When `trace` (a llm_trace.TraceWriter) is given, every message
     is appended and flushed to disk as it appears and every call's timing/usage is
     logged, so a stall is diagnosable and an interrupted run can resume. Returns an
-    AgentResult.
+    AgentResult. `dedupe_tools` is a set of (idempotent) tool names whose exact-argument
+    repeat is refused in the harness -- the agent gets "you already ran this" instead of a
+    re-execution, which stops the enumerate-the-same-thing loops that prose alone never
+    prevents. Pass it only for read-only tools (never for commands with side effects).
     """
+    seen_calls: Dict[str, int] = {}
+
     def _t_msg():
         if trace is not None:
             trace.append_message(messages[-1])
@@ -235,11 +241,25 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
         if tool_calls:
             for tc in tool_calls:
                 fn = tc.get("function", {}) or {}
+                name = fn.get("name", "")
+                raw_args = fn.get("arguments") or "{}"
                 try:
-                    args = json.loads(fn.get("arguments") or "{}")
+                    args = json.loads(raw_args)
                 except (json.JSONDecodeError, TypeError):
                     args = {}
-                out = exec_tool(fn.get("name", ""), args)
+                key = f"{name}({raw_args})"
+                if dedupe_tools and name in dedupe_tools and key in seen_calls:
+                    # Idempotent tool, identical arguments: refuse to re-run (the result is
+                    # already in the transcript). Harness-enforced; prose does not stop this.
+                    n = seen_calls[key]
+                    seen_calls[key] = n + 1
+                    out = (f"(You already called {name} with these exact arguments {n} time(s); "
+                           f"its result is earlier in this conversation. Do not repeat it -- use "
+                           f"what you have, or investigate something new.)")
+                else:
+                    out = exec_tool(name, args)
+                    if dedupe_tools and name in dedupe_tools:
+                        seen_calls[key] = seen_calls.get(key, 0) + 1
                 messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                                  "content": (out or "")[:max_tool_output]})
                 _t_msg()

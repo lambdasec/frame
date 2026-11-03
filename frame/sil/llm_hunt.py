@@ -336,7 +336,10 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
             (_extract_json_object(content) or {}).get("findings") or [], index),
         final_nudge="Report the findings now as the JSON object.",
         compact_at_chars=getattr(config, "agent_context_budget_chars", 80000),
-        trace=trace)
+        trace=trace,
+        # Every hunt tool is read-only and idempotent, so an identical repeat is pure waste
+        # (observed: read_file on one file 8x, handler_facts per handler 3x). Refuse repeats.
+        dedupe_tools={"list_handlers", "handler_facts", "engine_findings", "read_file", "grep"})
     return res.result or []
 
 

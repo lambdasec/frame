@@ -100,3 +100,54 @@ def test_exploit_prompt_treats_finding_as_lead():
     p = EXPLOIT_SYSTEM.lower()
     assert "lead" in p          # treat the FRAME ANALYSIS finding as a lead, not truth
     assert "pivot" in p         # pivot to other surfaces if the target contradicts it
+
+
+# --- tool-call dedupe (harness-enforced, idempotent tools) ----------------------
+
+def test_dedupe_refuses_exact_duplicate_tool_calls():
+    import json as _json
+    from frame.sil.llm_agent import run_agent
+    from frame.sil.llm_client import LLMConfig, LLMClient
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    # the model calls read_file on the same path 3x, then finishes.
+    call = {"content": "", "tool_calls": [{"id": "1", "function": {
+        "name": "read_file", "arguments": _json.dumps({"path": "a.py"})}}]}
+    script = [call, call, call, {"content": "done", "tool_calls": []}]
+    seq = {"i": 0}
+    def chat(messages, tools=None):
+        m = script[min(seq["i"], len(script) - 1)]; seq["i"] += 1
+        return m
+    c.chat_raw = chat
+    ran = {"n": 0}
+    def exec_tool(name, args):
+        ran["n"] += 1
+        return "file contents"
+    res = run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+                    c, tools=[], exec_tool=exec_tool, max_steps=10,
+                    finalize=lambda s: s, dedupe_tools={"read_file"})
+    assert res.result == "done"
+    assert ran["n"] == 1                 # executed once; the 2nd and 3rd were refused
+    # the refused calls still returned a tool message (so the loop stayed valid)
+    tool_msgs = [m for m in res.transcript if m.get("role") == "tool"]
+    assert len(tool_msgs) == 3
+    assert "already called read_file" in tool_msgs[1]["content"]
+
+
+def test_dedupe_off_by_default_reexecutes():
+    import json as _json
+    from frame.sil.llm_agent import run_agent
+    from frame.sil.llm_client import LLMConfig, LLMClient
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    call = {"content": "", "tool_calls": [{"id": "1", "function": {
+        "name": "run", "arguments": _json.dumps({"cmd": "x"})}}]}
+    script = [call, call, {"content": "done", "tool_calls": []}]
+    seq = {"i": 0}
+    def chat(messages, tools=None):
+        m = script[min(seq["i"], len(script) - 1)]; seq["i"] += 1
+        return m
+    c.chat_raw = chat
+    ran = {"n": 0}
+    res = run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+                    c, tools=[], exec_tool=lambda n, a: ran.__setitem__("n", ran["n"] + 1) or "ok",
+                    max_steps=10, finalize=lambda s: s)   # no dedupe_tools
+    assert ran["n"] == 2                 # both ran (side-effecting commands must not be deduped)
