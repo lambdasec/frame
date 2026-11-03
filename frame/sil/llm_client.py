@@ -22,6 +22,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -150,10 +151,15 @@ class LLMClient:
         self._call_fn = call_fn or self._http_call
         self._custom_call_fn = call_fn   # set only in tests / SDK swaps
         self.cache: Dict[str, Dict[str, Any]] = {}
-        self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0}
+        self.stats: Dict[str, int] = {"calls": 0, "errors": 0, "dropped": 0, "kept": 0,
+                                      "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0}
         # Timing + token usage of the most recent chat_raw call, for the agent timing log
         # (latency, prompt/cached/completion/reasoning tokens, cost, status, retries).
         self.last_call: Dict[str, Any] = {}
+        # A stable session id sent as `x-session-id` for the whole run. OptiQ Cloud forwards
+        # it upstream, which keeps the prompt-prefix cache warm across the many turns of a
+        # tool loop (measured 70-80% of the prompt cached). One id per client = per run.
+        self.session_id: str = uuid.uuid4().hex
         if getattr(config, "cache_path", ""):
             try:
                 with open(config.cache_path, encoding="utf-8") as fh:
@@ -255,7 +261,7 @@ class LLMClient:
         if response_format is not None:
             body["response_format"] = response_format
         payload = json.dumps(body).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "x-session-id": self.session_id}
         # Some local servers (e.g. OptiQ) reject *any* Authorization header; only
         # send one when a key is actually configured. Set FRAME_LLM_API_KEY="" to omit.
         if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
@@ -321,7 +327,7 @@ class LLMClient:
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "x-session-id": self.session_id}
         if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         data = json.dumps(body).encode("utf-8")
@@ -333,6 +339,9 @@ class LLMClient:
                 req = urllib.request.Request(url, data=data, headers=headers)
                 out = json.loads(self._urlopen_read(req).decode("utf-8"))
                 self.last_call = self._usage_record(out, time.time() - t0, i)
+                self.stats["prompt_tokens"] += self.last_call.get("prompt_tokens") or 0
+                self.stats["cached_tokens"] += self.last_call.get("cached_tokens") or 0
+                self.stats["completion_tokens"] += self.last_call.get("completion_tokens") or 0
                 return out["choices"][0]["message"]
             except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError) as exc:
                 self.stats["errors"] += 1
@@ -342,6 +351,12 @@ class LLMClient:
                     time.sleep(1.5 * (i + 1))
                     continue
                 return None
+
+    def cache_hit_rate(self) -> Optional[float]:
+        """Cached prompt tokens / total prompt tokens over the run (None if nothing seen).
+        A low number across a long tool loop means the prompt prefix is not stable."""
+        p = self.stats.get("prompt_tokens", 0)
+        return round(self.stats.get("cached_tokens", 0) / p, 3) if p else None
 
     @staticmethod
     def _usage_record(resp: Dict[str, Any], latency_s: float, retries: int) -> Dict[str, Any]:

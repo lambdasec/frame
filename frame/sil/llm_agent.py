@@ -139,10 +139,15 @@ def _compact_messages(messages: List[Dict[str, Any]], client,
     the kept tail (its assistant turn was compacted away) is dropped so the message
     sequence stays valid for the API.
     """
-    if len(messages) <= keep_recent + 1:
+    # Keep a STABLE prefix: the system prompt and the task framing (messages[0:2]) are
+    # byte-identical across every compaction, so a prefix-caching endpoint keeps hitting
+    # them; only the volatile middle is summarized. (Keeping just messages[0] re-broke the
+    # cache after the system message on every compaction.)
+    prefix = 2 if len(messages) >= 2 and messages[1].get("role") in ("user", "system") else 1
+    if len(messages) <= keep_recent + prefix:
         return messages
-    head = messages[0]
-    middle = messages[1:len(messages) - keep_recent]
+    head = messages[:prefix]
+    middle = messages[prefix:len(messages) - keep_recent]
     tail = messages[len(messages) - keep_recent:]
     lines: List[str] = []
     for m in middle:
@@ -163,7 +168,7 @@ def _compact_messages(messages: List[Dict[str, Any]], client,
     while tail and tail[0].get("role") == "tool":   # drop orphaned tool result
         tail = tail[1:]
     notes = {"role": "user", "content": f"{_PROGRESS_MARKER}\n{summary}"}
-    return [head, notes] + tail
+    return head + [notes] + tail
 
 
 # ---- The loop ------------------------------------------------------------------

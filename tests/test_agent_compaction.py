@@ -32,19 +32,20 @@ class _StubClient:
 
 # --- A1: compaction helper ------------------------------------------------------
 
-def test_compact_messages_keeps_system_recent_and_notes():
+def test_compact_messages_keeps_stable_prefix_then_notes():
     from frame.sil.llm_agent import _compact_messages
     c = _StubClient()
     sys_msg = {"role": "system", "content": "SYSTEM PROMPT"}
-    msgs = [sys_msg] + [{"role": "user", "content": f"turn {i}"} for i in range(1, 21)]
+    task = {"role": "user", "content": "THE TASK"}
+    msgs = [sys_msg, task] + [{"role": "user", "content": f"turn {i}"} for i in range(1, 21)]
     out = _compact_messages(msgs, c, keep_recent=6)
-    assert out[0] is sys_msg                                   # system preserved verbatim
-    assert out[1]["role"] == "user"
-    assert "[PROGRESS NOTES]" in out[1]["content"]             # a notes message inserted
-    assert "SUMMARY OF PROGRESS" in out[1]["content"]          # produced via client.complete
+    # system + task are the byte-identical cached prefix across every compaction.
+    assert out[0] is sys_msg and out[1] is task
+    assert "[PROGRESS NOTES]" in out[2]["content"]             # notes come AFTER the prefix
+    assert "SUMMARY OF PROGRESS" in out[2]["content"]
     assert c.completes == 1
     assert out[-6:] == msgs[-6:]                               # last K turns kept verbatim
-    assert len(out) == 8                                       # system + notes + 6
+    assert len(out) == 9                                       # system + task + notes + 6
 
 
 def test_compact_messages_noop_when_short():
