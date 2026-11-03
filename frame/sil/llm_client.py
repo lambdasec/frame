@@ -36,6 +36,12 @@ class LLMUnavailableError(RuntimeError):
     "no vulnerabilities found"."""
 
 
+class _DroppedStream(Exception):
+    """A streamed response was cut off (an in-stream error object, or an inter-token
+    stall past the timeout). Half a tool call is worse than none, so the caller discards
+    the partial output and re-issues the same request."""
+
+
 @dataclass
 class LLMConfig:
     base_url: str = ""              # OpenAI-compatible base, e.g. http://localhost:8080/v1
@@ -78,6 +84,12 @@ class LLMConfig:
     drop_threshold: float = 0.75    # triage drops only false-positives at/above this confidence
     exploit_max_steps: int = 250    # exploitation: tool-loop turns against a live target (compaction keeps long runs in-context)
     triage_agentic: bool = False    # triage: escalate uncertain verdicts to an investigation loop
+    # Streaming (recommended for cloud): read the response as it is generated, so a slow
+    # generation does not trip a whole-response read timeout, and time-to-first-token is
+    # visible. `stream_stall_timeout` aborts a stream with no new token for that many seconds
+    # (an inter-token stall) and the call is re-issued. Opt-in so non-streaming stays default.
+    stream: bool = False
+    stream_stall_timeout: int = 60
     enabled: bool = False
 
     @classmethod
@@ -94,6 +106,8 @@ class LLMConfig:
             agent_retries=int(os.environ.get("FRAME_LLM_AGENT_RETRIES", "2")),
             exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "250")),
             triage_agentic=os.environ.get("FRAME_LLM_TRIAGE_AGENTIC", "").lower() in ("1", "true", "yes"),
+            stream=os.environ.get("FRAME_LLM_STREAM", "").lower() in ("1", "true", "yes"),
+            stream_stall_timeout=int(os.environ.get("FRAME_LLM_STREAM_STALL", "60")),
             cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
             repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
             max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "30")),
@@ -332,10 +346,13 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         data = json.dumps(body).encode("utf-8")
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
+        streaming = bool(getattr(self.config, "stream", False))
         for i in range(attempts):
             t0 = time.time()
             try:
                 self.stats["calls"] += 1
+                if streaming:
+                    return self._chat_stream(url, body, headers)
                 req = urllib.request.Request(url, data=data, headers=headers)
                 out = json.loads(self._urlopen_read(req).decode("utf-8"))
                 self.last_call = self._usage_record(out, time.time() - t0, i)
@@ -343,11 +360,22 @@ class LLMClient:
                 self.stats["cached_tokens"] += self.last_call.get("cached_tokens") or 0
                 self.stats["completion_tokens"] += self.last_call.get("completion_tokens") or 0
                 return out["choices"][0]["message"]
-            except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError) as exc:
+            except urllib.error.HTTPError as exc:
+                self.stats["errors"] += 1
+                self.last_call = {"status": "error", "error": f"HTTP {exc.code}",
+                                  "latency_s": round(time.time() - t0, 2), "retries": i}
+                if exc.code in (400, 401):        # malformed request / bad auth: retrying cannot help
+                    return None
+                if i + 1 < attempts:
+                    time.sleep(1.5 * (i + 1))
+                    continue
+                return None
+            except (_DroppedStream, urllib.error.URLError, KeyError, ValueError,
+                    TimeoutError, OSError) as exc:
                 self.stats["errors"] += 1
                 self.last_call = {"status": "error", "error": type(exc).__name__,
                                   "latency_s": round(time.time() - t0, 2), "retries": i}
-                if i + 1 < attempts:      # transient blip -> back off and retry
+                if i + 1 < attempts:      # transient blip / dropped stream -> back off and retry
                     time.sleep(1.5 * (i + 1))
                     continue
                 return None
@@ -373,3 +401,85 @@ class LLMClient:
         if "cost" in u:
             rec["cost"] = u.get("cost")
         return rec
+
+    @staticmethod
+    def _assemble_stream(events: List[Dict[str, Any]]) -> "tuple":
+        """Assemble streamed SSE chunks into one OpenAI-shaped message + usage. Content and
+        each tool call's `arguments` arrive as deltas and are concatenated by index. An
+        in-stream `{"error": ...}` object means a dropped stream. Pure, so it is unit-tested
+        without a network."""
+        content: List[str] = []
+        tools: Dict[int, Dict[str, Any]] = {}
+        usage: Dict[str, Any] = {}
+        for obj in events:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("error"):
+                raise _DroppedStream(str(obj["error"])[:200])
+            if obj.get("usage"):
+                usage = obj["usage"]
+            for ch in obj.get("choices") or []:
+                delta = ch.get("delta") or {}
+                if delta.get("content"):
+                    content.append(delta["content"])
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tools.setdefault(idx, {"id": "", "type": "function",
+                                                  "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+        msg: Dict[str, Any] = {"content": "".join(content)}
+        if tools:
+            msg["tool_calls"] = [tools[k] for k in sorted(tools)]
+        return msg, usage
+
+    def _chat_stream(self, url: str, body: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """One streamed chat call. Reads SSE lines with an inter-token stall timeout, records
+        time-to-first-token, and returns the assembled message. Raises _DroppedStream on a
+        stall or an in-stream error, HTTPError on an HTTP error."""
+        body = dict(body, stream=True, stream_options={"include_usage": True})
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers)
+        stall = max(5, int(getattr(self.config, "stream_stall_timeout", 60)))
+        t0 = time.time()
+        first_token_s: Optional[float] = None
+        events: List[Dict[str, Any]] = []
+        resp = urllib.request.urlopen(req, timeout=stall)   # each readline is bounded by `stall`
+        try:
+            while True:
+                line = resp.readline()                      # raises socket.timeout on a stall
+                if not line:
+                    break
+                s = line.decode("utf-8", "replace").strip()
+                if not s or s.startswith(":") or not s.startswith("data:"):
+                    continue
+                payload = s[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if first_token_s is None and (obj.get("choices") or []):
+                    first_token_s = time.time() - t0
+                events.append(obj)
+        except (TimeoutError, OSError) as exc:              # socket.timeout is an OSError
+            raise _DroppedStream(f"stall: {type(exc).__name__}") from exc
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+        msg, usage = self._assemble_stream(events)
+        self.last_call = self._usage_record({"usage": usage}, time.time() - t0, 0)
+        if first_token_s is not None:
+            self.last_call["first_token_s"] = round(first_token_s, 2)
+        self.stats["prompt_tokens"] += self.last_call.get("prompt_tokens") or 0
+        self.stats["cached_tokens"] += self.last_call.get("cached_tokens") or 0
+        self.stats["completion_tokens"] += self.last_call.get("completion_tokens") or 0
+        return msg

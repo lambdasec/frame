@@ -403,6 +403,9 @@ The separation logic engine; flags in [engine.md](engine.md).
 | `FRAME_LLM_DROP_THRESHOLD` | 0.75 | triage drops a finding only as a false positive at or above this confidence |
 | `FRAME_LLM_TRIAGE_AGENTIC` | off | let triage use tools to read more of the repository |
 | `FRAME_LLM_MAX_TOOL_STEPS` | 30 | tool calls per agentic session |
+| `FRAME_LLM_STREAM` | off | stream responses, so a slow generation does not trip a read timeout and time-to-first-token is visible |
+| `FRAME_LLM_STREAM_STALL` | 60 | seconds with no new streamed token before the stream is treated as dropped and re-issued |
+| `FRAME_LLM_TRAJECTORY_DIR` | | write each agent run's HF Session-Trace (JSONL) + per-call timing here; an existing trace is resumed |
 | `FRAME_LLM_AGENT_MAX_TOKENS` | 16000 | completion budget per agent turn |
 | `FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS` | 80000 | context an agent session may accumulate |
 | `FRAME_LLM_AGENT_RETRIES` | 2 | retries for a failed agent turn |
