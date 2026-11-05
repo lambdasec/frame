@@ -11,7 +11,6 @@ for parsing. It handles:
 - Annotations (@RequestParam, etc.)
 """
 
-import os
 import re
 from fnmatch import fnmatchcase
 from typing import Dict, List, Optional, Tuple, Any
@@ -21,9 +20,10 @@ from dataclasses import dataclass, field
 def _aggressive_detectors() -> bool:
     """Context-dependent detectors (CSRF-disable, field-initializer secrets) are
     OFF by default -- they add false positives the sound layer can't adjudicate.
-    Enable them (FRAME_AGGRESSIVE_DETECTORS=1) only alongside LLM triage, which
+    Enable them (`[engine] aggressive_detectors = true`) only alongside LLM triage, which
     drops the context-dependent FPs while keeping the real ones."""
-    return bool(os.environ.get("FRAME_AGGRESSIVE_DETECTORS"))
+    from frame import config
+    return bool(config.setting("engine", "aggressive_detectors"))
 
 try:
     import tree_sitter_java as tsjava
@@ -2062,6 +2062,7 @@ class JavaFrontend:
         proc.class_name = cls or None
         proc.registered_via.append(via)
         proc.span = (node.start_byte, node.end_byte)
+        proc.end_line = node.end_point[0] + 1
         local_types = dict(outer_types)
         for i, (pname, written) in enumerate(pnodes):
             params.append((PVar(pname), Typ.unknown_type()))

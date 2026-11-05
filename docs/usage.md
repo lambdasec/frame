@@ -1,4 +1,4 @@
-# Using Frame: scans, CI, guardrails and configuration
+# Using Frame: scanning, CI, configuration and every command
 
 ## Scanning
 
@@ -85,7 +85,7 @@ frame scan src/ -f sarif -o frame.sarif --fail-on high
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/lambdasec/frame
-    rev: v1.0.0
+    rev: v1.1.0
     hooks:
       - id: frame
         # args: [--baseline, .frame-baseline.json]
@@ -115,15 +115,17 @@ args = ["frame-mcp"]
 
 | Tool | What it does |
 |---|---|
-| `scan` | Scan a path, symbolic or with `ai`, optionally only changed files or against a baseline |
+| `scan` | Scan a path, symbolic, with `ai`, or with the authorization hunt (`hunt_authz`), optionally only changed files or against a baseline |
 | `write_baseline` | Accept the current findings |
 | `verify` | Re-check earlier findings: fixed, present, suppressed, uncertain |
-| `fix` | Patch findings and re-scan to confirm (needs `FRAME_LLM_*`) |
+| `fix` | Patch findings and re-scan to confirm (needs a model) |
 | `exploit` | Attack a live target you are authorized to test |
 | `packs_list`, `packs_check` | List and validate framework packs |
 | `solve` | Check a separation logic entailment |
 
-A `security-review` prompt runs scan, verify and fix in one go. The `FRAME_LLM_*` variables set for the server reach the AI tools ([ai.md](ai.md)). Without MCP, an agent gets the same check by running `frame scan . --files <edited files>` after each edit.
+A `security-review` prompt runs scan, verify and fix in one go. The model for the AI tools comes from the `FRAME_LLM_*` variables set for the server or the project's `[llm]` table ([ai.md](ai.md)). Without MCP, an agent gets the same check by running `frame scan . --files <edited files>` after each edit.
+
+For agents that load skills, [`lambdasec/skills`](https://github.com/lambdasec/skills) has `frame-security-scan`: running a scan, reading and triaging the findings, fixing them and re-scanning to confirm, in the open SKILL.md format.
 
 ## Suppressions
 
@@ -137,7 +139,11 @@ A marker covers its own line or the comment-only line above it. `frame: ignore` 
 
 ## Configuration
 
-Project defaults live in `.frame.toml` (or `[tool.frame]` in `pyproject.toml`), found by walking up from the scan target:
+Every setting lives in one file: `.frame.toml`, or the same keys under `[tool.frame]` in `pyproject.toml`. Each command uses the nearest one above its target (`--config PATH` names one, `--no-config` ignores it). When a setting can be given more than one way, the first of these wins:
+
+```
+command-line flag  >  environment variable  >  config file  >  built-in default
+```
 
 ```toml
 min_severity = "medium"
@@ -150,9 +156,58 @@ packs = ["security/acme.toml"]       # extra framework packs
 deny = ["GPL-*", "AGPL-*"]
 unknown = "report"
 include_dev = false
+
+[llm]                                # the model for --ai, fix, exploit and the hunt (ai.md)
+model = "anthropic/claude-haiku-5.5"
+api_key_env = "OPENROUTER_API_KEY"   # the variable holding the key; never the key itself
+stream = true
+
+[hunt]                               # frame scan --hunt-authz
+concurrency = 8
+trajectory_dir = ".frame/traces"
 ```
 
-Unknown keys are an error naming the file, so a typo never silently disables a setting. Command-line flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--config PATH`, `--no-config`). Directory scans skip `.git`, `node_modules`, `.venv`, `__pycache__` and similar; `--no-default-excludes` scans them.
+Unknown keys and values of the wrong type are an error naming the file, so a typo never silently disables a setting. Flags win over the file (`--min-severity`, `--fail-on`, `--disable RULE`, `--pack PATH`, `--model`, `--root`). Directory scans skip `.git`, `node_modules`, `.venv`, `__pycache__` and similar; `--no-default-excludes` scans them. [`examples/configs/`](../examples/configs/README.md) has a minimal, an AI, a dependencies and a hunt config to start from.
+
+The settings tables:
+
+| Key | Default | |
+|---|---|---|
+| `llm.base_url`, `llm.model` | | the OpenAI-compatible endpoint and model (`FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL` win) |
+| `llm.api_key_env` | `FRAME_LLM_API_KEY` | the variable holding the key (set it to `""` to send none) |
+| `llm.temperature` | 0.0 | sampling temperature |
+| `llm.max_tokens` | 4096 | completion budget per call |
+| `llm.timeout` | 60 | seconds per request (a hung connection, not a cap on the work) |
+| `llm.total_timeout` | 0 (derived from the request timeout) | seconds for one HTTP call before its socket is closed |
+| `llm.json_mode` | `json_schema` | `json_schema`, `json_object` or `off`, for servers without structured output |
+| `llm.stream` | false | stream responses, so a slow generation does not trip a read timeout |
+| `llm.stream_stall_timeout` | 60 | seconds with no new streamed token before the stream is re-issued |
+| `llm.outage_wait` | 0 (off) | after the retries, keep retrying an unreachable endpoint (network errors, HTTP 408/425/429/5xx) every 30 s for up to this many seconds; for long unattended runs |
+| `llm.cache_path` | | a JSON file that keeps LLM verdicts across runs |
+| `llm.context_lines` | 12 | lines of code around a finding sent to the model |
+| `llm.max_context_chars` | 6000 | cap on one code snippet |
+| `llm.drop_threshold` | 0.75 | triage drops a finding only as a false positive at or above this confidence |
+| `llm.triage_agentic` | false | let triage use tools to read more of the repository |
+| `llm.max_tool_steps` | 30 | tool calls per agentic detect/triage session |
+| `llm.agent_max_tokens` | 16000 | completion budget per agent turn |
+| `llm.agent_context_budget_chars` | 400000 | context an agent session keeps before old tool results are elided |
+| `llm.agent_retries` | 5 | retries for a failed agent turn (backoff 2, 4, 8, 16, 30 s) |
+| `llm.exploit_max_steps` | 250 | `exploit` steps (`--max-steps` wins) |
+| `llm.hunt_max_steps` | 200 | turns for the single-agent hunt, where Frame has no frontend for the language |
+| `hunt.concurrency` | 8 | unit agents at once |
+| `hunt.unit_steps` | 24 | tool turns per unit |
+| `hunt.max_units` | all | units audited (the rest are reported as deferred) |
+| `hunt.scout_steps` | 30 | tool turns per scout; 0 turns the scouts off |
+| `hunt.max_scouts` | 16 | scouts that explore the repository before the units |
+| `hunt.coverage_readers` | 2 | code read by this many units and owned by none gets a unit of its own after the first wave; 0 turns this off |
+| `hunt.trajectory_dir` | | write each agent run's trace (HF Session-Trace JSONL) here; an interrupted trace is resumed |
+| `kb.enabled` | true | false uses built-in packs only and no advisories (`FRAME_KB=off`) |
+| `kb.source`, `kb.cache` | `hf:lambdasec/frame-kb`, `~/.cache/frame/kb` | where `kb pull` gets packs and where packs and advisories are cached |
+| `sca.advisories_source` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
+| `sca.registry_cache` | `~/.cache/frame/registry` | registry metadata for `--plan --registry` |
+| `sca.backport_cache` | `~/.cache/frame/backport` | OSV records and fix commits for `--backport` (a recorded directory works air-gapped) |
+| `engine.generated_line_threshold` | 2000 | a file with lines this long is treated as minified or generated |
+| `engine.aggressive_detectors` | false | Java context-dependent detectors (CSRF disabled, field-initializer secrets); use only with LLM triage |
 
 Every file Frame reads from a project:
 
@@ -186,70 +241,6 @@ frame kb pull --advisories --source /mnt/advisories     # advisories: a copy of 
 
 `--source` (or `FRAME_KB_SOURCE` for packs, `FRAME_ADVISORIES_SOURCE` for advisories) takes `hf:org/dataset`, an `https://` mirror, or a directory. The source of the last advisories pull is remembered, so later scans read that cache. A knowledge base holds data files only (TOML and JSON); nothing in it runs.
 
-## Verifying secrets
-
-A found credential may be live, revoked, or never real. `frame scan --verify-secrets` and `frame history --verify` ask each one's provider, the way Semgrep Secrets' validators and Endor Labs' secret validation do. It is off by default: it sends each found credential to its provider, which the provider sees as a use of that credential.
-
-```console
-$ frame scan demo --verify-secrets
-1. [LOW] 🔵 hardcoded_secret
-   Location: demo/deploy.py:6:12
-   Description: Hardcoded GitHub token (...) (GitHub format: github-token)
-   Verified: rejected by api.github.com (revoked or expired)
-```
-
-What is sent, and where: one read-only request per distinct credential, to the provider's own API, with the credential in the header the provider documents. Nothing else leaves the machine (no file name, no code, nothing to Frame's authors), and the run makes no other network request. The checks are data, each with the provider's documentation (`[format.verify]` in [`frame/sil/specs/data/secret-formats.toml`](../frame/sil/specs/data/secret-formats.toml)); the loader refuses a check whose URL is not a fixed `https://` address, so a credential can only go to that provider's host.
-
-| Format | Request | Valid | Invalid |
-|---|---|---|---|
-| GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) | `GET https://api.github.com/user` | 200 | 401 |
-| Slack tokens (`xox?-`) | `POST https://slack.com/api/auth.test` | `"ok": true` | `invalid_auth`, `not_authed`, `account_inactive`, `token_revoked`, `token_expired` |
-| Stripe live keys | `GET https://api.stripe.com/v1/balance` | 200 | 401 |
-| OpenAI | `GET https://api.openai.com/v1/models` | 200 | 401 |
-| Anthropic | `GET https://api.anthropic.com/v1/models` | 200 | 401 |
-| SendGrid | `GET https://api.sendgrid.com/v3/scopes` | 200 | 401 |
-| Hugging Face | `GET https://huggingface.co/api/whoami-v2` | 200 | 401 |
-| DigitalOcean | `GET https://api.digitalocean.com/v2/account` | 200 | 401 |
-| npm | `GET https://registry.npmjs.org/-/whoami` | 200 | 401 |
-
-Not checked, and why: an AWS access key ID (the check needs its secret key, which is rarely beside it), a GitLab token (it may belong to a self-managed instance, so gitlab.com rejecting it says nothing), a Slack webhook (the only check is posting to it), and Google API keys, PyPI and Shopify tokens and private keys (no side-effect-free check).
-
-Each finding gets `validity` (JSON, SARIF properties, a `Verified:` line in the text; in `frame history`, after the location):
-
-- `valid`: the provider accepted it, so anyone with the code can use it now. Severity becomes critical. Rotate it first, then remove it.
-- `invalid`: the provider rejected it (revoked, expired, or a fixture). Severity becomes low: it is still in the code and the history.
-- `unverified`: no check for the format, or no clear answer (a timeout, a rate limit, a 403 from a key that exists but may not read that endpoint). Severity is unchanged.
-
-Each credential is asked about once per run, however many places hold it. Behind a proxy, the standard `HTTPS_PROXY` variable applies.
-
-### Trying it and testing it
-
-To see both answers on your own machine with a credential you control:
-
-```bash
-mkdir -p /tmp/verify-demo
-printf 'GITHUB_TOKEN = "%s"\n' "$(gh auth token)" > /tmp/verify-demo/config.py   # or a new fine-grained PAT with no permissions
-frame scan /tmp/verify-demo --verify-secrets      # Verified: verified valid at api.github.com: it works now, rotate it
-# revoke the token (github.com/settings/tokens), run again: Verified: rejected by api.github.com (revoked or expired)
-rm -r /tmp/verify-demo
-```
-
-The secrets example's tokens are fake, so all three checked ones come back rejected ([examples/secrets](../examples/secrets/README.md#checking-them-with-the-providers)).
-
-Frame's own tests (`tests/test_secret_verify.py`) need no credentials:
-
-- Offline, on every run: the provider is a real HTTP server on localhost, which records what it was sent. The tests check that the credential goes in the documented header and nowhere else, that each answer means what the table says (Slack's `ratelimited` is unverified, not invalid), that each credential is asked once, and that nothing is sent without the flag.
-- `FRAME_SECRETS_LIVE=1`: a well-formed but fake token of every checked format is sent to the real provider, which must reject it. This proves each endpoint, method and header against the real API. CI runs it in the `sca-real` job.
-- `FRAME_VERIFY_GITHUB_TOKEN=$(gh auth token)`: a real token must come back valid (run locally; the Actions token is an installation token that may not read `/user`).
-
-```bash
-python -m pytest tests/test_secret_verify.py                                    # offline
-FRAME_SECRETS_LIVE=1 python -m pytest tests/test_secret_verify.py -k live       # against the providers
-FRAME_VERIFY_GITHUB_TOKEN=$(gh auth token) python -m pytest tests/test_secret_verify.py -k real
-```
-
-To add a check for a format: a `[format.verify]` table with `method`, a fixed `url`, `headers` carrying `{token}`, the `valid` and `invalid` status codes (or `valid_json` / `invalid_json` for an API that answers 200 either way, as Slack's does), and the provider's documentation as `reference`; add a fake token of the format to `FAKE` in the test, and run the live test once.
-
 ## Command reference
 
 Exit status, for every command that checks something: 0 clean, 1 findings (or violations) at or above the threshold, 2 the command could not run or could not judge.
@@ -275,7 +266,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--no-cross-file` | analyse each file alone |
 | `--cross-file-limit N` | most files one cross-file analysis spans (default 2000) |
 | `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
-| `--verify-secrets` | ask each found credential's provider whether it still works ([verifying secrets](#verifying-secrets); network, off by default) |
+| `--verify-secrets` | ask each found credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider); network, off by default) |
 | `--sca` | add vulnerable dependencies ([dependencies.md](dependencies.md)) |
 | `--iac` | add infrastructure findings: Kubernetes manifests, Dockerfiles, Terraform, CloudFormation (directory targets; [iac.md](iac.md)) |
 | `--vex openvex\|cyclonedx`, `--vex-out FILE` | with `--sca`: also write a VEX document |
@@ -284,9 +275,9 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `-v`, `--verbose` | more detail |
 | `--ai` | LLM detection and triage ([ai.md](ai.md)) |
 | `--llm-detect` / `--llm-triage` | only one of the two |
-| `--model MODEL` | override `FRAME_LLM_MODEL` |
+| `--model MODEL` | the model for this run (wins over `FRAME_LLM_MODEL` and `llm.model`) |
 | `--repo-scale` | one LLM session for the whole repository (with `--ai` or `--llm-detect`) |
-| `--hunt-authz` | agentic hunt for authorization / business-logic flaws over the engine's handler facts; corroborated findings are `llm-verified`, else `llm-detected` (needs an LLM endpoint) |
+| `--hunt-authz` | agentic hunt for authorization and business-logic flaws, with a verdict on every handler (a finding, safe, or unresolved); adds a `hunt` section to the output ([ai.md](ai.md#hunting-authorization-flaws---hunt-authz)) |
 
 ### `frame verify <findings.json>`
 
@@ -321,7 +312,7 @@ The dependency graph, vulnerabilities, upgrades, licences, SBOM and VEX; a walkt
 | `--apply` | write what `--plan` and/or `--mitigate` propose, then re-read and report what is fixed and what remains |
 | `--relock` | with `--apply`: regenerate lockfiles with the package manager (runs it) |
 | `--verify COMMAND` | with `--apply`: run your build or tests before and after; roll back an upgrade that breaks them |
-| `--adapt` | with `--verify`: when the upgrade breaks the command, let a model adapt the code that uses the upgraded packages; kept only if the command passes and a re-scan finds nothing new (needs `FRAME_LLM_*`) |
+| `--adapt` | with `--verify`: when the upgrade breaks the command, let a model adapt the code that uses the upgraded packages; kept only if the command passes and a re-scan finds nothing new (needs a model, [ai.md](ai.md#setting-it-up)) |
 | `--licenses` | check licences against `[licenses]` (exit 1 on a violation) |
 | `--sbom cyclonedx\|spdx` | print a CycloneDX 1.6 or SPDX 2.3 SBOM |
 | `--vex openvex\|cyclonedx` | print VEX statements (implies `--vulns`; exit 1 on a conflict with `.frame/vex.toml`) |
@@ -339,12 +330,12 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 | `--include-called` | with `--deps`: also call sites with no attacker data flow |
 | `--diff` / `--in-place` | print a diff (the default) / write the patches |
 | `--no-verify` | do not re-scan the patched code |
-| `--model MODEL` | override `FRAME_LLM_MODEL` |
+| `--model MODEL` | the model for this run (wins over `FRAME_LLM_MODEL` and `llm.model`) |
 | `--format text\|json` | output format |
 
 ### `frame exploit --target URL`
 
-Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default 40), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
+Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default `llm.exploit_max_steps`, 250), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
 
 ### `frame iac [target]`
 
@@ -362,7 +353,7 @@ Infrastructure files (Kubernetes manifests, Dockerfiles, Terraform, CloudFormati
 
 ### `frame history [repo]`
 
-Provider credentials anywhere in the git history: every line each commit added (all refs; `--range REV` for one branch or range, e.g. `origin/main..HEAD`), each credential reported once at the commit that first added it, with whether the current tree still has it. Values are never printed (the first four characters, the length, and a SHA-256 fingerprint in `-f json`). Comments count, unlike in `frame scan`: a real key in a comment is as leaked as one in a string. Exit 1 when any is found, 2 when the directory is not a git repository. `-f text|json`. `--verify` asks each credential's provider whether it still works ([verifying secrets](#verifying-secrets)).
+Provider credentials anywhere in the git history: every line each commit added (all refs; `--range REV` for one branch or range, e.g. `origin/main..HEAD`), each credential reported once at the commit that first added it, with whether the current tree still has it. Values are never printed (the first four characters, the length, and a SHA-256 fingerprint in `-f json`). Comments count, unlike in `frame scan`: a real key in a comment is as leaked as one in a string. Exit 1 when any is found, 2 when the directory is not a git repository. `-f text|json`. `--verify` asks each credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider)).
 
 ### `frame inventory [dir]`
 
@@ -390,36 +381,29 @@ The separation logic engine; flags in [engine.md](engine.md).
 
 ## Environment variables
 
-| Variable | Default | |
+The environment holds what belongs to the machine running Frame. Each variable wins over its key in the config file.
+
+| Variable | Key | |
 |---|---|---|
-| `FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL`, `FRAME_LLM_API_KEY`, `FRAME_LLM_REPO_ROOT` | | the model for `--ai`, `fix`, `exploit` ([ai.md](ai.md)) |
-| `FRAME_LLM_TEMPERATURE` | 0.0 | sampling temperature |
-| `FRAME_LLM_MAX_TOKENS` | 4096 | completion budget per call |
-| `FRAME_LLM_TIMEOUT` | 60 | seconds per request |
-| `FRAME_LLM_TOTAL_TIMEOUT` | 0 (derived from the request timeout) | seconds for a whole LLM session |
-| `FRAME_LLM_JSON_MODE` | `json_schema` | `json_schema`, `json_object` or `off`, for servers without structured output |
-| `FRAME_LLM_CONTEXT_LINES` | 12 | lines of code around a finding sent to the model |
-| `FRAME_LLM_MAX_CONTEXT_CHARS` | 6000 | cap on one code snippet |
-| `FRAME_LLM_DROP_THRESHOLD` | 0.75 | triage drops a finding only as a false positive at or above this confidence |
-| `FRAME_LLM_TRIAGE_AGENTIC` | off | let triage use tools to read more of the repository |
-| `FRAME_LLM_MAX_TOOL_STEPS` | 30 | tool calls per agentic detect/triage session |
-| `FRAME_LLM_HUNT_MAX_STEPS` | 200 | tool-loop turns for the authorization hunt (a deep investigation) |
-| `FRAME_LLM_STREAM` | off | stream responses, so a slow generation does not trip a read timeout and time-to-first-token is visible |
-| `FRAME_LLM_STREAM_STALL` | 60 | seconds with no new streamed token before the stream is treated as dropped and re-issued |
-| `FRAME_LLM_TRAJECTORY_DIR` | | write each agent run's HF Session-Trace (JSONL) + per-call timing here; an existing trace is resumed |
-| `FRAME_LLM_AGENT_MAX_TOKENS` | 16000 | completion budget per agent turn |
-| `FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS` | 80000 | context an agent session may accumulate |
-| `FRAME_LLM_AGENT_RETRIES` | 2 | retries for a failed agent turn |
-| `FRAME_LLM_EXPLOIT_MAX_STEPS` | 250 | hard cap on `exploit` steps |
-| `FRAME_LLM_CACHE` | | a JSON file that keeps LLM verdicts across runs |
-| `FRAME_KB` | on | `off` uses built-in packs only and no advisories |
-| `FRAME_KB_CACHE` | `~/.cache/frame/kb` | where packs and advisories are cached |
-| `FRAME_KB_SOURCE` | `hf:lambdasec/frame-kb` | where `kb pull` gets packs |
-| `FRAME_REGISTRY_CACHE` | beside `FRAME_KB_CACHE` (`~/.cache/frame/registry`) | registry metadata for `--plan --registry` |
-| `FRAME_BACKPORT_CACHE` | `~/.cache/frame/backport` | OSV records and GitHub fix commits for `--backport` (a recorded directory works air-gapped) |
-| `FRAME_ADVISORIES_SOURCE` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
-| `FRAME_GENERATED_LINE_THRESHOLD` | 2000 | a file with lines this long is treated as minified or generated |
-| `FRAME_AGGRESSIVE_DETECTORS` | off | Java context-dependent detectors (CSRF disabled, field-initializer secrets); use only with LLM triage |
+| `FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL` | `llm.base_url`, `llm.model` | the model for `--ai`, `fix`, `exploit` and the hunt ([ai.md](ai.md)) |
+| `FRAME_LLM_API_KEY` | (`llm.api_key_env` names another) | the endpoint's key |
+| `FRAME_KB` | `kb.enabled` | `off` uses built-in packs only and no advisories |
+| `FRAME_KB_SOURCE`, `FRAME_KB_CACHE` | `kb.source`, `kb.cache` | where packs come from and where the knowledge base is cached |
+| `FRAME_ADVISORIES_SOURCE` | `sca.advisories_source` | where advisories come from |
+| `FRAME_REGISTRY_CACHE` | `sca.registry_cache` | registry metadata for `--plan --registry` |
+| `FRAME_BACKPORT_CACHE` | `sca.backport_cache` | OSV records and fix commits for `--backport` |
+
+These variables are no longer read. A command warns about any that is still set, naming its replacement:
+
+| Retired variable | Use instead |
+|---|---|
+| `FRAME_LLM_TEMPERATURE`, `FRAME_LLM_MAX_TOKENS`, `FRAME_LLM_TIMEOUT`, `FRAME_LLM_TOTAL_TIMEOUT`, `FRAME_LLM_JSON_MODE` | `llm.temperature`, `llm.max_tokens`, `llm.timeout`, `llm.total_timeout`, `llm.json_mode` |
+| `FRAME_LLM_STREAM`, `FRAME_LLM_STREAM_STALL`, `FRAME_LLM_OUTAGE_WAIT`, `FRAME_LLM_CACHE` | `llm.stream`, `llm.stream_stall_timeout`, `llm.outage_wait`, `llm.cache_path` |
+| `FRAME_LLM_CONTEXT_LINES`, `FRAME_LLM_MAX_CONTEXT_CHARS`, `FRAME_LLM_DROP_THRESHOLD`, `FRAME_LLM_TRIAGE_AGENTIC`, `FRAME_LLM_MAX_TOOL_STEPS` | `llm.context_lines`, `llm.max_context_chars`, `llm.drop_threshold`, `llm.triage_agentic`, `llm.max_tool_steps` |
+| `FRAME_LLM_AGENT_MAX_TOKENS`, `FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS`, `FRAME_LLM_AGENT_RETRIES` | `llm.agent_max_tokens`, `llm.agent_context_budget_chars`, `llm.agent_retries` |
+| `FRAME_LLM_EXPLOIT_MAX_STEPS`, `FRAME_LLM_HUNT_MAX_STEPS`, `FRAME_LLM_TRAJECTORY_DIR` | `llm.exploit_max_steps`, `llm.hunt_max_steps`, `hunt.trajectory_dir` |
+| `FRAME_LLM_REPO_ROOT` | `frame scan --root` (a directory scan uses the scanned directory) |
+| `FRAME_GENERATED_LINE_THRESHOLD`, `FRAME_AGGRESSIVE_DETECTORS` | `engine.generated_line_threshold`, `engine.aggressive_detectors` |
 
 ## Python API
 

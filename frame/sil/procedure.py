@@ -534,6 +534,8 @@ class Procedure:
     asserts: bool = False
     parent: Optional[str] = None
     span: Optional[Tuple[int, int]] = None
+    # The definition's last source line (1-based); `span` is in BYTES. 0 when not recorded.
+    end_line: int = 0
 
     # Does the body contain a try/catch? The frontends translate handler bodies
     # inline instead of giving them their own edges, so for a procedure with one

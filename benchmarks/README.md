@@ -8,7 +8,7 @@ Comprehensive benchmark infrastructure for evaluating Frame against industry-sta
 
 - [Quick Start](#quick-start)
 - [Results Summary](#results-summary)
-  - [Real-World Security](#real-world-security): CVE-Bench, XBOW/ZeroPath, Endor, RealVuln, SusVibes
+  - [Real-World Security](#real-world-security): CVE-Bench, XBOW/ZeroPath, Endor, BAC-Bench, RealVuln, SusVibes
   - [Synthetic SAST Suites](#synthetic-sast-suites)
 - [Endor Labs Corpus (deep dive)](#real-world-benchmark-endor-labs-corpus)
 - [SAST Security Benchmarks](#sast-security-benchmarks)
@@ -63,8 +63,8 @@ python -m benchmarks run --all
 
 ### Real-World Security
 
-Five independent benchmarks with published ground truth: a live end-to-end loop, an
-AI-SAST vendor comparison, an authorization study, and two detection datasets.
+Six independent benchmarks with published ground truth: a live end-to-end loop, an
+AI-SAST vendor comparison, two authorization benchmarks, and two detection datasets.
 
 **[CVE-Bench](cve_bench/README.md)**: the full loop on live web CVEs: detect the
 vulnerability in source, exploit the running target, then fix it and re-scan to confirm
@@ -120,6 +120,25 @@ apples-to-apples. Detection rate (vulnerable app) and false-positive rate (patch
 twin). The full 39-benchmark run is in progress; a 5-class pilot has Frame tying
 ZeroPath at 4/5 detection and 2/5 false positives, ahead of Semgrep (3/5), Snyk (2/5),
 and Bearer (1/5). Full report: [`xbow_zeropath/`](xbow_zeropath/REPORT.md).
+
+**[BAC-Bench](bacbench/REPORT.md)**: 30 disclosed broken-access-control advisories in 25
+open-source web apps (Python, TypeScript, JavaScript), each a vulnerable and a fixing commit. Frame's
+agentic authorization hunt (`--hunt-authz`) with Claude Haiku 5.5:
+
+<p align="center"><img src="../assets/chart-bacbench.svg" alt="BAC-Bench, 30 real broken-access-control advisories: Frame detects 22/30 and pairs 11/30; ABSENTIA 19/30 and 17/30; a single agent 3/30; CodeQL and Semgrep 0/30" width="760"></p>
+
+| System | Detected | Paired with the fix |
+|--------|:--------:|:-------------------:|
+| Frame hunt, claim checked | **22/30** | 11/30 |
+| Frame hunt, deterministic matcher | 25/30 | 12/30 |
+| ABSENTIA (paper) | 19/30 | 17/30 |
+| CodeQL, Semgrep (paper) | 0/30 | 0/30 |
+
+Frame finds more advisories than ABSENTIA, but pairs fewer: on the fixing commit its agent often
+reports a different flaw in the same function. The paper's rows are quoted, not re-run, and its
+judge differs from the hand check. Two of the five misses are files the hunt's agents read but no unit owned,
+and two were mapped but judged safe. Per-case
+results, the funnel and the method: [`bacbench/`](bacbench/REPORT.md).
 
 **[RealVuln IDOR/BOLA](realvuln_authz/REPORT.md)**: broken-authorization detection on
 4 pinned public Python apps (VAmPI, DVBLab, Vulpy, DVGA), 8 IDOR/BOLA bugs plus 2

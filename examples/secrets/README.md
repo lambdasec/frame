@@ -60,6 +60,6 @@ $ frame scan demo --verify-secrets
 Scanned 3 files: 5 findings (1 critical, 4 low)
 ```
 
-A live key would say `verified valid at api.github.com: it works now, rotate it` and be critical. What is sent, the providers checked, and how to try it with a token of your own: [docs/usage.md](../../docs/usage.md#verifying-secrets).
+A live key would say `verified valid at api.github.com: it works now, rotate it` and be critical. What is sent, the providers checked, and how to try it with a token of your own: [docs/secrets.md](../../docs/secrets.md#verifying-with-the-provider).
 
 The formats are data, each with its provider's documentation: [`frame/sil/specs/data/secret-formats.toml`](../../frame/sil/specs/data/secret-formats.toml). It covers AWS, GitHub, GitLab, Slack, Google, Stripe, OpenAI, Anthropic, SendGrid, npm, PyPI, Hugging Face, DigitalOcean, Shopify and PEM private keys. Credential-named variables (`password = "..."`, `API_KEY = "..."`) are reported separately, by name, whatever the value's format. See [docs/coverage.md](../../docs/coverage.md#what-it-detects).

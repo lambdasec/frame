@@ -19,8 +19,68 @@ A credential removed from the code is still in every clone's history. `frame his
 
 `--range REV` scans one branch or range (`origin/main..HEAD`). Exit 1 when any credential is found, 2 when the directory is not a git repository.
 
-## Verifying against the provider
+## Verifying with the provider
 
-`frame scan --verify-secrets` and `frame history --verify` check each found credential with a read-only request to the provider's own API: GitHub, Slack, Stripe, OpenAI, Anthropic, SendGrid, Hugging Face, DigitalOcean and npm. A live credential becomes critical, a rejected one low, and one that cannot be checked keeps its severity. A credential is only ever sent to its own provider's documented endpoint. See [verifying secrets](usage.md#verifying-secrets) for the setup and the offline test.
+A found credential may be live, revoked, or never real. `frame scan --verify-secrets` and `frame history --verify` ask each one's provider, the way Semgrep Secrets' validators and Endor Labs' secret validation do. It is off by default: it sends each found credential to its provider, which the provider sees as a use of that credential.
+
+```console
+$ frame scan demo --verify-secrets
+1. [LOW] 🔵 hardcoded_secret
+   Location: demo/deploy.py:6:12
+   Description: Hardcoded GitHub token (...) (GitHub format: github-token)
+   Verified: rejected by api.github.com (revoked or expired)
+```
+
+What is sent, and where: one read-only request per distinct credential, to the provider's own API, with the credential in the header the provider documents. Nothing else leaves the machine (no file name, no code, nothing to Frame's authors), and the run makes no other network request. The checks are data, each with the provider's documentation (`[format.verify]` in [`frame/sil/specs/data/secret-formats.toml`](../frame/sil/specs/data/secret-formats.toml)); the loader refuses a check whose URL is not a fixed `https://` address, so a credential can only go to that provider's host.
+
+| Format | Request | Valid | Invalid |
+|---|---|---|---|
+| GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) | `GET https://api.github.com/user` | 200 | 401 |
+| Slack tokens (`xox?-`) | `POST https://slack.com/api/auth.test` | `"ok": true` | `invalid_auth`, `not_authed`, `account_inactive`, `token_revoked`, `token_expired` |
+| Stripe live keys | `GET https://api.stripe.com/v1/balance` | 200 | 401 |
+| OpenAI | `GET https://api.openai.com/v1/models` | 200 | 401 |
+| Anthropic | `GET https://api.anthropic.com/v1/models` | 200 | 401 |
+| SendGrid | `GET https://api.sendgrid.com/v3/scopes` | 200 | 401 |
+| Hugging Face | `GET https://huggingface.co/api/whoami-v2` | 200 | 401 |
+| DigitalOcean | `GET https://api.digitalocean.com/v2/account` | 200 | 401 |
+| npm | `GET https://registry.npmjs.org/-/whoami` | 200 | 401 |
+
+Not checked, and why: an AWS access key ID (the check needs its secret key, which is rarely beside it), a GitLab token (it may belong to a self-managed instance, so gitlab.com rejecting it says nothing), a Slack webhook (the only check is posting to it), and Google API keys, PyPI and Shopify tokens and private keys (no side-effect-free check).
+
+Each finding gets `validity` (JSON, SARIF properties, a `Verified:` line in the text; in `frame history`, after the location):
+
+- `valid`: the provider accepted it, so anyone with the code can use it now. Severity becomes critical. Rotate it first, then remove it.
+- `invalid`: the provider rejected it (revoked, expired, or a fixture). Severity becomes low: it is still in the code and the history.
+- `unverified`: no check for the format, or no clear answer (a timeout, a rate limit, a 403 from a key that exists but may not read that endpoint). Severity is unchanged.
+
+Each credential is asked about once per run, however many places hold it. Behind a proxy, the standard `HTTPS_PROXY` variable applies.
+
+### Trying it, and how it is tested
+
+To see both answers on your own machine with a credential you control:
+
+```bash
+mkdir -p /tmp/verify-demo
+printf 'GITHUB_TOKEN = "%s"\n' "$(gh auth token)" > /tmp/verify-demo/config.py   # or a new fine-grained PAT with no permissions
+frame scan /tmp/verify-demo --verify-secrets      # Verified: verified valid at api.github.com: it works now, rotate it
+# revoke the token (github.com/settings/tokens), run again: Verified: rejected by api.github.com (revoked or expired)
+rm -r /tmp/verify-demo
+```
+
+The secrets example's tokens are fake, so all three checked ones come back rejected ([examples/secrets](../examples/secrets/README.md#checking-them-with-the-providers)).
+
+Frame's own tests (`tests/test_secret_verify.py`) need no credentials:
+
+- Offline, on every run: the provider is a real HTTP server on localhost, which records what it was sent. The tests check that the credential goes in the documented header and nowhere else, that each answer means what the table says (Slack's `ratelimited` is unverified, not invalid), that each credential is asked once, and that nothing is sent without the flag.
+- `FRAME_SECRETS_LIVE=1`: a well-formed but fake token of every checked format is sent to the real provider, which must reject it. This proves each endpoint, method and header against the real API. CI runs it in the `sca-real` job.
+- `FRAME_VERIFY_GITHUB_TOKEN=$(gh auth token)`: a real token must come back valid (run locally; the Actions token is an installation token that may not read `/user`).
+
+```bash
+python -m pytest tests/test_secret_verify.py                                    # offline
+FRAME_SECRETS_LIVE=1 python -m pytest tests/test_secret_verify.py -k live       # against the providers
+FRAME_VERIFY_GITHUB_TOKEN=$(gh auth token) python -m pytest tests/test_secret_verify.py -k real
+```
+
+To add a check for a format: a `[format.verify]` table with `method`, a fixed `url`, `headers` carrying `{token}`, the `valid` and `invalid` status codes (or `valid_json` / `invalid_json` for an API that answers 200 either way, as Slack's does), and the provider's documentation as `reference`; add a fake token of the format to `FAKE` in the test, and run the live test once.
 
 A walkthrough with real output is in [examples/secrets](../examples/secrets/README.md).

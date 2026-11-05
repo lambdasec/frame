@@ -43,11 +43,13 @@ SOURCE_POINTER = "advisories-source"
 
 
 def source() -> str:
-    """FRAME_ADVISORIES_SOURCE, else the source the last `frame kb pull --advisories` used (so
-    a pull from a mirror or a directory is what later reads use), else the public dataset."""
-    env = os.environ.get("FRAME_ADVISORIES_SOURCE")
-    if env:
-        return env
+    """FRAME_ADVISORIES_SOURCE (or `[sca] advisories_source`), else the source the last
+    `frame kb pull --advisories` used (so a pull from a mirror or a directory is what later
+    reads use), else the public dataset."""
+    from frame import config
+    configured = config.setting("sca", "advisories_source")
+    if configured:
+        return configured
     from frame.kb.store import cache_root
     try:
         last = (cache_root() / SOURCE_POINTER).read_text().strip()
@@ -287,9 +289,9 @@ def _check_functions(data: dict, origin: str) -> Dict[str, List[dict]]:
 # loading
 
 def cached_revision_dir() -> Optional[Path]:
-    if os.environ.get("FRAME_KB", "").lower() in ("off", "0", "false", "no"):
+    from frame.kb.store import _revision_dir, kb_enabled
+    if not kb_enabled():
         return None
-    from frame.kb.store import _revision_dir
     return _revision_dir(source(), None)
 
 

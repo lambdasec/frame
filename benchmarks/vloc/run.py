@@ -51,7 +51,7 @@ def extract(zip_path: Path, dest: Path) -> bool:
 
 
 def frame_scan(repo: Path, language: str, patterns: list, use_ai: bool,
-               timeout: int, repo_scale: bool = False) -> tuple:
+               timeout: int, repo_scale: bool = False, config: str = "") -> tuple:
     """Run `frame scan` once per glob. Returns (findings, errors)."""
     findings, errors = [], []
     for pat in patterns:
@@ -60,6 +60,8 @@ def frame_scan(repo: Path, language: str, patterns: list, use_ai: bool,
                "-l", language, "-p", pat, "-f", "json", "-o", str(out)]
         if use_ai:
             cmd.append("--ai")
+        if config:
+            cmd += ["--config", config]      # e.g. [llm] max_tool_steps for the reference budget
         if repo_scale:
             # One LLM session for the whole repository instead of one per file.
             # Per-file costs ~40 sessions on a typical project here, which is the
@@ -141,6 +143,8 @@ def main() -> int:
                     help="one LLM session per repository instead of one per file")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--frame-config", default="", metavar="PATH",
+                    help="a .frame.toml every scan uses (e.g. [llm] max_tool_steps = 15)")
     args = ap.parse_args()
 
     ws = Path(args.workspace).expanduser().resolve()
@@ -187,7 +191,8 @@ def main() -> int:
             try:
                 findings, errors = frame_scan(repo, language, patterns,
                                               use_ai=not args.no_ai, timeout=args.timeout,
-                                              repo_scale=args.repo_scale)
+                                              repo_scale=args.repo_scale,
+                                              config=str(Path(args.frame_config).resolve()) if args.frame_config else "")
                 files = to_prediction(findings, repo, target, args.cwe_any, args.top_k)
             finally:
                 shutil.rmtree(repo, ignore_errors=True)   # keep peak disk small

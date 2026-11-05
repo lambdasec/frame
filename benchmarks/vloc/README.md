@@ -53,8 +53,9 @@ engine plus, under `--ai`, an LLM layer that explores with `read_file`/`grep`.
 That asymmetry favours Frame on Phase A recall and works against it on Phase B,
 where scanning everything creates more chances to report something on patched
 code. It is a real difference and these numbers are **not like-for-like** with
-the published agent results. Set `FRAME_LLM_MAX_TOOL_STEPS=15` to align Frame's
-LLM layer with the reference budget for a closer comparison.
+the published agent results. Set `max_tool_steps = 15` under `[llm]` in a config file
+(`--frame-config`) to align Frame's LLM layer with the reference budget for a closer
+comparison.
 
 The benchmark's submission rules permit "this repo's CLI, or a documented
 equivalent", and maintainers request raw prediction logs before merging, so a
@@ -82,8 +83,9 @@ the LLM layer, so `--ai` (and an LLM endpoint) is required for a full run.
 python benchmarks/vloc/prepare.py --workspace /tmp/frame-vloc --sample 80
 
 # 2. Scan. Needs FRAME_LLM_* pointing at an OpenAI-compatible endpoint.
-export FRAME_LLM_MAX_TOOL_STEPS=15        # align with the reference budget
-python benchmarks/vloc/run.py --workspace /tmp/frame-vloc --out /tmp/vloc-results
+printf '[llm]\nmax_tool_steps = 15\n' > /tmp/vloc.toml   # align with the reference budget
+python benchmarks/vloc/run.py --workspace /tmp/frame-vloc --out /tmp/vloc-results \
+    --frame-config /tmp/vloc.toml
 
 # 3. Score with Cisco's scorer, unmodified.
 python benchmarks/vloc/score.py --workspace /tmp/frame-vloc --results /tmp/vloc-results

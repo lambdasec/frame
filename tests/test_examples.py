@@ -479,3 +479,30 @@ def test_iac_walkthrough(tmp_path):
     assert "k8s/api.yaml" not in out and "images/api" not in out and "k8s-privileged" not in out
     assert "aws_security_group.web" not in out and "aws-ebs-unencrypted" not in out
     assert "aws_s3_bucket.exports" not in out and "DebugSecurityGroup" not in out
+
+
+def test_configs_walkthrough(tmp_path):
+    work = tmp_path / "configs"
+    shutil.copytree(EXAMPLES / "configs", work)
+    readme = (work / "README.md").read_text()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FRAME_LLM_")}
+    env.update({"FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)})
+
+    def run(*args, extra=None):
+        proc = subprocess.run([sys.executable, "-m", "frame.cli", *args], cwd=work,
+                              env={**env, **(extra or {})}, capture_output=True, text=True, timeout=600)
+        return proc.returncode, proc.stdout + proc.stderr
+
+    shutil.copy(work / "minimal.toml", work / ".frame.toml")
+    code, out = run("scan", "app.py")
+    for line in ["1. [CRITICAL] 🔴 sql_injection", "   Location: app.py:12:4"]:
+        assert line in out and line in readme, (line, out[-2000:])
+    assert code == 1 and "The exit status is 1." in readme
+    (work / "typo.toml").write_text("[hunt]\nconcurency = 8\n")
+    code, out = run("scan", "app.py", "--config", "typo.toml")
+    line = "Error: typo.toml: [hunt] has unknown key(s) ['concurency']"
+    assert code == 2 and line in out and line in readme, out
+    code, out = run("scan", "app.py", extra={"FRAME_LLM_MAX_TOKENS": "900"})
+    line = ("Warning: FRAME_LLM_MAX_TOKENS is no longer read; set llm.max_tokens in .frame.toml "
+            "(or [tool.frame]) instead")
+    assert line in out and line in readme, out

@@ -1,0 +1,8 @@
+# The smallest useful Frame config: what a scan reports and when CI fails.
+# Save as .frame.toml at the project root, or put these keys under [tool.frame]
+# in pyproject.toml.
+
+min_severity = "low"          # report low and above
+fail_on = "high"              # exit 1 on a high or critical finding
+exclude = ["vendor", "fixtures"]
+disable = []                  # CWE ids or finding types to drop, e.g. "CWE-798"

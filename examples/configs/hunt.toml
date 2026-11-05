@@ -1,0 +1,16 @@
+# The authorization hunt (frame scan --hunt-authz) on a large application, left to
+# run unattended: wait out network drops, keep every agent's trace.
+
+[llm]
+model = "anthropic/claude-haiku-5.5"
+api_key_env = "OPENROUTER_API_KEY"
+stream = true
+outage_wait = 21600           # keep retrying an unreachable endpoint for up to 6 hours
+
+[hunt]
+concurrency = 8               # unit agents at once
+unit_steps = 24               # tool turns per unit
+scout_steps = 30              # tool turns per scout (0 turns the scouts off)
+max_scouts = 16
+coverage_readers = 2          # audit code 2+ units relied on that no unit owned (0: off)
+trajectory_dir = ".frame/traces"

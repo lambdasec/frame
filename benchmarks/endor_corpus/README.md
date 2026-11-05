@@ -139,8 +139,10 @@ Then point Frame at the endpoint:
 export FRAME_LLM_BASE_URL=http://localhost:47317/v1
 export FRAME_LLM_API_KEY=                                   # empty for local servers
 export FRAME_LLM_MODEL=mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
-export FRAME_LLM_REPO_ROOT=/path/to/repo                    # enables agentic cross-file tools
 ```
+
+A directory scan gives the agentic `read_file`/`grep` tools the scanned directory as their root
+(`--root` names another).
 
 For a hosted model, set `FRAME_LLM_BASE_URL` to the provider's OpenAI-compatible
 base, `FRAME_LLM_API_KEY` to your key, and `FRAME_LLM_MODEL` to the model id.
@@ -150,9 +152,10 @@ base, `FRAME_LLM_API_KEY` to your key, and `FRAME_LLM_MODEL` to the model id.
 | `FRAME_LLM_BASE_URL` | OpenAI-compatible base URL |
 | `FRAME_LLM_MODEL` | model id |
 | `FRAME_LLM_API_KEY` | API key; empty for local servers |
-| `FRAME_LLM_REPO_ROOT` | repo root; enables agentic `read_file`/`grep` cross-file detection |
-| `FRAME_LLM_MAX_TOOL_STEPS` | tool-call rounds before a verdict (default 6) |
-| `FRAME_LLM_DROP_THRESHOLD` | triage confidence needed to drop a finding (default 0.75) |
+
+The agent budgets are config-file keys ([usage.md](../../docs/usage.md#configuration)):
+`llm.max_tool_steps` (tool-call rounds before a verdict, default 30) and `llm.drop_threshold`
+(triage confidence needed to drop a finding, default 0.75).
 
 Both layers are off by default. In code they are `FrameScanner(llm_detect=True,
 llm_triage=True)`.

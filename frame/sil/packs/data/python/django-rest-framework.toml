@@ -96,3 +96,95 @@ method = ["has_permission", "has_object_permission", "authenticate", "authentica
           "get_ident"]
 param_positions = [0]
 request_type = "Request"
+
+# What the generic views and viewsets serve without the subclass writing it: a class extending
+# one of these answers these requests with DRF's own code, over the class's queryset, permission
+# and serializer attributes. Read from the generic views and viewsets source (mixins.py,
+# generics.py, viewsets.py), which is what the documentation's class lists describe.
+[[provided_action]]
+id = "drf-model-viewset"
+extends = ["rest_framework.viewsets.ModelViewSet"]
+actions = ["list", "retrieve", "create", "update", "partial_update", "destroy"]
+decided_by = ["queryset", "get_queryset", "filter_queryset", "get_object", "lookup_field", "permission_classes",
+              "get_permissions", "serializer_class", "get_serializer_class", "perform_create", "perform_update",
+              "perform_destroy"]
+references = ["https://www.django-rest-framework.org/api-guide/viewsets/#modelviewset"]
+
+[[provided_action]]
+id = "drf-read-only-viewset"
+extends = ["rest_framework.viewsets.ReadOnlyModelViewSet", "rest_framework.mixins.ListModelMixin"]
+actions = ["list"]
+decided_by = ["queryset", "get_queryset", "filter_queryset", "permission_classes", "get_permissions"]
+references = ["https://www.django-rest-framework.org/api-guide/viewsets/#readonlymodelviewset",
+              "https://www.django-rest-framework.org/api-guide/generic-views/#listmodelmixin"]
+
+[[provided_action]]
+id = "drf-retrieve"
+extends = ["rest_framework.viewsets.ReadOnlyModelViewSet", "rest_framework.mixins.RetrieveModelMixin"]
+actions = ["retrieve"]
+decided_by = ["queryset", "get_queryset", "filter_queryset", "get_object", "lookup_field", "permission_classes",
+              "get_permissions"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#retrievemodelmixin"]
+
+[[provided_action]]
+id = "drf-create"
+extends = ["rest_framework.mixins.CreateModelMixin"]
+actions = ["create"]
+decided_by = ["permission_classes", "get_permissions", "serializer_class", "get_serializer_class", "perform_create"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#createmodelmixin"]
+
+[[provided_action]]
+id = "drf-update"
+extends = ["rest_framework.mixins.UpdateModelMixin"]
+actions = ["update", "partial_update"]
+decided_by = ["queryset", "get_queryset", "get_object", "lookup_field", "permission_classes", "get_permissions",
+              "serializer_class", "get_serializer_class", "perform_update"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#updatemodelmixin"]
+
+[[provided_action]]
+id = "drf-destroy"
+extends = ["rest_framework.mixins.DestroyModelMixin"]
+actions = ["destroy"]
+decided_by = ["queryset", "get_queryset", "get_object", "lookup_field", "permission_classes", "get_permissions",
+              "perform_destroy"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#destroymodelmixin"]
+
+# Concrete generic views: the HTTP method handlers they define call the mixin actions above.
+[[provided_action]]
+id = "drf-generic-get-list"
+extends = ["rest_framework.generics.ListAPIView", "rest_framework.generics.ListCreateAPIView"]
+actions = ["get"]
+decided_by = ["queryset", "get_queryset", "filter_queryset", "permission_classes", "get_permissions"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#concrete-view-classes"]
+
+[[provided_action]]
+id = "drf-generic-get-object"
+extends = ["rest_framework.generics.RetrieveAPIView", "rest_framework.generics.RetrieveUpdateAPIView",
+           "rest_framework.generics.RetrieveDestroyAPIView", "rest_framework.generics.RetrieveUpdateDestroyAPIView"]
+actions = ["get"]
+decided_by = ["queryset", "get_queryset", "get_object", "lookup_field", "permission_classes", "get_permissions"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#concrete-view-classes"]
+
+[[provided_action]]
+id = "drf-generic-post"
+extends = ["rest_framework.generics.CreateAPIView", "rest_framework.generics.ListCreateAPIView"]
+actions = ["post"]
+decided_by = ["permission_classes", "get_permissions", "serializer_class", "get_serializer_class", "perform_create"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#concrete-view-classes"]
+
+[[provided_action]]
+id = "drf-generic-update"
+extends = ["rest_framework.generics.UpdateAPIView", "rest_framework.generics.RetrieveUpdateAPIView",
+           "rest_framework.generics.RetrieveUpdateDestroyAPIView"]
+actions = ["put", "patch"]
+decided_by = ["queryset", "get_queryset", "get_object", "permission_classes", "get_permissions", "serializer_class",
+              "get_serializer_class", "perform_update"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#concrete-view-classes"]
+
+[[provided_action]]
+id = "drf-generic-delete"
+extends = ["rest_framework.generics.DestroyAPIView", "rest_framework.generics.RetrieveDestroyAPIView",
+           "rest_framework.generics.RetrieveUpdateDestroyAPIView"]
+actions = ["delete"]
+decided_by = ["queryset", "get_queryset", "get_object", "permission_classes", "get_permissions", "perform_destroy"]
+references = ["https://www.django-rest-framework.org/api-guide/generic-views/#concrete-view-classes"]

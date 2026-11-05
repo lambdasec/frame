@@ -7,9 +7,9 @@ This is the model-swappable substrate used by all three LLM layers -- detection
 verdict caching, and JSON extraction. It carries no layer-specific prompts or
 schemas -- each layer supplies those.
 
-Configure via env (`FRAME_LLM_*`) or an explicit `LLMConfig`. `llm_triage` re-exports
-`LLMClient`/`LLMConfig` under their historical names (`LLMTriageClient`/`TriageConfig`)
-for backward compatibility.
+Configure with `[llm]` in the config file and `FRAME_LLM_*` (see `frame.config`), or an
+explicit `LLMConfig`. `llm_triage` re-exports `LLMClient`/`LLMConfig` under their historical
+names (`LLMTriageClient`/`TriageConfig`) for backward compatibility.
 """
 
 from __future__ import annotations
@@ -66,7 +66,12 @@ class LLMConfig:
     # when the growing tail is genuinely large, not on the fixed prefix. ~100k tokens.
     agent_context_budget_chars: int = 400000
     # Retries for the agentic transport on transient network errors (flaky links).
-    agent_retries: int = 2
+    agent_retries: int = 5
+    # After those retries, keep retrying an unreachable endpoint (network errors, HTTP 408/429/5xx)
+    # every 30 seconds for up to this many seconds, measured from the first failure, instead of
+    # giving up. 0 = off. For long unattended runs on a link that can drop for hours: a hunt unit
+    # waits out the outage and continues where it was, rather than ending as transport_error.
+    outage_wait: int = 0
     # Structured output. "json_object" is widely supported (incl. local
     # MLX/optillm/vLLM/llama.cpp); "json_schema" enforces an exact schema where
     # supported; "off" falls back to prompt-only JSON.
@@ -99,32 +104,16 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        base = os.environ.get("FRAME_LLM_BASE_URL", "").rstrip("/")
-        return cls(
-            base_url=base,
-            api_key=os.environ.get("FRAME_LLM_API_KEY", "sk-local"),
-            model=os.environ.get("FRAME_LLM_MODEL", ""),
-            temperature=float(os.environ.get("FRAME_LLM_TEMPERATURE", "0.0")),
-            max_tokens=int(os.environ.get("FRAME_LLM_MAX_TOKENS", "4096")),
-            agent_max_tokens=int(os.environ.get("FRAME_LLM_AGENT_MAX_TOKENS", "16000")),
-            agent_context_budget_chars=int(os.environ.get("FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS", "400000")),
-            agent_retries=int(os.environ.get("FRAME_LLM_AGENT_RETRIES", "2")),
-            exploit_max_steps=int(os.environ.get("FRAME_LLM_EXPLOIT_MAX_STEPS", "250")),
-            hunt_max_steps=int(os.environ.get("FRAME_LLM_HUNT_MAX_STEPS", "200")),
-            triage_agentic=os.environ.get("FRAME_LLM_TRIAGE_AGENTIC", "").lower() in ("1", "true", "yes"),
-            stream=os.environ.get("FRAME_LLM_STREAM", "").lower() in ("1", "true", "yes"),
-            stream_stall_timeout=int(os.environ.get("FRAME_LLM_STREAM_STALL", "60")),
-            cache_path=os.environ.get("FRAME_LLM_CACHE", ""),
-            repo_root=os.environ.get("FRAME_LLM_REPO_ROOT", ""),
-            max_tool_steps=int(os.environ.get("FRAME_LLM_MAX_TOOL_STEPS", "30")),
-            context_lines=int(os.environ.get("FRAME_LLM_CONTEXT_LINES", "12")),
-            max_context_chars=int(os.environ.get("FRAME_LLM_MAX_CONTEXT_CHARS", "6000")),
-            json_mode=os.environ.get("FRAME_LLM_JSON_MODE", "json_schema"),
-            drop_threshold=float(os.environ.get("FRAME_LLM_DROP_THRESHOLD", "0.75")),
-            timeout=int(os.environ.get("FRAME_LLM_TIMEOUT", "60")),
-            total_timeout=int(os.environ.get("FRAME_LLM_TOTAL_TIMEOUT", "0")),
-            enabled=bool(base and os.environ.get("FRAME_LLM_MODEL")),
-        )
+        """The model endpoint and agent settings, resolved by `frame.config`: environment
+        (`FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL`, the key's variable) over the active config
+        file's `[llm]` table over the defaults."""
+        from frame import config
+        config.warn_retired()
+        s = config.section("llm")
+        base = s["base_url"].rstrip("/")
+        fields = {k: v for k, v in s.items() if k not in ("base_url", "api_key_env")}
+        return cls(base_url=base, api_key=os.environ.get(s["api_key_env"], "sk-local"),
+                   enabled=bool(base and s["model"]), **fields)
 
 
 def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -180,6 +169,9 @@ class LLMClient:
         # it upstream, which keeps the prompt-prefix cache warm across the many turns of a
         # tool loop (measured 70-80% of the prompt cached). One id per client = per run.
         self.session_id: str = uuid.uuid4().hex
+        # Set (a threading.Event) by a caller that may cancel this client's calls: an outage
+        # wait ends as soon as it is set, so a cancelled hunt never sits out the whole window.
+        self.abort: Optional[Any] = None
         if getattr(config, "cache_path", ""):
             try:
                 with open(config.cache_path, encoding="utf-8") as fh:
@@ -283,7 +275,7 @@ class LLMClient:
         payload = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json", "x-session-id": self.session_id}
         # Some local servers (e.g. OptiQ) reject *any* Authorization header; only
-        # send one when a key is actually configured. Set FRAME_LLM_API_KEY="" to omit.
+        # send one when a key is actually configured. Set the key's variable to "" to omit.
         if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         req = urllib.request.Request(url, data=payload, headers=headers)
@@ -312,20 +304,29 @@ class LLMClient:
                                        response_format=response_format)
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
         last_err: Optional[Exception] = None
-        for i in range(attempts):
+        first_fail: Optional[float] = None
+        i = 0
+        while True:
             try:
                 return _do()
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_err = exc
                 self.stats["errors"] += 1
+                first_fail = first_fail or time.time()
                 if i + 1 < attempts:        # transient blip -> back off and retry
                     _log.warning("LLM call to %s failed (attempt %d/%d): %s -- retrying",
                                  self.config.base_url, i + 1, attempts, exc)
                     time.sleep(1.5 * (i + 1))
+                    i += 1
+                    continue
+                wait = self._outage_delay(exc, first_fail)
+                if wait is None or not self._pause(wait):
+                    break
+                i += 1
         _log.error("LLM endpoint %s unreachable after %d attempts: %s",
-                   self.config.base_url, attempts, last_err)
+                   self.config.base_url, i + 1, last_err)
         raise LLMUnavailableError(
-            f"LLM endpoint {self.config.base_url!r} unreachable after {attempts} "
+            f"LLM endpoint {self.config.base_url!r} unreachable after {i + 1} "
             f"attempts: {last_err}") from last_err
 
     def detect_complete(self, messages: List[Dict[str, str]]) -> str:
@@ -353,7 +354,10 @@ class LLMClient:
         data = json.dumps(body).encode("utf-8")
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
         streaming = bool(getattr(self.config, "stream", False))
-        for i in range(attempts):
+        first_fail: Optional[float] = None
+        i = -1
+        while True:
+            i += 1
             t0 = time.time()
             try:
                 self.stats["calls"] += 1
@@ -369,11 +373,16 @@ class LLMClient:
             except urllib.error.HTTPError as exc:
                 self.stats["errors"] += 1
                 self.last_call = {"status": "error", "error": f"HTTP {exc.code}",
-                                  "latency_s": round(time.time() - t0, 2), "retries": i}
+                                  "latency_s": round(time.time() - t0, 2), "retries": i,
+                                  "detail": self._error_detail(exc)}
                 if exc.code in (400, 401):        # malformed request / bad auth: retrying cannot help
                     return None
+                first_fail = first_fail or t0
                 if i + 1 < attempts:
-                    time.sleep(1.5 * (i + 1))
+                    time.sleep(self._agent_backoff(i))
+                    continue
+                wait = self._outage_delay(exc, first_fail)
+                if wait is not None and self._pause(wait):
                     continue
                 return None
             except (_DroppedStream, urllib.error.URLError, KeyError, ValueError,
@@ -381,10 +390,62 @@ class LLMClient:
                 self.stats["errors"] += 1
                 self.last_call = {"status": "error", "error": type(exc).__name__,
                                   "latency_s": round(time.time() - t0, 2), "retries": i}
+                first_fail = first_fail or t0
                 if i + 1 < attempts:      # transient blip / dropped stream -> back off and retry
-                    time.sleep(1.5 * (i + 1))
+                    time.sleep(self._agent_backoff(i))
+                    continue
+                wait = self._outage_delay(exc, first_fail)
+                if wait is not None and self._pause(wait):
                     continue
                 return None
+
+    @staticmethod
+    def _error_detail(exc: "urllib.error.HTTPError") -> str:
+        """The start of an HTTP error's body (the endpoint's reason), for the call log: a 400
+        logged as only "HTTP 400" left a rejected request indistinguishable from any other."""
+        try:
+            return (exc.read() or b"")[:500].decode("utf-8", "replace")
+        except Exception:
+            return ""
+
+    _OUTAGE_HTTP = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+    def _outage_delay(self, exc: BaseException, first_fail: float) -> Optional[float]:
+        """Seconds to wait before one more try once the normal retries are spent, or None to
+        give up: only for failures that say the endpoint is unreachable or overloaded (network
+        errors, a dropped stream, HTTP 408/429/5xx; never a reply the model got wrong), only
+        while `outage_wait` has not elapsed since the first failure, and never once aborted."""
+        window = getattr(self.config, "outage_wait", 0) or 0
+        if window <= 0 or (self.abort is not None and self.abort.is_set()):
+            return None
+        if isinstance(exc, urllib.error.HTTPError):
+            if exc.code not in self._OUTAGE_HTTP and exc.code < 500:
+                return None
+        elif not isinstance(exc, (_DroppedStream, urllib.error.URLError, TimeoutError, OSError)):
+            return None
+        left = window - (time.time() - first_fail)
+        if left <= 0:
+            return None
+        if self.stats.get("outage_waits", 0) % 10 == 0:
+            _log.warning("LLM endpoint %s unreachable (%s); waiting up to %ds more for it",
+                         self.config.base_url, type(exc).__name__, int(left))
+        self.stats["outage_waits"] = self.stats.get("outage_waits", 0) + 1
+        return float(min(30.0, left))
+
+    def _pause(self, seconds: float) -> bool:
+        """Sleep, waking early if the caller aborts. True = go on and retry."""
+        if self.abort is not None:
+            return not self.abort.wait(seconds)
+        time.sleep(seconds)
+        return True
+
+    @staticmethod
+    def _agent_backoff(attempt: int) -> float:
+        """Exponential backoff between agent-turn retries: 2, 4, 8, 16, 30, 30... seconds. An
+        agent turn is one step of a long run (a hunt is 200 of them), so riding out a minute of
+        endpoint trouble is cheap; giving up after a few seconds silently ended whole hunts
+        (11 of 30 BAC-Bench cases in one run lost their agent to a short outage)."""
+        return float(min(30, 2 ** (attempt + 1)))
 
     def cache_hit_rate(self) -> Optional[float]:
         """Cached prompt tokens / total prompt tokens over the run (None if nothing seen).
@@ -404,8 +465,23 @@ class LLMClient:
                                "cached_tokens": pd.get("cached_tokens"),
                                "completion_tokens": u.get("completion_tokens"),
                                "reasoning_tokens": cd.get("reasoning_tokens")}
+        # Why generation stopped. A safety refusal ("content_filter" / "refusal") otherwise reads
+        # as an agent that answered briefly and stopped, and a truncation ("length") as one that
+        # forgot to call its tool -- both silently empty a hunt unit.
+        finish = ((resp.get("choices") or [{}])[0] or {}).get("finish_reason")
+        if finish:
+            rec["finish_reason"] = finish
         if "cost" in u:
             rec["cost"] = u.get("cost")
+        # OpenRouter reports top-level `cost` as 0 under BYOK (bring-your-own-key: the spend
+        # lands on the upstream provider account, not OpenRouter credits); the real inference
+        # cost is then in cost_details.upstream_inference_cost. Prefer a non-zero top-level
+        # cost, else fall back to the upstream figure, so spend is captured either way. Leaves
+        # providers that report a plain top-level `cost` (OptiQ) unchanged.
+        if not rec.get("cost"):
+            up = (u.get("cost_details") or {}).get("upstream_inference_cost")
+            if up:
+                rec["cost"] = up
         return rec
 
     @staticmethod

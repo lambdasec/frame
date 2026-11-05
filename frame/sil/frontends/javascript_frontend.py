@@ -1127,6 +1127,7 @@ class JavaScriptFrontend:
         # Find and translate body
         body_node = node.child_by_field_name("body")
         proc.span = (node.start_byte, node.end_byte)
+        proc.end_line = node.end_point[0] + 1
         if body_node is not None:
             own_params = {str(param) for param, _ in proc.params} | {
                 n for _, pattern in self._param_patterns_of(node) for n in bound_names(self._get_text(pattern))}

@@ -413,6 +413,13 @@ class SymbolicState:
     # without disturbing the state-merge fixpoint.
     feasibility_constraints: List[Formula] = field(default_factory=list)
 
+    # Resource objects bound to the authenticated caller ON THIS PATH: a branch
+    # condition relating a resource's field to the principal held true here
+    # (`if file.user_id == current_user.id:`). Used by the authorization-soundness
+    # check to tell a GRANT path that scopes the resource to the caller from one
+    # that grants without binding it (an inconsistent / under-constrained decision).
+    scoped_on_path: Set[str] = field(default_factory=set)
+
     def copy(self) -> 'SymbolicState':
         """Create a deep copy for branching"""
         return SymbolicState(
@@ -438,6 +445,7 @@ class SymbolicState:
             dict_elements={k: dict(v) for k, v in self.dict_elements.items()},
             object_members={k: dict(v) for k, v in self.object_members.items()},
             feasibility_constraints=list(self.feasibility_constraints),
+            scoped_on_path=set(self.scoped_on_path),
         )
 
     def set_constant(self, var: str, value: any) -> None:
@@ -724,6 +732,13 @@ class IPAState:
     entry_taints: Dict[ProcRef, Dict[str, Tuple[TaintInfo, Set[str]]]] = field(default_factory=dict)
     return_summaries: Dict[ProcRef, ReturnSummary] = field(default_factory=dict)
     callers: Dict[ProcRef, Set[ProcRef]] = field(default_factory=dict)
+    # Procedures that reach the data layer INTERPROCEDURALLY: they call a resource sink
+    # directly, or (transitively) call a procedure that does. Computed once as a backward
+    # closure over `callers` when the fixpoint settles (`_close_resource_reach`). Read only
+    # by the authorization hunt, to place an enforcement gate on a handler that reaches the
+    # database THROUGH a service layer (parse-server: a route handler delegates the access
+    # check to `enforceRoleSecurity` and the data access to a `RestQuery`, in three files).
+    reaches_resource: Set[ProcRef] = field(default_factory=set)
     dirty: Set[ProcRef] = field(default_factory=set)
     entry_markers: Dict[str, Tuple[ProcRef, str]] = field(default_factory=dict)
     # (file, app object) -> request field -> taint: what middleware registered with
@@ -794,6 +809,31 @@ def run_ipa_fixpoint(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> 
         for tr in translators.values():
             tr._ipa_summarising = False
             tr._ipa_fixed = True
+        _close_resource_reach(translators, ipa)
+
+
+def _close_resource_reach(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> None:
+    """Fill `ipa.reaches_resource` with every procedure that reaches the data layer, directly
+    or transitively. The call graph is already built (`ipa.callers`, callee -> its callers), so
+    this is a backward closure from the procedures with a direct resource sink: one pass, no new
+    call resolution. Hunt-only (nothing else reads the set), so it changes no benchmark number."""
+    direct: Set[ProcRef] = set()
+    for key, tr in translators.items():
+        for name, proc in tr.program.procedures.items():
+            try:
+                if tr._proc_reaches_resource(proc):
+                    direct.add((key, name))
+            except Exception:
+                continue
+    reach = set(direct)
+    work = deque(direct)
+    while work:
+        ref = work.popleft()
+        for caller in ipa.callers.get(ref, ()):      # a caller of a reacher is itself a reacher
+            if caller not in reach:
+                reach.add(caller)
+                work.append(caller)
+    ipa.reaches_resource = reach
 
 @dataclass
 class ParameterEffect:
@@ -952,6 +992,9 @@ class SILTranslator:
         self._identity_in_proc: bool = False               # an authenticated caller value seen in this proc
         self._handler_authz: Dict[str, Tuple[bool, bool, Location]] = {}  # handler -> (protected, touches resource, loc)
         self._ownership_guards: Dict[str, Set[str]] = {}   # procedure -> objects checked against the caller
+        # procedure -> list of (scoped_on_path, loc) for each `return True` grant, for the
+        # authorization-soundness check (_authorization_soundness_checks).
+        self._grant_paths: Dict[str, List[Tuple[bool, Location]]] = {}
         # CWE-401 leak bookkeeping: allocation identity -> its source location, so
         # a leak reported when an allocation is lost or outlives its scope points
         # at the allocation site rather than the point of loss.
@@ -1369,6 +1412,34 @@ class SILTranslator:
         # Per entry-point handler: (protected, reaches_resource, location). Filled as each handler
         # is translated; read by _missing_authorization_checks after the whole program is walked.
         self._handler_authz: Dict[str, Tuple[bool, bool, Location]] = {}
+        # Authorization-decision functions with an under-constrained grant (see
+        # _authorization_soundness_checks): leads the agentic hunt investigates for intent.
+        self._authz_soundness: List[Dict[str, Any]] = []
+        # Service / helper functions: a procedure that is NOT an entry-point handler yet performs a
+        # resource / DB operation -- the shared layer a handler delegates data access to. The real
+        # authorization enforcement often lives here (parse-server's `enforceRoleSecurity`,
+        # open-webui's `has_access_to_file`), not in the route handler, and the handler-centric
+        # suspect list never surfaces it. Published for the agentic hunt to audit. name ->
+        # (scopes_by_identity, reaches_resource, location); overwritten each pass (final wins).
+        self._service_functions: Dict[str, Tuple[bool, bool, Location]] = {}
+        # Authorization GATES: a procedure that is NOT an entry-point handler and touches NO
+        # resource, yet decides on its own inputs (a branch reading a parameter) -- the enforcement
+        # point a resource handler delegates the access check to (parse-server's
+        # `enforceRoleSecurity`, an app's `require_permission` / `assert_can_access`). It is the
+        # structural OPPOSITE of a service function (which reaches a resource), so the two sets are
+        # disjoint. Surfaced to the hunt to audit for COMPLETENESS: a missing clause (a class or
+        # operation the gate forgets to cover) is a CWE-862 the engine cannot see on its own, the
+        # flaw having no dataflow. name -> location; overwritten each pass (final wins).
+        self._authz_gates: Dict[str, Location] = {}
+        # Simple callee names invoked from a resource-reaching procedure (entry handler or service
+        # function): the delegation edges. A gate is authorization rather than plain input
+        # validation precisely when a resource-reaching caller delegates to it, so the hunt keeps
+        # only the gates whose name appears here. Accumulated across passes.
+        self._resource_proc_callees: set = set()
+        # Per procedure, the guard facts the agentic hunt queries (`authz_guards.guards_at` /
+        # `check_claim`): which conditions hold on every feasible path to each line. Recorded on
+        # the reporting pass only, as pure bookkeeping: nothing in the analysis reads it.
+        self._path_guards: Dict[str, Dict[str, Any]] = {}
         self._prepare()
 
         # Inter-procedural summaries first, to a fixpoint (`run_ipa_fixpoint`).
@@ -1397,6 +1468,11 @@ class SILTranslator:
         # hunting layer (llm_hunt) can query them as sound engine facts.
         try:
             setattr(self.program, "handler_authz", dict(self._handler_authz))
+            setattr(self.program, "authz_soundness", list(self._authz_soundness))
+            setattr(self.program, "service_functions", dict(self._service_functions))
+            setattr(self.program, "authz_gates", dict(self._authz_gates))
+            setattr(self.program, "resource_proc_callees", set(self._resource_proc_callees))
+            setattr(self.program, "path_guards", dict(self._path_guards))
         except (AttributeError, TypeError):
             pass
 
@@ -1445,6 +1521,7 @@ class SILTranslator:
         # it reaches is a missing-authorization finding, not an idor (_relabel_missing_authorization).
         self._identity_in_proc = False
         self._ownership_guards[proc.name] = set()      # objects compared with the caller (this walk)
+        self._grant_paths[proc.name] = []              # `return True` grants + whether scoped (this walk)
         # CWE-338 by destination: does this function's name say its result must be unpredictable?
         self._unpredictable_output = must_be_unpredictable(proc.simple_name.rsplit("::", 1)[-1])
         self._param_names = {str(p) for p, _ in proc.params}
@@ -1459,6 +1536,14 @@ class SILTranslator:
         self._toctou_candidates = []
         self._maybe_null_candidates = []
         self._branch_node_clean = False
+        # Guard facts for the agentic hunt (frame/sil/authz_guards.py), recorded on the reporting
+        # pass only: the edges this walk follows, where its paths end, which branches compare a
+        # resource with the caller, and whether each resource operation is scoped by the caller.
+        # Never read by the analysis.
+        pg: Optional[Dict[str, Any]] = (
+            {"edges": set(), "terms": {}, "owner": set(), "scoped": {}, "resource": {}}
+            if isinstance(getattr(self, "_path_guards", None), dict) and not self._ipa_summarising
+            else None)
 
         # Initialize state with parameters potentially tainted
         initial_state = self._init_state_for_procedure(proc)
@@ -1509,6 +1594,8 @@ class SILTranslator:
             self._branch_node_clean = self._branch_edge_formula(node) is not None
             for instr_idx, instr in enumerate(node.instrs):
                 self._cur_pos = (node_id, instr_idx)
+                if pg is not None:
+                    self._note_guard_facts(pg, instr, current_state)
                 node_checks, current_state = self._execute_instr(
                     instr, current_state, proc.name
                 )
@@ -1544,6 +1631,9 @@ class SILTranslator:
                 # after it; stopping here removes spurious merges that would otherwise
                 # drop the path conditions, so early-return guards are respected.
                 if isinstance(instr, Return):
+                    self._record_grant_path(instr, current_state)
+                    if pg is not None:
+                        pg["terms"][node_id] = instr_idx
                     returned = True
                     break
                 # A call to a function that never returns (exit, abort, ...) ends
@@ -1552,6 +1642,8 @@ class SILTranslator:
                 # guard clear p's null-ness downstream (the null branch is dead),
                 # so a later dereference is not misreported as CWE-476.
                 if self._is_noreturn_call(instr):
+                    if pg is not None:
+                        pg["terms"][node_id] = instr_idx
                     returned = True
                     break
 
@@ -1597,10 +1689,13 @@ class SILTranslator:
                     del succ_state._skip_successor_indices
                 if edge_exp is not None and idx in (0, 1):
                     self._apply_branch_guards(succ_state, edge_exp, is_true_branch=(idx == 0))
+                    self._apply_ownership_scope(succ_state, edge_exp, is_true_branch=(idx == 0))
                 if guard is not None:
                     succ_state.feasibility_constraints = (
                         succ_state.feasibility_constraints + [guard]
                     )
+                if pg is not None:
+                    pg["edges"].add((node_id, idx, succ_id))
                 worklist.append((succ_id, succ_state))
 
             # A path that ends here without returning (falls off the end of a
@@ -1654,16 +1749,51 @@ class SILTranslator:
         checks.extend(self._unchecked_return_checks(proc))
         checks.extend(self._excessive_allocation_checks(proc))
         checks.extend(self._incorrect_permission_checks(proc))
+        checks.extend(self._authorization_soundness_checks(proc))
 
         # Record this handler's authorization posture for the program-level consistency check
         # (_missing_authorization_checks). Only entry-point handlers; the fact is overwritten on
         # each pass, so the final reporting pass wins.
         store = getattr(self, "_handler_authz", None)
-        if getattr(proc, "entry_kinds", None) and isinstance(store, dict):
+        is_entry = bool(getattr(proc, "entry_kinds", None))
+        if is_entry and isinstance(store, dict):
             protected = self._proc_is_auth_gated(proc) or self._identity_in_proc
             store[proc.name] = (protected, self._proc_reaches_resource(proc),
                                 proc.loc or Location.unknown())
 
+        # Service / enforcement layers, recorded for the agentic hunt (never a finding by
+        # themselves). Skip C (its own passes) and test code, whose callbacks are not the
+        # application's enforcement -- parse-server's hunt surfaced only `spec/*.spec.js`
+        # callbacks when every resource-reacher was recorded indiscriminately.
+        # The stores are initialised in translate_program; the interprocedural fixpoint calls this
+        # method earlier (with checks discarded), so recording is skipped until they exist and
+        # lands only on the real reporting pass (as the handler_authz / service_functions blocks do).
+        svc = getattr(self, "_service_functions", None)
+        gates = getattr(self, "_authz_gates", None)
+        callees = getattr(self, "_resource_proc_callees", None)
+        if isinstance(svc, dict) and not self._is_c_lang and not self._program_is_test():
+            direct = self._proc_reaches_resource(proc)
+            ref = (self._file_key, proc.name)
+            reaches = direct or (ref in getattr(self._ipa, "reaches_resource", ()))
+            if reaches:
+                # A data-access path (reaches a resource directly, or THROUGH a service layer). Its
+                # callees are the delegation edges that let the hunt place a gate on the
+                # handler -> resource path, even when the gate and the sink sit in different files
+                # (the interprocedural reach is what makes that edge visible). A non-entry procedure
+                # that itself touches a resource is also a service-layer suspect in its own right.
+                if callees is not None:
+                    callees.update(self._proc_callee_names(proc))
+                if direct and not is_entry:
+                    svc[proc.name] = (self._identity_in_proc, True, proc.loc or Location.unknown())
+            elif (not is_entry) and isinstance(gates, dict) and self._proc_is_authz_gate(proc):
+                # Reaches no resource (not even through callees) yet branches on its own inputs:
+                # an enforcement point the data path delegates to. Surfaced only when a reacher
+                # actually calls it (its name lands in `callees`), which is what separates
+                # authorization from plain input validation.
+                gates[proc.name] = proc.loc or Location.unknown()
+
+        if pg is not None:
+            self._record_path_guards(proc, pg)
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
@@ -5759,6 +5889,16 @@ class SILTranslator:
                     _ti = state.get_taint_info(var)
                     if _ti is None or _ti.source_kind != TaintKind.USER_INPUT:
                         continue
+                    # A selection scoped by the caller's identity
+                    # (`get_object_or_404(Model, pk=x, user=request.user)`) is the caller's
+                    # own resource, not an object-level authz flaw. A bare-function fetch helper
+                    # is lowered as a TaintSink (no `.args`), so scope is read from the call
+                    # expression -- symmetric with the dotted-receiver Call path.
+                    _call_exp = instr.exp
+                    _arg_exps = list(_call_exp.args) if isinstance(_call_exp, ExpCall) else []
+                    if self._resource_select_scoped_from(
+                            _arg_exps, (instr.call or "").strip('"'), state):
+                        continue
                 # CWE-770 is about an allocation size that is UNBOUNDED. A branch
                 # condition on the path that constrains the size discharges that,
                 # so only a size reaching the allocator unchecked is reported.
@@ -6007,6 +6147,99 @@ class SILTranslator:
                     guarded.add(self._get_var_name(side.base.var))
                     self._identity_in_proc = True   # the handler compares an owner against the caller
 
+    def _apply_ownership_scope(self, state: "SymbolicState", cond: Exp, is_true_branch: bool) -> None:
+        """Per-path counterpart of _note_ownership_guard: on the edge where a comparison of a
+        resource's field to the authenticated caller holds TRUE, record the resource as scoped
+        to the caller ON THIS PATH (`if file.user_id == current_user.id:` -> `file` is scoped on
+        the true edge). `==`/`is` scope the true branch, `!=`/`is not` the false branch. This is
+        what lets the authorization-soundness check tell a grant that binds the resource to the
+        caller from one that does not. Conjunctions pass through; disjunctions do not (either
+        disjunct alone does not establish the relation on the whole branch)."""
+        stack = [(cond, is_true_branch)]
+        while stack:
+            e, truth = stack.pop()
+            if isinstance(e, ExpUnOp) and str(getattr(e.op, "value", e.op)) in ("!", "not"):
+                stack.append((e.operand, not truth))
+                continue
+            if not isinstance(e, ExpBinOp):
+                continue
+            op = str(getattr(e.op, "value", e.op))
+            if (op in ("and", "&&") and truth) or (op in ("or", "||") and not truth):
+                stack.extend(((e.left, truth), (e.right, truth)))
+                continue
+            eq_true = op in ("==", "===", "is")
+            if not (eq_true or op in ("!=", "!==", "is not")):
+                continue
+            # the equality holds on the true branch for ==, on the false branch for !=
+            if truth != eq_true:
+                continue
+            for side, other in ((e.left, e.right), (e.right, e.left)):
+                if isinstance(side, ExpFieldAccess) and isinstance(side.base, ExpVar) \
+                        and not self._carries_identity(side, state) and self._carries_identity(other, state):
+                    state.scoped_on_path.add(self._get_var_name(side.base.var))
+
+    def _record_grant_path(self, instr: "Return", state: "SymbolicState") -> None:
+        """At a `return True` (an explicit ACCESS-GRANTED verdict), record whether this path had
+        bound the resource to the caller (state.scoped_on_path). A function that grants with the
+        binding on one path and without it on another is an inconsistent authorization decision
+        (_authorization_soundness_checks). Only a literal True/1 counts as a grant: a function
+        that returns the comparison itself (`return doc.owner_id == user.id`) is already scoped and
+        is not a candidate."""
+        if self._cur_proc is None or not self._returns_grant(getattr(instr, "value", None)):
+            return
+        self._grant_paths.setdefault(self._cur_proc.name, []).append(
+            (bool(state.scoped_on_path), instr.loc or (self._cur_proc.loc or Location.unknown())))
+
+    @staticmethod
+    def _returns_grant(exp: Optional[Exp]) -> bool:
+        """A returned value that is an explicit allow: the literal True (or 1)."""
+        if not isinstance(exp, ExpConst):
+            return False
+        v = getattr(exp, "value", None)
+        return v is True or v == 1
+
+    def _authorization_soundness_checks(self, proc) -> List["VulnerabilityCheck"]:
+        """An authorization-decision function (one using the caller's identity that returns an
+        explicit allow) is UNSOUND when it grants access on a path that binds the resource to the
+        caller AND on another path that does not: the access predicate is under-constrained, so a
+        caller is granted access to a resource that is not theirs (CWE-863). This is the open-webui
+        `has_access_to_file` bug -- `return True` when the caller owns the file, but ALSO `return
+        True` when any shared chat references it, never checking the caller can access that chat.
+
+        Conservative by construction: it fires only when the SAME function both scopes and does not
+        scope a grant (an internal inconsistency), never on a function that simply never scopes
+        (which may be a legitimately public check). Needs the authenticated caller in scope
+        (_identity_in_proc). A path grants without binding when `scoped_on_path` is empty there;
+        known limitation: a deliberately public grant path (`if doc.is_public: return True`) reads
+        as unscoped, so this is a candidate the LLM layer adjudicates for intent, not a proof."""
+        if not self._identity_in_proc:
+            return []
+        grants = self._grant_paths.get(proc.name, [])
+        scoped = [g for g in grants if g[0]]
+        unscoped = [g for g in grants if not g[0]]
+        if not (scoped and unscoped):
+            return []
+        loc = unscoped[0][1]
+        handler = proc.name.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+        # Also publish it as a lead for the agentic hunt (program.authz_soundness): the hunt
+        # investigates intent and finds other handlers that trust the same decision function.
+        self._authz_soundness.append({
+            "name": proc.name, "file": getattr(loc, "file", "") or "",
+            "line": getattr(loc, "line", 0) or 0,
+            "reason": "grants access on a path that does not bind the resource to the caller"})
+        return [VulnerabilityCheck(
+            formula=Sink(Var(handler), "authz"),
+            vuln_type=VulnType.AUTHORIZATION_BYPASS,
+            location=loc,
+            description=(f"Authorization function '{handler}' grants access on a path that binds "
+                        f"the resource to the caller and on another path that does not: the access "
+                        f"decision is under-constrained, so a caller can be granted access to a "
+                        f"resource that is not theirs"),
+            source_var="",
+            sink_type="authz",
+            procedure_name=proc.name,
+        )]
+
     def _filter_post_hoc_ownership_checks(self, proc, checks):
         """Drop IDOR checks whose fetched object is validated by a post-hoc
         ownership guard: a conditional that compares the fetched object's field
@@ -6066,7 +6299,16 @@ class SILTranslator:
         object-level authorization flaw."""
         exps = [a for a, _ in (getattr(instr, "args", None) or [])]
         name = instr.get_full_name().strip('"') if isinstance(instr, Call) else ""
-        parts = name.split(".")[:-1]
+        return self._resource_select_scoped_from(exps, name, state)
+
+    def _resource_select_scoped_from(self, arg_exps: List[Exp], name: str,
+                                     state: "SymbolicState") -> bool:
+        """Core of `_resource_select_principal_scoped`, taking the selection's argument
+        expressions and dotted name directly, so a resource-selection lowered as a bare-function
+        `TaintSink` (`get_object_or_404(Model, pk=x, user=request.user)`, no `.args`) is scoped
+        symmetrically with a dotted-receiver `Call` (`Model.objects.get(...)`)."""
+        exps = list(arg_exps)
+        parts = (name or "").split(".")[:-1]
         if parts and all(p.isidentifier() or p.startswith("$") for p in parts):
             receiver: Exp = ExpVar(PVar(parts[0]))
             for attr in parts[1:]:
@@ -6093,6 +6335,56 @@ class SILTranslator:
             if spec is not None and getattr(spec, "is_sink", None) in self._RESOURCE_SINK_KINDS:
                 return True
         return False
+
+    def _program_is_test(self) -> bool:
+        """Is the program under analysis test code (a `*.spec.js` / `test_*.py` module registering
+        callbacks with a test framework)? Its functions are not the application's enforcement, so
+        they must not be surfaced as service functions or gates. Cached per program."""
+        pid = id(self.program)
+        if getattr(self, "_is_test_pid", None) != pid:
+            self._is_test_pid = pid
+            try:
+                from frame.sil.test_code import test_framework
+                lang = getattr(self.program, "language", "") or ""
+                self._is_test_flag = bool(test_framework(self.program, lang))
+            except Exception:
+                self._is_test_flag = False
+        return self._is_test_flag
+
+    def _proc_callee_names(self, proc) -> set:
+        """The simple callee names this procedure invokes (last `::` / `.` segment): the
+        delegation edges used to place an authorization gate on a handler -> resource path."""
+        out: set = set()
+        for instr in proc.get_all_instrs():
+            if isinstance(instr, Call):
+                name = instr.get_full_name().strip('"') if hasattr(instr, "get_full_name") else ""
+                if name:
+                    out.add(name.rsplit("::", 1)[-1].rsplit(".", 1)[-1])
+        return out
+
+    def _proc_is_authz_gate(self, proc) -> bool:
+        """A non-handler enforcement point: it decides on its OWN inputs -- a branch condition that
+        reads a parameter (or a field of one) -- while touching no resource. That is the gate a
+        resource handler delegates the access check to. Identified structurally, never by a name or
+        an error string. `_proc_reaches_resource` has already excluded the data layer (so a gate and
+        a service function are disjoint); the caller additionally requires a resource-reaching
+        caller (`_resource_proc_callees`), which is what distinguishes authorization enforcement
+        from plain input validation. Recall-oriented: the agent judges intent and completeness."""
+        params = set(proc.get_param_names() or [])
+        if not params:
+            return False
+        for instr in proc.get_all_instrs():
+            if isinstance(instr, Prune) and self._exp_reads_any(instr.condition, params):
+                return True
+        return False
+
+    @staticmethod
+    def _exp_reads_any(exp, names: set) -> bool:
+        """Does `exp` read any of `names` (a bare variable or the base of a field/index chain)?"""
+        try:
+            return bool(set(exp.free_vars()) & names)
+        except Exception:
+            return False
 
     def _missing_authorization_checks(self) -> List["VulnerabilityCheck"]:
         """Missing function-level authorization (CWE-862) by the application's OWN convention: among
@@ -6173,6 +6465,99 @@ class SILTranslator:
                 if cls in info:
                     return info[cls]
         return None
+
+    # ---- guard facts for the agentic hunt (frame/sil/authz_guards.py) -----------------------
+    # Recorded during the reporting walk and published as `Program.path_guards`. Bookkeeping
+    # only: nothing below changes the state, the walk or a finding.
+
+    def _is_ownership_comparison(self, cond: Exp, state: "SymbolicState") -> bool:
+        """Does `cond` compare a resource's field with the authenticated caller (the test
+        `_note_ownership_guard` records), on this state? Side-effect free."""
+        stack = [cond]
+        while stack:
+            e = stack.pop()
+            if isinstance(e, ExpUnOp):
+                stack.append(e.operand)
+                continue
+            if not isinstance(e, ExpBinOp):
+                continue
+            op = str(getattr(e.op, "value", e.op))
+            if op in ("and", "or", "&&", "||"):
+                stack.extend((e.left, e.right))
+                continue
+            if op not in ("==", "!=", "===", "!==", "is", "is not"):
+                continue
+            for side, other in ((e.left, e.right), (e.right, e.left)):
+                if isinstance(side, ExpFieldAccess) and isinstance(side.base, ExpVar) \
+                        and not self._carries_identity(side, state) and self._carries_identity(other, state):
+                    return True
+        return False
+
+    def _note_guard_facts(self, pg: Dict[str, Any], instr: Instr, state: "SymbolicState") -> None:
+        """Before `instr` executes on `state`: an ownership comparison in a branch condition, and
+        whether a resource operation is scoped by the caller's identity (AND over every visit, so
+        it is scoped only if it is on every path). Never raises into the walk, never changes
+        `_identity_in_proc` (the scoping test sets it as a side effect)."""
+        saved = self._identity_in_proc
+        try:
+            line = getattr(getattr(instr, "loc", None), "line", 0) or 0
+            if isinstance(instr, Prune):
+                if self._is_ownership_comparison(instr.condition, state):
+                    pg["owner"].add((line, str(instr.condition)))
+                return
+            if isinstance(instr, Call):
+                name = instr.get_full_name().strip('"')
+                spec = self.program.spec_for_call(instr)
+                if spec is None and name:
+                    spec = self._spec_of_name(name)
+                if spec is None or getattr(spec, "is_sink", None) not in self._RESOURCE_SINK_KINDS:
+                    return
+                exps = [a for a, _ in (instr.args or [])]
+            elif isinstance(instr, TaintSink):
+                if getattr(getattr(instr, "kind", None), "value", None) not in self._RESOURCE_SINK_KINDS:
+                    return
+                exp = instr.exp
+                exps = list(exp.args) if isinstance(exp, ExpCall) else []
+                name = (getattr(instr, "call", None) or "").strip('"')
+            else:
+                return
+            scoped = self._resource_select_scoped_from(exps, name, state)
+            pg["resource"][line] = name
+            pg["scoped"][line] = bool(scoped) and pg["scoped"].get(line, True)
+        except Exception:
+            pass
+        finally:
+            self._identity_in_proc = saved
+
+    def _proc_gate_facts(self, proc) -> List[Dict[str, Any]]:
+        """The authorization-gate annotations (an applied pack's `[[auth_gate]]`) on `proc` or its
+        class, as guard facts that hold on every path through the procedure."""
+        gates = self._pack_entries("auth_gates")
+        if not gates:
+            return []
+        gate_set = set(gates) | {g.rsplit(".", 1)[-1] for g in gates}
+        anns = list(getattr(proc, "annotations", ()) or [])
+        cls = self._proc_class_info(proc)
+        if cls is not None:
+            anns += list(getattr(cls, "annotations", ()) or [])
+        line = getattr(proc.loc, "line", 0) if proc.loc is not None else 0
+        out = []
+        for a in anns:
+            names = self._annotation_names(a)
+            if any(n in gate_set for n in names):
+                out.append({"line": line, "text": "@" + (getattr(a, "name", None) or names[0]),
+                            "kind": "decorator"})
+        return out
+
+    def _record_path_guards(self, proc, pg: Dict[str, Any]) -> None:
+        """Summarise this walk's record into per-line guard facts (authz_guards.summarise)."""
+        try:
+            from .authz_guards import summarise
+            pg["gates"] = self._proc_gate_facts(proc)
+            pg["identity_seen"] = bool(self._identity_in_proc)
+            self._path_guards[proc.name] = summarise(proc, pg, self._branch_edge_formula)
+        except Exception:
+            pass
 
 
     def _create_taint_check(
@@ -10151,6 +10536,20 @@ class SILTranslator:
                                         else TaintKind.USER_INPUT,
                                         source_var=chain, source_location=Location.unknown()))
                                 tainted_args.append(chain)
+                if spec.is_sink == 'resource_select' and tainted_args:
+                    # IDOR discipline, as on the TaintSink/Call paths: only a USER_INPUT selector
+                    # names a cross-user object, and a selection scoped by the caller's identity
+                    # (`get_object_or_404(Model, pk=x, user=request.user)` nested in an expression)
+                    # is the caller's own resource -- not an object-level authz flaw.
+                    user_input_args = []
+                    for v in tainted_args:
+                        ti = state.get_taint_info(v)
+                        if ti is not None and ti.source_kind == TaintKind.USER_INPUT:
+                            user_input_args.append(v)
+                    tainted_args = user_input_args
+                    if tainted_args and self._resource_select_scoped_from(
+                            list(exp.args), func_name, state):
+                        tainted_args = []
                 if tainted_args:
                     result.append((func_name, spec.is_sink, tainted_args))
 

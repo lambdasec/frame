@@ -31,7 +31,7 @@ import sys
 import json
 from collections import Counter
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from frame.sil.scanner import FrameScanner, ScanResult, Severity
 from frame.sil.llm_client import LLMUnavailableError
@@ -111,7 +111,7 @@ def add_pack_args(scan_parser) -> None:
     scan_parser.add_argument(
         "--verify-secrets", action="store_true",
         help="Ask each provider-format credential's provider whether it still works (a read-only request to "
-             "the provider's own API, e.g. GitHub's /user; off by default, see docs/usage.md#verifying-secrets)")
+             "the provider's own API, e.g. GitHub's /user; off by default, see docs/secrets.md#verifying-with-the-provider)")
     scan_parser.add_argument(
         "--vex", choices=["openvex", "cyclonedx"],
         help="With --sca: also write a VEX document for the dependency findings to --vex-out (attacker data "
@@ -225,7 +225,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--ai",
         action="store_true",
         help="Enable the LLM layer (detection + triage). Needs an LLM endpoint "
-             "configured via FRAME_LLM_* env vars."
+             "(FRAME_LLM_BASE_URL / FRAME_LLM_MODEL, or [llm] in .frame.toml)."
     )
     scan_parser.add_argument(
         "--llm-detect",
@@ -251,7 +251,7 @@ def create_parser() -> argparse.ArgumentParser:
              "authorization, privilege escalation, mass assignment, client-controlled "
              "server values). The agent reasons over the engine's handler facts; a "
              "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
-             "LLM endpoint (FRAME_LLM_*)."
+             "LLM endpoint (FRAME_LLM_* or [llm] in .frame.toml)."
     )
 
     return parser
@@ -388,6 +388,34 @@ def format_json_result(results: List[ScanResult], directory: bool = False,
     return json.dumps(doc, indent=2)
 
 
+def hunt_summary(status: Optional[dict]) -> Optional[dict]:
+    """The authorization hunt's outcome for the scan output (`--hunt-authz`), None when no hunt
+    ran: how it ended, the units audited and deferred, the coverage wave, and every member an
+    agent could not decide from the repository (`unresolved`, for a person to settle)."""
+    if not status or status.get("stop") in (None, "not_run"):
+        return None
+    units = status.get("units") or []
+    cov = status.get("coverage") or {}
+    return {"stop": status["stop"],
+            "units": sum(1 for u in units if u.get("stop") != "deferred"),
+            "deferred_units": int(status.get("deferred_units") or 0),
+            "coverage_units": int(cov.get("units") or 0),
+            "unresolved": list(status.get("unresolved") or [])}
+
+
+def format_hunt_text(hunt: dict) -> str:
+    rows = [f"Authorization hunt: {hunt['units']} units audited ({hunt['stop']})"
+            + (f", {hunt['coverage_units']} of them for code other units relied on"
+               if hunt["coverage_units"] else "")
+            + (f", {hunt['deferred_units']} deferred by max_units" if hunt["deferred_units"] else "")]
+    if hunt["unresolved"]:
+        rows.append(f"{len(hunt['unresolved'])} left unresolved (the code does not decide them):")
+        for u in hunt["unresolved"]:
+            rows.append(f"  {u.get('file')}:{u.get('line')} {u.get('handler')}: {u.get('suspicion')}")
+            rows.append(f"    needs: {u.get('needs')}")
+    return "\n".join(rows) + "\n"
+
+
 def format_sarif_result(results: List[ScanResult]) -> str:
     """Format results as SARIF"""
     if not results:
@@ -510,7 +538,9 @@ def cmd_scan(args) -> int:
             else:
                 print(f"Warning: --files: not a file, skipped: {f}", file=sys.stderr)
 
-    # Project configuration: flags > config file > built-in defaults.
+    # Project configuration: flags > environment > config file > built-in defaults
+    # (frame.config holds the file's settings tables for every layer to read).
+    from frame import config as settings
     from frame.sil.suppressions import ConfigError, ScanConfig, find_config, load_config_file
     config = ScanConfig()
     if not getattr(args, "no_config", False):
@@ -522,6 +552,11 @@ def cmd_scan(args) -> int:
         except (ConfigError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 2
+    flags = settings.active().flags
+    settings.activate(config.settings)
+    settings.active().flags.update(flags)     # --model, set before the file was loaded
+    for message in settings.retired_messages():
+        print(f"Warning: {message}", file=sys.stderr)
     root = project_root(target, getattr(args, "root", None), config.source)
     if baseline_entries and baseline_root_mismatch(baseline_entries, root):
         print(f"Warning: no file the baseline names exists under the project root {root}; "
@@ -554,6 +589,12 @@ def cmd_scan(args) -> int:
             use_builtin_packs=not getattr(args, "no_packs", False),
             verify_secrets=getattr(args, "verify_secrets", False),
         )
+        if getattr(args, "root", None) and (scanner.llm_detect or scanner.llm_triage or scanner.hunt_authz):
+            # The LLM layer's file tools read the project root --root names (a directory
+            # scan otherwise gives them the scanned directory).
+            from frame.sil.llm_triage import TriageConfig
+            scanner._llm_config = TriageConfig.from_env()
+            scanner._llm_config.repo_root = str(Path(args.root).resolve())
     except PackError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
@@ -660,6 +701,12 @@ def cmd_scan(args) -> int:
                   "summaries settled; some flows between files may be missing", file=sys.stderr)
         if scope.get("cross_file") is False and scope.get("reason"):
             print(f"Warning: {scope['reason']}", file=sys.stderr)
+    hunt = hunt_summary(getattr(scanner, "last_hunt_status", None))
+    if hunt is not None:
+        extra["hunt"] = hunt
+        if hunt["stop"] not in ("finished", "no_targets"):
+            print(f"Warning: the authorization hunt did not finish ({hunt['stop']}); its "
+                  f"absence of findings is not a clean result", file=sys.stderr)
     if baseline_entries is not None:
         fixed = apply_baseline(results, baseline_entries, root)
         for r in results:
@@ -709,6 +756,8 @@ def cmd_scan(args) -> int:
             b = extra["baseline"]
             chunks.append(f"Baseline {b['file']}: {b['new']} new, {b['baselined']} known, "
                           f"{len(b['fixed'])} fixed since it was written\n")
+        if hunt is not None:
+            chunks.append(format_hunt_text(hunt))
         if sca_run is not None:
             from frame.sca.scan import format_text as sca_text
             chunks.append(sca_text(sca_run))

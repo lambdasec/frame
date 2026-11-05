@@ -52,6 +52,19 @@ def test_basename_match_tolerates_path_prefixes():
     assert finding_matches_case(_f("/tmp/co/backend/app/access.py", 69, "CWE-862"), CASE)
 
 
+def test_same_basename_in_another_directory_does_not_match():
+    # Every controller in a TS monorepo is index.ts: a finding in a different controller must
+    # not be credited to the advisory's sink file just because the basenames agree.
+    case = {"expected_cwes": ["CWE-639"],
+            "sink_files": ["packages/server/src/controllers/documentstore/index.ts"],
+            "sink_locations": [{"file": "packages/server/src/controllers/documentstore/index.ts",
+                                "line_start": 28, "line_end": 36}]}
+    assert not finding_matches_case(
+        _f("packages/server/src/controllers/leads/index.ts", 6, "CWE-862"), case)
+    assert finding_matches_case(
+        _f("packages/server/src/controllers/documentstore/index.ts", 30, "CWE-862"), case)
+
+
 def test_case_detected_returns_first_match():
     findings = [_f("x.py", 1, "CWE-89"), _f("backend/app/access.py", 71, "CWE-863")]
     hit = case_detected(findings, CASE)

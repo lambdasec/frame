@@ -253,7 +253,7 @@ A fix in a new major version often changes the API your code uses. With `--adapt
 2. Frame applies them and runs your command again, for up to three rounds, each seeing the latest output. It never touches a manifest or lockfile, since that would undo the upgrade.
 3. The result is kept only if your command passes **and** a Frame scan of every edited file finds nothing it did not find before. Otherwise every edit is restored and the upgrade is rolled back.
 
-It needs a model (`FRAME_LLM_*`, see [ai.md](ai.md)).
+It needs a model (`FRAME_LLM_*` or `[llm]` in `.frame.toml`, see [ai.md](ai.md#setting-it-up)).
 
 ```console
 $ frame deps --vulns --plan --apply --verify ".venv/bin/pip install -q -r requirements.txt && .venv/bin/python -m pytest -q" --adapt
@@ -275,7 +275,7 @@ frame fix src/ --deps --diff        # each call site attacker data reaches (fram
 frame fix src/ --deps --in-place    # write only the verified patches
 ```
 
-For each call site where attacker data reaches a vulnerable function, an LLM proposes a change to how your code uses it, with the dependency's version unchanged (validating the input, or calling a safe alternative). The taint engine then re-runs the whole analysis on a patched copy of the project. A patch is kept only if the flow is gone and nothing new appears. `--include-called` also covers call sites with no attacker data flow. This needs a model (`FRAME_LLM_*`, see [ai.md](ai.md)).
+For each call site where attacker data reaches a vulnerable function, an LLM proposes a change to how your code uses it, with the dependency's version unchanged (validating the input, or calling a safe alternative). The taint engine then re-runs the whole analysis on a patched copy of the project. A patch is kept only if the flow is gone and nothing new appears. `--include-called` also covers call sites with no attacker data flow. This needs a model (`FRAME_LLM_*` or `[llm]` in `.frame.toml`, see [ai.md](ai.md#setting-it-up)).
 
 ## Backported fixes
 

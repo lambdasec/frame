@@ -94,10 +94,7 @@ def test_raised_budget_defaults():
     assert cfg.agent_context_budget_chars == 400000
 
 
-def test_from_env_budget_defaults(monkeypatch):
-    for v in ("FRAME_LLM_EXPLOIT_MAX_STEPS", "FRAME_LLM_MAX_TOOL_STEPS",
-              "FRAME_LLM_AGENT_CONTEXT_BUDGET_CHARS"):
-        monkeypatch.delenv(v, raising=False)
+def test_from_env_budget_defaults():
     cfg = LLMConfig.from_env()
     assert cfg.exploit_max_steps == 250
     assert cfg.max_tool_steps == 30
@@ -142,6 +139,102 @@ def test_dedupe_refuses_exact_duplicate_tool_calls():
     tool_msgs = [m for m in res.transcript if m.get("role") == "tool"]
     assert len(tool_msgs) == 3
     assert "already called read_file" in tool_msgs[1]["content"]
+
+
+def test_step_hook_nudge_is_injected_before_the_model_call():
+    # The finish-gate mechanism: a step_hook returning a string appends it as a user nudge that
+    # the model sees on that step. Here the hook fires on step 2 and the agent then concludes.
+    import json as _json
+    from frame.sil.llm_agent import run_agent
+    from frame.sil.llm_client import LLMConfig, LLMClient
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    seen = {"nudge_seen": False}
+
+    def chat(messages, tools=None):
+        if any(m.get("role") == "user" and "WRAP UP" in str(m.get("content")) for m in messages):
+            seen["nudge_seen"] = True
+            return {"content": "done", "tool_calls": []}
+        return {"content": "", "tool_calls": [{"id": "1", "function": {
+            "name": "read_file", "arguments": _json.dumps({"path": "a.py"})}}]}
+    c.chat_raw = chat
+    res = run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+                    c, tools=[{"x": 1}], exec_tool=lambda n, a: "data", max_steps=10,
+                    finalize=lambda s: s, step_hook=lambda step: "WRAP UP" if step >= 2 else None)
+    assert seen["nudge_seen"]
+    assert res.result == "done"
+    # the nudge is a real user turn in the transcript
+    assert any(m.get("role") == "user" and "WRAP UP" in str(m.get("content")) for m in res.transcript)
+
+
+def test_forced_final_turn_is_tool_enabled_so_a_last_turn_report_is_captured():
+    # Regression (BAC-Bench parse-server v6): the agent exhausted its step budget having reported
+    # nothing yet, and on the (previously tool-LESS) forced-final turn answered "Let me report it."
+    # -- a prose preamble, no JSON, no tool call -- so a confirmed finding was silently dropped.
+    # The forced-final turn must be TOOL-ENABLED so the agent can make the report_finding call it
+    # was about to make; the harness executes it and the finding lands in the collected list.
+    import json as _json
+    from frame.sil.llm_agent import run_agent
+    from frame.sil.llm_client import LLMConfig, LLMClient
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    collected = []
+    phase = {"n": 0}
+
+    def exec_tool(name, args):
+        if name == "report_finding":
+            collected.append(dict(args))
+            return "recorded"
+        return "data"
+
+    def chat(messages, tools=None):
+        phase["n"] += 1
+        on_final = any(m.get("role") == "user" and "LAST turn" in str(m.get("content"))
+                       for m in messages)
+        if on_final:
+            # The model reports on its last turn -- only possible because tools are enabled now --
+            # then, asked again, concludes (a content-only turn ends the forced-final loop).
+            if not collected:
+                return {"content": "", "tool_calls": [{"id": "r", "function": {
+                    "name": "report_finding", "arguments": _json.dumps({"handler": "H",
+                                                                        "file": "a.py", "line": 5})}}]}
+            return {"content": "done", "tool_calls": []}
+        # Before the budget runs out, it keeps investigating (never reports, never concludes).
+        return {"content": "", "tool_calls": [{"id": "1", "function": {
+            "name": "read_file", "arguments": _json.dumps({"path": "a.py"})}}]}
+    c.chat_raw = chat
+    run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "go"}],
+              c, tools=[{"x": 1}], exec_tool=exec_tool, max_steps=3,
+              finalize=lambda s: list(collected),
+              final_nudge="This is your LAST turn. Report now with report_finding.")
+    assert collected == [{"handler": "H", "file": "a.py", "line": 5}], collected
+
+
+def test_hunt_finish_gate_does_not_fire_before_any_finding():
+    # Regression (v4): the finish-gate must NOT nudge-to-stop while the agent has found nothing --
+    # that made the agent quit at ~step 33 with zero findings. The gate only trims the tail AFTER
+    # at least one report. Here the model never reports; the gate must stay silent and let it run.
+    import json as _json
+    from frame.sil.llm_hunt import hunt_authz
+    from frame.sil.llm_client import LLMConfig, LLMClient
+    from frame.sil.types import Location
+
+    class _Prog:
+        handler_authz = {"H.a": (False, True, Location("app.py", 10))}
+        procedures = {}
+    c = LLMClient(LLMConfig(base_url="x", model="m"))
+    steps = {"n": 0}
+
+    def chat(messages, tools=None):
+        steps["n"] += 1
+        # never reports, never concludes on its own -> would run to max_steps unless the gate fires.
+        if tools is None:
+            return {"content": "", "tool_calls": []}
+        return {"content": "", "tool_calls": [{"id": "1", "function": {
+            "name": "grep", "arguments": _json.dumps({"pattern": "x"})}}]}
+    c.chat_raw = chat
+    hunt_authz(_Prog(), [], repo_root="", config=LLMConfig(), client=c, max_steps=12)
+    # it ran the full budget (12) then the (tool-enabled, retried) forced-final; the gate never cut
+    # it short early -- the point is it reached the budget, not the exact forced-final turn count.
+    assert steps["n"] >= 12
 
 
 def test_dedupe_off_by_default_reexecutes():

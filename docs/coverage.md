@@ -274,7 +274,7 @@ A walkthrough: [examples/c-memory-pack](../examples/c-memory-pack/README.md).
 
 ## What it detects
 
-80+ vulnerability classes. The symbolic core proves the ones reachable by taint or memory reasoning; the [AI layer](ai.md) adds authorization and business-logic flaws.
+100+ finding types. The symbolic core proves the ones reachable by taint or memory reasoning; the [AI layer](ai.md) adds authorization and business-logic flaws ([the hunt](ai.md#hunting-authorization-flaws---hunt-authz)).
 
 | Injection | Access control | Data exposure and crypto | Memory safety |
 |---|---|---|---|

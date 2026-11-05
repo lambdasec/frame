@@ -35,6 +35,9 @@ class AgentResult:
     done: bool                  # terminated on a real result vs budget/transport failure
     steps: int
     transcript: List[Dict[str, Any]] = field(default_factory=list)
+    # Why the loop ended: "finished" (a final answer), "oracle" (check_done fired), "budget"
+    # (step cap), "transport_error" (the endpoint gave no reply after the client's retries).
+    stop: str = ""
 
 
 # ---- Shared repo-investigation tools (detect + triage) -------------------------
@@ -100,6 +103,53 @@ def _repo_exec(name: str, args: Dict[str, Any], repo_root: str, max_chars: int =
     return "ERROR: unknown tool"
 
 
+def sandbox_python(code: str, cwd: str, timeout_s: int = 60, max_chars: int = 8000,
+                   interpreter: Optional[str] = None) -> str:
+    """Run a short agent-written Python probe in a subprocess and return its output.
+
+    This is the hunt's DYNAMIC testing primitive: the agent writes a script that drives the
+    target application's own test client (Flask `test_client`, Django `Client`, FastAPI
+    `TestClient`) as two different users and observes whether one can reach the other's
+    resource -- confirming a candidate IDOR by exercise, not by reading code. It is gated OFF
+    by default (see `hunt_authz(dynamic=...)`), so it never runs during an ordinary scan or a
+    benchmark unless dynamic testing is explicitly enabled.
+
+    Sandboxing: a fresh process group (so a timeout kills the whole tree, including any server
+    the probe spawned), a hard wall-clock timeout, cwd pinned to the repo, combined stdout+stderr
+    captured and truncated. `interpreter` lets the caller point at the app's own virtualenv so the
+    probe can import the application; it defaults to the current interpreter."""
+    import signal
+    import subprocess
+    import sys
+    import tempfile
+
+    interp = interpreter or sys.executable
+    # The probe is meant to IMPORT the target application, so the repo must be importable: put it
+    # first on PYTHONPATH (Python would otherwise only add the script's own tempdir to sys.path).
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([os.path.realpath(cwd), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    with tempfile.TemporaryDirectory() as td:
+        script = os.path.join(td, "frame_probe.py")
+        try:
+            with open(script, "w", encoding="utf-8") as fh:
+                fh.write(code or "")
+            proc = subprocess.Popen(  # noqa: S603 - research sandbox, no shell, fixed argv
+                [interp, script], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, start_new_session=True, env=env)
+        except OSError as e:
+            return f"ERROR: could not start probe: {e}"
+        try:
+            out, _ = proc.communicate(timeout=timeout_s)
+            return f"exit={proc.returncode}\n{(out or '')[:max_chars]}"
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            out, _ = proc.communicate()
+            return f"TIMEOUT after {timeout_s}s (killed)\n{(out or '')[:max_chars]}"
+
+
 def investigation_exec(repo_root: str,
                        explored: Optional[set] = None) -> Callable[[str, Dict[str, Any]], str]:
     """Executor for the investigation tools; records read files into `explored`
@@ -158,7 +208,9 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
               compact_at_chars: Optional[int] = None,
               keep_recent: int = 6,
               trace: Optional[Any] = None,
-              dedupe_tools: Optional[set] = None) -> AgentResult:
+              dedupe_tools: Optional[set] = None,
+              step_hook: Optional[Callable[[int], Optional[str]]] = None,
+              on_final: Optional[Callable[[str], Optional[str]]] = None) -> AgentResult:
     """Drive `client` through a tool loop over `messages`.
 
     Exactly one of `finalize` (self-terminating: parse the model's no-tool-call
@@ -172,12 +224,52 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
     repeat is refused in the harness -- the agent gets "you already ran this" instead of a
     re-execution, which stops the enumerate-the-same-thing loops that prose alone never
     prevents. Pass it only for read-only tools (never for commands with side effects).
+
+    `step_hook(step) -> Optional[str]` is called at the top of each step with the step number;
+    if it returns a string, that string is appended as a user nudge before the model is called.
+    It is how a caller injects convergence pressure (a finish-gate: "you have not found a new
+    finding in a while -- stop if you are done") without the loop knowing what progress means.
+    The hook owns its own cadence (fire once, cool down); it must stay cheap and side-effect free.
+
+    `on_final(content) -> Optional[str]` (self-terminating agents only) is called when the model
+    answers without a tool call. A returned string is appended as a user nudge and the loop goes
+    on instead of finishing: a coverage gate ("these handlers have no verdict yet"). The caller
+    bounds how often it fires; returning None accepts the answer.
     """
     seen_calls: Dict[str, int] = {}
 
     def _t_msg():
         if trace is not None:
             trace.append_message(messages[-1])
+
+    def _exec_tool_calls(tool_calls: List[Dict[str, Any]]) -> None:
+        # Run each tool call, append its result to the transcript, and enforce idempotent-repeat
+        # refusal. Shared by the main loop and the force-final turn so report_finding (and every
+        # other tool) behaves identically whether the agent calls it mid-run or on its last turn.
+        for tc in tool_calls:
+            fn = tc.get("function", {}) or {}
+            name = fn.get("name", "")
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            key = f"{name}({raw_args})"
+            if dedupe_tools and name in dedupe_tools and key in seen_calls:
+                # Idempotent tool, identical arguments: refuse to re-run (the result is
+                # already in the transcript). Harness-enforced; prose does not stop this.
+                n = seen_calls[key]
+                seen_calls[key] = n + 1
+                out = (f"(You already called {name} with these exact arguments {n} time(s); "
+                       f"its result is earlier in this conversation. Do not repeat it -- use "
+                       f"what you have, or investigate something new.)")
+            else:
+                out = exec_tool(name, args)
+                if dedupe_tools and name in dedupe_tools:
+                    seen_calls[key] = seen_calls.get(key, 0) + 1
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                             "content": (out or "")[:max_tool_output]})
+            _t_msg()
 
     if trace is not None:
         trace.start()
@@ -190,17 +282,27 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
         if check_done is not None:
             r = check_done()
             if r is not None:
-                return AgentResult(r, True, step - 1, messages)
+                return AgentResult(r, True, step - 1, messages, stop="oracle")
+
+        # Convergence pressure: let the caller nudge the agent to wrap up (a finish-gate).
+        if step_hook is not None:
+            nudge = step_hook(step)
+            if nudge:
+                messages.append({"role": "user", "content": nudge})
+                _t_msg()
 
         if compact_at_chars and _context_chars(messages) > compact_at_chars:
             messages = _compact_messages(messages, client, keep_recent)
 
         msg = client.chat_raw(messages, tools)
         if msg is None:
-            # Transport hiccup. Self-terminating agents stop with an empty result;
-            # oracle-driven agents keep trying.
+            # Transport failure (after the client's own retries). Log the failed call so it is
+            # visible in the trace -- an unlogged failure read as a hunt that found nothing.
+            # Self-terminating agents stop with what they have; oracle-driven ones keep trying.
+            if trace is not None:
+                trace.append_call(getattr(client, "last_call", {}))
             if finalize is not None:
-                return AgentResult(finalize(""), False, step, messages)
+                return AgentResult(finalize(""), False, step, messages, stop="transport_error")
             messages.append({"role": "user", "content": "(no response) Continue: call a tool now."})
             _t_msg()
             continue
@@ -213,44 +315,46 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             trace.append_call(getattr(client, "last_call", {}))
 
         if tool_calls:
-            for tc in tool_calls:
-                fn = tc.get("function", {}) or {}
-                name = fn.get("name", "")
-                raw_args = fn.get("arguments") or "{}"
-                try:
-                    args = json.loads(raw_args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-                key = f"{name}({raw_args})"
-                if dedupe_tools and name in dedupe_tools and key in seen_calls:
-                    # Idempotent tool, identical arguments: refuse to re-run (the result is
-                    # already in the transcript). Harness-enforced; prose does not stop this.
-                    n = seen_calls[key]
-                    seen_calls[key] = n + 1
-                    out = (f"(You already called {name} with these exact arguments {n} time(s); "
-                           f"its result is earlier in this conversation. Do not repeat it -- use "
-                           f"what you have, or investigate something new.)")
-                else:
-                    out = exec_tool(name, args)
-                    if dedupe_tools and name in dedupe_tools:
-                        seen_calls[key] = seen_calls.get(key, 0) + 1
-                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
-                                 "content": (out or "")[:max_tool_output]})
-                _t_msg()
+            _exec_tool_calls(tool_calls)
             continue
 
         # No tool call.
         if finalize is not None:
-            return AgentResult(finalize(msg.get("content") or ""), True, step, messages)
+            nudge = on_final(msg.get("content") or "") if on_final is not None else None
+            if nudge:
+                messages.append({"role": "user", "content": nudge})
+                _t_msg()
+                continue
+            return AgentResult(finalize(msg.get("content") or ""), True, step, messages, stop="finished")
         # Oracle-driven agent narrated without acting -> push a concrete step
         # (the oracle is re-checked at the top of the next iteration).
         messages.append({"role": "user", "content": stall_nudge})
         _t_msg()
 
-    # Budget exhausted.
+    # Step budget exhausted: force the final answer and keep it in the transcript, so a run that
+    # hit the step cap still returns -- and shows -- what it found. The final turn is TOOL-ENABLED
+    # and retried a few times, because an agent that reports through a tool (report_finding) cannot
+    # report on a tool-less turn: observed a reasoning model answer the force-final with "Let me
+    # report it." (a preamble, no JSON, no tool call) and lose a confirmed finding. With tools on,
+    # it makes the call it was about to make; with a strict nudge, it emits the JSON. Each tool turn
+    # is executed (so report_finding lands wherever the caller collects it) and then we ask once
+    # more; a no-tool-call content turn is the final answer that finalize parses.
     if finalize is not None:
         messages.append({"role": "user", "content": final_nudge})
-        msg = client.chat_raw(messages)
-        return AgentResult(finalize((msg or {}).get("content") or ""), True, step, messages)
+        _t_msg()
+        content = ""
+        for _ in range(3):
+            msg = client.chat_raw(messages, tools)
+            if trace is not None:
+                trace.append_call(getattr(client, "last_call", {}))
+            tc = (msg or {}).get("tool_calls") or []
+            content = (msg or {}).get("content") or ""
+            messages.append({"role": "assistant", "content": content,
+                             **({"tool_calls": tc} if tc else {})})
+            _t_msg()
+            if not tc:
+                break                       # a content-only turn is the final answer
+            _exec_tool_calls(tc)            # e.g. report_finding -> the caller's collected list
+        return AgentResult(finalize(content), True, step, messages, stop="budget")
     r = check_done() if check_done is not None else None
-    return AgentResult(r, r is not None, step, messages)
+    return AgentResult(r, r is not None, step, messages, stop="oracle" if r is not None else "budget")

@@ -1,0 +1,15 @@
+# The AI layer (frame scan --ai, frame fix, frame exploit).
+# The endpoint and model can also come from FRAME_LLM_BASE_URL and FRAME_LLM_MODEL,
+# which win over this file. The key never goes in a file: name the variable holding it.
+
+fail_on = "high"
+
+[llm]
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-haiku-5.5"
+api_key_env = "OPENROUTER_API_KEY"
+max_tokens = 4096
+timeout = 60
+stream = true                 # read responses as they are generated
+drop_threshold = 0.75         # triage drops a finding only at this confidence or above
+cache_path = ".frame/llm-cache.json"

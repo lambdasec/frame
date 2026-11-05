@@ -70,3 +70,20 @@ def test_relative_links_resolve():
                 if anchor not in slugs:
                     broken.append(f"{doc.name}: {target} (no such heading)")
     assert not broken, broken
+
+
+def _config_keys():
+    from frame.config import SCHEMA
+    return [f"{section}.{key}" for section, keys in SCHEMA.items() for key in keys]
+
+
+@pytest.mark.parametrize("key", _config_keys())
+def test_every_config_key_is_documented(key):
+    assert f"`{key}`" in (ROOT / "docs" / "usage.md").read_text(), \
+        f"config key {key} is not documented in docs/usage.md"
+
+
+def test_every_retired_variable_is_documented():
+    from frame.config import RETIRED
+    usage = (ROOT / "docs" / "usage.md").read_text()
+    assert [v for v in RETIRED if f"`{v}`" not in usage] == []

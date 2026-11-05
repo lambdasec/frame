@@ -107,7 +107,7 @@ def create_parser() -> argparse.ArgumentParser:
                              help="Output format (default: text)")
     hist_parser.add_argument("--verify", action="store_true",
                              help="Ask each credential's provider whether it still works (a read-only request to "
-                                  "the provider's own API; off by default, see docs/usage.md#verifying-secrets)")
+                                  "the provider's own API; off by default, see docs/secrets.md#verifying-with-the-provider)")
 
     # === DEPS command ===
     deps_parser = subparsers.add_parser(
@@ -170,7 +170,7 @@ def create_parser() -> argparse.ArgumentParser:
                              help="With --apply: the project's own build / test command, run before and after; "
                                   "an upgrade that breaks a passing command is rolled back (runs the command)")
     deps_parser.add_argument("--adapt", action="store_true",
-                             help="With --verify: when the upgrade breaks the command, let a model (FRAME_LLM_*) adapt "
+                             help="With --verify: when the upgrade breaks the command, let a model (FRAME_LLM_* or [llm]) adapt "
                                   "the code that uses the upgraded packages; kept only if the command passes and a "
                                   "re-scan of the edited files finds nothing new, else everything is rolled back")
     deps_parser.add_argument("--relock", action="store_true",
@@ -274,8 +274,9 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--ai",
         action="store_true",
-        help="Enable the AI layer (LLM detection + triage). Needs FRAME_LLM_BASE_URL "
-             "and FRAME_LLM_MODEL, e.g. a local mlx-optiq or any OpenAI-compatible endpoint"
+        help="Enable the AI layer (LLM detection + triage). Needs an endpoint and a model "
+             "(FRAME_LLM_BASE_URL / FRAME_LLM_MODEL, or [llm] in .frame.toml), e.g. a local "
+             "mlx-optiq or any OpenAI-compatible endpoint"
     )
     scan_parser.add_argument(
         "--llm-detect",
@@ -289,7 +290,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--model",
-        help="Override FRAME_LLM_MODEL for this scan (same as setting the env var)"
+        help="The model for this run (wins over FRAME_LLM_MODEL and llm.model in the config file)"
     )
     scan_parser.add_argument(
         "--repo-scale",
@@ -305,7 +306,7 @@ def create_parser() -> argparse.ArgumentParser:
              "authorization, privilege escalation, mass assignment, client-controlled "
              "server values). The agent reasons over the engine's handler facts; a "
              "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
-             "LLM endpoint (FRAME_LLM_*)."
+             "LLM endpoint (FRAME_LLM_* or [llm] in .frame.toml)."
     )
 
     # === EXPLOIT command ===
@@ -336,8 +337,8 @@ def create_parser() -> argparse.ArgumentParser:
              "oracle). Omit to let the agent self-terminate when it verifies success."
     )
     exploit_parser.add_argument(
-        "--max-steps", type=int, default=40,
-        help="Maximum agent steps (default: 40)"
+        "--max-steps", type=int, default=None,
+        help="Maximum agent steps (default: llm.exploit_max_steps in the config file, else 250)"
     )
     exploit_parser.add_argument(
         "--exec-timeout", type=int, default=120,
@@ -559,10 +560,37 @@ def create_parser() -> argparse.ArgumentParser:
 # ============================================================================
 
 def _apply_model_override(args) -> None:
-    """`--model` is sugar for FRAME_LLM_MODEL: setting it here means every layer
-    (scan/detect/triage/exploit) reading the env picks it up. Flag beats env."""
-    if getattr(args, "model", None):
-        os.environ["FRAME_LLM_MODEL"] = args.model
+    """`--model` sets `llm.model` for this run, over FRAME_LLM_MODEL and the config file, for
+    every layer (scan/detect/triage/exploit)."""
+    from frame import config
+    config.override("llm", "model", getattr(args, "model", None) or None)
+
+
+# Where each command's config file is looked for: its path argument, else the working directory.
+_CONFIG_START = ("target", "source", "dir", "directory", "repo", "findings")
+
+
+def _activate_config(args) -> int:
+    """Load the command's config file (`--config`, else the nearest `.frame.toml` /
+    `[tool.frame]` above its path) and make its settings active. 0, or 2 for a bad file."""
+    from frame import config
+    from frame.sil.suppressions import ConfigError, find_config, load_config_file
+    cfg = None
+    if not getattr(args, "no_config", False):
+        try:
+            if getattr(args, "config", None):
+                cfg = load_config_file(Path(args.config))
+            else:
+                start = next((Path(v) for v in (getattr(args, a, None) for a in _CONFIG_START)
+                              if isinstance(v, str) and Path(v).exists()), Path.cwd())
+                cfg = find_config(start)
+        except (ConfigError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+    config.activate(cfg.settings if cfg else None)
+    for message in config.retired_messages():
+        print(f"Warning: {message}", file=sys.stderr)
+    return 0
 
 
 def cmd_history(args) -> int:
@@ -1058,14 +1086,15 @@ def cmd_exploit(args) -> int:
         exploit_agentic, local_exec_tool, guidance_from_finding,
     )
 
-    # LLM config from env (FRAME_LLM_*). --model overrides FRAME_LLM_MODEL, the
-    # same single knob every layer reads (flag beats env, uniformly).
+    # LLM config: --model, then FRAME_LLM_*, then the config file's [llm] (frame.config).
     _apply_model_override(args)
     config = LLMConfig.from_env()
     if not config.base_url or not config.model:
         print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
               "endpoint) to use the exploit agent.", file=sys.stderr)
         return 1
+    from frame import config as settings
+    args.max_steps = settings.setting("llm", "exploit_max_steps", flag=args.max_steps)
     config.exploit_max_steps = args.max_steps
 
     # Optional guidance: findings JSON (file or '-' stdin) -> top finding -> guidance.
@@ -1904,6 +1933,10 @@ def main(argv: List[str] = None) -> int:
 
     handler = commands.get(args.command)
     if handler:
+        if args.command not in ("solve", "check", "parse", "repl"):
+            status = _activate_config(args)
+            if status:
+                return status
         return handler(args)
     else:
         parser.print_help()

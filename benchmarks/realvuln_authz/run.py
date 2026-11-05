@@ -24,6 +24,8 @@ from pathlib import Path
 
 import yaml
 
+from frame import config as frame_config
+
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "manifest.yaml"
 PROMPTS = HERE / "prompts"
@@ -158,7 +160,7 @@ def main() -> int:
                     "application_commit": repo["commit"],
                     "model": os.environ.get("FRAME_LLM_MODEL") if system != "frame_authz_symbolic" else None,
                     "endpoint_base_url": os.environ.get("FRAME_LLM_BASE_URL") if system != "frame_authz_symbolic" else None,
-                    "temperature": float(os.environ.get("FRAME_LLM_TEMPERATURE", "0")) if system != "frame_authz_symbolic" else None,
+                    "temperature": float(frame_config.setting("llm", "temperature")) if system != "frame_authz_symbolic" else None,
                     "prompt_sha256": prompt_sha,
                     "start_time": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     "wall_clock_seconds": stats["wall_clock_seconds"],

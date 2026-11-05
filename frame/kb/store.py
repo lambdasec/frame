@@ -38,11 +38,18 @@ class Pulled:
 
 
 def cache_root() -> Path:
-    return Path(os.environ.get("FRAME_KB_CACHE") or Path.home() / ".cache" / "frame" / "kb")
+    from frame import config
+    return Path(config.setting("kb", "cache") or Path.home() / ".cache" / "frame" / "kb")
+
+
+def kb_enabled() -> bool:
+    from frame import config
+    return bool(config.setting("kb", "enabled"))
 
 
 def _source(source: Optional[str]) -> str:
-    return source or os.environ.get("FRAME_KB_SOURCE") or DEFAULT_SOURCE
+    from frame import config
+    return source or config.setting("kb", "source") or DEFAULT_SOURCE
 
 
 def _slug(source: str) -> str:
@@ -197,8 +204,8 @@ def _revision_dir(source: str, revision: Optional[str]) -> Optional[Path]:
 def kb_pack_dirs(project_start: Optional[Path] = None) -> List[Path]:
     """Pack directories a scan should load from the cache: the lockfile's revision when the
     project pins one (only if it is cached: a scan never downloads), else the last pulled
-    revision. `FRAME_KB=off` disables the knowledge base."""
-    if os.environ.get("FRAME_KB", "").lower() in ("off", "0", "false", "no"):
+    revision. `FRAME_KB=off` (or `[kb] enabled = false`) disables the knowledge base."""
+    if not kb_enabled():
         return []
     lock = read_lock(project_start) if project_start is not None else None
     d = _revision_dir(lock["source"], lock["revision"]) if lock else _revision_dir(_source(None), None)
@@ -211,7 +218,7 @@ def kb_pack_dirs(project_start: Optional[Path] = None) -> List[Path]:
 def kb_spec_file(table: str) -> Optional[Path]:
     """`specs/<table>.toml` of the last pulled revision, if it has one (spec tables load once
     per process, so they follow the cache's current revision, not a project's lockfile)."""
-    if os.environ.get("FRAME_KB", "").lower() in ("off", "0", "false", "no"):
+    if not kb_enabled():
         return None
     d = _revision_dir(_source(None), None)
     f = d / "specs" / f"{table}.toml" if d is not None else None

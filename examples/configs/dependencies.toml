@@ -1,0 +1,16 @@
+# Dependency scanning (frame deps, frame scan --sca) with a licence policy and a
+# knowledge base pulled from a mirror.
+
+fail_on = "high"
+
+[licenses]
+deny = ["AGPL-3.0-only", "GPL-3.0-only"]
+unknown = "report"            # or "fail"
+include_dev = false
+
+[kb]
+source = "https://mirror.example.com/frame-kb"
+cache = ".frame/kb"
+
+[sca]
+advisories_source = "https://mirror.example.com/frame-advisories"

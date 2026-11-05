@@ -71,6 +71,16 @@ A C file that allocates from the project's own pool, logs through its own helper
 Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each beside a safe twin. Shows untrusted input reaching a model's system prompt (prompt injection), model output run as a shell command or code, and MCP tool arguments reaching a shell or SQL.
 *Runs offline.*
 
+### [iac-multicloud](iac-multicloud/README.md): Azure and Google Cloud Terraform
+
+Network security groups and VPC firewall rules decided in each cloud's own rule order, plus storage and database settings, on an Azure and a Google Cloud configuration.
+*Runs offline.*
+
+### [configs](configs/README.md): configuration files
+
+A minimal config, an AI one, a dependencies one and an unattended authorization hunt, with what a scan does under each: the precedence order, a misspelt key named as an error, and a retired variable warned about.
+*Runs offline.*
+
 ## More
 
 - One vulnerable app and its safe twin for every supported framework: [benchmarks/exemplars/frameworks](../benchmarks/exemplars/frameworks). These measure Frame (every finding is labelled) rather than walk you through a feature.

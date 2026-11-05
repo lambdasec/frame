@@ -628,7 +628,8 @@ class PythonFrontend:
         program.class_info[class_name] = ClassInfo(
             name=class_name, kind="class", bases=bases,
             canonical_bases=[self._imports.resolve(b) or b for b in bases],
-            annotations=[parse_annotation(d, self._imports) for d in decorators], fields=fields)
+            annotations=[parse_annotation(d, self._imports) for d in decorators], fields=fields,
+            line=node.start_point[0] + 1, end_line=node.end_point[0] + 1)
 
         # Find class body
         body_node = node.child_by_field_name("body")
@@ -676,6 +677,7 @@ class PythonFrontend:
             is_method=is_method,
         )
         proc.span = (node.start_byte, node.end_byte)
+        proc.end_line = node.end_point[0] + 1
         if params_node is not None:
             for c in params_node.named_children:            # `*args`, `**kwargs`, also annotated
                 first = c.children[0] if c.type == "typed_parameter" and c.children else c
@@ -1335,7 +1337,11 @@ class PythonFrontend:
             ))
 
         # Check if this is a sink (unusual but possible)
-        if spec and spec.is_taint_sink():
+        if spec and spec.is_taint_sink() and spec.is_sink != "resource_select":
+            # A resource_select is owned by the Call path (_exec_call), which sees the whole
+            # call -- the USER_INPUT selector AND any identity scoping (`user=request.user`) and
+            # post-hoc ownership guard. A per-arg TaintSink here would lose that context and
+            # double-report a scoped selection as IDOR; skip it (symmetric with `objects.get`).
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args_exp):

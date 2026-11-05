@@ -76,6 +76,57 @@ def test_django_request_user_is_the_caller():
     assert _idor(DJANGO.format(select="Order.objects.get(pk=pk, owner=request.user)"), "views.py") == []
 
 
+# The bare-function fetch helper `get_object_or_404(Model, pk=x)` is IDOR-symmetric with the
+# dotted-receiver `Model.objects.get(pk=x)`: an attacker-named selector fires CWE-639, a selection
+# scoped by the caller's identity does not. (Regression for BAC-Bench wagtail, where the authz gap
+# is `get_object(self) -> get_object_or_404(self.model, pk=self.kwargs["pk"])`. The frontend used to
+# double-lower such a call as both a Call and a per-arg TaintSink; the TaintSink lost the sibling
+# `user=request.user` and so reported a scoped selection as IDOR.)
+SHORTCUT = """from django.urls import path
+from django.shortcuts import get_object_or_404, get_list_or_404, render
+from django.db import models
+class Order(models.Model): pass
+
+def view(request, pk):
+    return str({select})
+
+urlpatterns = [path("o/<pk>/", view)]
+"""
+
+
+@pytest.mark.parametrize("select, idor", [
+    ("get_object_or_404(Order, pk=pk)", True),
+    ("get_object_or_404(Order, pk=pk, user=request.user)", False),
+    ("get_object_or_404(Order, pk=pk, owner=request.user)", False),
+    ("get_list_or_404(Order, owner_id=pk)", True),
+    # nested in an expression (a render context) -- the embedded-sink path keeps the discipline
+    ('render(request, "o.html", {"o": get_object_or_404(Order, pk=pk)})', True),
+    ('render(request, "o.html", {"o": get_object_or_404(Order, pk=pk, user=request.user)})', False),
+])
+def test_django_get_object_or_404_is_idor_symmetric(select, idor):
+    assert bool(_idor(SHORTCUT.format(select=select), "views.py")) == idor
+
+
+def test_django_cbv_get_object_or_404_fires():
+    # the wagtail shape: a class-based view whose get_object fetches by the client-controlled URL
+    # kwarg with no caller scoping
+    code = ("from django.views import View\nfrom django.shortcuts import get_object_or_404\n"
+            "from django.urls import path\nfrom django.db import models\n"
+            "class Order(models.Model): pass\n\n"
+            "class OrderView(View):\n    model = Order\n"
+            "    def get_object(self):\n        return get_object_or_404(Order, pk=self.kwargs['pk'])\n\n"
+            "urlpatterns = [path('o/<pk>/', OrderView.as_view())]\n")
+    assert _idor(code, "views.py")
+
+
+def test_a_project_function_named_get_object_or_404_is_not_the_django_shortcut():
+    # canonical-keyed: a same-named project function is not the Django import, so it is not a sink
+    code = ("from django.urls import path\n\ndef get_object_or_404(model, **kw):\n    return None\n\n"
+            "def view(request, pk):\n    return str(get_object_or_404(None, pk=pk))\n\n"
+            "urlpatterns = [path('o/<pk>/', view)]\n")
+    assert _idor(code, "views.py") == []
+
+
 def test_the_caller_is_not_attacker_data():
     code = ("import os\nfrom django.http import HttpResponse\nfrom django.urls import path\n\n"
             "def view(request):\n    os.system('echo ' + request.user.username)\n"

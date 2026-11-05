@@ -1,0 +1,445 @@
+{
+ "model": "anthropic/claude-haiku-5.5",
+ "runs": {
+  "h4": "full 30, unit mode",
+  "h5": "scout build, h4's 8 unmapped misses"
+ },
+ "regions": {
+  "detected": 25,
+  "paired": 12,
+  "n": 30,
+  "hunt_errors": 0
+ },
+ "window_only": {
+  "detected": 25,
+  "paired": 13
+ },
+ "by_tier": {
+  "llm": {
+   "detected": 24,
+   "paired": 13
+  },
+  "symbolic": {
+   "detected": 3,
+   "paired": 1
+  }
+ },
+ "funnel": {
+  "cases_with_map": 30,
+  "in_map": 24,
+  "investigated": 27,
+  "reported_on_gt": 24,
+  "safe_on_gt": 3,
+  "detected": 24,
+  "paired": 13
+ },
+ "cases": {
+  "actualbudget-actual-qmjj-p7m9-wjrv": {
+   "run": "h4",
+   "language": "typescript",
+   "framework": "express",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 549,
+   "claim": "flaw"
+  },
+  "aegra-aegra-ghsa-m98r-6667-4wq7": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 321,
+   "claim": "flaw"
+  },
+  "askbot-devel-ghsa-r2jv-fwfr-4j8c": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django",
+   "status": "miss",
+   "window_only": "miss",
+   "agent": "miss",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1063,
+   "claim": "mechanism, unmatched"
+  },
+  "flowise-ghsa-3prp-9gf7-4rxx": {
+   "run": "h4",
+   "language": "typescript",
+   "framework": "express",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1862,
+   "claim": "flaw"
+  },
+  "frangoteam-FUXA-ghsa-8ghr-w65f-j3qr": {
+   "run": "h4",
+   "language": "javascript",
+   "framework": "express",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 962,
+   "claim": "flaw"
+  },
+  "git-proxy-ghsa-39p2-8hq9-fwj6": {
+   "run": "h4",
+   "language": "typescript",
+   "framework": "express",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 315,
+   "claim": "other flaw"
+  },
+  "indico-ghsa-q28v-664f-q6wj": {
+   "run": "h5",
+   "language": "python",
+   "framework": "flask",
+   "status": "miss",
+   "window_only": "miss",
+   "agent": "miss",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "safe",
+   "wall_clock_s": 1399,
+   "claim": null
+  },
+  "khoj-ghsa-6whj-7qmg-86qj": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 847,
+   "claim": "flaw"
+  },
+  "langflow-ghsa-7grx-3xcx-2xv5": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1391,
+   "claim": "flaw"
+  },
+  "langflow-ghsa-8c4j-f57c-35cf": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "detected",
+   "window_only": "paired",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 849,
+   "claim": "flaw"
+  },
+  "langflow-ghsa-rf6x-r45m-xv3w": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1107,
+   "claim": "flaw"
+  },
+  "mlflow-ghsa-46r5-x6jq-v8g6": {
+   "run": "h4",
+   "language": "python",
+   "framework": "flask",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 5971,
+   "claim": "other flaw"
+  },
+  "n8n-ghsa-gq57-v332-7666": {
+   "run": "h5",
+   "language": "typescript",
+   "framework": "express",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 3077,
+   "claim": "flaw"
+  },
+  "open-webui-ghsa-26g9-27vm-x3q8": {
+   "run": "h4",
+   "language": "python",
+   "framework": "fastapi",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "none",
+   "wall_clock_s": 2086,
+   "claim": "flaw"
+  },
+  "outline-ghsa-23jj-rp48-w7q7": {
+   "run": "h4",
+   "language": "typescript",
+   "framework": "koa",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1168,
+   "claim": "flaw"
+  },
+  "parse-server-ghsa-5f92-jrq3-28rc": {
+   "run": "h5",
+   "language": "javascript",
+   "framework": "express",
+   "status": "miss",
+   "window_only": "miss",
+   "agent": "miss",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "none",
+   "wall_clock_s": 1570,
+   "claim": null
+  },
+  "payload-puck-ghsa-65w6-pf7x-5g85": {
+   "run": "h5",
+   "language": "typescript",
+   "framework": "payload",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 353,
+   "claim": "flaw"
+  },
+  "plane-ghsa-qw87-v5w3-6vxx": {
+   "run": "h5",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 2132,
+   "claim": "flaw"
+  },
+  "pretix-ghsa-pmjj-h5jm-vxh4": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "miss",
+   "engine": "detected",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 9549,
+   "claim": "location only"
+  },
+  "rallly-ghsa-4j32-25f9-qgfm": {
+   "run": "h4",
+   "language": "typescript",
+   "framework": "nextjs-trpc",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "safe",
+   "wall_clock_s": 386,
+   "claim": "flaw"
+  },
+  "saltcorn-ghsa-9237-rg5p-rhfw": {
+   "run": "h5",
+   "language": "javascript",
+   "framework": "express",
+   "status": "miss",
+   "window_only": "miss",
+   "agent": "miss",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "safe",
+   "wall_clock_s": 3336,
+   "claim": null
+  },
+  "strapi-ghsa-495j-h493-42q2": {
+   "run": "h5",
+   "language": "typescript",
+   "framework": "koa",
+   "status": "miss",
+   "window_only": "miss",
+   "agent": "miss",
+   "engine": "miss",
+   "in_map": false,
+   "verdict_on_gt": "none",
+   "wall_clock_s": 2226,
+   "claim": null
+  },
+  "studiocms-9v82-xrm4-mp52": {
+   "run": "h5",
+   "language": "typescript",
+   "framework": "astro",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 789,
+   "claim": "flaw"
+  },
+  "tandoor-ghsa-v8x3-w674-55p5": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 2445,
+   "claim": "flaw"
+  },
+  "wagtail-ghsa-4qvv-g3vr-m348": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "paired",
+   "engine": "detected",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1712,
+   "claim": "flaw"
+  },
+  "weblate-ghsa-3pmh-24wp-xpf4": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "paired",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 2371,
+   "claim": "flaw"
+  },
+  "weblate-ghsa-mpf5-3vph-q75r": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 2456,
+   "claim": "flaw"
+  },
+  "weblate-ghsa-wppc-7cq7-cgfv": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1316,
+   "claim": "flaw"
+  },
+  "wger-ghsa-42cr-w2gr-m54q": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "detected",
+   "window_only": "detected",
+   "agent": "detected",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1053,
+   "claim": "flaw"
+  },
+  "wger-ghsa-g8gc-6c4h-jg86": {
+   "run": "h4",
+   "language": "python",
+   "framework": "django-rest-framework",
+   "status": "paired",
+   "window_only": "paired",
+   "agent": "paired",
+   "engine": "miss",
+   "in_map": true,
+   "verdict_on_gt": "reported",
+   "wall_clock_s": 1124,
+   "claim": "flaw"
+  }
+ },
+ "claim_checked": {
+  "detected": 22,
+  "paired": 11,
+  "method": "matched finding read by hand against the case's match_criteria"
+ },
+ "reference": {
+  "ABSENTIA (paper)": {
+   "detected": 19,
+   "paired": 17
+  },
+  "CodeQL (paper)": {
+   "detected": 0
+  },
+  "Semgrep (paper)": {
+   "detected": 0
+  }
+ }
+}

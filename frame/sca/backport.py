@@ -52,7 +52,8 @@ class Backport:
 def cache_dir() -> Path:
     """Where OSV records and GitHub commits are kept (`FRAME_BACKPORT_CACHE`): fetched once, and an
     air-gapped run reads a directory recorded elsewhere."""
-    return Path(os.environ.get("FRAME_BACKPORT_CACHE") or Path.home() / ".cache" / "frame" / "backport")
+    from frame import config
+    return Path(config.setting("sca", "backport_cache") or Path.home() / ".cache" / "frame" / "backport")
 
 
 def osv_record(advisory: str, cache: Optional[Path] = None) -> dict:

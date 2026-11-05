@@ -18,7 +18,6 @@ from frame.sil import FrameScanner
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv("FRAME_LLM_REPO_ROOT", raising=False)
     monkeypatch.setenv("FRAME_LLM_BASE_URL", "http://endpoint.invalid/v1")
     monkeypatch.setenv("FRAME_LLM_MODEL", "test-model")
 
@@ -48,14 +47,6 @@ def test_triage_only_also_gets_a_root(tmp_path):
     scanner = FrameScanner(language="python", verify=False, llm_triage=True)
     scanner.scan_directory(str(d), "**/*.py")
     assert scanner._llm_config.repo_root == str(d.resolve())
-
-
-def test_explicit_env_repo_root_wins(tmp_path, monkeypatch):
-    d = _tree(tmp_path)
-    monkeypatch.setenv("FRAME_LLM_REPO_ROOT", "/explicitly/chosen/root")
-    scanner = FrameScanner(language="python", verify=False, llm_detect=True)
-    scanner.scan_directory(str(d), "**/*.py")
-    assert scanner._llm_config.repo_root == "/explicitly/chosen/root"
 
 
 def test_preconfigured_repo_root_is_not_overwritten(tmp_path):

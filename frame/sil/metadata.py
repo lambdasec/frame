@@ -59,6 +59,8 @@ class ClassInfo:
     fields: List[str] = field(default_factory=list)   # declared instance fields / properties
     field_annotations: Dict[str, List[Annotation]] = field(default_factory=dict)  # per field, where recorded
     settable_fields: List[str] = field(default_factory=list)  # public members code outside can assign (C#)
+    line: int = 0                               # the declaration's first and last source lines, where recorded
+    end_line: int = 0
 
 
 class ImportTable:

@@ -233,6 +233,26 @@ name = "objects.filter"
 is_sink = "resource_select"
 description = "Django ORM filter selection (IDOR)"
 
+# Django's documented fetch-by-field shortcuts (django.shortcuts): a handler that calls these
+# selects a resource by a caller-supplied identifier, exactly the IDOR surface. Keyed on the
+# canonical import id so a project function of the same name is never caught; the frontend aliases
+# the row under whatever local name the `from django.shortcuts import ...` binding gives it.
+# sink_args skip arg 0 (the Model / Manager / QuerySet) and cover the lookup selectors that
+# follow (positional or kwargs the frontend lowers after it). The resource_select discipline then
+# fires IDOR only on a USER_INPUT selector and suppresses a selection scoped by the caller's
+# identity (`get_object_or_404(Model, pk=x, user=request.user)`), symmetric with `objects.get`.
+[[spec]]
+name = "django.shortcuts.get_object_or_404"
+is_sink = "resource_select"
+sink_args = [1, 2, 3, 4]
+description = "Django get_object_or_404 select by field (IDOR)"
+
+[[spec]]
+name = "django.shortcuts.get_list_or_404"
+is_sink = "resource_select"
+sink_args = [1, 2, 3, 4]
+description = "Django get_list_or_404 select by field (IDOR)"
+
 # State-changing resource operations (resource_modify): a structural marker that a handler mutates a
 # resource, so the authorization-consistency check (CWE-862) compares mutation endpoints too. Not a
 # taint sink -- writing user data to a resource is normal. Keyed on the same typed receivers as the

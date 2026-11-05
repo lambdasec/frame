@@ -48,7 +48,8 @@ class RegistryError(RuntimeError):
 
 def cache_dir() -> Path:
     from frame.kb.store import cache_root
-    return Path(os.environ.get("FRAME_REGISTRY_CACHE") or cache_root().parent / "registry")
+    from frame import config
+    return Path(config.setting("sca", "registry_cache") or cache_root().parent / "registry")
 
 
 def _cache_name(name: str) -> str:

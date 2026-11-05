@@ -29,7 +29,7 @@ has already triaged:
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Any, Iterable, List, Optional, Set, Tuple
 
 try:  # Python 3.11+
     import tomllib
@@ -127,6 +127,7 @@ class ScanConfig:
     exclude: List[str] = field(default_factory=list)
     packs: List[str] = field(default_factory=list)   # extra framework packs (paths relative to the config)
     licenses: Optional[dict] = None                  # the [licenses] table (frame deps --licenses)
+    settings: Optional[Any] = None                   # the [llm]/[hunt]/[kb]/[sca]/[engine] tables (frame.config)
     source: Optional[str] = None
 
 
@@ -135,12 +136,17 @@ class ConfigError(ValueError):
 
 
 def _from_table(table: dict, source: str) -> ScanConfig:
-    known = {"min_severity", "fail_on", "disable", "exclude", "packs", "licenses"}
+    from frame.config import SCHEMA, SettingsError, parse_tables
+    known = {"min_severity", "fail_on", "disable", "exclude", "packs", "licenses"} | set(SCHEMA)
     unknown = set(table) - known
     if unknown:
         raise ConfigError(
             f"{source}: unknown key(s) {sorted(unknown)}; expected {sorted(known)}")
     cfg = ScanConfig(source=source)
+    try:
+        cfg.settings = parse_tables(table, source)
+    except SettingsError as e:
+        raise ConfigError(str(e)) from e
     sev = table.get("min_severity")
     if sev is not None:
         if str(sev).lower() not in _SEVERITIES:

@@ -87,7 +87,7 @@ _TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
-             "policy", "define"}
+             "policy", "define", "provided_action"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
 # `<converter(args):name>` (Flask, Quart): a rule must start with "/".
@@ -311,6 +311,20 @@ class ServiceRegistration:
 
 
 @dataclass
+class ProvidedAction:
+    """Request handlers a framework base class gives every subclass without the subclass writing
+    them (`[[provided_action]]`): a DRF `ReadOnlyModelViewSet` serves `list` and `retrieve` over
+    the class's `queryset`. The authorization hunt audits them as members of the class's unit,
+    since a subclass that writes nothing still answers those requests; `decided_by` names the
+    class attributes / hooks the framework's code reads to decide what such a request may touch."""
+    id: str
+    extends: List[str]                   # base-class globs (as written or resolved)
+    actions: List[str]                   # handler method names the base provides
+    decided_by: List[str] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
 class SameOriginCheck:
     """A call that is true exactly when its argument is a local URL, a path on this site (`/x`, not
     `//host` or `/\\host`): ASP.NET's `Url.IsLocalUrl(x)` (`[[same_origin_check]]`). Read as
@@ -486,6 +500,7 @@ class Pack:
     setting_registrations: List[Tuple[str, str]] = field(default_factory=list)
     returns: Dict[str, str] = field(default_factory=dict)          # call id -> the type of what it returns
     same_origin_checks: List[SameOriginCheck] = field(default_factory=list)
+    provided_actions: List[ProvidedAction] = field(default_factory=list)
     service_registrations: List[ServiceRegistration] = field(default_factory=list)
     request_attributes: List[RequestAttribute] = field(default_factory=list)
     middleware_methods: List[str] = field(default_factory=list)    # JS [[middleware]]
@@ -1037,6 +1052,16 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not t.get("methods"):
             raise _fail(origin, where, "needs methods")
         pack.middleware_methods += _strings(origin, f"{where}.methods", t["methods"])
+
+    for i, t in enumerate(data.get("provided_action", [])):
+        where = f"[[provided_action]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "extends", "actions", "decided_by", "description", "references"})
+        pack.provided_actions.append(ProvidedAction(
+            id=str(t.get("id", f"{name}-provided-{i + 1}")),
+            extends=_strings(origin, f"{where}.extends", t.get("extends", []), allow_empty=False),
+            actions=_strings(origin, f"{where}.actions", t.get("actions", []), allow_empty=False),
+            decided_by=_strings(origin, f"{where}.decided_by", t.get("decided_by", [])),
+            description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("same_origin_check", [])):
         where = f"[[same_origin_check]] #{i + 1}"

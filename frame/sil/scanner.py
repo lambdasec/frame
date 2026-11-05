@@ -450,9 +450,7 @@ class ScanResult:
 
 # A source line this long does not occur in code people write and review; it is
 # the signature of a bundler, a minifier, or a code generator. Overridable for
-# codebases with unusual formatting.
-GENERATED_LINE_THRESHOLD = int(
-    os.environ.get("FRAME_GENERATED_LINE_THRESHOLD", "2000"))
+# codebases with unusual formatting (`[engine] generated_line_threshold`).
 
 
 def is_generated_source(source_code: str,
@@ -470,7 +468,10 @@ def is_generated_source(source_code: str,
     """
     if not source_code:
         return False
-    limit = GENERATED_LINE_THRESHOLD if threshold is None else threshold
+    if threshold is None:
+        from frame import config
+        threshold = config.setting("engine", "generated_line_threshold")
+    limit = threshold
     if limit <= 0:
         return False
     longest = 0
@@ -878,6 +879,9 @@ class FrameScanner:
         llm_config: Any = None,
         llm_repo_scale: bool = False,
         hunt_authz: bool = False,
+        hunt_dynamic: bool = False,
+        hunt_interpreter: Optional[str] = None,
+        hunt_options: Optional[Dict[str, Any]] = None,
         respect_suppressions: bool = True,
         disabled_rules: Optional[Iterable[str]] = None,
         packs: Optional[Iterable[str]] = None,
@@ -930,9 +934,18 @@ class FrameScanner:
         # repo-scale LLM pass whose tools are the engine's own handler facts. Opt-in;
         # off by default so the symbolic layer and every benchmark number are unchanged.
         self.hunt_authz = hunt_authz
+        # Dynamic testing for the hunt (run_code): let the agent confirm a candidate flaw by
+        # exercising the app in a sandboxed probe. Off by default; `hunt_interpreter` points the
+        # probe at the app's own virtualenv so it can import the application.
+        self.hunt_dynamic = hunt_dynamic
+        self.hunt_interpreter = hunt_interpreter
+        # The hunt's unit budget (frame/sil/llm_hunt.hunt_authz keywords: max_units, unit_steps,
+        # concurrency, verdict_cache, scout_steps, max_scouts); unset keys take the hunt's defaults.
+        self.hunt_options: Dict[str, Any] = dict(hunt_options or {})
         self._llm_config = llm_config
         self._hunt_programs: List[Any] = []  # translated programs collected for the hunt engine facts
         self._collecting_hunt_programs = False
+        self.last_hunt_status: Optional[Dict[str, Any]] = None  # how the last hunt ended (_apply_hunt_authz)
         self._llm_client = None
         self.library_mode = library_mode
         self.secret_verifier: Any = None
@@ -1718,6 +1731,10 @@ class FrameScanner:
         `llm_detect`), attached to the file they name. Fail-safe: any error leaves the
         symbolic results untouched -- a broken LLM tier must never drop proven findings.
         """
+        # How the hunt ended (`llm_hunt.hunt_authz`'s status, or why it never ran). Fail-safe
+        # returns below look the same as a hunt that found nothing, so callers that measure the
+        # hunt (benchmarks) read this instead of guessing from an empty finding list.
+        self.last_hunt_status = {"stop": "not_run"}
         try:
             from frame.sil.llm_hunt import hunt_authz
             from frame.sil.llm_triage import TriageConfig
@@ -1726,14 +1743,18 @@ class FrameScanner:
         try:
             config = self._llm_config or TriageConfig.from_env()
             if not getattr(config, "base_url", "") or not getattr(config, "model", ""):
+                self.last_hunt_status = {"stop": "no_endpoint"}
                 if self.verbose:
                     print("[Scanner] hunt-authz requested but no endpoint/model.")
                 return results
             resolved_root = dir_path.resolve()
             symbolic = [v for r in results for v in r.vulnerabilities]
             found = hunt_authz(self._hunt_programs, symbolic, str(resolved_root),
-                               config, self._llm_client, language=self.language)
+                               config, self._llm_client, language=self.language,
+                               dynamic=self.hunt_dynamic, interpreter=self.hunt_interpreter,
+                               status=self.last_hunt_status, **self.hunt_options)
         except Exception as e:
+            self.last_hunt_status = {"stop": "exception", "error": type(e).__name__}
             if self.verbose:
                 print(f"[Scanner] hunt-authz failed: {e}")
             return results
@@ -1761,8 +1782,8 @@ class FrameScanner:
     def _default_repo_root(self, dir_path: Path) -> None:
         """Point the LLM layer's investigation tools at the directory being scanned.
 
-        Only fills in a root that is not already configured, so an explicit
-        FRAME_LLM_REPO_ROOT still wins. No-op when the LLM layer is off.
+        Only fills in a root that is not already configured, so `scan --root` still
+        wins. No-op when the LLM layer is off.
         """
         if not (self.llm_detect or self.llm_triage or self.hunt_authz):
             return
