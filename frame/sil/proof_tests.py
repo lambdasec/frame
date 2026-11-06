@@ -94,8 +94,8 @@ def c_integer_test(
     lines: List[str] = []
     tag = f"{cwe}: " if cwe else ""
     lines.append(f"/* Frame proof-carrying test. {tag}{trigger} */".rstrip())
-    lines.append("/* Build with: cc -fsanitize=address,undefined,implicit-conversion "
-                 "-fno-sanitize-recover=all -o repro repro.c */")
+    lines.append("/* Build with: cc -fsanitize=address,undefined -fno-sanitize-recover=all "
+                 "-o repro repro.c   (add ,implicit-conversion on Clang for CWE-197) */")
     if header:
         lines.append(f'#include "{header}"')
     lines.append("#include <stdio.h>")

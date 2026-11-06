@@ -60,6 +60,36 @@ def _compiler(cc: Optional[str]) -> Optional[str]:
     return os.environ.get("CC") or shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
 
 
+_SANITIZER_CACHE: Dict[str, str] = {}
+
+
+def _probe_flag(compiler: str, flag: str) -> bool:
+    """Does the compiler accept this flag? (compiles a trivial program)."""
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "probe.c"
+            src.write_text("int main(void){return 0;}\n")
+            r = subprocess.run([compiler, flag, str(src), "-o", str(Path(d) / "probe")],
+                               capture_output=True, text=True, errors="replace", timeout=30)
+            return r.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _sanitize_flag(compiler: str) -> str:
+    """The `-fsanitize=` list this compiler supports. `address,undefined` is
+    universal (Clang and GCC); `implicit-conversion` is Clang-only (it traps a
+    value-changing narrowing/sign change, CWE-197/194/195), so it is probed and
+    added only when supported. On GCC those conversions simply are not auto-
+    confirmed -- never a wrong flag that fails every build (the 1.1.1 bug)."""
+    if compiler not in _SANITIZER_CACHE:
+        groups = ["address", "undefined"]
+        if _probe_flag(compiler, "-fsanitize=implicit-conversion"):
+            groups.append("implicit-conversion")
+        _SANITIZER_CACHE[compiler] = "-fsanitize=" + ",".join(groups)
+    return _SANITIZER_CACHE[compiler]
+
+
 def confirm_c_integer_proof(
     source: str,
     func_name: str,
@@ -133,12 +163,11 @@ def compile_and_run_c(source: str, *, stdin: Optional[str] = None,
         src_path = Path(d) / "repro.c"
         bin_path = Path(d) / "repro"
         src_path.write_text(source)
-        # implicit-conversion traps a value-CHANGING narrowing/sign change (CWE-197/
-        # 194/195) -- exactly the finding, and never a value-preserving conversion, so
-        # it adds confirmations without false ones. Unsigned overflow is defined (wraps),
-        # so no sanitizer traps it; such a finding is simply never auto-confirmed.
+        # Compiler-aware sanitizer set (Clang gets implicit-conversion, GCC does not):
+        # a wrong flag would fail every build. address+undefined cover signed overflow
+        # and out-of-bounds on both; implicit-conversion (Clang) adds CWE-197/194/195.
         build = [compiler, "-g", "-O0",
-                 "-fsanitize=address,undefined,implicit-conversion",
+                 _sanitize_flag(compiler),
                  "-fno-sanitize-recover=all",
                  str(src_path), "-o", str(bin_path)]
         try:
