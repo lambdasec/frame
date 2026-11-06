@@ -66,6 +66,45 @@ jobs:
         print('Basic functionality test passed')
         "
 
+  reproduction:
+    # Cross-language proof-carrying reproduction exemplars: compile and run each case's
+    # confirmed driver so a marker reaches the sink THROUGH the project (a direct call is
+    # rejected). These need real toolchains -- a JDK for the Java reflective-Proxy spy, the
+    # .NET SDK for the C# Moq spy, Node for JS -- which the lean Python matrix does not carry,
+    # so they run here. The job ASSERTS the Java and C# cases actually ran (PASSED, not
+    # SKIPPED): a silent skip must not look like a pass.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0'
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install
+      run: pip install -e ".[dev]"
+    - name: Toolchains present
+      run: javac -version && java -version && dotnet --version && node --version
+    - name: Reproduction exemplars (all languages)
+      run: python -m pytest tests/test_reproduction_exemplars.py -v -rs | tee /tmp/repro.out
+    - name: The Java and C# cases must have run, not skipped
+      run: |
+        grep -qE "java-sca-deserialization\] PASSED" /tmp/repro.out \
+          || { echo "Java reproduction exemplar did not run"; exit 1; }
+        grep -qE "csharp-taint-cmdi\] PASSED" /tmp/repro.out \
+          || { echo "C# reproduction exemplar did not run"; exit 1; }
+
   self-scan:
     # Frame's own SCA on this repository: resolve its Python dependencies (pyproject with
     # extras, requirements files) and fail on a known high or critical vulnerability. Test and
