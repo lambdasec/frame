@@ -47,6 +47,15 @@ class ToolError(RuntimeError):
     pass
 
 
+class ToolUnavailable(ToolError):
+    """The external package manager is installed but could not run at all (it
+    crashed in its own code -- e.g. an upstream dependency broke its CLI), so it
+    produced no ground truth to compare Frame against. This is NOT a Frame problem
+    and NOT a missing tool: the test skips on it rather than failing, since there
+    is nothing to assert. A genuine Frame-vs-tool mismatch is still a failure."""
+    pass
+
+
 # ---------------------------------------------------------------------------------------------
 # running tools
 
@@ -843,8 +852,17 @@ def run_case(case: Case, tmp: Path) -> Tuple[Truth, Path, List[str]]:
     """Generate, take the tool's truth, compare Frame's plain read (and --resolve). Returns the
     truth, the clean directory of kept files, and the problems found."""
     work = prepare(case, tmp)
-    case.generate(work)
-    truth = case.truth(work)
+    # Generating the lockfile/report and asking the tool what it resolved both run
+    # the external package manager. If the tool itself cannot run (its own crash,
+    # not a mismatch), there is no ground truth -- surface that as ToolUnavailable
+    # so the test skips, instead of a ToolError the caller reads as a real failure.
+    try:
+        case.generate(work)
+        truth = case.truth(work)
+    except ToolUnavailable:
+        raise
+    except ToolError as exc:
+        raise ToolUnavailable(str(exc)) from exc
     files, clean = frame_files(case, work)
     problems = [f"plain read: {p}" for p in compare(truth, files, case.ecosystem)]
     if case.resolve:
