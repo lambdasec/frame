@@ -234,25 +234,49 @@ def test_js_runner_rejects_without_the_marker(tmp_path):
     assert r.reproduced is False
 
 
-from frame.sil.proof_deps import java_repro_test
+from frame.sil.proof_deps import java_repro_main
 
 
-def test_java_repro_test_generation():
+def test_java_repro_main_generation():
     spec = DepsReproSpec(advisory="CWE-502", package="", version="",
-                         vuln_function="com.acme.UnsafeXml.parse", call_text="UnsafeXml.parse",
-                         call_site="app/DocService.java:5", source_var="raw")
-    t = java_repro_test(spec, "new app.Api().handle(MARKER);")
+                         vuln_function="lib.IStore.load", call_text="lib.IStore.load",
+                         call_site="app/Api.java:6", source_var="body")
+    t = java_repro_main(spec, "new app.Api(spy).handle(MARKER);")
     assert t is not None
-    assert 'CALLSITE = "DocService"' in t                      # call-site class for the via-project guard
-    assert "mockConstruction(com.acme.UnsafeXml.class" in t    # non-bootstrap construction mock
-    assert ".parse(any())" in t
-    assert "new app.Api().handle(MARKER);" in t
-    assert "seen[0] && seen[1]" in t                           # marker AND via-project
+    assert 'CALLSITE = "Api"' in t                             # call-site class for the via-project guard
+    assert "Proxy.newProxyInstance(" in t                      # reflective spy, no Mockito
+    assert "lib.IStore spy = (lib.IStore)" in t                # DI-seam interface, namespaced
+    assert 'method.getName().equals("load")' in t
+    assert "new app.Api(spy).handle(MARKER);" in t
+    assert "seenMarker && seenVia" in t                        # marker AND via-project
 
 
-def test_java_repro_test_refuses_bootstrap_and_bare_sinks():
-    # JDK bootstrap classes are not portably mockable this way -> refused.
-    for fn in ("java.lang.Runtime.exec", "javax.xml.parsers.X.parse", "execute"):
+def test_java_repro_main_refuses_bootstrap_and_non_interface_sinks():
+    # Bootstrap (java.*/javax.*) and non-interface concrete sinks are not Proxy-able -> refused.
+    for fn in ("java.lang.Runtime.exec", "javax.xml.parsers.X.parse",
+               "com.acme.UnsafeXml.parse", "execute"):
         spec = DepsReproSpec(advisory="x", package="", version="", vuln_function=fn,
                              call_text=fn, call_site="a.java:1", source_var="x")
-        assert java_repro_test(spec, "x") is None
+        assert java_repro_main(spec, "x") is None
+
+
+from frame.sil.proof_deps import csharp_repro_test
+
+
+def test_csharp_repro_test_generation():
+    spec = DepsReproSpec(advisory="CWE-78", package="", version="",
+                         vuln_function="app.IShell.Run", call_text="app.IShell.Run",
+                         call_site="app/Api.cs:5", source_var="host")
+    t = csharp_repro_test(spec, "new app.Api(mock.Object).Ping(MARKER);")
+    assert t is not None
+    assert "new Mock<app.IShell>()" in t                  # namespaced interface
+    assert ".Run(It.IsAny<string>())).Callback<string>(Record)" in t
+    assert 'CALLSITE = "Api"' in t                        # call-site class
+    assert "new app.Api(mock.Object).Ping(MARKER);" in t
+
+
+def test_csharp_repro_test_refuses_non_interface_sink():
+    for fn in ("System.Diagnostics.Process.Start", "SqlCommand.ExecuteReader", "Start"):
+        spec = DepsReproSpec(advisory="x", package="", version="", vuln_function=fn,
+                             call_text=fn, call_site="a.cs:1", source_var="x")
+        assert csharp_repro_test(spec, "x") is None

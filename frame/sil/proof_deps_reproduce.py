@@ -22,11 +22,13 @@ from typing import Any, Dict, List, Optional
 from frame.sil.llm_agent import run_agent
 from frame.sil.proof_deps import (
     DepsReproSpec, run_deps_repro, run_deps_repro_js, run_deps_repro_java,
+    run_deps_repro_csharp,
 )
 
 _PY_LANGS = {"python", "py"}
 _JS_LANGS = {"javascript", "js", "typescript", "ts"}
 _JAVA_LANGS = {"java"}
+_CSHARP_LANGS = {"csharp", "c#", "cs"}
 
 
 def _lang_note(language: str) -> str:
@@ -37,6 +39,10 @@ def _lang_note(language: str) -> str:
     if language in _JAVA_LANGS:
         return ("Write the driver as Java statements that call the entry point, e.g. "
                 "`new app.Api().ping(MARKER);`. MARKER is a String already in scope.")
+    if language in _CSHARP_LANGS:
+        return ("Write the driver as C# statements that call the entry point, injecting the "
+                "mocked sink: `new app.Api(mock.Object).Ping(MARKER);`. `mock` and MARKER are "
+                "already in scope.")
     return ("Write the driver in Python. MARKER is already defined, e.g. "
             "`from routes import handler; handler(MARKER)`.")
 
@@ -114,13 +120,14 @@ def _read_tool(root: Path):
 
 
 _GREP_GLOBS = {"python": ("*.py",), "javascript": ("*.js", "*.ts", "*.jsx", "*.tsx"),
-               "java": ("*.java",)}
+               "java": ("*.java",), "csharp": ("*.cs",)}
 
 
 def _grep_tool(root: Path, language: str = "python"):
     import re
     globs = (_GREP_GLOBS["javascript"] if language in _JS_LANGS
              else _GREP_GLOBS["java"] if language in _JAVA_LANGS
+             else _GREP_GLOBS["csharp"] if language in _CSHARP_LANGS
              else _GREP_GLOBS["python"])
 
     def _grep(pattern: str) -> str:
@@ -167,6 +174,7 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
     language = (language or "python").lower()
     is_js = language in _JS_LANGS
     is_java = language in _JAVA_LANGS
+    is_csharp = language in _CSHARP_LANGS
     root = Path(project_root)
     state: Dict[str, Any] = {"driver": "", "detail": ""}
     read_fn, grep_fn = _read_tool(root), _grep_tool(root, language)
@@ -177,6 +185,8 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
         if is_java:
             return run_deps_repro_java(driver, spec, str(root), mvn=mvn, jdk=jdk,
                                        timeout=max(timeout, 300))
+        if is_csharp:
+            return run_deps_repro_csharp(driver, spec, str(root), timeout=max(timeout, 420))
         return run_deps_repro(driver, spec, str(root), python=python, timeout=timeout)
 
     def _exec(name: str, args: Dict[str, Any]) -> str:

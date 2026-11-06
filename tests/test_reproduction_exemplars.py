@@ -14,23 +14,40 @@ practice (validated separately against a live model).
 import importlib.util
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
+
+def _tool_works(*cmd) -> bool:
+    """True only when the tool runs (not a macOS JDK stub with no runtime behind it)."""
+    exe = shutil.which(cmd[0])
+    if exe is None:
+        return False
+    try:
+        return subprocess.run([exe, *cmd[1:]], capture_output=True,
+                              timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
 from frame.sil.proof_deps import (
     DepsReproSpec, run_deps_repro, run_deps_repro_js, run_deps_repro_java,
+    run_deps_repro_csharp,
 )
 
 _JS = {"javascript", "js", "typescript", "ts"}
 _JAVA = {"java"}
+_CSHARP = {"csharp", "c#", "cs"}
 
 
 def _skip_if_unavailable(meta: dict, language: str):
     if language in _JS and shutil.which("node") is None:
         pytest.skip("node not available for a JS exemplar")
-    if language in _JAVA and (shutil.which("mvn") is None or shutil.which("javac") is None):
-        pytest.skip("JDK + Maven not available for a Java exemplar")
+    if language in _JAVA and not (_tool_works("javac", "-version") and _tool_works("java", "-version")):
+        pytest.skip("a working JDK (javac/java) is not available for a Java exemplar")
+    if language in _CSHARP and not _tool_works("dotnet", "--version"):
+        pytest.skip(".NET SDK not available for a C# exemplar")
     for mod in meta.get("requires", []):
         if importlib.util.find_spec(mod) is None:
             pytest.skip(f"real library {mod!r} not installed for this exemplar")
@@ -41,6 +58,8 @@ def _run_case(language: str, driver: str, spec, case):
         return run_deps_repro_js(driver, spec, str(case))
     if language in _JAVA:
         return run_deps_repro_java(driver, spec, str(case))
+    if language in _CSHARP:
+        return run_deps_repro_csharp(driver, spec, str(case))
     return run_deps_repro(driver, spec, str(case))
 
 
@@ -75,6 +94,6 @@ def test_exemplar_rejects_a_driver_that_does_not_drive_the_sink(case):
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
     _skip_if_unavailable(meta, language)
-    noop = ";" if language in (_JS | _JAVA) else "pass"
+    noop = ";" if language in (_JS | _JAVA | _CSHARP) else "pass"
     run = _run_case(language, noop, _spec(meta), case)
     assert not run.reproduced

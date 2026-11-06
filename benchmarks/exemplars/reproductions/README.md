@@ -16,16 +16,17 @@ the vulnerable call and a spy observed attacker-marked data arrive there.
 | `python-taint-ssrf` | Python | SSRF (CWE-918) | `urllib.request.urlopen` | real (stdlib) |
 | `js-taint-cmdi` | JavaScript | command injection (CWE-78) | `child_process.exec` | real (node core) |
 | `js-taint-pathtraversal` | JavaScript | path traversal (CWE-22) | `fs.readFileSync` | real (node core) |
-| `java-sca-deserialization` | Java | deserialization (CWE-502) | a library `parse` | real (JDK, Mockito) |
+| `java-sca-deserialization` | Java | deserialization (CWE-502) | an injected store interface | real (JDK) |
+| `csharp-taint-cmdi` | C# | command injection (CWE-78) | an injected shell interface | real (.NET SDK) |
 
 Most cases drive a genuine library sink (`pickle.loads`, real PyYAML `yaml.load`,
 `os.system`, `subprocess.call`, `child_process.exec`); the stand-in cases use a small
-local module that mirrors a real sink's shape (a DB cursor's `execute`; the Java case's
-vulnerable library), so they stay self-contained. A case that needs a real library
-declares it in `requires`, and the test skips when it is absent. The Java case needs a
-JDK + Maven (Mockito construction-mocks the sink, a non-bootstrap library class); its
-test skips where the toolchain is absent. A JDK bootstrap sink (`Runtime`/`ProcessBuilder`)
-is not portably mockable this way and is left for the agent-based runner.
+local module that mirrors a real sink's shape (a DB cursor's `execute`; the Java and C# cases'
+injected sink interface), so they stay self-contained. A case that needs a real library
+declares it in `requires`, and the test skips when it is absent. The Java case needs a JDK
+(a `java.lang.reflect.Proxy` spies the injected sink interface, no Maven or Mockito); the
+C# case needs the .NET SDK (xUnit + Moq spy the interface); each test skips where its
+toolchain is absent. A non-interface or JDK-bootstrap sink is left for the agent-based runner.
 
 `case.json` fields: `language`, `cwe`, `advisory`, `vuln_function` (the sink's
 canonical id), `call_site` (`file:line` where the project calls it), `source_var`

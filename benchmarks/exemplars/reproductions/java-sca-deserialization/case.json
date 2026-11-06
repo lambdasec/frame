@@ -1,3 +1,3 @@
-{"language":"java","cwe":"CWE-502","advisory":"deserialization via a vulnerable dependency (Mockito construction mock)",
- "vuln_function":"com.acme.UnsafeXml.parse","call_site":"app/DocService.java:5","source_var":"raw",
- "driver":"new app.Api().handle(MARKER);"}
+{"language":"java","cwe":"CWE-502","advisory":"unsafe deserialization via an injected store",
+ "vuln_function":"lib.IStore.load","call_site":"app/Api.java:6","source_var":"body",
+ "driver":"new app.Api(spy).handle(MARKER);"}

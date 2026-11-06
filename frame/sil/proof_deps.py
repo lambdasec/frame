@@ -406,68 +406,84 @@ def run_deps_repro_js(driver_src: str, spec: "DepsReproSpec", project_root: str,
 
 # ---------------------------------------------------------------------------------------------
 # Java reproduction runner (scoped). Java is compiled with static dispatch, so there is no
-# runtime monkeypatch; the spy is Mockito. This covers the mockable sink families -- today the
-# non-bootstrap (library/app) sink class via Mockito's CONSTRUCTION mock -- the realistic SCA
-# shape (a vulnerable dependency function reached through `new Lib().call(...)`), with the same
-# stack-based via-project oracle as the other runners. This is portable across JDKs; a JDK
-# bootstrap sink (java.lang.Runtime/ProcessBuilder) cannot be instrumented this way and needs a
-# ByteBuddy java agent (a later brick), so those are refused. Needs a JDK + Maven.
+# runtime monkeypatch. The portable spy is a java.lang.reflect.Proxy over the sink's INTERFACE
+# (the DI-seam shape: the project takes the sink as an injected interface and the driver passes
+# the proxy in its place) -- pure core-JDK reflection, no Mockito, no bytecode instrumentation
+# and no Maven, so it works on ANY JDK with just `javac`/`java`. (Mockito's inline mock maker,
+# which mockStatic/mockConstruction need, attaches a java agent at runtime; CI JDKs disallow
+# that -- "Could not modify all classes" -- so an instrumentation-based runner is not portable.)
+# A directly-called static sink (Runtime.exec, Files.*) or a concrete-class sink reached via
+# `new`/a final method is not an interface and is refused here; those need a ByteBuddy java
+# agent (a later brick). The same stack-based via-project oracle as the other runners. Needs a JDK.
 
 def _java_sink_parts(spec: "DepsReproSpec") -> Optional[tuple]:
-    """(fully-qualified class, method) for the sink, or None for a bare/bootstrap sink.
+    """(fully-qualified interface, method) for a Java DI-seam sink, or None.
 
-    Reproduction mocks the sink's class with Mockito's construction mock, which works
-    only for a NON-bootstrap class (a library/app class loaded by the app loader).
-    java.lang.* bootstrap sinks (Runtime, ProcessBuilder) cannot be instrumented
-    portably this way; they need the ByteBuddy agent brick, so they are refused here."""
+    The spy is a reflective Proxy, which implements an INTERFACE (conventionally an
+    `I`-prefixed type, like the C# runner). A java.lang.* / javax.* bootstrap sink or a
+    non-interface concrete sink is not proxyable this way and is refused -- those need the
+    ByteBuddy agent brick."""
     fn = (spec.vuln_function or spec.call_text or "").replace("/", ".").strip(".")
     if "." not in fn:
         return None
-    cls, _, method = fn.rpartition(".")
-    if not cls or not method or cls.startswith("java.") or cls.startswith("javax."):
+    iface, _, method = fn.rpartition(".")
+    simple = iface.rsplit(".", 1)[-1]
+    if not iface or not method or iface.startswith("java.") or iface.startswith("javax."):
         return None
-    return cls, method
+    if simple[:1] != "I":                      # DI-seam interface convention (mirrors C#)
+        return None
+    return iface, method
 
 
-def java_repro_test(spec: "DepsReproSpec", driver: str,
+def java_repro_main(spec: "DepsReproSpec", driver: str,
                     marker: str = "PROOF_MARKER_7F3A") -> Optional[str]:
-    """Generate a JUnit 5 + Mockito test that construction-mocks the sink's class, runs the
-    driver, and asserts the marker reached the sink through the project (a project class, not
-    the test, on the stack). Pure/offline -- the compile+run is `run_deps_repro_java`. None
-    when the sink is a bare name or a JDK bootstrap class (not portably mockable)."""
+    """Generate a self-contained `Main.java` whose main() installs a reflective Proxy spy on
+    the sink interface, runs the driver (which injects `spy`), and exits 0 only when the marker
+    reached the sink through the project (the call-site class on the stack). Pure/offline --
+    the compile+run is `run_deps_repro_java`. None for a non-interface / bootstrap sink."""
     parts = _java_sink_parts(spec)
     if parts is None:
         return None
-    fqcn, method = parts
-    callsite_class = spec.module_path.split("/")[-1].rsplit(".", 1)[0]  # DocService.java -> DocService
+    iface, method = parts
+    callsite_class = spec.module_path.split("/")[-1].rsplit(".", 1)[0]  # Api.java -> Api
     body = "\n            ".join(driver.splitlines()) or ";"
     return (
-        "import static org.junit.jupiter.api.Assertions.*;\n"
-        "import static org.mockito.Mockito.*;\n"
-        "import org.junit.jupiter.api.Test;\n"
-        "import org.mockito.MockedConstruction;\n"
+        "import java.lang.reflect.*;\n"
         "import java.util.Arrays;\n\n"
-        "public class ReproTest {\n"
+        "public class Main {\n"
         f"    static final String MARKER = \"{marker}\";\n"
         f"    static final String CALLSITE = \"{callsite_class}\";\n"
-        "    static final boolean[] seen = {false, false};\n"
-        "    static Object record(Object arg) {\n"
-        "        String a = String.valueOf(arg);\n"
-        "        if (a.contains(MARKER)) {\n"
-        "            seen[0] = true;\n"
-        "            seen[1] = Arrays.stream(Thread.currentThread().getStackTrace())\n"
+        "    static boolean seenMarker = false, seenVia = false;\n"
+        "    static void record(Object arg) {\n"
+        "        if (arg != null && String.valueOf(arg).contains(MARKER)) {\n"
+        "            seenMarker = true;\n"
+        "            seenVia = Arrays.stream(Thread.currentThread().getStackTrace())\n"
         "                .anyMatch(f -> f.getClassName().contains(CALLSITE)\n"
-        "                            && !f.getClassName().equals(\"ReproTest\"));\n"
+        "                            && !f.getClassName().startsWith(\"Main\"));\n"
         "        }\n"
+        "    }\n"
+        "    static Object defaultReturn(Class<?> t) {\n"
+        "        if (t == boolean.class) return false;\n"
+        "        if (t == char.class) return '\\0';\n"
+        "        if (t == byte.class) return (byte) 0;\n"
+        "        if (t == short.class) return (short) 0;\n"
+        "        if (t == int.class) return 0;\n"
+        "        if (t == long.class) return 0L;\n"
+        "        if (t == float.class) return 0f;\n"
+        "        if (t == double.class) return 0d;\n"
         "        return null;\n"
         "    }\n"
-        "    @Test public void reproduces() throws Exception {\n"
-        f"        try (MockedConstruction<{fqcn}> _mc = mockConstruction({fqcn}.class,\n"
-        f"                (mock, ctx) -> when(mock.{method}(any())).thenAnswer(_i -> record(_i.getArgument(0))))) {{\n"
-        f"            {body}\n"
-        "        }\n"
-        "        assertTrue(seen[0] && seen[1],\n"
-        "            \"the marker must reach the sink through the project\");\n"
+        "    @SuppressWarnings(\"unchecked\")\n"
+        "    public static void main(String[] args) {\n"
+        f"        {iface} spy = ({iface}) Proxy.newProxyInstance(\n"
+        f"            {iface}.class.getClassLoader(), new Class<?>[]{{{iface}.class}},\n"
+        "            (proxy, method, margs) -> {\n"
+        f"                if (method.getName().equals(\"{method}\") && margs != null)\n"
+        "                    for (Object a : margs) record(a);\n"
+        "                return defaultReturn(method.getReturnType());\n"
+        "            });\n"
+        f"        try {{ {body} }} catch (Throwable _t) {{ /* the sink is spied; faults are irrelevant */ }}\n"
+        "        System.exit(seenMarker && seenVia ? 0 : 1);\n"
         "    }\n"
         "}\n"
     )
@@ -475,64 +491,164 @@ def java_repro_test(spec: "DepsReproSpec", driver: str,
 
 def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
                         marker: str = "PROOF_MARKER_7F3A", mvn: Optional[str] = None,
-                        jdk: Optional[str] = None, timeout: int = 300) -> DepsRun:
-    """Compile the project's Java sources plus a generated Mockito test and run it, so the
-    marker is driven through the project to the sink. Needs Maven (`mvn`) and a JDK (`jdk` =
-    JAVA_HOME). Never raises; returns a skipped/unsupported DepsRun when the toolchain or the
-    sink family is missing."""
+                        jdk: Optional[str] = None, timeout: int = 180) -> DepsRun:
+    """Compile the project's Java sources plus a generated `Main.java` with `javac` and run it
+    with `java`, so the marker is driven through the project to the sink interface's proxy spy.
+    Needs only a JDK (`jdk` = JAVA_HOME, else PATH `javac`/`java`); no Maven, no Mockito. The
+    `mvn` argument is accepted for call-compatibility and ignored. Never raises; returns a
+    skipped/unsupported DepsRun when the toolchain or the sink family is missing."""
     import os
     import shutil as _shutil
-    test_src = java_repro_test(spec, driver_src, marker)
-    if test_src is None:
-        return DepsRun(False, "no Mockito template for this Java sink family yet")
-    mvn_bin = mvn or _shutil.which("mvn")
-    if not mvn_bin:
-        return DepsRun(False, "maven is not available")
+    main_src = java_repro_main(spec, driver_src, marker)
+    if main_src is None:
+        return DepsRun(False, "no Proxy template for this Java sink (needs an injected interface sink)")
     java_home = jdk or os.environ.get("JAVA_HOME")
+
+    def _bin(name: str) -> Optional[str]:
+        if java_home:
+            cand = Path(java_home) / "bin" / name
+            if cand.exists():
+                return str(cand)
+        return _shutil.which(name)
+
+    javac, java = _bin("javac"), _bin("java")
+    if not javac or not java:
+        return DepsRun(False, "a JDK (javac/java) is not available")
     src = Path(project_root)
     with tempfile.TemporaryDirectory() as d:
         proj = Path(d)
-        main = proj / "src" / "main" / "java"
-        test = proj / "src" / "test" / "java"
-        main.mkdir(parents=True)
-        test.mkdir(parents=True)
         for jf in src.rglob("*.java"):
-            text = jf.read_text(errors="replace")
-            m = re.search(r"^\s*package\s+([\w.]+)\s*;", text, re.M)
-            pkgdir = main.joinpath(*m.group(1).split(".")) if m else main
-            pkgdir.mkdir(parents=True, exist_ok=True)
-            (pkgdir / jf.name).write_text(text)
-        (test / "ReproTest.java").write_text(test_src)
-        (proj / "pom.xml").write_text(_JAVA_POM)
-        env = dict(os.environ)
-        if java_home:
-            env["JAVA_HOME"] = java_home
+            dest = proj / jf.relative_to(src)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(jf.read_text(errors="replace"))
+        (proj / "Main.java").write_text(main_src)
+        out = proj / "out"
+        out.mkdir()
+        sources = [str(p) for p in proj.rglob("*.java")]
         try:
-            r = subprocess.run([mvn_bin, "-q", "-B", "test"], cwd=str(proj),
+            c = subprocess.run([javac, "-d", str(out), *sources], cwd=str(proj),
+                               capture_output=True, text=True, errors="replace", timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return DepsRun(False, f"compile error: {exc}")
+        if c.returncode != 0:
+            err = c.stderr or ""
+            if "Unable to locate a Java Runtime" in err or "No Java runtime" in err:
+                return DepsRun(False, "a JDK (javac/java) is not available", {"stderr": err[-1500:]})
+            return DepsRun(False, "the project did not compile standalone", {"stderr": err[-1500:]})
+        try:
+            r = subprocess.run([java, "-cp", str(out), "Main"], cwd=str(proj),
+                               capture_output=True, text=True, errors="replace", timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return DepsRun(False, f"run error: {exc}")
+        out_txt = ((r.stdout or "") + (r.stderr or ""))[-1500:]
+        if r.returncode == 0:
+            return DepsRun(True, "marker reached the sink via the project", {"stdout": out_txt})
+        return DepsRun(False, "the marker did not reach the sink via the project",
+                       {"stdout": out_txt})
+
+
+# ---------------------------------------------------------------------------------------------
+# C# reproduction runner (scoped). Like Java, C# is compiled with static dispatch; the portable
+# spy is Moq over the sink's INTERFACE (the DI-seam shape: the project takes the sink as an
+# injected interface). Moq mocks an interface with a dynamic proxy -- no bootstrap/IL rewriting,
+# so it is portable across .NET runtimes. A directly-called static sink (Process.Start) or a
+# sealed class would need a Pose/Harmony shim (a later brick). Needs the .NET SDK.
+
+def _csharp_sink_parts(spec: "DepsReproSpec") -> Optional[tuple]:
+    """(interface, method) for a C# DI-seam sink, or None. Scoped to an interface sink
+    (conventionally an `I`-prefixed type) that the project has injected."""
+    fn = (spec.vuln_function or spec.call_text or "").replace("/", ".").strip(".")
+    if "." not in fn:
+        return None
+    iface, _, method = fn.rpartition(".")      # keep the namespace on the interface
+    simple = iface.rsplit(".", 1)[-1]
+    if not iface or not method or simple[:1] != "I":
+        return None
+    return iface, method
+
+
+def csharp_repro_test(spec: "DepsReproSpec", driver: str,
+                      marker: str = "PROOF_MARKER_7F3A") -> Optional[str]:
+    """Generate an xUnit + Moq test that mocks the sink interface, runs the driver (which
+    injects `mock.Object` into the project entry), and asserts the marker reached the sink
+    through the project (the call-site class on the stack). None for a non-interface sink."""
+    parts = _csharp_sink_parts(spec)
+    if parts is None:
+        return None
+    iface, method = parts
+    callsite = spec.module_path.split("/")[-1].rsplit(".", 1)[0]   # Api.cs -> Api
+    body = "\n            ".join(driver.splitlines()) or ";"
+    return (
+        "using System;\nusing System.Linq;\nusing System.Diagnostics;\n"
+        "using Xunit;\nusing Moq;\n\n"
+        "public class ReproTest {\n"
+        f"    const string MARKER = \"{marker}\";\n"
+        f"    const string CALLSITE = \"{callsite}\";\n"
+        "    static bool marker, via;\n"
+        "    static void Record(object a) {\n"
+        "        if (a != null && a.ToString().Contains(MARKER)) {\n"
+        "            marker = true;\n"
+        "            via = new StackTrace().GetFrames()\n"
+        "                .Any(f => (f.GetMethod()?.DeclaringType?.Name ?? \"\") == CALLSITE);\n"
+        "        }\n"
+        "    }\n"
+        "    [Fact] public void Reproduces() {\n"
+        "        marker = false; via = false;\n"
+        f"        var mock = new Mock<{iface}>();\n"
+        f"        mock.Setup(x => x.{method}(It.IsAny<string>())).Callback<string>(Record);\n"
+        f"        {body}\n"
+        "        Assert.True(marker && via, \"the marker must reach the sink through the project\");\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+_CSHARP_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="xunit" Version="2.7.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7" />
+    <PackageReference Include="Moq" Version="4.20.70" />
+  </ItemGroup>
+</Project>
+"""
+
+
+def run_deps_repro_csharp(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
+                          marker: str = "PROOF_MARKER_7F3A", dotnet: Optional[str] = None,
+                          timeout: int = 420) -> DepsRun:
+    """Compile the project's C# sources plus a generated xUnit+Moq test and run `dotnet test`,
+    driving the marker through the project to the mocked sink interface. Needs the .NET SDK.
+    Never raises; returns an unsupported/skipped DepsRun when the sink or toolchain is missing."""
+    import os
+    import shutil as _shutil
+    test_src = csharp_repro_test(spec, driver_src, marker)
+    if test_src is None:
+        return DepsRun(False, "no Moq template for this C# sink (needs an injected interface sink)")
+    dn = dotnet or _shutil.which("dotnet")
+    if not dn:
+        return DepsRun(False, "the .NET SDK is not available")
+    src = Path(project_root)
+    with tempfile.TemporaryDirectory() as d:
+        proj = Path(d)
+        for cs in src.rglob("*.cs"):
+            (proj / cs.name).write_text(cs.read_text(errors="replace"))
+        (proj / "ReproTest.cs").write_text(test_src)
+        (proj / "repro.csproj").write_text(_CSHARP_CSPROJ)
+        env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1",
+                   DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", DOTNET_NOLOGO="1")
+        try:
+            r = subprocess.run([dn, "test", "-v", "q", "--nologo"], cwd=str(proj),
                                capture_output=True, text=True, errors="replace",
                                timeout=timeout, env=env)
         except (subprocess.TimeoutExpired, OSError) as exc:
             return DepsRun(False, f"run error: {exc}")
         out = (r.stdout or "") + (r.stderr or "")
         if r.returncode == 0:
-            return DepsRun(True, "marker reached the sink via the project",
-                           {"stdout": out[-1500:]})
-        if "BUILD FAILURE" in out and "ReproTest" not in out and "COMPILATION" in out:
+            return DepsRun(True, "marker reached the sink via the project", {"stdout": out[-1500:]})
+        if "error CS" in out and "Reproduces" not in out:
             return DepsRun(False, "the project did not compile standalone", {"stdout": out[-1500:]})
         return DepsRun(False, "the marker did not reach the sink via the project",
                        {"stdout": out[-1500:]})
-
-
-_JAVA_POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>frame.repro</groupId><artifactId>repro</artifactId><version>1.0</version>
-  <properties><maven.compiler.release>17</maven.compiler.release></properties>
-  <dependencies>
-    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.2</version><scope>test</scope></dependency>
-    <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>5.11.0</version><scope>test</scope></dependency>
-  </dependencies>
-  <build><plugins>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.2.5</version></plugin>
-  </plugins></build>
-</project>
-"""
