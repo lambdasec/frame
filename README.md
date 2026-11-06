@@ -31,9 +31,9 @@ Where a team runs Semgrep for code, Snyk or Endor Labs for dependencies, gitleak
 ## Why it is different
 
 - **Sound, not pattern-based**: findings are proved by a solver (its own [separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) on Z3: entailment, frame inference, bi-abduction, countermodels), so there are fewer false alarms and a fix can be proved to remove the bug.
-- **Proof-carrying findings**: a finding the solver proves reachable becomes a runnable test that triggers it in your own code, raised to the `exploit-confirmed` level when the fault is actually observed, a true positive by construction. `frame scan --confirm-proofs` compiles C integer-overflow and out-of-bounds findings with the solver's own inputs under AddressSanitizer and UndefinedBehaviorSanitizer (no model), and `frame exploit --deps` turns `--sca` reachability into a test that drives your app to the vulnerable call. ([AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md#proof-carrying-findings---confirm-proofs))
+- **Proof-carrying findings**: a finding the solver proves reachable becomes a runnable test that triggers it in your own code, raised to the `exploit-confirmed` level when the fault is actually observed, a true positive by construction. `frame scan --confirm-proofs` compiles C integer-overflow and out-of-bounds findings with the solver's own inputs under AddressSanitizer and UndefinedBehaviorSanitizer (no model). `frame exploit --deps` drives your app to the sink for injection flows and vulnerable dependency calls in Python, JavaScript/TypeScript, Java and C#, confirmed by a spy that only counts data arriving through your own code; with `--check-fixed` the same test proves a fix removed the flow. ([AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md#proof-carrying-findings---confirm-proofs))
 - **Open rules and advisories, as data**: framework packs and the full advisory database ship as versioned public datasets, [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb) and [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) (rebuilt daily), updated between releases and pinnable for air-gapped CI. Nothing in them runs.
-- **Built for the AI-coding era**: scan only what changed, baseline what you accept, and `verify` that a fix removed the bug; a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
+- **Built for the AI-coding era**: scan only what changed, baseline what you accept, `verify` that a fix removed the bug, `diff` two scans to see what a pull request introduced, and fail CI only on proven findings (`--fail-on-evidence`). Reports as SARIF, JSON, Markdown (pull-request comments), GitLab SAST and SonarQube; a [GitHub Action](https://github.com/marketplace/actions/frame-security-scan), a pre-commit hook, and an [MCP server](https://github.com/lambdasec/frame-mcp) for Claude Code, Codex, Cursor and other coding agents.
 - **Runs on open models, local or hosted**: an optional LLM layer adds recall for business-logic and authorization flaws, triages, and proposes fixes the sound core then verifies; it works with any OpenAI-compatible model, including on-device.
 - **One config file**: every setting in `.frame.toml` (or `[tool.frame]` in `pyproject.toml`), checked strictly, with one precedence order: flag, then environment variable, then file, then default. [Example configs](https://github.com/lambdasec/frame/blob/main/examples/configs/README.md).
 
@@ -120,6 +120,8 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 
 ## Documentation
 
+The [documentation index](https://github.com/lambdasec/frame/blob/main/docs/README.md) lists every guide.
+
 | | |
 |---|---|
 | [Usage](https://github.com/lambdasec/frame/blob/main/docs/usage.md) | Scanning, baselines and `verify`, the GitHub Action, pre-commit hook, MCP server and agent skill, suppressions, configuration, the knowledge base, every command and flag, environment variables, Python API |
@@ -130,20 +132,27 @@ Methods and every suite, including SL-COMP for the engine, are in [benchmarks/RE
 | [Infrastructure as code](https://github.com/lambdasec/frame/blob/main/docs/iac.md) | Kubernetes, Dockerfiles, Terraform and CloudFormation, how close they are to Kubernetes, BuildKit and HCL, writing policies, how Z3 decides them |
 | [AI layer](https://github.com/lambdasec/frame/blob/main/docs/ai.md) | Detect, triage, the authorization hunt, exploit, fix, and proof-carrying reproductions, with any OpenAI-compatible model, including on-device |
 | [Separation logic engine](https://github.com/lambdasec/frame/blob/main/docs/engine.md) | The prover under the scanner: capabilities, syntax, CLI, Python API, SL-COMP results |
-| [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | What is built, and what is next: data growth, and reproduction for taint and cross-language dependency flows |
+| [Roadmap](https://github.com/lambdasec/frame/blob/main/docs/roadmap.md) | What is built, and what is next: data growth, and widening reproduction to sinks that are not injected interfaces |
 | [Examples](https://github.com/lambdasec/frame/blob/main/examples/README.md) | Runnable walkthroughs with real output: dependencies end to end, mitigations, adapting to a breaking upgrade, secrets, Kubernetes, AI apps and MCP servers, configuration files |
 | [Exemplars](https://github.com/lambdasec/frame/blob/main/benchmarks/exemplars/README.md) | The quickstart app, a vulnerable and safe app per framework, and the cross-file comparison |
 | Open datasets | Framework packs and spec tables, [`lambdasec/frame-kb`](https://huggingface.co/datasets/lambdasec/frame-kb); the OSV advisory database rebuilt daily, [`lambdasec/frame-advisories`](https://huggingface.co/datasets/lambdasec/frame-advisories) |
 
+## Community
+
+- **Ask a question or share an idea** in [Discussions](https://github.com/lambdasec/frame/discussions).
+- **Report a false positive or a missed vulnerability** with the [issue forms](https://github.com/lambdasec/frame/issues/new/choose): they are the most useful reports a scanner gets.
+- **Report a vulnerability in Frame itself** privately, as described in the [security policy](https://github.com/lambdasec/frame/blob/main/SECURITY.md), which also lists exactly what Frame runs and sends (by default: no project code executed, nothing fetched during a scan, no telemetry).
+- **What changed** in each release is in the [changelog](https://github.com/lambdasec/frame/blob/main/CHANGELOG.md).
+
 ## Contributing
+
+Contributions are welcome, and most of what Frame knows is data anyone can extend: a framework is one TOML pack plus a vulnerable and safe app pair. [CONTRIBUTING.md](https://github.com/lambdasec/frame/blob/main/CONTRIBUTING.md) covers setup, the principles every change follows, and how to add a pack, a source or sink, a flag or a parser.
 
 ```bash
 pip install -e ".[dev]"
 python -m pytest tests/ -n auto
 ruff check frame tests benchmarks
 ```
-
-`CLAUDE.md` is the engineering map of the codebase. To add a framework, write a pack under `frame/sil/packs/data/<language>/` and a vulnerable/safe app pair under `benchmarks/exemplars/frameworks/`; the fixture test checks both.
 
 ## License
 

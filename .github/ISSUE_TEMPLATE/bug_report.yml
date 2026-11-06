@@ -1,0 +1,54 @@
+name: Bug report
+description: Frame crashed, hung, printed an error, or a command did not behave as documented.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Frame version
+      description: Output of `frame --version`.
+      placeholder: frame 1.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How Frame runs
+      options:
+        - pip / PyPI
+        - GitHub Action
+        - pre-commit hook
+        - MCP server
+        - From source
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and Python version.
+      placeholder: Ubuntu 24.04, Python 3.12
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: frame deps --vulns --apply
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The full error or traceback.
+      render: text
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps or files to reproduce

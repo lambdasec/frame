@@ -11,7 +11,10 @@ import pytest
 from frame.cli import create_parser
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md")), *sorted((ROOT / "examples").glob("**/README.md"))]
+# the README, the community files beside it, every guide and every example README
+COMMUNITY = [ROOT / name for name in ("CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md")]
+DOCS = [ROOT / "README.md", *COMMUNITY, *sorted((ROOT / "docs").glob("*.md")),
+        *sorted((ROOT / "examples").glob("**/README.md"))]
 # the solver commands are documented in the engine guide
 ENGINE_COMMANDS = {"solve", "check", "parse", "repl"}
 

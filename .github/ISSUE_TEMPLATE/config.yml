@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability in Frame
+    url: https://github.com/lambdasec/frame/security/advisories/new
+    about: Please report vulnerabilities in Frame itself privately, not as a public issue (see SECURITY.md).
+  - name: Ask a question or share an idea
+    url: https://github.com/lambdasec/frame/discussions
+    about: Questions about using Frame, configuration or results belong in Discussions.
+  - name: Documentation
+    url: https://github.com/lambdasec/frame/blob/main/docs/README.md
+    about: Usage, every command and flag, coverage, dependencies, IaC, secrets and the AI layer.
