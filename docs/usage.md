@@ -85,7 +85,7 @@ frame scan src/ -f sarif -o frame.sarif --fail-on high
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/lambdasec/frame
-    rev: v1.1.0
+    rev: v1.1.1
     hooks:
       - id: frame
         # args: [--baseline, .frame-baseline.json]
