@@ -215,6 +215,15 @@ def create_parser() -> argparse.ArgumentParser:
              "(default: config file, else high)"
     )
     scan_parser.add_argument(
+        "--fail-on-evidence",
+        choices=["matched", "llm-detected", "llm-verified", "data-flow",
+                 "solver-verified", "exploit-confirmed"],
+        default=None,
+        help="Only fail (per --fail-on) on findings at or above this evidence level, "
+             "so you can break the build only on what Frame proved, e.g. "
+             "--fail-on-evidence solver-verified. ANDed with --fail-on."
+    )
+    scan_parser.add_argument(
         "--config",
         help="Path to a .frame.toml / pyproject.toml with a [tool.frame] table. "
              "Default: the nearest one above the scan target. Flags override it."
@@ -477,22 +486,39 @@ def _at_least(results: List[ScanResult], min_severity: Severity) -> List[ScanRes
             for r in results]
 
 
-def should_fail(results: List[ScanResult], fail_on: str) -> bool:
-    """Determine if scan should fail based on findings"""
+def _evidence_value(evidence: str) -> int:
+    """Rank of an evidence level (matched=0 ... exploit-confirmed=5); unknown = 0."""
+    from frame.sil.findings import EVIDENCE_LEVELS
+    try:
+        return EVIDENCE_LEVELS.index(evidence or "matched")
+    except ValueError:
+        return 0
+
+
+def should_fail(results: List[ScanResult], fail_on: str,
+                fail_on_evidence: Optional[str] = None) -> bool:
+    """Determine if scan should fail based on findings.
+
+    `fail_on_evidence` (an evidence level) is ANDed with the severity gate: the
+    build fails only on a finding at/above BOTH the severity and the evidence tier,
+    so `--fail-on-evidence solver-verified` fails only on findings Frame proved.
+    """
     if fail_on == "none":
         return False
 
+    min_ev = _evidence_value(fail_on_evidence) if fail_on_evidence else 0
+
+    def _ev_ok(v) -> bool:
+        return _evidence_value(getattr(v, "evidence", "matched")) >= min_ev
+
     if fail_on == "any":
-        return any(r.vulnerabilities for r in results)
+        return any(_ev_ok(v) for r in results for v in r.vulnerabilities)
 
-    threshold = parse_severity(fail_on)
-    threshold_value = severity_value(threshold)
-
+    threshold_value = severity_value(parse_severity(fail_on))
     for result in results:
         for vuln in result.vulnerabilities:
-            if severity_value(vuln.severity) >= threshold_value:
+            if severity_value(vuln.severity) >= threshold_value and _ev_ok(vuln):
                 return True
-
     return False
 
 
@@ -820,7 +846,7 @@ def cmd_scan(args) -> int:
             print(output)
 
     # Determine exit code
-    if should_fail(results, args.fail_on):
+    if should_fail(results, args.fail_on, getattr(args, "fail_on_evidence", None)):
         return 1
     if sca_run is not None and sca_run.findings and args.fail_on != "none":
         from frame.sca.scan import worst_severity          # 4 critical .. 1 low, as severity_value - 1

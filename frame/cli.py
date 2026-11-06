@@ -249,6 +249,15 @@ def create_parser() -> argparse.ArgumentParser:
              "(default: config file, else high)"
     )
     scan_parser.add_argument(
+        "--fail-on-evidence",
+        choices=["matched", "llm-detected", "llm-verified", "data-flow",
+                 "solver-verified", "exploit-confirmed"],
+        default=None,
+        help="Only fail (per --fail-on) on findings at or above this evidence level, "
+             "so you can break the build only on what Frame proved, e.g. "
+             "--fail-on-evidence solver-verified. ANDed with --fail-on."
+    )
+    scan_parser.add_argument(
         "--config",
         help="Path to a .frame.toml / pyproject.toml with a [tool.frame] table. "
              "Default: the nearest one above the scan target. Flags override it."

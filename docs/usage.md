@@ -254,6 +254,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `-l`, `--language LANG` | which files a directory scan walks (default: every supported one), and the language of files with an unknown extension |
 | `-p`, `--pattern GLOB` | only files matching the glob |
 | `--fail-on critical\|high\|medium\|low\|any\|none` | exit 1 at or above this severity (default: config, else high) |
+| `--fail-on-evidence LEVEL` | only fail (per `--fail-on`) on findings at or above this evidence level (`matched`, `llm-detected`, `llm-verified`, `data-flow`, `solver-verified`, `exploit-confirmed`); ANDed with `--fail-on`, so `--fail-on-evidence solver-verified` breaks the build only on findings Frame proved |
 | `--min-severity critical\|high\|medium\|low\|info` | report only at or above this (default: config, else low) |
 | `--disable RULE` | drop a CWE id or finding type (repeatable) |
 | `--config FILE` / `--no-config` | use this config file / ignore config files |
