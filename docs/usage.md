@@ -249,7 +249,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 
 | Flag | |
 |---|---|
-| `-f`, `--format text\|json\|sarif` | output format |
+| `-f`, `--format text\|json\|sarif\|markdown` | output format (markdown: a PR-comment / `$GITHUB_STEP_SUMMARY` report with the evidence column) |
 | `-o`, `--output FILE` | write to a file instead of stdout |
 | `-l`, `--language LANG` | which files a directory scan walks (default: every supported one), and the language of files with an unknown extension |
 | `-p`, `--pattern GLOB` | only files matching the glob |

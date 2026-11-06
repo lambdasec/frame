@@ -178,7 +178,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-f", "--format",
         default="text",
-        choices=["text", "json", "sarif"],
+        choices=["text", "json", "sarif", "markdown"],
         help="Output format (default: text)"
     )
     scan_parser.add_argument(
@@ -439,6 +439,42 @@ def format_hunt_text(hunt: dict) -> str:
             rows.append(f"  {u.get('file')}:{u.get('line')} {u.get('handler')}: {u.get('suspicion')}")
             rows.append(f"    needs: {u.get('needs')}")
     return "\n".join(rows) + "\n"
+
+
+def format_markdown_result(results: List[ScanResult], min_severity: Severity) -> str:
+    """A human-readable Markdown report for a PR comment or $GITHUB_STEP_SUMMARY.
+
+    Leads with a headline that surfaces how many findings Frame proved, then a table
+    with severity, type, CWE, evidence level, location and the data-flow -- the
+    evidence column is the point: it puts `solver-verified` / `exploit-confirmed`
+    where a human reviewer actually looks."""
+    def _md(s: str) -> str:
+        return str(s).replace("|", "\\|").replace("\n", " ")
+
+    thr = severity_value(min_severity)
+    vulns = [v for r in results for v in r.vulnerabilities
+             if severity_value(v.severity) >= thr]
+    lines = ["## Frame security scan", ""]
+    if not vulns:
+        lines.append("No findings at or above the reporting threshold.")
+        return "\n".join(lines) + "\n"
+    confirmed = sum(1 for v in vulns if getattr(v, "evidence", "") == "exploit-confirmed")
+    proven = sum(1 for v in vulns if _evidence_value(getattr(v, "evidence", "")) >= _evidence_value("solver-verified"))
+    lines.append(f"**{len(vulns)} finding{'s' if len(vulns) != 1 else ''}** "
+                 f"- {proven} solver-verified or higher, {confirmed} exploit-confirmed.")
+    lines.append("")
+    lines.append("| Severity | Type | CWE | Evidence | Location | Flow |")
+    lines.append("|---|---|---|---|---|---|")
+    for v in sorted(vulns, key=lambda v: -severity_value(v.severity)):
+        flow = " -> ".join(str(s) for s in (v.data_flow or []))[:120]
+        loc = f"`{_md(v.location)}:{v.line}`"
+        lines.append(f"| {v.severity.value} | {_md(v.type.value)} | {v.cwe_id or ''} "
+                     f"| {getattr(v, 'evidence', '')} | {loc} | {_md(flow)} |")
+    tests = [v.proof.get("test_path") for v in vulns
+             if getattr(v, "proof", None) and v.proof.get("test_path")]
+    if tests:
+        lines += ["", "Reproduction tests written:"] + [f"- `{_md(t)}`" for t in tests]
+    return "\n".join(lines) + "\n"
 
 
 def format_sarif_result(results: List[ScanResult]) -> str:
@@ -819,6 +855,14 @@ def cmd_scan(args) -> int:
     elif args.format == "json":
         results = _at_least(results, min_severity)
         output = format_json_result(results, directory=target.is_dir(), extra=extra)
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+        else:
+            print(output)
+
+    elif args.format == "markdown":
+        output = format_markdown_result(results, min_severity)
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)

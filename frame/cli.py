@@ -212,7 +212,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-f", "--format",
         default="text",
-        choices=["text", "json", "sarif"],
+        choices=["text", "json", "sarif", "markdown"],
         help="Output format (default: text)"
     )
     scan_parser.add_argument(

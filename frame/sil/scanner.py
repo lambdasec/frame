@@ -401,6 +401,26 @@ class ScanResult:
                 }],
             }
 
+            # codeFlows + relatedLocations from the taint data already on the finding,
+            # so GitHub/Azure render the source -> sink "how the taint flows" panel.
+            sink_phys = result["locations"][0]["physicalLocation"]
+            src_phys = self._sarif_physical(getattr(vuln, "source_location", ""))
+            flow = list(getattr(vuln, "data_flow", None) or [])
+            if src_phys or flow:
+                src_msg = {"text": f"source: {vuln.source_var or 'attacker-controlled data'}"}
+                if src_phys:
+                    result["relatedLocations"] = [{"physicalLocation": src_phys, "message": src_msg}]
+                steps = []
+                if src_phys:
+                    steps.append({"location": {"physicalLocation": src_phys, "message": src_msg}})
+                for hop in flow:
+                    steps.append({"location": {"physicalLocation": sink_phys,
+                                               "message": {"text": str(hop)}}})
+                steps.append({"location": {"physicalLocation": sink_phys,
+                                           "message": {"text": f"sink: {vuln.sink_type or vuln.type.value}"}}})
+                if len(steps) >= 2:
+                    result["codeFlows"] = [{"threadFlows": [{"locations": steps}]}]
+
             result["properties"] = {"category": category_of(vuln.type.value, vuln.category),
                                     "evidence": vuln.evidence}
             if vuln.context:
@@ -452,6 +472,21 @@ class ScanResult:
             Severity.INFO: "note",
         }
         return mapping.get(severity, "warning")
+
+    def _sarif_physical(self, loc: str) -> Optional[dict]:
+        """Parse a ``file:line[:col]`` source-location string into a SARIF
+        physicalLocation, or None when it is not parseable. Best effort: used for
+        the taint source in codeFlows/relatedLocations."""
+        if not loc or ":" not in str(loc):
+            return None
+        parts = str(loc).split(":")
+        nums = []                         # peel trailing numeric segments (line, then col)
+        while parts and parts[-1].isdigit():
+            nums.insert(0, parts.pop())
+        if not nums or not parts:
+            return None
+        return {"artifactLocation": {"uri": ":".join(parts) or self.filename},
+                "region": {"startLine": int(nums[0])}}
 
 
 # A source line this long does not occur in code people write and review; it is
