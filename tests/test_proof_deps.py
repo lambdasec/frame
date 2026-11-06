@@ -192,3 +192,43 @@ def test_taint_reproduction_class_method_sink(tmp_path):
                              "source_var": "q"})
     r = run_deps_repro("from app import handle\nhandle(MARKER)", spec, str(tmp_path))
     assert r.reproduced is True
+
+
+import shutil as _shutil
+from frame.sil.proof_deps import run_deps_repro_js
+
+_need_node = __import__("pytest").mark.skipif(
+    _shutil.which("node") is None, reason="node not available")
+
+
+def _js_project(root: Path):
+    (root / "shell.js").write_text(
+        "const cp = require('child_process');\n"
+        "module.exports.run = function(c){ return cp.exec('ping ' + c); };\n")
+    (root / "routes.js").write_text(
+        "const { run } = require('./shell');\n"
+        "module.exports.ping = function(host){ return run(host); };\n")
+    return DepsReproSpec(advisory="CWE-78", package="", version="",
+                         vuln_function="child_process.exec", call_text="cp.exec",
+                         call_site="shell.js:2", source_var="c")
+
+
+@_need_node
+def test_js_runner_confirms_a_genuine_driver(tmp_path):
+    spec = _js_project(tmp_path)
+    r = run_deps_repro_js("const { ping } = require('./routes');\nping(MARKER);", spec, str(tmp_path))
+    assert r.reproduced is True
+
+
+@_need_node
+def test_js_runner_rejects_a_direct_call_cheat(tmp_path):
+    spec = _js_project(tmp_path)
+    r = run_deps_repro_js("require('child_process').exec(MARKER);", spec, str(tmp_path))
+    assert r.reproduced is False
+
+
+@_need_node
+def test_js_runner_rejects_without_the_marker(tmp_path):
+    spec = _js_project(tmp_path)
+    r = run_deps_repro_js("const { ping } = require('./routes');\nping('benign');", spec, str(tmp_path))
+    assert r.reproduced is False

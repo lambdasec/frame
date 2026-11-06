@@ -1,0 +1,3 @@
+{"language":"javascript","cwe":"CWE-78","advisory":"command injection via child_process.exec",
+ "vuln_function":"child_process.exec","call_site":"exec.js:2","source_var":"host",
+ "driver":"const { lookup } = require('./api');\nlookup({ query: { host: MARKER } });"}

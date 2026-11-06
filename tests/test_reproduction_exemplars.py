@@ -1,0 +1,66 @@
+"""Proof-carrying reproduction exemplars: real reachability reproductions across languages.
+
+Each case under `benchmarks/exemplars/reproductions/<name>/` is a small project that
+reaches a known vulnerability shape (SCA deserialization, command injection, SQL
+injection) through its own code, with a `case.json` giving the finding and a driver
+Frame confirmed. These are both rigorous cross-language tests and the outreach demos
+("a real, runnable reproduction of a known vuln").
+
+The test is deterministic -- it runs each case's confirmed driver through the spy
+runner (no model), so it validates the engine in CI. The agent finds that driver in
+practice (validated separately against a live model).
+"""
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+
+from frame.sil.proof_deps import DepsReproSpec, run_deps_repro, run_deps_repro_js
+
+CASES_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "exemplars" / "reproductions"
+CASES = sorted(p for p in CASES_DIR.glob("*") if (p / "case.json").is_file()) \
+    if CASES_DIR.is_dir() else []
+
+_JS = {"javascript", "js", "typescript", "ts"}
+
+
+def _spec(meta: dict) -> DepsReproSpec:
+    return DepsReproSpec(
+        advisory=meta.get("advisory", meta.get("cwe", "")),
+        package=meta.get("package", ""), version=meta.get("version", ""),
+        vuln_function=meta["vuln_function"], call_text=meta["vuln_function"],
+        call_site=meta["call_site"], source_var=meta.get("source_var", ""))
+
+
+@pytest.mark.skipif(not CASES, reason="no reproduction exemplars found")
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_exemplar_reproduces(case):
+    meta = json.loads((case / "case.json").read_text())
+    language = meta["language"].lower()
+    if language in _JS and shutil.which("node") is None:
+        pytest.skip("node not available for a JS exemplar")
+    spec = _spec(meta)
+    driver = meta["driver"]
+    if language in _JS:
+        run = run_deps_repro_js(driver, spec, str(case))
+    else:
+        run = run_deps_repro(driver, spec, str(case))
+    assert run.reproduced, f"{case.name}: {run.detail} ({run.result})"
+
+
+@pytest.mark.skipif(not CASES, reason="no reproduction exemplars found")
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_exemplar_rejects_a_driver_that_does_not_drive_the_sink(case):
+    # Soundness guard: a driver that never drives the project to the sink must NOT
+    # count as a reproduction (the spy is never reached with the marker).
+    meta = json.loads((case / "case.json").read_text())
+    language = meta["language"].lower()
+    if language in _JS and shutil.which("node") is None:
+        pytest.skip("node not available for a JS exemplar")
+    spec = _spec(meta)
+    noop = ";" if language in _JS else "pass"
+    run = run_deps_repro_js(noop, spec, str(case)) if language in _JS \
+        else run_deps_repro(noop, spec, str(case))
+    assert not run.reproduced

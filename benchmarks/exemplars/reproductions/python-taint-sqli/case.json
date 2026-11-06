@@ -1,0 +1,3 @@
+{"language":"python","cwe":"CWE-89","advisory":"SQL injection via Cursor.execute",
+ "vuln_function":"db.Cursor.execute","call_site":"users.py:4","source_var":"name",
+ "driver":"from users import find_user\nfind_user(MARKER)"}

@@ -294,3 +294,97 @@ def taint_repro_spec(finding: Dict) -> Optional["DepsReproSpec"]:
         flows=[{"location": call_site, "type": finding.get("type", ""),
                 "source": finding.get("source_var", "")}],
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# JavaScript/TypeScript reproduction runner (Node). Same soundness model as the Python runner:
+# the harness patches the sink before the project requires it, runs the agent's driver, and
+# confirms the marker reached the sink from the flagged call-site file. Module-function and
+# module-level sinks (child_process.exec, a package export) are covered; a prototype method is
+# a refinement. Needs `node` on PATH (or passed in).
+
+_JS_RUNNER = r'''
+const fs = require('fs');
+const path = require('path');
+const { createRequire } = require('module');
+const projectRequire = createRequire(path.join(@@ROOT@@, 'noop.js'));
+const MARKER = @@MARKER@@;
+const CALLSITE = @@CALLSITE@@;
+const DOTTED = @@DOTTED@@;
+const RESULT = { seen: false, marker_in_args: false, via_callsite: false, error: "" };
+
+function resolveParent(dotted) {
+  const parts = dotted.split('.');
+  let mod = null, i = parts.length;
+  for (; i > 0; i--) {
+    try { mod = projectRequire(parts.slice(0, i).join('.')); break; } catch (e) { mod = null; }
+  }
+  if (mod === null) { try { mod = projectRequire(parts[0]); i = 1; } catch (e) { throw new Error('no requirable module in ' + dotted); } }
+  let obj = mod;
+  for (let k = i; k < parts.length - 1; k++) obj = obj[parts[k]];
+  return [obj, parts[parts.length - 1]];
+}
+
+try {
+  const [parent, leaf] = resolveParent(DOTTED);
+  parent[leaf] = function (...args) {
+    RESULT.seen = true;
+    RESULT.marker_in_args = args.some(a => { try { return String(a).includes(MARKER); } catch (e) { return false; } });
+    const stack = (new Error().stack || '').split('\n');
+    RESULT.via_callsite = stack.some(l => l.includes(CALLSITE));
+    return undefined;
+  };
+} catch (e) { RESULT.error = 'patch failed: ' + e.message; }
+
+if (!RESULT.error) {
+  try {
+    (function (require) {
+@@DRIVER@@
+    })(projectRequire);
+  } catch (e) { RESULT.error = 'driver error: ' + e.message; }
+}
+fs.writeFileSync(@@RESULT@@, JSON.stringify(RESULT));
+'''
+
+
+def run_deps_repro_js(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
+                      marker: str = "PROOF_MARKER_7F3A", node: Optional[str] = None,
+                      timeout: int = 30) -> DepsRun:
+    """Node counterpart of `run_deps_repro`. The driver gets a `require` resolving from the
+    project root; it drives the project so MARKER reaches the sink, and the harness spy
+    confirms the marker arrived from the flagged call-site file. Never raises."""
+    import json as _json
+    import shutil as _shutil
+    dotted = (spec.vuln_function or spec.call_text).replace("/", ".").strip(".")
+    if not dotted:
+        return DepsRun(False, "could not resolve the sink")
+    node_bin = node or _shutil.which("node")
+    if not node_bin:
+        return DepsRun(False, "node is not available")
+    callsite_file = spec.module_path.split(":")[0]
+    indented = "\n".join("      " + ln for ln in driver_src.splitlines()) or "      ;"
+    with tempfile.TemporaryDirectory() as d:
+        result_path = str(Path(d) / "result.json")
+        runner = (_JS_RUNNER
+                  .replace("@@ROOT@@", _json.dumps(str(project_root)))
+                  .replace("@@MARKER@@", _json.dumps(marker))
+                  .replace("@@CALLSITE@@", _json.dumps(callsite_file))
+                  .replace("@@DOTTED@@", _json.dumps(dotted))
+                  .replace("@@RESULT@@", _json.dumps(result_path))
+                  .replace("@@DRIVER@@", indented))
+        runner_path = Path(d) / "_frame_repro_runner.js"
+        runner_path.write_text(runner)
+        try:
+            subprocess.run([node_bin, str(runner_path)], capture_output=True, text=True,
+                           errors="replace", timeout=timeout, cwd=d)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return DepsRun(False, f"run error: {exc}")
+        try:
+            res = _json.loads(Path(result_path).read_text())
+        except (OSError, ValueError):
+            return DepsRun(False, "driver produced no result")
+    ok = bool(res.get("seen") and res.get("marker_in_args") and res.get("via_callsite")
+              and not res.get("error"))
+    detail = ("marker reached the sink via the project" if ok
+              else res.get("error") or "the marker did not reach the sink via the project")
+    return DepsRun(ok, detail, res)

@@ -20,17 +20,31 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from frame.sil.llm_agent import run_agent
-from frame.sil.proof_deps import DepsReproSpec, run_deps_repro
+from frame.sil.proof_deps import DepsReproSpec, run_deps_repro, run_deps_repro_js
+
+_PY_LANGS = {"python", "py"}
+_JS_LANGS = {"javascript", "js", "typescript", "ts"}
+
+
+def _lang_note(language: str) -> str:
+    if language in _JS_LANGS:
+        return ("Write the driver in JavaScript. `require` is already provided and resolves from "
+                "the project root, so `const { handler } = require('./routes'); handler(MARKER);`. "
+                "MARKER is already defined.")
+    return ("Write the driver in Python. MARKER is already defined, e.g. "
+            "`from routes import handler; handler(MARKER)`.")
+
 
 REPRODUCE_SYSTEM = (
     "You are writing a REACHABILITY TEST for your own project: static analysis found that "
-    "attacker-controlled data reaches a vulnerable library function, and you want a runnable "
-    "test that proves it, so the risk is concrete and a fix can be verified. Ordinary QA.\n\n"
+    "attacker-controlled data reaches a vulnerable function (a dependency call or an injection "
+    "sink), and you want a runnable test that proves it, so the risk is concrete and a fix can be "
+    "verified. Ordinary QA.\n\n"
     "You are given the vulnerable function, the file and line where your project calls it, and "
     "the tainted variable. Explore the project with `read_file` and `grep` to find the entry "
-    "point (the handler/function a caller invokes) that leads to that call. Then write a DRIVER: "
-    "a few lines of Python that import that entry point and call it so the already-defined "
-    "variable MARKER flows to the vulnerable call. Submit the driver with `try_driver`.\n\n"
+    "point (the handler/function a caller invokes) that leads to that call. Then write a DRIVER "
+    "that calls that entry point so the already-defined variable MARKER flows to the vulnerable "
+    "call, and submit it with `try_driver`.\n\n"
     "The harness installs a spy on the vulnerable function and tells you whether MARKER actually "
     "reached it THROUGH your project's code. Calling the vulnerable function directly does not "
     "count -- the data must flow through the project. Iterate on the harness feedback until it "
@@ -70,11 +84,13 @@ class DepsReproduceResult:
     transcript: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def _seed(spec: DepsReproSpec) -> str:
-    return (f"Advisory {spec.advisory} in {spec.package}=={spec.version}.\n"
+def _seed(spec: DepsReproSpec, language: str) -> str:
+    pkg = f" in {spec.package}=={spec.version}" if spec.package else ""
+    return (f"Finding {spec.advisory}{pkg}.\n"
             f"Vulnerable function: {spec.vuln_function} (called as {spec.call_text!r})\n"
             f"Your project reaches it at: {spec.call_site}\n"
             f"Tainted variable at that call: {spec.source_var!r}\n\n"
+            f"{_lang_note(language)}\n"
             "Find the entry point that leads to that call and write a driver that passes MARKER "
             "through it to the vulnerable function. Submit with try_driver.")
 
@@ -91,8 +107,12 @@ def _read_tool(root: Path):
     return _read
 
 
-def _grep_tool(root: Path):
+_GREP_GLOBS = {"python": ("*.py",), "javascript": ("*.js", "*.ts", "*.jsx", "*.tsx")}
+
+
+def _grep_tool(root: Path, language: str = "python"):
     import re
+    globs = _GREP_GLOBS["javascript"] if language in _JS_LANGS else _GREP_GLOBS["python"]
 
     def _grep(pattern: str) -> str:
         try:
@@ -100,7 +120,8 @@ def _grep_tool(root: Path):
         except re.error as exc:
             return f"error: bad pattern: {exc}"
         hits: List[str] = []
-        for p in sorted(root.rglob("*.py")):
+        paths = sorted(p for g in globs for p in root.rglob(g))
+        for p in paths:
             try:
                 for i, line in enumerate(p.read_text(errors="replace").splitlines(), 1):
                     if rx.search(line):
@@ -115,11 +136,14 @@ def _grep_tool(root: Path):
 
 def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
                            client: Any = None, *,
+                           language: str = "python",
                            max_steps: int = 8,
                            python: Optional[str] = None,
+                           node: Optional[str] = None,
                            timeout: int = 30) -> DepsReproduceResult:
     """Drive a seeded agent to write a driver that reaches the vulnerable function.
 
+    ``language`` picks the runner and the driver dialect (``python`` or a JS/TS value).
     ``reproduced`` is True only when the harness spy confirms the marker reached the
     vulnerable function through the project's code -- never the model's claim.
     """
@@ -129,9 +153,16 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
         return DepsReproduceResult(False, detail="LLM client unavailable")
     if client is None:
         client = LLMClient(config)
+    language = (language or "python").lower()
+    is_js = language in _JS_LANGS
     root = Path(project_root)
     state: Dict[str, Any] = {"driver": "", "detail": ""}
-    read_fn, grep_fn = _read_tool(root), _grep_tool(root)
+    read_fn, grep_fn = _read_tool(root), _grep_tool(root, language)
+
+    def _run(driver: str):
+        if is_js:
+            return run_deps_repro_js(driver, spec, str(root), node=node, timeout=timeout)
+        return run_deps_repro(driver, spec, str(root), python=python, timeout=timeout)
 
     def _exec(name: str, args: Dict[str, Any]) -> str:
         if name == "read_file":
@@ -142,7 +173,7 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
             driver = args.get("driver", "")
             if not driver.strip():
                 return "error: empty driver"
-            run = run_deps_repro(driver, spec, str(root), python=python, timeout=timeout)
+            run = _run(driver)
             if run.reproduced:
                 state["driver"] = driver
                 state["detail"] = run.detail
@@ -155,7 +186,7 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
 
     messages = [
         {"role": "system", "content": REPRODUCE_SYSTEM},
-        {"role": "user", "content": _seed(spec)},
+        {"role": "user", "content": _seed(spec, language)},
     ]
     res = run_agent(messages, client, tools=_TOOLS, exec_tool=_exec,
                     max_steps=max_steps, check_done=_done, stall_nudge=_STALL,
