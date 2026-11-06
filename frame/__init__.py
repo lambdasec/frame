@@ -40,7 +40,7 @@ from frame.predicates import (
     ListSegment, Tree, GenericPredicate
 )
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __all__ = [
     # Core formulas and expressions
     "Formula", "Emp", "PointsTo", "SepConj", "Wand", "And", "Or", "Not",

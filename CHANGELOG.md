@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-06
+
 ### Added
 
 - **Proof-carrying findings, across languages.** `frame exploit --deps` now reproduces code taint flows (SQL injection, command injection, XSS, path traversal, SSRF and the other source-to-sink injections) as well as dependency reachability, for Python, JavaScript/TypeScript, Java and C#. Java spies the sink interface with a core-JDK `java.lang.reflect.Proxy` (only a JDK needed); C# uses xUnit + Moq (the .NET SDK). Every reproduction counts only when the marker reaches the sink through the project's own code.
@@ -57,7 +59,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/lambdasec/frame/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/lambdasec/frame/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/lambdasec/frame/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/lambdasec/frame/compare/v1.0.0...v1.1.0
