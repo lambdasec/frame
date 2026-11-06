@@ -109,6 +109,18 @@ def create_parser() -> argparse.ArgumentParser:
                              help="Ask each credential's provider whether it still works (a read-only request to "
                                   "the provider's own API; off by default, see docs/secrets.md#verifying-with-the-provider)")
 
+    # === DIFF command ===
+    diff_parser = subparsers.add_parser(
+        "diff",
+        help="Compare two scan JSONs and show introduced / fixed findings",
+        description="Pair two `frame scan -f json` runs by fingerprint and report which findings this change "
+                    "introduced, fixed, or left unchanged. Exit 1 when any finding was introduced."
+    )
+    diff_parser.add_argument("old", help="Baseline findings JSON (from `frame scan -f json`)")
+    diff_parser.add_argument("new", help="New findings JSON to compare against the baseline")
+    diff_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
+                             help="Output format (default: text)")
+
     # === DEPS command ===
     deps_parser = subparsers.add_parser(
         "deps",
@@ -212,7 +224,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-f", "--format",
         default="text",
-        choices=["text", "json", "sarif", "markdown"],
+        choices=["text", "json", "sarif", "markdown", "gitlab", "sonar"],
         help="Output format (default: text)"
     )
     scan_parser.add_argument(
@@ -1101,6 +1113,68 @@ def _select_findings(findings: List[dict], n: int = 6) -> List[dict]:
         if len(out) >= n:
             break
     return out
+
+
+def _diff_findings(old: List[dict], new: List[dict]):
+    """Pair two findings lists by fingerprint (exact, then loose by nearest line).
+    Returns (introduced, fixed, unchanged_count)."""
+    used = set()
+    by_exact = {}
+    for i, e in enumerate(old):
+        by_exact.setdefault(e.get("fingerprint"), []).append(i)
+    rest, unchanged = [], 0
+    for n in new:
+        cand = [i for i in by_exact.get(n.get("fingerprint"), []) if i not in used]
+        if cand and n.get("fingerprint"):
+            used.add(cand[0]); unchanged += 1
+        else:
+            rest.append(n)
+    by_loose = {}
+    for i, e in enumerate(old):
+        if i not in used:
+            by_loose.setdefault(e.get("fingerprint_loose"), []).append(i)
+    introduced = []
+    for n in rest:
+        free = [i for i in by_loose.get(n.get("fingerprint_loose"), []) if i not in used]
+        if free and n.get("fingerprint_loose"):
+            idx = min(free, key=lambda i: abs((old[i].get("line") or 0) - (n.get("line") or 0)))
+            used.add(idx); unchanged += 1
+        else:
+            introduced.append(n)
+    fixed = [e for i, e in enumerate(old) if i not in used]
+    return introduced, fixed, unchanged
+
+
+def cmd_diff(args) -> int:
+    """`frame diff OLD.json NEW.json`: introduced / fixed findings between two scans."""
+    try:
+        old = _load_findings(Path(args.old).read_text())
+        new = _load_findings(Path(args.new).read_text())
+    except Exception as e:
+        print(f"Error reading findings JSON: {e}", file=sys.stderr)
+        return 2
+    introduced, fixed, unchanged = _diff_findings(old, new)
+
+    def _line(v):
+        loc = f"{v.get('location', '')}:{v.get('line', '')}"
+        ev = v.get("evidence", "")
+        return f"  [{v.get('severity', '').upper()}] {v.get('type', '')} {loc} ({ev})"
+
+    if args.format == "json":
+        print(json.dumps({"introduced": introduced, "fixed": fixed,
+                          "unchanged": unchanged}, indent=2))
+    else:
+        print(f"Security diff: +{len(introduced)} introduced, -{len(fixed)} fixed, "
+              f"{unchanged} unchanged")
+        if introduced:
+            print("Introduced:")
+            for v in introduced:
+                print(_line(v))
+        if fixed:
+            print("Fixed:")
+            for v in fixed:
+                print(_line(v))
+    return 1 if introduced else 0
 
 
 def _load_dependency_findings(raw: str) -> List[dict]:
@@ -2028,6 +2102,7 @@ def main(argv: List[str] = None) -> int:
         "inventory": cmd_inventory,
         "iac": cmd_iac,
         "history": cmd_history,
+        "diff": cmd_diff,
         "deps": cmd_deps,
         "exploit": cmd_exploit,
         "fix": cmd_fix,

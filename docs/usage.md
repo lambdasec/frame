@@ -120,6 +120,7 @@ args = ["frame-mcp"]
 | `verify` | Re-check earlier findings: fixed, present, suppressed, uncertain |
 | `fix` | Patch findings and re-scan to confirm (needs a model) |
 | `exploit` | Attack a live target you are authorized to test |
+| `diff` | Compare two scan JSONs: introduced / fixed findings by fingerprint |
 | `packs_list`, `packs_check` | List and validate framework packs |
 | `solve` | Check a separation logic entailment |
 
@@ -249,7 +250,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 
 | Flag | |
 |---|---|
-| `-f`, `--format text\|json\|sarif\|markdown` | output format (markdown: a PR-comment / `$GITHUB_STEP_SUMMARY` report with the evidence column) |
+| `-f`, `--format text\|json\|sarif\|markdown\|gitlab\|sonar` | output format (markdown: a PR-comment / `$GITHUB_STEP_SUMMARY` report; gitlab: GitLab SAST report; sonar: SonarQube generic issue import) |
 | `-o`, `--output FILE` | write to a file instead of stdout |
 | `-l`, `--language LANG` | which files a directory scan walks (default: every supported one), and the language of files with an unknown extension |
 | `-p`, `--pattern GLOB` | only files matching the glob |
@@ -360,6 +361,10 @@ Infrastructure files (Kubernetes manifests, Dockerfiles, Terraform, CloudFormati
 ### `frame history [repo]`
 
 Provider credentials anywhere in the git history: every line each commit added (all refs; `--range REV` for one branch or range, e.g. `origin/main..HEAD`), each credential reported once at the commit that first added it, with whether the current tree still has it. Values are never printed (the first four characters, the length, and a SHA-256 fingerprint in `-f json`). Comments count, unlike in `frame scan`: a real key in a comment is as leaked as one in a string. Exit 1 when any is found, 2 when the directory is not a git repository. `-f text|json`. `--verify` asks each credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider)).
+
+### `frame diff OLD.json NEW.json`
+
+Pairs two `frame scan -f json` runs by fingerprint (exact, then loose by nearest line) and reports which findings a change introduced, fixed, or left unchanged, so a reviewer sees "this PR introduces 2, fixes 1" rather than diffing a baseline file by hand. Exit 1 when any finding was introduced, else 0. `-f text|json`.
 
 ### `frame inventory [dir]`
 

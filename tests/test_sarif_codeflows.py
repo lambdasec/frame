@@ -42,3 +42,20 @@ def test_sarif_physical_parses_file_line_col():
     assert r._sarif_physical("a/b.py:12")["region"]["startLine"] == 12
     assert r._sarif_physical("nonsense") is None
     assert r._sarif_physical("") is None
+
+
+def test_proof_surfaced_in_sarif():
+    res = _result(proof={"family": "integer-range", "witness": {"n": 46341},
+                         "inputs": {"n": 46341}, "constructible": True,
+                         "trigger": "n*n overflows", "run": {"status": "confirmed"},
+                         "test_path": "proofs/CWE-190_scale_6.c"})
+    assert res["properties"]["proof"]["witness"] == {"n": 46341}
+    assert res["properties"]["proof"]["run"]["status"] == "confirmed"
+    att = res["attachments"][0]["artifactLocation"]["uri"]
+    assert att == "proofs/CWE-190_scale_6.c"
+    assert "Reproduction test: proofs/CWE-190_scale_6.c" in res["message"]["text"]
+
+
+def test_no_proof_no_attachment():
+    res = _result()
+    assert "attachments" not in res and "proof" not in res.get("properties", {})

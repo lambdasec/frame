@@ -178,7 +178,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-f", "--format",
         default="text",
-        choices=["text", "json", "sarif", "markdown"],
+        choices=["text", "json", "sarif", "markdown", "gitlab", "sonar"],
         help="Output format (default: text)"
     )
     scan_parser.add_argument(
@@ -475,6 +475,74 @@ def format_markdown_result(results: List[ScanResult], min_severity: Severity) ->
     if tests:
         lines += ["", "Reproduction tests written:"] + [f"- `{_md(t)}`" for t in tests]
     return "\n".join(lines) + "\n"
+
+
+_GITLAB_SEVERITY = {Severity.CRITICAL: "Critical", Severity.HIGH: "High",
+                    Severity.MEDIUM: "Medium", Severity.LOW: "Low", Severity.INFO: "Info"}
+_SONAR_SEVERITY = {Severity.CRITICAL: "BLOCKER", Severity.HIGH: "CRITICAL",
+                   Severity.MEDIUM: "MAJOR", Severity.LOW: "MINOR", Severity.INFO: "INFO"}
+
+
+def format_gitlab_result(results: List[ScanResult], min_severity: Severity) -> str:
+    """GitLab SAST report (schema 15.x): populates GitLab's Security Dashboard and the
+    MR security widget. Maps the findings Frame already has (severity, CWE, location,
+    fingerprint for dedupe)."""
+    from frame import __version__
+    import datetime
+    thr = severity_value(min_severity)
+    vulns = []
+    for r in results:
+        for v in r.vulnerabilities:
+            if severity_value(v.severity) < thr:
+                continue
+            ident = []
+            if v.cwe_id:
+                num = v.cwe_id.split("-")[-1]
+                ident.append({"type": "cwe", "name": v.cwe_id, "value": num,
+                              "url": f"https://cwe.mitre.org/data/definitions/{num}.html"})
+            vulns.append({
+                "id": v.fingerprint or f"{v.location}:{v.line}:{v.type.value}",
+                "category": "sast",
+                "name": v.type.value.replace("_", " ").title(),
+                "message": v.type.value,
+                "description": v.description,
+                "severity": _GITLAB_SEVERITY.get(v.severity, "Unknown"),
+                "location": {"file": v.path or v.location, "start_line": v.line},
+                "identifiers": ident or [{"type": "frame", "name": v.type.value,
+                                          "value": v.type.value}],
+            })
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    scanner = {"id": "frame", "name": "Frame", "version": __version__,
+               "vendor": {"name": "lambdasec"}}
+    return json.dumps({
+        "version": "15.0.6",
+        "scan": {"scanner": scanner, "analyzer": scanner, "type": "sast",
+                 "start_time": now, "end_time": now, "status": "success"},
+        "vulnerabilities": vulns,
+    }, indent=2)
+
+
+def format_sonar_result(results: List[ScanResult], min_severity: Severity) -> str:
+    """SonarQube generic issue import format: ingest Frame findings into SonarQube."""
+    thr = severity_value(min_severity)
+    issues = []
+    for r in results:
+        for v in r.vulnerabilities:
+            if severity_value(v.severity) < thr:
+                continue
+            issue = {
+                "engineId": "frame",
+                "ruleId": v.type.value,
+                "type": "VULNERABILITY",
+                "severity": _SONAR_SEVERITY.get(v.severity, "INFO"),
+                "primaryLocation": {
+                    "message": v.description,
+                    "filePath": v.path or v.location,
+                    "textRange": {"startLine": max(1, v.line)},
+                },
+            }
+            issues.append(issue)
+    return json.dumps({"issues": issues}, indent=2)
 
 
 def format_sarif_result(results: List[ScanResult]) -> str:
@@ -809,6 +877,17 @@ def cmd_scan(args) -> int:
     # Format output
     min_severity = parse_severity(args.min_severity)
 
+    # Proof-carrying summary: surface how many findings Frame proved by running them.
+    if getattr(args, "confirm_proofs", False) or getattr(args, "reproduce_proofs", False):
+        _all = [v for r in results for v in r.vulnerabilities]
+        _conf = sum(1 for v in _all if getattr(v, "evidence", "") == "exploit-confirmed")
+        _tests = [v.proof.get("test_path") for v in _all
+                  if getattr(v, "proof", None) and v.proof.get("test_path")]
+        msg = f"Proof-carrying: {_conf} finding(s) raised to exploit-confirmed by running them"
+        if _tests:
+            msg += f"; {len(_tests)} reproduction test(s) written"
+        print(msg, file=sys.stderr)
+
     if args.format == "text":
         shown = results
         if target.is_dir() and not getattr(args, "verbose", False):
@@ -861,8 +940,13 @@ def cmd_scan(args) -> int:
         else:
             print(output)
 
-    elif args.format == "markdown":
-        output = format_markdown_result(results, min_severity)
+    elif args.format in ("markdown", "gitlab", "sonar"):
+        if args.format == "markdown":
+            output = format_markdown_result(results, min_severity)
+        elif args.format == "gitlab":
+            output = format_gitlab_result(results, min_severity)
+        else:
+            output = format_sonar_result(results, min_severity)
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)

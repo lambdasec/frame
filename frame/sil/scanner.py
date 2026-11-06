@@ -431,6 +431,22 @@ class ScanResult:
                 result["properties"]["cwe"] = cwe
             if vuln.witness:
                 result["message"]["text"] += f"\n\nExploit witness: {vuln.witness}"
+            proof = getattr(vuln, "proof", None)
+            if proof:
+                # Surface the proof: the concrete witness/inputs as a property, and the
+                # written reproduction test as a SARIF attachment, so the alert itself
+                # shows "here is the test that triggers this."
+                result["properties"]["proof"] = {
+                    k: proof[k] for k in ("family", "witness", "inputs", "constructible",
+                                          "trigger", "run") if k in proof
+                }
+                tp = proof.get("test_path")
+                if tp:
+                    result["attachments"] = [{
+                        "artifactLocation": {"uri": tp},
+                        "description": {"text": "Frame reproduction test for this finding"},
+                    }]
+                    result["message"]["text"] += f"\n\nReproduction test: {tp}"
             if vuln.fingerprint:
                 result["partialFingerprints"] = {
                     "frame/v1": vuln.fingerprint,
