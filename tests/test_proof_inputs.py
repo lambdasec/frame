@@ -401,3 +401,18 @@ def test_reproduce_rejects_a_program_that_forges_a_fault():
                             client=_StubClient(forged), max_steps=3)
     assert r.reproduced is False
     assert not r.test_source
+
+
+def test_reproduce_must_call_guard_rejects_inlined_overflow():
+    # With must_call set, a program that faults by replicating the overflow in main
+    # (without calling the finding's function) must NOT count as a reproduction.
+    _need_cc()
+    from frame.sil.proof_reproduce import reproduce_c_finding
+    source = "#include <stdlib.h>\nint scale(int n){ int r=n*n; return r; }\n"
+    proof = {"cwe": "CWE-190", "trigger": "n*n", "witness": {"n": 46341},
+             "family": "integer-range", "constructible": False}
+    inline = ("#include <stdlib.h>\nint scale(int n){ int r=n*n; return r; }\n"
+              "int main(void){ int n=46341; int r=n*n; return r; }\n")  # never calls scale()
+    r = reproduce_c_finding(source, proof, config=None,
+                            client=_StubClient(inline), max_steps=3, must_call="scale")
+    assert r.reproduced is False

@@ -11,6 +11,7 @@ runner (no model), so it validates the engine in CI. The agent finds that driver
 practice (validated separately against a live model).
 """
 
+import importlib.util
 import json
 import shutil
 from pathlib import Path
@@ -18,6 +19,14 @@ from pathlib import Path
 import pytest
 
 from frame.sil.proof_deps import DepsReproSpec, run_deps_repro, run_deps_repro_js
+
+
+def _skip_if_unavailable(meta: dict, language: str):
+    if language in _JS and shutil.which("node") is None:
+        pytest.skip("node not available for a JS exemplar")
+    for mod in meta.get("requires", []):
+        if importlib.util.find_spec(mod) is None:
+            pytest.skip(f"real library {mod!r} not installed for this exemplar")
 
 CASES_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "exemplars" / "reproductions"
 CASES = sorted(p for p in CASES_DIR.glob("*") if (p / "case.json").is_file()) \
@@ -39,8 +48,7 @@ def _spec(meta: dict) -> DepsReproSpec:
 def test_exemplar_reproduces(case):
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
-    if language in _JS and shutil.which("node") is None:
-        pytest.skip("node not available for a JS exemplar")
+    _skip_if_unavailable(meta, language)
     spec = _spec(meta)
     driver = meta["driver"]
     if language in _JS:
@@ -57,8 +65,7 @@ def test_exemplar_rejects_a_driver_that_does_not_drive_the_sink(case):
     # count as a reproduction (the spy is never reached with the marker).
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
-    if language in _JS and shutil.which("node") is None:
-        pytest.skip("node not available for a JS exemplar")
+    _skip_if_unavailable(meta, language)
     spec = _spec(meta)
     noop = ";" if language in _JS else "pass"
     run = run_deps_repro_js(noop, spec, str(case)) if language in _JS \

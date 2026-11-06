@@ -114,7 +114,10 @@ def reproduce_c_finding(source: str, proof: Dict, config: Any,
                         client: Any = None, *,
                         max_steps: int = 6,
                         cc: Optional[str] = None,
-                        timeout: int = 30) -> ReproduceResult:
+                        timeout: int = 30,
+                        include_dirs: Optional[List[str]] = None,
+                        extra_sources: Optional[List[str]] = None,
+                        must_call: Optional[str] = None) -> ReproduceResult:
     """Drive a seeded agent to write a C program that reproduces the finding.
 
     Args:
@@ -143,7 +146,15 @@ def reproduce_c_finding(source: str, proof: Dict, config: Any,
         prog = args.get("source", "")
         if not prog.strip():
             return "error: empty program"
-        outcome = compile_and_run_c(prog, cc=cc, timeout=timeout)
+        # Guard against inline-cheating: the program must drive the finding's own
+        # function, not replicate the faulty operation in its own main. The source
+        # already defines the function once; a genuine reproduction ADDS a call, so
+        # the program must mention `name(` more often than the source does.
+        if must_call and prog.count(must_call + "(") <= source.count(must_call + "("):
+            return (f"your program must drive the finding's function {must_call!r}, not "
+                    f"replicate the faulty operation in main; call it")
+        outcome = compile_and_run_c(prog, cc=cc, timeout=timeout,
+                                    include_dirs=include_dirs, extra_sources=extra_sources)
         if outcome.status == "skipped":
             return "error: no C compiler available"
         if outcome.faulted:

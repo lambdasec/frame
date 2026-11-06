@@ -1,3 +1,3 @@
 import yaml
 def parse_config(raw):
-    return yaml.load(raw)          # vulnerable: yaml.load on attacker data
+    return yaml.load(raw)          # CWE-502: yaml.load (real PyYAML) on attacker data

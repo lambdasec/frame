@@ -150,12 +150,20 @@ class RunOutcome:
 
 
 def compile_and_run_c(source: str, *, stdin: Optional[str] = None,
-                      cc: Optional[str] = None, timeout: int = 30) -> RunOutcome:
+                      cc: Optional[str] = None, timeout: int = 30,
+                      include_dirs: Optional[List[str]] = None,
+                      extra_sources: Optional[List[str]] = None,
+                      defines: Optional[List[str]] = None) -> RunOutcome:
     """Compile a complete C source (it must contain its own ``main``) under
     AddressSanitizer + UndefinedBehaviorSanitizer and run it, optionally feeding
     ``stdin``. ``faulted`` is True when the sanitizer reported a fault or the
     program exited non-zero. The shared sandbox for confirmation and reproduction;
-    never raises."""
+    never raises.
+
+    ``include_dirs`` adds ``-I`` paths, ``extra_sources`` extra .c files to link,
+    and ``defines`` ``-D`` macros, so a finding in a real multi-file C project (or a
+    corpus whose cases include a support header) compiles against its headers and
+    helpers rather than failing standalone."""
     compiler = _compiler(cc)
     if compiler is None:
         return RunOutcome(False, "skipped", "no C compiler available")
@@ -168,8 +176,14 @@ def compile_and_run_c(source: str, *, stdin: Optional[str] = None,
         # and out-of-bounds on both; implicit-conversion (Clang) adds CWE-197/194/195.
         build = [compiler, "-g", "-O0",
                  _sanitize_flag(compiler),
-                 "-fno-sanitize-recover=all",
-                 str(src_path), "-o", str(bin_path)]
+                 "-fno-sanitize-recover=all"]
+        for inc in include_dirs or []:
+            build += ["-I", str(inc)]
+        for mac in defines or []:
+            build.append(f"-D{mac}")
+        build.append(str(src_path))
+        build += [str(s) for s in (extra_sources or [])]
+        build += ["-o", str(bin_path)]
         try:
             bp = subprocess.run(build, capture_output=True, text=True,
                                 errors="replace", timeout=timeout)
