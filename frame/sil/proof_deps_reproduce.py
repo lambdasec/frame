@@ -20,10 +20,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from frame.sil.llm_agent import run_agent
-from frame.sil.proof_deps import DepsReproSpec, run_deps_repro, run_deps_repro_js
+from frame.sil.proof_deps import (
+    DepsReproSpec, run_deps_repro, run_deps_repro_js, run_deps_repro_java,
+)
 
 _PY_LANGS = {"python", "py"}
 _JS_LANGS = {"javascript", "js", "typescript", "ts"}
+_JAVA_LANGS = {"java"}
 
 
 def _lang_note(language: str) -> str:
@@ -31,6 +34,9 @@ def _lang_note(language: str) -> str:
         return ("Write the driver in JavaScript. `require` is already provided and resolves from "
                 "the project root, so `const { handler } = require('./routes'); handler(MARKER);`. "
                 "MARKER is already defined.")
+    if language in _JAVA_LANGS:
+        return ("Write the driver as Java statements that call the entry point, e.g. "
+                "`new app.Api().ping(MARKER);`. MARKER is a String already in scope.")
     return ("Write the driver in Python. MARKER is already defined, e.g. "
             "`from routes import handler; handler(MARKER)`.")
 
@@ -107,12 +113,15 @@ def _read_tool(root: Path):
     return _read
 
 
-_GREP_GLOBS = {"python": ("*.py",), "javascript": ("*.js", "*.ts", "*.jsx", "*.tsx")}
+_GREP_GLOBS = {"python": ("*.py",), "javascript": ("*.js", "*.ts", "*.jsx", "*.tsx"),
+               "java": ("*.java",)}
 
 
 def _grep_tool(root: Path, language: str = "python"):
     import re
-    globs = _GREP_GLOBS["javascript"] if language in _JS_LANGS else _GREP_GLOBS["python"]
+    globs = (_GREP_GLOBS["javascript"] if language in _JS_LANGS
+             else _GREP_GLOBS["java"] if language in _JAVA_LANGS
+             else _GREP_GLOBS["python"])
 
     def _grep(pattern: str) -> str:
         try:
@@ -140,12 +149,14 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
                            max_steps: int = 8,
                            python: Optional[str] = None,
                            node: Optional[str] = None,
+                           mvn: Optional[str] = None,
+                           jdk: Optional[str] = None,
                            timeout: int = 30) -> DepsReproduceResult:
     """Drive a seeded agent to write a driver that reaches the vulnerable function.
 
-    ``language`` picks the runner and the driver dialect (``python`` or a JS/TS value).
-    ``reproduced`` is True only when the harness spy confirms the marker reached the
-    vulnerable function through the project's code -- never the model's claim.
+    ``language`` picks the runner and the driver dialect (``python``, a JS/TS value, or
+    ``java``). ``reproduced`` is True only when the harness spy confirms the marker
+    reached the vulnerable function through the project's code -- never the model's claim.
     """
     try:
         from frame.sil.llm_client import LLMClient
@@ -155,6 +166,7 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
         client = LLMClient(config)
     language = (language or "python").lower()
     is_js = language in _JS_LANGS
+    is_java = language in _JAVA_LANGS
     root = Path(project_root)
     state: Dict[str, Any] = {"driver": "", "detail": ""}
     read_fn, grep_fn = _read_tool(root), _grep_tool(root, language)
@@ -162,6 +174,9 @@ def reproduce_deps_finding(spec: DepsReproSpec, project_root: str, config: Any,
     def _run(driver: str):
         if is_js:
             return run_deps_repro_js(driver, spec, str(root), node=node, timeout=timeout)
+        if is_java:
+            return run_deps_repro_java(driver, spec, str(root), mvn=mvn, jdk=jdk,
+                                       timeout=max(timeout, 300))
         return run_deps_repro(driver, spec, str(root), python=python, timeout=timeout)
 
     def _exec(name: str, args: Dict[str, Any]) -> str:

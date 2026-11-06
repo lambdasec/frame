@@ -17,6 +17,7 @@ shapes data the scan already produced and writes text; it runs nothing.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -401,3 +402,139 @@ def run_deps_repro_js(driver_src: str, spec: "DepsReproSpec", project_root: str,
     detail = ("marker reached the sink via the project" if ok
               else res.get("error") or "the marker did not reach the sink via the project")
     return DepsRun(ok, detail, res)
+
+
+# ---------------------------------------------------------------------------------------------
+# Java reproduction runner (scoped). Java is compiled with static dispatch, so there is no
+# runtime monkeypatch; the spy is Mockito. This covers the mockable sink families -- today the
+# command-injection family (Runtime.getRuntime().exec) -- via a generated JUnit+Mockito test
+# with the same stack-based via-project oracle as the other runners. Arbitrary-reachability
+# sinks need a ByteBuddy java agent (a later brick). Needs a JDK + Maven; validated on a host
+# that has them, so its exemplar test is gated on the toolchain.
+
+# sink canonical id -> (mocked class, how to stub it so a call records). Keyed by a substring
+# of the sink so java.lang.Runtime.exec and Runtime.exec both match.
+_JAVA_SINK_TEMPLATES = {
+    "Runtime.exec": {
+        "mocked": "Runtime",
+        "stub": ("        Runtime _rt = mock(Runtime.class);\n"
+                 "        try (MockedStatic<Runtime> _st = mockStatic(Runtime.class)) {\n"
+                 "            _st.when(Runtime::getRuntime).thenReturn(_rt);\n"
+                 "            when(_rt.exec(anyString())).thenAnswer(_i -> record(_i.getArgument(0)));\n"
+                 "            __DRIVER__\n"
+                 "        }\n"),
+    },
+}
+
+
+def _java_sink_template(spec: "DepsReproSpec") -> Optional[dict]:
+    fn = (spec.vuln_function or spec.call_text or "").replace("/", ".")
+    for key, tmpl in _JAVA_SINK_TEMPLATES.items():
+        if fn.endswith(key) or key in fn:
+            return tmpl
+    return None
+
+
+def java_repro_test(spec: "DepsReproSpec", driver: str,
+                    marker: str = "PROOF_MARKER_7F3A") -> Optional[str]:
+    """Generate a JUnit 5 + Mockito test that mocks the sink, runs the driver, and asserts
+    the marker reached the sink through the project (a project class, not the test, on the
+    stack). Pure/offline -- the compile+run is `run_deps_repro_java`. None for an unsupported
+    Java sink family."""
+    tmpl = _java_sink_template(spec)
+    if tmpl is None:
+        return None
+    callsite_class = spec.module_path.split("/")[-1].rsplit(".", 1)[0]  # ShellService.java -> ShellService
+    body = tmpl["stub"].replace("__DRIVER__", "\n            ".join(driver.splitlines()) or "            ;")
+    return (
+        "import static org.junit.jupiter.api.Assertions.*;\n"
+        "import static org.mockito.Mockito.*;\n"
+        "import org.junit.jupiter.api.Test;\n"
+        "import org.mockito.MockedStatic;\n"
+        "import java.util.Arrays;\n\n"
+        "public class ReproTest {\n"
+        f"    static final String MARKER = \"{marker}\";\n"
+        f"    static final String CALLSITE = \"{callsite_class}\";\n"
+        "    static final boolean[] seen = {false, false};\n"
+        "    static Object record(Object arg) {\n"
+        "        String a = String.valueOf(arg);\n"
+        "        if (a.contains(MARKER)) {\n"
+        "            seen[0] = true;\n"
+        "            seen[1] = Arrays.stream(Thread.currentThread().getStackTrace())\n"
+        "                .anyMatch(f -> f.getClassName().contains(CALLSITE)\n"
+        "                            && !f.getClassName().equals(\"ReproTest\"));\n"
+        "        }\n"
+        "        return null;\n"
+        "    }\n"
+        "    @Test public void reproduces() throws Exception {\n"
+        f"{body}"
+        "        assertTrue(seen[0] && seen[1],\n"
+        "            \"the marker must reach the sink through the project\");\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
+                        marker: str = "PROOF_MARKER_7F3A", mvn: Optional[str] = None,
+                        jdk: Optional[str] = None, timeout: int = 300) -> DepsRun:
+    """Compile the project's Java sources plus a generated Mockito test and run it, so the
+    marker is driven through the project to the sink. Needs Maven (`mvn`) and a JDK (`jdk` =
+    JAVA_HOME). Never raises; returns a skipped/unsupported DepsRun when the toolchain or the
+    sink family is missing."""
+    import os
+    import shutil as _shutil
+    test_src = java_repro_test(spec, driver_src, marker)
+    if test_src is None:
+        return DepsRun(False, "no Mockito template for this Java sink family yet")
+    mvn_bin = mvn or _shutil.which("mvn")
+    if not mvn_bin:
+        return DepsRun(False, "maven is not available")
+    java_home = jdk or os.environ.get("JAVA_HOME")
+    src = Path(project_root)
+    with tempfile.TemporaryDirectory() as d:
+        proj = Path(d)
+        main = proj / "src" / "main" / "java"
+        test = proj / "src" / "test" / "java"
+        main.mkdir(parents=True)
+        test.mkdir(parents=True)
+        for jf in src.rglob("*.java"):
+            text = jf.read_text(errors="replace")
+            m = re.search(r"^\s*package\s+([\w.]+)\s*;", text, re.M)
+            pkgdir = main.joinpath(*m.group(1).split(".")) if m else main
+            pkgdir.mkdir(parents=True, exist_ok=True)
+            (pkgdir / jf.name).write_text(text)
+        (test / "ReproTest.java").write_text(test_src)
+        (proj / "pom.xml").write_text(_JAVA_POM)
+        env = dict(os.environ)
+        if java_home:
+            env["JAVA_HOME"] = java_home
+        try:
+            r = subprocess.run([mvn_bin, "-q", "-B", "test"], cwd=str(proj),
+                               capture_output=True, text=True, errors="replace",
+                               timeout=timeout, env=env)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return DepsRun(False, f"run error: {exc}")
+        out = (r.stdout or "") + (r.stderr or "")
+        if r.returncode == 0:
+            return DepsRun(True, "marker reached the sink via the project",
+                           {"stdout": out[-1500:]})
+        if "BUILD FAILURE" in out and "ReproTest" not in out and "COMPILATION" in out:
+            return DepsRun(False, "the project did not compile standalone", {"stdout": out[-1500:]})
+        return DepsRun(False, "the marker did not reach the sink via the project",
+                       {"stdout": out[-1500:]})
+
+
+_JAVA_POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>frame.repro</groupId><artifactId>repro</artifactId><version>1.0</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <dependencies>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.2</version><scope>test</scope></dependency>
+    <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>5.11.0</version><scope>test</scope></dependency>
+  </dependencies>
+  <build><plugins>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.2.5</version></plugin>
+  </plugins></build>
+</project>
+"""

@@ -232,3 +232,24 @@ def test_js_runner_rejects_without_the_marker(tmp_path):
     spec = _js_project(tmp_path)
     r = run_deps_repro_js("const { ping } = require('./routes');\nping('benign');", spec, str(tmp_path))
     assert r.reproduced is False
+
+
+from frame.sil.proof_deps import java_repro_test
+
+
+def test_java_repro_test_generation():
+    spec = DepsReproSpec(advisory="CWE-78", package="", version="",
+                         vuln_function="java.lang.Runtime.exec", call_text="Runtime.exec",
+                         call_site="app/ShellService.java:4", source_var="host")
+    t = java_repro_test(spec, "new app.Api().ping(MARKER);")
+    assert t is not None
+    assert 'CALLSITE = "ShellService"' in t          # call-site class for the via-project guard
+    assert "mockStatic(Runtime.class)" in t
+    assert "new app.Api().ping(MARKER);" in t
+    assert "seen[0] && seen[1]" in t                 # marker AND via-project
+
+
+def test_java_repro_test_none_for_unsupported_sink():
+    spec = DepsReproSpec(advisory="x", package="", version="", vuln_function="com.acme.Foo.bar",
+                         call_text="bar", call_site="a.java:1", source_var="x")
+    assert java_repro_test(spec, "x") is None
