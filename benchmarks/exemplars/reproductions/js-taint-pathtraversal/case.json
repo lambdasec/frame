@@ -1,0 +1,3 @@
+{"language":"javascript","cwe":"CWE-22","advisory":"path traversal via fs.readFileSync (node core)",
+ "vuln_function":"fs.readFileSync","call_site":"store.js:2","source_var":"name",
+ "driver":"const { download } = require('./api');\ntry { download({ params: { name: MARKER } }); } catch (e) {}"}

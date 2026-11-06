@@ -1,0 +1,3 @@
+{"language":"python","cwe":"CWE-22","advisory":"path traversal via open() (real stdlib)",
+ "vuln_function":"builtins.open","call_site":"storage.py:3","source_var":"name",
+ "driver":"from routes import download\ntry:\n    download(MARKER)\nexcept Exception:\n    pass"}

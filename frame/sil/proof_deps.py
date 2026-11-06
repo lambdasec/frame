@@ -167,13 +167,19 @@ def _resolve_parent(dotted):
 
 try:
     _parent, _leaf = _resolve_parent(_DOTTED)
+    _orig = getattr(_parent, _leaf, None)
     def _spy(*a, **k):
-        RESULT["seen"] = True
+        # Pass-through: record only the marker-carrying call, and delegate every
+        # other call to the original -- so a sink the harness itself uses (open for
+        # the result file, the import machinery) keeps working.
         vals = [str(x) for x in a] + [str(v) for v in k.values()]
-        RESULT["marker_in_args"] = any(MARKER in s for s in vals)
-        frames = traceback.extract_stack()[:-1]
-        RESULT["via_callsite"] = any(str(f.filename).endswith(_CALLSITE) for f in frames)
-        return None
+        if any(MARKER in s for s in vals):
+            RESULT["seen"] = True
+            RESULT["marker_in_args"] = True
+            frames = traceback.extract_stack()[:-1]
+            RESULT["via_callsite"] = any(str(f.filename).endswith(_CALLSITE) for f in frames)
+            return None
+        return _orig(*a, **k) if callable(_orig) else None
     setattr(_parent, _leaf, _spy)
 except Exception as e:
     RESULT["error"] = "patch failed: %s: %s" % (type(e).__name__, e)
@@ -327,12 +333,19 @@ function resolveParent(dotted) {
 
 try {
   const [parent, leaf] = resolveParent(DOTTED);
+  const orig = parent[leaf];
   parent[leaf] = function (...args) {
-    RESULT.seen = true;
-    RESULT.marker_in_args = args.some(a => { try { return String(a).includes(MARKER); } catch (e) { return false; } });
-    const stack = (new Error().stack || '').split('\n');
-    RESULT.via_callsite = stack.some(l => l.includes(CALLSITE));
-    return undefined;
+    // Pass-through: record only the marker-carrying call; delegate everything else
+    // to the original, so a sink node itself uses (fs for require) keeps working.
+    const hit = args.some(a => { try { return String(a).includes(MARKER); } catch (e) { return false; } });
+    if (hit) {
+      RESULT.seen = true;
+      RESULT.marker_in_args = true;
+      const stack = (new Error().stack || '').split('\n');
+      RESULT.via_callsite = stack.some(l => l.includes(CALLSITE));
+      return undefined;
+    }
+    return typeof orig === 'function' ? orig.apply(this, args) : undefined;
   };
 } catch (e) { RESULT.error = 'patch failed: ' + e.message; }
 

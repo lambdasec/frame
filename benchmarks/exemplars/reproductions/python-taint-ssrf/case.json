@@ -1,0 +1,3 @@
+{"language":"python","cwe":"CWE-918","advisory":"SSRF via urllib.request.urlopen (real stdlib)",
+ "vuln_function":"urllib.request.urlopen","call_site":"fetcher.py:4","source_var":"url",
+ "driver":"from routes import preview\ntry:\n    preview(MARKER)\nexcept Exception:\n    pass"}

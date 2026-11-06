@@ -12,7 +12,10 @@ the vulnerable call and a spy observed attacker-marked data arrive there.
 | `python-taint-cmdi` | Python | command injection (CWE-78) | `os.system` | real (stdlib) |
 | `python-taint-subprocess` | Python | command injection (CWE-78) | `subprocess.call(shell=True)` | real (stdlib) |
 | `python-taint-sqli` | Python | SQL injection (CWE-89) | a DB cursor's `execute` | stand-in |
+| `python-taint-pathtraversal` | Python | path traversal (CWE-22) | `open` | real (stdlib) |
+| `python-taint-ssrf` | Python | SSRF (CWE-918) | `urllib.request.urlopen` | real (stdlib) |
 | `js-taint-cmdi` | JavaScript | command injection (CWE-78) | `child_process.exec` | real (node core) |
+| `js-taint-pathtraversal` | JavaScript | path traversal (CWE-22) | `fs.readFileSync` | real (node core) |
 
 Most cases drive a genuine library sink (`pickle.loads`, real PyYAML `yaml.load`,
 `os.system`, `subprocess.call`, `child_process.exec`); the one stand-in case uses a
