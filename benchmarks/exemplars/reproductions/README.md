@@ -16,14 +16,16 @@ the vulnerable call and a spy observed attacker-marked data arrive there.
 | `python-taint-ssrf` | Python | SSRF (CWE-918) | `urllib.request.urlopen` | real (stdlib) |
 | `js-taint-cmdi` | JavaScript | command injection (CWE-78) | `child_process.exec` | real (node core) |
 | `js-taint-pathtraversal` | JavaScript | path traversal (CWE-22) | `fs.readFileSync` | real (node core) |
-| `java-taint-cmdi` | Java | command injection (CWE-78) | `Runtime.exec` | real (JDK, Mockito) |
+| `java-sca-deserialization` | Java | deserialization (CWE-502) | a library `parse` | real (JDK, Mockito) |
 
 Most cases drive a genuine library sink (`pickle.loads`, real PyYAML `yaml.load`,
-`os.system`, `subprocess.call`, `child_process.exec`, `Runtime.exec`); the one stand-in
-case uses a small local module that mirrors a real sink's shape (a DB cursor's `execute`),
-so it stays self-contained. A case that needs a real library declares it in `requires`,
-and the test skips when the library is absent. The Java case needs a JDK + Maven (Mockito
-spies the sink); its test skips where the toolchain is absent.
+`os.system`, `subprocess.call`, `child_process.exec`); the stand-in cases use a small
+local module that mirrors a real sink's shape (a DB cursor's `execute`; the Java case's
+vulnerable library), so they stay self-contained. A case that needs a real library
+declares it in `requires`, and the test skips when it is absent. The Java case needs a
+JDK + Maven (Mockito construction-mocks the sink, a non-bootstrap library class); its
+test skips where the toolchain is absent. A JDK bootstrap sink (`Runtime`/`ProcessBuilder`)
+is not portably mockable this way and is left for the agent-based runner.
 
 `case.json` fields: `language`, `cwe`, `advisory`, `vuln_function` (the sink's
 canonical id), `call_site` (`file:line` where the project calls it), `source_var`

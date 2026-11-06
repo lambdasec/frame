@@ -407,50 +407,45 @@ def run_deps_repro_js(driver_src: str, spec: "DepsReproSpec", project_root: str,
 # ---------------------------------------------------------------------------------------------
 # Java reproduction runner (scoped). Java is compiled with static dispatch, so there is no
 # runtime monkeypatch; the spy is Mockito. This covers the mockable sink families -- today the
-# command-injection family (Runtime.getRuntime().exec) -- via a generated JUnit+Mockito test
-# with the same stack-based via-project oracle as the other runners. Arbitrary-reachability
-# sinks need a ByteBuddy java agent (a later brick). Needs a JDK + Maven; validated on a host
-# that has them, so its exemplar test is gated on the toolchain.
+# non-bootstrap (library/app) sink class via Mockito's CONSTRUCTION mock -- the realistic SCA
+# shape (a vulnerable dependency function reached through `new Lib().call(...)`), with the same
+# stack-based via-project oracle as the other runners. This is portable across JDKs; a JDK
+# bootstrap sink (java.lang.Runtime/ProcessBuilder) cannot be instrumented this way and needs a
+# ByteBuddy java agent (a later brick), so those are refused. Needs a JDK + Maven.
 
-# sink canonical id -> (mocked class, how to stub it so a call records). Keyed by a substring
-# of the sink so java.lang.Runtime.exec and Runtime.exec both match.
-_JAVA_SINK_TEMPLATES = {
-    "Runtime.exec": {
-        "mocked": "Runtime",
-        "stub": ("        Runtime _rt = mock(Runtime.class);\n"
-                 "        try (MockedStatic<Runtime> _st = mockStatic(Runtime.class)) {\n"
-                 "            _st.when(Runtime::getRuntime).thenReturn(_rt);\n"
-                 "            when(_rt.exec(anyString())).thenAnswer(_i -> record(_i.getArgument(0)));\n"
-                 "            __DRIVER__\n"
-                 "        }\n"),
-    },
-}
+def _java_sink_parts(spec: "DepsReproSpec") -> Optional[tuple]:
+    """(fully-qualified class, method) for the sink, or None for a bare/bootstrap sink.
 
-
-def _java_sink_template(spec: "DepsReproSpec") -> Optional[dict]:
-    fn = (spec.vuln_function or spec.call_text or "").replace("/", ".")
-    for key, tmpl in _JAVA_SINK_TEMPLATES.items():
-        if fn.endswith(key) or key in fn:
-            return tmpl
-    return None
+    Reproduction mocks the sink's class with Mockito's construction mock, which works
+    only for a NON-bootstrap class (a library/app class loaded by the app loader).
+    java.lang.* bootstrap sinks (Runtime, ProcessBuilder) cannot be instrumented
+    portably this way; they need the ByteBuddy agent brick, so they are refused here."""
+    fn = (spec.vuln_function or spec.call_text or "").replace("/", ".").strip(".")
+    if "." not in fn:
+        return None
+    cls, _, method = fn.rpartition(".")
+    if not cls or not method or cls.startswith("java.") or cls.startswith("javax."):
+        return None
+    return cls, method
 
 
 def java_repro_test(spec: "DepsReproSpec", driver: str,
                     marker: str = "PROOF_MARKER_7F3A") -> Optional[str]:
-    """Generate a JUnit 5 + Mockito test that mocks the sink, runs the driver, and asserts
-    the marker reached the sink through the project (a project class, not the test, on the
-    stack). Pure/offline -- the compile+run is `run_deps_repro_java`. None for an unsupported
-    Java sink family."""
-    tmpl = _java_sink_template(spec)
-    if tmpl is None:
+    """Generate a JUnit 5 + Mockito test that construction-mocks the sink's class, runs the
+    driver, and asserts the marker reached the sink through the project (a project class, not
+    the test, on the stack). Pure/offline -- the compile+run is `run_deps_repro_java`. None
+    when the sink is a bare name or a JDK bootstrap class (not portably mockable)."""
+    parts = _java_sink_parts(spec)
+    if parts is None:
         return None
-    callsite_class = spec.module_path.split("/")[-1].rsplit(".", 1)[0]  # ShellService.java -> ShellService
-    body = tmpl["stub"].replace("__DRIVER__", "\n            ".join(driver.splitlines()) or "            ;")
+    fqcn, method = parts
+    callsite_class = spec.module_path.split("/")[-1].rsplit(".", 1)[0]  # DocService.java -> DocService
+    body = "\n            ".join(driver.splitlines()) or ";"
     return (
         "import static org.junit.jupiter.api.Assertions.*;\n"
         "import static org.mockito.Mockito.*;\n"
         "import org.junit.jupiter.api.Test;\n"
-        "import org.mockito.MockedStatic;\n"
+        "import org.mockito.MockedConstruction;\n"
         "import java.util.Arrays;\n\n"
         "public class ReproTest {\n"
         f"    static final String MARKER = \"{marker}\";\n"
@@ -467,7 +462,10 @@ def java_repro_test(spec: "DepsReproSpec", driver: str,
         "        return null;\n"
         "    }\n"
         "    @Test public void reproduces() throws Exception {\n"
-        f"{body}"
+        f"        try (MockedConstruction<{fqcn}> _mc = mockConstruction({fqcn}.class,\n"
+        f"                (mock, ctx) -> when(mock.{method}(any())).thenAnswer(_i -> record(_i.getArgument(0))))) {{\n"
+        f"            {body}\n"
+        "        }\n"
         "        assertTrue(seen[0] && seen[1],\n"
         "            \"the marker must reach the sink through the project\");\n"
         "    }\n"

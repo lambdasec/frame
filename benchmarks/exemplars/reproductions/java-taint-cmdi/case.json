@@ -1,3 +1,0 @@
-{"language":"java","cwe":"CWE-78","advisory":"command injection via Runtime.exec (Mockito)",
- "vuln_function":"java.lang.Runtime.exec","call_site":"app/ShellService.java:4","source_var":"host",
- "driver":"new app.Api().ping(MARKER);"}

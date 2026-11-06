@@ -238,18 +238,21 @@ from frame.sil.proof_deps import java_repro_test
 
 
 def test_java_repro_test_generation():
-    spec = DepsReproSpec(advisory="CWE-78", package="", version="",
-                         vuln_function="java.lang.Runtime.exec", call_text="Runtime.exec",
-                         call_site="app/ShellService.java:4", source_var="host")
-    t = java_repro_test(spec, "new app.Api().ping(MARKER);")
+    spec = DepsReproSpec(advisory="CWE-502", package="", version="",
+                         vuln_function="com.acme.UnsafeXml.parse", call_text="UnsafeXml.parse",
+                         call_site="app/DocService.java:5", source_var="raw")
+    t = java_repro_test(spec, "new app.Api().handle(MARKER);")
     assert t is not None
-    assert 'CALLSITE = "ShellService"' in t          # call-site class for the via-project guard
-    assert "mockStatic(Runtime.class)" in t
-    assert "new app.Api().ping(MARKER);" in t
-    assert "seen[0] && seen[1]" in t                 # marker AND via-project
+    assert 'CALLSITE = "DocService"' in t                      # call-site class for the via-project guard
+    assert "mockConstruction(com.acme.UnsafeXml.class" in t    # non-bootstrap construction mock
+    assert ".parse(any())" in t
+    assert "new app.Api().handle(MARKER);" in t
+    assert "seen[0] && seen[1]" in t                           # marker AND via-project
 
 
-def test_java_repro_test_none_for_unsupported_sink():
-    spec = DepsReproSpec(advisory="x", package="", version="", vuln_function="com.acme.Foo.bar",
-                         call_text="bar", call_site="a.java:1", source_var="x")
-    assert java_repro_test(spec, "x") is None
+def test_java_repro_test_refuses_bootstrap_and_bare_sinks():
+    # JDK bootstrap classes are not portably mockable this way -> refused.
+    for fn in ("java.lang.Runtime.exec", "javax.xml.parsers.X.parse", "execute"):
+        spec = DepsReproSpec(advisory="x", package="", version="", vuln_function=fn,
+                             call_text=fn, call_site="a.java:1", source_var="x")
+        assert java_repro_test(spec, "x") is None
