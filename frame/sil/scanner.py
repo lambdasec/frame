@@ -258,7 +258,7 @@ class Vulnerability:
     category: str = ""
     # How strongly the finding is proven (frame.sil.findings.EVIDENCE_LEVELS).
     evidence: str = "matched"
-    sink_call: str = ""          # internal: the sink call, for frame/sca (not in the JSON)
+    sink_call: str = ""          # the sink call (canonical id, else text): frame/sca + reproduction; in the JSON only when set
     # Proof-carrying findings (Phase 5): the concrete witness that triggers the
     # finding and, when directly constructible, a reproduction test. None unless
     # the engine computed one (frame/sil/proof_tests.py). In the JSON when present.
@@ -289,6 +289,11 @@ class Vulnerability:
             d["validity_detail"] = self.validity_detail
         d["category"] = category_of(self.type.value, self.category)
         d["evidence"] = self.evidence
+        # The sink call (canonical id, else its text) links a flow to its injection
+        # sink. Emitted so `frame exploit --deps` can build a reproduction from a
+        # findings JSON (proof_deps.taint_repro_spec); omitted when unknown.
+        if self.sink_call:
+            d["sink_call"] = self.sink_call
         if self.fingerprint:
             d["path"] = self.path
             d["fingerprint"] = self.fingerprint

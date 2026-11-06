@@ -1,0 +1,3 @@
+{"language":"python","cwe":"CWE-79","advisory":"Reflected XSS via mark_safe (unescaped HTML)",
+ "vuln_function":"safestring.mark_safe","call_site":"views.py:4","source_var":"name",
+ "driver":"from views import profile\nprofile(MARKER)"}

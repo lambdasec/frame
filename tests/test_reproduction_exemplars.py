@@ -32,7 +32,7 @@ def _tool_works(*cmd) -> bool:
         return False
 
 from frame.sil.proof_deps import (
-    DepsReproSpec, run_deps_repro, run_deps_repro_js, run_deps_repro_java,
+    DepsReproSpec, fix_proof, run_deps_repro, run_deps_repro_js, run_deps_repro_java,
     run_deps_repro_csharp,
 )
 
@@ -84,6 +84,30 @@ def test_exemplar_reproduces(case):
     _skip_if_unavailable(meta, language)
     run = _run_case(language, meta["driver"], _spec(meta), case)
     assert run.reproduced, f"{case.name}: {run.detail} ({run.result})"
+
+
+# Fix-loop tie-in: a case with a `fixed/` subdir carries a repaired copy of its own
+# sources. The SAME confirmed driver must reproduce against the vulnerable code and
+# must NO LONGER reproduce against the fixed code -- the proof of the vulnerability has
+# become a proof of the fix (the flow to the sink is gone). Only fixes that remove the
+# flow flip a reachability reproduction; a sanitize-in-place or an upgrade that keeps
+# the call is certified by a re-scan, not by this test.
+FIX_CASES = [c for c in CASES if (c / "fixed").is_dir()]
+
+
+@pytest.mark.skipif(not FIX_CASES, reason="no reproduction exemplars carry a fixed/ variant")
+@pytest.mark.parametrize("case", FIX_CASES, ids=[c.name for c in FIX_CASES])
+def test_fix_stops_the_reproduction(case):
+    meta = json.loads((case / "case.json").read_text())
+    language = meta["language"].lower()
+    _skip_if_unavailable(meta, language)
+    proof = fix_proof(meta["driver"], _spec(meta), str(case), str(case / "fixed"),
+                      language=language)
+    assert proof.before.reproduced, \
+        f"{case.name}: the driver did not reproduce against the vulnerable code ({proof.before.detail})"
+    assert not proof.after.reproduced, \
+        f"{case.name}: the fix did not stop the reproduction ({proof.after.detail})"
+    assert proof.proved, f"{case.name}: {proof.detail}"
 
 
 @pytest.mark.skipif(not CASES, reason="no reproduction exemplars found")

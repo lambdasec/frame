@@ -359,6 +359,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="With --deps: directory to write confirmed reproduction tests into."
     )
     exploit_parser.add_argument(
+        "--check-fixed", metavar="DIR",
+        help="With --deps: a fixed copy of the project. After a reproduction is confirmed, "
+             "re-run the SAME driver against DIR; the fix is verified when the reproduction "
+             "no longer reaches the sink (the proof of the vulnerability becomes a proof of the fix)."
+    )
+    exploit_parser.add_argument(
         "--goal",
         help="Objective / success condition in words (default: read a secret, run a "
              "command, or modify server state)"
@@ -1200,7 +1206,7 @@ def _cmd_exploit_deps(args, config) -> int:
     agent drives the project to that call and a harness spy confirms the marker arrives
     there through the project; a confirmed reproduction is written as a pytest."""
     from frame.sil.proof_deps import (
-        deps_repro_spec, taint_repro_spec, python_deps_test_with_driver,
+        deps_repro_spec, taint_repro_spec, python_deps_test_with_driver, fix_proof,
     )
     from frame.sil.proof_deps_reproduce import reproduce_deps_finding
 
@@ -1231,7 +1237,9 @@ def _cmd_exploit_deps(args, config) -> int:
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
+    check_fixed = getattr(args, "check_fixed", None)
     confirmed = 0
+    fixes_verified = 0
     for spec in specs:
         label = f"{spec.advisory} {spec.package}=={spec.version}" if spec.package else spec.advisory
         print(f"[repro] {label}: reaching {spec.vuln_function} at {spec.call_site} ...",
@@ -1249,7 +1257,18 @@ def _cmd_exploit_deps(args, config) -> int:
             path = out_dir / f"test_{stem}.py"
             path.write_text(python_deps_test_with_driver(spec, rep.driver))
             print(f"[repro]   wrote {path}", file=sys.stderr)
-    print(f"Reproduced {confirmed} of {len(specs)} reachable findings.")
+        # Fix-loop tie-in: re-run the confirmed driver against the fixed copy. The fix
+        # is verified when the reproduction no longer reaches the sink via the project.
+        if check_fixed:
+            fp = fix_proof(rep.driver, spec, root, check_fixed, language="python")
+            if fp.proved:
+                fixes_verified += 1
+                print(f"[repro]   fix verified against {check_fixed}: the reproduction no longer triggers",
+                      file=sys.stderr)
+            else:
+                print(f"[repro]   fix NOT verified against {check_fixed}: {fp.detail}", file=sys.stderr)
+    tail = f" Verified {fixes_verified} fix(es)." if check_fixed else ""
+    print(f"Reproduced {confirmed} of {len(specs)} reachable findings.{tail}")
     return 0
 
 

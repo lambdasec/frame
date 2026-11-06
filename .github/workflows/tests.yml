@@ -98,12 +98,21 @@ jobs:
       run: javac -version && java -version && dotnet --version && node --version
     - name: Reproduction exemplars (all languages)
       run: python -m pytest tests/test_reproduction_exemplars.py -v -rs | tee /tmp/repro.out
-    - name: The Java and C# cases must have run, not skipped
+    - name: The compiled-language and fix-loop cases must have run, not skipped
       run: |
         grep -qE "java-sca-deserialization\] PASSED" /tmp/repro.out \
           || { echo "Java reproduction exemplar did not run"; exit 1; }
         grep -qE "csharp-taint-cmdi\] PASSED" /tmp/repro.out \
           || { echo "C# reproduction exemplar did not run"; exit 1; }
+        grep -qE "js-sca-yaml-load\] PASSED" /tmp/repro.out \
+          || { echo "JS dependency reproduction exemplar did not run"; exit 1; }
+        grep -qE "python-taint-xss\] PASSED" /tmp/repro.out \
+          || { echo "XSS reproduction exemplar did not run"; exit 1; }
+        # the fix-loop proof (reproduction flips off after the fix) must have run for both languages
+        grep -qE "test_fix_stops_the_reproduction\[python-taint-xss\] PASSED" /tmp/repro.out \
+          || { echo "Python fix-loop proof did not run"; exit 1; }
+        grep -qE "test_fix_stops_the_reproduction\[js-sca-yaml-load\] PASSED" /tmp/repro.out \
+          || { echo "JS fix-loop proof did not run"; exit 1; }
 
   self-scan:
     # Frame's own SCA on this repository: resolve its Python dependencies (pyproject with

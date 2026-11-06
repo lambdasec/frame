@@ -1,0 +1,3 @@
+{"language":"javascript","cwe":"CWE-502","advisory":"js-yaml.load deserialization (vulnerable dependency)",
+ "package":"js-yaml","version":"3.13.0","vuln_function":"js-yaml.load","call_site":"config.js:2","source_var":"raw",
+ "driver":"const { uploadConfig } = require('./api');\nuploadConfig({ body: MARKER });"}

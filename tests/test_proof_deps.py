@@ -280,3 +280,84 @@ def test_csharp_repro_test_refuses_non_interface_sink():
         spec = DepsReproSpec(advisory="x", package="", version="", vuln_function=fn,
                              call_text=fn, call_site="a.cs:1", source_var="x")
         assert csharp_repro_test(spec, "x") is None
+
+
+from frame.sil.proof_deps import taint_repro_spec, fix_proof, run_reproduction
+
+
+def test_finding_json_carries_sink_call_for_taint_reproduction():
+    # Regression: a code-injection finding must serialize `sink_call` so
+    # `frame exploit --deps` can build a reproduction from a scan's JSON. Before this,
+    # sink_call was internal-only and taint_repro_spec always returned None from the JSON.
+    from frame.sil.scanner import Vulnerability, VulnType, Severity
+    v = Vulnerability(type=VulnType.XSS, severity=Severity.HIGH,
+                      location="views.py", line=4, column=0, description="reflected XSS",
+                      procedure="profile", source_var="name")
+    v.sink_call = "markupsafe.Markup"
+    d = v.to_dict()
+    assert d["sink_call"] == "markupsafe.Markup"
+    spec = taint_repro_spec(d)
+    assert spec is not None
+    assert spec.vuln_function == "markupsafe.Markup"
+    assert spec.call_site == "views.py:4"
+
+
+def test_finding_json_omits_empty_sink_call():
+    from frame.sil.scanner import Vulnerability, VulnType, Severity
+    v = Vulnerability(type=VulnType.XSS, severity=Severity.HIGH, location="a.py",
+                      line=1, column=0, description="d", procedure="p", source_var="s")
+    assert "sink_call" not in v.to_dict()               # omitted when unknown
+
+
+def test_fix_proof_flips_when_the_flow_is_removed(tmp_path):
+    # A confirmed Python driver reproduces against vulnerable code and no longer
+    # reproduces once the flow to the sink is removed -- the fix-loop tie-in.
+    sink = "def mark_safe(s):\n    return s\n"
+    vuln = tmp_path / "vuln"
+    vuln.mkdir()
+    (vuln / "sink.py").write_text(sink)
+    (vuln / "views.py").write_text(
+        "from sink import mark_safe\n"
+        "def profile(name):\n"
+        "    return mark_safe('<b>' + name + '</b>')\n")
+    fixed = tmp_path / "fixed"
+    fixed.mkdir()
+    (fixed / "sink.py").write_text(sink)
+    (fixed / "views.py").write_text(
+        "from sink import mark_safe\n"
+        "ALLOWED = {'alice'}\n"
+        "def profile(name):\n"
+        "    if name not in ALLOWED:\n"
+        "        return 'no'\n"
+        "    return mark_safe('<b>' + name + '</b>')\n")
+    spec = DepsReproSpec(advisory="CWE-79", package="", version="",
+                         vuln_function="sink.mark_safe", call_text="sink.mark_safe",
+                         call_site="views.py:3", source_var="name")
+    driver = "from views import profile\nprofile(MARKER)"
+    # sanity: it reproduces against the vulnerable tree
+    assert run_reproduction(driver, spec, str(vuln), language="python").reproduced
+    proof = fix_proof(driver, spec, str(vuln), str(fixed), language="python")
+    assert proof.before.reproduced and not proof.after.reproduced
+    assert proof.proved
+
+
+def test_fix_proof_not_proved_when_the_flow_remains(tmp_path):
+    # If the "fixed" code still lets attacker data reach the sink, the reachability
+    # reproduction does not flip, and fix_proof must not claim a fix.
+    sink = "def mark_safe(s):\n    return s\n"
+    for name in ("vuln", "stillvuln"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "sink.py").write_text(sink)
+        (d / "views.py").write_text(
+            "from sink import mark_safe\n"
+            "def profile(name):\n"
+            "    return mark_safe('<b>' + name + '</b>')\n")
+    spec = DepsReproSpec(advisory="CWE-79", package="", version="",
+                         vuln_function="sink.mark_safe", call_text="sink.mark_safe",
+                         call_site="views.py:3", source_var="name")
+    driver = "from views import profile\nprofile(MARKER)"
+    proof = fix_proof(driver, spec, str(tmp_path / "vuln"), str(tmp_path / "stillvuln"),
+                      language="python")
+    assert proof.before.reproduced and proof.after.reproduced
+    assert not proof.proved

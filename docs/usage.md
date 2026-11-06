@@ -342,7 +342,7 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 
 Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default `llm.exploit_max_steps`, 250), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
 
-`frame exploit --deps` needs no live target: it turns reachability into runnable tests. Give it a `frame scan --sca -f json` findings file (`--guidance FILE`) and the project (`--root DIR`); for each reachable finding -- attacker data reaching a vulnerable dependency call or a code injection sink (SQLi, command injection) -- a seeded agent drives the project to that call and a harness spy confirms the marker reaches it through the project. `--out-dir DIR` writes each confirmed reproduction as a pytest ([ai.md](ai.md#proof-carrying-findings---confirm-proofs)).
+`frame exploit --deps` needs no live target: it turns reachability into runnable tests. Give it a `frame scan --sca -f json` findings file (`--guidance FILE`) and the project (`--root DIR`); for each reachable finding -- attacker data reaching a vulnerable dependency call or a code injection sink (SQLi, command injection, XSS, path traversal, SSRF) -- a seeded agent drives the project to that call and a harness spy confirms the marker reaches it through the project. `--out-dir DIR` writes each confirmed reproduction as a pytest. `--check-fixed DIR` re-runs the confirmed driver against a fixed copy of the project and verifies the reproduction no longer reaches the sink (the fix-loop: a proof of the vulnerability becomes a proof of the fix) ([ai.md](ai.md#proof-carrying-findings---confirm-proofs)).
 
 ### `frame iac [target]`
 

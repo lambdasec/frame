@@ -204,6 +204,59 @@ class DepsRun:
     result: Dict = field(default_factory=dict)
 
 
+# Languages, kept here so the dispatcher and callers agree on one spelling.
+_JS_LANGS = {"javascript", "js", "typescript", "ts"}
+_JAVA_LANGS = {"java"}
+_CSHARP_LANGS = {"csharp", "c#", "cs"}
+
+
+def run_reproduction(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
+                     language: str = "python", **kw) -> "DepsRun":
+    """Dispatch a reproduction driver to the runner for ``language`` (python, a JS/TS
+    value, java, or a C# value). One entry point so the fix-loop and callers do not
+    repeat the language switch. Never raises; returns the runner's ``DepsRun``."""
+    lang = (language or "python").lower()
+    if lang in _JS_LANGS:
+        return run_deps_repro_js(driver_src, spec, project_root, **kw)
+    if lang in _JAVA_LANGS:
+        return run_deps_repro_java(driver_src, spec, project_root, **kw)
+    if lang in _CSHARP_LANGS:
+        return run_deps_repro_csharp(driver_src, spec, project_root, **kw)
+    return run_deps_repro(driver_src, spec, project_root, **kw)
+
+
+@dataclass
+class FixProof:
+    """The reproduction run before and after a fix. ``proved`` is True only when the
+    SAME driver reproduced against the vulnerable code and NO LONGER reproduces against
+    the fixed code -- the flow to the sink is gone, so the proof of the vulnerability
+    has become a proof of the fix. A fix that leaves attacker data reaching the sink
+    (a sanitize-in-place or a dependency upgrade that keeps the call) does not flip the
+    reachability reproduction; that is certified by a re-scan, not by this test."""
+    proved: bool
+    before: "DepsRun"
+    after: "DepsRun"
+    detail: str = ""
+
+
+def fix_proof(driver_src: str, spec: "DepsReproSpec", vulnerable_root: str,
+              fixed_root: str, *, language: str = "python", **kw) -> "FixProof":
+    """Run a confirmed reproduction driver against the vulnerable project and against a
+    fixed copy, and report whether the reproduction FLIPPED off. This is the fix-loop
+    tie-in: the generated reproduction is a regression guard, and a fix that removes the
+    flow to the sink makes it stop triggering. Never raises."""
+    before = run_reproduction(driver_src, spec, vulnerable_root, language=language, **kw)
+    after = run_reproduction(driver_src, spec, fixed_root, language=language, **kw)
+    if not before.reproduced:
+        detail = f"no proof to begin with: the driver did not reproduce against the vulnerable code ({before.detail})"
+    elif after.reproduced:
+        detail = "the fix did NOT remove the flow: attacker data still reaches the sink via the project"
+    else:
+        detail = "fix verified: the reproduction no longer reaches the sink via the project"
+    return FixProof(proved=bool(before.reproduced and not after.reproduced),
+                    before=before, after=after, detail=detail)
+
+
 def run_deps_repro(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
                    marker: str = "PROOF_MARKER_7F3A", python: Optional[str] = None,
                    timeout: int = 30) -> DepsRun:
