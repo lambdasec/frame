@@ -117,9 +117,10 @@ relative comparison. Full numbers and caveats: [`susvibes/`](susvibes/README.md)
 (ZeroPath) and open-source scanners (Semgrep, Snyk, Bearer) on 39 real web-vuln apps,
 using ZeroPath's public benchmark and their own GPT-4o judge, so the numbers are
 apples-to-apples. Detection rate (vulnerable app) and false-positive rate (patched
-twin). The full 39-benchmark run is in progress; a 5-class pilot has Frame tying
-ZeroPath at 4/5 detection and 2/5 false positives, ahead of Semgrep (3/5), Snyk (2/5),
-and Bearer (1/5). Full report: [`xbow_zeropath/`](xbow_zeropath/REPORT.md).
+twin). On the full 39-app run, Frame detects 78.8% of technical bugs (26/33) and 87.5%
+of business-logic bugs (7/8) at a 26.3% technical false-positive rate, against ZeroPath's
+80.0% / 87.5% / 25.0%, and ahead of Semgrep, Snyk and Bearer. Full report, including the
+business-logic false-positive caveat: [`xbow_zeropath/`](xbow_zeropath/REPORT.md).
 
 **[BAC-Bench](bacbench/REPORT.md)**: 30 disclosed broken-access-control advisories in 25
 open-source web apps (Python, TypeScript, JavaScript), each a vulnerable and a fixing commit. Frame's

@@ -48,7 +48,7 @@ A C program with zlib and cJSON copied into `third_party/`, no manifest anywhere
 
 ### [secrets](secrets/README.md): hardcoded credentials
 
-A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments. A fixture password in a pytest file is tagged as test code (known from its imports, not its name) and reported as low. With `--history`, a key deleted from the code is still found in the git history.
+A script writes a small app with credentials where people really leave them: passed to a client, in a request header, as a keyword argument. Frame finds each by its provider's format (GitHub, AWS, Stripe, OpenAI...), and ignores documented example keys and comments. A fixture password in a pytest file is tagged as test code (known from its imports, not its name) and reported as low. The demo also builds a git repo, so `frame history` finds a credential that was deleted from the code but is still in the history.
 *Runs offline.*
 
 ### [java-allocation](java-allocation/README.md): sizes a peer chose

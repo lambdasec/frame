@@ -6,7 +6,7 @@ Frame is the open-source application security platform: code (SAST), dependencie
 
 - **One engine, reused everywhere.** The program model (SIL, the project index, canonical call ids, taint, Z3) serves every domain: SCA reachability is "is this vulnerable function called", AI-app security is taint with new source and sink kinds, and proof generation solves the same path conditions for the concrete inputs that reach a finding.
 - **Knowledge is data.** What Frame knows about languages, frameworks, rules, advisories and secret formats lives in versioned, data-only files (TOML/JSON), not in the engine. No framework or benchmark name is special-cased in the core.
-- **Every finding carries its evidence.** One finding model across all domains, with an evidence level (matched, reachable, solver-verified, LLM-triaged, exploit-confirmed). Fingerprints, baselines, `verify`, SARIF, the GitHub Action, the pre-commit hook and MCP work the same for every category.
+- **Every finding carries its evidence.** One finding model across all domains, with an evidence level (matched, llm-detected, llm-verified, data-flow, solver-verified, exploit-confirmed). Fingerprints, baselines, `verify`, SARIF, the GitHub Action, the pre-commit hook and MCP work the same for every category.
 - **No benchmark-specific behaviour.** Every change is checked against the full benchmark sweep (identical results unless the change intends otherwise), and solver changes against every SL-COMP division.
 
 ## Built
