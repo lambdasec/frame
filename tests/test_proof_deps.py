@@ -150,3 +150,45 @@ def test_exploit_deps_parses_without_a_target():
     args = create_parser().parse_args(
         ["exploit", "--deps", "--guidance", "f.json", "--root", ".", "--out-dir", "o"])
     assert args.deps is True and args.target is None and args.root == "."
+
+
+from frame.sil.proof_deps import taint_repro_spec
+
+
+def test_taint_spec_from_a_code_finding():
+    spec = taint_repro_spec({"type": "command_injection", "cwe_id": "CWE-78",
+                             "sink_call": "os.system", "location": "app.py", "line": 3,
+                             "source_var": "cmd"})
+    assert spec is not None
+    assert spec.vuln_function == "os.system" and spec.call_site == "app.py:3"
+    assert spec.source_var == "cmd" and spec.advisory == "CWE-78"
+
+
+def test_taint_spec_none_for_a_bare_textual_sink():
+    # a sink with no dotted/canonical path cannot be import-resolved
+    assert taint_repro_spec({"type": "sql_injection", "sink_call": "execute",
+                             "location": "a.py", "line": 1}) is None
+    assert taint_repro_spec({"type": "sql_injection", "sink_call": "",
+                             "location": "a.py", "line": 1}) is None
+
+
+def test_taint_reproduction_module_function_sink(tmp_path):
+    # command injection via os.system (a module-level sink)
+    (tmp_path / "app.py").write_text("import os\ndef handle(cmd):\n    os.system(cmd)\n")
+    spec = taint_repro_spec({"type": "command_injection", "cwe_id": "CWE-78",
+                             "sink_call": "os.system", "location": "app.py", "line": 3,
+                             "source_var": "cmd"})
+    r = run_deps_repro("from app import handle\nhandle(MARKER)", spec, str(tmp_path))
+    assert r.reproduced is True
+
+
+def test_taint_reproduction_class_method_sink(tmp_path):
+    # SQLi via a class method -> exercises attribute-walk patching
+    (tmp_path / "db.py").write_text("class Cursor:\n    def execute(self, q):\n        return q\n")
+    (tmp_path / "app.py").write_text(
+        "from db import Cursor\ndef handle(q):\n    return Cursor().execute(q)\n")
+    spec = taint_repro_spec({"type": "sql_injection", "cwe_id": "CWE-89",
+                             "sink_call": "db.Cursor.execute", "location": "app.py", "line": 3,
+                             "source_var": "q"})
+    r = run_deps_repro("from app import handle\nhandle(MARKER)", spec, str(tmp_path))
+    assert r.reproduced is True

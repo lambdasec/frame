@@ -324,10 +324,10 @@ def create_parser() -> argparse.ArgumentParser:
     )
     exploit_parser.add_argument(
         "--deps", action="store_true",
-        help="Proof-carrying dependency reachability: no live target. Read a findings JSON "
-             "(--guidance, from `frame scan --sca -f json`) and, for each finding where attacker "
-             "data reaches a vulnerable library function, drive the project (--root) to that call "
-             "and write a reproduction test (--out-dir) confirmed by a spy. See docs/ai.md."
+        help="Proof-carrying reachability: no live target. Read a findings JSON (--guidance, from "
+             "`frame scan --sca -f json`) and, for each reachable finding -- attacker data reaching "
+             "a vulnerable dependency call or an injection sink -- drive the project (--root) to that "
+             "call and write a reproduction test (--out-dir) confirmed by a spy. See docs/ai.md."
     )
     exploit_parser.add_argument(
         "--root",
@@ -1117,46 +1117,56 @@ def _cmd_exploit_deps(args, config) -> int:
     agent drives the project to that call and a harness spy confirms the marker arrives
     there through the project; a confirmed reproduction is written as a pytest."""
     from frame.sil.proof_deps import (
-        deps_repro_spec, python_deps_test_with_driver,
+        deps_repro_spec, taint_repro_spec, python_deps_test_with_driver,
     )
     from frame.sil.proof_deps_reproduce import reproduce_deps_finding
 
     if not args.guidance:
-        print("Error: --deps needs a findings JSON via --guidance (from `frame scan --sca -f json`).",
+        print("Error: --deps needs a findings JSON via --guidance (from `frame scan -f json`).",
               file=sys.stderr)
         return 1
     try:
         raw = sys.stdin.read() if args.guidance == "-" else Path(args.guidance).read_text()
-        findings = _load_dependency_findings(raw)
     except Exception as e:
         print(f"Error reading findings: {e}", file=sys.stderr)
         return 1
     root = args.root or "."
-    specs = [s for s in (deps_repro_spec(f) for f in findings) if s is not None]
+    # Dependency reachability (SCA findings) and code injection flows (taint findings)
+    # reproduce through the same spy engine.
+    specs = [s for s in (deps_repro_spec(f) for f in _load_dependency_findings(raw)) if s]
+    _INJECTION = {"sql_injection", "command_injection", "xss", "path_traversal",
+                  "ssrf", "ldap_injection", "xpath_injection", "code_injection"}
+    for f in _load_findings(raw):
+        if f.get("category") == "taint" or f.get("type") in _INJECTION:
+            s = taint_repro_spec(f)
+            if s:
+                specs.append(s)
     if not specs:
-        print("No findings with attacker data reaching a vulnerable function (tainted "
-              "reachability). Run `frame scan --sca` first.", file=sys.stderr)
+        print("No findings with attacker data reaching a sink (tainted reachability or a "
+              "resolvable injection sink). Run `frame scan --sca -f json` first.", file=sys.stderr)
         return 0
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
     confirmed = 0
     for spec in specs:
-        print(f"[deps] {spec.advisory} {spec.package}=={spec.version}: reaching "
-              f"{spec.vuln_function} at {spec.call_site} ...", file=sys.stderr)
+        label = f"{spec.advisory} {spec.package}=={spec.version}" if spec.package else spec.advisory
+        print(f"[repro] {label}: reaching {spec.vuln_function} at {spec.call_site} ...",
+              file=sys.stderr)
         rep = reproduce_deps_finding(spec, root, config, max_steps=args.max_steps or 8)
         if not rep.reproduced:
-            print(f"[deps]   not reproduced: {rep.detail}", file=sys.stderr)
+            print(f"[repro]   not reproduced: {rep.detail}", file=sys.stderr)
             continue
         confirmed += 1
-        print(f"[deps]   reproduced: {rep.detail}", file=sys.stderr)
+        print(f"[repro]   reproduced: {rep.detail}", file=sys.stderr)
         if out_dir:
             import re as _re
-            stem = _re.sub(r"[^A-Za-z0-9_.-]", "_", f"{spec.advisory}_{spec.package}")
+            stem = _re.sub(r"[^A-Za-z0-9_.-]", "_",
+                           f"{spec.advisory}_{spec.package or spec.call_site}")
             path = out_dir / f"test_{stem}.py"
             path.write_text(python_deps_test_with_driver(spec, rep.driver))
-            print(f"[deps]   wrote {path}", file=sys.stderr)
-    print(f"Reproduced {confirmed} of {len(specs)} reachable dependency findings.")
+            print(f"[repro]   wrote {path}", file=sys.stderr)
+    print(f"Reproduced {confirmed} of {len(specs)} reachable findings.")
     return 0
 
 

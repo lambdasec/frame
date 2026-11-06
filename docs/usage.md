@@ -340,7 +340,7 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 
 Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default `llm.exploit_max_steps`, 250), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
 
-`frame exploit --deps` needs no live target: it turns dependency reachability into runnable tests. Give it a `frame scan --sca -f json` findings file (`--guidance FILE`) and the project (`--root DIR`); for each finding where attacker data reaches a vulnerable library function, a seeded agent drives the project to that call and a harness spy confirms the marker reaches it through the project. `--out-dir DIR` writes each confirmed reproduction as a pytest ([ai.md](ai.md#proof-carrying-findings---confirm-proofs)).
+`frame exploit --deps` needs no live target: it turns reachability into runnable tests. Give it a `frame scan --sca -f json` findings file (`--guidance FILE`) and the project (`--root DIR`); for each reachable finding -- attacker data reaching a vulnerable dependency call or a code injection sink (SQLi, command injection) -- a seeded agent drives the project to that call and a harness spy confirms the marker reaches it through the project. `--out-dir DIR` writes each confirmed reproduction as a pytest ([ai.md](ai.md#proof-carrying-findings---confirm-proofs)).
 
 ### `frame iac [target]`
 

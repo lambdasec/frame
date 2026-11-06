@@ -68,14 +68,46 @@ class ReproduceResult:
     transcript: List[Dict[str, Any]] = field(default_factory=list)
 
 
+# How the attacker value enters, detected from the source, with how to drive each
+# channel from the agent's own `main` (it writes the whole program, so it sets these up).
+_CHANNELS = [
+    ("stdin", ("fgets", "scanf", "getchar", "fread", "gets", "read("),
+     "reads stdin: feed the value with `freopen` on a temp file, or the harness stdin"),
+    ("environment", ("getenv", "secure_getenv"),
+     "reads an environment variable: `setenv(\"NAME\", \"<value>\", 1)` before calling"),
+    ("file", ("fopen", "open(", "fscanf"),
+     "reads a file: create a temp file with the value, then point the code at it"),
+    ("argv", ("argv", "main(int"),
+     "reads argv: call the inner function directly with the value (the harness passes no args)"),
+    ("socket", ("recv", "accept", "socket("),
+     "reads a socket: if a server is impractical, call the function that processes the "
+     "received bytes directly with the value"),
+]
+
+
+def _detect_channels(source: str) -> List[str]:
+    out = []
+    for name, needles, how in _CHANNELS:
+        if any(n in source for n in needles):
+            out.append(f"- {name}: the code {how}.")
+    return out
+
+
 def _seed(source: str, proof: Dict) -> str:
     witness = proof.get("witness") or {}
     vals = ", ".join(f"{k} = {v}" for k, v in witness.items())
+    channels = _detect_channels(source)
+    hint = ("\nThe input appears to enter through:\n" + "\n".join(channels) +
+            "\n") if channels else ""
     return (f"Finding: {proof.get('cwe', '')} -- {proof.get('trigger', '')}\n"
-            f"The solver's triggering values: {vals or '(none recorded)'}\n\n"
+            f"The solver's triggering values: {vals or '(none recorded)'}\n"
+            f"{hint}\n"
             f"Source under test:\n```c\n{source.rstrip()}\n```\n\n"
-            "Write a complete C program that drives the input so this fault fires, "
-            "and submit it with `try_program`.")
+            "Write a complete C program (the given source plus your own `main`) that drives "
+            "the input through its real channel so this fault fires, and submit it with "
+            "`try_program`. You write the whole program, so set up the channel yourself "
+            "(set an env var, write a temp file, redirect stdin) rather than calling the "
+            "vulnerable function with the value directly.")
 
 
 def reproduce_c_finding(source: str, proof: Dict, config: Any,
