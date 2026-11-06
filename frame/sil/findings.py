@@ -8,7 +8,8 @@ Evidence, weakest to strongest:
 - ``llm-verified``: proposed by the LLM layer and grounded in a sink Frame recognises.
 - ``data-flow``: a source-to-sink path found by the taint analysis.
 - ``solver-verified``: a path the solver proved reachable (incorrectness logic witness).
-- ``exploit-confirmed``: reproduced against a live target (``frame exploit``).
+- ``exploit-confirmed``: reproduced by running it -- a generated test that triggers the finding
+  (``frame scan --confirm-proofs``), or an exploit against a live target (``frame exploit``).
 
 Categories: ``taint`` (injection and other attacker-data flows), ``memory`` (C/C++ memory and
 undefined behaviour), ``crypto``, ``secret``, ``access-control``, ``hardening``, and, for the

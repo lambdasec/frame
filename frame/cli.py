@@ -318,8 +318,24 @@ def create_parser() -> argparse.ArgumentParser:
                     "`frame scan --ai -f json`) so it attacks the localized flaw."
     )
     exploit_parser.add_argument(
-        "--target", required=True,
-        help="Target under test, e.g. http://app:8080 (must be authorized/in-scope)"
+        "--target",
+        help="Target under test, e.g. http://app:8080 (must be authorized/in-scope). "
+             "Required unless --deps is used."
+    )
+    exploit_parser.add_argument(
+        "--deps", action="store_true",
+        help="Proof-carrying dependency reachability: no live target. Read a findings JSON "
+             "(--guidance, from `frame scan --sca -f json`) and, for each finding where attacker "
+             "data reaches a vulnerable library function, drive the project (--root) to that call "
+             "and write a reproduction test (--out-dir) confirmed by a spy. See docs/ai.md."
+    )
+    exploit_parser.add_argument(
+        "--root",
+        help="With --deps: the project root to import and drive (defaults to the cwd)."
+    )
+    exploit_parser.add_argument(
+        "--out-dir",
+        help="With --deps: directory to write confirmed reproduction tests into."
     )
     exploit_parser.add_argument(
         "--goal",
@@ -1078,6 +1094,72 @@ def _select_findings(findings: List[dict], n: int = 6) -> List[dict]:
     return out
 
 
+def _load_dependency_findings(raw: str) -> List[dict]:
+    """Pull dependency findings (with `reachability`) out of a `frame scan --sca -f json`
+    payload: they live under `dependencies.findings`. Also accepts a bare list or a
+    top-level `findings` list."""
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return [f for f in data if isinstance(f, dict) and "reachability" in f]
+    if isinstance(data, dict):
+        dep = (data.get("dependencies") or {}).get("findings")
+        if dep:
+            return dep
+        if isinstance(data.get("findings"), list):
+            return data["findings"]
+    return []
+
+
+def _cmd_exploit_deps(args, config) -> int:
+    """`frame exploit --deps`: turn SCA reachability into runnable reproduction tests.
+
+    For each finding where attacker data reaches a vulnerable library function, a seeded
+    agent drives the project to that call and a harness spy confirms the marker arrives
+    there through the project; a confirmed reproduction is written as a pytest."""
+    from frame.sil.proof_deps import (
+        deps_repro_spec, python_deps_test_with_driver,
+    )
+    from frame.sil.proof_deps_reproduce import reproduce_deps_finding
+
+    if not args.guidance:
+        print("Error: --deps needs a findings JSON via --guidance (from `frame scan --sca -f json`).",
+              file=sys.stderr)
+        return 1
+    try:
+        raw = sys.stdin.read() if args.guidance == "-" else Path(args.guidance).read_text()
+        findings = _load_dependency_findings(raw)
+    except Exception as e:
+        print(f"Error reading findings: {e}", file=sys.stderr)
+        return 1
+    root = args.root or "."
+    specs = [s for s in (deps_repro_spec(f) for f in findings) if s is not None]
+    if not specs:
+        print("No findings with attacker data reaching a vulnerable function (tainted "
+              "reachability). Run `frame scan --sca` first.", file=sys.stderr)
+        return 0
+    out_dir = Path(args.out_dir) if args.out_dir else None
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    confirmed = 0
+    for spec in specs:
+        print(f"[deps] {spec.advisory} {spec.package}=={spec.version}: reaching "
+              f"{spec.vuln_function} at {spec.call_site} ...", file=sys.stderr)
+        rep = reproduce_deps_finding(spec, root, config, max_steps=args.max_steps or 8)
+        if not rep.reproduced:
+            print(f"[deps]   not reproduced: {rep.detail}", file=sys.stderr)
+            continue
+        confirmed += 1
+        print(f"[deps]   reproduced: {rep.detail}", file=sys.stderr)
+        if out_dir:
+            import re as _re
+            stem = _re.sub(r"[^A-Za-z0-9_.-]", "_", f"{spec.advisory}_{spec.package}")
+            path = out_dir / f"test_{stem}.py"
+            path.write_text(python_deps_test_with_driver(spec, rep.driver))
+            print(f"[deps]   wrote {path}", file=sys.stderr)
+    print(f"Reproduced {confirmed} of {len(specs)} reachable dependency findings.")
+    return 0
+
+
 def cmd_exploit(args) -> int:
     """Execute exploit command - run the LLM exploitation agent against a target."""
     import subprocess
@@ -1092,6 +1174,14 @@ def cmd_exploit(args) -> int:
     if not config.base_url or not config.model:
         print("Error: set FRAME_LLM_BASE_URL and FRAME_LLM_MODEL (an OpenAI-compatible "
               "endpoint) to use the exploit agent.", file=sys.stderr)
+        return 1
+
+    # Proof-carrying dependency reachability: no live target, generate tests instead.
+    if getattr(args, "deps", False):
+        return _cmd_exploit_deps(args, config)
+    if not args.target:
+        print("Error: --target is required (or use --deps for dependency reachability tests).",
+              file=sys.stderr)
         return 1
     from frame import config as settings
     args.max_steps = settings.setting("llm", "exploit_max_steps", flag=args.max_steps)

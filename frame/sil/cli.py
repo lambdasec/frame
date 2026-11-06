@@ -113,6 +113,22 @@ def add_pack_args(scan_parser) -> None:
         help="Ask each provider-format credential's provider whether it still works (a read-only request to "
              "the provider's own API, e.g. GitHub's /user; off by default, see docs/secrets.md#verifying-with-the-provider)")
     scan_parser.add_argument(
+        "--confirm-proofs", action="store_true",
+        help="Proof-carrying findings: compile and run each directly constructible C integer-overflow or "
+             "out-of-bounds finding under AddressSanitizer+UndefinedBehaviorSanitizer; an observed fault "
+             "raises it to the exploit-confirmed evidence level. Runs compiled code (opt-in), offline, no "
+             "model. See docs/ai.md.")
+    scan_parser.add_argument(
+        "--proof-tests-dir", metavar="DIR",
+        help="With --confirm-proofs: write each confirmed finding's reproduction test (a self-contained C "
+             "file) to DIR as a regression guard.")
+    scan_parser.add_argument(
+        "--reproduce-proofs", action="store_true",
+        help="Implies --confirm-proofs. For a C finding whose triggering value is not a bare parameter "
+             "(read from stdin/argv), drive a seeded agent to write a reproduction program that makes the "
+             "fault manifest under the sanitizers; a reproduced finding is raised to exploit-confirmed. "
+             "Uses the [llm] endpoint (runs a model, opt-in). See docs/ai.md.")
+    scan_parser.add_argument(
         "--vex", choices=["openvex", "cyclonedx"],
         help="With --sca: also write a VEX document for the dependency findings to --vex-out (attacker data "
              "reaching a vulnerable function is stated exploitable)")
@@ -588,6 +604,9 @@ def cmd_scan(args) -> int:
             packs=pack_paths,
             use_builtin_packs=not getattr(args, "no_packs", False),
             verify_secrets=getattr(args, "verify_secrets", False),
+            confirm_proofs=getattr(args, "confirm_proofs", False) or getattr(args, "reproduce_proofs", False),
+            proof_tests_dir=getattr(args, "proof_tests_dir", None),
+            reproduce_proofs=getattr(args, "reproduce_proofs", False),
         )
         if getattr(args, "root", None) and (scanner.llm_detect or scanner.llm_triage or scanner.hunt_authz):
             # The LLM layer's file tools read the project root --root names (a directory

@@ -284,6 +284,11 @@ class VulnerabilityCheck:
     # the check is dropped. Populated after the fact (never prunes execution).
     path_condition: List[Formula] = field(default_factory=list)
 
+    # Proof-carrying findings (Phase 5): the concrete witness that triggers this
+    # finding, when the engine computed one (currently the C integer-range checks).
+    # A map built by `frame.sil.proof_tests`; None when there is no witness.
+    proof: Optional[Dict[str, Any]] = None
+
     def __str__(self) -> str:
         return f"VulnerabilityCheck({self.vuln_type.value} at {self.location})"
 
@@ -8248,6 +8253,7 @@ class SILTranslator:
                 continue
             names = set().union(*(g.free_vars() for g in parts))
             check.path_condition = [g for g in pc if g.free_vars() & names]
+            check.proof = self._range_proof(proc, check, parts, pc, names)
             out.append(check)
 
         for pos, check, var in self._toctou_candidates:
@@ -8435,6 +8441,33 @@ class SILTranslator:
         if key not in cache:
             cache[key] = self._feasibility_sat(self._build_conjunction(list(pc) + list(parts)))
         return cache[key]
+
+    def _range_proof(self, proc, check, parts, pc, names):
+        """Phase 5: the concrete inputs that trigger an integer-range finding.
+
+        Re-solves the already-satisfiable candidate condition for one concrete
+        assignment and shapes it into a proof (`frame.sil.proof_tests`). Returns
+        None whenever no witness is available; never affects whether the finding
+        is reported."""
+        checker = getattr(self, "_feas_checker", None)
+        if not checker:
+            return None
+        try:
+            model = checker.satisfying_model(
+                self._build_conjunction(list(pc) + list(parts)))
+        except Exception:
+            return None
+        if not model:
+            return None
+        from frame.sil.proof_tests import integer_range_proof
+        param_names = proc.get_param_names() if proc is not None else []
+        witness = {k: v for k, v in model.items() if k in names}
+        trigger_vars = set(witness)
+        oob = {VulnType.OOB_READ, VulnType.OOB_WRITE,
+               VulnType.OOB_UNDERREAD, VulnType.OOB_UNDERWRITE}
+        family = "out-of-bounds" if check.vuln_type in oob else "integer-range"
+        return integer_range_proof(witness, trigger_vars, param_names,
+                                   trigger=check.description, family=family)
 
     def _maybe_uninitialized(self, var: str, pc: List[Formula]) -> bool:
         """Is there a feasible path here on which `var` has no value yet? The

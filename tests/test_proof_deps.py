@@ -1,0 +1,152 @@
+"""Proof-carrying dependency findings (Phase 5c foundation): spec extraction + test emit."""
+
+from frame.sil.proof_deps import deps_repro_spec, python_deps_test
+
+
+def _tainted_finding():
+    return {
+        "id": "GHSA-xxxx-yyyy-zzzz",
+        "package": "acme-xml",
+        "version": "1.2.0",
+        "fixed": ["1.2.1"],
+        "summary": "XXE in acme_xml.parse",
+        "functions": [{"id": "acme_xml/parse"}],
+        "reachability": {
+            "level": "tainted",
+            "calls": [{"function": "acme_xml/parse", "location": "app/views.py:42",
+                       "source": "", "call": "acme_xml.parse"}],
+            "flows": [{"location": "app/views.py:42", "type": "xxe",
+                       "evidence": "data-flow", "source": "body"}],
+        },
+    }
+
+
+def test_spec_extracted_from_a_tainted_finding():
+    spec = deps_repro_spec(_tainted_finding())
+    assert spec is not None
+    assert spec.advisory == "GHSA-xxxx-yyyy-zzzz"
+    assert spec.package == "acme-xml" and spec.version == "1.2.0"
+    assert spec.vuln_function == "acme_xml/parse"
+    assert spec.call_site == "app/views.py:42"
+    assert spec.source_var == "body"
+    assert spec.fixed == "1.2.1"
+    assert spec.module_path == "app/views.py"
+
+
+def test_no_spec_unless_tainted():
+    for level in ("installed", "imported", "called"):
+        f = _tainted_finding()
+        f["reachability"]["level"] = level
+        assert deps_repro_spec(f) is None
+    # a tainted finding with no flow is also not actionable
+    f = _tainted_finding(); f["reachability"]["flows"] = []
+    assert deps_repro_spec(f) is None
+
+
+def test_emitted_test_names_the_advisory_and_spies_the_function():
+    spec = deps_repro_spec(_tainted_finding())
+    src = python_deps_test(spec)
+    assert "GHSA-xxxx-yyyy-zzzz" in src
+    assert "acme_xml/parse" in src
+    assert "monkeypatch" in src and "PROOF_MARKER_7F3A" in src
+    assert "def test_attacker_data_reaches_the_vulnerable_function" in src
+    # the emitted test is valid Python
+    compile(src, "emitted_test.py", "exec")
+
+
+import json as _json
+from pathlib import Path
+from frame.sil.proof_deps import DepsReproSpec, run_deps_repro
+
+
+def _mini_project(root: Path):
+    (root / "acme_xml.py").write_text("def parse(data):\n    return 'parsed:' + str(data)\n")
+    (root / "app.py").write_text(
+        "import acme_xml\n\ndef handle(payload):\n    return acme_xml.parse(payload)\n")
+    return DepsReproSpec(advisory="GHSA-x", package="acme-xml", version="1.0",
+                         vuln_function="acme_xml/parse", call_text="acme_xml.parse",
+                         call_site="app.py:4", source_var="payload")
+
+
+def test_runner_confirms_a_genuine_driver(tmp_path):
+    spec = _mini_project(tmp_path)
+    r = run_deps_repro("from app import handle\nhandle(MARKER)", spec, str(tmp_path))
+    assert r.reproduced is True
+    assert r.result["marker_in_args"] and r.result["via_callsite"]
+
+
+def test_runner_rejects_a_direct_call_cheat(tmp_path):
+    # Calling the vulnerable function straight from the driver bypasses the project:
+    # the call-site file is not on the stack, so it must NOT count.
+    spec = _mini_project(tmp_path)
+    r = run_deps_repro("import acme_xml\nacme_xml.parse(MARKER)", spec, str(tmp_path))
+    assert r.reproduced is False
+
+
+def test_runner_rejects_a_driver_without_the_marker(tmp_path):
+    spec = _mini_project(tmp_path)
+    r = run_deps_repro("from app import handle\nhandle('benign')", spec, str(tmp_path))
+    assert r.reproduced is False
+
+
+def test_runner_handles_from_import_binding(tmp_path):
+    # `from acme_xml import parse` binds before the patch would normally apply;
+    # the harness patches first, so it is still spied.
+    (tmp_path / "acme_xml.py").write_text("def parse(d):\n    return 1\n")
+    (tmp_path / "app.py").write_text(
+        "from acme_xml import parse\n\ndef handle(p):\n    return parse(p)\n")
+    spec = DepsReproSpec(advisory="a", package="acme-xml", version="1",
+                         vuln_function="acme_xml/parse", call_text="parse",
+                         call_site="app.py:4", source_var="p")
+    r = run_deps_repro("from app import handle\nhandle(MARKER)", spec, str(tmp_path))
+    assert r.reproduced is True
+
+
+class _StubClient:
+    def __init__(self, driver):
+        self._driver = driver; self._n = 0; self.last_call = {}
+
+    def chat_raw(self, messages, tools):
+        self._n += 1
+        if self._n == 1:
+            return {"content": "", "tool_calls": [{"id": "1", "function": {
+                "name": "try_driver", "arguments": _json.dumps({"driver": self._driver})}}]}
+        return {"content": "done", "tool_calls": []}
+
+
+def test_reproduce_loop_confirms_via_project(tmp_path):
+    from frame.sil.proof_deps_reproduce import reproduce_deps_finding
+    spec = _mini_project(tmp_path)
+    r = reproduce_deps_finding(spec, str(tmp_path), config=None,
+                               client=_StubClient("from app import handle\nhandle(MARKER)"),
+                               max_steps=4)
+    assert r.reproduced is True
+    assert "handle(MARKER)" in r.driver
+
+
+def test_reproduce_loop_rejects_a_forged_direct_call(tmp_path):
+    from frame.sil.proof_deps_reproduce import reproduce_deps_finding
+    spec = _mini_project(tmp_path)
+    r = reproduce_deps_finding(spec, str(tmp_path), config=None,
+                               client=_StubClient("import acme_xml\nacme_xml.parse(MARKER)"),
+                               max_steps=3)
+    assert r.reproduced is False
+    assert not r.driver
+
+
+def test_load_dependency_findings_from_sca_json():
+    from frame.cli import _load_dependency_findings
+    import json as J
+    payload = J.dumps({"dependencies": {"findings": [
+        {"id": "CVE-1", "package": "p", "version": "1", "reachability": {"level": "tainted"}}]}})
+    out = _load_dependency_findings(payload)
+    assert len(out) == 1 and out[0]["id"] == "CVE-1"
+    # bare list, filtered to reachability dicts
+    assert _load_dependency_findings(J.dumps([{"reachability": {}}, {"x": 1}])) == [{"reachability": {}}]
+
+
+def test_exploit_deps_parses_without_a_target():
+    from frame.cli import create_parser
+    args = create_parser().parse_args(
+        ["exploit", "--deps", "--guidance", "f.json", "--root", ".", "--out-dir", "o"])
+    assert args.deps is True and args.target is None and args.root == "."

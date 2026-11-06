@@ -267,6 +267,9 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--cross-file-limit N` | most files one cross-file analysis spans (default 2000) |
 | `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
 | `--verify-secrets` | ask each found credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider); network, off by default) |
+| `--confirm-proofs` | compile and run each directly constructible C integer-overflow or out-of-bounds finding under AddressSanitizer+UndefinedBehaviorSanitizer; an observed fault raises it to the `exploit-confirmed` evidence level (runs compiled code, opt-in, offline, no model; [ai.md](ai.md#proof-carrying-findings---confirm-proofs)) |
+| `--proof-tests-dir DIR` | with `--confirm-proofs`: write each confirmed finding's reproduction test (a self-contained C file) to DIR as a regression guard |
+| `--reproduce-proofs` | implies `--confirm-proofs`; for a C finding whose triggering value is not a bare parameter (read from stdin/argv), drive a seeded agent to write a reproduction program and raise it to `exploit-confirmed` on an observed fault (uses the `[llm]` endpoint, runs a model, opt-in; [ai.md](ai.md#proof-carrying-findings---confirm-proofs)) |
 | `--sca` | add vulnerable dependencies ([dependencies.md](dependencies.md)) |
 | `--iac` | add infrastructure findings: Kubernetes manifests, Dockerfiles, Terraform, CloudFormation (directory targets; [iac.md](iac.md)) |
 | `--vex openvex\|cyclonedx`, `--vex-out FILE` | with `--sca`: also write a VEX document |
@@ -336,6 +339,8 @@ Patches findings and re-scans to confirm each patch (needs a model, [ai.md](ai.m
 ### `frame exploit --target URL`
 
 Drives an agent against a live target you are authorized to test ([ai.md](ai.md)): `--goal`, `--guidance FILE`, `--success-check COMMAND`, `--max-steps N` (default `llm.exploit_max_steps`, 250), `--exec-timeout S` (default 120), `--model`, `--format text|json`, `--trace-out FILE`.
+
+`frame exploit --deps` needs no live target: it turns dependency reachability into runnable tests. Give it a `frame scan --sca -f json` findings file (`--guidance FILE`) and the project (`--root DIR`); for each finding where attacker data reaches a vulnerable library function, a seeded agent drives the project to that call and a harness spy confirms the marker reaches it through the project. `--out-dir DIR` writes each confirmed reproduction as a pytest ([ai.md](ai.md#proof-carrying-findings---confirm-proofs)).
 
 ### `frame iac [target]`
 

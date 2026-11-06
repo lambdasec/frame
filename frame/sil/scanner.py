@@ -259,6 +259,10 @@ class Vulnerability:
     # How strongly the finding is proven (frame.sil.findings.EVIDENCE_LEVELS).
     evidence: str = "matched"
     sink_call: str = ""          # internal: the sink call, for frame/sca (not in the JSON)
+    # Proof-carrying findings (Phase 5): the concrete witness that triggers the
+    # finding and, when directly constructible, a reproduction test. None unless
+    # the engine computed one (frame/sil/proof_tests.py). In the JSON when present.
+    proof: Optional[dict] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
@@ -289,6 +293,8 @@ class Vulnerability:
             d["path"] = self.path
             d["fingerprint"] = self.fingerprint
             d["fingerprint_loose"] = self.fingerprint_loose
+        if self.proof:
+            d["proof"] = self.proof
         return d
 
 
@@ -887,6 +893,9 @@ class FrameScanner:
         packs: Optional[Iterable[str]] = None,
         use_builtin_packs: bool = True,
         verify_secrets: bool = False,
+        confirm_proofs: bool = False,
+        proof_tests_dir: Optional[str] = None,
+        reproduce_proofs: bool = False,
     ):
         """
         Initialize the scanner.
@@ -948,6 +957,17 @@ class FrameScanner:
         self.last_hunt_status: Optional[Dict[str, Any]] = None  # how the last hunt ended (_apply_hunt_authz)
         self._llm_client = None
         self.library_mode = library_mode
+        # Proof-carrying findings (Phase 5): compile and run each directly
+        # constructible C integer/out-of-bounds finding under sanitizers; an
+        # observed fault raises it to `exploit-confirmed`. Opt-in (a scan runs no
+        # code by default). `proof_tests_dir`, when set, writes each confirmed
+        # reproduction test there as a regression guard.
+        self.confirm_proofs = confirm_proofs or reproduce_proofs
+        self.proof_tests_dir = proof_tests_dir
+        # For a non-constructible finding (input read from stdin/argv), drive a
+        # seeded agent to write a reproduction program (frame/sil/proof_reproduce.py).
+        # Uses the [llm] endpoint; opt-in, so a scan runs no model by default.
+        self.reproduce_proofs = reproduce_proofs
         self.secret_verifier: Any = None
         if verify_secrets:
             from frame.sil.secret_verify import Verifier
@@ -1181,6 +1201,12 @@ class FrameScanner:
 
             if self.verbose:
                 print(f"[Scanner] After confidence filter: {len(result.vulnerabilities)} vulnerabilities")
+
+            # Step 6b (optional): proof-carrying findings -- run each directly
+            # constructible finding under sanitizers and raise it to
+            # `exploit-confirmed` on an observed fault (frame/sil/proof_run.py).
+            if self.confirm_proofs:
+                self._confirm_proofs(result, source_code, filename)
 
             # Step 7 (optional): LLM DETECTION -- adds findings the symbolic layer
             # missed (recall). Runs BEFORE triage so that, when both are enabled,
@@ -1840,6 +1866,12 @@ class FrameScanner:
         severity = self.SEVERITY_MAP.get(check.vuln_type, Severity.MEDIUM)
         cwe_id = self.CWE_MAP.get(check.vuln_type)
 
+        # Proof-carrying findings (Phase 5): carry the concrete witness the engine
+        # computed, stamped with this finding's CWE, through to the finding.
+        proof = getattr(check, "proof", None)
+        if proof and cwe_id and "cwe" not in proof:
+            proof = {**proof, "cwe": cwe_id}
+
         # Set confidence based on verification status
         # - verified: highest confidence (formal proof of reachability)
         # - verification error: medium confidence (taint analysis found it, verification had issues)
@@ -1869,7 +1901,99 @@ class FrameScanner:
             evidence=evidence_of_check(verified, bool(check.source_var and check.sink_type)),
             sink_call=getattr(check, "sink_call", ""),
             category="ai" if getattr(check, "source_kind", "") in ("llm", "retrieved") else "",
+            proof=proof,
         )
+
+    def _confirm_proofs(self, result: "ScanResult", source_code: str, filename: str) -> None:
+        """Proof-carrying findings (Phase 5): run each directly constructible C
+        integer/out-of-bounds finding under sanitizers. An observed fault raises the
+        finding to `exploit-confirmed` and records the run on its proof; anything
+        else leaves the finding untouched. Writes the reproduction test to
+        `proof_tests_dir` when that is set and the finding is confirmed."""
+        if self.language not in ("c", "cpp", "c++"):
+            return
+        from frame.sil.proof_run import confirm_c_integer_proof
+        from frame.sil.proof_tests import c_integer_test
+        for vuln in result.vulnerabilities:
+            proof = vuln.proof
+            if not proof:
+                continue
+            if proof.get("constructible"):
+                try:
+                    run = confirm_c_integer_proof(source_code, vuln.procedure, proof)
+                except Exception as exc:                   # never let confirmation break a scan
+                    proof["run"] = {"status": "error", "detail": str(exc)}
+                    continue
+                proof["run"] = {"status": run.status, "detail": run.detail}
+                if not run.confirmed:
+                    continue
+                vuln.evidence = "exploit-confirmed"
+                if self.proof_tests_dir:
+                    self._write_proof_test(vuln, source_code, filename, c_integer_test)
+            elif self.reproduce_proofs:
+                self._reproduce_proof(vuln, source_code, filename)
+
+    def _reproduce_proof(self, vuln: "Vulnerability", source_code: str, filename: str) -> None:
+        """Non-constructible finding: drive a seeded agent to write a reproduction
+        program (frame/sil/proof_reproduce.py). On an observed sanitizer fault the
+        finding is raised to `exploit-confirmed` and its test recorded/written. Uses
+        the [llm] endpoint; any failure leaves the finding untouched."""
+        proof = vuln.proof or {}
+        if self._llm_config is None:
+            try:
+                from frame.sil.llm_triage import TriageConfig
+                self._llm_config = TriageConfig.from_env()
+            except Exception:
+                self._llm_config = None
+        if not getattr(self._llm_config, "base_url", ""):
+            proof["run"] = {"status": "skipped", "detail": "no LLM endpoint configured"}
+            return
+        try:
+            from frame.sil.proof_reproduce import reproduce_c_finding
+            rep = reproduce_c_finding(source_code, proof, self._llm_config)
+        except Exception as exc:                           # never let reproduction break a scan
+            proof["run"] = {"status": "error", "detail": str(exc)}
+            return
+        proof["run"] = {"status": "reproduced" if rep.reproduced else "not-reproduced",
+                        "detail": rep.detail, "mode": "agent"}
+        if not rep.reproduced:
+            return
+        vuln.evidence = "exploit-confirmed"
+        if self.proof_tests_dir and rep.test_source:
+            out_dir = Path(self.proof_tests_dir)
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                stem = re.sub(r"[^A-Za-z0-9_.-]", "_",
+                              f"{(proof.get('cwe') or 'proof')}_{vuln.procedure}_{vuln.line}")
+                path = out_dir / f"{stem}.c"
+                path.write_text(rep.test_source)
+                proof["test_path"] = str(path)
+            except OSError as exc:
+                proof["run"]["detail"] = f"reproduced; could not write test: {exc}"
+
+    def _write_proof_test(self, vuln: "Vulnerability", source_code: str,
+                          filename: str, c_integer_test) -> None:
+        """Write a confirmed finding's reproduction harness into `proof_tests_dir`
+        as a standalone, self-contained C file (the scanned source plus a `main`
+        that calls the function with the triggering inputs), a regression guard that
+        must stop faulting once the bug is fixed."""
+        proof = vuln.proof or {}
+        inputs = proof.get("inputs") or {}
+        harness = c_integer_test(vuln.procedure, list(inputs.keys()), inputs,
+                                 cwe=proof.get("cwe"), trigger=proof.get("trigger", ""))
+        if harness is None:
+            return
+        out_dir = Path(self.proof_tests_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = re.sub(r"[^A-Za-z0-9_.-]", "_",
+                      f"{(proof.get('cwe') or 'proof')}_{vuln.procedure}_{vuln.line}")
+        path = out_dir / f"{stem}.c"
+        try:
+            path.write_text(source_code.rstrip() + "\n\n" + harness)
+            proof["test_path"] = str(path)
+        except OSError as exc:
+            proof["run"] = {**(proof.get("run") or {}),
+                            "detail": f"could not write test: {exc}"}
 
     def _deduplicate_vulnerabilities(self, vulns: List[Vulnerability]) -> List[Vulnerability]:
         """

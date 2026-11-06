@@ -28,6 +28,7 @@ from frame.checking._disjunct_handling import extract_disjuncts, score_disjuncts
 from frame.checking._frame_inference import find_frame, abduce_frame
 from frame.checking._checker_core import check_entailment_core
 from frame.checking._satisfiability_check import is_satisfiable as _is_satisfiable_impl
+from frame.checking._model_extraction import satisfying_model as _satisfying_model_impl
 from frame.checking._unification_matching import try_unification_matching as _try_unification_matching_impl
 
 
@@ -162,6 +163,15 @@ class EntailmentChecker:
     def is_satisfiable(self, formula: Formula) -> bool:
         """Delegate to satisfiability checking helper"""
         return _is_satisfiable_impl(self, formula)
+
+    def satisfying_model(self, formula):
+        """One integer assignment satisfying a pure arithmetic formula, or None.
+
+        Additive over `is_satisfiable`: re-solves an already-satisfiable pure
+        formula to read off the concrete witness the proof-carrying layer turns
+        into test inputs. Never raises; the satisfiability decision is unchanged.
+        """
+        return _satisfying_model_impl(self, formula)
 
     def _try_unification_matching(self, antecedent: Formula, consequent: Formula) -> Optional[EntailmentResult]:
         """Delegate to unification matching helper"""

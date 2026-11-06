@@ -87,6 +87,31 @@ For long unattended runs, set `[llm] outage_wait` so a network drop is waited ou
 
 A hunt is as expensive as the application is large: one agent per unit, every unit audited by default. On BAC-Bench the 60 checkouts took about 15.5 hours of scan time on an 8-core machine, much of it the engine's pre-scan of the largest Django apps. `max_units` bounds it.
 
+## Proof-carrying findings (`--confirm-proofs`)
+
+When the symbolic engine proves a finding reachable it also computes the concrete inputs that reach it. `frame scan --confirm-proofs` turns those inputs into a test, runs it, and raises the finding to the `exploit-confirmed` evidence level only when the fault is actually observed. A finding with a reproduced test is a true positive by construction. This step runs compiled code, so it is opt-in; it uses no model and no network, and never contacts a live target.
+
+Today it covers the C integer-overflow and out-of-bounds findings (CWE-190/191/194/195/197 and CWE-125/787/124/127), whose trigger is an attacker integer leaving a range. Each such finding carries a `proof` in the JSON: the solver's `witness` (the concrete values), the `inputs` restricted to the function's parameters, whether it is directly `constructible` (every triggering value is a scalar parameter, so the function can be called with them), and the triggering condition.
+
+```bash
+frame scan src/ -l c --confirm-proofs --proof-tests-dir tests/frame-proofs
+```
+
+For each directly constructible finding, Frame compiles the file with a `main` that calls the function with the witness inputs, under AddressSanitizer and UndefinedBehaviorSanitizer, and runs it. An observed fault (a sanitizer report or a non-zero exit) confirms the finding and records the run on its `proof`; anything else (a function that does not compile on its own, a guard that makes it safe, no compiler) leaves the finding exactly as it was. With `--proof-tests-dir`, each confirmed finding's reproduction test is written there as a self-contained C file: a regression guard that must stop faulting once the bug is fixed.
+
+A finding whose triggering value is not a function parameter (for example an integer read from stdin) still records its witness, but is not directly constructible: calling the function alone will not reach it. `--reproduce-proofs` (which implies `--confirm-proofs`) handles those with a small seeded agent. The agent is given the source and the solver's witness and asked to write a complete reproduction program that drives the real input path so the fault fires; the harness compiles and runs it under the same sanitizers, and the loop stops only on an observed fault, never the model's claim. A reproduced finding is raised to `exploit-confirmed` and, with `--proof-tests-dir`, its program is written there. This uses the `[llm]` endpoint and runs a model, so it is opt-in; it still runs only against your own code in a local sandbox, with no live target.
+
+### Dependency reachability as a runnable test (`frame exploit --deps`)
+
+When `frame scan --sca` finds attacker data reaching a vulnerable library function in your own code (`reachability: tainted`), `frame exploit --deps` turns that into a test you can run. Give it the findings JSON and the project:
+
+```bash
+frame scan ./app --sca -f json -o findings.json
+frame exploit --deps --guidance findings.json --root ./app --out-dir tests/frame-proofs
+```
+
+For each reachable finding a seeded agent explores the project, finds the entry point that leads to the vulnerable call, and writes a driver that passes a marker through it. A harness installs a spy on the vulnerable function and confirms the marker arrives there through the project's own code: calling the library function directly does not count (the flagged call site must be on the runtime stack), so the agent cannot fake the result. Each confirmed finding is written as a self-contained pytest that imports your entry point, spies on the vulnerable function, and asserts attacker data reaches it. Drop it into your test suite: it passes while the reachable flow exists and fails once a fix removes it. This runs a model (the `[llm]` endpoint) against your own code in a local sandbox; there is no live target.
+
 ## Choosing a model
 
 ### Hosted
