@@ -5,9 +5,6 @@ on:
     branches: [ main, master ]
   push:
     branches: [ main, master ]
-  schedule:
-    # Nightly: the full benchmark sweep is too slow for every push.
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -144,7 +141,7 @@ jobs:
   sca-real:
     # `frame deps` against the real package managers (tests/sca_real/): each tool resolves a
     # fixture project, lists what it resolved, and Frame's reading must match. Runs on pushes to
-    # main, nightly and on dispatch; on pull requests only when the SCA code or its tests change.
+    # main and on dispatch; on pull requests only when the SCA code or its tests change.
     # A missing tool fails the job (FRAME_SCA_REAL=1 never skips). Pinned to 24.04: the Swift
     # setup action does not support newer Ubuntu images yet.
     runs-on: ubuntu-24.04
@@ -238,7 +235,7 @@ jobs:
 
   benchmarks:
     # Full curated sweep (4,742 cases: SL-COMP, QF_S, QF_AX, QF_BV).
-    # Runs nightly and on manual dispatch, plus on pushes to main.
+    # Runs on pushes to main and on manual dispatch, not on pull requests.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
