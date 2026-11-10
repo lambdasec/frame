@@ -220,6 +220,12 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 if fill and python and held and i.canonical is not None and parts_[0] in imports \
                         and i.canonical == ".".join([imports[parts_[0]]] + parts_[1:]):
                     i.canonical = None            # `g.db.execute()`: the value the file stored on flask.g
+                if fill and python and text and "." in text and i.canonical is not None \
+                        and i.canonical == getattr(i, "canonical_by_inference", None):
+                    known_ = of(text.split(".", 1)[0])
+                    if known_ is not None and not i.canonical.startswith(known_ + "."):
+                        i.canonical = None        # the project proves the receiver's type: it wins
+                        i.canonical_by_inference = None
                 if i.canonical is None and fill and text and held:
                     _set(i, f"{held}.{'.'.join(parts_[2:])}")   # `self.conn.cursor()`, `models.sequelize.query()`
                     changed = True

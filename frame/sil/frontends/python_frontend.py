@@ -146,6 +146,7 @@ class PythonFrontend:
         self._file_bound: Set[str] = set()
         self._unlowered: Dict[str, int] = {}
         self._aliases: Dict[str, Exp] = {}     # comprehension loop variables while lowering one
+        self._hoisted: Dict[int, Exp] = {}     # conditional expressions lowered as branches, by node id
         self._try_depth = 0
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
@@ -179,6 +180,7 @@ class PythonFrontend:
         self._file_bound = self._bound_names(tree.root_node)
         self._dynamic_attr_heads: Set[str] = set()
         self._unlowered: Dict[str, int] = {}
+        self._hoisted = {}
         self._dicts_are_queries = self._pack_says_dict_queries()
 
         # Walk top-level definitions
@@ -1159,6 +1161,8 @@ class PythonFrontend:
         """Translate expression statement (usually a call or assignment)"""
         for child in node.children:
             child = self._unwrap_await(child)
+            if child.is_named and child.type not in ("assignment", "augmented_assignment", "lambda"):
+                self._hoist_conditionals_in(child, self._get_location(child))
             if child.type == "call" and self._literal_setattr(child):
                 pass                                    # lowered as the attribute write
 
@@ -1313,6 +1317,12 @@ class PythonFrontend:
 
     def _assign_value(self, target_name: str, right: TSNode, loc: Location) -> None:
         """Lower `target_name = right` for every kind of right-hand side."""
+        if right.type != "conditional_expression":
+            self._hoist_conditionals_in(right, loc)
+        if right.type == "conditional_expression":
+            # `x = a if c else b`: a branch, so the condition's guard holds on its own arm
+            self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=self._hoist_conditional(right, loc)))
+            return
         if right.type == "call" and self._is_const_table_lookup(right):
             self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=ExpConst.null()))
 
@@ -1499,6 +1509,9 @@ class PythonFrontend:
         # Handle nested calls in arguments - expand them first
         args_exp = []
         for i, arg in enumerate(args):
+            if arg.type == "conditional_expression":     # a branch: its guard holds on its arm
+                args_exp.append((self._hoist_conditional(arg, loc), Typ.unknown_type()))
+                continue
             if arg.type == "call":
                 # Nested call - expand it first
                 nested_instrs, nested_var = self._expand_nested_call(arg, loc)
@@ -1715,6 +1728,9 @@ class PythonFrontend:
         args = self._get_call_args(call_node)
         args_exp = []
         for a in args:
+            if a.type == "conditional_expression":       # a branch: its guard holds on its arm
+                args_exp.append((self._hoist_conditional(a, loc), Typ.unknown_type()))
+                continue
             hoisted = self._hoist_subscript_source(a, loc)
             if hoisted is not None:
                 instrs.extend(hoisted[0])
@@ -1722,7 +1738,8 @@ class PythonFrontend:
             else:
                 args_exp.append((self._translate_expression(a), Typ.unknown_type()))
         for a in args:
-            instrs.extend(self._lost_call_instrs(a, loc))
+            if a.type != "conditional_expression":
+                instrs.extend(self._lost_call_instrs(a, loc))
 
         # Build Call instruction (no return)
         call_instr = Call(
@@ -1741,7 +1758,7 @@ class PythonFrontend:
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
+                    arg_exp = args_exp[arg_idx][0]          # as lowered (a hoisted conditional's value)
                     instrs.append(TaintSink(
                         loc=loc,
                         exp=arg_exp,
@@ -1880,11 +1897,15 @@ class PythonFrontend:
 
         if value_node:
             value_node = self._unwrap_await(value_node)
+            if value_node.type != "conditional_expression":
+                self._hoist_conditionals_in(value_node, loc)
             # If the return value is a call, translate it as a call assignment
             if value_node.type == "call":
                 instrs = self._translate_call_assignment("__return_val", value_node, loc)
                 self._add_instrs(instrs)
                 value_exp = ExpVar(PVar("__return_val"))
+            elif value_node.type == "conditional_expression":
+                value_exp = self._hoist_conditional(value_node, loc)
             else:
                 # Extract nested calls from the expression first
                 nested_call_instrs = self._extract_all_calls_from_node(value_node, loc)
@@ -2555,7 +2576,7 @@ class PythonFrontend:
             func_exp = self._translate_expression(func)
             # the same argument nodes a call statement gets (a bare generator is one argument)
             args = [self._translate_expression(a) for a in self._get_call_args(node)]
-            return ExpCall(func_exp, args)
+            return ExpCall(func_exp, args, kwarg_names=self._kwarg_names(node))
 
         elif node.type == "parenthesized_expression":
             for child in node.children:
@@ -2583,6 +2604,9 @@ class PythonFrontend:
             if parts:
                 return ExpStringConcat(parts)
             return ExpConst.string("")
+
+        elif node.type == "conditional_expression" and node.id in self._hoisted:
+            return self._hoisted[node.id]                # lowered as a branch (`_hoist_conditional`)
 
         elif node.type == "conditional_expression":
             # Python ternary: value_if_true if condition else value_if_false
@@ -2634,6 +2658,67 @@ class PythonFrontend:
         self._unlowered[node.type] = self._unlowered.get(node.type, 0) + 1
         text = self._get_text(node)
         return ExpVar(PVar(text)) if text else ExpConst.null()
+
+    @staticmethod
+    def _conditional_parts(node: TSNode):
+        """(consequence, condition, alternative) of `a if c else b`."""
+        parts = [None, None, None]
+        state = 0
+        for child in node.children:
+            if child.type == "if":
+                state = 1
+            elif child.type == "else":
+                state = 2
+            elif child.is_named and child.type != "comment":
+                parts[state] = child
+        return parts[0], parts[1], parts[2]
+
+    def _hoist_conditional(self, node: TSNode, loc: Location) -> Exp:
+        """`a if c else b` as a real branch: `if c: t = a else: t = b`, returning t. A guard in the
+        condition then holds on its own arm, as for an if statement (`target if target in
+        ALLOWED else "/home"` is the allowlisted value); written as one expression, both arms
+        reached the sink unguarded. A condition of literals takes its arm directly."""
+        if node.id in self._hoisted:
+            return self._hoisted[node.id]
+        consequence, condition, alternative = self._conditional_parts(node)
+        proc, before = self._current_proc, self._current_node
+        if proc is None or before is None or consequence is None or alternative is None or condition is None:
+            return self._translate_expression(node)
+        folded = _fold_literal_condition(self._get_text(condition))
+        if folded is not None:
+            return self._translate_expression(consequence if folded else alternative)
+        temp = f"__cond_{self._ident_counter}"
+        self._ident_counter += 1
+        condition_exp = self._translate_expression(condition)
+        for c in self._extract_all_calls_from_node(condition, loc):
+            before.add_instr(c)
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        for value, truth, kind in ((consequence, True, PruneKind.IF_TRUE), (alternative, False, PruneKind.IF_FALSE)):
+            arm = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm)
+            before.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=truth, kind=kind))
+            proc.connect(before.id, arm.id)
+            self._current_node = arm
+            self._assign_value(temp, self._unwrap_await(value), loc)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
+        self._hoisted[node.id] = ExpVar(PVar(temp))
+        return self._hoisted[node.id]
+
+    def _hoist_conditionals_in(self, node: Optional[TSNode], loc: Location) -> None:
+        """Hoist every conditional expression a statement evaluates (`"ping " + (q if ok else
+        "x")`), so each is a branch whose condition guards its arm; lowering the statement then
+        reads the hoisted value (`_hoisted`). Lambdas and comprehensions do not run here."""
+        stack = [node] if node is not None else []
+        while stack:
+            n = stack.pop()
+            if n.type == "conditional_expression":
+                self._hoist_conditional(n, loc)
+            elif n.type not in ("lambda", "list_comprehension", "set_comprehension", "generator_expression",
+                                "dictionary_comprehension", "function_definition", "class_definition"):
+                stack.extend(reversed(n.children))
 
     def _comprehension_element(self, node: TSNode) -> Exp:
         """`[f(x) for x in items]` as one element: `f(x)` with each loop variable read as an

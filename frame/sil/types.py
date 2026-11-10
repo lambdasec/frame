@@ -399,6 +399,8 @@ class ExpCall(Exp):
     """
     func: Exp
     args: List[Exp]
+    # Parallel to args: each argument's keyword (Python `f(x=v)`), else None; None when unknown.
+    kwarg_names: Optional[List[Optional[str]]] = field(default=None, compare=False, repr=False)
 
     def __str__(self) -> str:
         args_str = ", ".join(str(a) for a in self.args)

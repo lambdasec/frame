@@ -169,3 +169,26 @@ def test_command_injection_through_assignment_and_statement_shapes(body):
 ], ids=["constant-chain", "uncalled-lambda"])
 def test_safe_assignment_and_statement_shapes(body):
     assert "CWE-78" not in cwes(body)
+
+
+# ---- a connection factory imported from another project file --------------------------
+
+def test_a_factory_imported_from_the_project_types_its_result(tmp_path):
+    # The Flask-tutorial layout without `g`: `get_db` in database.py. Type inference named
+    # `db.execute` after the import (`app.database.get_db.execute`) while one file was
+    # translated; the project's proof that get_db returns a sqlite3 connection now replaces it.
+    pkg = tmp_path / "app"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "database.py").write_text(
+        "import sqlite3\ndef get_db():\n    conn = sqlite3.connect('x.db')\n    return conn\n")
+    (pkg / "views.py").write_text(
+        "from flask import Flask, request\nfrom app.database import get_db\napp = Flask(__name__)\n"
+        "@app.route('/a')\ndef a():\n    q = request.args.get('q', '')\n    db = get_db()\n"
+        "    db.execute(\"SELECT * FROM t WHERE n = '\" + q + \"'\")\n    return 'ok'\n"
+        "@app.route('/c')\ndef c():\n    q = request.args.get('q', '')\n"
+        "    get_db().execute('SELECT * FROM t WHERE n = ?', (q,))\n    return 'ok'\n")
+    results = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = {(r.filename.rsplit("/", 1)[-1], v.procedure, v.cwe_id) for r in results for v in r.vulnerabilities}
+    assert ("views.py", "a", "CWE-89") in found
+    assert not any(proc == "c" for _, proc, _ in found)      # the parameterised query stays clean

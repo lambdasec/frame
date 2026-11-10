@@ -17,7 +17,7 @@ from frame.sil.scanner import FrameScanner
 
 # ---- Python -------------------------------------------------------------------------------
 
-PY_HEAD = """import os, sqlite3, urllib.request, contextlib, functools
+PY_HEAD = """import os, shlex, sqlite3, urllib.request, contextlib, functools
 from flask import Flask, request, g
 app = Flask(__name__)
 def ident(s):
@@ -96,8 +96,6 @@ KNOWN_GAPS = {
     ("python", "dict-key"): "a dict literal lowers to null (no per-key values yet)",
     ("python", "dict-get"): "a dict literal lowers to null (no per-key values yet)",
     ("python", "partial"): "calling a functools.partial object written inline is not resolved",
-    ("python", "conditional-inline"): "a conditional expression inside a sink argument carries no taint "
-                                      "(_get_exp_vars has no ExpTernary case)",
 }
 
 
@@ -163,6 +161,80 @@ PY_CONTROL = {
 @pytest.mark.parametrize("case", list(PY_CONTROL))
 def test_python_try_statement_is_control_flow(case):
     lines, cwe = PY_CONTROL[case]
+    found = _scan("python", _py(lines), "app.py")
+    assert (cwe in found) if cwe else ("CWE-78" not in found)
+
+
+# A sanitizer inside one arm of a conditional expression counts (the pagination idiom).
+PY_SAFE_CONDITIONALS = {
+    "int-arm": ["n = int(q) if q else 0", "sqlite3.connect('x.db').execute(f'SELECT * FROM t OFFSET {n}')"],
+    "quoted-arm": ["h = shlex.quote(q) if q else 'localhost'", "os.system('ping ' + h)"],
+}
+
+
+@pytest.mark.parametrize("case", list(PY_SAFE_CONDITIONALS))
+def test_python_sanitized_conditional_arm_stays_clean(case):
+    assert not ({"CWE-78", "CWE-89"} & _scan("python", _py(PY_SAFE_CONDITIONALS[case]), "app.py"))
+
+
+# A keyword argument binds the parameter of that name, not the next position (both directions:
+# a missed flow, and a parameterised query reported because `params=` landed on `sql`).
+PY_HELPERS = """
+conn = sqlite3.connect('x.db')
+def run(host, count=1, flags=''):
+    os.system('ping ' + flags + ' ' + host)
+def query(sql, params=()):
+    return conn.execute(sql, params)
+def build(c='', n=1):
+    return 'sudo ' + c
+"""
+PY_KEYWORDS = {
+    "keyword-to-tainted-param": ("run('localhost', flags=q)", "CWE-78"),
+    "keyword-in-nested-call": ("os.system(build(c=q))", "CWE-78"),
+    "keyword-to-safe-param": ("run('localhost', count=q)", None),
+    "parameterised-query-by-keyword": ("query(params=(q,), sql='SELECT * FROM t WHERE n = ?')", None),
+    "nested-keyword-to-safe-param": ("os.system(build(n=q))", None),
+}
+
+
+@pytest.mark.parametrize("case", list(PY_KEYWORDS))
+def test_python_keyword_arguments_bind_by_name(case):
+    call, cwe = PY_KEYWORDS[case]
+    found = _scan("python", PY_HEAD + PY_HELPERS + PY_HANDLER.format(body="    " + call), "app.py")
+    assert (cwe in found) if cwe else not ({"CWE-78", "CWE-89"} & found)
+
+
+# Comparing a value with a literal pins it to that constant, as membership in a literal does.
+PY_EQUALITY = {
+    "equals-literal": (["if q == 'a':", "    os.system('ping ' + q)"], None),
+    "either-literal": (["if q == 'a' or q == 'b':", "    os.system('ping ' + q)"], None),
+    "not-equal-early-return": (["if q != 'a':", "    return 'no'", "os.system('ping ' + q)"], None),
+    "match-literal-case": (["match q:", "    case 'a' | 'b':", "        os.system('ping ' + q)"], None),
+    "not-equal-branch": (["if q != 'a':", "    os.system('ping ' + q)"], "CWE-78"),
+    "else-of-equality": (["if q == 'a':", "    pass", "else:", "    os.system('ping ' + q)"], "CWE-78"),
+}
+
+
+@pytest.mark.parametrize("case", list(PY_EQUALITY))
+def test_python_equality_with_a_literal_is_a_guard(case):
+    lines, cwe = PY_EQUALITY[case]
+    found = _scan("python", _py(lines), "app.py")
+    assert (cwe in found) if cwe else ("CWE-78" not in found)
+
+
+# A conditional expression is a branch: the condition's guard holds on its own arm.
+PY_GUARDED_CONDITIONALS = {
+    "guarded-argument": (["os.system('ping ' + (q if q in ('a', 'b') else 'localhost'))"], None),
+    "guarded-assignment": (["h = q if q in ('a', 'b') else 'localhost'", "os.system('ping ' + h)"], None),
+    "guarded-call-argument": (["os.system(q if q.isalnum() else 'true')"], None),
+    "unguarded-argument": (["os.system(q if q else 'true')"], "CWE-78"),
+    "guard-on-the-other-arm": (["h = 'localhost' if q in ('a', 'b') else q", "os.system('ping ' + h)"], "CWE-78"),
+}
+
+
+@pytest.mark.parametrize("case", list(PY_GUARDED_CONDITIONALS))
+def test_python_conditional_guard_holds_on_its_arm(case):
+    lines, cwe = PY_GUARDED_CONDITIONALS[case]
     found = _scan("python", _py(lines), "app.py")
     assert (cwe in found) if cwe else ("CWE-78" not in found)
 

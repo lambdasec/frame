@@ -2281,6 +2281,25 @@ class SILTranslator:
             params = params[1:]
         return params
 
+    def _call_bindings(self, callee: Procedure, func_name: str, args: List[Exp],
+                       kwarg_names: Optional[List[Optional[str]]]) -> List[Tuple[Exp, str]]:
+        """Each argument with the callee parameter it binds: positional arguments in order, a
+        Python keyword argument the parameter of that name (`run(h, flags=q)` binds flags, not
+        the second parameter); a keyword the callee does not declare binds nothing."""
+        params = self._call_params(callee, func_name)
+        names = list(kwarg_names or []) if (getattr(self.program, "language", "") or "") == "python" else []
+        out: List[Tuple[Exp, str]] = []
+        position = 0
+        for i, arg in enumerate(args):
+            keyword = names[i] if i < len(names) else None
+            if keyword:
+                if keyword in params:
+                    out.append((arg, keyword))
+            elif position < len(params):
+                out.append((arg, params[position]))
+                position += 1
+        return out
+
     def _call_exp_name(self, exp: "ExpCall") -> str:
         if isinstance(exp.func, ExpConst):
             return str(exp.func.value).strip('"')
@@ -2335,7 +2354,7 @@ class SILTranslator:
                 if summary.source is not None:
                     out.append((summary.source, set(wrap) | set(summary.source_sanitized or ())))
                 params = self._call_params(callee.proc, name)
-                for arg, param in zip(exp.args, params):
+                for arg, param in self._call_bindings(callee.proc, name, exp.args, exp.kwarg_names):
                     if param in summary.params:
                         out.extend(self._summary_param_leaves(summary, param, arg, state, wrap, at=name))
                 for cap in callee.proc.captures:          # a closure returning an enclosing variable
@@ -2448,7 +2467,8 @@ class SILTranslator:
         self._ipa.callers.setdefault(callee.ref, set()).add(self._cur_ref)
         if callee.ref == self._cur_ref:
             return
-        for (arg_exp, _), param in zip(instr.args, self._call_params(callee.proc, func_name)):
+        for arg_exp, param in self._call_bindings(callee.proc, func_name, [a for a, _ in instr.args],
+                                                  getattr(instr, "kwarg_names", None)):
             leaves = [(i, k) for i, k in self._arg_taint_leaves(arg_exp, state)
                       if not i.source_var.startswith(self._SEED_PREFIX)]
             if not leaves:
@@ -2640,8 +2660,10 @@ class SILTranslator:
                     return {str(exp.right.var): frozenset({cls._LACKS + exp.left.value})}
                 return {}
             return cls._member_fact(exp.left, exp.right)
-        if isinstance(exp, ExpBinOp) and exp.op in ("==", "!="):
-            return cls._c_equality_fact(exp.left, exp.right, truth == (exp.op == "=="), strings)
+        if isinstance(exp, ExpBinOp) and exp.op in ("==", "!=", "===", "!=="):
+            equal = truth == (exp.op in ("==", "==="))
+            fact = cls._literal_equality_fact(exp.left, exp.right, language) if equal else {}
+            return fact or cls._c_equality_fact(exp.left, exp.right, equal, strings)
         if isinstance(exp, ExpCall) and not truth and cls._call_base_name(exp) in cls._C_STRCMP | {"strncmp"}:
             return cls._c_equality_fact(exp, ExpConst(0), True, strings)      # `!strcmp(x, "a")`
         prefix = cls._literal_prefix_test(exp)
@@ -2759,6 +2781,18 @@ class SILTranslator:
             or (isinstance(n, ExpConst) and isinstance(n.value, int) and n.value >= len(text))
         if covers and re.match(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#@\s]+/", text):
             return {str(x.var): cls._HOST_KINDS}
+        return {}
+
+    @classmethod
+    def _literal_equality_fact(cls, left, right, language: str) -> dict:
+        """`x == "a"` / `x === 1` holding: x is that constant, as membership in a literal
+        collection makes it (`case "a":` prunes on the same comparison). In C/C++ `==` on a
+        string compares addresses, so only an integer literal counts there."""
+        c_like = (language or "").lower() in ("c", "cpp", "c++")
+        for var, lit in ((left, right), (right, left)):
+            if isinstance(var, ExpVar) and isinstance(lit, ExpConst) and not isinstance(lit.value, bool) \
+                    and (isinstance(lit.value, int) or (isinstance(lit.value, str) and not c_like)):
+                return {str(var.var): cls._EXACT_VALUE_KINDS}
         return {}
 
     @classmethod
@@ -3554,7 +3588,8 @@ class SILTranslator:
         if summary.source is not None:
             leaves.append((summary.source, set(summary.source_sanitized or ())))
         params = self._call_params(callee.proc, func_name)
-        for (arg_exp, _), param in zip(instr.args, params):
+        for arg_exp, param in self._call_bindings(callee.proc, func_name, [a for a, _ in instr.args],
+                                                  getattr(instr, "kwarg_names", None)):
             if param in summary.params:
                 leaves.extend(self._summary_param_leaves(summary, param, arg_exp, state, at=ret_var))
         for cap in callee.proc.captures:                  # a closure returning an enclosing variable
@@ -3604,7 +3639,7 @@ class SILTranslator:
                 callee = self._resolve_callee(name)
                 summary = self._ipa.return_summaries.get(callee.ref) if callee else None
                 if summary is not None:
-                    for arg, param in zip(e.args, self._call_params(callee.proc, name)):
+                    for arg, param in self._call_bindings(callee.proc, name, e.args, e.kwarg_names):
                         kinds = summary.params.get(param, self._ALL_SINK_KINDS)
                         for v in self._get_exp_vars(arg):
                             out[v] = (out[v] & set(kinds)) if v in out else set(kinds)
@@ -4031,11 +4066,16 @@ class SILTranslator:
                 else [instr.exp.true_exp] if taken else [instr.exp.false_exp]
             if len(branches) == 1:
                 return self._exec_assign(Assign(loc=instr.loc, id=instr.id, exp=branches[0]), state, proc_name)
-            leaves = sorted((v for b in branches for v in self._get_exp_vars(b) if state.is_tainted(v)),
-                            key=lambda v: state.tainted[v].source_kind == TaintKind.WEAK_RANDOM)
+            # each arm's attacker data with what that arm sanitized it for (`int(q) if q else 0`
+            # is a number: the sanitizer call in the arm counts, not only the variable's own)
+            leaves = [leaf for b in branches for leaf in self._arg_taint_leaves(b, state)]
             if leaves:
-                state.propagate_taint(leaves[0], target)
-                common = set.intersection(*(set(state.sanitized.get(v, [])) for v in leaves))
+                info = leaves[0][0]
+                state.add_taint(target, TaintInfo(
+                    source_kind=info.source_kind, source_var=info.source_var, request=info.request,
+                    read=info.read, source_location=info.source_location,
+                    propagation_path=list(info.propagation_path) + [target]))
+                common = set.intersection(*(set(k) for _, k in leaves))
                 if common:
                     state.sanitized[target] = sorted(common)
             return checks, state
@@ -10310,6 +10350,8 @@ class SILTranslator:
             if self._constant_table_index(exp):
                 return self._get_exp_vars(exp.base)        # one of the table's constants, whatever the key
             return self._get_exp_vars(exp.base) + self._get_exp_vars(exp.index)
+        if isinstance(exp, ExpTernary):                    # either arm's value, never the condition's
+            return self._get_exp_vars(exp.true_exp) + self._get_exp_vars(exp.false_exp)
         if isinstance(exp, ExpStringConcat):
             result = []
             for part in exp.parts:

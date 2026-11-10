@@ -279,3 +279,6 @@ def infer_canonicals(root, program, table, text: Callable) -> None:
                 canon = inf.derive(func, instr.loc.line if instr.loc else 0)
                 if canon:
                     instr.canonical = canon
+                    # a guess from this file alone: a type the project proves later replaces it
+                    # (`db = get_db()` with get_db imported from the project's database.py)
+                    instr.canonical_by_inference = canon
