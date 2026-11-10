@@ -2342,6 +2342,9 @@ class SILTranslator:
                     if cap in summary.params and cap not in params:
                         out.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, wrap,
                                                               at=name))
+                head = name.rpartition(".")[0]
+                if head and _PLAIN_LOCAL.match(head):     # `b.get()` written inside an expression
+                    out.extend(self._receiver_field_leaves(callee, summary, params, head, state, wrap, name))
                 return out
             self._client_receiver = None
             called = self._request_call(name, state, exp.args)
@@ -2402,6 +2405,9 @@ class SILTranslator:
                         out.append((state.get_taint_info(resolved),
                                     set(wrap) | set(state.sanitized.get(resolved, []))))
                     return out
+                if dotted and state.is_tainted(dotted):    # a field holding attacker data (`self.val`, `b.val`)
+                    out.append((state.get_taint_info(dotted),
+                                set(wrap) | set(state.sanitized.get(dotted, []))))
             members = self._get_embedded_member_sources(exp)
             if members:
                 src, kind = members[0]
@@ -3215,6 +3221,51 @@ class SILTranslator:
             param = origin[1]
             fields[param] = set(kinds) if param not in fields else fields[param] & kinds
 
+    def _receiver_field_reads(self, proc: Procedure) -> List[Tuple[str, str]]:
+        """(name as read, summary key) for each field of its receiver a method reads:
+        `self.val` / `this.val` (key the same), and a Java/C#/C++ declared field read by its bare
+        name (`return name;`, key `this.name`)."""
+        if not proc.is_method:
+            return []
+        fields = set()
+        if (getattr(self.program, "language", "") or "").lower() in ("java", "csharp", "cpp") and proc.class_name:
+            fields = (self.program.declared_fields.get(proc.class_name)
+                      or self.program.declared_fields.get(proc.class_name.rsplit(".", 1)[-1], set()))
+            fields = set(fields) - {p.name for p, _ in proc.params}
+        found: Dict[str, str] = {}
+
+        def walk(e) -> None:
+            if isinstance(e, ExpFieldAccess) and isinstance(e.base, ExpVar) \
+                    and str(e.base.var) in ("self", "this") and _PLAIN_LOCAL.match(e.field_name or "-"):
+                found[f"{e.base.var}.{e.field_name}"] = f"{e.base.var}.{e.field_name}"
+                return
+            if isinstance(e, ExpVar):
+                name = str(e.var)
+                head, dot, rest = name.partition(".")
+                fld = rest.split(".", 1)[0] if dot else ""
+                if dot and head in ("self", "this") and _PLAIN_LOCAL.match(fld or "-"):
+                    found[f"{head}.{fld}"] = f"{head}.{fld}"
+                elif name in fields:
+                    found[name] = f"this.{name}"
+                return
+            for value in vars(e).values() if hasattr(e, "__dict__") else ():
+                for child in (value if isinstance(value, (list, tuple)) else [value]):
+                    if isinstance(child, tuple):
+                        child = child[0]
+                    if isinstance(child, Exp):
+                        walk(child)
+
+        for node in proc.nodes.values():
+            for instr in node.instrs:
+                for attr in ("exp", "value", "cond", "args"):
+                    value = getattr(instr, attr, None)
+                    for child in (value if isinstance(value, list) else [value]):
+                        if isinstance(child, tuple):
+                            child = child[0]
+                        if isinstance(child, Exp):
+                            walk(child)
+        return sorted(found.items())
+
     def _bare_field(self, name: str) -> Optional[str]:
         """`_target = target` in Java/C#/C++: a write to a declared field of the
         method's class by its bare name (not shadowed by a parameter)."""
@@ -3509,6 +3560,10 @@ class SILTranslator:
         for cap in callee.proc.captures:                  # a closure returning an enclosing variable
             if cap in summary.params and cap not in params:
                 leaves.extend(self._summary_param_leaves(summary, cap, ExpVar(PVar(cap)), state, at=ret_var))
+        receiver = self._call_receiver(callee, instr, func_name) if callee.proc.is_method else None
+        if receiver:
+            leaves.extend(self._receiver_field_leaves(callee, summary, params, receiver, state,
+                                                      frozenset(), ret_var))
         if not leaves:
             return
         info = leaves[0][0]
@@ -3519,6 +3574,21 @@ class SILTranslator:
         sanitized = set.intersection(*(k for _, k in leaves))
         if sanitized:
             state.add_sanitization(ret_var, sorted(sanitized))
+
+    def _receiver_field_leaves(self, callee: Callee, summary: ReturnSummary, params: List[str],
+                               receiver: str, state: SymbolicState, wrap: frozenset,
+                               at: str) -> List[Tuple[TaintInfo, Set[str]]]:
+        """A getter's return (`return self.val`, summary key `self.val`) called as `b.get()`:
+        the caller's `b.val`, sanitized as the getter left it."""
+        if not callee.proc.is_method or callee.proc.simple_name in self._CONSTRUCTOR_NAMES:
+            return []
+        out: List[Tuple[TaintInfo, Set[str]]] = []
+        for key in summary.params:
+            head, dot, fld = key.partition(".")
+            if dot and head in ("self", "this") and key not in params:
+                out.extend(self._summary_param_leaves(
+                    summary, key, ExpFieldAccess(ExpVar(PVar(receiver)), fld), state, wrap, at=at))
+        return out
 
     def _summary_inline_sanitized(self, exp: Exp) -> Dict[str, Set[str]]:
         """Variables inside same-file calls in `exp`, with the sink kinds the
@@ -3627,6 +3697,18 @@ class SILTranslator:
                 marker = f"{self._file_key}::{proc.name}({param.name})"
                 self._ipa.entry_markers[marker] = ((self._file_key, proc.name), param.name)
                 state.add_taint(param.name, TaintInfo(
+                    source_kind=TaintKind.USER_INPUT, source_var=self._SEED_PREFIX + marker,
+                    source_location=proc.loc or Location.unknown(),
+                    propagation_path=[marker]))
+            # The receiver's fields too: a getter (`return self.val`) then records the field
+            # as reaching its return (summary key `self.val` / `this.val`), and a call `b.get()`
+            # carries the caller's `b.val` (`_apply_return_summary`).
+            for name, key in self._receiver_field_reads(proc):
+                if name in entry or key in entry or state.is_tainted(name):
+                    continue
+                marker = f"{self._file_key}::{proc.name}({key})"
+                self._ipa.entry_markers[marker] = ((self._file_key, proc.name), key)
+                state.add_taint(name, TaintInfo(
                     source_kind=TaintKind.USER_INPUT, source_var=self._SEED_PREFIX + marker,
                     source_location=proc.loc or Location.unknown(),
                     propagation_path=[marker]))

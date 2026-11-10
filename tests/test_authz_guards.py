@@ -103,7 +103,8 @@ def test_early_return_guard_on_a_permission():
     prog, _ = _scan(code)
     v = check_claim(prog, "view", line, {"kind": "guarded_by", "pattern": "is_admin"})
     assert v["verdict"] == "proved"
-    assert ("noreturn_guard", "!(current_user.is_admin) -> return 'no', 403") in _kinds(prog, "view", line)
+    # `return 'no', 403` is a tuple: its members (it used to be one variable named by its text)
+    assert ("noreturn_guard", '!(current_user.is_admin) -> return "no" ++ 403') in _kinds(prog, "view", line)
 
 
 def test_an_auth_gate_decorator_is_a_fact_everywhere_in_the_handler():

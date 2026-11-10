@@ -45,6 +45,15 @@ def _call_text(call: Call) -> Optional[str]:
     return None
 
 
+def _dotted(exp) -> Optional[str]:
+    """`g.db` for a variable or an attribute path on one (`ExpFieldAccess` chains), else None."""
+    parts = []
+    while type(exp).__name__ == "ExpFieldAccess":
+        parts.insert(0, exp.field_name)
+        exp = exp.base
+    return ".".join([str(exp.var)] + parts) if isinstance(exp, ExpVar) else None
+
+
 def _ret_name(call: Call) -> Optional[str]:
     ret = call.ret
     if not ret:
@@ -78,6 +87,44 @@ def _module_qualified(text: Optional[str], modules: Set[str]) -> Optional[str]:
         if text == m or text.startswith(m + "."):
             return text
     return None
+
+
+def _returned_origins(proc, scope: Dict[str, str], module_scope: Dict[str, str]) -> Set[Optional[str]]:
+    """The origins of what `proc` returns: a variable or an attribute path (`return g.db`), as
+    the procedure binds it, else as the module does when the procedure does not bind it."""
+    defs = _definitions(proc)
+    out: Set[Optional[str]] = set()
+    for i in _instrs(proc):
+        if type(i).__name__ != "Return":
+            continue
+        key = _dotted(getattr(i, "value", None))
+        if key is None:
+            continue                               # a constant (`return None`) holds no object
+        out.add(scope.get(key) or (module_scope.get(key) if key not in defs else None))
+    return out
+
+
+def _global_paths(program, scopes: Dict[str, Dict[str, str]], imports: Dict[str, str]) -> Dict[str, str]:
+    """Attribute paths on an imported or module-level object (`g.db` with `from flask import g`)
+    that every write in the file binds to the same kind of value: the path holds it in every
+    function (`@app.before_request` stores `g.db`, a handler calls `g.db.execute`). A write
+    whose value is unknown, two writes that disagree, or a `setattr` on the object with a
+    computed name give the path no origin."""
+    module = program.procedures.get(MODULE)
+    module_defs = _definitions(module) if module is not None else {}
+    dynamic = set(getattr(program, "dynamic_attr_heads", None) or ())
+    seen: Dict[str, Set[Optional[str]]] = {}
+    for name, proc in program.procedures.items():
+        defs = _definitions(proc)
+        params = {str(p) for p, _ in proc.params}
+        for key in defs:
+            head, dot, _ = key.partition(".")
+            if not dot or head in dynamic or head in params or (name != MODULE and head in defs):
+                continue
+            if head not in imports and head not in module_defs:
+                continue                           # a local's attribute, not a shared object's
+            seen.setdefault(key, set()).add(scopes.get(name, {}).get(key))
+    return {k: next(iter(v)) for k, v in seen.items() if len(v) == 1 and None not in v}
 
 
 def _definitions(proc) -> Dict[str, int]:
@@ -170,6 +217,9 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 field_head = ".".join(parts_[:2]) if len(parts_) > 2 and parts_[0] in receivers_ else None
                 held = (origin.get(field_head) or (outer.get(field_head) if parts_[0] not in defs else None)) \
                     if field_head else None
+                if fill and python and held and i.canonical is not None and parts_[0] in imports \
+                        and i.canonical == ".".join([imports[parts_[0]]] + parts_[1:]):
+                    i.canonical = None            # `g.db.execute()`: the value the file stored on flask.g
                 if i.canonical is None and fill and text and held:
                     _set(i, f"{held}.{'.'.join(parts_[2:])}")   # `self.conn.cursor()`, `models.sequelize.query()`
                     changed = True
@@ -218,6 +268,14 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                 o = f"{head}.{i.exp.field_name}" if head else None
                 if o is None and isinstance(base, ExpVar):  # a field whose value is known (`db = $arg2.db`)
                     o = of(f"{base.var}.{i.exp.field_name}")
+                if o and defs.get(x) == 1 and origin.get(x) != o:
+                    origin[x] = o
+                    changed = True
+                note(x, i, o)
+            elif isinstance(i, Assign) and python and type(i.exp).__name__ == "ExpFieldAccess":
+                # `conn = self.conn`, `db = getattr(g, "_database", None)`: what the path holds
+                x, path = str(i.id), _dotted(i.exp)
+                o = of(path) if path else None
                 if o and defs.get(x) == 1 and origin.get(x) != o:
                     origin[x] = o
                     changed = True
@@ -369,8 +427,7 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
         for name, proc in program.procedures.items():
             if name == MODULE or proc.is_method or "#" in name:
                 continue
-            values = {scopes.get(name, {}).get(str(i.value.var)) for n in proc.nodes.values() for i in n.instrs
-                      if type(i).__name__ == "Return" and isinstance(getattr(i, "value", None), ExpVar)}
+            values = _returned_origins(proc, scopes.get(name, {}), scopes.get(MODULE, {}))
             if len(values) == 1 and None not in values:
                 found[name] = next(iter(values))
         if found == returning:
@@ -463,6 +520,21 @@ def _outer_bindings(program, imports, returning) -> Dict[str, Dict[str, List[Opt
 
 
 def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict[str, Dict[str, str]]:
+    """Every procedure's origins. Python attribute paths on a shared object (`g.db`) whose writes
+    all agree (`_global_paths`) are visible to every procedure, as the module's names are; a
+    path found that way can type another write (`g.cur = g.db.cursor()`), so it repeats."""
+    paths: Dict[str, str] = {}
+    for _ in range(3):
+        scopes = _annotate_scopes_once(program, param_origins, imports, python, returning, paths)
+        found = _global_paths(program, scopes, imports) if python else {}
+        if found == paths:
+            break
+        paths = found
+    return scopes
+
+
+def _annotate_scopes_once(program, param_origins, imports, python, returning,
+                          paths: Dict[str, str]) -> Dict[str, Dict[str, str]]:
     if python:
         _reset_filled(program)
     module = program.procedures.get(MODULE)
@@ -475,7 +547,7 @@ def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict
                      params=_module_params(program, param_origins, imports),
                      python=python, returning=returning, extra=extra.get(MODULE)) \
         if module is not None else _module_params(program, param_origins, imports)
-    outer = {**globals_, **outer}
+    outer = {**paths, **globals_, **outer}
     scopes[MODULE] = outer
 
     def visible(name: str, seen: Set[str]) -> Dict[str, str]:

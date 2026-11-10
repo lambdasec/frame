@@ -11,6 +11,8 @@ for parsing. It handles:
 - Class methods
 """
 
+import ast
+import operator
 import re
 from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field
@@ -45,6 +47,59 @@ from frame.sil.metadata import (
     ClassInfo, ImportTable, annotate_program_calls, parse_annotation,
 )
 from frame.sil.packs import default_packs, finish_program
+
+
+_FOLD_LIMIT = 10 ** 18
+_FOLD_BINOPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+                ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Div: operator.truediv}
+_FOLD_COMPARISONS = {ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt,
+                     ast.GtE: operator.ge, ast.Eq: operator.eq, ast.NotEq: operator.ne}
+
+
+def _fold_literal_condition(text: str) -> Optional[bool]:
+    """The value of a condition written only with integer literals (`7 * 18 > 200`), else None.
+
+    Read from Python's own syntax tree, never `eval`: the scanned code is untrusted. Only
+    bounded arithmetic is allowed (no `**` or shifts, every value within 10**18), so a file
+    holding `a if 9**9**9 > 1 else b` cannot stall the scan."""
+    if len(text) > 200:
+        return None
+    try:
+        tree = ast.parse(text.strip(), mode="eval").body
+    except (SyntaxError, ValueError):
+        return None
+
+    def bounded(v):
+        if not isinstance(v, bool) and isinstance(v, (int, float)) and abs(v) > _FOLD_LIMIT:
+            raise ValueError("too large to fold")
+        return v
+
+    def ev(n):
+        if isinstance(n, ast.Constant) and type(n.value) in (int, bool):
+            return n.value
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd, ast.Not)):
+            v = ev(n.operand)
+            return (not v) if isinstance(n.op, ast.Not) else bounded(-v if isinstance(n.op, ast.USub) else v)
+        if isinstance(n, ast.BinOp) and type(n.op) in _FOLD_BINOPS:
+            return bounded(_FOLD_BINOPS[type(n.op)](ev(n.left), ev(n.right)))
+        if isinstance(n, ast.Compare) and all(type(o) in _FOLD_COMPARISONS for o in n.ops):
+            left = ev(n.left)
+            for op, right_node in zip(n.ops, n.comparators):
+                right = ev(right_node)
+                if not _FOLD_COMPARISONS[type(op)](left, right):
+                    return False
+                left = right
+            return True
+        if isinstance(n, ast.BoolOp):
+            values = [bool(ev(v)) for v in n.values]
+            return all(values) if isinstance(n.op, ast.And) else any(values)
+        raise ValueError("not a literal condition")
+
+    try:
+        result = ev(tree)
+    except (ValueError, ArithmeticError, RecursionError):
+        return None
+    return result if isinstance(result, bool) else None
 
 
 class PythonFrontend:
@@ -88,6 +143,9 @@ class PythonFrontend:
         self._ident_counter = 0
         self._current_class: Optional[str] = None
         self._imports = ImportTable()
+        self._file_bound: Set[str] = set()
+        self._unlowered: Dict[str, int] = {}
+        self._aliases: Dict[str, Exp] = {}     # comprehension loop variables while lowering one
         self._try_depth = 0
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
@@ -118,11 +176,16 @@ class PythonFrontend:
 
         self._imports = self._collect_imports(tree.root_node)
         program.imports = self._imports.as_dict()
+        self._file_bound = self._bound_names(tree.root_node)
+        self._dynamic_attr_heads: Set[str] = set()
+        self._unlowered: Dict[str, int] = {}
         self._dicts_are_queries = self._pack_says_dict_queries()
 
         # Walk top-level definitions
         self._const_tables = self._collect_const_tables(tree.root_node)
         self._translate_module(tree.root_node, program)
+        program.dynamic_attr_heads = sorted(self._dynamic_attr_heads)
+        program.unlowered_syntax = dict(self._unlowered)
 
         infer_canonicals(tree.root_node, program, self._imports, self._get_text)
         annotate_program_calls(program, self._imports)
@@ -419,6 +482,29 @@ class PythonFrontend:
         return False
 
     _dicts_are_queries = False
+
+    def _bound_names(self, root: TSNode) -> Set[str]:
+        """Plain names the file itself binds (def, class, assignment, parameter): a builtin
+        such as `getattr` that the file redefines is no longer the builtin."""
+        bound: Set[str] = set()
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            target = None
+            if n.type in ("function_definition", "class_definition"):
+                target = n.child_by_field_name("name")
+            elif n.type in ("assignment", "augmented_assignment"):
+                target = n.child_by_field_name("left")
+            elif n.type in ("default_parameter", "typed_default_parameter"):
+                target = n.child_by_field_name("name")
+            elif n.type == "typed_parameter" and n.named_children:
+                target = n.named_children[0]
+            elif n.type == "parameters":
+                bound.update(self._get_text(c) for c in n.named_children if c.type == "identifier")
+            if target is not None and target.type == "identifier":
+                bound.add(self._get_text(target))
+            stack.extend(n.children)
+        return bound
 
     def _collect_imports(self, root: TSNode) -> ImportTable:
         """Local name -> qualified name for every `import` in the file (function-local
@@ -1025,11 +1111,10 @@ class PythonFrontend:
                 if child.type == "call":
                     self._add_instrs(self._translate_call_expr(child))
                     break
-            # A raise ends the path. Inside a `try` the handlers are lowered as straight-line
-            # code after the body, so a Return there would cut off everything that follows
-            # the whole try statement: only a raise outside any try is a path end.
-            if self._try_depth == 0:
-                self._add_instr(Return(loc=self._get_location(node), value=None))
+            # A raise ends the path. Inside a `try` the handlers are branches of their own
+            # (`_translate_try`), entered from before and after the body, so this ends only
+            # the body's path.
+            self._add_instr(Return(loc=self._get_location(node), value=None))
 
         elif node.type == "pass_statement":
             pass  # No SIL needed
@@ -1074,7 +1159,10 @@ class PythonFrontend:
         """Translate expression statement (usually a call or assignment)"""
         for child in node.children:
             child = self._unwrap_await(child)
-            if child.type == "call":
+            if child.type == "call" and self._literal_setattr(child):
+                pass                                    # lowered as the attribute write
+
+            elif child.type == "call":
                 instrs = self._translate_call_expr(child)
                 self._add_instrs(instrs)
 
@@ -1090,6 +1178,35 @@ class PythonFrontend:
                 # Docstring - skip
                 pass
 
+            elif child.is_named and child.type not in ("comment", "ellipsis", "identifier", "lambda"):
+                # `debug or os.system(cmd)`, `[run(c) for c in cmds]`: the expression's value is
+                # unused but its calls still run (such statements used to be dropped entirely)
+                self._add_instrs(self._calls_with_bindings(child, self._get_location(child)))
+
+    def _literal_setattr(self, node: TSNode) -> bool:
+        """`setattr(obj, "name", value)` with the builtin setattr and a literal name is the write
+        `obj.name = value`. With a computed name the object's attributes are no longer known one
+        by one (`dynamic_attr_heads`), and the call keeps its ordinary lowering."""
+        func = node.child_by_field_name("function")
+        if func is None or func.type != "identifier" or self._get_text(func) != "setattr" \
+                or "setattr" in self._imports.names or "setattr" in self._file_bound:
+            return False
+        args_node = node.child_by_field_name("arguments")
+        args = [c for c in (args_node.named_children if args_node else []) if c.type != "comment"]
+        if len(args) != 3 or any(a.type in ("keyword_argument", "list_splat", "dictionary_splat") for a in args) \
+                or args[0].type not in ("identifier", "attribute"):
+            return False
+        owner = self._get_text(args[0])
+        name = self._translate_expression(args[1])
+        if not (isinstance(name, ExpConst) and isinstance(name.value, str) and name.value.isidentifier()):
+            self._dynamic_attr_heads.add(owner.split(".", 1)[0])
+            return False
+        loc = self._get_location(node)
+        self._add_instrs(self._extract_all_calls_from_node(args[2], loc))
+        self._add_instr(Assign(loc=loc, id=PVar(f"{owner}.{name.value}"),
+                               exp=self._translate_expression(args[2])))
+        return True
+
     def _translate_assignment(self, node: TSNode) -> None:
         """Translate assignment: target = value"""
         left = node.child_by_field_name("left")
@@ -1099,7 +1216,13 @@ class PythonFrontend:
             return
 
         loc = self._get_location(node)
+        if right.type == "assignment":
+            self._translate_chained_assignment(left, right, loc)
+            return
         right = self._unwrap_await(right)
+        if left.type in self._TARGET_PATTERNS:
+            self._translate_destructuring(left, right, loc)
+            return
 
         # Check for subscript assignment: target[key] = value
         # This handles patterns like session['userid'] = bar (CWE-501)
@@ -1107,9 +1230,89 @@ class PythonFrontend:
             self._translate_subscript_assignment(left, right, loc)
             return
 
-        target_name = self._get_text(left)
+        self._assign_value(self._get_text(left), right, loc)
 
-        # Handle different RHS types
+    def _translate_chained_assignment(self, left: TSNode, right: TSNode, loc: Location) -> None:
+        """`a = b = value`: Python evaluates the value once and binds it to every target, left to
+        right. Lowered as `__chain_N = value` and one write per target, so each target gets the
+        value's taint and origin (the inner assignment used to be bound as its source text)."""
+        targets = [left]
+        while right is not None and right.type == "assignment":
+            targets.append(right.child_by_field_name("left"))
+            right = right.child_by_field_name("right")
+        if right is None or any(t is None for t in targets):
+            return
+        temp = f"__chain_{self._ident_counter}"
+        self._ident_counter += 1
+        self._assign_value(temp, self._unwrap_await(right), loc)
+        for target in targets:
+            self._bind_target(target, ExpVar(PVar(temp)), loc)
+
+    _TARGET_PATTERNS = ("pattern_list", "tuple_pattern", "list_pattern")
+
+    def _translate_destructuring(self, left: TSNode, right: TSNode, loc: Location) -> None:
+        """`a, b = x, y`: each target its own element when the right-hand side is written out
+        with the same number of elements (all evaluated first, so `a, b = b, a` swaps); else
+        (`a, b = pair()`, a starred target) every target holds the whole value, as an element of
+        an unknown sequence. The targets used to be bound as one variable named by their text."""
+        targets = [t for t in left.named_children if t.type != "comment"]
+        values = [v for v in right.named_children if v.type != "comment"] \
+            if right.type in ("expression_list", "tuple", "list") else None
+        if values is not None and len(values) == len(targets) \
+                and not any(n.type in ("list_splat_pattern", "list_splat") for n in targets + values):
+            temps = []
+            for v in values:
+                temp = f"__unpack_{self._ident_counter}"
+                self._ident_counter += 1
+                self._assign_value(temp, self._unwrap_await(v), loc)
+                temps.append(temp)
+            for target, temp in zip(targets, temps):
+                self._bind_target(target, ExpVar(PVar(temp)), loc)
+            return
+        temp = f"__unpack_{self._ident_counter}"
+        self._ident_counter += 1
+        self._assign_value(temp, right, loc)
+        self._bind_target(left, ExpVar(PVar(temp)), loc)
+
+    def _bind_target(self, target: TSNode, value: Exp, loc: Location) -> None:
+        """Write `value` to an assignment target: a name or attribute, a subscript (through
+        `__setitem__`), or every name of a nested pattern."""
+        if target.type in self._TARGET_PATTERNS or target.type in ("parenthesized_expression",
+                                                                   "list_splat_pattern"):
+            for t in target.named_children:
+                self._bind_target(t, value, loc)
+        elif target.type == "subscript":
+            self._translate_subscript_assignment(target, None, loc, value_exp=value)
+        elif target.type in ("identifier", "attribute"):
+            self._add_instr(Assign(loc=loc, id=PVar(self._get_text(target)), exp=value))
+        elif target.type != "comment":
+            key = "target:" + target.type                 # recorded like an unlowered expression
+            self._unlowered[key] = self._unlowered.get(key, 0) + 1
+
+    def _literal_getattr(self, node: Optional[TSNode]) -> Optional[Exp]:
+        """`getattr(obj, "name")` with the builtin getattr is `obj.name`; with a literal default
+        it is `obj.name` or a constant, which carries nothing. A computed name, keyword or splat
+        arguments, or a default that is itself a value keep the call's ordinary lowering."""
+        if node is None or node.type != "call":
+            return None
+        func = node.child_by_field_name("function")
+        if func is None or func.type != "identifier" or self._get_text(func) != "getattr" \
+                or "getattr" in self._imports.names or "getattr" in self._file_bound:
+            return None
+        args_node = node.child_by_field_name("arguments")
+        args = [c for c in (args_node.named_children if args_node else []) if c.type != "comment"]
+        if len(args) not in (2, 3) or any(a.type in ("keyword_argument", "list_splat", "dictionary_splat")
+                                         for a in args):
+            return None
+        name = self._translate_expression(args[1])
+        if not (isinstance(name, ExpConst) and isinstance(name.value, str) and name.value.isidentifier()):
+            return None
+        if len(args) == 3 and not isinstance(self._translate_expression(args[2]), ExpConst):
+            return None
+        return ExpFieldAccess(self._translate_expression(args[0]), name.value)
+
+    def _assign_value(self, target_name: str, right: TSNode, loc: Location) -> None:
+        """Lower `target_name = right` for every kind of right-hand side."""
         if right.type == "call" and self._is_const_table_lookup(right):
             self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=ExpConst.null()))
 
@@ -1183,8 +1386,9 @@ class PythonFrontend:
     def _translate_subscript_assignment(
         self,
         subscript_node: TSNode,
-        value_node: TSNode,
-        loc: Location
+        value_node: Optional[TSNode],
+        loc: Location,
+        value_exp: Optional[Exp] = None,
     ) -> None:
         """
         Translate subscript assignment: target[key] = value
@@ -1203,9 +1407,10 @@ class PythonFrontend:
 
         target_name = self._get_text(target)
         key_exp = self._translate_expression(key)
-        # `ctx["banner"] = mark_safe(user)`: the calls in the stored value still happen
-        self._add_instrs(self._extract_all_calls_from_node(value_node, loc))
-        value_exp = self._translate_expression(value_node)
+        if value_exp is None:                 # else already lowered (a chained assignment's value)
+            # `ctx["banner"] = mark_safe(user)`: the calls in the stored value still happen
+            self._add_instrs(self._extract_all_calls_from_node(value_node, loc))
+            value_exp = self._translate_expression(value_node)
 
         # Generate synthetic __setitem__ call: target.__setitem__(key, value)
         # This allows our spec system to detect trust boundary violations
@@ -1246,6 +1451,10 @@ class PythonFrontend:
         instrs = []
         if self._is_const_table_lookup(call_node):             # `TABLE.get(key, default)`
             return [Assign(loc=loc, id=PVar(target), exp=ExpConst.null())]
+        read = self._literal_getattr(call_node)
+        if read is not None:                                   # `getattr(g, "_database", None)` reads g._database
+            return self._extract_all_calls_from_node(call_node.child_by_field_name("arguments"), loc) \
+                + [Assign(loc=loc, id=PVar(target), exp=read)]
 
         # Check for method chain: obj.method1().method2()
         # The "function" field will be an "attribute" whose object is a "call"
@@ -1269,11 +1478,11 @@ class PythonFrontend:
                 method_name = self._get_text(attr_name)
                 # Create method call name like "var.method"
                 func_name = f"{inner_var}.{method_name}"
-                ctor = self._constructor_text(inner_call)
+                ctor = self._written_receiver(inner_call)
                 if ctor is not None:
-                    # `Repo(session).search(q)`: keep the written form so the project
-                    # index can resolve the method on the constructed class (a `__nested`
-                    # temporary carries no class evidence).
+                    # `Repo(session).search(q)`, `super().save(x)`: keep the written form so the
+                    # project index can resolve the method on the constructed class or the parent
+                    # (a `__nested` temporary carries no class evidence).
                     func_name = f"{ctor}.{method_name}"
             else:
                 func_name = self._get_call_name(call_node)
@@ -1354,6 +1563,15 @@ class PythonFrontend:
 
         return instrs
 
+    def _written_receiver(self, call_node: TSNode) -> Optional[str]:
+        """A receiver call kept as written in the method's name, because the project resolves the
+        method through it: `Repo(session)` (the constructed class) or `super()` (the parent)."""
+        fn = call_node.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier" and self._get_text(fn) == "super" \
+                and "super" not in self._file_bound:
+            return "super()"
+        return self._constructor_text(call_node)
+
     def _constructor_text(self, call_node: TSNode) -> Optional[str]:
         """`Repo(session)` as written when it looks like a class construction (a plain or
         dotted name whose last segment is capitalised); None otherwise."""
@@ -1399,6 +1617,14 @@ class PythonFrontend:
 
         def walk(n: TSNode):
             if n is None:
+                return
+            if n.type == "named_expression":
+                # `if (v := q):` binds v where the expression runs, after its value's calls
+                value, name = n.child_by_field_name("value"), n.child_by_field_name("name")
+                walk(value)
+                if name is not None and value is not None:
+                    instrs.append(Assign(loc=self._get_location(n), id=PVar(self._get_text(name)),
+                                         exp=self._translate_expression(value)))
                 return
             if n.type == "call":
                 # Generate Call instruction for this call
@@ -1448,6 +1674,11 @@ class PythonFrontend:
         them. The argument's value is unchanged: only the calls are made visible."""
         if arg.type not in self._CALL_LOSING_ARGS:
             return []
+        return self._calls_with_bindings(arg, loc)
+
+    def _calls_with_bindings(self, arg: TSNode, loc: Location) -> List[Instr]:
+        """The calls written inside `arg`, after binding each comprehension variable to an
+        element of what it iterates."""
         binds: List[Instr] = []
         stack = [arg]
         while stack:                      # `[f(x) for x in items]`: x is an element of items
@@ -1468,6 +1699,19 @@ class PythonFrontend:
         loc = self._get_location(call_node)
 
         func_name = self._get_call_name(call_node)
+        func_node = call_node.child_by_field_name("function")
+        receiver = func_node.child_by_field_name("object") \
+            if func_node is not None and func_node.type == "attribute" else None
+        if receiver is not None and receiver.type == "call" and self._written_receiver(receiver) != "super()":
+            # `get_db().execute(q)` / `conn.cursor().execute(q)` as a statement: the receiver call
+            # runs first and the method is called on its result, as on an assignment's right-hand
+            # side. Named `get_db().execute` as one call, the receiver's type and the inner call
+            # itself were lost. (`super().m(x)` stays as written: the project resolves the parent.)
+            inner_instrs, inner_var = self._expand_nested_call(receiver, loc)
+            instrs.extend(inner_instrs)
+            method = self._get_text(func_node.child_by_field_name("attribute"))
+            ctor = self._written_receiver(receiver)
+            func_name = f"{ctor}.{method}" if ctor is not None else f"{inner_var}.{method}"
         args = self._get_call_args(call_node)
         args_exp = []
         for a in args:
@@ -1924,26 +2168,75 @@ class PythonFrontend:
         if self._current_proc:
             self._current_proc.has_exception_handler = True
 
+        # try / except / else / finally as control flow. The body runs from a node of its own;
+        # each handler is a branch entered from before the body and from its end (an exception
+        # can leave the body anywhere, and what the body binds only adds taint); `else` follows
+        # the body's normal end; the branches join and `finally` runs after the join. A return
+        # or raise ends its own branch only. (The except/finally blocks have no field name in
+        # the grammar, so they used to be dropped entirely, and `else` was never read.)
+        proc = self._current_proc
+        if proc is None:
+            return
+        pre = self._current_node
+        body_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(body_node)
+        if pre is not None:
+            proc.connect(pre.id, body_node.id)
+        self._current_node = body_node
         self._try_depth += 1
         try:
-            # Simplified: just translate the body
             body = node.child_by_field_name("body")
-            if body:
+            if body is not None:
                 self._translate_block(body)
-
-            # Also translate handlers (they might contain vulnerable code)
-            for child in node.children:
-                if child.type == "except_clause":
-                    body = child.child_by_field_name("body")
-                    if body:
-                        self._translate_block(body)
-
-                elif child.type == "finally_clause":
-                    body = child.child_by_field_name("body")
-                    if body:
-                        self._translate_block(body)
         finally:
             self._try_depth -= 1
+        after_body = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        joined = False
+
+        def close() -> None:
+            nonlocal joined
+            cur = self._current_node
+            if cur is not None and not any(isinstance(i, Return) for i in cur.instrs):
+                proc.connect(cur.id, join.id)              # (a branch that returned ends there)
+                joined = True
+
+        for clause in node.children:
+            if clause.type not in ("except_clause", "except_group_clause"):
+                continue
+            entry = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(entry)
+            for source in (pre, after_body):
+                if source is not None:
+                    proc.connect(source.id, entry.id)
+            self._current_node = entry
+            block = self._clause_block(clause)
+            if block is not None:
+                self._translate_block(block)
+            close()
+        if after_body is not None:
+            self._current_node = after_body
+            else_clause = next((c for c in node.children if c.type == "else_clause"), None)
+            block = self._clause_block(else_clause) if else_clause is not None else None
+            if block is not None:
+                self._translate_block(block)
+            close()
+        finally_clause = next((c for c in node.children if c.type == "finally_clause"), None)
+        if finally_clause is not None and not joined and pre is not None:
+            proc.connect(pre.id, join.id)       # every branch returned: the finally still runs
+        self._current_node = join
+        block = self._clause_block(finally_clause) if finally_clause is not None else None
+        if block is not None:
+            self._translate_block(block)
+
+    @staticmethod
+    def _clause_block(clause: Optional[TSNode]) -> Optional[TSNode]:
+        """The block of an except / else / finally clause (only `else` names it `body`)."""
+        if clause is None:
+            return None
+        return clause.child_by_field_name("body") or next(
+            (c for c in clause.children if c.type == "block"), None)
 
     def _translate_with(self, node: TSNode) -> None:
         """Translate with statement: with expr as var: body"""
@@ -2097,7 +2390,32 @@ class PythonFrontend:
 
         if node.type == "identifier":
             name = self._get_text(node)
+            alias = self._aliases.get(name)
+            if alias is not None:                 # a comprehension's loop variable
+                return alias
             return ExpVar(PVar(name))
+
+        elif node.type == "keyword_argument":
+            # `f(g(url=q))`: the argument's value (the `name=value` text used to become a variable)
+            return self._translate_expression(node.child_by_field_name("value"))
+
+        elif node.type in ("list_splat", "dictionary_splat") and node.named_children:
+            return self._translate_expression(node.named_children[0])      # `f(*args)`, `f(**kw)`
+
+        elif node.type == "named_expression":
+            # `(v := q)`: the value is v; the binding is emitted with the expression's calls
+            # (`_extract_all_calls_from_node`)
+            name = node.child_by_field_name("name")
+            return ExpVar(PVar(self._get_text(name))) if name is not None else ExpConst.null()
+
+        elif node.type == "expression_list":
+            # `return q, 200`, `x = a, b`: a tuple written without parentheses carries its elements
+            parts = [self._translate_expression(c) for c in node.named_children if c.type != "comment"]
+            return parts[0] if len(parts) == 1 else ExpStringConcat(parts) if parts else ExpConst.null()
+
+        elif node.type in ("list_comprehension", "set_comprehension", "generator_expression",
+                           "dictionary_comprehension"):
+            return self._comprehension_element(node)
 
         elif node.type in ("integer", "float"):
             text = self._get_text(node)
@@ -2229,17 +2547,14 @@ class PythonFrontend:
         elif node.type == "await" and node.named_children:
             return self._translate_expression(self._unwrap_await(node))
 
+        elif node.type == "call" and self._literal_getattr(node) is not None:
+            return self._literal_getattr(node)        # `getattr(g, "db")` is `g.db`
+
         elif node.type == "call":
             func = node.child_by_field_name("function")
-            args_node = node.child_by_field_name("arguments")
-
             func_exp = self._translate_expression(func)
-            args = []
-            if args_node:
-                for child in args_node.children:
-                    if child.type not in ("(", ")", ","):
-                        args.append(self._translate_expression(child))
-
+            # the same argument nodes a call statement gets (a bare generator is one argument)
+            args = [self._translate_expression(a) for a in self._get_call_args(node)]
             return ExpCall(func_exp, args)
 
         elif node.type == "parenthesized_expression":
@@ -2247,12 +2562,9 @@ class PythonFrontend:
                 if child.type not in ("(", ")"):
                     return self._translate_expression(child)
 
-        elif node.type == "list" or node.type == "tuple":
-            # [a, b, c] or (a, b, c)
-            elements = []
-            for child in node.children:
-                if child.type not in ("[", "]", "(", ")", ","):
-                    elements.append(self._translate_expression(child))
+        elif node.type in ("list", "tuple", "set"):
+            # [a, b, c], (a, b, c) or {a, b, c}
+            elements = [self._translate_expression(c) for c in node.named_children if c.type != "comment"]
             # Return first element or null (simplified)
             return elements[0] if elements else ExpConst.null()
 
@@ -2297,26 +2609,14 @@ class PythonFrontend:
             cons_is_const = isinstance(consequence, ExpConst)
             alt_is_const = isinstance(alternative, ExpConst) if alternative else True
 
-            # Check if condition can be evaluated as constant
+            # A condition of integer literals folds here (`7 * 18 > 200`); anything else is
+            # left to the translator, which folds over the path's constants
             if condition:
-                cond_text = self._get_text(condition)
-                # Try simple constant evaluation
-                try:
-                    # Handle simple arithmetic conditions
-                    import re
-                    # Replace common patterns with evaluable Python
-                    eval_cond = cond_text
-                    # Only eval if it looks like a safe arithmetic expression
-                    if re.match(r'^[\d\s\+\-\*/%<>=!()]+$', eval_cond):
-                        cond_result = eval(eval_cond)
-                        if cond_result is True:
-                            # Condition is always TRUE - return consequence
-                            return consequence if consequence else ExpConst.null()
-                        elif cond_result is False:
-                            # Condition is always FALSE - return alternative
-                            return alternative if alternative else ExpConst.null()
-                except:
-                    pass
+                cond_result = _fold_literal_condition(self._get_text(condition))
+                if cond_result is True:
+                    return consequence if consequence else ExpConst.null()
+                elif cond_result is False:
+                    return alternative if alternative else ExpConst.null()
 
             # The condition is left to the translator, which folds it over the
             # constants the path knows (`num = 106` before `... - num > 200`).
@@ -2328,9 +2628,44 @@ class PythonFrontend:
                 return consequence
             return ExpConst.null()
 
-        # Default: return as identifier
+        # Default: return as identifier. Data in a node lowered this way is lost (the source text
+        # becomes a variable name), so each such node type is recorded: `Program.unlowered_syntax`,
+        # held to an allowlist by tests/test_lowering_coverage.py.
+        self._unlowered[node.type] = self._unlowered.get(node.type, 0) + 1
         text = self._get_text(node)
         return ExpVar(PVar(text)) if text else ExpConst.null()
+
+    def _comprehension_element(self, node: TSNode) -> Exp:
+        """`[f(x) for x in items]` as one element: `f(x)` with each loop variable read as an
+        element of what it iterates (`next(items)`, as a `for` statement binds it), so a
+        sanitizer in the element still counts. A dict comprehension is a dict, which carries
+        nothing unless the file's dicts are queries (as a dict literal)."""
+        saved = dict(self._aliases)
+        try:
+            for clause in node.named_children:
+                if clause.type != "for_in_clause":
+                    continue
+                left, right = clause.child_by_field_name("left"), clause.child_by_field_name("right")
+                element = ExpCall(ExpConst.string("next"), [self._translate_expression(right)]) \
+                    if right is not None else ExpConst.null()
+                stack = [left] if left is not None else []
+                while stack:                                   # `for i, (k, v) in ...`
+                    target = stack.pop()
+                    if target.type == "identifier":
+                        self._aliases[self._get_text(target)] = element
+                    else:
+                        stack.extend(target.named_children)
+            body = node.child_by_field_name("body")
+            if body is None:
+                return ExpConst.null()
+            if node.type == "dictionary_comprehension":
+                if not self._dicts_are_queries:
+                    return ExpConst.null()
+                parts = [self._translate_expression(c) for c in body.named_children]
+                return ExpStringConcat(parts) if parts else ExpConst.null()
+            return self._translate_expression(body)
+        finally:
+            self._aliases = saved
 
     def _check_concat_taint(self, target: str, value_node: TSNode, loc: Location) -> None:
         """Check if string concatenation might propagate taint"""
@@ -2480,6 +2815,8 @@ class PythonFrontend:
         """Get argument nodes from call"""
         args = []
         args_node = call_node.child_by_field_name("arguments")
+        if args_node is not None and args_node.type == "generator_expression":
+            return [args_node]                # `"".join(x for x in xs)`: one argument, the generator
         if args_node:
             for child in args_node.children:
                 if child.type not in ("(", ")", ",", "comment"):
