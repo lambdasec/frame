@@ -46,8 +46,20 @@ path_normalizers = ["path.resolve", "path.normalize", "fs.realpathSync", "realpa
                     "os.path.abspath", "os.path.normpath", "getCanonicalPath", "getCanonicalFile",
                     "toRealPath", "Path.GetFullPath", "System.IO.Path.GetFullPath"]
 
+# `<test>(p)` is true when p is an absolute path (Node path.isAbsolute, os.path.isabs).
+absolute_tests = ["path.isAbsolute", "path.posix.isAbsolute", "os.path.isabs", "posixpath.isabs"]
+
 # Constants holding the platform's path separator.
 path_separators = ["path.sep", "os.sep", "os.path.sep", "File.separator", "Path.DirectorySeparatorChar"]
+
+# Calls returning the path from a base to a path, and the position of that path (Node
+# path.relative(from, to); os.path.relpath(path, start)). Both arguments are resolved first, so a
+# result that is not absolute and does not start with ".." stays inside the base.
+[relative_paths]
+"path.relative" = 1
+"path.posix.relative" = 1
+"os.path.relpath" = 0
+"posixpath.relpath" = 0
 
 # How much of the subject a match must cover: "full", "prefix" (anchored at the start) or
 # "search" (anywhere).

@@ -33,11 +33,12 @@ from frame.sil.types import (
     var, const
 )
 from frame.sil.instructions import (
-    Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return,
+    Instr, Load, Store, Alloc, Free, Prune, Call, Assign, Return, ReturnedResponse,
     TaintSource, TaintSink, Sanitize,
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._python_types import infer_canonicals
+from frame.sil.frontends import _credential_sinks
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.loop_exit import body_can_exit_loop
@@ -1309,6 +1310,7 @@ class PythonFrontend:
         """Translate a single statement"""
         if node.type in ("expression_statement", "assignment", "augmented_assignment", "return_statement"):
             self._add_instrs(self._system_message_instrs(node))
+            self._add_instrs(_credential_sinks.python_sinks(self, node))   # SQL storing a credential
         if node.type == "expression_statement" and node.named_children \
                 and node.named_children[0].type == "yield":
             self._translate_yield(node.named_children[0])
@@ -2184,7 +2186,202 @@ class PythonFrontend:
                 else:
                     value_exp = self._translate_expression(value_node)
 
-        self._add_instr(Return(loc=loc, value=value_exp))
+        response = self._returned_response(node, value_node, value_exp) \
+            if value is None and value_node is not None and value_exp is not None else None
+        self._add_instr(Return(loc=loc, value=value_exp, response=response))
+
+    # str methods: called on a str they return a str (Python's own semantics, not a library's).
+    _STR_METHODS = frozenset({
+        "format", "format_map", "join", "replace", "strip", "lstrip", "rstrip", "upper", "lower",
+        "title", "capitalize", "casefold", "swapcase", "center", "ljust", "rjust", "zfill",
+        "expandtabs", "removeprefix", "removesuffix", "translate"})
+
+    def _returned_response(self, node: TSNode, value_node: TSNode, value_exp: Exp) -> Optional[ReturnedResponse]:
+        """What a web framework that turns a view's return value into a response reads from this
+        `return`: the body (the value, or a tuple's first element: Flask's `(body, status,
+        headers)` / `(body, headers)`), the Content-Type literal written in a headers dict or a
+        list of pairs beside it, and whether the body is a `str`. Whether that makes an HTML
+        response is the pack's (`[[returned_response]]`); here only the syntax is read."""
+        scope = node.parent
+        while scope is not None and scope.type not in ("function_definition", "lambda", "module"):
+            scope = scope.parent
+        if scope is None or scope.type != "function_definition":
+            return None
+        inner = value_node
+        while inner.type == "parenthesized_expression" and inner.named_children:
+            inner = inner.named_children[0]
+        content_type: Optional[str] = None
+        known = True
+        body_node, body_exp = inner, value_exp
+        if inner.type in ("expression_list", "tuple"):
+            elems = [c for c in inner.named_children if c.type != "comment"]
+            if len(elems) < 2:
+                return None
+            body_node = elems[0]
+            body_exp = self._translate_expression(body_node)
+            for extra in elems[1:]:
+                found = self._content_type_written(extra)
+                if found is False:
+                    known = False
+                elif found is not None:
+                    content_type = found
+        texts: List[str] = []
+        string_body = self._string_built(body_node, scope, set(), texts)
+        return ReturnedResponse(body=body_exp, content_type=content_type, content_type_known=known,
+                                string_body=string_body,
+                                markup=any(self._MARKUP.search(t) for t in texts))
+
+    # A tag in a string literal (`<p>`, `</a>`, `<!doctype`): the body is written as markup.
+    _MARKUP = re.compile(r"<\s*[A-Za-z/!]")
+
+    def _content_type_written(self, node: TSNode):
+        """The Content-Type a headers value written in a return tuple sets: the literal (str), None
+        when it sets none (a status code, headers without one), False when it cannot be read (a
+        variable, a computed value)."""
+        if node.type in ("integer", "none"):
+            return None
+        pairs: List[Tuple[TSNode, TSNode]] = []
+        if node.type == "dictionary":
+            for p in node.named_children:
+                if p.type != "pair":
+                    return False                        # `**other`
+                pairs.append((p.child_by_field_name("key"), p.child_by_field_name("value")))
+        elif node.type in ("list", "tuple"):
+            for item in node.named_children:
+                kids = [c for c in item.named_children if c.type != "comment"] \
+                    if item.type in ("tuple", "list") else []
+                if len(kids) != 2:
+                    return False
+                pairs.append((kids[0], kids[1]))
+        else:
+            return False
+        for key, val in pairs:
+            text = self._literal_text(key)
+            if text is None:
+                return False
+            if text.lower() == "content-type":
+                literal = self._literal_text(val)
+                return literal if literal is not None else False
+        return None
+
+    def _literal_text(self, node: Optional[TSNode]) -> Optional[str]:
+        """The text of a plain string literal (no interpolation), else None."""
+        if node is None or node.type != "string" or any(c.type == "interpolation" for c in node.named_children):
+            return None
+        content = [c for c in node.named_children if c.type == "string_content"]
+        return "".join(self._get_text(c) for c in content)
+
+    def _string_built(self, node: Optional[TSNode], scope: TSNode, seen: Set[str],
+                      texts: Optional[List[str]] = None) -> bool:
+        """Is `node`'s value a `str` by Python's semantics: a string literal or f-string, `+` with a
+        string operand, `%` on a string, a str method called on a string (`"<p>{}</p>".format(x)`,
+        `"".join(parts)`), the builtin `str(...)`, a conditional whose arms both are, or a local
+        name every binding in the function gives such a value (`+=` keeps it a str)."""
+        if node is None:
+            return False
+        t = node.type
+        if t in ("string", "concatenated_string"):
+            if texts is not None:
+                texts.append(self._get_text(node))
+            return True
+        if t == "parenthesized_expression":
+            return bool(node.named_children) and self._string_built(node.named_children[0], scope, seen, texts)
+        if t == "binary_operator":
+            op = node.child_by_field_name("operator")
+            left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+            op_text = self._get_text(op) if op is not None else ""
+            if op_text == "%":
+                return self._string_built(left, scope, seen, texts)
+            if op_text == "+":
+                return self._string_built(left, scope, seen, texts) or self._string_built(right, scope, seen, texts)
+            return False
+        if t == "conditional_expression":
+            arms = [c for c in node.named_children]
+            return len(arms) == 3 and self._string_built(arms[0], scope, seen, texts) \
+                and self._string_built(arms[2], scope, seen, texts)
+        if t == "call":
+            func = node.child_by_field_name("function")
+            if func is not None and func.type == "identifier":
+                return self._get_text(func) == "str" and "str" not in self._file_bound
+            if func is not None and func.type == "attribute":
+                attr = func.child_by_field_name("attribute")
+                return attr is not None and self._get_text(attr) in self._STR_METHODS \
+                    and self._string_built(func.child_by_field_name("object"), scope, seen, texts)
+            return False
+        if t == "identifier":
+            name = self._get_text(node)
+            if name in seen:
+                return True                             # a cycle: decided by the other bindings
+            seen = seen | {name}
+            params = scope.child_by_field_name("parameters")
+            if params is not None and any(self._get_text(i) == name for p in params.named_children
+                                          for i in ([p] if p.type == "identifier" else p.named_children[:1])):
+                return False
+            bound = False
+            stack = list(scope.child_by_field_name("body").named_children) \
+                if scope.child_by_field_name("body") is not None else []
+            while stack:
+                n = stack.pop()
+                if n.type in ("function_definition", "class_definition", "lambda"):
+                    continue
+                if n.type == "assignment":
+                    left = n.child_by_field_name("left")
+                    names = [left] if left is not None and left.type == "identifier" else \
+                        [i for i in (left.named_children if left is not None else ()) if i.type == "identifier"]
+                    if any(self._get_text(i) == name for i in names):
+                        if left.type != "identifier" or not self._string_built(n.child_by_field_name("right"), scope, seen, texts):
+                            return False
+                        bound = True
+                elif n.type == "augmented_assignment":
+                    left = n.child_by_field_name("left")
+                    if left is not None and left.type == "identifier" and self._get_text(left) == name:
+                        op = n.child_by_field_name("operator")
+                        if op is None or self._get_text(op) != "+=":
+                            return False
+                        self._string_built(n.child_by_field_name("right"), scope, seen, texts)   # its text
+                elif n.type in ("for_statement", "with_statement", "named_expression", "for_in_clause",
+                                "global_statement", "nonlocal_statement", "import_statement",
+                                "import_from_statement", "except_clause"):
+                    if any(c.type == "identifier" and self._get_text(c) == name
+                           for c in self._descendants_shallow(n)):
+                        return False
+                stack.extend(n.named_children)
+            return bound
+        return False
+
+    def _descendants_shallow(self, node: TSNode):
+        """The binding positions of a statement that binds names (`for x in`, `with ... as x`,
+        `x := v`, `global x`, imports, `except E as x`): its targets, not its body."""
+        if node.type == "for_statement":
+            yield from self._iter_nodes(node.child_by_field_name("left"))
+        elif node.type == "for_in_clause":
+            yield from self._iter_nodes(node.child_by_field_name("left"))
+        elif node.type == "named_expression":
+            yield from self._iter_nodes(node.child_by_field_name("name"))
+        elif node.type == "with_statement":
+            for c in node.named_children:
+                if c.type == "with_clause":
+                    for item in c.named_children:
+                        for a in item.named_children:
+                            if a.type == "as_pattern":
+                                tgt = a.child_by_field_name("alias")
+                                yield from self._iter_nodes(tgt)
+        elif node.type == "except_clause":
+            for a in node.named_children:
+                if a.type == "as_pattern":
+                    yield from self._iter_nodes(a.child_by_field_name("alias"))
+        else:
+            for c in node.named_children:
+                if c.type != "block":
+                    yield from self._iter_nodes(c)
+
+    @staticmethod
+    def _iter_nodes(node: Optional[TSNode]):
+        stack = [node] if node is not None else []
+        while stack:
+            n = stack.pop()
+            yield n
+            stack.extend(n.named_children)
 
     def _translate_if(self, node: TSNode) -> None:
         """Translate if statement"""
@@ -2762,7 +2959,15 @@ class PythonFrontend:
             except ValueError:
                 return ExpConst.integer(0)
 
-        elif node.type == "string" or node.type == "concatenated_string":
+        elif node.type == "concatenated_string":
+            # `'<p>' f'{note}'`: adjacent literals are one string, the f-string parts with their values
+            pieces = [c for c in node.named_children if c.type == "string"]
+            if any(k.type == "interpolation" for c in pieces for k in c.children):
+                parts = self._extract_fstring_parts(node)
+                return ExpStringConcat(parts) if parts else ExpConst.string("")
+            return ExpConst.string("".join(self._get_string_content(c) for c in pieces))
+
+        elif node.type == "string":
             # Check if it's an f-string by looking for interpolation children
             has_interpolation = False
             for child in node.children:

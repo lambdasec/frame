@@ -779,11 +779,13 @@ description = "Math.random not cryptographic (weak_random: CWE-338 where a value
 [[spec]]
 name = "crypto.randomBytes"
 is_sanitizer = ["random"]
+is_source = "generated_secret"     # a credential once handed out: matters only where one is stored
 description = "Cryptographically secure random"
 
 [[spec]]
 name = "crypto.randomUUID"
 is_sanitizer = ["random"]
+is_source = "generated_secret"     # a credential once handed out: matters only where one is stored
 description = "Cryptographically secure UUID"
 
 [[spec]]

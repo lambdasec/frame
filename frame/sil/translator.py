@@ -49,6 +49,9 @@ from .specs.principals import load as _principals
 from .kinds import check as _kinds_check, load as _load_kinds
 
 _KINDS = _load_kinds()
+# Taint that is no attacker data (a weak random number, a generated secret): where a value carries
+# both, the attacker data is the one kept and reported.
+_NOT_ATTACKER_KINDS = frozenset({TaintKind.WEAK_RANDOM, TaintKind.GENERATED_SECRET})
 
 # A plain local variable name: no field, element or call in it.
 _PLAIN_LOCAL = re.compile(r'[A-Za-z_$][\w$]*$')
@@ -610,7 +613,7 @@ class SymbolicState:
         is attacker data: weak-random taint never replaces it (a strong update has already cleared
         what an assignment overwrites)."""
         cur = self.tainted.get(var)
-        return (kind == TaintKind.WEAK_RANDOM and cur is not None and cur.source_kind != TaintKind.WEAK_RANDOM
+        return (kind in _NOT_ATTACKER_KINDS and cur is not None and cur.source_kind not in _NOT_ATTACKER_KINDS
                 and not cur.source_var.startswith("@param:"))      # a summary's parameter seed is not data
 
     def add_taint(self, var: str, info: TaintInfo) -> None:
@@ -1838,6 +1841,8 @@ class SILTranslator:
                             callee = self._resolve_callee(name)
                             if callee is not None and callee.ref != (self._file_key, proc.name):
                                 return True
+                        if isinstance(instr, Call) and instr.ret and self._callback_of(instr) is not None:
+                            return True                  # `s.replace(re, (m, k) => values[k])`
                 for text, index in proc.passed_as:       # Python: wrapped by a decorator of the project
                     if lang == "python" and index == 0 and any(a.name == text for a in proc.annotations):
                         callee = self._resolve_callee(text)
@@ -2392,7 +2397,7 @@ class SILTranslator:
         """`_arg_taint_leaves_any`, attacker data first: callers that keep one leaf keep it, not a
         weak random number concatenated before it (`key + "=" + code`)."""
         return sorted(self._arg_taint_leaves_any(exp, state, wrap),
-                      key=lambda leaf: leaf[0].source_kind == TaintKind.WEAK_RANDOM)
+                      key=lambda leaf: leaf[0].source_kind in _NOT_ATTACKER_KINDS)
 
     def _arg_taint_leaves_any(self, exp: Exp, state: SymbolicState,
                               wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
@@ -2571,6 +2576,12 @@ class SILTranslator:
                                       source_location=info.source_location,
                                       propagation_path=[marker]), sanitized)
             self._ipa.dirty.add(callee.ref)
+        elif known[0].source_kind in _NOT_ATTACKER_KINDS and leaves[0][0].source_kind not in _NOT_ATTACKER_KINDS:
+            info = leaves[0][0]                     # attacker data from another call wins
+            entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request,
+                                      read=(), source_location=info.source_location,
+                                      propagation_path=list(known[0].propagation_path)), known[1] & sanitized)
+            self._ipa.dirty.add(callee.ref)
         elif not known[1] <= sanitized:
             entry[param] = (known[0], known[1] & sanitized)
             self._ipa.dirty.add(callee.ref)
@@ -2735,7 +2746,11 @@ class SILTranslator:
                         merged[var] = merged.get(var, frozenset()) | kinds
                 return merged
             common = set(facts[0]) & set(facts[1])
-            return {v: facts[0][v] & facts[1][v] for v in common}
+            # `x == BASE or x.startswith(BASE + sep)`: where one side pins x to a constant, what the
+            # other side proves holds either way (a constant is harmless for every kind)
+            exact = cls._EXACT_VALUE_KINDS
+            return {v: facts[1][v] if facts[0][v] >= exact else facts[0][v] if facts[1][v] >= exact
+                    else facts[0][v] & facts[1][v] for v in common}
         if isinstance(exp, ExpBinOp) and exp.op in ("in", "not in"):
             if truth != (exp.op == "in"):
                 # the value does NOT contain the left operand: `"../" in x` rejected, `"'" not in x`
@@ -2747,6 +2762,9 @@ class SILTranslator:
             equal = truth == (exp.op in ("==", "==="))
             fact = cls._literal_equality_fact(exp.left, exp.right, language) if equal else {}
             return fact or cls._c_equality_fact(exp.left, exp.right, equal, strings)
+        if isinstance(exp, ExpCall) and not truth and len(exp.args) == 1 and isinstance(exp.args[0], ExpVar) \
+                and (cls._flatten(exp.func) or "").strip('"') in cls._GUARDS.absolute_tests:
+            return {str(exp.args[0].var): frozenset({cls._RELATIVE})}     # `!path.isAbsolute(rel)`
         if isinstance(exp, ExpCall) and not truth and cls._call_base_name(exp) in cls._C_STRCMP | {"strncmp"}:
             return cls._c_equality_fact(exp, ExpConst(0), True, strings)      # `!strcmp(x, "a")`
         prefix = cls._literal_prefix_test(exp)
@@ -2766,6 +2784,9 @@ class SILTranslator:
     # into a real sanitization only where the string the value is built into puts the danger out
     # of reach: under a constant path prefix (filesystem) or inside a quote of that kind (sql, xpath).
     _LACKS = "@lacks:"
+    # A path a guard proved is not absolute (`!path.isAbsolute(rel)`): with "does not start with
+    # `..`", the path a `path.relative(base, p)` result names stays inside base (_contained_relative).
+    _RELATIVE = "@relative"
 
     @classmethod
     def _concat_parts(cls, exp) -> list:
@@ -2875,6 +2896,10 @@ class SILTranslator:
         for var, lit in ((left, right), (right, left)):
             if isinstance(var, ExpVar) and isinstance(lit, ExpConst) and not isinstance(lit.value, bool) \
                     and (isinstance(lit.value, int) or (isinstance(lit.value, str) and not c_like)):
+                return {str(var.var): cls._EXACT_VALUE_KINDS}
+            # a module constant (`x == BASE_DIR`), as membership in an UPPER_CASE collection counts
+            if not c_like and isinstance(var, ExpVar) and isinstance(lit, ExpVar) \
+                    and cls._CONST_NAME.match(str(lit.var)) and not cls._CONST_NAME.match(str(var.var)):
                 return {str(var.var): cls._EXACT_VALUE_KINDS}
         return {}
 
@@ -4186,7 +4211,7 @@ class SILTranslator:
             for arm, truth in ((instr.exp.true_exp, True), (instr.exp.false_exp, False)):
                 guarded = self._apply_branch_guards(state.copy(), instr.exp.condition, truth)
                 leaves += self._arg_taint_leaves(arm, guarded)
-            leaves.sort(key=lambda leaf: leaf[0].source_kind == TaintKind.WEAK_RANDOM)
+            leaves.sort(key=lambda leaf: leaf[0].source_kind in _NOT_ATTACKER_KINDS)
             state.sanitized.pop(target, None)
             if leaves:
                 info = leaves[0][0]
@@ -4324,7 +4349,7 @@ class SILTranslator:
             tainted_srcs = [v for v in source_vars if state.is_tainted(v)]
             if tainted_srcs:                   # one source; attacker data before a weak random number
                 state.propagate_taint(min(tainted_srcs, key=lambda v: state.tainted[v].source_kind
-                                          == TaintKind.WEAK_RANDOM), target)
+                                          in _NOT_ATTACKER_KINDS), target)
 
         # After the receiver's own taint: a request attribute a Filter stored.
         if self._ipa_on and isinstance(instr.exp, ExpCall):
@@ -4759,6 +4784,68 @@ class SILTranslator:
     _HTML_SIGNIFICANT = frozenset("&<>\"'")
     _NEUTRALIZED = "neutralized:"                     # a pseudo sink kind on `state.sanitized`
     _CHAR_REFERENCE = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);")
+
+    def _callback_procedure(self, instr: Call, func_name: str, pos: int) -> Optional[Callee]:
+        """The function of this file passed at argument `pos` of this call: a named one
+        (`re.sub(p, repl, s)`), or the inline function the frontend made a procedure of
+        (`s.replace(re, (m, k) => values[k])`: `Procedure.passed_as`, nested in this procedure)."""
+        if pos >= len(instr.args) or self._cur_proc is None:
+            return None
+        arg = instr.args[pos][0]
+        if isinstance(arg, ExpVar) and _PLAIN_LOCAL.match(str(arg.var)):
+            callee = self._resolve_callee(str(arg.var))
+            if callee is not None:
+                return callee
+        here = self._cur_proc.name
+        found = [p for p in self.program.procedures.values()
+                 if getattr(p, "parent", None) == here and (func_name, pos) in (p.passed_as or ())]
+        return Callee((self._file_key, found[0].name), found[0]) if len(found) == 1 else None
+
+    def _callback_of(self, instr: Call, func_name: Optional[str] = None):
+        """(callbacks.toml entry, the function of this file it is passed) for this call, or None."""
+        from .specs.callbacks import for_call
+        name = func_name if func_name is not None else instr.get_full_name()
+        cb = for_call(self.program.language or "", (name, getattr(instr, "canonical", None)))
+        callee = self._callback_procedure(instr, name, cb.arg) if cb is not None else None
+        return (cb, callee) if callee is not None else None
+
+    def _apply_callback_results(self, instr: Call, func_name: str, state: SymbolicState) -> None:
+        """A call whose result is made from what a function passed to it returns
+        (`specs/data/callbacks.toml`: `re.sub(p, repl, s)`, `s.replace(re, fn)`, `xs.map(fn)`): what
+        that function returns -- its own sources and the variables it captures from here, through
+        its return summary, sanitized as it left them -- is in the result. For `elements` (map) the
+        result is only that, the function called on the receiver's elements; a function the call
+        does not resolve to keeps the call's ordinary propagation."""
+        if not self._ipa_on:
+            return
+        found = self._callback_of(instr, func_name)
+        if found is None:
+            return
+        cb, callee = found
+        if self._ipa_summarising and self._cur_ref is not None:
+            self._ipa.callers.setdefault(callee.ref, set()).add(self._cur_ref)
+        args: List[Exp] = []
+        if cb.elements and "." in func_name:
+            args = [ExpVar(PVar(func_name.rsplit(".", 1)[0]))]
+        # no summary yet (the function is analysed later): nothing known to come back; the summary,
+        # once made, re-analyses this procedure (`callers` above)
+        leaves = self._arg_taint_leaves(ExpCall(ExpVar(PVar(callee.proc.name)), args), state) \
+            if self._ipa.return_summaries.get(callee.ref) is not None else []
+        ret = str(instr.ret[0])
+        if cb.elements:
+            state.tainted.pop(ret, None)
+            state.sanitized.pop(ret, None)
+        if not leaves:
+            return
+        kinds = set.intersection(*(set(k) for _, k in leaves))
+        if state.is_tainted(ret):
+            kinds &= set(state.sanitized.get(ret, []))
+        else:
+            state.add_taint(ret, dataclasses.replace(leaves[0][0]))
+        if kinds:
+            state.sanitized[ret] = sorted(kinds)
+        else:
+            state.sanitized.pop(ret, None)
 
     def _note_replaced_characters(self, instr: Call, func_name: str, state: SymbolicState) -> None:
         """`s.replace(/</g, "&lt;")` (JS: a `g` regex or `replaceAll`; Python: `str.replace`, which
@@ -5349,6 +5436,7 @@ class SILTranslator:
                             state.propagate_taint(receiver_var, ret_var)
 
         if instr.ret:
+            self._apply_callback_results(instr, func_name, state)
             self._settle_call_sanitization(
                 instr, spec, state, pre_call_input_kinds)
             self._note_replaced_characters(instr, func_name, state)
@@ -6028,6 +6116,22 @@ class SILTranslator:
             return ExpCall(exp.func, [self._guarded_paths_as_names(a) for a in exp.args])
         return exp
 
+    def _contained_relative(self, var: str, kinds: Set[str], state: SymbolicState) -> Optional[str]:
+        """The path `p` of `var = path.relative(base, p)` (guards.toml `relative_paths`) when the guard
+        proved `var` neither absolute nor starting with `..`: p resolves inside base. None otherwise,
+        or when base itself carries attacker data."""
+        if self._RELATIVE not in kinds or self._NOT_STARTS + ".." not in kinds:
+            return None
+        d = self._defining_call(var)
+        name = (self._flatten(d.func) or "").strip('"') if isinstance(d, ExpCall) else ""
+        pos = self._GUARDS.relative_paths.get(name)
+        if pos is None or pos >= len(d.args) or len(d.args) != 2 or not isinstance(d.args[pos], ExpVar):
+            return None
+        base = d.args[1 - pos]
+        if any(state.is_tainted(v) for v in self._get_exp_vars(base)):
+            return None
+        return self._get_var_name(d.args[pos].var)
+
     def _apply_branch_guards(self, state: SymbolicState, condition, is_true_branch: bool) -> SymbolicState:
         """Record what `condition` proves about its variables on the branch where it
         evaluates to `is_true_branch`: sanitization for the sinks it rules out."""
@@ -6049,7 +6153,11 @@ class SILTranslator:
                     marks = state.asserted_safe.setdefault(var, [])
                     if lack not in marks:                   # resolved to a real kind at the concat
                         marks.append(lack)
-                kinds = {k for k in kinds if not k.startswith((self._STARTS, self._NOT_STARTS, self._LACKS))}
+                inside = self._contained_relative(var, kinds, state)
+                if inside is not None:                      # `rel = path.relative(base, p)` checked
+                    state.add_sanitization(inside, ["filesystem"])
+                kinds = {k for k in kinds if not k.startswith((self._STARTS, self._NOT_STARTS, self._LACKS))
+                         and k != self._RELATIVE}
                 if self._CONTAINED in kinds:
                     kinds.discard(self._CONTAINED)
                     if self._is_normalized_path(var, state):
@@ -6932,6 +7040,11 @@ class SILTranslator:
         # A number read off the wire is a size, not text: it matters only where it sizes an allocation.
         if taint_info is not None and taint_info.source_kind == TaintKind.WIRE_SIZE \
                 and sink_kind != SinkKind.ALLOC_SIZE:
+            check.kind_mismatch = True
+        # A secret the program generated is no attacker data: it matters only where a credential is
+        # stored unhashed.
+        if taint_info is not None and taint_info.source_kind == TaintKind.GENERATED_SECRET \
+                and sink_kind != SinkKind.PASSWORD_STORE:
             check.kind_mismatch = True
         # Model output is attacker-steerable, not confidential: it matters at injection sinks,
         # not where a secret or personal data would leak (logs, error pages, responses).
@@ -8640,7 +8753,7 @@ class SILTranslator:
     def _attacker_tainted(self, var: str, state: SymbolicState) -> bool:
         info = state.get_taint_info(var)
         return (state.is_tainted(var) and info is not None
-                and info.source_kind not in (TaintKind.WEAK_RANDOM,)
+                and info.source_kind not in _NOT_ATTACKER_KINDS
                 and not info.source_var.startswith(self._SEED_PREFIX))
 
     def _range_candidate(self, instr: Instr, state: SymbolicState, proc_name: str, var: str,
@@ -9695,6 +9808,8 @@ class SILTranslator:
         must be unpredictable, and only weak-random output does there."""
         if str(source_kind) in (TaintKind.IDENTITY.value, TaintKind.REQUEST.value):
             return True
+        if str(source_kind) == TaintKind.GENERATED_SECRET.value:
+            return str(getattr(sink_kind, "value", sink_kind)) != SinkKind.PASSWORD_STORE.value
         weak = str(source_kind) == TaintKind.WEAK_RANDOM.value
         return weak != (str(getattr(sink_kind, "value", sink_kind)) == SinkKind.UNPREDICTABLE.value)
 
@@ -10602,6 +10717,17 @@ class SILTranslator:
                 out.append(key)
         return out
 
+    def _chained_call_name(self, func: Exp) -> Optional[str]:
+        """`crypto.createHash.update` for the callee of `crypto.createHash("sha256").update(x)`: a
+        method called on a call's result is named after that call, as value origins name the
+        method of a value a call returned."""
+        if not (isinstance(func, ExpFieldAccess) and isinstance(func.base, ExpCall)):
+            return None
+        inner = func.base.func
+        name = self._flatten(inner) if not isinstance(inner, ExpFieldAccess) or not isinstance(inner.base, ExpCall) \
+            else self._chained_call_name(inner)
+        return f"{name.strip(chr(34))}.{func.field_name}" if name else None
+
     def _get_sanitizer_calls(self, exp: Exp) -> List[Tuple[str, List[str]]]:
         """
         Extract all function calls from an expression that might be sanitizers.
@@ -10617,7 +10743,7 @@ class SILTranslator:
             elif isinstance(exp.func, ExpVar):
                 func_name = self._get_var_name(exp.func.var)
             else:
-                func_name = str(exp.func)
+                func_name = self._chained_call_name(exp.func) or str(exp.func)
 
             # Get argument variables
             arg_vars = []
@@ -10629,6 +10755,10 @@ class SILTranslator:
             # Recurse into arguments
             for arg in exp.args:
                 result.extend(self._get_sanitizer_calls(arg))
+            # and into a call the method is called on (`hashlib.sha256(t).hexdigest()`): what that
+            # call sanitized is what the method's result is made from, as when it is assigned first
+            if isinstance(exp.func, ExpFieldAccess) and isinstance(exp.func.base, ExpCall):
+                result.extend(self._get_sanitizer_calls(exp.func.base))
 
         elif isinstance(exp, ExpBinOp):
             result.extend(self._get_sanitizer_calls(exp.left))
@@ -10713,6 +10843,11 @@ class SILTranslator:
             # Recurse into arguments to find nested source calls
             for arg in exp.args:
                 result.extend(self._get_embedded_source_calls(arg, sink_kind))
+            # and into a call the method is called on (`crypto.randomBytes(16).toString("hex")`):
+            # its result is made from that call's, as when the call is assigned first
+            if isinstance(exp.func, ExpFieldAccess) and isinstance(exp.func.base, ExpCall) \
+                    and not (spec and spec.is_taint_sanitizer()):
+                result.extend(self._get_embedded_source_calls(exp.func.base, sink_kind))
 
         elif isinstance(exp, ExpBinOp):
             result.extend(self._get_embedded_source_calls(exp.left, sink_kind))

@@ -86,7 +86,7 @@ _TOOL_KEYS = {
 _TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "setting_registration", "returns", "entrypoint", "source", "sink", "sanitizer", "propagator", "setting", "function",
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
-             "request_attribute", "middleware", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
+             "request_attribute", "middleware", "returned_response", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
              "policy", "define", "provided_action"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
@@ -277,6 +277,22 @@ class DisabledProtection:
     configurer: List[str]
     disable: List[str]
     kind: str
+    description: str = ""
+
+
+@dataclass
+class ReturnedResponseRule:
+    """Python: the value a view of one of this pack's `entrypoints` returns is the response
+    (`[[returned_response]]`): its body is a sink of `kind` when the Content-Type written beside
+    it is one of `content_types`, or, when none is written, when the body is a `str` and the
+    framework's `default_content_type` for a str body is one of them (Flask: text/html); with
+    `default_needs_markup`, only when the body's literal text is markup (a tag)."""
+    id: str
+    entrypoints: List[str]
+    kind: str
+    content_types: List[str]
+    default_content_type: str = ""
+    default_needs_markup: bool = False
     description: str = ""
 
 
@@ -510,6 +526,7 @@ class Pack:
     required_flags: List[RequiredFlag] = field(default_factory=list)
     disabled_protections: List[DisabledProtection] = field(default_factory=list)
     handler_returns: List[HandlerReturn] = field(default_factory=list)
+    returned_responses: List[ReturnedResponseRule] = field(default_factory=list)   # Python
     injected_field_annotations: List[str] = field(default_factory=list)
     dict_queries: bool = False           # Python: in files this pack applies to, a dict literal is a query
     globals: Dict[str, str] = field(default_factory=dict)   # JS: a global the framework defines -> its value id
@@ -1052,6 +1069,29 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if not t.get("methods"):
             raise _fail(origin, where, "needs methods")
         pack.middleware_methods += _strings(origin, f"{where}.methods", t["methods"])
+
+    for i, t in enumerate(data.get("returned_response", [])):
+        where = f"[[returned_response]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "entrypoints", "kind", "content_types", "default_content_type",
+                                       "default_needs_markup", "description"})
+        if language != "python":
+            raise _fail(origin, where, "returned responses are for Python packs")
+        for k in ("entrypoints", "kind", "content_types"):
+            if not t.get(k):
+                raise _fail(origin, where, f"needs {k}")
+        known = {e.id for e in pack.entrypoints}
+        entries = _strings(origin, f"{where}.entrypoints", t["entrypoints"], allow_empty=False)
+        unknown = [e for e in entries if e not in known]
+        if unknown:
+            raise _fail(origin, where, f"names entry points this pack does not define: {unknown}")
+        pack.returned_responses.append(ReturnedResponseRule(
+            id=str(t.get("id", f"{name}-returned-response-{i + 1}")), entrypoints=entries,
+            kind=_sink_kind(origin, f"{where}.kind", t["kind"]),
+            content_types=[c.lower() for c in _strings(origin, f"{where}.content_types", t["content_types"],
+                                                       allow_empty=False)],
+            default_content_type=str(t.get("default_content_type", "")).lower(),
+            default_needs_markup=bool(t.get("default_needs_markup", False)),
+            description=str(t.get("description", ""))))
 
     for i, t in enumerate(data.get("provided_action", [])):
         where = f"[[provided_action]] #{i + 1}"

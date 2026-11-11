@@ -48,6 +48,22 @@ registered_via = ["flask.Flask.add_url_rule", "flask.Blueprint.add_url_rule", "q
 params = "all"
 description = "Flask view function argument (URL variable)"
 
+# What a view returns is the response (Flask docs "About Responses"): a str body is sent with the
+# Response class's default mimetype, text/html; a tuple is (body, status, headers) or (body,
+# headers), and a Content-Type in the headers replaces the default. A dict or list is sent as JSON,
+# and a Response object (jsonify, make_response, redirect, send_file) is sent as built, so only a
+# body the frontend proves is a str takes the default; and of those only one written as markup (a
+# tag in its literal text): `return str(count)` or a status message is text by intent, whatever
+# Content-Type Flask gives it.
+[[returned_response]]
+id = "view-response"
+entrypoints = ["route-view", "url-rule-view"]
+kind = "html"
+content_types = ["text/html", "application/xhtml+xml"]
+default_content_type = "text/html"
+default_needs_markup = true
+description = "Flask view returns an HTML response body (XSS)"
+
 # flask.abort / werkzeug.exceptions.abort raise an HTTPException: the request handling ends there.
 [[function]]
 name = "flask.abort"

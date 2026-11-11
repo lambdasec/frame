@@ -1478,7 +1478,14 @@ description = "Regex findall (potential ReDoS)"
 [[spec]]
 name = "re.sub"
 is_sink = "regex"
+taint_propagates = [1, 2]       # the replacement and the string are in the result
 description = "Regex sub (potential ReDoS)"
+
+[[spec]]
+name = "re.subn"
+is_sink = "regex"
+taint_propagates = [1, 2]
+description = "Regex subn (potential ReDoS)"
 
 [[spec]]
 name = "re.compile"
@@ -1690,17 +1697,31 @@ description = "AES ECB mode (CWE-327)"
 [[spec]]
 name = "secrets.token_bytes"
 is_sanitizer = ["random"]
+is_source = "generated_secret"     # a credential once handed out: matters only where one is stored
 description = "Cryptographically secure random"
 
 [[spec]]
 name = "secrets.token_hex"
 is_sanitizer = ["random"]
+is_source = "generated_secret"     # a credential once handed out: matters only where one is stored
 description = "Cryptographically secure random"
 
 [[spec]]
 name = "secrets.token_urlsafe"
 is_sanitizer = ["random"]
+is_source = "generated_secret"     # a credential once handed out: matters only where one is stored
 description = "Cryptographically secure random"
+
+[[spec]]
+name = "secrets.choice"
+is_sanitizer = ["random"]
+is_source = "generated_secret"
+description = "Cryptographically secure random choice (a token built from it is a generated secret)"
+
+[[spec]]
+name = "uuid.uuid4"
+is_source = "generated_secret"     # random (os.urandom); a token built from it is a credential once handed out
+description = "Random UUID"
 
 [[spec]]
 name = "os.urandom"

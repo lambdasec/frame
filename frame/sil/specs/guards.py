@@ -18,7 +18,7 @@ HOW = ("full", "prefix", "search")
 _LISTS = ("charset_methods", "prefix_methods", "membership_methods", "collection_views",
           "literal_collection_types", "literal_collection_factories", "url_parsers", "host_fields",
           "path_normalizers", "path_separators", "charset_functions", "position_methods", "key_methods",
-          "host_getters")
+          "host_getters", "absolute_tests")
 _REGEX = {"compiled_methods", "literal_methods", "subject_methods", "matcher", "matcher_methods", "function"}
 _FUNCTION = {"names", "pattern_arg", "subject_arg", "how"}
 
@@ -51,6 +51,8 @@ class Guards(NamedTuple):
     position_methods: FrozenSet[str] = frozenset()
     key_methods: FrozenSet[str] = frozenset()
     host_getters: FrozenSet[str] = frozenset()
+    absolute_tests: FrozenSet[str] = frozenset()
+    relative_paths: Dict[str, int] = {}
 
     def regex_function(self, name: str):
         return next((f for f in self.regex_functions if name in f.names), None)
@@ -66,8 +68,12 @@ def _hows(name: str, where: str, value) -> Dict[str, str]:
 def load(path: Path = PATH) -> Guards:
     name = Path(path).name
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    if set(data) != set(_LISTS) | {"regex"}:
-        raise ValueError(f"{name}: needs exactly {sorted(set(_LISTS) | {'regex'})}")
+    if set(data) != set(_LISTS) | {"regex", "relative_paths"}:
+        raise ValueError(f"{name}: needs exactly {sorted(set(_LISTS) | {'regex', 'relative_paths'})}")
+    rel = data["relative_paths"]
+    if not isinstance(rel, dict) or not rel or not all(
+            isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 0 for k, v in rel.items()):
+        raise ValueError(f"{name}: [relative_paths] maps call names to the position of the path")
     for k in _LISTS:
         if not isinstance(data[k], list) or not data[k] or not all(isinstance(v, str) and v for v in data[k]):
             raise ValueError(f"{name}: {k} must be a non-empty list of names")
@@ -100,7 +106,8 @@ def load(path: Path = PATH) -> Guards:
         subject_methods=_hows(name, "[regex] subject_methods", rx["subject_methods"]),
         matcher=rx["matcher"],
         matcher_methods=_hows(name, "[regex] matcher_methods", rx["matcher_methods"]),
-        regex_functions=tuple(functions))
+        regex_functions=tuple(functions),
+        relative_paths=dict(rel))
 
 
 __all__ = ["Guards", "HOW", "PATH", "RegexFunction", "load"]

@@ -967,7 +967,50 @@ def _apply_entrypoints(program: Program, packs: Sequence[Pack], only: Optional[S
                 description=f"{pack.name}: {e.id} entry point (attacker-controlled)"))
         for src in reversed([r for r in requests if str(r.var) not in tainted]):
             entry.instrs.insert(0, src)
+    _apply_returned_responses(program, packs, procs)
     _constructor_fields(program)
+
+
+def _media_type(content_type: str) -> str:
+    """`text/html; charset=utf-8` -> `text/html`."""
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _apply_returned_responses(program: Program, packs: Sequence[Pack], procs: Sequence[Procedure]) -> None:
+    """A view whose return value the framework sends as the response (`[[returned_response]]`):
+    the body of each `return` it makes is a sink of the rule's kind where the response is of one
+    of its content types, by the Content-Type written beside the body (`return page, 200,
+    {"Content-Type": "text/html"}`) or, with none written, by the framework's default for a str
+    body (with `default_needs_markup`, only a body whose literal text is markup). A Content-Type
+    that cannot be read (a headers variable) decides nothing."""
+    from ..instructions import Return, TaintSink, resolve_sink_kind
+    rules = [(f"{p.name}:{e}", r) for p in packs for r in p.returned_responses for e in r.entrypoints]
+    if not rules:
+        return
+    for proc in procs:
+        kinds = set(proc.entry_kinds)
+        applying = [r for entry, r in rules if entry in kinds]
+        if not applying:
+            continue
+        for node in proc.nodes.values():
+            out: List = []
+            for instr in node.instrs:
+                resp = getattr(instr, "response", None) if isinstance(instr, Return) else None
+                if resp is not None:
+                    media = _media_type(resp.content_type) if resp.content_type is not None else None
+                    for r in applying:
+                        if not resp.content_type_known:
+                            continue
+                        html = media in r.content_types if media is not None else \
+                            (resp.string_body and _media_type(r.default_content_type) in r.content_types
+                             and (resp.markup or not r.default_needs_markup))
+                        desc = r.description or "View returns the response body"
+                        if html and not any(isinstance(o, TaintSink) and o.description == desc
+                                            and str(o.exp) == str(resp.body) for o in out[-3:]):
+                            out.append(TaintSink(loc=instr.loc, exp=resp.body, kind=resolve_sink_kind(r.kind),
+                                                 description=desc))
+                out.append(instr)
+            node.instrs = out
 
 
 def _constructor_fields(program: Program) -> None:

@@ -86,6 +86,10 @@ class TaintKind(Enum):
     # itself. Its client properties are (`req.query`, `req.get("Host")`: what the RequestType it
     # carries lists), its server state is not (`req.session`, `req.user`). Never reported at a sink.
     REQUEST = "request"
+    # A secret the program just generated (a CSPRNG token: `secrets.token_urlsafe`,
+    # `crypto.randomBytes`): not attacker data, but a credential once handed out. It matters only
+    # where a credential is stored (SinkKind.PASSWORD_STORE), and only there.
+    GENERATED_SECRET = "generated_secret"
 
     def __str__(self) -> str:
         return self.value
@@ -264,7 +268,7 @@ class SinkKind(Enum):
     CREDENTIAL = "credential"   # Credential handling (CWE-522)
     INSECURE_AUTH = "insecure_auth"  # Insufficiently protected credentials (CWE-522)
     SESSION = "session"         # Session management (CWE-384)
-    PASSWORD_STORE = "password" # Password storage (CWE-257)
+    PASSWORD_STORE = "password" # A credential written to storage unhashed (CWE-522)
     TRUST_BOUNDARY = "trust_boundary"  # Trust boundary violation (CWE-501)
     INSECURE_COOKIE = "insecure_cookie"  # Insecure cookie - missing Secure (CWE-614)
     INSECURE_COOKIE_HTTPONLY = "insecure_cookie_httponly"  # Cookie missing HttpOnly (CWE-1004)
@@ -780,6 +784,22 @@ class AssertSafe(Instr):
 # Additional Instructions
 # =============================================================================
 
+@dataclass(frozen=True)
+class ReturnedResponse:
+    """A returned value as a response body (`return body`, `return body, 200, {"Content-Type":
+    "text/html"}`), from the syntax: the body's value, the Content-Type literal written with it
+    (None when none is written), whether one is written in a way that is not a literal
+    (`content_type_known` False: a headers variable, a computed value), whether the body is a
+    `str` by the language's own semantics (a literal, an f-string, `+` / `%` with one, a str
+    method on one, a local only ever bound to such values), and whether its literal text is
+    markup."""
+    body: Exp
+    content_type: Optional[str] = None
+    content_type_known: bool = True
+    string_body: bool = False
+    markup: bool = False        # a string literal in the body holds a tag (`<p>`, `<!doctype`)
+
+
 @dataclass
 class Return(Instr):
     """
@@ -791,6 +811,10 @@ class Return(Instr):
     # JS: a returned object literal's fields are also written on this temporary (`$retN.token =
     # ...`), so what each field holds is known (ReturnSummary.return_fields).
     fields: Optional[str] = None
+    # Python: the returned value read as a web framework reads a view's return value (the body
+    # and the Content-Type written beside it); a pack's [[returned_response]] decides whether
+    # it is an HTML response (packs/apply.py).
+    response: Optional["ReturnedResponse"] = None
 
     def __str__(self) -> str:
         if self.value:

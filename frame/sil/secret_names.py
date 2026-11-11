@@ -18,7 +18,7 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "specs" / "data" / "secret-names.toml"
 _WORDS = ("name_descriptors", "leading_descriptors", "metadata_heads", "http_auth_names", "password_words",
-          "structural_words")
+          "structural_words", "credential_heads")
 _VALUE = {"connection_string", "placeholders", "pem_with_body", "known_credential", "credential_prefixes",
           "not_secret"}
 
@@ -38,6 +38,7 @@ class SecretNames:
     http_auth_names: FrozenSet[str]
     password_words: FrozenSet[str]
     structural_words: FrozenSet[str]
+    credential_heads: FrozenSet[str]
 
 
 def name_words(name: str) -> List[str]:
@@ -98,4 +99,18 @@ def load(path: Path = PATH) -> SecretNames:
         **{w: frozenset(words[w]) for w in _WORDS})
 
 
-__all__ = ["PATH", "SecretNames", "load", "name_words"]
+def is_credential_name(name: str) -> bool:
+    """Does `name` (a storage column, a field) denote a credential itself: a name rule matches it and
+    its head noun, its last word, is a password word or a credential head (`owner_token`,
+    `api_key`, `password`), not metadata about one (`password_hash`, `token_type`, `secret_name`)."""
+    words = name_words(name)
+    if not words:
+        return False
+    rules = load()
+    if words[-1] not in rules.password_words | rules.credential_heads:
+        return False
+    flat = "_".join(words)
+    return any(rx.search(flat) or rx.search(name) for rx, _, _ in rules.name_rules)
+
+
+__all__ = ["PATH", "SecretNames", "is_credential_name", "load", "name_words"]

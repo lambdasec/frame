@@ -44,6 +44,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.frontends._literal_fields import literal_init_procedure
+from frame.sil.frontends import _credential_sinks
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.procedure import (
     Procedure, Node, NodeKind, ProcSpec, Program, GLOBAL_OBJECTS,
@@ -2244,6 +2245,7 @@ class JavaScriptFrontend:
         """Translate a single statement"""
         if node.type in ("expression_statement", "lexical_declaration", "variable_declaration", "return_statement"):
             self._add_instrs(self._system_message_instrs(node))
+            self._add_instrs(_credential_sinks.javascript_sinks(self, node))   # SQL storing a credential
         if node.type == "expression_statement":
             self._translate_expression_statement(node)
 

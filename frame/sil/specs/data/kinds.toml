@@ -205,9 +205,12 @@ vuln = "insufficient_credential_protection"
 kind = "session"
 vuln = "session_fixation"
 
+# A credential written to storage (a SQL INSERT / UPDATE binding a credential column): reached by a
+# credential that no hash function has replaced (a password from the request, a generated token).
 [[sink]]
 kind = "password"
-vuln = "weak_password"
+vuln = "insufficient_credential_protection"
+aliases = ["credential_storage"]
 
 [[sink]]
 kind = "trust_boundary"

@@ -1,0 +1,33 @@
+# Library calls whose result is made from what a function passed to them returns (read by
+# frame/sil/specs/callbacks.py; applied by the translator's `_apply_callback_results` when the
+# argument is a function of the file, through its return summary: what it returns from the
+# variables it captures, its own sources, and what its sanitizers left). A function the call does
+# not resolve to keeps the call's ordinary propagation.
+#
+# `call`: the callee as written or its canonical id (Python), `method`: the method name on any
+# receiver (JavaScript, propagation only). `arg`: the callback's position. `elements = true`: the
+# callback is called on each element of the receiver, and the result is only what it returns
+# (Array.prototype.map); otherwise its return values are spliced into the call's result beside what
+# the call already propagates (re.sub, String.prototype.replace).
+
+# re.sub(pattern, repl, string): "If repl is a function, it is called for every non-overlapping
+# occurrence of pattern ... and returns the replacement string" (Python docs, re.sub).
+[[callback]]
+language = "python"
+call = ["re.sub", "re.subn"]
+arg = 1
+
+# String.prototype.replace / replaceAll(pattern, replacer): "the function's result (return value)
+# will be used as the replacement string" (ECMA-262 22.1.3.19, MDN).
+[[callback]]
+language = "javascript"
+method = ["replace", "replaceAll"]
+arg = 1
+
+# Array.prototype.map(callbackFn): "a new array with each element being the result of the callback
+# function" (ECMA-262 23.1.3.21).
+[[callback]]
+language = "javascript"
+method = ["map", "flatMap"]
+arg = 0
+elements = true
