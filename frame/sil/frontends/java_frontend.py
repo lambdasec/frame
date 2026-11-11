@@ -36,7 +36,7 @@ except ImportError:
 from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall,
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, ExpTernary,
     var, const
 )
 from frame.sil.instructions import (
@@ -180,6 +180,16 @@ class JavaFrontend:
         self._handler_lambdas = set()
         self._method_refs = []
         self._in_call_args = False
+        # Node types lowered as a variable named by their source text (the data they carry is
+        # lost): `Program.unlowered_syntax`, held to an allowlist by tests/test_lowering_coverage_java.py.
+        self._unlowered: Dict[str, int] = {}
+        # Values lowered once into a temporary before the statement that uses them (a ternary), and
+        # expressions with an effect (an assignment, an instanceof binding) already emitted, by the
+        # node's byte range: an expression translated twice (a sink re-reads its argument) is
+        # evaluated once.
+        self._hoisted_values: Dict[Tuple[int, int], str] = {}
+        self._evaluated: set = set()
+        self._switch_results: List[Optional[str]] = []      # the enclosing switch expressions' values
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="java",
@@ -196,6 +206,7 @@ class JavaFrontend:
 
         self._receiver_facts = self._collect_receiver_facts(tree.root_node)
         self._translate_compilation_unit(tree.root_node, program)
+        program.unlowered_syntax = dict(self._unlowered)
         self._apply_method_references(program)
         for lam, parent in self._lambda_parents:             # the parents' names are final now
             lam.parent = parent.name
@@ -1182,17 +1193,70 @@ class JavaFrontend:
             self._translate_throw(node)
         elif node.type == "block":
             self._translate_block(node)
+        elif node.type == "do_statement":
+            self._translate_do(node)
+        elif node.type == "yield_statement":
+            self._translate_yield(node)
+        elif node.type == "synchronized_statement":
+            # `synchronized (lock) { ... }`: the lock is evaluated, then the body runs once
+            lock = next((c for c in node.named_children if c.type == "parenthesized_expression"), None)
+            if lock is not None:
+                self._translate_effect(lock)
+            body = node.child_by_field_name("body")
+            if body is not None:
+                self._translate_block(body)
+        elif node.type == "labeled_statement":
+            # `outer: for (...) {...}`: the label names the statement, which runs as written
+            for child in node.named_children:
+                if child.type != "identifier":
+                    self._translate_statement(child)
+        elif node.type in self._NO_DATA_STATEMENTS:
+            pass
+        else:
+            # A statement kind not lowered above must not take its body with it: the statements
+            # and blocks it holds still run (declarations of local types are their own scope).
+            key = "statement:" + node.type
+            self._unlowered[key] = self._unlowered.get(key, 0) + 1
+            for child in node.named_children:
+                if child.type == "block" or child.type.endswith("_statement") \
+                        or child.type == "local_variable_declaration":
+                    self._translate_statement(child)
+
+    # Statements that carry no data: control transfers without SIL edges, empty statements, and
+    # `assert` (disabled unless the JVM runs with -ea). A local type declaration or a `super(...)` /
+    # `this(...)` call is not lowered yet, so it is recorded like any unknown statement.
+    _NO_DATA_STATEMENTS = frozenset({
+        "break_statement", "continue_statement", ";", "line_comment", "block_comment", "assert_statement",
+    })
 
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
-        for child in node.children:
-            if child.type == "method_invocation":
-                instrs = self._translate_method_call(child)
-                self._add_instrs(instrs)
-            elif child.type == "assignment_expression":
-                self._translate_assignment(child)
-            elif child.type == "update_expression":
-                self._translate_update(child)
+        for child in node.named_children:
+            self._translate_effect(child)
+
+    def _translate_effect(self, expr: Optional[TSNode]) -> None:
+        """An expression evaluated for its effect (an expression statement, a `for` init or
+        update): a call, an assignment, an increment, a creation (`new FileOutputStream(p);`
+        runs the constructor); anything else is evaluated for the calls and assignments it
+        holds."""
+        if expr is None:
+            return
+        t = expr.type
+        loc = self._get_location(expr)
+        if t == "method_invocation":
+            self._add_instrs(self._translate_method_call(expr))
+        elif t == "assignment_expression":
+            self._translate_assignment(expr)
+        elif t == "update_expression":
+            self._translate_update(expr)
+        elif t == "object_creation_expression":
+            tmp = f"$new{self._ident_counter}"
+            self._ident_counter += 1
+            self._add_instrs(self._translate_object_creation_assignment(tmp, expr, loc))
+        elif t in ("line_comment", "block_comment", "identifier", "this") or t.endswith("_literal"):
+            pass
+        else:
+            self._hoisted_expression(expr)
 
     @staticmethod
     def _peel_cast_call(node: Optional[TSNode]) -> Optional[TSNode]:
@@ -1278,6 +1342,19 @@ class JavaFrontend:
 
         target = self._get_text(left)
         loc = self._get_location(node)
+        op_node = node.child_by_field_name("operator")
+        op = self._get_text(op_node) if op_node is not None else "="
+        self._constant_values.pop(target, None)            # no longer the constant it was declared with
+        if op != "=" or left.type == "array_access":
+            # `x += e` is `x = x + e` (the value is combined with the target's, never replaced by
+            # it); `a[i] = e` writes one element: the array keeps what it held and gains e's data.
+            value = self._assigned_value(right, loc)
+            if op != "=":
+                current = self._translate_expression(left)
+                base_op = op[:-1]
+                value = ExpStringConcat([current, value]) if base_op == "+" else ExpBinOp(base_op, current, value)
+            self._write_target(left, value, loc)
+            return
         if right.type != "method_invocation":
             self._note_binding(target, None)
 
@@ -1294,6 +1371,37 @@ class JavaFrontend:
         else:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
+
+    def _assigned_value(self, right: TSNode, loc: Location) -> Exp:
+        """The value an assignment writes, with a call or creation lowered as one (into a
+        temporary) so its spec and callee apply."""
+        if right.type in ("method_invocation", "object_creation_expression"):
+            tmp = f"$as{self._ident_counter}"
+            self._ident_counter += 1
+            if right.type == "method_invocation":
+                self._add_instrs(self._translate_call_assignment(tmp, right, loc))
+            else:
+                self._add_instrs(self._translate_object_creation_assignment(tmp, right, loc))
+            return ExpVar(PVar(tmp))
+        return self._translate_expression(right)
+
+    def _write_target(self, left: TSNode, value: Exp, loc: Location) -> None:
+        """`target = value` for an assignment target. An array element (`a[i] = v`, `a[i][j] = v`)
+        is a weak update of the array (`a = a + v`): the other elements keep their data."""
+        if left.type == "array_access":
+            base = left
+            while base is not None and base.type == "array_access":
+                base = base.child_by_field_name("array")
+            if base is None:
+                return
+            array = self._translate_expression(base)
+            name = str(array.var) if isinstance(array, ExpVar) else self._get_text(base)
+            self._note_binding(name, None)
+            self._add_instr(Assign(loc=loc, id=PVar(name), exp=ExpBinOp("+", ExpVar(PVar(name)), value)))
+            return
+        target = self._get_text(left)
+        self._note_binding(target, None)
+        self._add_instr(Assign(loc=loc, id=PVar(target), exp=value))
 
     # -- declared types ------------------------------------------------------
 
@@ -1373,6 +1481,12 @@ class JavaFrontend:
                 parts = [c for c in (ctype.named_children if ctype is not None else ())]
                 name = next((c for c in n.children if c.type == "identifier"), None)
                 record(name, typer(parts[0]) if len(parts) == 1 else "Throwable")
+            elif t == "instanceof_expression" and n.child_by_field_name("name") is not None:
+                # `o instanceof HttpServletRequest r`: r has the pattern's type
+                record(n.child_by_field_name("name"), typer(n.child_by_field_name("right")))
+            elif t == "record_pattern_component" and len(n.named_children) == 2 \
+                    and n.named_children[1].type == "identifier":
+                record(n.named_children[1], typer(n.named_children[0]))
             elif t == "inferred_parameters":
                 for p in n.named_children:
                     record(p, None)
@@ -1454,7 +1568,12 @@ class JavaFrontend:
         `b.parse(x)`), if the frontend knows it."""
         if call_node is None:
             return None
-        obj = call_node.child_by_field_name("object")
+        cast = self._receiver_cast_type(call_node)
+        if cast:
+            return cast                      # `((HttpServletRequest) req).getHeader(h)`
+        obj = self._call_object(call_node)
+        if obj is not None and obj.type in ("string_literal", "text_block"):
+            return "String"                  # `"a,b".split(sep)`
         if obj is None or obj.type == "this":
             # `m(x)` / `this.m(x)` calling a method this class declares.
             name = call_node.child_by_field_name("name")
@@ -1477,14 +1596,17 @@ class JavaFrontend:
         """Declared type a documented API call returns (`JAVA_RETURN_TYPES`), so the next call of
         a chain has a receiver type."""
         name = call_node.child_by_field_name("name")
-        obj = call_node.child_by_field_name("object")
+        obj = self._call_object(call_node)
         if name is None or obj is None:
             return None
-        if obj.type == "identifier":
+        cast = self._receiver_cast_type(call_node)
+        if cast:
+            owner = cast
+        elif obj.type == "identifier":
             text = self._get_text(obj)
             owner = self._var_types.get(text) or (text if text[:1].isupper() else None)
-        elif obj.type == "field_access" and _QUALIFIED_CLASS.match(self._get_text(obj)):
-            owner = self._get_text(obj).rsplit(".", 1)[-1]          # `java.sql.DriverManager.getConnection()`
+        elif obj.type == "field_access" and _QUALIFIED_CLASS.match(self._dotted_text(obj)):
+            owner = self._dotted_text(obj).rsplit(".", 1)[-1]       # `java.sql.DriverManager.getConnection()`
         elif obj.type == "this":
             owner = "Object"                                         # `this.getClass()`
         elif obj.type == "method_invocation":
@@ -1517,7 +1639,7 @@ class JavaFrontend:
         right), bound to a temporary that the method is then called on. Without this the whole
         creation text became the method's name and neither call was analysed."""
         name = self._get_method_name(call_node)
-        obj = call_node.child_by_field_name("object")
+        obj = self._call_object(call_node)
         method = call_node.child_by_field_name("name")
         if obj is not None and obj.type == "object_creation_expression" and method is not None:
             tmp = f"$new{self._ident_counter}"
@@ -1600,7 +1722,10 @@ class JavaFrontend:
         case), or this class for `m(x)` / `this.m(x)` (which may be inherited)."""
         if call_node is None:
             return None
-        obj = call_node.child_by_field_name("object")
+        cast = self._receiver_cast_type(call_node)
+        if cast:
+            return cast
+        obj = self._call_object(call_node)
         if obj is None:
             # `run(x)` with `import static a.B.run`: the method belongs to B unless this class declares one
             name = self._get_text(call_node.child_by_field_name("name"))
@@ -1863,6 +1988,7 @@ class JavaFrontend:
         instrs, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
         lams = self._last_lambdas
         instrs = pre + instrs
+        args_exp = self._argv_views(self._lookup_spec(method_name, call_node), args, args_exp)
 
         ret_id = self._new_ident(target)
 
@@ -2456,6 +2582,7 @@ class JavaFrontend:
         hoisted, args_exp = self._translate_args(args, loc, via=self._get_method_name(call_node))
         lams = self._last_lambdas
         instrs.extend(hoisted)
+        args_exp = self._argv_views(self._lookup_spec(method_name, call_node), args, args_exp)
 
         call_instr = Call(
             loc=loc,
@@ -2676,7 +2803,6 @@ class JavaFrontend:
 
         loc = self._get_location(node)
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
 
@@ -2698,11 +2824,17 @@ class JavaFrontend:
         if before_node:
             proc.connect(before_node.id, loop_head.id)
 
-        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
-        proc.connect(loop_head.id, body_node.id)
+        # The condition is evaluated in the loop head, on every iteration: an assignment in it
+        # (`while ((line = br.readLine()) != null)`) runs there.
+        self._current_node = loop_head
+        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        test = self._current_node or loop_head
 
-        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.LOOP_EXIT))
-        proc.connect(loop_head.id, after_node.id)
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
+        proc.connect(test.id, body_node.id)
+
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.LOOP_EXIT))
+        proc.connect(test.id, after_node.id)
 
         body = node.child_by_field_name("body")
         if body:
@@ -2722,11 +2854,12 @@ class JavaFrontend:
 
         loc = self._get_location(node)
 
-        # Initialize
-        init = node.child_by_field_name("init")
-        if init:
+        # Initialize: a declaration, or expressions (`for (i = 0, j = n; ...)`)
+        for init in node.children_by_field_name("init"):
             if init.type == "local_variable_declaration":
                 self._translate_local_var_declaration(init)
+            else:
+                self._translate_effect(init)
 
         before_node = self._current_node
 
@@ -2742,28 +2875,64 @@ class JavaFrontend:
         if before_node:
             proc.connect(before_node.id, loop_head.id)
 
+        # evaluated in the loop head, on every iteration (an assignment in it runs there)
+        self._current_node = loop_head
         condition = node.child_by_field_name("condition")
         condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        test = self._current_node or loop_head
 
-        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
-        proc.connect(loop_head.id, body_node.id)
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
+        proc.connect(test.id, body_node.id)
 
-        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.FOR_EXIT))
-        proc.connect(loop_head.id, after_node.id)
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.FOR_EXIT))
+        proc.connect(test.id, after_node.id)
 
         body = node.child_by_field_name("body")
+        self._current_node = body_node
         if body:
-            self._current_node = body_node
             self._translate_statement(body)
 
-        # Update
-        update = node.child_by_field_name("update")
-        if update and self._current_node:
-            self._translate_expression_statement(update)
+        # Update: every expression of it (`i++, j--`)
+        for update in node.children_by_field_name("update"):
+            if self._current_node:
+                self._translate_effect(update)
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
 
+        self._current_node = after_node
+
+    def _translate_do(self, node: TSNode) -> None:
+        """`do { body } while (cond);`: the body runs first, then the condition (evaluated after
+        every pass, assignments in it included) chooses between another pass and the exit."""
+        proc = self._current_proc
+        if not proc:
+            return
+        loc = self._get_location(node)
+        before_node = self._current_node
+        body_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(body_node)
+        cond_node = proc.new_node(NodeKind.LOOP_HEAD)
+        proc.add_node(cond_node)
+        cond_node.loop_body_can_exit = body_can_exit_loop(node.child_by_field_name("body"))
+        after_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(after_node)
+        if before_node:
+            proc.connect(before_node.id, body_node.id)
+        self._current_node = body_node
+        body = node.child_by_field_name("body")
+        if body is not None:
+            self._translate_statement(body)
+        if self._current_node:
+            proc.connect(self._current_node.id, cond_node.id)
+        self._current_node = cond_node
+        condition = node.child_by_field_name("condition")
+        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        test = self._current_node or cond_node
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
+        proc.connect(test.id, body_node.id)
+        test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.LOOP_EXIT))
+        proc.connect(test.id, after_node.id)
         self._current_node = after_node
 
     def _translate_enhanced_for(self, node: TSNode) -> None:
@@ -2904,71 +3073,190 @@ class JavaFrontend:
             self._add_instr(Assign(loc=loc, id=PVar(var_name),
                                    exp=self._translate_expression(value_node)))
 
-    def _translate_switch(self, node: TSNode) -> None:
-        """Translate switch with path-sensitive analysis for constant conditions"""
-        # Get the switch condition
+    def _translate_switch(self, node: TSNode, result: Optional[str] = None) -> None:
+        """A switch statement or expression. Each arm (`case X:` group or `case X ->` rule) is a
+        branch from the condition; a group without a `break` falls through into the next, a rule
+        never does. With a condition whose value the method knows (a constant), only the arm it
+        selects runs (or `default`). A switch expression's value is written to `result` by each
+        rule's expression and by `yield`."""
+        proc = self._current_proc
         condition = node.child_by_field_name("condition")
+        body = node.child_by_field_name("body")
+        if proc is None or body is None:
+            return
+        cond_exp = self._hoisted_expression(condition) if condition is not None else ExpConst.null()
         known_value = None
-
         if condition:
             # Check if condition is wrapped in parentheses
             cond_text = self._get_text(condition).strip()
             if cond_text.startswith("(") and cond_text.endswith(")"):
                 cond_text = cond_text[1:-1].strip()
-
             # Check if the condition variable has a known constant value
             if cond_text in self._constant_values:
                 known_value = self._constant_values[cond_text]
 
-        body = node.child_by_field_name("body")
-        if body:
-            for child in body.children:
-                if child.type == "switch_block_statement_group":
-                    # Check if this case matches the known value
-                    should_translate = True
-                    if known_value is not None:
-                        should_translate = False
-                        for stmt in child.children:
-                            if stmt.type == "switch_label":
-                                label_text = self._get_text(stmt).strip()
-                                # Check for "case 'X'" or "case X" or "default"
-                                if label_text == "default":
-                                    # Only translate default if no other case matched
-                                    pass  # Will be handled by should_translate staying False
-                                elif label_text.startswith("case "):
-                                    # Extract the case value - handle: case 'A', case 'B', case 1
-                                    case_match = label_text[5:].strip()  # Remove "case "
-                                    # Remove quotes if present (for char literals like 'A')
-                                    if case_match.startswith("'") and case_match.endswith("'"):
-                                        case_match = case_match[1:-1]
-                                    if case_match == known_value:
-                                        should_translate = True
-                                        break
+        arms = [c for c in body.named_children if c.type in ("switch_block_statement_group", "switch_rule")]
+        labels = [self._arm_labels(a) for a in arms]
+        if known_value is not None and all(values is not None for _, values, _ in labels):
+            # The arm the constant selects (else default), falling through as Java does.
+            start = next((i for i, (_, values, _) in enumerate(labels) if str(known_value) in values), None)
+            if start is None:
+                start = next((i for i, (default, _, _) in enumerate(labels) if default), None)
+            for arm in arms[start:] if start is not None else []:
+                if self._translate_switch_arm(arm, result) or arm.type == "switch_rule":
+                    break
+            return
 
-                    if should_translate:
-                        for stmt in child.children:
-                            if stmt.type not in ("switch_label",):
-                                self._translate_statement(stmt)
+        before = self._current_node
+        loc = self._get_location(node)
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        entries = []
+        for arm, (_, _, patterns) in zip(arms, labels):
+            entry = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(entry)
+            if before is not None:
+                proc.connect(before.id, entry.id)
+            for name in patterns:                      # `case String s ->`: s is the value
+                entry.add_instr(Assign(loc=loc, id=PVar(name), exp=cond_exp))
+            entries.append(entry)
+        if before is not None and not any(default for default, _, _ in labels):
+            proc.connect(before.id, join.id)           # no arm matches
+        for i, arm in enumerate(arms):
+            self._current_node = entries[i]
+            ends = self._translate_switch_arm(arm, result)
+            if self._current_node is None:
+                continue
+            if ends or arm.type == "switch_rule" or i == len(arms) - 1:
+                proc.connect(self._current_node.id, join.id)
+            else:
+                proc.connect(self._current_node.id, entries[i + 1].id)   # falls through
+        self._current_node = join
+
+    def _arm_labels(self, arm: TSNode):
+        """(has a `default` label, the constant label values as text (None when a label is a
+        pattern or not a literal), the names its patterns bind)."""
+        default, values, patterns = False, [], []
+        literal = True
+        for label in (c for c in arm.named_children if c.type == "switch_label"):
+            if self._get_text(label).strip() == "default":
+                default = True
+                continue
+            for v in label.named_children:
+                if v.type == "identifier" and self._get_text(v) == "default":
+                    default = True
+                elif v.type == "pattern":
+                    literal = False
+                    patterns += self._pattern_bindings(v)
+                elif v.type == "guard":
+                    continue
+                elif v.type in ("character_literal", "string_literal"):
+                    values.append(self._get_text(v)[1:-1])
+                elif v.type.endswith("_literal"):
+                    n = self._int_literal(v) if "integer" in v.type else None
+                    values.append(str(n) if n is not None else self._get_text(v))
+                else:
+                    literal = False                    # an enum constant or a named constant
+        return default, (values if literal else None), patterns
+
+    def _translate_switch_arm(self, arm: TSNode, result: Optional[str]) -> bool:
+        """Translate one arm; True when it ends the switch (`break`, `yield`, a rule)."""
+        if arm.type == "switch_rule":
+            body = next((c for c in arm.named_children if c.type != "switch_label"), None)
+            if body is None:
+                return True
+            if result is not None and body.type == "expression_statement":
+                expr = next((c for c in body.named_children
+                             if c.type not in ("line_comment", "block_comment")), None)
+                if expr is not None:                   # `case 1 -> value;`
+                    self._add_instr(Assign(loc=self._get_location(body), id=PVar(result),
+                                           exp=self._assigned_value(expr, self._get_location(body))))
+                return True
+            self._switch_results.append(result)
+            try:
+                self._translate_statement(body)
+            finally:
+                self._switch_results.pop()
+            return True
+        self._switch_results.append(result)
+        try:
+            for stmt in arm.named_children:
+                if stmt.type == "switch_label":
+                    continue
+                if stmt.type == "break_statement":
+                    return True
+                self._translate_statement(stmt)
+                if stmt.type == "yield_statement":
+                    return True
+        finally:
+            self._switch_results.pop()
+        return False
+
+    def _translate_yield(self, node: TSNode) -> None:
+        """`yield v;` gives the enclosing switch expression its value."""
+        result = self._switch_results[-1] if self._switch_results else None
+        expr = next((c for c in node.named_children if c.type not in ("line_comment", "block_comment")), None)
+        if result is not None and expr is not None:
+            loc = self._get_location(node)
+            self._add_instr(Assign(loc=loc, id=PVar(result), exp=self._assigned_value(expr, loc)))
 
     def _translate_throw(self, node: TSNode) -> None:
         """Translate throw: the path leaves the method without a return value
         (the exception object is not what the method returns)."""
         self._add_instr(Return(loc=self._get_location(node), value=None))
 
-    def _shell_command_array(self, node: TSNode) -> Optional[Exp]:
-        """`new String[] {"/bin/sh", "-c", cmd}`: an argument vector that hands `cmd` to a shell is
-        one command string (the elements joined), not separate arguments, so it carries `cmd`'s
-        taint. Any other vector (`{"ping", "-c", "1", host}`) is left as it was."""
-        init = node.child_by_field_name("value")
+    def _argv_views(self, spec: Optional[ProcSpec], args: List[TSNode], args_exp: list) -> list:
+        """A command sink whose argument may be the argument vector itself (`argv_from`:
+        `Runtime.exec(String[])`): its first element is the program, and the other elements are
+        handed to the program as they are, without a shell, unless the program is a shell given
+        a command flag (`{"/bin/sh", "-c", cmd}`), whose next element is a command line
+        (specs/data/shells.toml). At that position the call reads the program and such command
+        lines, not every element (the C frontend reads `execl`'s arguments the same way)."""
+        pos = spec.argv_from if spec is not None and spec.is_taint_sink() else None
+        if pos is None or pos >= len(args) or pos >= len(args_exp):
+            return args_exp
+        elements = self._argv_elements(args[pos])
+        if elements is None:
+            return args_exp
+        out = list(args_exp)
+        out[pos] = (self._argv_command(elements), out[pos][1])
+        return out
+
+    def _argv_elements(self, node: TSNode) -> Optional[List[TSNode]]:
+        """The elements of an argument vector written out: `new String[]{...}`, or a local
+        initialised with one that is never written and read nowhere else."""
+        init = node
+        if node.type == "identifier":
+            name = self._get_text(node)
+            init = self._find_initializer(node, name)
+            scope = init.parent if init is not None else None
+            while scope is not None and scope.type not in ("method_declaration", "constructor_declaration",
+                                                           "lambda_expression", "class_body"):
+                scope = scope.parent
+            if scope is None or scope.type == "class_body":
+                return None
+            uses = [n for n in self._descendants(scope, stop=("class_body",))
+                    if n.type == "identifier" and self._get_text(n) == name]
+            if len(uses) != 2:                        # the declaration and this argument
+                return None
+        if init is not None and init.type == "array_creation_expression":
+            init = init.child_by_field_name("value")
         if init is None or init.type != "array_initializer":
             return None
-        items = [c for c in init.named_children if c.type not in ("line_comment", "block_comment")]
-        if len(items) < 3 or items[0].type != "string_literal" or items[1].type != "string_literal":
-            return None
-        if not is_shell(self._get_text(items[0])[1:-1]) \
-                or self._get_text(items[1])[1:-1].lower() not in shells().command_flags:   # specs/data/shells.toml
-            return None
-        return ExpStringConcat([self._translate_expression(i) for i in items[2:]])
+        return [c for c in init.named_children if c.type not in ("line_comment", "block_comment")]
+
+    def _argv_command(self, elements: List[TSNode]) -> Exp:
+        """What an argument vector runs: the program, plus the element after a shell's command flag."""
+        if not elements:
+            return ExpConst.null()
+        literal = [self._string_literal_value(e) if e.type == "string_literal" else None for e in elements]
+        parts = [elements[0]]
+        if literal[0] is not None and is_shell(literal[0]):
+            flags = shells().command_flags                 # specs/data/shells.toml
+            parts += [elements[i + 1] for i in range(1, len(elements) - 1)
+                      if literal[i] is not None and literal[i].lower() in flags]
+        exps = [self._hoisted_expression(p) for p in parts]
+        return exps[0] if len(exps) == 1 else ExpStringConcat(exps)
 
     def _starts_with_test(self, node: TSNode, args: List[Exp]) -> Optional[Exp]:
         """`next.startsWith("/")` written as a method on the variable (`next.startsWith(...)`),
@@ -3001,11 +3289,9 @@ class JavaFrontend:
         if node.type == "identifier":
             return ExpVar(PVar(self._get_text(node)))
 
-        elif node.type in ("decimal_integer_literal", "hex_integer_literal", "octal_integer_literal"):
-            try:
-                return ExpConst.integer(int(self._get_text(node), 0))
-            except ValueError:
-                return ExpConst.integer(0)
+        elif node.type in ("decimal_integer_literal", "hex_integer_literal", "octal_integer_literal",
+                           "binary_integer_literal"):
+            return ExpConst.integer(self._int_literal(node) or 0)
 
         elif node.type in ("decimal_floating_point_literal", "hex_floating_point_literal"):
             try:
@@ -3090,9 +3376,10 @@ class JavaFrontend:
             return ExpCall(ExpConst.string(f"new {type_name}"), args)
 
         elif node.type == "parenthesized_expression":
-            for child in node.children:
-                if child.type not in ("(", ")"):
+            for child in node.named_children:
+                if child.type not in ("line_comment", "block_comment"):
                     return self._translate_expression(child)
+            return ExpConst.null()
 
         elif node.type == "ternary_expression":
             # Handle ternary: condition ? consequence : alternative
@@ -3109,10 +3396,13 @@ class JavaFrontend:
             elif cond_value is False:
                 # Condition is always false - return alternative (taint doesn't flow through conseq)
                 return self._translate_expression(alt) if alt else ExpConst.null()
-            else:
-                # Can't determine statically - be conservative and return consequence
-                # (could also merge both branches, but that's more complex)
-                return self._translate_expression(conseq) if conseq else ExpConst.null()
+            # Either branch's value, never the condition's: the translator folds the condition
+            # over the constants the path knows, else takes the taint of either branch. Bound to a
+            # temporary first, where the translator reads a conditional value wherever it is
+            # written (a sink argument, a concatenation, a return).
+            return self._hoist_value(node, "$tern", lambda: ExpTernary(
+                self._condition_expression(cond), self._translate_expression(conseq),
+                self._translate_expression(alt)))
 
         elif node.type == "cast_expression":
             value = node.child_by_field_name("value")
@@ -3122,12 +3412,125 @@ class JavaFrontend:
             return ExpVar(PVar("this"))
 
         elif node.type == "array_creation_expression":
-            shell = self._shell_command_array(node)
-            if shell is not None:
-                return shell
+            # `new String[]{a, b}` holds its elements; `new byte[n]` holds no data yet (its size
+            # is an allocation sink of its own, see _allocation_size_sinks)
+            init = node.child_by_field_name("value")
+            return self._translate_expression(init) if init is not None else ExpConst.null()
 
-        # Default
+        elif node.type == "array_initializer":
+            # `{a, "b"}`: the array carries every element's data (it used to be a variable named
+            # by its text, which only a brace-splitting rule in the translator read, and no
+            # element that was itself an expression)
+            elements = self._array_elements(node)
+            return ExpStringConcat(elements) if elements else ExpConst.null()
+
+        elif node.type == "assignment_expression":
+            # `a = b = x`, `(line = br.readLine()) != null`: the assignment happens where the
+            # expression is evaluated, and the expression's value is the target's new value
+            key = (node.start_byte, node.end_byte)
+            if key not in self._evaluated and self._current_node is not None:
+                self._evaluated.add(key)
+                self._translate_assignment(node)
+            return self._translate_expression(node.child_by_field_name("left"))
+
+        elif node.type == "update_expression":
+            # `a[i++]`: the variable's value (the increment is emitted where it is evaluated)
+            key = (node.start_byte, node.end_byte)
+            if key not in self._evaluated and self._current_node is not None:
+                self._evaluated.add(key)
+                self._translate_update(node)
+            operand = next((c for c in node.named_children), None)
+            return self._translate_expression(operand) if operand is not None else ExpConst.null()
+
+        elif node.type == "switch_expression":
+            # `x = switch (k) { case 1 -> a; default -> b; }`: the arms are branches that each write
+            # the switch's value into a temporary (evaluated once, where the expression is)
+            key = (node.start_byte, node.end_byte)
+            tmp = self._hoisted_values.get(key)
+            if tmp is None and self._current_node is not None and self._current_proc is not None:
+                tmp = f"$sw{self._ident_counter}"
+                self._ident_counter += 1
+                self._hoisted_values[key] = tmp
+                self._add_instr(Assign(loc=self._get_location(node), id=PVar(tmp), exp=ExpConst.null()))
+                self._translate_switch(node, result=tmp)
+            if tmp is not None:
+                return ExpVar(PVar(tmp))
+
+        elif node.type == "instanceof_expression":
+            # `o instanceof String s`: the pattern binds s to o's value; bound where the test is
+            # evaluated (s is only in scope where the test held, so this is the value it has
+            # there). A record pattern binds each of its components to a part of o.
+            left = node.child_by_field_name("left")
+            left_exp = self._translate_expression(left)
+            key = (node.start_byte, node.end_byte)
+            if key not in self._evaluated and self._current_node is not None:
+                self._evaluated.add(key)
+                loc = self._get_location(node)
+                for name in self._pattern_bindings(node):
+                    self._add_instr(Assign(loc=loc, id=PVar(name), exp=left_exp))
+            right = node.child_by_field_name("right") or node.child_by_field_name("pattern")
+            return ExpBinOp("instanceof", left_exp, ExpConst.string(self._get_text(right).split("(")[0].strip()))
+
+        # Default: the node's source text as a variable name. The data such a node carries is
+        # lost, so each node type that reaches here is recorded (`Program.unlowered_syntax`,
+        # held to an allowlist by tests/test_lowering_coverage_java.py).
+        self._unlowered[node.type] = self._unlowered.get(node.type, 0) + 1
         return ExpVar(PVar(self._get_text(node))) if self._get_text(node) else ExpConst.null()
+
+    def _condition_expression(self, node: Optional[TSNode]) -> Exp:
+        """A condition as an `if` lowers it: calls stay in the expression (`ALLOWED.contains(x)`),
+        where the translator reads what a guard proves, even inside a call's arguments."""
+        outer, self._in_call_args = self._in_call_args, False
+        try:
+            return self._translate_expression(node)
+        finally:
+            self._in_call_args = outer
+
+    def _int_literal(self, node: TSNode) -> Optional[int]:
+        """The value of a Java integer literal (`0x1F`, `0b101`, `017` octal, `1_000L`)."""
+        text = self._get_text(node).replace("_", "").rstrip("lL")
+        try:
+            if node.type == "octal_integer_literal" or (len(text) > 1 and text[0] == "0" and text.isdigit()):
+                return int(text, 8)
+            return int(text, 0)
+        except ValueError:
+            return None
+
+    def _array_elements(self, init: TSNode) -> List[Exp]:
+        """The elements of an array initializer, calls inside them lowered as calls."""
+        return [self._hoisted_expression(c) for c in init.named_children
+                if c.type not in ("line_comment", "block_comment")]
+
+    def _pattern_bindings(self, node: TSNode) -> List[str]:
+        """The names an instanceof pattern binds (`String s`, `Point(int x, var y)`, nested
+        record patterns), from the syntax tree."""
+        name = node.child_by_field_name("name")
+        if name is not None:
+            return [self._get_text(name)]
+        out: List[str] = []
+        for n in self._descendants(node, stop=("argument_list", "lambda_expression", "class_body")):
+            if n.type in ("type_pattern", "record_pattern_component") and n.named_children:
+                last = n.named_children[-1]
+                if last.type == "identifier":
+                    out.append(self._get_text(last))
+        return out
+
+    def _hoist_value(self, node: TSNode, prefix: str, build) -> Exp:
+        """`build()` bound to a temporary assigned right before the statement that uses the
+        value (once per node), so the translator reads it as an assignment's value; inline when
+        there is no statement to precede (no current node)."""
+        key = (node.start_byte, node.end_byte)
+        tmp = self._hoisted_values.get(key)
+        if tmp is not None:
+            return ExpVar(PVar(tmp))
+        exp = build()
+        if self._current_node is None or self._current_proc is None:
+            return exp
+        tmp = f"{prefix}{self._ident_counter}"
+        self._ident_counter += 1
+        self._hoisted_values[key] = tmp
+        self._add_instr(Assign(loc=self._get_location(node), id=PVar(tmp), exp=exp))
+        return ExpVar(PVar(tmp))
 
     # =========================================================================
     # Helpers
@@ -3260,11 +3663,42 @@ class JavaFrontend:
 
         return None
 
+    @staticmethod
+    def _call_object(node: Optional[TSNode]) -> Optional[TSNode]:
+        """The receiver a call is made on, without the parentheses and casts written around it
+        (`((HttpServletRequest) req).getHeader(h)` is a call on `req`)."""
+        obj = node.child_by_field_name("object") if node is not None else None
+        while obj is not None and obj.type in ("parenthesized_expression", "cast_expression"):
+            obj = obj.child_by_field_name("value") if obj.type == "cast_expression" else \
+                next((c for c in obj.named_children if c.type not in ("line_comment", "block_comment")), None)
+        return obj
+
+    def _receiver_cast_type(self, node: Optional[TSNode]) -> Optional[str]:
+        """The type a call's receiver is cast to (the outermost cast), which is its static type at
+        the call (`((HttpServletRequest) req).getHeader(h)`: HttpServletRequest)."""
+        obj = node.child_by_field_name("object") if node is not None else None
+        while obj is not None and obj.type == "parenthesized_expression":
+            obj = next((c for c in obj.named_children if c.type not in ("line_comment", "block_comment")), None)
+        if obj is not None and obj.type == "cast_expression":
+            return self._type_name(obj.child_by_field_name("type"))
+        return None
+
+    _DOT_SPACE = re.compile(r"\s*\.\s*")
+
+    def _dotted_text(self, node: Optional[TSNode]) -> str:
+        """A receiver's text as a name: a chain written over several lines
+        (`org.owasp\\n    .esapi.ESAPI.encoder()`) is the same name as on one line. Text holding a
+        literal or a comment is left as written."""
+        text = self._get_text(node)
+        if any(q in text for q in ('"', "'", "//", "/*")):
+            return text
+        return self._DOT_SPACE.sub(".", text)
+
     def _get_method_name(self, node: TSNode) -> str:
         name = node.child_by_field_name("name")
-        obj = node.child_by_field_name("object")
+        obj = self._call_object(node)
         if obj and name:
-            return f"{self._get_text(obj)}.{self._get_text(name)}"
+            return f"{self._dotted_text(obj)}.{self._get_text(name)}"
         elif name:
             return self._get_text(name)
         return ""

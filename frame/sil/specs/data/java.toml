@@ -596,33 +596,42 @@ name = "Class.getResourceAsStream"
 is_sink = "filesystem"
 description = "ClassLoader.getResourceAsStream (path traversal)"
 
+# `exec(String[] cmdarray, ...)`: argument 0 may be the argument vector itself (`argv_from = 0`).
+# Its first element is the program and the others are handed to it as they are, with no shell, so
+# only the program and the element after a shell's command flag (`{"/bin/sh", "-c", cmd}`,
+# shells.toml) are command lines; argument 1 is the environment.
 [[spec]]
 name = "Runtime.exec"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 0
 description = "Runtime.exec (command injection)"
 
 [[spec]]
 name = "Runtime.getRuntime().exec"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 0
 description = "Runtime.exec (command injection)"
 
+# ProcessBuilder(String...) and command(String...): every argument (argument injection is reported
+# as command injection, see CLAUDE.md "Known limits").
 [[spec]]
 name = "ProcessBuilder"
 is_sink = "command"
-sink_args = [0, 1, 2, 3]
+sink_args = [0, 1, 2, 3, 4, 5, 6, 7]
 description = "ProcessBuilder (command injection)"
 
 [[spec]]
 name = "new ProcessBuilder"
 is_sink = "command"
-sink_args = [0, 1, 2, 3]
+sink_args = [0, 1, 2, 3, 4, 5, 6, 7]
 description = "ProcessBuilder (command injection)"
 
 [[spec]]
 name = "ProcessBuilder.command"
 is_sink = "command"
+sink_args = [0, 1, 2, 3, 4, 5, 6, 7]
 description = "ProcessBuilder.command (command injection)"
 
 [[spec]]
@@ -1130,6 +1139,27 @@ description = "StringBuilder.append"
 name = "StringBuffer.append"
 taint_propagates = [0]
 description = "StringBuffer.append"
+
+# insert(offset, value) / replace(start, end, str): the value written into the builder
+[[spec]]
+name = "StringBuilder.insert"
+taint_propagates = [1]
+description = "StringBuilder.insert"
+
+[[spec]]
+name = "StringBuffer.insert"
+taint_propagates = [1]
+description = "StringBuffer.insert"
+
+[[spec]]
+name = "StringBuilder.replace"
+taint_propagates = [2]
+description = "StringBuilder.replace"
+
+[[spec]]
+name = "StringBuffer.replace"
+taint_propagates = [2]
+description = "StringBuffer.replace"
 
 [[spec]]
 name = "Integer.parseInt"
@@ -1870,15 +1900,21 @@ name = "String.substring"
 taint_propagates = [0]
 description = "String.substring"
 
+# replace(target, replacement): the replacement is spliced into the result
 [[spec]]
 name = "String.replace"
-taint_propagates = [0]
+taint_propagates = [0, 1]
 description = "String.replace"
 
 [[spec]]
 name = "String.replaceAll"
-taint_propagates = [0]
+taint_propagates = [0, 1]
 description = "String.replaceAll"
+
+[[spec]]
+name = "String.replaceFirst"
+taint_propagates = [0, 1]
+description = "String.replaceFirst"
 
 [[spec]]
 name = "String.toLowerCase"

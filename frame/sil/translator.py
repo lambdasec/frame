@@ -1580,9 +1580,12 @@ class SILTranslator:
                 # A change in what the path knows also reopens the node, a few times: the
                 # back edge of `for (i = 0; i < 3; i++)` weakens `i == 0`, and only then is
                 # the loop's exit feasible. Without it nothing after such a loop was analysed.
-                if not state_changed and fact_reopens.get(node_id, 0) < 3 and \
-                        {str(c) for c in old_state.feasibility_constraints} != \
-                        {str(c) for c in merged_state.feasibility_constraints}:
+                # A constant the back edge makes unknown reopens it the same way: the head's
+                # condition was folded with `i == 0`, which skipped the exit successor.
+                if not state_changed and fact_reopens.get(node_id, 0) < 3 and (
+                        {str(c) for c in old_state.feasibility_constraints} !=
+                        {str(c) for c in merged_state.feasibility_constraints}
+                        or old_state.constants != merged_state.constants):
                     fact_reopens[node_id] = fact_reopens.get(node_id, 0) + 1
                     state_changed = True
                 state = merged_state
@@ -4067,8 +4070,14 @@ class SILTranslator:
             if len(branches) == 1:
                 return self._exec_assign(Assign(loc=instr.loc, id=instr.id, exp=branches[0]), state, proc_name)
             # each arm's attacker data with what that arm sanitized it for (`int(q) if q else 0`
-            # is a number: the sanitizer call in the arm counts, not only the variable's own)
-            leaves = [leaf for b in branches for leaf in self._arg_taint_leaves(b, state)]
+            # is a number: the sanitizer call in the arm counts), read under what the condition
+            # proves on that arm, as on an `if` edge (`ALLOWED.contains(s) ? s : "id"`)
+            leaves = []
+            for arm, truth in ((instr.exp.true_exp, True), (instr.exp.false_exp, False)):
+                guarded = self._apply_branch_guards(state.copy(), instr.exp.condition, truth)
+                leaves += self._arg_taint_leaves(arm, guarded)
+            leaves.sort(key=lambda leaf: leaf[0].source_kind == TaintKind.WEAK_RANDOM)
+            state.sanitized.pop(target, None)
             if leaves:
                 info = leaves[0][0]
                 state.add_taint(target, TaintInfo(

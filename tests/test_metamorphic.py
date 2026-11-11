@@ -85,17 +85,26 @@ PY_TRANSFORMS = {
 PY_TRANSFORMS = {k: v for k, v in PY_TRANSFORMS.items() if v is not None}
 # Sink arguments written inline (the value never passes through a variable).
 PY_INLINE = {
+    "match-capture": "match q:\n        case other:\n            os.system('ping ' + other)",
+    "list-literal-order": "os.system(' '.join(['ping', q]))",
+    "subscript-augmented": "d = {'c': 'ping '}\n    d['c'] += q\n    os.system(d['c'])",
+    "lambda-body": "run = lambda c: os.system(c)\n    run(q)",
     "format-keyword-inline": 'os.system("ping {h}".format(h=q))',
     "conditional-inline": 'os.system("ping " + (q if q else "x"))',
     "receiver-call-statement": "sqlite3.connect('x.db').cursor().execute(\"SELECT '\" + q + \"'\")",
 }
 PY_INLINE_CWE = {"format-keyword-inline": "CWE-78", "conditional-inline": "CWE-78",
-                 "receiver-call-statement": "CWE-89"}
+                 "receiver-call-statement": "CWE-89", "match-capture": "CWE-78",
+                 "list-literal-order": "CWE-78", "subscript-augmented": "CWE-78", "lambda-body": "CWE-78"}
 
 KNOWN_GAPS = {
     ("python", "dict-key"): "a dict literal lowers to null (no per-key values yet)",
     ("python", "dict-get"): "a dict literal lowers to null (no per-key values yet)",
     ("python", "partial"): "calling a functools.partial object written inline is not resolved",
+    ("python", "match-capture"): "match capture/sequence/mapping patterns bind nothing yet",
+    ("python", "list-literal-order"): "a list literal lowers to its first element: ' '.join(['ping', q]) loses q",
+    ("python", "subscript-augmented"): "`d['k'] += q`: the augmented target is taken as text",
+    ("python", "lambda-body"): "a lambda's body is not a procedure: `run = lambda c: os.system(c)`",
 }
 
 
