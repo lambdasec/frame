@@ -542,6 +542,11 @@ class Assign(Instr):
     # signal that the target has no reaching definition yet (drives CWE-457).
     is_uninit_decl: bool = False
 
+    # True when the target is a field path that names exactly one location (C/C++: `s.f` of a
+    # local struct, set by the C frontend), so the write replaces what the field held (a strong
+    # update, as for a plain local). Other field paths may stand for more than one location.
+    strong_update: bool = False
+
     def __str__(self) -> str:
         return f"{self.id} = {self.exp}"
 

@@ -2268,6 +2268,8 @@ class SILTranslator:
         """`Job(v)` (Python) / `new Job(v)` (JS): the class's constructor, resolved the way
         `Job.__init__(...)` / `Job.constructor(...)` would be."""
         lang = (getattr(self.program, "language", "") or "").lower()
+        if lang == "cpp":
+            return self._cpp_constructor(func_name)
         ctor = {"python": "__init__", "javascript": "constructor", "typescript": "constructor"}.get(lang)
         if ctor is None:
             return None
@@ -2286,6 +2288,28 @@ class SILTranslator:
         if proc is None or proc.simple_name != ctor or not self._plain_callee(proc):
             return None
         return Callee(ref, proc)
+
+    def _cpp_constructor(self, func_name: str) -> Optional[Callee]:
+        """C++ `Runner r(q)` / `Runner(q)` / `new Runner(q)` (lowered as a call of `Runner`): the
+        constructor `Runner::Runner` of a class this file defines, when it is the class's only
+        one (with overloads the arguments' types would choose, which the IR does not carry)."""
+        cls = func_name[len("new "):] if func_name.startswith("new ") else func_name
+        if not cls or "." in cls:
+            return None
+        simple = cls.rsplit("::", 1)[-1]
+        name = f"{cls}::{simple}"
+        local = self.program.procedures.get(name)
+        if local is None or f"{name}#2" in self.program.procedures or not local.is_method \
+                or local.class_name != simple or not self._plain_callee(local):
+            return None
+        return Callee((self._file_key, local.name), local)
+
+    def _is_constructor(self, proc: Procedure, func_name: str) -> bool:
+        """Is this callee a constructor (the call creates its receiver)?"""
+        if proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
+            return True
+        return (getattr(self.program, "language", "") or "").lower() == "cpp" and proc.is_method \
+            and bool(proc.class_name) and proc.simple_name == proc.class_name.rsplit("::", 1)[-1]
 
     @property
     def _cur_ref(self) -> ProcRef:
@@ -2546,9 +2570,17 @@ class SILTranslator:
     def _argument_field_leaves(self, arg_exp: Exp, state: SymbolicState):
         """Java: the fields of an object passed as an argument that carry attacker data
         (`c.setName(x); dao.find(c)`): the callee's parameter starts with the same fields
-        tainted (`p.name`), so a getter called on it there returns them."""
-        if (getattr(self.program, "language", "") or "").lower() != "java" \
-                or not isinstance(arg_exp, ExpVar) or not _PLAIN_LOCAL.match(str(arg_exp.var)):
+        tainted (`p.name`), so a getter called on it there returns them. C/C++: a struct passed
+        by value, by reference or by its address (`go(&c)`): the callee's `p->cmd` / `p.cmd` is
+        the caller's `c.cmd` (both are the path `p.cmd`)."""
+        lang = (getattr(self.program, "language", "") or "").lower()
+        if self._is_c_lang:
+            arg_exp = self._cast_strip(arg_exp)
+            if isinstance(arg_exp, ExpUnOp) and arg_exp.op == "&":
+                arg_exp = self._cast_strip(arg_exp.operand)
+        elif lang != "java":
+            return []
+        if not isinstance(arg_exp, ExpVar) or not _PLAIN_LOCAL.match(str(arg_exp.var)):
             return []
         prefix = f"{arg_exp.var}."
         return [(key[len(prefix):], self._arg_taint_leaves(ExpVar(PVar(key)), state))
@@ -3424,7 +3456,7 @@ class SILTranslator:
     def _call_receiver(self, callee: Callee, instr: Call, func_name: str) -> Optional[str]:
         """The local variable a call acts on: the new object for a constructor, else
         `x` in `x.m(...)`."""
-        if callee.proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
+        if self._is_constructor(callee.proc, func_name):
             return str(instr.ret[0]) if instr.ret else None
         head = func_name.rpartition(".")[0]
         if not head and self._implicit_this_call(callee):
@@ -3659,6 +3691,7 @@ class SILTranslator:
         if not self._is_c_lang or not summary.param_fields:
             return
         for (arg, _), param in zip(instr.args, self._call_params(callee.proc, func_name)):
+            self._apply_filled_fields(callee, summary.param_fields.get(param, {}), arg, param, state)
             filled = summary.param_fields.get(param, {}).get("")
             var = self._sole_var(self._cast_strip(arg)) if filled is not None else None
             if var is None:
@@ -3671,13 +3704,43 @@ class SILTranslator:
             if kinds:
                 state.add_sanitization(var, sorted(kinds))
 
+    def _apply_filled_fields(self, callee: Callee, fields: Dict[str, Tuple[TaintInfo, Set[str]]], arg: Exp,
+                             param: str, state: SymbolicState) -> None:
+        """C/C++: `fill(&c)` where fill sets `p->cmd` from attacker data (`param_fields[p]["cmd"]`):
+        the caller's `c.cmd` holds it. Only for an argument naming the struct (`&c`, or `c` when
+        the parameter is a pointer or reference), whose field path is the callee's."""
+        if not fields:
+            return
+        exp = self._cast_strip(arg)
+        if isinstance(exp, ExpUnOp) and exp.op == "&":
+            exp = self._cast_strip(exp.operand)
+        else:
+            # the parameter must be declared through a pointer or reference declarator (C frontend:
+            # `scalar_types` holds the parameters declared as a plain name, i.e. by value)
+            if param not in (callee.proc.param_types or {}) or param in (callee.proc.scalar_types or {}):
+                return          # a struct passed by value: the callee wrote its own copy
+        if not isinstance(exp, ExpVar) or not _PLAIN_LOCAL.match(str(exp.var)):
+            return
+        for fld, (info, kinds) in fields.items():
+            if not fld or not _PLAIN_LOCAL.match(fld):
+                continue
+            key = f"{exp.var}.{fld}"
+            state.add_taint(key, TaintInfo(
+                source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
+                source_location=info.source_location,
+                propagation_path=list(info.propagation_path) + [f"{callee.ref[1]}({param}.{fld})"]))
+            if kinds:
+                state.add_sanitization(key, sorted(kinds))
+            else:
+                state.sanitized.pop(key, None)
+
     def _record_field_entry_taints(self, callee: Callee, instr: Call, func_name: str,
                                    state: SymbolicState) -> None:
         """A method called on an object whose fields carry attacker data starts with
         those fields tainted (`job.go()` after `new Job(v)`). Only while summarising."""
         if not self._ipa_summarising or not callee.proc.is_method:
             return
-        if callee.proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
+        if self._is_constructor(callee.proc, func_name):
             return
         recv = self._call_receiver(callee, instr, func_name)
         if recv is None:
@@ -3750,7 +3813,7 @@ class SILTranslator:
                                at: str) -> List[Tuple[TaintInfo, Set[str]]]:
         """A getter's return (`return self.val`, summary key `self.val`) called as `b.get()`:
         the caller's `b.val`, sanitized as the getter left it."""
-        if not callee.proc.is_method or callee.proc.simple_name in self._CONSTRUCTOR_NAMES:
+        if not callee.proc.is_method or self._is_constructor(callee.proc, ""):
             return []
         out: List[Tuple[TaintInfo, Set[str]]] = []
         for key in summary.params:
@@ -4116,8 +4179,11 @@ class SILTranslator:
         # before (taint, sanitization, asserted safety) is gone unless the new value
         # reads it (`x = x + y`). `if (bad(next)) next = "/home";` leaves next clean.
         # Fields and elements are left alone: the name may stand for more than one
-        # location.
-        if _PLAIN_LOCAL.match(target) and target not in source_vars:
+        # location, unless the frontend says it names one (`strong_update`: a C/C++ field of
+        # a local struct, `s.cmd = "ls"` after `s.cmd = q`).
+        strong_field = instr.strong_update and not any(
+            v.split(".")[0] == target.split(".")[0] for v in source_vars)
+        if (_PLAIN_LOCAL.match(target) and target not in source_vars) or strong_field:
             state.tainted.pop(target, None)
             state.sanitized.pop(target, None)
             state.asserted_safe.pop(target, None)
@@ -8279,6 +8345,12 @@ class SILTranslator:
         `x#uninit == 1` / `== 0`. A pure function of its arguments, so it can be
         replayed from a merged state."""
         drop = set(instr.get_written_vars()) | self._havoc_vars(instr, pc)
+        if drop and pc and self._is_c_lang:
+            # a field path's facts (`s.p == nil`) describe the struct the base names: writing
+            # the base (or a pointer through which it may be written) changes them too
+            fields = {v for fact in pc for v in fact.free_vars()
+                      if "." in v and any(v.startswith(d + ".") for d in drop)}
+            drop |= fields
         if ghosts and drop:
             drop |= {v + self._CHECKED_GHOST for v in drop}      # a rewritten path is not the checked one
         if drop and pc:
@@ -8996,6 +9068,26 @@ class SILTranslator:
             return self._deref_base(exp.base)
         return None
 
+    def _deref_field_pointer(self, exp: Exp) -> Optional[str]:
+        """C/C++: the pointer a dereference reads through when it is a field of a struct value
+        (`*s.p`, `s.p[i]`, `s.a.p->f`): the dotted path `s.p` that the path facts track (an
+        assignment `s.p = NULL` is the fact `s.p == nil`). Reached through `->` anywhere in the
+        chain the path is not one value of a local, and `_deref_base` answers instead."""
+        while isinstance(exp, ExpCast):
+            exp = exp.exp
+        if isinstance(exp, ExpBinOp) and exp.op in ("+", "-"):
+            exp = exp.left
+            while isinstance(exp, ExpCast):
+                exp = exp.exp
+        if not isinstance(exp, ExpFieldAccess):
+            return None
+        cur = exp
+        while isinstance(cur, ExpFieldAccess):
+            if cur.is_arrow:
+                return None
+            cur = cur.base
+        return self._field_path(exp) if isinstance(cur, ExpVar) else None
+
     def _walk_exp(self, exp: Exp):
         """Yield `exp` and every sub-expression, depth first."""
         if not isinstance(exp, Exp):
@@ -9021,7 +9113,7 @@ class SILTranslator:
         bases: Dict[str, object] = {}
 
         def add(e):
-            b = self._deref_base(e)
+            b = self._deref_field_pointer(e) or self._deref_base(e)
             if b:
                 bases.setdefault(b, instr.loc)
 

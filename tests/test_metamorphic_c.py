@@ -16,7 +16,10 @@ finding must survive; the same transform applied to a constant must stay clean, 
 buy recall with noise. A guard written inside each construct must still clear the flow.
 
 A transform Frame does not handle yet is in KNOWN_GAPS with the reason, as a strict xfail: fixing
-it makes the test pass and CI asks for the entry to be removed.
+it makes the test pass and CI asks for the entry to be removed. None is left: macro expansion, field
+strong updates and path facts, struct fields through pointer arguments, lambda captures, constructor
+and setter members, container elements and `using` resolution each have positives and their nearest
+safe twins below.
 """
 
 import re
@@ -64,6 +67,9 @@ C_TRANSFORMS = {
     "struct-initializer": ["struct S s = { .name = q, .n = 1 };", "char *v = s.name;"],
     "struct-positional-initializer": ["struct S s = { q, NULL, 0 };", "char *v = s.name;"],
     "chained-field-assignment": ["struct S s;", "char *v = s.name = q;"],
+    "field-overwritten-on-one-branch": ["struct S s;", 's.name = "x";', "if (n) s.name = q;", "char *v = s.name;"],
+    "field-overwritten-then-tainted": ["struct S s;", "s.name = q;", 's.name = "x";', "s.name = q;",
+                                       "char *v = s.name;"],
     "array-of-strings": ['char *arr[2] = {q, "x"};', "char *v = arr[0];"],
     "array-of-calls": ['char *arr[2] = {getenv("Q"), "x"};', "char *v = arr[0];"],
     "array-element-write": ["char *arr[2];", "arr[0] = q;", "char *v = arr[0];"],
@@ -118,18 +124,7 @@ C_INLINE = {
     "function-macro": ("RUN(q);", "CWE-78"),
 }
 
-KNOWN_GAPS = {
-    "function-macro": "a function-like macro is not expanded: `RUN(q)` with `#define RUN(x) system(x)` is a call "
-                      "of an unknown RUN",
-    "cpp-lambda-capture": "a lambda's captured variables carry no taint into its body or out of its return",
-    "cpp-constructor-field": "C++ field taint does not cross a call: a value a constructor or setter stores in a "
-                             "member is not seen by another method called afterwards",
-    "cpp-container-element": "container element writes (`push_back`, `insert`) are not modelled",
-    "cpp-using-namespace": "a call is not resolved through a `using namespace` directive",
-    "field-null-path-fact": "path facts are kept for variables, not fields: `s.p = NULL; *s.p = 1;` is not "
-                            "proved a null dereference",
-    "field-strong-update": "a field write is a weak update in the translator (the dotted name may stand for "
-                           "more than one location): an overwrite with a constant leaves the old taint",
+KNOWN_GAPS: dict = {
 }
 
 
@@ -202,6 +197,13 @@ C_SAFE = {
     "field-constant": ["struct S s;", 's.name = "ls";', "system(s.name);"],
     "store-through-alias-constant": ["char *w = q;", "char **pp = &w;", '*pp = "ls";', "system(w);"],
     "field-strong-update": ["struct S s;", "s.name = q;", 's.name = "ls";', "system(s.name);"],
+    # `p->name` with `p = &s` is `s.name`: one location, overwritten
+    "field-strong-update-through-pointee": ["struct S s;", "struct S *p = &s;", "p->name = q;", 'p->name = "ls";',
+                                            "system(s.name);"],
+    # a macro whose expansion runs a constant / checks its argument first
+    "macro-ignores-argument": ['#define SAFE_RUN(x) system("ls")', "SAFE_RUN(q);"],
+    "macro-guarded": ['#define RUN_STATUS(x) do { if (strcmp(x, "status") == 0) system(x); } while (0)',
+                      "RUN_STATUS(q);"],
 }
 
 
@@ -229,6 +231,8 @@ C_MEMORY = {
     "uninit-labeled": (["int x;", "L: return x;"], "CWE-457"),
     "leak-on-goto": (["char *p = malloc(10);", "if (n) goto out;", "free(p);", "out:", "return 1;"], "CWE-401"),
     "field-null-path-fact": (["struct { char *p; } s;", "s.p = NULL;", "*s.p = 1;"], "CWE-476"),
+    "field-null-subscript": (["struct { char *p; } s;", "s.p = NULL;", "s.p[0] = 1;"], "CWE-476"),
+    "field-null-arrow": (["struct S s;", "s.next = NULL;", "s.next->n = 1;"], "CWE-476"),
 }
 C_MEMORY_SAFE = {
     "free-reallocated": (["char *p = malloc(10);", "free(p);", "p = malloc(10);", "if (!p) return 1;",
@@ -241,6 +245,13 @@ C_MEMORY_SAFE = {
     "init-after-goto": (["int x;", "goto L;", "L:", "x = 1;", "return x;"], "CWE-457"),
     "freed-after-label": (["char *p = malloc(10);", "if (n) goto out;", "p[0] = 1;", "out:", "free(p);"], "CWE-401"),
     "void-cast-free-no-leak": (["char *p = malloc(10);", "(void)free(p);"], "CWE-401"),
+    # the field's null fact is decided per path, and forgotten when the field or its struct changes
+    "field-null-checked": (["struct { char *p; } s;", "s.p = NULL;", "if (s.p) *s.p = 1;"], "CWE-476"),
+    "field-reassigned": (["struct { char *p; } s;", "s.p = NULL;", "s.p = buf;", "*s.p = 1;"], "CWE-476"),
+    "field-struct-reassigned": (["struct S s, t;", "s.name = NULL;", "t.name = buf;", "s = t;", "*s.name = 1;"],
+                                "CWE-476"),
+    "field-struct-escapes": (["struct S s;", "s.name = NULL;", "struct S *p = &s;", "p->next = NULL;",
+                              "scanf(\"%p\", &s.name);", "*s.name = 1;"], "CWE-476"),
 }
 
 
@@ -327,6 +338,18 @@ CPP_CALLS = {
     "cpp-lambda-capture": ["auto f = [&]() { return q; };", "system(f());"],
     "cpp-constructor-field": ["Runner r(q);", "r.go();"],
     "cpp-container-element": ["std::vector<std::string> xs;", "xs.push_back(q);", "system(xs[0].c_str());"],
+    "lambda-copy-capture": ["auto f = [q]() { system(q); };", "f();"],
+    "lambda-default-copy-capture": ["auto f = [=]() { system(q); };", "f();"],
+    "lambda-init-capture": ["auto f = [c = q]() { system(c); };", "f();"],
+    "lambda-returns-captured": ["auto f = [q]() { return q; };", "const char *v = f();", "system(v);"],
+    "setter-field": ['Runner r("x");', "r.set(q);", "r.go();"],
+    "container-emplace-back": ["std::vector<std::string> xs;", "xs.emplace_back(q);", "system(xs.at(0).c_str());"],
+    "container-insert": ["std::vector<std::string> xs;", "xs.insert(xs.end(), q);", "system(xs.front().c_str());"],
+    "container-range-for": ["std::vector<std::string> xs;", "xs.push_back(q);", "for (const auto &x : xs) {",
+                            "    system(x.c_str());", "}"],
+    "container-deque-front": ["std::deque<std::string> xs;", "xs.push_front(q);", "system(xs.front().c_str());"],
+    "map-subscript-write": ["std::map<std::string, std::string> m;", 'm["k"] = q;', 'system(m["k"].c_str());'],
+    "map-insert": ["std::map<std::string, std::string> m;", 'm.insert({"k", q});', 'system(m.at("k").c_str());'],
 }
 CPP_SAFE = {
     "guard-in-try": ["try {", '    if (strcmp(q, "status") != 0) return 1;', "} catch (...) {", "    return 1;", "}",
@@ -336,6 +359,11 @@ CPP_SAFE = {
                              "default: break;", "}"],
     "throw-guard": ['if (strcmp(q, "status") != 0) throw 1;', "system(q);"],
     "lambda-given-constant": ["auto f = [](const char *c) { system(c); };", 'f("ls");'],
+    # a lambda reads only what it captures: q is not captured, its own constant is run
+    "lambda-captures-other": ['const char *k = "ls";', "auto f = [k]() { system(k); };", "f();"],
+    # another container holds the attacker's element
+    "container-other": ["std::vector<std::string> xs, ys;", "xs.push_back(q);", 'ys.push_back("ls");',
+                        "system(ys[0].c_str());"],
 }
 # A default-constructed object is not a null pointer.
 CPP_OBJECTS = {
@@ -417,12 +445,74 @@ void run(void) { struct C c; c.cmd = getenv("Q"); go(&c); }'''),
 struct C { char *cmd; };
 static void fill(struct C *c) { c->cmd = getenv("Q"); }
 void run(void) { struct C c; fill(&c); system(c.cmd); }'''),
+    "c-field-by-value-argument": ("c", '''#include <stdlib.h>
+struct C { char *cmd; };
+static void go(struct C c) { system(c.cmd); }
+void run(void) { struct C c; c.cmd = getenv("Q"); go(c); }'''),
+    "c-value-macro": ("c", '''#include <stdlib.h>
+#define INPUT() getenv("Q")
+void run(void) { char *v = INPUT(); system(v); }'''),
+    "c-statement-macro": ("c", '''#include <stdlib.h>
+#define SH(c) do { if (c) system(c); } while (0)
+void run(void) { SH(getenv("Q")); }'''),
+    "c-nested-macro": ("c", '''#include <stdlib.h>
+#define INNER(x) system(x)
+#define OUTER(x) INNER(x)
+void run(void) { OUTER(getenv("Q")); }'''),
+    "c-pasting-macro": ("c", '''#include <stdlib.h>
+#define CALL(f, ...) f(__VA_ARGS__)
+#define SYS(x) sys ## tem(x)
+void run(void) { CALL(SYS, getenv("Q")); }'''),
+    "cpp-using-declaration": ("cpp", '''#include <cstdlib>
+namespace ns { void sh(const char *c) { system(c); } }
+using ns::sh;
+void run() { sh(std::getenv("Q")); }'''),
+    "cpp-using-namespace": ("cpp", '''#include <cstdlib>
+namespace ns { void sh(const char *c) { system(c); } }
+void run() { using namespace ns; sh(std::getenv("Q")); }'''),
 }
-KNOWN_GAPS.update({
-    "c-field-through-pointer-argument": "struct field taint does not cross a call through a pointer argument "
-                                        "(`go(&c)` reading `c->cmd`)",
-    "c-field-filled-by-callee": "a field a callee writes through a pointer parameter is not seen by the caller",
-})
+# The nearest safe programs: each must stay clean of CWE-78.
+SAFE_PROGRAMS = {
+    # a callee given a copy writes the copy, never the caller's struct
+    "c-field-filled-in-a-copy": ("c", '''#include <stdlib.h>
+struct C { char *cmd; };
+static void fill(struct C c) { c.cmd = getenv("Q"); }
+void run(void) { struct C c; c.cmd = "ls"; fill(c); system(c.cmd); }'''),
+    # the caller overwrites what the callee filled in
+    "c-field-filled-then-overwritten": ("c", '''#include <stdlib.h>
+struct C { char *cmd; };
+static void fill(struct C *c) { c->cmd = getenv("Q"); }
+void run(void) { struct C c; fill(&c); c.cmd = "ls"; system(c.cmd); }'''),
+    # the callee reads a field the caller did not taint
+    "c-other-field-through-pointer": ("c", '''#include <stdlib.h>
+struct C { char *cmd; char *name; };
+static void go(struct C *c) { system(c->cmd); }
+void run(void) { struct C c; c.cmd = "ls"; c.name = getenv("Q"); go(&c); }'''),
+    # a macro that recurses is expanded once and never again (no hang, no invented call)
+    "c-recursive-macro": ("c", '''#include <stdlib.h>
+#define LOOP(x) LOOP(x)
+void run(void) { LOOP(getenv("Q")); }'''),
+    # a macro defined twice (two #ifdef arms): which applies is unknown, so it is not expanded
+    "c-macro-defined-twice": ("c", '''#include <stdlib.h>
+#ifdef A
+#define RUN(x) system(x)
+#else
+#define RUN(x) puts(x)
+#endif
+void run(void) { RUN(getenv("Q")); }'''),
+    # without the using-directive in force the call is the global function
+    "cpp-using-out-of-scope": ("cpp", '''#include <cstdlib>
+#include <cstdio>
+namespace ns { void sh(const char *c) { system(c); } }
+void other() { using namespace ns; }
+void sh(const char *c) { puts(c); }
+void run() { sh(std::getenv("Q")); }'''),
+    # the constructor stores a constant; the setter is never called with attacker data
+    "cpp-member-set-to-constant": ("cpp", '''#include <cstdlib>
+#include <string>
+class R { public: std::string cmd; R(const char *c) : cmd("ls") { (void)c; } void go() { system(cmd.c_str()); } };
+void run() { R r(std::getenv("Q")); r.go(); }'''),
+}
 
 
 @pytest.mark.parametrize("case", [pytest.param(c, id=c, marks=_gap(c)) for c in PROGRAMS])
@@ -437,7 +527,12 @@ def test_program_with_a_constant_stays_clean(case):
     assert "CWE-78" not in _scan(re.sub(r'(?:std::)?getenv\("Q"\)', '"ls"', code), lang)
 
 
-@pytest.mark.xfail(reason=KNOWN_GAPS["cpp-using-namespace"], strict=True)
+@pytest.mark.parametrize("case", list(SAFE_PROGRAMS))
+def test_safe_program_stays_clean(case):
+    lang, code = SAFE_PROGRAMS[case]
+    assert "CWE-78" not in _scan(code, lang)
+
+
 def test_cpp_call_through_using_namespace():
     code = ("#include <cstdlib>\nnamespace ns { void sh(const char *c) { system(c); } }\nusing namespace ns;\n"
             'void run() { const char *q = std::getenv("Q"); sh(q); }\n')

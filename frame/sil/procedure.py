@@ -1013,6 +1013,13 @@ class Program:
         if canonical and (self.language or "") in ("javascript", "typescript") \
                 and canonical in self.library_specs and canonical != func_name:
             return self.library_specs[canonical]   # a module's value bound in a function (`node-serialize.unserialize`)
+        if canonical and (self.language or "") == "cpp" and '.' in func_name and "::" in canonical:
+            # C++: `xs.push_back(q)` on a declared `std::vector<...> xs` has the id
+            # `std::vector::push_back` (the frontend's typed member calls); its row is keyed
+            # `vector::push_back` like the C++ tables' other members
+            for key in (canonical, canonical[5:] if canonical.startswith("std::") else None):
+                if key and key in self.library_specs:
+                    return self.library_specs[key]
         if canonical and '.' in func_name:
             from .value_origins import typed_names
             for key in typed_names(canonical, self.language, getattr(self, "value_returns", None)):

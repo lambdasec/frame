@@ -45,6 +45,8 @@ from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
 from frame.sil.c_int_model import INT_TYPES, LIMITS
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.frontends._syntax import first_syntax_error_line
+from frame.sil.frontends._c_macros import FunctionMacro, expand as expand_macros, \
+    parse_definition as parse_macro_definition
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
 from frame.sil.packs import default_packs, finish_program
 from frame.sil.specs.cpp_types import load as _cpp_types
@@ -198,6 +200,11 @@ class CFrontend:
         self._labels: Dict[str, Node] = {}                  # goto targets of the current function
         self._pending_gotos: Dict[str, List[Node]] = {}     # gotos seen before their label
         self._lambda_vars: Dict[int, Dict[str, Optional[str]]] = {}   # id(Procedure) -> {var: lambda}
+        self._macro_trees: List[Any] = []        # parsed macro expansions (`_macro_expansion`)
+        self._macro_cache: Dict[int, Any] = {}
+        self._no_expand: Set[int] = set()
+        self._macro_loc: List[Location] = []
+        self._macro_at: List[int] = []           # byte offset of the outermost macro call
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language=self.LANGUAGE)
@@ -212,6 +219,10 @@ class CFrontend:
         program.global_array_bounds = self._global_array_bounds(tree.root_node)
 
         self._translate_translation_unit(tree.root_node, program)
+        for proc in program.procedures.values():
+            enclosing = self._lambda_parent.get(id(proc))
+            if enclosing is not None and proc.captures:
+                proc.parent = enclosing.name      # its final name (namespace / class prefixed)
 
         includes = ImportTable()
         stack = [tree.root_node]
@@ -333,14 +344,33 @@ class CFrontend:
         call is not a function call: `GET_ADDR(x, ...)` may assign `x` (macros
         are expanded in place), so its arguments are not by-value reads."""
         names: Set[str] = set()
+        defs: Dict[str, List[Optional[FunctionMacro]]] = {}
+        undefined: Set[str] = set()
         stack = [root]
         while stack:
             n = stack.pop()
             if n.type == "preproc_function_def":
                 name = n.child_by_field_name("name")
                 if name is not None:
-                    names.add(self._get_text(name))
+                    key = self._get_text(name)
+                    names.add(key)
+                    params = n.child_by_field_name("parameters")
+                    value = n.child_by_field_name("value")
+                    defs.setdefault(key, []).append(
+                        parse_macro_definition(self._get_text(params), self._get_text(value))
+                        if params is not None else None)
+            elif n.type in ("preproc_def",):
+                name = n.child_by_field_name("name")
+                if name is not None:
+                    defs.setdefault(self._get_text(name), []).append(None)
+            elif n.type == "preproc_call":
+                directive = n.child_by_field_name("directive")
+                if directive is not None and self._get_text(directive).strip() == "#undef":
+                    undefined.add(self._get_text(n.child_by_field_name("argument")).strip())
             stack.extend(n.children)
+        # the macros a call expands (`_macro_expansion`): defined once, never #undef'ed
+        self._macro_defs = {name: d[0] for name, d in defs.items()
+                            if len(d) == 1 and d[0] is not None and name not in undefined}
         return names
 
     def _translate_translation_unit(self, root: TSNode, program: Program) -> None:
@@ -718,7 +748,16 @@ class CFrontend:
         `n = 0, run(cmd);` were expressions whose calls never became Call instructions, so no
         sink saw them); `c ? f(x) : g(y);` and `ok && f(x);` are branches."""
         t = node.type
-        if t == "call_expression":
+        expansion = self._macro_expansion(node)
+        if expansion is not None:
+            # `RUN(q);` with `#define RUN(x) system(x)`: what the preprocessor makes of it
+            with self._in_macro(node):
+                if expansion[0] == "expr":
+                    self._effect(expansion[1])
+                else:
+                    for stmt in expansion[1]:
+                        self._translate_statement(stmt)
+        elif t == "call_expression":
             self._add_instrs(self._translate_call(node))
         elif t == "assignment_expression":
             self._translate_assignment(node)
@@ -1268,7 +1307,8 @@ class CFrontend:
                     self._add_instr(Assign(
                         loc=loc, id=PVar(f"$deref_{marker}"),
                         exp=ExpFieldAccess(obj_exp, field_name, True)))
-                self._add_instr(Assign(loc=loc, id=PVar(target), exp=val_exp))
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=val_exp,
+                                       strong_update=self._names_one_location(left)))
 
     _LITERAL_ELEMENTS = frozenset({"number_literal", "string_literal", "char_literal", "true", "false",
                                    "null", "nullptr", "concatenated_string", "comment"})
@@ -1420,6 +1460,24 @@ class CFrontend:
             return None
         return ".".join([root] + parts[::-1])
 
+    def _names_one_location(self, node: TSNode) -> bool:
+        """Does the field path `node` stand for exactly one location: `s.f` / `s.a.b` of a local
+        or parameter struct (or C++ reference), or `p->f` with `p = &s`? A write to it replaces
+        what it held (`Assign.strong_update`). Through any other pointer the path names whatever
+        the pointer points to, which may be what another name also reaches."""
+        cur = node
+        while cur is not None and cur.type == "field_expression":
+            arg = cur.child_by_field_name("argument")
+            if self._is_arrow_access(cur):
+                if not (arg is not None and arg.type == "identifier" and self._pointee(arg) is not None):
+                    return False
+            cur = arg
+        if cur is None or cur.type != "identifier":
+            return False
+        root = self._alias_of(self._pointee(cur) or self._get_text(cur)) \
+            if self._is_arrow_access(cur.parent) else self._alias_of(self._get_text(cur))
+        return self._current_proc is not None and self._is_local_name(root)
+
     def _write_exp(self, left: TSNode, value: Exp, loc: Location) -> None:
         """Write an already lowered value into the location `left` names (an assignment or an
         increment inside an expression: `v = s.name = q`, `a[i]++`, `p->n++`)."""
@@ -1428,7 +1486,8 @@ class CFrontend:
         if left.type == "identifier":
             self._add_instr(Assign(loc=loc, id=PVar(self._alias_of(self._get_text(left))), exp=value))
         elif left.type == "field_expression" and self._field_target(left) is not None:
-            self._add_instr(Assign(loc=loc, id=PVar(self._field_target(left)), exp=value))
+            self._add_instr(Assign(loc=loc, id=PVar(self._field_target(left)), exp=value,
+                                   strong_update=self._names_one_location(left)))
         elif left.type == "field_expression":
             self._add_instr(Store(loc=loc, addr=self._translate_expression(left), value=value,
                                   typ=Typ.unknown_type()))
@@ -1459,6 +1518,17 @@ class CFrontend:
     ) -> List[Instr]:
         """Translate: target = func(args)"""
         instrs = []
+
+        expansion = self._macro_expansion(call_node)
+        if expansion is not None and expansion[0] == "expr":
+            # `v = GET(q);` with a function-like macro: the expanded expression's value
+            with self._in_macro(call_node):
+                inner = expansion[1]
+                while inner.type == "parenthesized_expression" and inner.named_child_count == 1:
+                    inner = inner.named_children[0]
+                if inner.type == "call_expression":
+                    return self._translate_call_assignment(target, inner, loc)
+                return [Assign(loc=loc, id=PVar(target), exp=self._translate_expression(inner))]
 
         accessed = self._content_accessor_receiver(call_node)
         if accessed is not None:
@@ -2312,6 +2382,12 @@ class CFrontend:
         if node is None:
             return ExpConst.null()
 
+        if node.type == "call_expression":
+            expansion = self._macro_expansion(node)
+            if expansion is not None and expansion[0] == "expr":
+                with self._in_macro(node):          # `GET(q) + 1`: the expanded expression
+                    return self._translate_expression(expansion[1])
+
         if node.type == "identifier":
             text = self._alias_of(self._expand_alias_macro(self._get_text(node)))
             if text in self._int_macros:
@@ -2654,15 +2730,80 @@ class CFrontend:
             stack.extend(n.children)
         return out
 
+    # -- function-like macros ---------------------------------------------------------
+
+    def _macro_expansion(self, node: Optional[TSNode]):
+        """For a call of a function-like macro the file defines (`RUN(q)` with `#define RUN(x)
+        system(x)`), what the preprocessor makes of it, parsed: ("expr", node) when it is one
+        expression, ("stmts", [nodes]) when it is statements (`do { ... } while (0)`); else None.
+
+        The expansion is `_c_macros.expand` of the call's text (arguments, `#`, `##`, rescan,
+        bounded depth, no macro inside its own expansion), parsed inside a function body of its
+        own. The tree is kept alive for the rest of the translation (node ids must stay unique),
+        and a macro call left in it (a recursive one, or one past the depth bound) is never
+        expanded again. An expansion that does not parse is not used: the call stays as written."""
+        if node is None or node.type != "call_expression" or not getattr(self, "_macro_defs", None):
+            return None
+        func = node.child_by_field_name("function")
+        if func is None or func.type != "identifier" or self._get_text(func) not in self._macro_defs:
+            return None
+        if node.id in self._no_expand:
+            return None
+        if node.id in self._macro_cache:
+            return self._macro_cache[node.id]
+        result = None
+        text = expand_macros(self._get_text(node), self._macro_defs)
+        if text is not None:
+            tree = self.parser.parse(("void __frame_macro__(void) {\n" + text + "\n;}\n").encode("utf-8"))
+            fn = tree.root_node.named_children[0] if tree.root_node.named_child_count == 1 else None
+            body = fn.child_by_field_name("body") if fn is not None and fn.type == "function_definition" else None
+            if body is not None and not tree.root_node.has_error:
+                self._macro_trees.append(tree)
+                for call in self._descendants(body, "call_expression"):
+                    f = call.child_by_field_name("function")
+                    if f is not None and f.type == "identifier" and f.text.decode("utf-8", "replace") \
+                            in self._macro_defs:
+                        self._no_expand.add(call.id)
+                stmts = [c for c in body.named_children if c.type != "comment"
+                         and not (c.type == "expression_statement" and c.named_child_count == 0)]
+                if len(stmts) == 1 and stmts[0].type == "expression_statement" \
+                        and stmts[0].named_child_count == 1:
+                    result = ("expr", stmts[0].named_children[0])
+                elif stmts:
+                    result = ("stmts", stmts)
+        self._macro_cache[node.id] = result
+        return result
+
+    def _in_macro(self, node: TSNode):
+        """While the expansion of the macro call `node` is lowered, every instruction it makes is
+        located at the call (the expansion's own tree has positions of its own)."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def scope():
+            self._macro_at.append(self._macro_at[-1] if self._macro_at else node.start_byte)
+            self._macro_loc.append(self._get_location(node))
+            try:
+                yield
+            finally:
+                self._macro_loc.pop()
+                self._macro_at.pop()
+        return scope()
+
     def _get_text(self, node: TSNode) -> str:
         if node is None:
             return ""
+        if self._macro_trees:
+            # a macro expansion is a tree of its own: its nodes index its own text
+            return node.text.decode("utf-8", errors="replace")
         # Slice UTF-8 bytes (tree-sitter uses byte offsets), not the source
         # string -- otherwise multi-byte characters corrupt every later token.
         return self._source_bytes[node.start_byte:node.end_byte].decode(
             "utf-8", errors="replace")
 
     def _get_location(self, node) -> Location:
+        if getattr(self, "_macro_loc", None):
+            return self._macro_loc[-1]
         if hasattr(node, 'start_point'):
             return Location(
                 file=self._filename,
@@ -2781,10 +2922,14 @@ class CFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
         body = node.child_by_field_name("body")
+        parent = saved[0]
+        inits = self._lambda_init_captures(node, proc)
         saved_labels = self._begin_labels()
         if body:
             self._translate_compound_statement(body)
         self._end_labels(saved_labels)
+        if parent is not None:
+            proc.captures = self._lambda_captures(node, proc, parent, inits)
         exit_node = proc.new_node(NodeKind.EXIT)
         proc.add_node(exit_node)
         proc.exit_node = exit_node.id
@@ -2796,6 +2941,54 @@ class CFrontend:
         if program is not None:
             program.add_procedure(proc)
         return name
+
+    def _lambda_init_captures(self, node: TSNode, proc: Procedure) -> Set[str]:
+        """`[x = q + 1]`: x is a variable of the lambda initialised from the enclosing scope's
+        expression, lowered as that assignment at the lambda's entry; returns the names the
+        initialisers read (captured from the enclosing scope)."""
+        spec = node.child_by_field_name("captures")
+        read: Set[str] = set()
+        if spec is None:
+            return read
+        for init in spec.named_children:
+            if init.type != "lambda_capture_initializer":
+                continue
+            left, right = init.child_by_field_name("left"), init.child_by_field_name("right")
+            if left is None or right is None:
+                continue
+            read |= {self._get_text(i) for i in self._descendants(right, "identifier")}
+            value = self._translate_expression(right)
+            self._record_local(self._get_text(left))
+            self._add_instr(Assign(loc=self._get_location(init), id=PVar(self._get_text(left)), exp=value))
+        return read
+
+    def _lambda_captures(self, node: TSNode, proc: Procedure, parent: Procedure, inits: Set[str]) -> List[str]:
+        """The enclosing function's variables a C++ lambda reads (`Procedure.captures`): those its
+        capture list names (`[q]`, `[&q]`), the ones its initialisers read (`[x = q]`), and with a
+        default capture (`[=]`, `[&]`) every name in its body that is a variable of an enclosing
+        function and not one of the lambda's own. The translator hands the enclosing function's
+        taint of those names to the lambda (and a lambda's return of one back to its caller)."""
+        visible: Set[str] = set()
+        scope: Optional[Procedure] = parent
+        seen: Set[int] = set()
+        while scope is not None and id(scope) not in seen:
+            seen.add(id(scope))
+            visible |= set(scope.locals or {}) | {p.name for p, _ in scope.params} | set(scope.captures)
+            scope = self._lambda_parent.get(id(scope))
+        own = set(proc.locals or {}) | {p.name for p, _ in proc.params}
+        spec = node.child_by_field_name("captures")
+        names: Set[str] = set(inits)
+        default = False
+        if spec is not None:
+            for c in spec.named_children:
+                if c.type == "identifier":
+                    names.add(self._get_text(c))
+                elif c.type == "lambda_default_capture":
+                    default = True
+        body = node.child_by_field_name("body")
+        if default and body is not None:
+            names |= {self._get_text(i) for i in self._descendants(body, "identifier")} - own
+        return sorted(n for n in names if n in visible)
 
     def _note_lambda_binding(self, name: str, lam: TSNode) -> None:
         """`auto run = [](const char *c) { system(c); };` names the lambda: a later `run(x)`
@@ -2861,6 +3054,11 @@ class CFrontend:
                 if bound:
                     return bound
                 cur = self._lambda_parent.get(id(cur))
+        if func is not None and func.type == "identifier" and self.LANGUAGE == "cpp" \
+                and not self._is_local_name(self._get_text(func)):
+            via_using = self._using_resolution(self._get_text(func), func)
+            if via_using is not None:
+                return via_using
         if func:
             text = self._get_text(func)
             if func.type == "identifier":
@@ -2972,6 +3170,7 @@ class CppFrontend(CFrontend):
                                 for n in self._descendants(root, "namespace_definition")
                                 if n.child_by_field_name("name") is not None}
             self._class_methods = self._declared_methods(root)
+            self._collect_usings(root)
         for child in root.children:
             if child.type == "function_definition":
                 self._written_function_name = None
@@ -3013,6 +3212,65 @@ class CppFrontend(CFrontend):
                 self._translate_translation_unit(child, program)
             elif child.type == "declaration":
                 pass  # Skip global declarations
+
+    def _collect_usings(self, root: TSNode) -> None:
+        """The functions the file defines in namespaces (`ns::sh`, `a::b::f`), the ones it
+        defines at global scope, and each `using namespace ns;` / `using ns::f;` with the byte
+        range it is in force over (from the directive to the end of the block, namespace body
+        or file holding it)."""
+        self._ns_functions: Set[str] = set()
+        self._global_functions: Set[str] = set()
+        self._usings: List[Tuple[int, int, bool, str]] = []    # (from, to, is_directive, name)
+
+        def walk(node: TSNode, prefix: str) -> None:
+            for child in node.named_children:
+                if child.type == "namespace_definition":
+                    name = child.child_by_field_name("name")
+                    body = child.child_by_field_name("body")
+                    if body is not None:
+                        inner = self._get_text(name) if name is not None else ""
+                        walk(body, f"{prefix}{inner}::" if inner else prefix)
+                elif child.type in ("template_declaration", "linkage_specification", "declaration_list",
+                                    "preproc_ifdef", "preproc_if", "preproc_else"):
+                    walk(child, prefix)
+                elif child.type == "function_definition":
+                    decl = child.child_by_field_name("declarator")
+                    fname = self._get_function_name(decl) if decl is not None else None
+                    if not fname:
+                        continue
+                    full = prefix + fname
+                    if "::" in full:
+                        self._ns_functions.add(full)
+                    else:
+                        self._global_functions.add(full)
+
+        walk(root, "")
+        for use in self._descendants(root, "using_declaration"):
+            target = next((c for c in use.named_children if c.type in ("identifier", "qualified_identifier")),
+                          None)
+            parent = use.parent
+            if target is None or parent is None:
+                continue
+            directive = any(c.type == "namespace" for c in use.children)
+            self._usings.append((use.end_byte, parent.end_byte, directive, self._get_text(target)))
+
+    def _using_resolution(self, name: str, node: TSNode) -> Optional[str]:
+        """C++: the namespace function an unqualified call `name(...)` names through a
+        `using namespace ns;` or `using ns::name;` in force where it is written, when exactly one
+        function of the file is that and no function or library row of the same name is visible
+        at global scope (then the call would be ambiguous or overloaded, and is left as written)."""
+        usings = getattr(self, "_usings", None)
+        if not usings or "::" in name or name in self._global_functions or name in self.specs:
+            return None
+        at = self._macro_at[-1] if getattr(self, "_macro_at", None) else node.start_byte
+        found = set()
+        for start, end, directive, target in usings:
+            if not (start <= at < end):
+                continue
+            candidate = f"{target}::{name}" if directive else (target if target.rsplit("::", 1)[-1] == name else None)
+            if candidate and candidate in self._ns_functions:
+                found.add(candidate)
+        return found.pop() if len(found) == 1 else None
 
     def _declared_methods(self, root: TSNode) -> Dict[str, Set[str]]:
         """The member functions each class of the file declares or defines (in its body, or out
@@ -3089,6 +3347,10 @@ class CppFrontend(CFrontend):
                             fname = self._extract_identifier(d)
                             if fname:
                                 self._class_field_types.setdefault(class_name, {})[fname] = self._get_text(ftype)
+                                if not any(c.type == "function_declarator" for c in [d] + list(d.named_children)):
+                                    # a data member: a method writing or reading it by its bare name
+                                    # acts on `this.<name>` (the translator's receiver-field stores)
+                                    program.declared_fields.setdefault(class_name, set()).add(fname)
                 elif child.type == "access_specifier":
                     # public, private, protected - skip
                     pass

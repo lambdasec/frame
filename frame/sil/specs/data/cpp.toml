@@ -1900,6 +1900,213 @@ name = "string::replace"
 taint_propagates = [0, 2]
 description = "std::string::replace"
 
+# Container element writes: called as a statement, a row's taint_propagates arguments taint
+# the receiver (the container); element reads (`v[0]`, `v.at(0)`, `front()`, range-for) carry it.
+[[spec]]
+name = "vector::push_back"
+taint_propagates = [0]
+description = "std::vector::push_back - stores the element into the container"
+
+[[spec]]
+name = "deque::push_back"
+taint_propagates = [0]
+description = "std::deque::push_back - stores the element into the container"
+
+[[spec]]
+name = "list::push_back"
+taint_propagates = [0]
+description = "std::list::push_back - stores the element into the container"
+
+[[spec]]
+name = "string::push_back"
+taint_propagates = [0]
+description = "std::string::push_back - stores the element into the container"
+
+[[spec]]
+name = "vector::emplace_back"
+taint_propagates = [0, 1, 2, 3]
+description = "std::vector::emplace_back - constructs the element in the container"
+
+[[spec]]
+name = "deque::emplace_back"
+taint_propagates = [0, 1, 2, 3]
+description = "std::deque::emplace_back - constructs the element in the container"
+
+[[spec]]
+name = "list::emplace_back"
+taint_propagates = [0, 1, 2, 3]
+description = "std::list::emplace_back - constructs the element in the container"
+
+[[spec]]
+name = "deque::push_front"
+taint_propagates = [0]
+description = "std::deque::push_front - stores the element into the container"
+
+[[spec]]
+name = "deque::emplace_front"
+taint_propagates = [0, 1, 2, 3]
+description = "std::deque::emplace_front - constructs the element in the container"
+
+[[spec]]
+name = "list::push_front"
+taint_propagates = [0]
+description = "std::list::push_front - stores the element into the container"
+
+[[spec]]
+name = "list::emplace_front"
+taint_propagates = [0, 1, 2, 3]
+description = "std::list::emplace_front - constructs the element in the container"
+
+[[spec]]
+name = "forward_list::push_front"
+taint_propagates = [0]
+description = "std::forward_list::push_front - stores the element into the container"
+
+[[spec]]
+name = "forward_list::emplace_front"
+taint_propagates = [0, 1, 2, 3]
+description = "std::forward_list::emplace_front - constructs the element in the container"
+
+[[spec]]
+name = "vector::insert"
+taint_propagates = [1, 2, 3]
+description = "std::vector::insert(pos, value...) - stores the elements into the container"
+
+[[spec]]
+name = "vector::emplace"
+taint_propagates = [1, 2, 3]
+description = "std::vector::emplace(pos, args...) - constructs the element in the container"
+
+[[spec]]
+name = "deque::insert"
+taint_propagates = [1, 2, 3]
+description = "std::deque::insert(pos, value...) - stores the elements into the container"
+
+[[spec]]
+name = "deque::emplace"
+taint_propagates = [1, 2, 3]
+description = "std::deque::emplace(pos, args...) - constructs the element in the container"
+
+[[spec]]
+name = "list::insert"
+taint_propagates = [1, 2, 3]
+description = "std::list::insert(pos, value...) - stores the elements into the container"
+
+[[spec]]
+name = "list::emplace"
+taint_propagates = [1, 2, 3]
+description = "std::list::emplace(pos, args...) - constructs the element in the container"
+
+[[spec]]
+name = "set::insert"
+taint_propagates = [0, 1]
+description = "std::set::insert - stores the element into the container"
+
+[[spec]]
+name = "set::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::set::emplace - constructs the element in the container"
+
+[[spec]]
+name = "unordered_set::insert"
+taint_propagates = [0, 1]
+description = "std::unordered_set::insert - stores the element into the container"
+
+[[spec]]
+name = "unordered_set::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::unordered_set::emplace - constructs the element in the container"
+
+[[spec]]
+name = "multiset::insert"
+taint_propagates = [0, 1]
+description = "std::multiset::insert - stores the element into the container"
+
+[[spec]]
+name = "multiset::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::multiset::emplace - constructs the element in the container"
+
+[[spec]]
+name = "map::insert"
+taint_propagates = [0, 1]
+description = "std::map::insert - stores the element into the container"
+
+[[spec]]
+name = "map::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::map::emplace - constructs the element in the container"
+
+[[spec]]
+name = "unordered_map::insert"
+taint_propagates = [0, 1]
+description = "std::unordered_map::insert - stores the element into the container"
+
+[[spec]]
+name = "unordered_map::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::unordered_map::emplace - constructs the element in the container"
+
+[[spec]]
+name = "multimap::insert"
+taint_propagates = [0, 1]
+description = "std::multimap::insert - stores the element into the container"
+
+[[spec]]
+name = "multimap::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::multimap::emplace - constructs the element in the container"
+
+[[spec]]
+name = "map::insert_or_assign"
+taint_propagates = [0, 1]
+description = "std::map::insert_or_assign(key, value)"
+
+[[spec]]
+name = "map::try_emplace"
+taint_propagates = [0, 1, 2]
+description = "std::map::try_emplace(key, args...)"
+
+[[spec]]
+name = "unordered_map::insert_or_assign"
+taint_propagates = [0, 1]
+description = "std::unordered_map::insert_or_assign(key, value)"
+
+[[spec]]
+name = "unordered_map::try_emplace"
+taint_propagates = [0, 1, 2]
+description = "std::unordered_map::try_emplace(key, args...)"
+
+[[spec]]
+name = "queue::push"
+taint_propagates = [0]
+description = "std::queue::push - stores the element into the container"
+
+[[spec]]
+name = "queue::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::queue::emplace - constructs the element in the container"
+
+[[spec]]
+name = "stack::push"
+taint_propagates = [0]
+description = "std::stack::push - stores the element into the container"
+
+[[spec]]
+name = "stack::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::stack::emplace - constructs the element in the container"
+
+[[spec]]
+name = "priority_queue::push"
+taint_propagates = [0]
+description = "std::priority_queue::push - stores the element into the container"
+
+[[spec]]
+name = "priority_queue::emplace"
+taint_propagates = [0, 1, 2]
+description = "std::priority_queue::emplace - constructs the element in the container"
+
 [[spec]]
 name = "string::substr"
 taint_propagates = [0]
