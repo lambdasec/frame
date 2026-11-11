@@ -4,6 +4,25 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-11
+
+### Fixed
+
+- **Findings lost when code was written another ordinary way** ([#9](https://github.com/lambdasec/frame/issues/9)). A Flask app that keeps its database connection on `flask.g` (the Flask docs' `get_db()` pattern) lost its SQL injection findings. An adversarial review of every frontend then found and fixed the same class of bug in Python, JavaScript/TypeScript, Java, C# and C/C++: chained and unpacking assignments, `try`/`except`/`finally` and `catch` bodies, compound assignment (`x += e` was lowered as `x = e` in Java and C#), ternaries, `switch`, `break`/`continue`/`goto`, struct and object fields, dict and list literals, comprehensions, lambdas, method references, library callbacks (`forEach`, `map`, `then`), `out`/`ref` arguments, Razor control flow, C macros and many more. Metamorphic tests now rewrite each vulnerable flow without changing its meaning and require the finding to survive, and lowering tripwires fail when data-carrying syntax is dropped.
+- **Fewer false positives.** A same-file Java helper returning a constant no longer taints its result (OWASP BenchmarkJava, full suite: false positives 429 to 216, no true positive lost); constant dict keys (`', '.join(f'{k} = ?' for k in updates)`), numeric operators in JavaScript, numeric parsing in C#, and `sizeof` in C (was the constant 0) no longer produce findings.
+- **Scanner robustness.** The Python frontend evaluated constant conditions with `eval`, so a scanned file containing `9**9**9` could stall the scan; it now uses a bounded evaluator.
+- Package metadata: the licence is an SPDX expression (`license = "Apache-2.0"`), removing the setuptools deprecation warning.
+
+### Added
+
+- **Unhashed credential storage (CWE-522).** A password or generated token written to a database without a hash, MAC or KDF in between, read from the SQL the program writes.
+- **Flask views' returned HTML is an XSS sink** when the response is sent as HTML.
+- Replacer functions (`re.sub`, `String.replace`) and `map` callbacks carry what they return; path containment through `path.relative` / `os.path.relpath` is a guard.
+
+### Changed
+
+- C#: `while (true)` with no way out is reported as CWE-835, as in Java and C.
+
 ## [1.1.3] - 2026-11-06
 
 ### Added
@@ -59,7 +78,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/lambdasec/frame/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/lambdasec/frame/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/lambdasec/frame/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/lambdasec/frame/compare/v1.1.0...v1.1.1
