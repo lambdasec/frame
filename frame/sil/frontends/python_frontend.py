@@ -185,6 +185,9 @@ class PythonFrontend:
 
         # Walk top-level definitions
         self._const_tables = self._collect_const_tables(tree.root_node)
+        self._key_dicts = self._constant_key_dicts(tree.root_node)
+        self._key_nodes = self._dict_key_nodes(tree.root_node)
+        self._program_ref = program
         self._translate_module(tree.root_node, program)
         program.dynamic_attr_heads = sorted(self._dynamic_attr_heads)
         program.unlowered_syntax = dict(self._unlowered)
@@ -484,6 +487,206 @@ class PythonFrontend:
         return False
 
     _dicts_are_queries = False
+    _key_dicts: frozenset = frozenset()
+    _key_nodes: frozenset = frozenset()
+
+    # Uses of a constant-keyed dict that cannot add a key: reads by any key, these methods,
+    # these builtins, `in`, iteration and `**d` (a copy).
+    _KEY_SAFE_METHODS = frozenset({"get", "keys", "values", "items", "copy", "pop", "__contains__", "__len__"})
+    _KEY_SAFE_READERS = frozenset({"len", "sorted", "list", "tuple", "set", "frozenset", "iter", "reversed",
+                                   "enumerate", "min", "max", "any", "all", "str", "repr", "print", "bool",
+                                   "isinstance"})
+    # Builtins whose result is made of the keys of a dict they are given.
+    _KEY_PRESERVING = frozenset({"sorted", "list", "tuple", "set", "frozenset", "iter", "reversed",
+                                 "enumerate", "min", "max"})
+
+    def _literal_key(self, node: Optional[TSNode]) -> bool:
+        return node is not None and node.type == "string" and \
+            not any(c.type == "interpolation" for c in node.children)
+
+    def _constant_key_dicts(self, root: TSNode) -> frozenset:
+        """Names whose keys are all string literals of the file: every binding is a dict literal
+        with literal keys (`{}`, `dict()`), every write uses a literal key (`d["title"] = v`,
+        `d.setdefault("k", v)`), and every other use only reads (`d[k]`, `d.get`, `d.items()`,
+        `len(d)`, `k in d`, `for k in d`, `**d`). Any other use (`x = d`, `return d`, `f(d)`, a
+        parameter, `d.update(...)`) could add a key the analysis does not see, so the name does
+        not count. Iterating such a dict yields constants however tainted its values are."""
+        bound: Dict[str, bool] = {}
+        bad: Set[str] = set()
+
+        def literal_dict(n: Optional[TSNode]) -> bool:
+            if n is None:
+                return False
+            if n.type == "dictionary":
+                return all(c.type == "pair" and self._literal_key(c.child_by_field_name("key"))
+                           for c in n.named_children if c.type != "comment")
+            if n.type == "call" and self._get_text(n.child_by_field_name("function")) == "dict" \
+                    and "dict" not in self._file_bound:
+                args = n.child_by_field_name("arguments")
+                return args is not None and not args.named_children
+            return False
+
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type != "identifier":
+                continue
+            name, parent = self._get_text(n), n.parent
+            if parent is None:
+                continue
+            pt = parent.type
+            if pt == "attribute" and parent.child_by_field_name("attribute") == n:
+                continue                                     # `x.d` names an attribute
+            if pt == "keyword_argument" and parent.child_by_field_name("name") == n:
+                continue
+            if pt == "assignment" and parent.child_by_field_name("left") == n:
+                if literal_dict(parent.child_by_field_name("right")) and parent.child_by_field_name("type") is None:
+                    bound[name] = True
+                else:
+                    bad.add(name)
+                continue
+            if self._key_safe_use(n, parent):
+                continue
+            bad.add(name)
+        return frozenset(name for name in bound if name not in bad)
+
+    def _key_safe_use(self, n: TSNode, parent: TSNode) -> bool:
+        pt = parent.type
+        if pt == "subscript" and parent.child_by_field_name("value") == n:
+            outer = parent.parent
+            written = outer is not None and (
+                (outer.type in ("assignment", "augmented_assignment") and outer.child_by_field_name("left") == parent)
+                or outer.type == "delete_statement")
+            return not written or self._literal_key(parent.child_by_field_name("subscript"))
+        if pt == "attribute" and parent.child_by_field_name("object") == n:
+            call = parent.parent
+            attr = self._get_text(parent.child_by_field_name("attribute"))
+            if call is None or call.type != "call" or call.child_by_field_name("function") != parent:
+                return False
+            if attr == "setdefault":
+                args = call.child_by_field_name("arguments")
+                return args is not None and bool(args.named_children) and self._literal_key(args.named_children[0])
+            return attr in self._KEY_SAFE_METHODS
+        if pt == "argument_list":
+            call = parent.parent
+            fn = call.child_by_field_name("function") if call is not None else None
+            if fn is None:
+                return False
+            if fn.type == "identifier":
+                name = self._get_text(fn)
+                return name in self._KEY_SAFE_READERS and name not in self._file_bound
+            return fn.type == "attribute" and self._get_text(fn.child_by_field_name("attribute")) == "join"
+        if pt == "comparison_operator":
+            ops = [self._get_text(c) for c in parent.children if not c.is_named]
+            return parent.named_children[-1] == n and any(op in ("in", "not in") for op in ops) \
+                or ops == ["not", "in"] and parent.named_children[-1] == n
+        if pt in ("for_statement", "for_in_clause"):
+            return parent.child_by_field_name("right") == n
+        if pt in ("dictionary_splat", "interpolation", "not_operator", "assert_statement"):
+            return True
+        if pt in ("if_statement", "elif_clause", "while_statement"):
+            return parent.child_by_field_name("condition") == n      # `if d:` tests it
+        return False
+
+    def _dict_key_nodes(self, root: TSNode) -> frozenset:
+        """Nodes that evaluate to keys of a constant-keyed dict, lowered as constants: `d.keys()`,
+        `sorted(d)` (and the other key-preserving builtins, nested), `d` iterated by a `for` or
+        a comprehension, or joined (`", ".join(d)`)."""
+        if not self._key_dicts:
+            return frozenset()
+        out: Set[int] = set()
+
+        def is_dict(n: Optional[TSNode]) -> bool:
+            return n is not None and n.type == "identifier" and self._get_text(n) in self._key_dicts
+
+        def keys_only(n: Optional[TSNode]) -> bool:
+            if n is None or n.type != "call":
+                return False
+            fn, args = n.child_by_field_name("function"), n.child_by_field_name("arguments")
+            positional = [a for a in (args.named_children if args is not None else [])
+                          if a.type not in ("keyword_argument", "comment")]
+            if fn is not None and fn.type == "attribute" and self._get_text(fn.child_by_field_name("attribute")) == "keys":
+                return is_dict(fn.child_by_field_name("object")) and not positional
+            if fn is not None and fn.type == "identifier" and self._get_text(fn) in self._KEY_PRESERVING \
+                    and self._get_text(fn) not in self._file_bound and len(positional) == 1:
+                return is_dict(positional[0]) or keys_only(positional[0])
+            return False
+
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if keys_only(n):
+                out.add(n.id)
+            elif is_dict(n) and n.parent is not None:
+                pt = n.parent.type
+                if pt in ("for_statement", "for_in_clause") and n.parent.child_by_field_name("right") == n:
+                    out.add(n.id)
+                elif pt == "argument_list" and len(n.parent.named_children) == 1:
+                    fn = n.parent.parent.child_by_field_name("function") if n.parent.parent is not None else None
+                    if fn is not None and fn.type == "attribute" and \
+                            self._get_text(fn.child_by_field_name("attribute")) == "join":
+                        out.add(n.id)
+        return frozenset(out)
+
+    _ELEMENT_READERS = frozenset({"str", "repr", "sorted", "list", "tuple", "set", "frozenset", "reversed",
+                                  "iter", "min", "max", "enumerate"})
+
+    def _reads_every_element(self, node: TSNode) -> bool:
+        """Whether the list/tuple/set literal's value is all of its elements: joined
+        (`sep.join([...])`), given to an element-reading builtin, iterated, or interpolated. Not
+        `+`: `["git", "log"] + [name]` builds an argv."""
+        parent = node.parent
+        while parent is not None and parent.type == "parenthesized_expression":
+            node, parent = parent, parent.parent
+        if parent is None:
+            return False
+        if parent.type in ("for_statement", "for_in_clause"):
+            return parent.child_by_field_name("right") == node
+        if parent.type == "interpolation":
+            return True
+        if parent.type == "argument_list" and parent.parent is not None:
+            fn = parent.parent.child_by_field_name("function")
+            if fn is not None and fn.type == "attribute":
+                return self._get_text(fn.child_by_field_name("attribute")) == "join"
+            if fn is not None and fn.type == "identifier":
+                return self._get_text(fn) in self._ELEMENT_READERS and self._get_text(fn) not in self._file_bound
+        return False
+
+    def _literal_pair_value(self, node: TSNode) -> Optional[TSNode]:
+        """`{"k": q, "n": 1}["k"]`: the value of the literal's pair with that literal key."""
+        base, key = node.child_by_field_name("value"), node.child_by_field_name("subscript")
+        while base is not None and base.type == "parenthesized_expression" and base.named_children:
+            base = base.named_children[0]
+        if base is None or base.type != "dictionary" or not self._literal_key(key):
+            return None
+        found = None
+        for pair in base.named_children:
+            if pair.type != "pair":
+                return None                              # `**other` may hold the key
+            k = pair.child_by_field_name("key")
+            if not self._literal_key(k):
+                return None
+            if self._get_text(k)[1:-1] == self._get_text(key)[1:-1] and self._get_text(k)[0] in "'\"":
+                found = pair.child_by_field_name("value")
+        return found
+
+    def _items_targets(self, right: Optional[TSNode], left: Optional[TSNode]):
+        """`for k, v in d.items()` over a constant-keyed dict: (key target, value target, d)."""
+        if right is None or left is None or right.type != "call":
+            return None
+        fn, args = right.child_by_field_name("function"), right.child_by_field_name("arguments")
+        if fn is None or fn.type != "attribute" or self._get_text(fn.child_by_field_name("attribute")) != "items" \
+                or (args is not None and args.named_children):
+            return None
+        obj = fn.child_by_field_name("object")
+        if obj is None or obj.type != "identifier" or self._get_text(obj) not in self._key_dicts:
+            return None
+        names = [c for c in left.named_children] if left.type in ("pattern_list", "tuple_pattern", "list_pattern") else []
+        if len(names) != 2 or any(c.type != "identifier" for c in names):
+            return None
+        return names[0], names[1], self._get_text(obj)
 
     def _bound_names(self, root: TSNode) -> Set[str]:
         """Plain names the file itself binds (def, class, assignment, parameter): a builtin
@@ -571,7 +774,11 @@ class PythonFrontend:
         """Names of the keyword arguments, parallel to `_get_call_args` (None per
         positional argument); None when the call has no keyword argument."""
         args_node = call_node.child_by_field_name("arguments")
+        partial = self._inline_partial(call_node)
         names: List[Optional[str]] = []
+        if partial is not None:                    # the bound arguments come first
+            bound = self._kwarg_names(partial)
+            names = list(bound[1:]) if bound else [None] * (len(self._get_call_args(partial)) - 1)
         for child in (args_node.children if args_node else []):
             if child.type in ("(", ")", ",", "comment"):
                 continue
@@ -994,6 +1201,37 @@ class PythonFrontend:
                 out[name] = text
         return out
 
+    def _translate_lambda(self, name: str, node: TSNode) -> None:
+        """`run = lambda c: os.system(c)`: the lambda is a procedure named after the variable, so
+        `run(q)` resolves to it like a `def` (its body is a `return` of its expression)."""
+        program = getattr(self, "_program_ref", None)
+        body = node.child_by_field_name("body")
+        if program is None or body is None:
+            return
+        saved = (self._current_proc, self._current_node, self._node_counter, self._saw_yield)
+        if saved[0] is not None and saved[0].name != "<module>":
+            self._nested_in[(node.start_byte, node.end_byte)] = saved[0]
+        try:
+            params_node = node.child_by_field_name("parameters")
+            proc = Procedure(name=name, params=self._translate_parameters(params_node) if params_node else [],
+                             ret_type=Typ.unknown_type(), loc=self._get_location(node))
+            proc.span = (node.start_byte, node.end_byte)
+            proc.end_line = node.end_point[0] + 1
+            self._current_proc, self._node_counter = proc, 0
+            entry = proc.new_node(NodeKind.ENTRY)
+            proc.add_node(entry)
+            proc.entry_node = entry.id
+            self._current_node = entry
+            self._translate_return(node, value=self._unwrap_await(body))
+            exit_node = proc.new_node(NodeKind.EXIT)
+            proc.add_node(exit_node)
+            proc.exit_node = exit_node.id
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, exit_node.id)
+            program.add_procedure(proc)
+        finally:
+            self._current_proc, self._current_node, self._node_counter, self._saw_yield = saved
+
     def _translate_nested_function(self, node: TSNode, program: Program) -> None:
         """Translate a function defined inside another function's body.
 
@@ -1227,6 +1465,8 @@ class PythonFrontend:
         if left.type in self._TARGET_PATTERNS:
             self._translate_destructuring(left, right, loc)
             return
+        if right.type == "lambda" and left.type == "identifier":
+            self._translate_lambda(self._get_text(left), right)
 
         # Check for subscript assignment: target[key] = value
         # This handles patterns like session['userid'] = bar (CWE-501)
@@ -1392,6 +1632,21 @@ class PythonFrontend:
                 id=PVar(target_name),
                 exp=exp
             ))
+            if right.type == "dictionary" and "." not in target_name:
+                self._store_dict_pairs(target_name, right, loc)
+
+    def _store_dict_pairs(self, target_name: str, node: TSNode, loc: Location) -> None:
+        """`d = {"a": v, k: w}` stores each pair as `d[key] = value` would, so a read by a literal
+        key gets that key's value (`d["a"]`, `d.get("a")`) and `d` as a whole carries them all."""
+        for pair in node.named_children:
+            if pair.type != "pair":
+                continue
+            key, value = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+            if key is None or value is None:
+                continue
+            self._add_instr(Call(loc=loc, ret=None, func=ExpConst.string(f"{target_name}.__setitem__"),
+                                 args=[(self._translate_expression(key), Typ.unknown_type()),
+                                       (self._translate_expression(value), Typ.unknown_type())]))
 
     def _translate_subscript_assignment(
         self,
@@ -1461,6 +1716,8 @@ class PythonFrontend:
         instrs = []
         if self._is_const_table_lookup(call_node):             # `TABLE.get(key, default)`
             return [Assign(loc=loc, id=PVar(target), exp=ExpConst.null())]
+        if call_node.id in self._key_nodes:                    # `names = sorted(d)`: the dict's keys
+            return [Assign(loc=loc, id=PVar(target), exp=ExpConst.string(""))]
         read = self._literal_getattr(call_node)
         if read is not None:                                   # `getattr(g, "_database", None)` reads g._database
             return self._extract_all_calls_from_node(call_node.child_by_field_name("arguments"), loc) \
@@ -1850,6 +2107,15 @@ class PythonFrontend:
         # Get operator (+=, -=, *=, etc.)
         op = self._get_text(op_node) if op_node else "+="
         bin_op = op[:-1] if op.endswith("=") else "+"
+        if left.type in ("subscript", "attribute"):
+            # `d["k"] += q` / `self.buf += q`: read the target, combine, write it back
+            self._add_instrs(self._extract_all_calls_from_node(right, loc))
+            combined = ExpBinOp(bin_op, self._translate_expression(left), self._translate_expression(right))
+            if left.type == "subscript":
+                self._translate_subscript_assignment(left, None, loc, value_exp=combined)
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=combined))
+            return
 
         # Translate as: target = target op value
         left_exp = ExpVar(PVar(target_name))
@@ -1883,14 +2149,14 @@ class PythonFrontend:
                                exp=ExpStringConcat([ExpVar(PVar("__yield")), value_exp])))
         self._saw_yield = True
 
-    def _translate_return(self, node: TSNode) -> None:
-        """Translate return statement"""
+    def _translate_return(self, node: TSNode, value: Optional[TSNode] = None) -> None:
+        """Translate return statement (or a lambda's body, `value`)"""
         loc = self._get_location(node)
 
         # Find return value (if any)
         value_exp = None
-        value_node = None
-        for child in node.children:
+        value_node = value
+        for child in (node.children if value is None else ()):
             if child.type not in ("return",):
                 value_node = child
                 break
@@ -2127,7 +2393,8 @@ class PythonFrontend:
         iterable_exp = self._translate_expression(right) if right else ExpConst.null()
         if right is not None and self._current_node is not None:
             right = self._unwrap_await(right)
-            if right.type == "call" and not self._is_const_table_lookup(right):
+            if right.type == "call" and not self._is_const_table_lookup(right) and right.id not in self._key_nodes \
+                    and self._items_targets(right, left) is None:
                 # `for h in request.args.get("hosts").split(","):` -- lower the iterable like
                 # `__iter = <call>` so a source call or method chain taints the loop variable.
                 self._add_instrs(self._translate_call_assignment("__for_iter", right, loc))
@@ -2148,6 +2415,12 @@ class PythonFrontend:
         targets = [loop_var]
         if left is not None and left.type in ("pattern_list", "tuple_pattern", "list_pattern"):
             targets = [self._get_text(c) for c in left.named_children if c.type == "identifier"] or [loop_var]
+        items = self._items_targets(right, left)
+        if items is not None:                     # `for k, v in d.items()`: k is one of d's literal keys
+            body_node.add_instr(Assign(loc=loc, id=PVar(self._get_text(items[0])), exp=ExpConst.string("")))
+            body_node.add_instr(Assign(loc=loc, id=PVar(self._get_text(items[1])),
+                                       exp=ExpCall(ExpConst.string("next"), [ExpVar(PVar(items[2]))])))
+            targets = []
         for target in targets:                    # `for i, h in enumerate(xs)` binds both names
             body_node.add_instr(Assign(
                 loc=loc,
@@ -2360,6 +2633,11 @@ class PythonFrontend:
                     cond = eq if cond is None else ExpBinOp("||", cond, eq)
                 self._current_node.instrs.append(Prune(condition=cond, is_true_branch=True, loc=loc))
 
+            # `case other:` / `case [a, *rest]:` / `case {"k": v}:` bind parts of the subject
+            if subject_exp is not None and pattern is not None:
+                for name in self._case_captures(pattern):
+                    self._add_instr(Assign(loc=loc, id=PVar(name), exp=subject_exp))
+
             # Translate case body - look for the block/consequence
             for child in case_node.children:
                 if child.type == "block":
@@ -2369,6 +2647,39 @@ class PythonFrontend:
                 proc.connect(self._current_node.id, join_node.id)
 
         self._current_node = join_node
+
+    def _case_captures(self, pattern: TSNode) -> List[str]:
+        """Names a case pattern binds (captures, `*rest`, `**kw`, `as` names, keyword patterns'
+        values), never a class name, a keyword or a dotted value pattern (`Color.RED`)."""
+        out: List[str] = []
+        stack = [pattern]
+        while stack:
+            n = stack.pop()
+            kids = [c for c in n.named_children if c.type != "comment"]
+            if n.type == "case_pattern" and len(kids) == 1 and kids[0].type == "dotted_name":
+                ids = kids[0].named_children
+                if len(ids) == 1 and self._get_text(ids[0]) != "_":
+                    out.append(self._get_text(ids[0]))
+                continue
+            if n.type == "splat_pattern":
+                out += [self._get_text(c) for c in kids if c.type == "identifier" and self._get_text(c) != "_"]
+                continue
+            if n.type == "as_pattern" and kids and kids[-1].type == "identifier":
+                out.append(self._get_text(kids[-1]))
+                stack.extend(kids[:-1])
+                continue
+            if n.type == "keyword_pattern":
+                for c in kids[1:]:
+                    if c.type == "dotted_name" and len(c.named_children) == 1:
+                        out.append(self._get_text(c))
+                    else:
+                        stack.append(c)
+                continue
+            if n.type == "class_pattern":
+                stack.extend(kids[1:])                 # kids[0] names the class
+                continue
+            stack.extend(kids)
+        return out
 
     def _case_literals(self, pattern_node: TSNode) -> Optional[List[Exp]]:
         """The literals a case pattern compares the subject with (`case 'A':`, `case 'C' | 'D':`),
@@ -2408,6 +2719,9 @@ class PythonFrontend:
         """Translate expression to SIL Exp"""
         if node is None:
             return ExpConst.null()
+
+        if node.id in self._key_nodes:
+            return ExpConst.string("")                   # the keys of a constant-keyed dict
 
         if node.type == "identifier":
             name = self._get_text(node)
@@ -2556,6 +2870,9 @@ class PythonFrontend:
         elif node.type in ("subscript", "call") and self._is_const_table_lookup(node):
             return ExpConst.null()
 
+        elif node.type == "subscript" and self._literal_pair_value(node) is not None:
+            return self._translate_expression(self._literal_pair_value(node))   # `{"k": q}["k"]`
+
         elif node.type == "subscript":
             value = node.child_by_field_name("value")
             subscript = node.child_by_field_name("subscript")
@@ -2573,7 +2890,8 @@ class PythonFrontend:
 
         elif node.type == "call":
             func = node.child_by_field_name("function")
-            func_exp = self._translate_expression(func)
+            partial = self._inline_partial(node)
+            func_exp = self._translate_expression(self._get_call_args(partial)[0] if partial is not None else func)
             # the same argument nodes a call statement gets (a bare generator is one argument)
             args = [self._translate_expression(a) for a in self._get_call_args(node)]
             return ExpCall(func_exp, args, kwarg_names=self._kwarg_names(node))
@@ -2586,7 +2904,10 @@ class PythonFrontend:
         elif node.type in ("list", "tuple", "set"):
             # [a, b, c], (a, b, c) or {a, b, c}
             elements = [self._translate_expression(c) for c in node.named_children if c.type != "comment"]
-            # Return first element or null (simplified)
+            if len(elements) > 1 and self._reads_every_element(node):
+                return ExpStringConcat(elements)         # `" ".join(["ping", q])`, `for h in [a, q]`
+            # Otherwise its first element: a call's list argument is an argv (`subprocess.run(["ls",
+            # name])` runs `ls`), whose program is the first element
             return elements[0] if elements else ExpConst.null()
 
         elif node.type == "dictionary":
@@ -2723,14 +3044,19 @@ class PythonFrontend:
     def _comprehension_element(self, node: TSNode) -> Exp:
         """`[f(x) for x in items]` as one element: `f(x)` with each loop variable read as an
         element of what it iterates (`next(items)`, as a `for` statement binds it), so a
-        sanitizer in the element still counts. A dict comprehension is a dict, which carries
-        nothing unless the file's dicts are queries (as a dict literal)."""
+        sanitizer in the element still counts. A dict comprehension carries its keys and values."""
         saved = dict(self._aliases)
         try:
             for clause in node.named_children:
                 if clause.type != "for_in_clause":
                     continue
                 left, right = clause.child_by_field_name("left"), clause.child_by_field_name("right")
+                items = self._items_targets(right, left)
+                if items is not None:                          # `for k, v in d.items()` (constant keys)
+                    self._aliases[self._get_text(items[0])] = ExpConst.string("")
+                    self._aliases[self._get_text(items[1])] = ExpCall(ExpConst.string("next"),
+                                                                      [ExpVar(PVar(items[2]))])
+                    continue
                 element = ExpCall(ExpConst.string("next"), [self._translate_expression(right)]) \
                     if right is not None else ExpConst.null()
                 stack = [left] if left is not None else []
@@ -2744,8 +3070,7 @@ class PythonFrontend:
             if body is None:
                 return ExpConst.null()
             if node.type == "dictionary_comprehension":
-                if not self._dicts_are_queries:
-                    return ExpConst.null()
+                # `{k: v for k, v in request.json.items()}` carries its keys and its values
                 parts = [self._translate_expression(c) for c in body.named_children]
                 return ExpStringConcat(parts) if parts else ExpConst.null()
             return self._translate_expression(body)
@@ -2797,8 +3122,23 @@ class PythonFrontend:
     # type there, is renamed so the XSS sink spec does not match it.
     _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
 
+    def _inline_partial(self, call_node: TSNode) -> Optional[TSNode]:
+        """`functools.partial(f, a)(b)`: the inner `partial(...)` call, when it has a function."""
+        func = call_node.child_by_field_name("function")
+        if func is None or func.type != "call":
+            return None
+        inner = func.child_by_field_name("function")
+        if inner is None or self._imports.resolve(self._get_text(inner)) != "functools.partial":
+            return None
+        args = self._get_call_args(func)
+        names = self._kwarg_names(func) or [None] * len(args)
+        return func if args and names[0] is None else None
+
     def _get_call_name(self, call_node: TSNode) -> str:
         """Get full name of function being called"""
+        partial = self._inline_partial(call_node)
+        if partial is not None:                   # `functools.partial(f, a)(b)` calls f(a, b)
+            return self._get_text(self._get_call_args(partial)[0])
         func = call_node.child_by_field_name("function")
         if not func:
             return ""
@@ -2898,7 +3238,8 @@ class PythonFrontend:
 
     def _get_call_args(self, call_node: TSNode) -> List[TSNode]:
         """Get argument nodes from call"""
-        args = []
+        partial = self._inline_partial(call_node)
+        args = self._get_call_args(partial)[1:] if partial is not None else []
         args_node = call_node.child_by_field_name("arguments")
         if args_node is not None and args_node.type == "generator_expression":
             return [args_node]                # `"".join(x for x in xs)`: one argument, the generator

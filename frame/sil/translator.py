@@ -2333,6 +2333,48 @@ class SILTranslator:
             return [exp.args[i] for i in spec.taint_propagates if 0 <= i < len(exp.args)]
         return list(exp.args)
 
+    def _clean_dict_reads(self, exp: Exp, state: SymbolicState) -> Set[str]:
+        """Dicts the expression reads only by literal keys whose stored values carry no taint
+        (`"SELECT " + d["b"]` with `d = {"a": q, "b": "x"}`): their names are not sink data."""
+        reads: Dict[str, bool] = {}
+
+        def walk(e: Exp, keyed: bool = False) -> None:
+            if isinstance(e, ExpIndex) and isinstance(e.base, ExpVar) and isinstance(e.index, ExpConst) \
+                    and isinstance(e.index.value, str):
+                base = self._get_var_name(e.base.var)
+                stored = state.dict_get(base, e.index.value.strip("'\"")) if state.is_tracked_dict(base) else None
+                reads[base] = reads.get(base, True) and stored is not None and stored[1] is None
+                return
+            if isinstance(e, ExpVar):
+                reads[self._get_var_name(e.var)] = False
+                return
+            if isinstance(e, ExpConst):
+                return
+            if isinstance(e, ExpBinOp):
+                children = [e.left, e.right]
+            elif isinstance(e, ExpUnOp):
+                children = [e.operand]
+            elif isinstance(e, ExpStringConcat):
+                children = list(e.parts)
+            elif isinstance(e, ExpTernary):
+                children = [e.condition, e.true_exp, e.false_exp]
+            elif isinstance(e, ExpCast):
+                children = [e.exp]
+            elif isinstance(e, ExpCall):
+                children = [e.func] + list(e.args)
+            elif isinstance(e, ExpFieldAccess):
+                children = [e.base]
+            elif isinstance(e, ExpIndex):
+                children = [e.base, e.index]
+            else:                                          # unknown shape: nothing in it is clean
+                for name in self._get_exp_vars(e):
+                    reads[name] = False
+                return
+            for c in children:
+                walk(c)
+        walk(exp)
+        return {name for name, clean in reads.items() if clean}
+
     def _arg_taint_leaves(self, exp: Exp, state: SymbolicState,
                           wrap: frozenset = frozenset()) -> List[Tuple[TaintInfo, Set[str]]]:
         """`_arg_taint_leaves_any`, attacker data first: callers that keep one leaf keep it, not a
@@ -2430,6 +2472,14 @@ class SILTranslator:
                 if dotted and state.is_tainted(dotted):    # a field holding attacker data (`self.val`, `b.val`)
                     out.append((state.get_taint_info(dotted),
                                 set(wrap) | set(state.sanitized.get(dotted, []))))
+            if isinstance(exp, ExpIndex) and isinstance(exp.base, ExpVar) and isinstance(exp.index, ExpConst) \
+                    and isinstance(exp.index.value, str):
+                base = self._get_var_name(exp.base.var)
+                stored = state.dict_get(base, exp.index.value.strip("'\"")) if state.is_tracked_dict(base) else None
+                if stored is not None:                     # `d["b"]` of a dict whose "b" is known
+                    if stored[1] is not None:
+                        out.append((stored[1], set(wrap) | set(state.sanitized.get(base, []))))
+                    return out
             members = self._get_embedded_member_sources(exp)
             if members:
                 src, kind = members[0]
@@ -4962,6 +5012,8 @@ class SILTranslator:
                                 if spec.is_sink in ('redirect', 'ssrf') and self._has_local_redirect_prefix(arg_exp):
                                     continue          # "/p/" + id stays on this origin
                                 arg_vars = self._get_exp_vars(arg_exp)
+                                clean_dicts = self._clean_dict_reads(arg_exp, state)
+                                arg_vars = [v for v in arg_vars if v not in clean_dicts]
                                 # a closure called in the argument hands back what it captured
                                 # (`db.query(buildQuery())`), as at a TaintSink
                                 arg_vars += [c for c in self._closure_captured_vars(arg_exp, sink_kind)
@@ -5325,6 +5377,12 @@ class SILTranslator:
                     # Also maintain coarse-grained taint for compatibility
                     if value_taint:
                         state.propagate_taint(value_vars[0] if value_vars else str(value_exp), container_var)
+                    elif not isinstance(key_exp, ExpConst):
+                        # `d[name] = 1` with an attacker-chosen name: iterating d yields it
+                        for key_var in self._get_exp_vars(key_exp):
+                            if state.is_tainted(key_var):
+                                state.propagate_taint(key_var, container_var)
+                                break
                 else:
                     # Fallback: Check if any argument is tainted (coarse-grained)
                     for arg_exp, _ in instr.args:
@@ -5957,6 +6015,8 @@ class SILTranslator:
             if callee is not None and (callee.ref[0] != self._file_key or callee.proc.is_method):
                 return checks, state          # the project's own method, analysed on its own
         sink_vars = self._get_exp_vars(instr.exp)
+        clean_dicts = self._clean_dict_reads(instr.exp, state)
+        sink_vars = [v for v in sink_vars if v not in clean_dicts]
         # A field path the sink reads (`self.options.additional.join(..)`) that carries
         # taint of its own (field stores, constructor-filled fields).
         sink_vars += [c for c in self._field_chains(instr.exp) if c in state.tainted and c not in sink_vars]

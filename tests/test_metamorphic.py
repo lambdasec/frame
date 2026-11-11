@@ -97,15 +97,7 @@ PY_INLINE_CWE = {"format-keyword-inline": "CWE-78", "conditional-inline": "CWE-7
                  "receiver-call-statement": "CWE-89", "match-capture": "CWE-78",
                  "list-literal-order": "CWE-78", "subscript-augmented": "CWE-78", "lambda-body": "CWE-78"}
 
-KNOWN_GAPS = {
-    ("python", "dict-key"): "a dict literal lowers to null (no per-key values yet)",
-    ("python", "dict-get"): "a dict literal lowers to null (no per-key values yet)",
-    ("python", "partial"): "calling a functools.partial object written inline is not resolved",
-    ("python", "match-capture"): "match capture/sequence/mapping patterns bind nothing yet",
-    ("python", "list-literal-order"): "a list literal lowers to its first element: ' '.join(['ping', q]) loses q",
-    ("python", "subscript-augmented"): "`d['k'] += q`: the augmented target is taken as text",
-    ("python", "lambda-body"): "a lambda's body is not a procedure: `run = lambda c: os.system(c)`",
-}
+KNOWN_GAPS: dict = {}
 
 
 def _scan(language, code, name):
