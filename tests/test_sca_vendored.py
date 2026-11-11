@@ -116,8 +116,30 @@ def test_live_the_recorded_release_still_reads_the_same(tmp_path, name):
                "libxml2": "https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz",
                "curl": "https://curl.se/download/curl-8.6.0.tar.gz",
                "libtiff": "https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz"}   # tiffvers.h is generated
+    # Mirrors of a release tarball, used only when upstream cannot be reached and only if the file
+    # has the pinned digest (download.osgeo.org was down for days; the digest matches the BLFS
+    # and Buildroot mirrors and BLFS's published MD5 for tiff-4.6.0.tar.gz).
+    mirrors = {"libtiff": (["https://ftp.osuosl.org/pub/blfs/conglomeration/tiff/tiff-4.6.0.tar.gz",
+                            "https://sources.buildroot.net/tiff/tiff-4.6.0.tar.gz"],
+                           "88b3979e6d5c7e32b50d7ec72fb15af724f6ab2cbf7e10880c360a77e4b5d99a")}
     url = special.get(name) or f"https://codeload.github.com/{lib.repo.split('/', 1)[1]}/tar.gz/refs/tags/{h['tag']}"
-    data = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "frame"}), timeout=300).read()
+    try:
+        data = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "frame"}), timeout=300).read()
+    except OSError:
+        if name not in mirrors:
+            raise
+        import hashlib
+        urls, digest = mirrors[name]
+        data = None
+        for m in urls:
+            try:
+                got = urllib.request.urlopen(urllib.request.Request(m, headers={"User-Agent": "frame"}), timeout=300).read()
+            except OSError:
+                continue
+            if hashlib.sha256(got).hexdigest() == digest:
+                data = got
+                break
+        assert data is not None, f"{url} unreachable and no mirror served the pinned release"
     want = {h["header"], *h["companions"]}
     if url.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
