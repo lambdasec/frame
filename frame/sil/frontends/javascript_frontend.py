@@ -131,6 +131,7 @@ class JavaScriptFrontend:
         self._node_counter = 0
         self._ident_counter = 0
         self._current_class: Optional[str] = None
+        self._unlowered: Dict[str, int] = {}
         # Treat function parameters as untrusted input. In Node.js packages the
         # exported API is the attack surface (callers pass attacker-controlled
         # data), so this is the pure-SL recall lever for real-world JS, mirroring
@@ -153,6 +154,7 @@ class JavaScriptFrontend:
         self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
+        self._unlowered = {}
 
         # Parse source code
         tree = self.parser.parse(self._source_bytes)
@@ -195,6 +197,7 @@ class JavaScriptFrontend:
 
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
+        program.unlowered_syntax = dict(self._unlowered)
 
         self._link_enclosing_procedures(program)
         annotate_program_calls(program, self._imports)
@@ -827,6 +830,7 @@ class JavaScriptFrontend:
         )
         self._current_proc = proc
         self._node_counter = 0
+        self._catch_entries, self._dead_nodes = [], set()
         entry = proc.new_node(NodeKind.ENTRY)
         proc.add_node(entry)
         proc.entry_node = entry.id
@@ -985,8 +989,14 @@ class JavaScriptFrontend:
 
         # Find class body
         body_node = node.child_by_field_name("body")
+        # Instance field initializers (`private db = mysql.createPool(cfg)`) run in the constructor
+        # (`_translate_function_body`); a class without one gets the constructor the language
+        # gives it. Without this a field so set had no value origin in the class's methods.
+        has_constructor = False
         if body_node:
             for child in body_node.children:
+                if child.type == "method_definition" and self._get_text(child.child_by_field_name("name")) == "constructor":
+                    has_constructor = True
                 if child.type == "method_definition":
                     seen_ids.add(child.id)
                     proc = self._translate_method(child)
@@ -1009,7 +1019,67 @@ class JavaScriptFrontend:
                                 proc.name = f"{class_name}.{proc.name}"
                                 program.add_procedure(proc)
 
+        # (A derived class's implicit constructor also passes its arguments to the base's, which
+        # a constructor of its own here would hide: only a class with no base gets one.)
+        if body_node is not None and not has_constructor and not bases and self._field_initializers(body_node):
+            proc = self._implicit_constructor(node, body_node)
+            proc.class_name = class_name
+            proc.name = f"{class_name}.constructor"
+            program.add_procedure(proc)
         self._current_class = None
+
+    _LITERAL_VALUES = frozenset({"string", "number", "true", "false", "null", "undefined", "regex"})
+
+    def _field_initializers(self, body: Optional[TSNode]) -> List[Tuple[str, TSNode]]:
+        """(field, value) for each instance field a class body initializes with an expression that
+        is not a literal or a function (`db = mysql.createPool(cfg)`; a literal carries no data,
+        and a function-valued field is a method of its own)."""
+        out: List[Tuple[str, TSNode]] = []
+        for child in (body.named_children if body is not None else ()):
+            if child.type not in ("field_definition", "public_field_definition"):
+                continue
+            if any(c.type == "static" for c in child.children):
+                continue
+            name = child.child_by_field_name("property") or child.child_by_field_name("name")
+            value = child.child_by_field_name("value")
+            if name is None or value is None or name.type not in ("property_identifier", "private_property_identifier"):
+                continue
+            inner = self._unwrap_value(value)
+            if inner is None or inner.type in self._LITERAL_VALUES or inner.type in self._FUNC_NODE_TYPES \
+                    or inner.type in ("class", "function") or inner.type == "template_string" and not any(
+                        c.type == "template_substitution" for c in inner.children):
+                continue
+            out.append((self._get_text(name), value))
+        return out
+
+    def _lower_field_initializers(self, class_body: TSNode) -> None:
+        for name, value in self._field_initializers(class_body):
+            target = f"this.{name}"
+            loc = self._get_location(value)
+            inner = self._unwrap_await(value)
+            if inner.type == "call_expression":
+                self._add_instrs(self._translate_call_assignment(target, inner, loc))
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=self._translate_expression(inner)))
+                self._add_instrs(self._check_expression_for_taint_source(inner, target, loc))
+
+    def _implicit_constructor(self, class_node: TSNode, class_body: TSNode) -> Procedure:
+        proc = Procedure(name="constructor", params=[], ret_type=Typ.unknown_type(),
+                         loc=self._get_location(class_node), is_method=True)
+        outer_proc, outer_node, outer_counter = self._current_proc, self._current_node, self._node_counter
+        self._current_proc = proc
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        self._lower_field_initializers(class_body)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node is not None:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc, self._current_node, self._node_counter = outer_proc, outer_node, outer_counter
+        return proc
 
     def _translate_method(self, node: TSNode) -> Optional[Procedure]:
         """Translate class method definition"""
@@ -1110,6 +1180,8 @@ class JavaScriptFrontend:
         """Translate function body to SIL"""
         self._current_proc = proc
         self._node_counter = 0
+        self._catch_entries = []                # the handlers a `throw` here goes to (`_translate_try`)
+        self._dead_nodes = set()                # nodes after a throw that jumped to a handler
 
         # Create entry node
         entry = proc.new_node(NodeKind.ENTRY)
@@ -1123,6 +1195,9 @@ class JavaScriptFrontend:
         if node.type == "method_definition" and proc.name == "constructor":
             for name in self._parameter_properties(node):
                 self._add_instr(Assign(loc=proc.loc, id=PVar(f"this.{name}"), exp=ExpVar(PVar(name))))
+            # then the class's instance field initializers (`_translate_class`)
+            if node.parent is not None and node.parent.type == "class_body":
+                self._lower_field_initializers(node.parent)
 
         # Find and translate body
         body_node = node.child_by_field_name("body")
@@ -1945,6 +2020,49 @@ class JavaScriptFrontend:
         elif node.type == "throw_statement":
             self._translate_throw(node)
 
+        elif node.type == "do_statement":
+            self._translate_do(node)
+
+        elif node.type == "statement_block":
+            self._translate_block(node)                 # a bare `{ ... }`, a `case 'a': { ... }` body
+
+        elif node.type == "with_statement":
+            # `with (o) { ... }` (sloppy mode only): the object is evaluated, then the body runs
+            self._translate_effect(node.child_by_field_name("object"))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                self._translate_statement(body)
+
+        elif node.type == "labeled_statement":
+            body = node.child_by_field_name("body")     # `outer: for (...) {...}`
+            if body is not None:
+                self._translate_statement(body)
+
+        elif node.type not in self._NO_EFFECT_STATEMENTS:
+            # A statement kind not lowered above used to vanish with every call in it. Its
+            # statements and expressions are lowered one by one (`with (o) { exec(x) }`), and the
+            # kind is recorded like an expression that reaches the source-text fallback.
+            key = "statement:" + node.type
+            self._unlowered[key] = self._unlowered.get(key, 0) + 1
+            for child in node.named_children:
+                if child.type in self._NO_EFFECT_STATEMENTS:
+                    continue
+                if child.type.endswith(("_statement", "_declaration")) or child.type == "statement_block":
+                    self._translate_statement(child)
+                else:
+                    self._translate_effect(child)
+
+    # Statements with nothing to lower here: declarations that are procedures (or types) of their
+    # own, and jumps the CFG does not model.
+    _NO_EFFECT_STATEMENTS = frozenset({
+        "empty_statement", "debugger_statement", "break_statement", "continue_statement",
+        "comment", "html_comment", "hash_bang_line", "function_declaration",
+        "generator_function_declaration", "class_declaration", "abstract_class_declaration",
+        "import_statement", "export_statement", "interface_declaration", "type_alias_declaration",
+        "enum_declaration", "ambient_declaration", "module", "internal_module", "function_signature",
+        "statement_identifier", "decorator", "ERROR",
+    })
+
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
         for child in node.children:
@@ -2024,8 +2142,54 @@ class JavaScriptFrontend:
             # the expression emits the TaintSink as a side effect.
             self._translate_expression(child)
 
+        elif child.type == "unary_expression":
+            # `void cp.exec(cmd)`, `!f(x)`, `delete o[k]`: the operand still runs
+            self._translate_effect(child.child_by_field_name("argument"))
+
+        elif child.type == "binary_expression":
+            # `run(a) + run(b)` (the logical operators are branches, `_translate_effect`)
+            self._translate_effect(child.child_by_field_name("left"))
+            self._translate_effect(child.child_by_field_name("right"))
+
+        elif child.type in self._TS_TRANSPARENT:
+            self._translate_effect(self._ts_value(child))        # `exec(c) as T`
+
+        elif child.type in ("spread_element", "yield_expression"):
+            self._translate_effect(self._single_operand(child))  # `yield exec(c)`
+
+        elif child.type == "array":
+            for part in child.named_children:                     # `[f(a), g(b)]`
+                if part.type != "comment":
+                    self._translate_effect(part)
+
+        elif child.type == "template_string":
+            for part in child.named_children:                     # `` `${exec(c)}` ``
+                if part.type == "template_substitution":
+                    for inner in part.named_children:
+                        if inner.type != "comment":
+                            self._translate_effect(inner)
+
+    # TypeScript forms around a value that do not change it at run time: `x as T`, `x satisfies T`,
+    # `x!`, `<T>x`, `f<T>`
+    _TS_TRANSPARENT = frozenset({"as_expression", "satisfies_expression", "non_null_expression",
+                                 "type_assertion", "instantiation_expression"})
+
+    @staticmethod
+    def _ts_value(node: TSNode) -> Optional[TSNode]:
+        """The value inside a TypeScript type form (`_TS_TRANSPARENT`): the expression, never the
+        type (`<T>x` writes the type first)."""
+        named = [c for c in node.named_children if c.type != "comment"]
+        if not named:
+            return None
+        return named[-1] if node.type == "type_assertion" else named[0]
+
+    @staticmethod
+    def _single_operand(node: TSNode) -> Optional[TSNode]:
+        """The operand of `...x`, `yield x`, `await x` (no field name in the grammar)."""
+        return next((c for c in node.named_children if c.type != "comment"), None)
+
     def _translate_destructuring(self, pattern: TSNode, value_node: TSNode,
-                                 loc: Location) -> None:
+                                 loc: Location) -> Exp:
         """`const {id, cmd} = req.query` / `const [a, b] = f()`: each bound name
         is an Assign of its part of the value (`id = req.query.id`), with the
         value's taint. Unlowered, the bindings were never assigned and a
@@ -2041,6 +2205,7 @@ class JavaScriptFrontend:
             base = self._translate_expression(value_node)
             src_node = value_node
         self._bind_pattern(pattern, base, src_node, loc)
+        return base
 
     def _bind_pattern(self, pattern: TSNode, base: Exp, src_node: Optional[TSNode],
                       loc: Location) -> None:
@@ -2126,17 +2291,32 @@ class JavaScriptFrontend:
                     # Uninitialized variable
                     self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=ExpConst.null()))
 
-    def _translate_assignment(self, node: TSNode) -> None:
-        """Translate assignment expression: target = value"""
+    _PATTERNS = ("object_pattern", "array_pattern")
+
+    def _translate_assignment(self, node: TSNode) -> Exp:
+        """Translate assignment expression: target = value. Returns the value the assignment
+        expression has (what was written), for an assignment used as a value."""
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
 
         if not left or not right:
-            return
+            return ExpConst.null()
 
         target_name = self._get_text(left)
         loc = self._get_location(node)
         right = self._unwrap_await(right)
+        literal = right.type if right.type in ("object", "array") else ""
+
+        if left.type in self._PATTERNS:
+            # `({ host } = req.query)`, `[a, b] = pair`: each bound name its part of the value (the
+            # pattern used to be one variable named by its text)
+            return self._translate_destructuring(left, right, loc)
+
+        if right.type == "assignment_expression":
+            # `a = b = value`: the inner assignment runs first and its value is what the outer one
+            # writes (the inner assignment used to be read as a variable named by its text)
+            self._assign_exp(left, self._translate_assignment(right), loc, literal)
+            return ExpVar(PVar(target_name))
 
         if right.type == "call_expression":
             instrs = self._translate_call_assignment(target_name, right, loc)
@@ -2158,8 +2338,12 @@ class JavaScriptFrontend:
         # above (inline sources) or assignment propagation (already-tainted
         # vars). The taint engine then reports it only when that value is
         # actually attacker-tainted; a constant right-hand side stays untainted.
+        self._assignment_target_sink(left, target_name, literal, loc)
+        return ExpVar(PVar(target_name))
+
+    def _assignment_target_sink(self, left: TSNode, target_name: str, literal: str, loc: Location) -> None:
         sink_spec = self._assignment_sink_spec(left)
-        if sink_spec and sink_spec.json_for_literals and right.type in ("object", "array"):
+        if sink_spec and sink_spec.json_for_literals and literal:
             sink_spec = None            # `ctx.body = { q }` is serialised as JSON, not sent as HTML
         if sink_spec:
             self._add_instr(TaintSink(
@@ -2168,6 +2352,16 @@ class JavaScriptFrontend:
                 kind=_get_sink_kind(sink_spec.is_sink),
                 description=sink_spec.description,
             ))
+
+    def _assign_exp(self, target: TSNode, value: Exp, loc: Location, literal: str = "") -> None:
+        """Write an already lowered value to an assignment target: a name, member or element
+        (`Assign`, plus the sink a property assignment is), or every name of a pattern."""
+        if target.type in self._PATTERNS:
+            self._bind_pattern(target, value, None, loc)
+            return
+        name = self._get_text(target)
+        self._add_instr(Assign(loc=loc, id=PVar(name), exp=value, literal=literal))
+        self._assignment_target_sink(target, name, literal, loc)
 
     def _assignment_sink_spec(self, left_node: TSNode):
         """Return the sink ProcSpec if an assignment target is a known sink
@@ -2627,6 +2821,8 @@ class JavaScriptFrontend:
                 target = n.child_by_field_name("left") or n.child_by_field_name("argument")
                 if target is not None and self._get_text(target) == name:
                     out.append(None)
+            if self._rebinds(n, name) or self._loop_declares(n, name):
+                out.append(None)                          # a value read out of a pattern or a loop
             stack.extend(n.named_children)
         return out
 
@@ -2673,6 +2869,10 @@ class JavaScriptFrontend:
                 arg = n.child_by_field_name("argument")
                 if arg is not None and arg.type == "identifier" and self._get_text(arg) == name:
                     assigned = True
+            if self._rebinds(n, name):
+                assigned = True
+            elif self._loop_declares(n, name):
+                decls.append(None)                      # `for (const name of xs)`: each element
             stack.extend(n.named_children)
         if not decls:
             return False, None
@@ -2680,8 +2880,38 @@ class JavaScriptFrontend:
             return True, decls[0]
         return True, None
 
+    def _pattern_binds(self, target: Optional[TSNode], name: str) -> bool:
+        """Does an assignment or loop target that is a pattern (`({ host } = q)`, `for ([k, v] of
+        e)`) write `name`?"""
+        if target is None or target.type not in self._PATTERNS:
+            return False
+        return any(x.type in ("identifier", "shorthand_property_identifier_pattern") and self._get_text(x) == name
+                   and not (x.parent is not None and x.parent.type == "pair_pattern"
+                            and x.parent.child_by_field_name("key") == x)
+                   for x in self._descendants_js(target))
+
+    def _rebinds(self, n: TSNode, name: str) -> bool:
+        """`({ name } = v)`, or a `for (name of xs)` / `for ({ name } of xs)` head without a
+        declaration of its own."""
+        if n.type == "assignment_expression":
+            return self._pattern_binds(n.child_by_field_name("left"), name)
+        if n.type == "for_in_statement" and n.child_by_field_name("kind") is None:
+            left = n.child_by_field_name("left")
+            return left is not None and (left.type == "identifier" and self._get_text(left) == name
+                                         or self._pattern_binds(left, name))
+        return False
+
+    def _loop_declares(self, n: TSNode, name: str) -> bool:
+        if n.type != "for_in_statement" or n.child_by_field_name("kind") is None:
+            return False
+        left = n.child_by_field_name("left")
+        return left is not None and (left.type == "identifier" and self._get_text(left) == name
+                                     or self._pattern_binds(left, name))
+
     def _assigns(self, root: TSNode, name: str) -> bool:
         for n in self._descendants_js(root):
+            if self._rebinds(n, name):
+                return True
             if n.type in ("assignment_expression", "augmented_assignment_expression"):
                 left = n.child_by_field_name("left")
                 if left is not None and left.type == "identifier" and self._get_text(left) == name:
@@ -2845,13 +3075,34 @@ class JavaScriptFrontend:
                 func_name = f"{inner}.{self._get_text(prop_node)}"
             elif obj_node is not None and obj_node.type == "new_expression" and prop_node is not None:
                 func_name = f"{self._hoist_new_receiver(obj_node, loc, instrs)}.{self._get_text(prop_node)}"
+            elif prop_node is not None:
+                receiver = self._value_receiver(obj_node, loc, instrs)
+                if receiver is not None:                  # `('ping ' + q).trim()`, `parts[0].trim()`
+                    func_name = f"{receiver}.{self._get_text(prop_node)}"
         self._note_escaping_const(call_node)
         escaping = self._escaping_callee(func_node)
         if func_node is not None and func_node.type == "call_expression":
             func_name = self._hoist_callee_call(func_node, loc, instrs)
+        self._callee_effects(func_node)
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
         args_exp, kwarg_names = self._with_option_kwargs(func_name, args, args_exp)
+        if kwarg_names is None and self._lookup_call_spec(func_name, call_node) is None:
+            # `unknownLib(process.argv[2])`, `helper(location.hash)`: a source read written inline in
+            # an argument of a call with no spec is hoisted into a temporary (`$argN = process.argv[2]`)
+            # that carries the source, so the call's default propagation and the callee's summary
+            # see it, as they see a variable.
+            for i, arg in enumerate(args[:len(args_exp)]):
+                node = self._unwrap_value(arg)
+                if node is None or node.type not in self._INLINE_SOURCE_ARGS:
+                    continue
+                name = f"$arg{self._ident_counter}"
+                found = self._check_expression_for_taint_source(arg, name, loc)
+                if found and not any(getattr(f, "kind", None) == TaintKind.WEAK_RANDOM for f in found):
+                    self._ident_counter += 1
+                    instrs.append(Assign(loc=loc, id=PVar(name), exp=args_exp[i][0]))
+                    instrs.extend(found)
+                    args_exp[i] = (ExpVar(PVar(name)), args_exp[i][1])
 
         # Create return identifier
         ret_id = self._new_ident(target)
@@ -3035,6 +3286,81 @@ class JavaScriptFrontend:
         instrs.append(Assign(loc=loc, id=PVar(inner), exp=self._translate_expression(new_node)))
         return inner
 
+    _LITERAL_RECEIVERS = frozenset({"string", "number", "regex", "true", "false", "null", "undefined"})
+    # argument forms in which a source read can be written inline (`_translate_call_assignment`)
+    _INLINE_SOURCE_ARGS = frozenset({"member_expression", "subscript_expression", "binary_expression",
+                                     "ternary_expression", "sequence_expression", "assignment_expression"})
+
+    def _is_path(self, node: Optional[TSNode]) -> bool:
+        """A name or a member chain on one (`req.query.host`, `this.db`): a receiver the
+        translator reads by its text."""
+        while node is not None and node.type == "member_expression":
+            node = node.child_by_field_name("object")
+        return node is not None and node.type in ("identifier", "this", "super")
+
+    def _unwrap_value(self, node: Optional[TSNode]) -> Optional[TSNode]:
+        """The value inside parentheses, `await` and TypeScript type forms."""
+        while node is not None and (node.type in ("parenthesized_expression", "await_expression")
+                                    or node.type in self._TS_TRANSPARENT):
+            if node.type in self._TS_TRANSPARENT:
+                inner = self._ts_value(node)
+            else:
+                named = [c for c in node.named_children if c.type != "comment"]
+                inner = named[0] if len(named) == 1 else None
+            if inner is None:
+                break
+            node = inner
+        return node
+
+    def _value_receiver(self, obj: Optional[TSNode], loc: Location, instrs: List[Instr]) -> Optional[str]:
+        """The name a method call's receiver is read by, when it is not a path, a call or a
+        `new` the callers already hoist: `('ping ' + q).trim()`, `` `ping ${q}`.trim() ``,
+        `['ping', q].join(' ')`, `parts[0].trim()`, `(await pool.getConnection()).query(sql)`. The
+        receiver is evaluated first into a temporary (`$recvN = <value>`; a call inside it is
+        hoisted as `$chainN`) and the method is called on that. Named by its source text, such a
+        receiver was a variable that nothing ever wrote, and its taint was lost. None when the
+        receiver is a path, a literal or a function (it carries no data): the written name stays."""
+        node = self._unwrap_value(obj)
+        if node is None or node.type in self._LITERAL_RECEIVERS or node.type in self._FUNC_NODE_TYPES \
+                or node.type in ("class", "function"):
+            return None
+        if node.type == "template_string" and not any(c.type == "template_substitution" for c in node.children):
+            return None
+        if self._is_path(node):
+            return self._callee_text(node) if node is not obj else None      # `(h).trim()` is `h.trim()`
+        if node.type == "call_expression":
+            return self._hoist_callee_call(node, loc, instrs)
+        if node.type == "new_expression":
+            return self._hoist_new_receiver(node, loc, instrs)
+        if node.type == "member_expression":                     # `getDb().pool.query`, `rows[0].name.trim`
+            base = self._value_receiver(node.child_by_field_name("object"), loc, instrs)
+            prop = node.child_by_field_name("property")
+            if base is None or prop is None:
+                return None
+            return f"{base}.{self._get_text(prop)}"
+        exp = None
+        if node.type == "subscript_expression" and not self._is_const_table_subscript(node):
+            # `s.split(',')[0]`: a call in the indexed value is hoisted first
+            base_node = self._unwrap_value(node.child_by_field_name("object"))
+            if base_node is not None and not self._is_path(base_node):
+                base = self._value_receiver(base_node, loc, instrs)
+                if base is not None:
+                    exp = ExpIndex(ExpVar(PVar(base)), self._translate_expression(node.child_by_field_name("index")))
+        name = f"$recv{self._ident_counter}"
+        self._ident_counter += 1
+        instrs.append(Assign(loc=loc, id=PVar(name), exp=exp if exp is not None else self._translate_expression(node)))
+        instrs.extend(self._check_expression_for_taint_source(node, name, loc))
+        return name
+
+    def _callee_effects(self, func_node: Optional[TSNode]) -> None:
+        """A callee that is a computed value, not a name (`(new Function(code))()`, `(a || b)(x)`),
+        is evaluated before the call: a sink in it (the `new Function`) still fires."""
+        node = self._unwrap_value(func_node)
+        if node is not None and node is not func_node and node.type not in (
+                "identifier", "member_expression", "call_expression", "subscript_expression", "this", "super") \
+                and node.type not in self._FUNC_NODE_TYPES and node.type not in ("function", "class"):
+            self._translate_expression(node)
+
     def _hoist_callee_call(self, func_node: TSNode, loc: Location, instrs: List[Instr]) -> str:
         """`f(x)(y)` (`_.template(src)(data)`, `connect(m)(C)`): the inner call runs first and its
         result is what is called. Lowered as `$chainN = f(x)`, a real Call, so the inner call's
@@ -3077,13 +3403,18 @@ class JavaScriptFrontend:
             elif obj_node is not None and obj_node.type == "new_expression" and prop_node is not None:
                 func_name = f"{self._hoist_new_receiver(obj_node, loc, instrs)}.{self._get_text(prop_node)}"
             else:
-                # Regular method call (e.g., obj.method())
-                func_name = self._get_call_name(call_node)
+                # Regular method call (e.g., obj.method()); a receiver that is a value, not a path,
+                # is evaluated first (`(await pool.getConnection()).query(sql)`, `parts[0].run()`)
+                receiver = self._value_receiver(obj_node, loc, instrs) \
+                    if prop_node is not None and self._inline_require_member(func_node) is None else None
+                func_name = f"{receiver}.{self._get_text(prop_node)}" if receiver is not None \
+                    else self._get_call_name(call_node)
         elif func_node is not None and func_node.type == "call_expression":
             func_name = self._hoist_callee_call(func_node, loc, instrs)
         else:
             # Simple function call
             func_name = self._get_call_name(call_node)
+        self._callee_effects(func_node)
 
         args = self._get_call_args(call_node)
         args_exp = [(self._call_arg_exp(func_name, args, i), Typ.unknown_type()) for i in range(len(args))]
@@ -3345,11 +3676,18 @@ class JavaScriptFrontend:
         if literal is not None and literal.type == "object":
             self._returned_fields_var = self._returned_object(literal, loc)
         if inner is not None and inner.type == "call_expression":
-            # the call as a statement (a Call instruction for specs, packs and canonical ids) ...
+            # the call as a statement (a Call instruction for specs, packs and canonical ids),
+            # bound to a temporary that is returned: `return mysql.createConnection(cfg)` then
+            # returns a variable, so the function's return has the call's value origin
+            # (`getDb().query(q)` is a query on a connection). Returned as the call expression, the
+            # function returned no origin at all.
             spec = self._lookup_call_spec(self._get_call_name(inner), inner)
             if not (spec is not None and spec.taint_propagates and not spec.is_taint_sink()
                     and not spec.is_taint_source() and not spec.is_taint_sanitizer()):
-                self._add_instrs(self._translate_call_expr(inner))
+                name = f"$ret{self._ident_counter}"
+                self._ident_counter += 1
+                self._add_instrs(self._translate_call_assignment(name, inner, self._get_location(inner)))
+                return ExpVar(PVar(name))
         # ... and the returned value as the expression, so argument -> result propagation is unchanged
         return self._translate_expression(node)
 
@@ -3541,8 +3879,8 @@ class JavaScriptFrontend:
         if init:
             if init.type in ("lexical_declaration", "variable_declaration"):
                 self._translate_var_declaration(init)
-            elif init.type == "assignment_expression":
-                self._translate_assignment(init)
+            elif init.type != "empty_statement":
+                self._translate_effect(init)          # `i = 0`, `i = 0, j = n`
 
         # Simplified loop translation
         before_node = self._current_node
@@ -3560,7 +3898,8 @@ class JavaScriptFrontend:
             proc.connect(before_node.id, loop_head.id)
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        condition_exp = self._translate_expression(condition) \
+            if condition is not None and condition.type != "empty_statement" else ExpConst.boolean(True)
 
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
         proc.connect(loop_head.id, body_node.id)
@@ -3579,10 +3918,7 @@ class JavaScriptFrontend:
         # Update
         update = node.child_by_field_name("increment")
         if update and self._current_node:
-            if update.type == "update_expression":
-                self._translate_update(update)
-            elif update.type == "assignment_expression":
-                self._translate_assignment(update)
+            self._translate_effect(update)            # `i++`, `i += 2`, `i++, j--`
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -3600,7 +3936,6 @@ class JavaScriptFrontend:
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
 
-        loop_var = self._get_text(left) if left else "_iter"
         iterable_exp = self._translate_expression(right) if right else ExpConst.null()
 
         before_node = self._current_node
@@ -3609,12 +3944,16 @@ class JavaScriptFrontend:
         proc.add_node(loop_head)
 
         body_node = proc.new_node(NodeKind.NORMAL)
-        body_node.add_instr(Assign(
-            loc=loc,
-            id=PVar(loop_var),
-            exp=ExpCall(ExpConst.string("next"), [iterable_exp])
-        ))
         proc.add_node(body_node)
+        # Each iteration binds the loop target to an element of what it iterates: a name, a member,
+        # or every name of a pattern (`for (const [k, v] of Object.entries(q))`, `for (const { host }
+        # of items)`; a pattern used to be one variable named by its text)
+        element = ExpCall(ExpConst.string("next"), [iterable_exp])
+        self._current_node = body_node
+        if left is not None and left.type in self._PATTERNS:
+            self._bind_pattern(left, element, None, loc)
+        else:
+            body_node.add_instr(Assign(loc=loc, id=PVar(self._get_text(left) if left else "_iter"), exp=element))
 
         after_node = proc.new_node(NodeKind.NORMAL)
         proc.add_node(after_node)
@@ -3643,44 +3982,174 @@ class JavaScriptFrontend:
         self._current_node = after_node
 
     def _translate_try(self, node: TSNode) -> None:
-        """Translate try/catch/finally"""
-        # The handler's control flow is not modelled below, so record that this
-        # procedure's CFG understates how control can leave it.
-        if self._current_proc:
-            self._current_proc.has_exception_handler = True
+        """try / catch / finally as control flow. The body runs from a node of its own; the
+        handler is a branch entered from before the body and from its end (an exception can leave
+        the body anywhere, and what the body binds only adds taint); the branches join and
+        `finally` runs after the join. A return or throw ends its own branch only. (The handler used
+        to be lowered as straight-line code after the body, so `catch (e) { return next(e) }` ended
+        every path and cut off the code after the try; the finally block was dropped.)"""
+        proc = self._current_proc
+        if proc is None:
+            return
+        # Exceptions raised by calls are not edges of the CFG: recorded so analyses that need every
+        # way out of the procedure (CWE-674) stay silent.
+        proc.has_exception_handler = True
 
-        body = node.child_by_field_name("body")
-        if body:
-            self._translate_block(body)
-
+        pre = self._current_node
+        body_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(body_node)
+        if pre is not None:
+            proc.connect(pre.id, body_node.id)
         handler = node.child_by_field_name("handler")
-        if handler:
-            handler_body = handler.child_by_field_name("body")
-            if handler_body:
-                self._translate_block(handler_body)
+        entry = None
+        if handler is not None:
+            entry = proc.new_node(NodeKind.NORMAL)        # a `throw` in the body jumps here
+            proc.add_node(entry)
+        self._current_node = body_node
+        body = node.child_by_field_name("body")
+        catch_entries = self.__dict__.setdefault("_catch_entries", [])
+        if entry is not None:
+            catch_entries.append(entry)
+        try:
+            if body is not None:
+                self._translate_block(body)
+        finally:
+            if entry is not None:
+                catch_entries.pop()
+        after_body = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        joined = False
 
+        dead = self.__dict__.get("_dead_nodes", set())
+
+        def close() -> None:
+            nonlocal joined
+            cur = self._current_node
+            if cur is not None and cur.id not in dead and not any(isinstance(i, Return) for i in cur.instrs):
+                proc.connect(cur.id, join.id)              # (a branch that returned ends there)
+                joined = True
+
+        if handler is not None and entry is not None:
+            for source in (pre, after_body):
+                if source is not None and source is not entry:
+                    proc.connect(source.id, entry.id)
+            self._current_node = entry
+            block = handler.child_by_field_name("body")
+            if block is not None:
+                self._translate_block(block)
+            close()
+        self._current_node = after_body
+        close()
         finalizer = node.child_by_field_name("finalizer")
-        if finalizer:
-            self._translate_block(finalizer)
+        if finalizer is not None and not joined and pre is not None:
+            proc.connect(pre.id, join.id)       # every branch returned: the finally still runs
+        self._current_node = join
+        block = finalizer.child_by_field_name("body") if finalizer is not None else None
+        if block is not None:
+            self._translate_block(block)
+
+    def _translate_do(self, node: TSNode) -> None:
+        """`do { body } while (cond)`: the body runs once before the condition is first tested."""
+        proc = self._current_proc
+        if proc is None:
+            return
+        loc = self._get_location(node)
+        body_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(body_node)
+        if self._current_node is not None:
+            proc.connect(self._current_node.id, body_node.id)
+        self._current_node = body_node
+        body = node.child_by_field_name("body")
+        if body is not None:
+            self._translate_statement(body)
+        condition = node.child_by_field_name("condition")
+        condition_exp = self._translate_expression(condition) if condition is not None else ExpConst.boolean(True)
+        loop_head = proc.new_node(NodeKind.LOOP_HEAD)
+        proc.add_node(loop_head)
+        loop_head.loop_body_can_exit = body_can_exit_loop(body)
+        after_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(after_node)
+        if self._current_node is not None:
+            proc.connect(self._current_node.id, loop_head.id)
+        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
+        proc.connect(loop_head.id, body_node.id)
+        loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.LOOP_EXIT))
+        proc.connect(loop_head.id, after_node.id)
+        self._current_node = after_node
+
+    # Statements after which control does not fall into the next `case`
+    _CASE_ENDS = frozenset({"break_statement", "return_statement", "throw_statement", "continue_statement"})
+
+    def _case_ends(self, stmts: List[TSNode]) -> bool:
+        last = next((s for s in reversed(stmts) if s.type not in ("comment", "empty_statement")), None)
+        while last is not None and last.type == "statement_block":
+            inner = [c for c in last.named_children if c.type not in ("comment", "empty_statement")]
+            last = inner[-1] if inner else None
+        return last is not None and last.type in self._CASE_ENDS
 
     def _translate_switch(self, node: TSNode) -> None:
-        """Translate switch statement (simplified)"""
+        """switch as branches: each case is entered from the switch (the discriminant is not
+        compared: a case value proves nothing about the cases after it) and from the case before
+        it when that one falls through; a case ending in `break`/`return`/`throw` leaves to the
+        join, and without a `default` the switch can match nothing. (The cases used to run one
+        after another, so a later case overwrote an earlier one and a `return` in one case ended
+        every path through the switch.)"""
+        proc = self._current_proc
+        if proc is None:
+            return
+        value = node.child_by_field_name("value")
+        if value is not None:
+            self._translate_effect(value)               # `switch (run(x))`: the discriminant is evaluated
         body = node.child_by_field_name("body")
-        if body:
-            for child in body.children:
-                if child.type == "switch_case" or child.type == "switch_default":
-                    for stmt in child.children:
-                        if stmt.type not in ("case", "default", ":", "break_statement"):
-                            self._translate_statement(stmt)
+        pre = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        falling = None
+        has_default = False
+        for case in (body.named_children if body is not None else ()):
+            if case.type not in ("switch_case", "switch_default"):
+                continue
+            has_default = has_default or case.type == "switch_default"
+            stmts = [c for i, c in enumerate(case.children) if case.field_name_for_child(i) == "body"]
+            entry = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(entry)
+            if pre is not None:
+                proc.connect(pre.id, entry.id)
+            if falling is not None:
+                proc.connect(falling.id, entry.id)
+            self._current_node = entry
+            for stmt in stmts:
+                self._translate_statement(stmt)
+            if self._case_ends(stmts):
+                if self._current_node is not None:
+                    proc.connect(self._current_node.id, join.id)
+                falling = None
+            else:
+                falling = self._current_node
+        if falling is not None:
+            proc.connect(falling.id, join.id)
+        if not has_default and pre is not None:
+            proc.connect(pre.id, join.id)
+        self._current_node = join
 
     def _translate_throw(self, node: TSNode) -> None:
-        """Translate throw statement"""
+        """A throw leaves the path. Inside the body of a `try` with a `catch` it goes to the
+        handler (with what the path holds at the throw); anywhere else it leaves the procedure."""
         loc = self._get_location(node)
-        # Simplified: just mark as potential error
         for child in node.children:
             if child.type not in ("throw", ";"):
                 exp = self._translate_expression(child)
-                self._add_instr(Return(loc=loc, value=exp))
+                handlers = self.__dict__.get("_catch_entries") or []
+                proc = self._current_proc
+                if handlers and proc is not None and self._current_node is not None:
+                    proc.connect(self._current_node.id, handlers[-1].id)
+                    unreachable = proc.new_node(NodeKind.NORMAL)   # what follows the throw
+                    proc.add_node(unreachable)
+                    self.__dict__.setdefault("_dead_nodes", set()).add(unreachable.id)
+                    self._current_node = unreachable
+                else:
+                    self._add_instr(Return(loc=loc, value=exp))
                 break
 
     def _translate_expression(self, node: TSNode) -> Exp:
@@ -3705,6 +4174,19 @@ class JavaScriptFrontend:
         elif node.type == "string":
             text = self._get_string_content(node)
             return ExpConst.string(text)
+
+        elif node.type == "template_string" and self._is_tagged_template(node):
+            # sql`... ${q}`, html`<b>${q}</b>`: the tag receives the literal strings and each value
+            # separately, and what it returns is the tag's own business (SQL and HTML tags bind or
+            # escape their values). No spec models a tag yet, so its values are not passed to it as
+            # data; calls inside the substitutions still run.
+            for part in node.named_children:
+                if part.type == "template_substitution":
+                    for inner in part.named_children:
+                        if inner.type != "comment":
+                            self._translate_expression(inner)
+            return ExpConst.string("".join(self._get_text(c) for c in node.named_children
+                                           if c.type == "string_fragment"))
 
         elif node.type == "template_string":
             parts = self._extract_template_parts(node)
@@ -3785,12 +4267,7 @@ class JavaScriptFrontend:
             inline = self._inline_require_member(func) if func is not None else None
             if inline is not None:
                 func_exp = ExpVar(PVar(inline))        # `require("m").f` -> `m.f`
-            args = []
-            args_node = node.child_by_field_name("arguments")
-            if args_node:
-                for child in args_node.children:
-                    if child.type not in ("(", ")", ","):
-                        args.append(self._translate_expression(child))
+            args = [self._translate_expression(a) for a in self._get_call_args(node)]
             # A call nested inside another expression (e.g. `return eval(x)`,
             # `f(exec(y))`) is still a sink -- emit its TaintSink as a side effect
             # so it is not missed just because it is not a standalone statement.
@@ -3876,12 +4353,7 @@ class JavaScriptFrontend:
         elif node.type == "new_expression":
             cons = node.child_by_field_name("constructor")
             cons_name = self._get_text(cons) if cons else "Object"
-            args = []
-            args_node = node.child_by_field_name("arguments")
-            if args_node:
-                for child in args_node.children:
-                    if child.type not in ("(", ")", ","):
-                        args.append(self._translate_expression(child))
+            args = [self._translate_expression(a) for a in self._get_call_args(node)]
             # A constructor can itself be a sink (e.g. new Function(userCode) is
             # code injection). Emit the TaintSink as a side effect so it fires in
             # any context (var initializer, argument, etc.).
@@ -3902,15 +4374,44 @@ class JavaScriptFrontend:
                             kind=kind, description=spec.description, arg_index=arg_idx))
             return ExpCall(ExpConst.string(f"new {cons_name}"), args)
 
-        elif node.type in ("as_expression", "satisfies_expression",
-                            "non_null_expression"):
-            # TypeScript type assertions (`x as string`, `x satisfies T`, `x!`)
+        elif node.type in self._TS_TRANSPARENT:
+            # TypeScript type assertions (`x as string`, `x satisfies T`, `x!`, `<string>x`)
             # are transparent to runtime values and taint -- translate the inner
             # expression and drop the type so `req.query.id as string` stays a
             # recognized source.
-            inner = node.named_child(0) if node.named_child_count else None
+            inner = self._ts_value(node)
             return (self._translate_expression(inner) if inner is not None
                     else ExpConst.null())
+
+        elif node.type in ("this", "super"):
+            return ExpVar(PVar(self._get_text(node)))
+
+        elif node.type == "assignment_expression":
+            # `f(a = req.query.a)`, `const x = (y = v)`, `if ((m = re.exec(s)))`: the assignment
+            # happens where the expression runs, and its value is what it wrote
+            return self._translate_assignment(node)
+
+        elif node.type == "augmented_assignment_expression":
+            self._translate_augmented_assignment(node)
+            left = node.child_by_field_name("left")
+            return ExpVar(PVar(self._get_text(left))) if left is not None else ExpConst.null()
+
+        elif node.type == "update_expression":
+            # `a[i++]`: the variable's value (the increment itself is lowered only as a statement)
+            return self._translate_expression(node.child_by_field_name("argument"))
+
+        elif node.type == "sequence_expression":
+            # `(0, f)(x)`, `(log(x), q)`: the earlier parts run for their effects, the last is the value
+            parts = [c for c in node.named_children if c.type != "comment"]
+            for part in parts[:-1]:
+                self._translate_effect(part)
+            return self._translate_expression(parts[-1]) if parts else ExpConst.null()
+
+        elif node.type in ("spread_element", "yield_expression"):
+            # `cp.exec(...args)`: the spread value; `yield call(api, q)`: what is yielded (what a
+            # driver such as redux-saga resumes the generator with)
+            inner = self._single_operand(node)
+            return self._translate_expression(inner) if inner is not None else ExpConst.null()
 
         elif node.type in ("jsx_element", "jsx_self_closing_element", "jsx_fragment"):
             # JSX evaluates to a React element (opaque value for taint), but its
@@ -3919,7 +4420,10 @@ class JavaScriptFrontend:
             self._scan_jsx_for_sinks(node)
             return ExpConst.null()
 
-        # Default
+        # Default: the node as a variable named by its source text. Data in a node lowered this way
+        # is lost, so each such node type is recorded (`Program.unlowered_syntax`, held to an
+        # allowlist by tests/test_lowering_coverage_javascript.py).
+        self._unlowered[node.type] = self._unlowered.get(node.type, 0) + 1
         text = self._get_text(node)
         return ExpVar(PVar(text)) if text else ExpConst.null()
 
@@ -4228,6 +4732,24 @@ class JavaScriptFrontend:
             root = f"{self._module_aliases[head]}.{rest}"
         return f"{root}.{self._get_text(method)}"
 
+    def _indirect_callee(self, func: Optional[TSNode]) -> Optional[TSNode]:
+        """`(0, cp.exec)(cmd)` is a call of `cp.exec` without its receiver as `this` (the form
+        Babel and TypeScript compile an imported function's call to): the callee is the last part
+        of the sequence, when the parts before it are literals."""
+        node = func
+        while node is not None and node.type == "parenthesized_expression":
+            named = [c for c in node.named_children if c.type != "comment"]
+            if len(named) != 1:
+                return func
+            node = named[0]
+            if node.type == "sequence_expression":
+                parts = [c for c in node.named_children if c.type != "comment"]
+                if len(parts) < 2 or any(p.type not in self._LITERAL_RECEIVERS for p in parts[:-1]):
+                    return func
+                node = parts[-1]
+        return node if node is not None and node is not func and node.type in ("identifier", "member_expression") \
+            else func
+
     def _callee_text(self, node: TSNode) -> str:
         """A callee as written, without the layout of a member chain split over lines
         (`this.repo\n  .createQueryBuilder` is `this.repo.createQueryBuilder`): read from the
@@ -4244,7 +4766,7 @@ class JavaScriptFrontend:
         binding is named after the module: `cp.exec` with
         `const cp = require('child_process')` is `child_process.exec`, and a
         destructured / named import `run(...)` is the function it binds."""
-        func = call_node.child_by_field_name("function")
+        func = self._indirect_callee(call_node.child_by_field_name("function"))
         if not func:
             return ""
         inline = self._inline_require_member(func)
@@ -4580,9 +5102,20 @@ class JavaScriptFrontend:
                     return self._check_expression_for_taint_source(child, target, loc)
 
         # TypeScript type assertions are transparent - unwrap the value
-        elif node_type in ("as_expression", "satisfies_expression",
-                           "non_null_expression"):
-            inner = node.named_child(0) if node.named_child_count else None
+        elif node_type in self._TS_TRANSPARENT:
+            inner = self._ts_value(node)
+            if inner is not None:
+                return self._check_expression_for_taint_source(inner, target, loc)
+
+        # `x = (log(a), location.hash)`, `x = y = location.hash`, `f(...location.hash)`: the value
+        elif node_type == "sequence_expression":
+            parts = [c for c in node.named_children if c.type != "comment"]
+            if parts:
+                return self._check_expression_for_taint_source(parts[-1], target, loc)
+        elif node_type == "assignment_expression":
+            return self._check_expression_for_taint_source(node.child_by_field_name("right"), target, loc)
+        elif node_type in ("spread_element", "await_expression"):
+            inner = self._single_operand(node)
             if inner is not None:
                 return self._check_expression_for_taint_source(inner, target, loc)
 
@@ -4612,15 +5145,106 @@ class JavaScriptFrontend:
 
         return []
 
+    @staticmethod
+    def _is_tagged_template(node: TSNode) -> bool:
+        parent = node.parent
+        return parent is not None and parent.type == "call_expression" \
+            and parent.child_by_field_name("arguments") == node
+
     def _get_call_args(self, call_node: TSNode) -> List[TSNode]:
-        """Get argument nodes from call"""
+        """Get argument nodes from call. A spread whose elements are written in the file is the
+        arguments it spreads, one per position (`f(...['a', x])`, `db.query(...q)` with
+        `const q = [sql, params]`); any other spread stays one argument, the spread value."""
         args = []
         args_node = call_node.child_by_field_name("arguments")
+        if args_node is not None and args_node.type == "template_string":
+            return [args_node]                         # a tagged template: one argument
         if args_node:
             for child in args_node.children:
                 if child.type not in ("(", ")", ",", "comment"):
-                    args.append(child)
+                    args.extend(self._spread_arguments(child, call_node) if child.type == "spread_element"
+                                else [child])
         return args
+
+    def _spread_arguments(self, spread: TSNode, call_node: TSNode, depth: int = 0) -> List[TSNode]:
+        elements = self._spread_elements(spread, call_node) if depth < 3 else None
+        if elements is None:
+            return [spread]
+        out: List[TSNode] = []
+        for el in elements:
+            out.extend(self._spread_arguments(el, call_node, depth + 1) if el.type == "spread_element" else [el])
+        return out
+
+    def _spread_elements(self, spread: TSNode, call_node: TSNode) -> Optional[List[TSNode]]:
+        """The element nodes a spread argument passes, when they are written in the file: an array
+        literal, a name bound once to one, or the call of a function bound once whose only return
+        is one (`(...buildQuery())` with `buildQuery = () => [sql, [term]]`), as long as each name
+        the returned elements read is the variable the call site sees by that name. None when the
+        elements are not known."""
+        value = self._unwrap_value(self._single_operand(spread))
+        if value is None:
+            return None
+        if value.type == "identifier":
+            value = self._resolve_binding(value) if self._only_spread(value) else None
+        elif value.type == "call_expression":
+            value = self._returned_array(value, call_node)
+        if value is None or value.type != "array":
+            return None
+        return [c for c in value.named_children if c.type != "comment"]
+
+    def _only_spread(self, ident: TSNode) -> bool:
+        """Is the variable read only where it is spread (`f(...args)`)? Any other use (`args.push(q)`,
+        `g(args)`, `args[0] = q`) may change its elements after the binding."""
+        name = self._get_text(ident)
+        scope = self._declaring_scope(ident, name)
+        if scope is None:
+            return False
+        for n in self._descendants_js(scope):
+            if n.type in self._FUNCTION_SCOPES and n.id != scope.id and self._declares(n, name):
+                continue
+            if n.type != "identifier" or self._get_text(n) != name:
+                continue
+            parent = n.parent
+            if parent is not None and (parent.type == "spread_element"
+                                       or parent.type == "variable_declarator" and parent.child_by_field_name("name") == n):
+                continue
+            return False
+        return True
+
+    def _returned_array(self, call: TSNode, call_node: TSNode) -> Optional[TSNode]:
+        func, args = call.child_by_field_name("function"), call.child_by_field_name("arguments")
+        if func is None or func.type != "identifier" or args is None or args.named_children:
+            return None
+        fn = self._resolve_binding(func)
+        if fn is None or fn.type not in ("arrow_function", "function_expression", "function"):
+            return None
+        body = fn.child_by_field_name("body")
+        if body is None:
+            return None
+        if body.type != "statement_block":
+            returned = [self._unwrap_value(body)]
+        else:
+            returned = []
+            stack = list(body.named_children)
+            while stack:
+                n = stack.pop()
+                if n.type in self._FUNC_NODE_TYPES:
+                    continue
+                if n.type == "return_statement":
+                    returned.append(self._unwrap_value(next((c for c in n.named_children if c.type != "comment"), None)))
+                stack.extend(n.named_children)
+        if len(returned) != 1 or returned[0] is None or returned[0].type != "array":
+            return None
+        for ident in [returned[0]] + self._descendants_js(returned[0]):
+            if ident.type in ("this", "super") or (ident.type == "identifier" and self._get_text(ident) == "arguments"):
+                return None
+            if ident.type in ("identifier", "shorthand_property_identifier"):
+                name = self._get_text(ident)
+                inner, outer = self._declaring_scope(ident, name), self._declaring_scope(call_node, name)
+                if inner is not None and inner.id == fn.id or \
+                        (inner.id if inner is not None else None) != (outer.id if outer is not None else None):
+                    return None
+        return returned[0]
 
     def _new_ident(self, prefix: str = "tmp") -> Ident:
         """Create a new unique identifier"""
