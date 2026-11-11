@@ -1015,91 +1015,66 @@ class SILTranslator:
         return (getattr(program, "language", "") or "").lower() in (
             "c", "cpp", "c++", "cxx")
 
+    # Literal words a frontend may lower as a variable reference rather than an ExpConst.
+    _CONSTANT_WORDS = frozenset({"true", "false", "null", "None", "undefined", "nullptr", "NULL"})
+
     def _proc_always_returns_constant(self, proc_name: str) -> bool:
         """
-        Check if a procedure always returns a constant value.
+        Whether the procedure a call names always returns a constant, so calling it
+        propagates no taint (inter-procedural dead path elimination).
 
-        This is used for inter-procedural dead path elimination.
-        If a procedure only has Return instructions with constant values
-        (and no parameter references), calling it won't propagate taint.
+        The callee is the procedure of that exact name, else the one `_resolve_callee`
+        resolves the call to; never a procedure that merely shares the method name. A
+        return value is constant when its expression is a literal (an `ExpConst`, a
+        literal word, a cast of one), or a local every definition of which assigns one:
+        a parameter, a call's result or a load is never constant, and neither is a
+        concatenation (`"a" + s + "b"`).
         """
-        # Check cache first
-        if proc_name in self._constant_return_procs:
-            return self._constant_return_procs[proc_name]
-
-        # Try to find the procedure with various name patterns
-        proc = None
-        # Try exact match
-        if proc_name in self.program.procedures:
-            proc = self.program.procedures[proc_name]
-        else:
-            # Try matching by method name suffix (e.g., "new Test().doSomething" -> "Test.doSomething")
-            method_suffix = proc_name.split('.')[-1] if '.' in proc_name else proc_name
-            for pname, p in self.program.procedures.items():
-                if pname.endswith('.' + method_suffix):
-                    proc = p
-                    break
-
+        proc = self.program.procedures.get(proc_name)
         if proc is None:
-            self._constant_return_procs[proc_name] = False
+            callee = self._resolve_callee(proc_name)
+            proc = callee.proc if callee is not None else None
+        if proc is None:
             return False
+        key = proc.name
+        if key in self._constant_return_procs:
+            return self._constant_return_procs[key]
 
-        # Track variable assignments to constants
-        # A variable "always contains a constant" if it's only ever assigned constants
-        var_is_constant: Dict[str, bool] = {}
-
-        # First pass: collect all assignments
+        # Every definition of each name: an Assign's expression, or None for a
+        # definition whose value is not a literal (parameter, call result, load, ...).
+        defs: Dict[str, List[Optional[Exp]]] = {}
+        for param, _ in proc.params:
+            defs.setdefault(param.name, []).append(None)
+        returns: List[Optional[Exp]] = []
         for node in proc.nodes.values():
             for instr in node.instrs:
                 if isinstance(instr, Assign):
-                    var_name = str(instr.id)
-                    value_str = str(instr.exp)
-                    # Check if assigned value is a constant
-                    is_constant = (
-                        (value_str.startswith('"') and value_str.endswith('"')) or
-                        (value_str.startswith("'") and value_str.endswith("'")) or
-                        value_str.replace('.', '', 1).replace('-', '', 1).isdigit() or
-                        value_str in ('true', 'false', 'null', 'None', 'null')
-                    )
-                    # If already marked as non-constant, keep it that way
-                    if var_name in var_is_constant and not var_is_constant[var_name]:
-                        continue
-                    var_is_constant[var_name] = is_constant
+                    defs.setdefault(str(instr.id), []).append(instr.exp)
+                elif isinstance(instr, Call) and instr.ret:
+                    defs.setdefault(str(instr.ret[0]), []).append(None)
+                elif isinstance(instr, (Load, Alloc)):
+                    defs.setdefault(str(instr.id), []).append(None)
+                elif isinstance(instr, TaintSource):
+                    defs.setdefault(str(instr.var), []).append(None)
+                elif isinstance(instr, Return):
+                    returns.append(instr.value)
 
-        # Check all return instructions
-        # A procedure returns a constant if:
-        # 1. It returns a literal constant, OR
-        # 2. It returns a variable that only contains constants
-        all_returns_constant = True
-        found_return = False
+        def constant(exp: Optional[Exp], visiting: frozenset) -> bool:
+            if isinstance(exp, ExpConst):
+                return True
+            if isinstance(exp, ExpCast):
+                return constant(exp.exp, visiting)
+            if isinstance(exp, ExpVar):
+                name = str(exp.var)
+                if name not in defs:
+                    return name in self._CONSTANT_WORDS
+                if name in visiting:
+                    return False
+                return all(constant(d, visiting | {name}) for d in defs[name])
+            return False
 
-        for node in proc.nodes.values():
-            for instr in node.instrs:
-                if isinstance(instr, Return):
-                    found_return = True
-                    if instr.value is None:
-                        # Void return - doesn't propagate taint
-                        continue
-                    value_str = str(instr.value)
-                    # Check if the return value is a literal constant
-                    is_constant = (
-                        (value_str.startswith('"') and value_str.endswith('"')) or
-                        (value_str.startswith("'") and value_str.endswith("'")) or
-                        value_str.replace('.', '', 1).replace('-', '', 1).isdigit() or
-                        value_str in ('true', 'false', 'null', 'None')
-                    )
-                    # Or check if it's a variable that only contains constants
-                    if not is_constant and value_str in var_is_constant:
-                        is_constant = var_is_constant[value_str]
-
-                    if not is_constant:
-                        all_returns_constant = False
-                        break
-            if not all_returns_constant:
-                break
-
-        result = found_return and all_returns_constant
-        self._constant_return_procs[proc_name] = result
+        result = bool(returns) and all(v is None or constant(v, frozenset()) for v in returns)
+        self._constant_return_procs[key] = result
         return result
 
     def _build_procedure_summaries(self) -> None:
@@ -1805,7 +1780,7 @@ class SILTranslator:
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
-    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript", "csharp", "c", "cpp"})
+    _ENTRY_TAINT_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "c", "cpp"})
     _ALL_SINK_KINDS = frozenset(k.value for k in SinkKind) | frozenset(_SINK_KIND_ALIASES)
     _SEED_PREFIX = "@param:"
 
@@ -1839,6 +1814,8 @@ class SILTranslator:
 
         def calls_in(instr):
             if isinstance(instr, Call):
+                if lang == "java" and self._java_same_file_call(instr, instr.get_full_name()) is not None:
+                    yield "<java-same-file-call>"           # resolved by type (_resolve_call_instr)
                 yield instr.get_full_name()
                 for a, _ in instr.args:
                     yield from nested_calls(a)
@@ -1854,6 +1831,8 @@ class SILTranslator:
                 for node in proc.nodes.values():
                     for instr in node.instrs:
                         for name in calls_in(instr):
+                            if name == "<java-same-file-call>":
+                                return True
                             if self._is_c_lang and f"{name}#2" in self.program.procedures:
                                 return True              # a C++ overload set (_record_overload_entry_taints)
                             callee = self._resolve_callee(name)
@@ -2112,6 +2091,8 @@ class SILTranslator:
         callee = self._resolve_callee(func_name)
         if callee is None:
             callee = self._resolve_constructor(func_name)
+        if callee is None and self._project is None:
+            callee = self._java_same_file_call(instr, func_name)
         if callee is not None or self._project is None:
             return callee
         target = self._java_call_target(instr, func_name)
@@ -2124,6 +2105,24 @@ class SILTranslator:
         if proc is None or not self._plain_callee(proc):
             return None
         return Callee(ref, proc)
+
+    def _java_same_file_call(self, instr: Call, func_name: str) -> Optional[Callee]:
+        """A Java file scanned on its own: the method of one of the file's classes the call names
+        (`Call.callee_class`: `doSomething(request, param)`, `new Job(v)`), chosen among its
+        overloads by argument type (`Program.resolve_java_call`); None when that does not settle it."""
+        if (getattr(self.program, "language", "") or "").lower() != "java":
+            return None
+        target = self._java_call_target(instr, func_name)
+        if target is None:
+            return None
+        _, owner, method = target
+        arg_types = getattr(instr, "arg_types", None)
+        if arg_types is None:
+            return None
+        proc = self.program.resolve_java_call(owner, method, list(arg_types))
+        if proc is None or not self._plain_callee(proc):
+            return None
+        return Callee((self._file_key, proc.name), proc)
 
     def _java_call_target(self, instr: Call, func_name: str) -> Optional[Tuple[str, str, str]]:
         """(file the class name is resolved from, class, method) a Java/C# call names."""
@@ -2522,28 +2521,46 @@ class SILTranslator:
             return
         for arg_exp, param in self._call_bindings(callee.proc, func_name, [a for a, _ in instr.args],
                                                   getattr(instr, "kwarg_names", None)):
-            leaves = [(i, k) for i, k in self._arg_taint_leaves(arg_exp, state)
-                      if not i.source_var.startswith(self._SEED_PREFIX)]
-            if not leaves:
-                continue
-            sanitized = set.intersection(*(k for _, k in leaves))
-            entry = self._ipa.entry_taints.setdefault(callee.ref, {})
-            known = entry.get(param)
-            if known is None:
-                # Names the first call that passed attacker data, then the
-                # parameter it reached: the `data_flow` entry of a finding.
-                where = getattr(instr.loc, "line", None)
-                caller = f"{self._file_key}:{where} -> " if self._file_key and where else ""
-                marker = f"{caller}{callee.ref[0]}::{callee.ref[1]}({param})".lstrip(":")
-                self._ipa.entry_markers[marker] = (callee.ref, param)
-                info = leaves[0][0]
-                entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=(),
-                                          source_location=info.source_location,
-                                          propagation_path=[marker]), sanitized)
-                self._ipa.dirty.add(callee.ref)
-            elif not known[1] <= sanitized:
-                entry[param] = (known[0], known[1] & sanitized)
-                self._ipa.dirty.add(callee.ref)
+            self._record_entry_taint(callee, instr, param, self._arg_taint_leaves(arg_exp, state))
+            for fld, leaves in self._argument_field_leaves(arg_exp, state):
+                self._record_entry_taint(callee, instr, f"{param}.{fld}", leaves)
+
+    def _argument_field_leaves(self, arg_exp: Exp, state: SymbolicState):
+        """Java: the fields of an object passed as an argument that carry attacker data
+        (`c.setName(x); dao.find(c)`): the callee's parameter starts with the same fields
+        tainted (`p.name`), so a getter called on it there returns them."""
+        if (getattr(self.program, "language", "") or "").lower() != "java" \
+                or not isinstance(arg_exp, ExpVar) or not _PLAIN_LOCAL.match(str(arg_exp.var)):
+            return []
+        prefix = f"{arg_exp.var}."
+        return [(key[len(prefix):], self._arg_taint_leaves(ExpVar(PVar(key)), state))
+                for key in list(state.tainted)
+                if key.startswith(prefix) and _PLAIN_LOCAL.match(key[len(prefix):])]
+
+    def _record_entry_taint(self, callee: Callee, instr, param: str,
+                            leaves: List[Tuple[TaintInfo, Set[str]]]) -> None:
+        """One parameter (or parameter field) of `callee` receives these taint leaves."""
+        leaves = [(i, k) for i, k in leaves if not i.source_var.startswith(self._SEED_PREFIX)]
+        if not leaves:
+            return
+        sanitized = set.intersection(*(k for _, k in leaves))
+        entry = self._ipa.entry_taints.setdefault(callee.ref, {})
+        known = entry.get(param)
+        if known is None:
+            # Names the first call that passed attacker data, then the
+            # parameter it reached: the `data_flow` entry of a finding.
+            where = getattr(instr.loc, "line", None)
+            caller = f"{self._file_key}:{where} -> " if self._file_key and where else ""
+            marker = f"{caller}{callee.ref[0]}::{callee.ref[1]}({param})".lstrip(":")
+            self._ipa.entry_markers[marker] = (callee.ref, param)
+            info = leaves[0][0]
+            entry[param] = (TaintInfo(source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=(),
+                                      source_location=info.source_location,
+                                      propagation_path=[marker]), sanitized)
+            self._ipa.dirty.add(callee.ref)
+        elif not known[1] <= sanitized:
+            entry[param] = (known[0], known[1] & sanitized)
+            self._ipa.dirty.add(callee.ref)
 
     # Which library calls test characters, parse URLs, normalise paths, match regexes or test
     # membership: specs/data/guards.toml.
@@ -3372,7 +3389,32 @@ class SILTranslator:
         if callee.proc.simple_name in self._CONSTRUCTOR_NAMES or func_name.startswith("new "):
             return str(instr.ret[0]) if instr.ret else None
         head = func_name.rpartition(".")[0]
+        if not head and self._implicit_this_call(callee):
+            return "this"                         # Java `run(st)`: a method of this object
         return head if head and _PLAIN_LOCAL.match(head) else None
+
+    def _implicit_this_call(self, callee: Callee) -> bool:
+        """A Java call written without a receiver (`run(st)`) inside an instance method, to an
+        instance method of the same class: it acts on `this`."""
+        caller = self._cur_proc
+        return ((getattr(self.program, "language", "") or "").lower() == "java"
+                and caller is not None and caller.is_method and not caller.is_static
+                and callee.proc.is_method and not callee.proc.is_static
+                and callee.ref[0] == self._file_key and bool(caller.class_name)
+                and callee.proc.class_name == caller.class_name)
+
+    def _receiver_field_keys(self, recv: str, fld: str) -> List[str]:
+        """The caller's names for field `fld` of receiver `recv`: `recv.fld`, and for Java's
+        `this` the field's bare name, as the frontend writes and reads it (`_bare_field`)."""
+        keys = [f"{recv}.{fld}"]
+        if recv == "this" and self._java_bare_field(fld):
+            keys.append(fld)
+        return keys
+
+    def _java_bare_field(self, name: str) -> bool:
+        """Java: `name` is a declared field of the method's class read by its bare name."""
+        return (getattr(self.program, "language", "") or "").lower() == "java" \
+            and self._bare_field(name) is not None
 
     def _apply_field_stores(self, callee: Callee, summary: ReturnSummary, instr: Call,
                             func_name: str, state: SymbolicState) -> None:
@@ -3389,17 +3431,17 @@ class SILTranslator:
                       for info, kinds in self._arg_taint_leaves(args[p], state)]
             if not leaves:
                 continue
-            key = f"{recv}.{fld}"
             info = leaves[0][0]
-            state.add_taint(key, TaintInfo(
-                source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
-                source_location=info.source_location,
-                propagation_path=list(info.propagation_path) + [key]))
             sanitized = set.intersection(*(k for _, k in leaves))
-            if sanitized:
-                state.add_sanitization(key, sorted(sanitized))
-            else:
-                state.sanitized.pop(key, None)
+            for key in self._receiver_field_keys(recv, fld):
+                state.add_taint(key, TaintInfo(
+                    source_kind=info.source_kind, source_var=info.source_var, request=info.request, read=info.read,
+                    source_location=info.source_location,
+                    propagation_path=list(info.propagation_path) + [key]))
+                if sanitized:
+                    state.add_sanitization(key, sorted(sanitized))
+                else:
+                    state.sanitized.pop(key, None)
 
     def _accumulate_param_fields(self, state: SymbolicState) -> None:
         """At the end of a path: fields of a parameter that now hold attacker data
@@ -3603,8 +3645,10 @@ class SILTranslator:
         if recv is None:
             return
         prefix = recv + "."
-        for key in [k for k in state.tainted if k.startswith(prefix)]:
-            fld = key[len(prefix):]
+        held = [(k, k[len(prefix):]) for k in state.tainted if k.startswith(prefix)]
+        if recv == "this":                          # Java: the caller's fields by their bare names
+            held += [(k, k) for k in state.tainted if "." not in k and self._java_bare_field(k)]
+        for key, fld in held:
             if not _PLAIN_LOCAL.match(fld):
                 continue
             leaves = [(i, k) for i, k in self._arg_taint_leaves(ExpVar(PVar(key)), state)
@@ -3676,6 +3720,9 @@ class SILTranslator:
             if dot and head in ("self", "this") and key not in params:
                 out.extend(self._summary_param_leaves(
                     summary, key, ExpFieldAccess(ExpVar(PVar(receiver)), fld), state, wrap, at=at))
+                if receiver == "this" and self._java_bare_field(fld):
+                    out.extend(self._summary_param_leaves(   # Java: the caller's field by its bare name
+                        summary, key, ExpVar(PVar(fld)), state, wrap, at=at))
         return out
 
     def _summary_inline_sanitized(self, exp: Exp) -> Dict[str, Set[str]]:
@@ -4884,7 +4931,12 @@ class SILTranslator:
                 self._apply_return_summary(callee, summary, ipa_instr, func_name, state)
                 self._apply_field_stores(callee, summary, ipa_instr, func_name, state)
                 self._apply_filled_buffers(callee, summary, ipa_instr, func_name, state)
-                spec = ProcSpec()
+                # A Java object built from attacker data still carries it when used whole (its
+                # `toString`, a library call it is handed to): default argument->result propagation
+                # on top of the fields its constructor stores.
+                java_ctor = (callee.proc.simple_name == "<init>" and func_name.startswith("new ")
+                             and (getattr(self.program, "language", "") or "").lower() == "java")
+                spec = None if java_ctor else ProcSpec()
             else:
                 spec = None
         elif self._ipa_on:

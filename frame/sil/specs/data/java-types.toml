@@ -30,6 +30,7 @@ MultipartHttpServletRequest = ["HttpServletRequest"]
 HttpServletResponse = ["ServletResponse"]
 ServletResponseWrapper = ["ServletResponse"]
 HttpServletResponseWrapper = ["ServletResponseWrapper", "HttpServletResponse"]
+NamedParameterJdbcDaoSupport = ["JdbcDaoSupport"]
 PreparedStatement = ["Statement"]
 CallableStatement = ["PreparedStatement"]
 # java.util collections (the JDK's documented hierarchy) and Map.Entry
@@ -203,6 +204,9 @@ createDefault = "CloseableHttpClient"
 "Connection.prepareCall" = "java.sql.CallableStatement"
 "Statement.executeQuery" = "java.sql.ResultSet"
 "Statement.getConnection" = "java.sql.Connection"
+# Spring's DAO base classes hand their subclasses the template they were configured with
+"JdbcDaoSupport.getJdbcTemplate" = "org.springframework.jdbc.core.JdbcTemplate"
+"NamedParameterJdbcDaoSupport.getNamedParameterJdbcTemplate" = "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate"
 # Servlet responses
 "ServletResponse.getWriter" = "java.io.PrintWriter"
 "HttpServletResponse.getWriter" = "java.io.PrintWriter"

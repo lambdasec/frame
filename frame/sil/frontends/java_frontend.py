@@ -61,7 +61,7 @@ from frame.sil.specs.java_specs import (
     JAVA_SPECS, PERMISSIVE_VERIFIERS, type_spec_receivers,
     JAVA_FACTORY_RETURN_TYPES, JAVA_RETURN_TYPES, JAKARTA_MIGRATED, JAVA_STRING_METHOD_TYPES,
     JAVA_LANG_TYPES, UMBRELLA_PACKAGE_ROOTS, JAVA_STRING_STATIC_TYPES, JAVA_BUILDER_TYPES,
-    JAVA_BUILDER_SELF_METHODS, JAVA_CAPACITY_CONSTRUCTORS)
+    JAVA_BUILDER_SELF_METHODS, JAVA_CAPACITY_CONSTRUCTORS, JAVA_SUPERTYPES)
 from frame.sil.specs.guards import load as _guards
 
 
@@ -166,6 +166,10 @@ class JavaFrontend:
         self._class_type_vars: set = set()
         self._type_vars: set = set()
         self._class_method_returns: Dict[str, set] = {}
+        self._class_supers: List[str] = []
+        self._method_locals: set = set()        # names the current method declares
+        self._static_methods: set = set()       # the current class's static methods
+        self._class_superclass: Optional[str] = None
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate Java source code to SIL Program."""
@@ -190,6 +194,10 @@ class JavaFrontend:
         self._hoisted_values: Dict[Tuple[int, int], str] = {}
         self._evaluated: set = set()
         self._switch_results: List[Optional[str]] = []      # the enclosing switch expressions' values
+        # Enclosing statements a `break` / `continue` can leave: (kind, label, break target,
+        # continue target); kind is "loop", "switch" or "block" (a labelled block).
+        self._jumps: List[Tuple[str, Optional[str], Any, Any]] = []
+        self._pending_label: Optional[str] = None         # the label written on the next statement
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="java",
@@ -358,6 +366,12 @@ class JavaFrontend:
             self._get_text(c.child_by_field_name("name"))
             for c in members
             if c.type == "method_declaration" and c.child_by_field_name("name") is not None}
+        outer_static_methods = self._static_methods
+        self._static_methods = {
+            self._get_text(c.child_by_field_name("name"))
+            for c in members
+            if c.type == "method_declaration" and c.child_by_field_name("name") is not None
+            and any(m.type == "modifiers" and "static" in self._get_text(m).split() for m in c.children)}
         outer_static, outer_tvars = self._field_static_types, self._class_type_vars
         outer_returns = self._class_method_returns
         self._class_type_vars = outer_tvars | self._type_params(node)
@@ -399,6 +413,12 @@ class JavaFrontend:
                            if t.type in ("type_identifier", "scoped_type_identifier")
                            and t.parent is not None and t.parent.type != "scoped_type_identifier"]
         program.class_supertypes[class_name] = supers
+        outer_supers, self._class_supers = self._class_supers, supers
+        outer_superclass = self._class_superclass
+        sc = node.child_by_field_name("superclass")
+        sc_type = next((t for t in self._descendants(sc, stop=("type_arguments",))
+                        if t.type in ("type_identifier", "scoped_type_identifier")), None) if sc is not None else None
+        self._class_superclass = self._get_text(sc_type).split("<")[0].rsplit(".", 1)[-1] if sc_type is not None else None
         if body:
             for child in members:
                 if child.type == "method_declaration":
@@ -436,6 +456,9 @@ class JavaFrontend:
         self._class_methods = outer_methods
         self._field_static_types, self._class_type_vars = outer_static, outer_tvars
         self._class_method_returns = outer_returns
+        self._class_supers = outer_supers
+        self._static_methods = outer_static_methods
+        self._class_superclass = outer_superclass
 
     def _translate_field_initializers(self, body: TSNode, class_name: str,
                                       program: Program) -> None:
@@ -1206,10 +1229,14 @@ class JavaFrontend:
             if body is not None:
                 self._translate_block(body)
         elif node.type == "labeled_statement":
-            # `outer: for (...) {...}`: the label names the statement, which runs as written
-            for child in node.named_children:
-                if child.type != "identifier":
-                    self._translate_statement(child)
+            self._translate_labeled(node)
+        elif node.type in ("break_statement", "continue_statement"):
+            self._translate_jump(node)
+        elif node.type == "explicit_constructor_invocation":
+            self._translate_constructor_invocation(node)
+        elif node.type in ("class_declaration", "record_declaration", "enum_declaration",
+                           "interface_declaration") and self._program is not None:
+            self._translate_local_class(node)
         elif node.type in self._NO_DATA_STATEMENTS:
             pass
         else:
@@ -1222,12 +1249,108 @@ class JavaFrontend:
                         or child.type == "local_variable_declaration":
                     self._translate_statement(child)
 
-    # Statements that carry no data: control transfers without SIL edges, empty statements, and
-    # `assert` (disabled unless the JVM runs with -ea). A local type declaration or a `super(...)` /
-    # `this(...)` call is not lowered yet, so it is recorded like any unknown statement.
+    # Statements that carry no data: empty statements, comments, and `assert` (disabled unless the
+    # JVM runs with -ea).
     _NO_DATA_STATEMENTS = frozenset({
-        "break_statement", "continue_statement", ";", "line_comment", "block_comment", "assert_statement",
+        ";", "line_comment", "block_comment", "assert_statement",
     })
+
+    def _translate_labeled(self, node: TSNode) -> None:
+        """`outer: for (...) {...}`: the label names the statement, which runs as written; a
+        `break outer` / `continue outer` inside leaves it. A labelled block ends where `break`
+        jumps to."""
+        label_node = next((c for c in node.named_children if c.type == "identifier"), None)
+        label = self._get_text(label_node) if label_node is not None else None
+        for child in node.named_children:
+            if child is label_node:
+                continue
+            if child.type in ("for_statement", "enhanced_for_statement", "while_statement",
+                              "do_statement", "switch_statement", "switch_expression"):
+                self._pending_label = label
+                self._translate_statement(child)
+            elif self._current_proc is not None and self._current_node is not None:
+                proc = self._current_proc
+                after = proc.new_node(NodeKind.NORMAL)
+                proc.add_node(after)
+                self._jumps.append(("block", label, after, None))
+                try:
+                    self._translate_statement(child)
+                finally:
+                    self._jumps.pop()
+                if self._current_node is not None:
+                    proc.connect(self._current_node.id, after.id)
+                self._current_node = after
+            else:
+                self._translate_statement(child)
+            self._pending_label = None
+
+    def _push_jump(self, kind: str, brk, cont=None) -> None:
+        self._jumps.append((kind, self._pending_label, brk, cont))
+        self._pending_label = None
+
+    def _translate_jump(self, node: TSNode) -> None:
+        """`break` / `continue` (with or without a label) is an edge to the statement it leaves
+        (the end of the loop, switch or labelled block) or to the loop's next iteration. The
+        statements after it in the same block are unreachable."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        label_node = next((c for c in node.named_children if c.type == "identifier"), None)
+        label = self._get_text(label_node) if label_node is not None else None
+        is_break = node.type == "break_statement"
+        target = None
+        for kind, lab, brk, cont in reversed(self._jumps):
+            if label is not None:
+                if lab == label:
+                    target = brk if is_break else cont
+                    break
+            elif is_break and kind in ("loop", "switch"):
+                target = brk
+                break
+            elif not is_break and kind == "loop":
+                target = cont
+                break
+        if target is None:
+            return
+        proc.connect(self._current_node.id, target.id)
+        dead = proc.new_node(NodeKind.NORMAL)             # what follows in the block is unreachable
+        proc.add_node(dead)
+        self._current_node = dead
+
+    def _translate_constructor_invocation(self, node: TSNode) -> None:
+        """`super(args)` / `this(args)` in a constructor: a call of the superclass's (or this
+        class's other) constructor with those arguments."""
+        kind = next((c for c in node.children if c.type in ("super", "this")), None)
+        args_node = node.child_by_field_name("arguments")
+        if kind is None or args_node is None:
+            return
+        owner = self._current_class if kind.type == "this" else (self._class_superclass or "Object")
+        loc = self._get_location(node)
+        args = [a for a in args_node.named_children if a.type not in ("line_comment", "block_comment")]
+        name = f"new {owner}"
+        instrs, args_exp = self._translate_args(args, loc, via=name)
+        lams = self._last_lambdas
+        self._add_instrs(instrs)
+        self._add_instr(Call(loc=loc, ret=None, func=ExpConst.string(name), args=args_exp,
+                             arg_types=[self._arg_type(a) for a in args], callee_class=owner))
+        self._add_instrs(self._invoke_lambdas(lams, name, loc))
+
+    # Per-method state a local class declaration's own methods would overwrite.
+    _METHOD_STATE = ("_current_proc", "_current_node", "_node_counter", "_constant_values",
+                     "_loaded_properties", "_var_types", "_var_chains", "_static_types", "_exact_vars",
+                     "_type_vars", "_method_locals", "_in_call_args", "_jumps", "_pending_label",
+                     "_switch_results")
+
+    def _translate_local_class(self, node: TSNode) -> None:
+        """A class declared inside a method body: its methods are procedures of their own, like a
+        member class's (declaring it runs nothing)."""
+        saved = {k: getattr(self, k) for k in self._METHOD_STATE if hasattr(self, k)}
+        self._jumps, self._switch_results, self._pending_label = [], [], None
+        try:
+            self._translate_class(node, self._program)
+        finally:
+            for k, v in saved.items():
+                setattr(self, k, v)
 
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
@@ -1340,7 +1463,7 @@ class JavaFrontend:
         if not left or not right:
             return
 
-        target = self._get_text(left)
+        target = self._target_name(left)
         loc = self._get_location(node)
         op_node = node.child_by_field_name("operator")
         op = self._get_text(op_node) if op_node is not None else "="
@@ -1372,6 +1495,23 @@ class JavaFrontend:
             exp = self._translate_expression(right)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
 
+    def _this_field_is_bare(self, fname: str) -> bool:
+        """`this.f` names the same value as a bare `f`: f is a typed field of the class and no
+        parameter or local of the method shadows it."""
+        return (fname in self._field_types and self._current_proc is not None
+                and fname not in {p.name for p, _ in self._current_proc.params}
+                and fname not in self._method_locals)
+
+    def _target_name(self, left: TSNode) -> str:
+        """The variable an assignment writes: `this.f = v` writes the field by its bare name, as
+        a read of `this.f` reads it (`_this_field_is_bare`), so a later `f` sees the value."""
+        if left.type == "field_access":
+            obj, field = left.child_by_field_name("object"), left.child_by_field_name("field")
+            if obj is not None and obj.type == "this" and field is not None \
+                    and self._this_field_is_bare(self._get_text(field)):
+                return self._get_text(field)
+        return self._get_text(left)
+
     def _assigned_value(self, right: TSNode, loc: Location) -> Exp:
         """The value an assignment writes, with a call or creation lowered as one (into a
         temporary) so its spec and callee apply."""
@@ -1399,7 +1539,7 @@ class JavaFrontend:
             self._note_binding(name, None)
             self._add_instr(Assign(loc=loc, id=PVar(name), exp=ExpBinOp("+", ExpVar(PVar(name)), value)))
             return
-        target = self._get_text(left)
+        target = self._target_name(left)
         self._note_binding(target, None)
         self._add_instr(Assign(loc=loc, id=PVar(target), exp=value))
 
@@ -1431,8 +1571,11 @@ class JavaFrontend:
                 if value is not None and value.type == "object_creation_expression":
                     return self._type_name(value.child_by_field_name("type"))
                 if value is not None and value.type == "method_invocation":
+                    # the documented return type of the call (`c.createStatement()`, the
+                    # class's own `getConn()`), else a documented factory's
                     name = value.child_by_field_name("name")
-                    return JAVA_FACTORY_RETURN_TYPES.get(self._get_text(name)) if name else None
+                    return self._call_result_type(value) or (
+                        JAVA_FACTORY_RETURN_TYPES.get(self._get_text(name)) if name else None)
                 return None
             return text
         return None
@@ -1503,8 +1646,22 @@ class JavaFrontend:
         """Field types of the enclosing class, overridden by the method's own
         parameters and locals."""
         types = dict(self._field_types)
-        types.update(self._declared_types(method_node))
+        declared = self._declared_types(method_node)
+        self._method_locals = set(declared)
+        types.update(declared)
         types = {k: v for k, v in types.items() if v}
+        # A `var` typed by its initializer call may need another local's type (`var c = ...;
+        # var st = c.createStatement();`): settle the locals' types in rounds over the method.
+        saved = self._var_types
+        for _ in range(4):
+            self._var_types = types
+            again = dict(self._field_types)
+            again.update(self._declared_types(method_node))
+            again = {k: v for k, v in again.items() if v}
+            if again == types:
+                break
+            types = again
+        self._var_types = saved
         self._exact_vars = self._exactly_typed_locals(method_node, types)
         self._type_vars = self._class_type_vars | self._type_params(method_node)
         static = dict(self._field_static_types)
@@ -1597,8 +1754,14 @@ class JavaFrontend:
         a chain has a receiver type."""
         name = call_node.child_by_field_name("name")
         obj = self._call_object(call_node)
-        if name is None or obj is None:
+        if name is None:
             return None
+        if obj is None or obj.type == "this":
+            # `getConn()` / `this.getConn()`: the class's own method, or one inherited from a
+            # library base (`getJdbcTemplate()` in a JdbcDaoSupport)
+            own = self._own_method_type(self._get_text(name))
+            if own is not None or obj is None:
+                return own
         cast = self._receiver_cast_type(call_node)
         if cast:
             owner = cast
@@ -1609,6 +1772,8 @@ class JavaFrontend:
             owner = self._dotted_text(obj).rsplit(".", 1)[-1]       # `java.sql.DriverManager.getConnection()`
         elif obj.type == "this":
             owner = "Object"                                         # `this.getClass()`
+        elif obj.type == "field_access" and (obj.child_by_field_name("object") or obj).type == "this":
+            owner = self._field_types.get(self._get_text(obj.child_by_field_name("field"))) or None
         elif obj.type == "method_invocation":
             owner = self._call_result_type(obj)
         elif obj.type == "object_creation_expression":
@@ -1617,6 +1782,28 @@ class JavaFrontend:
             owner = None
         qualified = JAVA_RETURN_TYPES.get(f"{owner}.{self._get_text(name)}") if owner else None
         return self._implicit_import(qualified) if qualified else None
+
+    def _own_method_type(self, method: str) -> Optional[str]:
+        """The class an unqualified call of `method` returns: the declared return type of the
+        class's own method (one type across its overloads), else the documented return type
+        (`[return_types]`) of the method on a declared library supertype or one of its
+        documented supertypes. Primitives, arrays and type variables are no class."""
+        if method in self._class_methods:
+            returns = self._class_method_returns.get(method) or set()
+            t = next(iter(returns)) if len(returns) == 1 else None
+            return t if t and t[:1].isupper() and not t.endswith("]") else None
+        seen: List[str] = []
+        todo = list(self._class_supers)
+        while todo:
+            base = todo.pop(0)
+            if base in seen:
+                continue
+            seen.append(base)
+            qualified = JAVA_RETURN_TYPES.get(f"{base}.{method}")
+            if qualified:
+                return self._implicit_import(qualified)
+            todo.extend(JAVA_SUPERTYPES.get(base, ()))
+        return None
 
     def _implicit_import(self, qualified: str) -> str:
         """The simple name of a documented return type, made resolvable to its canonical name
@@ -2250,8 +2437,37 @@ class JavaFrontend:
     def _invoke_lambdas(self, lams: List[Tuple[str, TSNode]], call_name: str, loc: Location) -> List[Instr]:
         out: List[Instr] = []
         for lam, node in lams:
-            out.extend(self._invoke_lambda(lam, node, call_name, loc))
+            if node.type == "method_reference":
+                out.extend(self._invoke_method_reference(node, call_name, loc))
+            else:
+                out.extend(self._invoke_lambda(lam, node, call_name, loc))
         return out
+
+    def _invoke_method_reference(self, node: TSNode, via: str, loc: Location) -> List[Instr]:
+        """A method reference handed to a call (`names.forEach(this::run)`,
+        `Optional.ofNullable(n).map(repo::find)`) is invoked by whatever receives it, like a lambda:
+        the referenced method is called with what the receiver holds. `this::m` (or `C::m` for a
+        static method of the current class C) calls the class's method, `v::m` calls m on the
+        variable v. A reference whose head is another type (`String::trim` is `s.trim()`,
+        `String::valueOf` is `String.valueOf(s)`) or a constructor (`C::new`) is not lowered: the
+        written form does not say which."""
+        kids = [c for c in node.children if c.type != "::"]
+        if len(kids) != 2 or kids[1].type != "identifier":
+            return []
+        head, method = kids[0], self._get_text(kids[1])
+        text = self._get_text(head)
+        if head.type == "this" or (text == self._current_class and method in self._static_methods):
+            func, owner = f"this.{method}", self._current_class
+        elif head.type == "identifier" and (text in self._method_locals or text in self._field_types
+                                            or text in self._var_types) and text != self._current_class:
+            func, owner = f"{text}.{method}", self._var_types.get(text)
+        else:
+            return []
+        recv = via.rsplit(".", 1)[0] if "." in via else ""
+        args = [(ExpVar(PVar(recv)), Typ.unknown_type())] if recv and self._IDENT.match(recv) else []
+        return [Call(loc=loc, ret=None, func=ExpConst.string(func), args=args,
+                     receiver_type=owner if head.type != "this" else None,
+                     callee_class=owner, arg_types=[None] * len(args))]
 
     def _invoke_lambda(self, lam: str, node: TSNode, via: str, loc: Location) -> List[Instr]:
         """A lambda handed to a call (`pool.submit(() -> run(v))`, `names.forEach(n -> run(n))`)
@@ -2342,6 +2558,8 @@ class JavaFrontend:
                 instrs.extend(self._lower_anonymous_class(a, loc))
             if a.type == "method_reference":
                 self._note_method_reference(a, via or "<call>")
+                if self._program is not None:
+                    lams.append(("", a))             # run by the call it is passed to (_invoke_lambdas)
             if a.type == "method_invocation":
                 spec = self._lookup_spec(self._get_method_name(a), a)
                 if (spec is not None and spec.is_taint_source()) or self._is_receiver_getter_arg(a):
@@ -2554,7 +2772,8 @@ class JavaFrontend:
             loc=loc,
             ret=(ret_id, Typ.unknown_type()),
             func=ExpConst.string(constructor_name),
-            args=args_exp
+            args=args_exp,
+            arg_types=[self._arg_type(a) for a in args],   # which constructor (overload resolution)
         )
         instrs.append(call_instr)
 
@@ -2837,9 +3056,13 @@ class JavaFrontend:
         proc.connect(test.id, after_node.id)
 
         body = node.child_by_field_name("body")
+        self._current_node = body_node
         if body:
-            self._current_node = body_node
-            self._translate_statement(body)
+            self._push_jump("loop", after_node, loop_head)
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -2887,10 +3110,20 @@ class JavaFrontend:
         test.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.FOR_EXIT))
         proc.connect(test.id, after_node.id)
 
+        # `continue` runs the update, then the condition
+        update_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(update_node)
         body = node.child_by_field_name("body")
         self._current_node = body_node
         if body:
-            self._translate_statement(body)
+            self._push_jump("loop", after_node, update_node)
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
+        if self._current_node:
+            proc.connect(self._current_node.id, update_node.id)
+        self._current_node = update_node
 
         # Update: every expression of it (`i++, j--`)
         for update in node.children_by_field_name("update"):
@@ -2922,7 +3155,11 @@ class JavaFrontend:
         self._current_node = body_node
         body = node.child_by_field_name("body")
         if body is not None:
-            self._translate_statement(body)
+            self._push_jump("loop", after_node, cond_node)
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
         if self._current_node:
             proc.connect(self._current_node.id, cond_node.id)
         self._current_node = cond_node
@@ -2979,9 +3216,13 @@ class JavaFrontend:
         proc.connect(loop_head.id, after_node.id)
 
         body = node.child_by_field_name("body")
+        self._current_node = body_node
         if body:
-            self._current_node = body_node
-            self._translate_statement(body)
+            self._push_jump("loop", after_node, loop_head)
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -3102,9 +3343,18 @@ class JavaFrontend:
             start = next((i for i, (_, values, _) in enumerate(labels) if str(known_value) in values), None)
             if start is None:
                 start = next((i for i, (default, _, _) in enumerate(labels) if default), None)
-            for arm in arms[start:] if start is not None else []:
-                if self._translate_switch_arm(arm, result) or arm.type == "switch_rule":
-                    break
+            after = proc.new_node(NodeKind.NORMAL)          # where a nested `break` leaves to
+            proc.add_node(after)
+            self._push_jump("switch", after)
+            try:
+                for arm in arms[start:] if start is not None else []:
+                    if self._translate_switch_arm(arm, result) or arm.type == "switch_rule":
+                        break
+            finally:
+                self._jumps.pop()
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, after.id)
+            self._current_node = after
             return
 
         before = self._current_node
@@ -3122,15 +3372,19 @@ class JavaFrontend:
             entries.append(entry)
         if before is not None and not any(default for default, _, _ in labels):
             proc.connect(before.id, join.id)           # no arm matches
-        for i, arm in enumerate(arms):
-            self._current_node = entries[i]
-            ends = self._translate_switch_arm(arm, result)
-            if self._current_node is None:
-                continue
-            if ends or arm.type == "switch_rule" or i == len(arms) - 1:
-                proc.connect(self._current_node.id, join.id)
-            else:
-                proc.connect(self._current_node.id, entries[i + 1].id)   # falls through
+        self._push_jump("switch", join)
+        try:
+            for i, arm in enumerate(arms):
+                self._current_node = entries[i]
+                ends = self._translate_switch_arm(arm, result)
+                if self._current_node is None:
+                    continue
+                if ends or arm.type == "switch_rule" or i == len(arms) - 1:
+                    proc.connect(self._current_node.id, join.id)
+                else:
+                    proc.connect(self._current_node.id, entries[i + 1].id)   # falls through
+        finally:
+            self._jumps.pop()
         self._current_node = join
 
     def _arm_labels(self, arm: TSNode):
@@ -3337,9 +3591,7 @@ class JavaFrontend:
             obj = node.child_by_field_name("object")
             field = node.child_by_field_name("field")
             fname = self._get_text(field) if field else ""
-            if (obj is not None and obj.type == "this" and fname in self._field_types
-                    and self._current_proc is not None
-                    and fname not in {p.name for p, _ in self._current_proc.params}):
+            if obj is not None and obj.type == "this" and self._this_field_is_bare(fname):
                 # `this.username` reads the field `username` (when no parameter shadows it):
                 # one name for one value, so a field an entry point taints is seen either way.
                 return ExpVar(PVar(fname))

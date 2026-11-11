@@ -15,7 +15,7 @@ from frame.sil.frontends.java_frontend import JavaFrontend
 JAVA_ALLOWED = {
     "class_literal",       # `String.class`
     "lambda_expression",   # a function value outside a call or declaration (its body is not run here)
-    "method_reference",    # `this::find`: a function value (its flow is a known gap, test_metamorphic_java)
+    "method_reference",    # `String::trim` stored as a value (one passed to a call is invoked there)
 }
 
 JAVA_ZOO = '''
@@ -29,6 +29,17 @@ public class Zoo {
     private String[] slots = new String[4];
 
     record Point(int x, int y) {}
+
+    static class Base {
+        Base(String s) {}
+    }
+
+    static class Sub extends Base {
+        Sub(String s) { super(s.trim()); }
+        Sub() { this("x"); }
+    }
+
+    void use(String s) {}
 
     String run(String q, Object o, int n, List<String> items) throws Exception {
         String a, b;
@@ -106,6 +117,15 @@ public class Zoo {
         new StringBuilder(q).insert(0, q);
         new File(q);
         assert q != null : "q";
+        class Local {
+            String twice(String v) { return v + v; }
+        }
+        s = new Local().twice(q);
+        items.forEach(this::use);
+        check: {
+            if (q.isEmpty()) break check;
+            s = q;
+        }
         System.out.println(t + u + w + k + c + f + sup + r + arr2 + i + j);
         return (s = q);
     }

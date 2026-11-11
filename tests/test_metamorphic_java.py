@@ -110,17 +110,7 @@ JAVA_INLINE = {
     "creation-statement": ('new FileOutputStream("/srv/out/" + q);', "CWE-22"),
 }
 
-KNOWN_GAPS = {
-    # not lowering: receiver typing, per-file IPA, method references; field taint across a call
-    "var-from-call": "a `var` local initialised from a call has no receiver type unless the call is a "
-                     "documented factory (JAVA_FACTORY_RETURN_TYPES)",
-    "own-getter-receiver": "a call on the result of the class's own getter has no receiver type",
-    "field-across-call": "taint stored in a field does not reach a same-class method called afterwards "
-                         "(field taint does not cross a call)",
-    "method-reference": "a method reference (`forEach(this::run)`) is not lowered as a call of the method",
-    "helper-returns-constant": "per-file Java analysis has no return summaries: a same-file helper that returns "
-                               "a constant still taints its result through its arguments",
-}
+KNOWN_GAPS: dict = {}
 
 
 def _scan(code, name="App.java"):
@@ -222,33 +212,107 @@ def test_java_guard_inside_a_statement_still_counts(case):
     assert "CWE-89" not in found
 
 
-# Out-of-scope shapes, pinned as strict xfails so a fix is noticed.
+# Flows through receivers, helpers, fields, method references, jumps and declarations (once known
+# gaps; a shape that is not handled yet goes in KNOWN_GAPS). Each has a safe twin in JAVA_GAP_SAFE:
+# the same code with a constant in place of the request value, or the nearest correct idiom.
+_SQL_V = JAVA_SINKS["CWE-89"].replace("{v}", "v")
+_OWN_GETTER = ("    private Statement getSt() throws Exception {\n"
+               "        return DriverManager.getConnection(\"x\").createStatement();\n    }")
+_RUN = ("    private void run(Statement st) throws Exception {\n"
+        "        st.executeQuery(\"SELECT '\" + val + \"'\");\n    }")
+_QUERY = ("    private String query() {\n"
+          "        return \"SELECT * FROM t WHERE n = '\" + val + \"'\";\n    }")
+_BOX = ("    static class Box {\n        private String name;\n"
+        "        void setName(String n) { this.name = n; }\n        String getName() { return name; }\n    }\n"
+        "    static class Dao {\n        void find(Statement st, Box b) throws Exception {\n"
+        "            st.executeQuery(\"SELECT * FROM t WHERE n = '\" + b.getName() + \"'\");\n        }\n    }")
+_RUN_QUERY = ("    private void runQuery(String s) {\n        try {\n"
+              "            DriverManager.getConnection(\"x\").createStatement().executeQuery(\"SELECT '\" + s + \"'\");\n"
+              "        } catch (Exception e) {\n        }\n    }")
+_REPO = ("    static class Repo {\n        String find(String s) {\n            try {\n"
+         "                DriverManager.getConnection(\"x\").createStatement().executeQuery(\"SELECT '\" + s + \"'\");\n"
+         "            } catch (Exception e) {\n            }\n            return \"\";\n        }\n    }")
+_PICK = ("    private class Helper {\n        String pick(String s) {\n"
+         "            List<String> l = new ArrayList<>();\n            l.add(\"safe\");\n"
+         "            l.add(s);\n            return l.get(INDEX);\n        }\n    }")
+_WRAP = ("    private static String wrap(String s) {\n        String r = \"x\";\n"
+         "        if ((7 * 42) - 86 > LIMIT) r = s;\n        return \"'\" + r + \"'\";\n    }")
+_BASE = ("    static class Base {\n        Base(String p) throws Exception { new FileInputStream(p); }\n    }\n"
+         "    static class Child extends Base {\n        Child(String p) throws Exception { super(ARG); }\n    }")
+_THIS = ("    static class Child {\n        Child(String p) throws Exception { this(ARG, 0); }\n"
+         "        Child(String p, int n) throws Exception { new FileInputStream(\"/srv/files/\" + p); }\n    }")
+_LOCAL = ["class Local {", "    void run(Statement s, String x) throws Exception {",
+          "        s.executeQuery(\"SELECT '\" + x + \"'\");", "    }", "}"]
+_SWITCH_BREAK = ['String v = "";', "switch (q.length()) {", "    case 0:", "        if (q.isEmpty()) {",
+                 "            v = VALUE;", "            break;", "        }", '        v = "x";', "        break;",
+                 '    default: v = "y";', "}", _SQL_V]
 JAVA_GAP_CASES = {
+    # `var` typed from the documented (or the class's own) return type of its initializer call
     "var-from-call": (['var c2 = DriverManager.getConnection("jdbc:x");', "var st2 = c2.createStatement();",
                        "st2.executeQuery(\"SELECT * FROM t WHERE n = '\" + q + \"'\");"], "", "CWE-89"),
+    "var-from-own-getter": (["var st2 = getSt();", "st2.executeQuery(\"SELECT * FROM t WHERE n = '\" + q + \"'\");"],
+                            _OWN_GETTER, "CWE-89"),
+    # a call on the result of the class's own method, typed by its declared return type
     "own-getter-receiver": (["getSt().executeQuery(\"SELECT * FROM t WHERE n = '\" + q + \"'\");"],
-                            "    private Statement getSt() throws Exception {\n"
-                            "        return DriverManager.getConnection(\"x\").createStatement();\n    }", "CWE-89"),
-    "field-across-call": (["this.val = q;", "run(st);"],
-                          "    private void run(Statement st) throws Exception {\n"
-                          "        st.executeQuery(\"SELECT '\" + val + \"'\");\n    }", "CWE-89"),
+                            _OWN_GETTER, "CWE-89"),
+    "this-own-getter-receiver": (["this.getSt().executeQuery(\"SELECT * FROM t WHERE n = '\" + q + \"'\");"],
+                                 _OWN_GETTER, "CWE-89"),
+    # field taint across a call: on `this` (written `this.f` and read bare, or the other way round),
+    # returned by the class's own method, and through the fields of an object passed as an argument
+    "field-across-call": (["this.val = q;", "run(st);"], _RUN, "CWE-89"),
+    "bare-field-across-call": (["val = q;", "this.run(st);"], _RUN, "CWE-89"),
+    "field-returned-across-call": (["this.val = q;", "String v = query();", "st.executeQuery(v);"], _QUERY, "CWE-89"),
+    "argument-field-across-call": (["Box b = new Box();", "b.setName(q);", "new Dao().find(st, b);"], _BOX, "CWE-89"),
+    "this-field-in-method": (["this.val = q;", "st.executeQuery(\"SELECT '\" + val + \"'\");"], "", "CWE-89"),
     "counted-loop-exit": (["for (int i = 0; i < 1; i++) {", "}",
                            "st.executeQuery(\"SELECT * FROM t WHERE n = '\" + q + \"'\");"], "", "CWE-89"),
-    "method-reference": (["List.of(q).forEach(this::runQuery);"],
-                         "    private void runQuery(String s) {\n        try {\n"
-                         "            DriverManager.getConnection(\"x\").createStatement().executeQuery(\"SELECT '\" + s + \"'\");\n"
-                         "        } catch (Exception e) {\n        }\n    }", "CWE-89"),
+    # a method reference is called with what the call it is passed to holds
+    "method-reference": (["List.of(q).forEach(this::runQuery);"], _RUN_QUERY, "CWE-89"),
+    "method-reference-variable": (["Repo repo = new Repo();", "Optional.ofNullable(q).map(repo::find);"],
+                                  _REPO, "CWE-89"),
+    # a same-file helper's result carries what its return does: here the request's element
+    "helper-returns-tainted-element": (["String v = new Helper().pick(q);", _SQL_V],
+                                       _PICK.replace("INDEX", "1"), "CWE-89"),
+    "helper-live-branch": (["String v = wrap(q);", "st.executeQuery(\"SELECT * FROM t WHERE n = \" + v);"],
+                           _WRAP.replace("LIMIT", "100"), "CWE-89"),
+    # break / continue are edges: the path that leaves keeps its value, the code after is skipped
+    "break-out-of-switch-arm": ([ln.replace("VALUE", "q") for ln in _SWITCH_BREAK], "", "CWE-89"),
+    "break-out-of-labeled-block": (["String v = q;", "check: {", "    if (v.isEmpty()) break check;",
+                                    '    v = "safe";', "}", _SQL_V], "", "CWE-89"),
+    "continue-after-a-passed-check": (["for (String v : List.of(q)) {", '    if (v.matches("[a-z]+")) continue;',
+                                       "    " + _SQL_V, "}"], "", "CWE-89"),
+    # a local class's methods, and constructor calls of super / this
+    "local-class": (_LOCAL + ["new Local().run(st, q);"], "", "CWE-89"),
+    "super-constructor-call": (["new Child(q);"], _BASE.replace("ARG", '"/srv/files/" + p'), "CWE-22"),
+    "this-constructor-call": (["new Child(q);"], _THIS.replace("ARG", "p"), "CWE-22"),
 }
-# Out-of-scope shapes that should be clean but are reported.
 JAVA_GAP_SAFE = {
     "ternary-allowlist-guard": (['String col = ALLOWED.contains(q) ? q : "id";',
                                  'st.executeQuery("SELECT * FROM t ORDER BY " + col);'], ""),
     "ternary-allowlist-guard-inline": (['st.executeQuery("SELECT * FROM t ORDER BY " + (ALLOWED.contains(q) ? q : "id"));'],
                                        ""),
-    "helper-returns-constant": (["String v = new Helper().pick(q);", JAVA_SINKS["CWE-89"].replace("{v}", "v")],
-                                "    private class Helper {\n        String pick(String s) {\n"
-                                "            List<String> l = new ArrayList<>();\n            l.add(\"safe\");\n"
-                                "            l.add(s);\n            return l.get(0);\n        }\n    }"),
+    "var-from-call": (['var c2 = DriverManager.getConnection("jdbc:x");', "var st2 = c2.createStatement();",
+                       "st2.executeQuery(\"SELECT * FROM t WHERE n = 'x'\");"], ""),
+    "own-getter-receiver": (["getSt().executeQuery(\"SELECT * FROM t WHERE n = 'x'\");"], _OWN_GETTER),
+    "field-across-call": (['this.val = "x";', "run(st);"], _RUN),
+    "field-overwritten-before-call": (["this.val = q;", 'val = "x";', "run(st);"], _RUN),
+    "field-returned-across-call": (['this.val = "x";', "String v = query();", "st.executeQuery(v);"], _QUERY),
+    "argument-field-across-call": (["Box b = new Box();", 'b.setName("x");', "new Dao().find(st, b);"], _BOX),
+    "method-reference": (['List.of("x").forEach(this::runQuery);'], _RUN_QUERY),
+    "method-reference-variable": (["Repo repo = new Repo();", 'Optional.ofNullable("x").map(repo::find);'], _REPO),
+    # the helper returns a constant list element, or a constant on the only branch that runs
+    "helper-returns-constant": (["String v = new Helper().pick(q);", _SQL_V], _PICK.replace("INDEX", "0")),
+    "helper-dead-branch": (["String v = wrap(q);", "st.executeQuery(\"SELECT * FROM t WHERE n = \" + v);"],
+                           _WRAP.replace("LIMIT", "300")),
+    "break-out-of-switch-arm": ([ln.replace("VALUE", '"z"') for ln in _SWITCH_BREAK], ""),
+    "break-out-of-labeled-block": (["String v = q;", "check: {", '    if (!v.matches("[a-z]+")) {',
+                                    '        v = "safe";', "        break check;", "    }", "}", _SQL_V], ""),
+    # without the continue edge, the code after it also ran on the path whose check failed
+    "continue-past-a-failed-check": (["for (String v : List.of(q)) {", '    if (!v.matches("[a-z]+")) continue;',
+                                      "    " + _SQL_V, "}"], ""),
+    "local-class": (_LOCAL + ['new Local().run(st, "x");'], ""),
+    "super-constructor-call": (["new Child(q);"], _BASE.replace("ARG", '"/srv/files/fixed"')),
+    "this-constructor-call": (["new Child(q);"], _THIS.replace("ARG", '"fixed"')),
 }
 
 
@@ -261,4 +325,64 @@ def test_java_known_gap_flows(case):
 @pytest.mark.parametrize("case", [pytest.param(c, id=c, marks=_gap(c)) for c in JAVA_GAP_SAFE])
 def test_java_known_gap_safe(case):
     lines, members = JAVA_GAP_SAFE[case]
-    assert not _scan(_java(lines, members)) & {"CWE-89", "CWE-78"}
+    assert not _scan(_java(lines, members)) & {"CWE-89", "CWE-78", "CWE-22"}
+
+
+# Receivers typed through the class's own methods and fields, and through a library base class's
+# documented methods (Spring's JdbcDaoSupport hands its subclasses their JdbcTemplate).
+_DAO = """import java.sql.*;
+import javax.sql.DataSource;
+import org.springframework.jdbc.core.support.JdbcDaoSupport;
+import javax.servlet.http.*;
+
+public class Dao extends JdbcDaoSupport {
+    private Connection conn;
+    private DataSource ds;
+    private Connection getConn() throws Exception { return DriverManager.getConnection("x"); }
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws Exception {
+        String q = request.getParameter("q");
+        BODY
+    }
+}
+"""
+_Q = "\"SELECT * FROM t WHERE n = '\" + VALUE + \"'\""
+_RECEIVERS = {
+    "own-getter": "getConn().createStatement().executeQuery(" + _Q + ");",
+    "this-field": "this.conn.createStatement().executeQuery(" + _Q + ");",
+    "this-field-chain": "this.ds.getConnection().createStatement().executeQuery(" + _Q + ");",
+    "inherited-library-getter": "getJdbcTemplate().queryForList(" + _Q + ");",
+    "this-inherited-library-getter": "this.getJdbcTemplate().update(" + _Q + ");",
+    "var-from-own-getter": "var c = getConn();\n        var s = c.createStatement();\n        s.executeQuery(" + _Q + ");",
+    "var-from-inherited-getter": "var t = getJdbcTemplate();\n        t.execute(" + _Q + ");",
+}
+
+
+@pytest.mark.parametrize("case", list(_RECEIVERS))
+def test_java_receiver_typed_through_the_class(case):
+    def cwes(value):
+        code = _DAO.replace("BODY", _RECEIVERS[case].replace("VALUE", value))
+        return {v.cwe_id for v in FrameScanner(language="java").scan(code, "Dao.java").vulnerabilities}
+    assert "CWE-89" in cwes("q")
+    assert "CWE-89" not in cwes('"x"')
+
+
+def test_constant_return_is_decided_on_the_expression():
+    # A helper returns a constant only when its return expression is a literal, or a local that only
+    # ever holds one: `"'" + s + "'"` starts and ends with a quote but carries s.
+    from frame.sil.frontends.java_frontend import JavaFrontend
+    from frame.sil.translator import SILTranslator
+    prog = JavaFrontend().translate("""class A {
+    String quoted(String s) { return "'" + s + "'"; }
+    String fixed() { String r = "x"; return r; }
+    String reassigned(String s) { String r = "x"; r = s; return r; }
+    String called(String s) { String r = "x"; r = s.trim(); return r; }
+    void none() { return; }
+}""", "A.java")
+    t = SILTranslator(prog)
+    assert not t._proc_always_returns_constant("A.quoted")
+    assert t._proc_always_returns_constant("A.fixed")
+    assert not t._proc_always_returns_constant("A.reassigned")
+    assert not t._proc_always_returns_constant("A.called")
+    assert t._proc_always_returns_constant("A.none")
+    # a call is never matched to a procedure that merely shares the method name
+    assert not t._proc_always_returns_constant("other.fixed")
