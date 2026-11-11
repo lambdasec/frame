@@ -197,6 +197,7 @@ class JavaScriptFrontend:
 
         # Walk top-level definitions
         self._translate_module(tree.root_node, program)
+        self._resolve_callback_calls(program)
         program.unlowered_syntax = dict(self._unlowered)
 
         self._link_enclosing_procedures(program)
@@ -214,6 +215,7 @@ class JavaScriptFrontend:
             self._scan_redos(tree.root_node, program)
             self._scan_proto_pollution(tree.root_node, program)
 
+        self._record_member_procedures(tree.root_node, program)
         self._record_declarations(tree.root_node, program)
         self._record_object_exports(tree.root_node, {p.span: p for p in program.procedures.values() if p.span}, program)
         packs = self.packs if self.packs is not None else default_packs()
@@ -255,6 +257,39 @@ class JavaScriptFrontend:
                         changed = True
             if not changed:
                 break
+
+    def _record_member_procedures(self, root: TSNode, program: Program) -> None:
+        """`Program.member_procedures`: `svc.run` for a function held by an object literal that a
+        name the file binds once (and never rebinds) holds (`const svc = { run(h) {...} }`), and
+        `U.run` for a static method of a class the file declares once under a name nothing else
+        binds. A call so named runs that procedure."""
+        by_span = {p.span: p for p in program.procedures.values() if p.span}
+        bindings = self._js_bindings(root)
+        rebound = self._rebound_names(root)
+        out: Dict[str, str] = {}
+        for name, binds in bindings.items():
+            if len(binds) != 1 or binds[0][0] != "value" or name in rebound:
+                continue
+            value = self._unwrap(binds[0][1])
+            if value is None or value.type != "object":
+                continue
+            for item in self._object_functions(value, by_span, root):
+                if item[0] == "proc" and item[2]:
+                    out[".".join((name,) + tuple(item[2]))] = item[1].name
+        classes: Dict[str, int] = {}
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type in ("class_declaration", "abstract_class_declaration") and n.child_by_field_name("name"):
+                cname = self._get_text(n.child_by_field_name("name"))
+                classes[cname] = classes.get(cname, 0) + 1
+        for proc in program.procedures.values():
+            cls = proc.class_name
+            if not proc.is_static or not cls or classes.get(cls) != 1 or cls in bindings or cls in rebound:
+                continue
+            out.setdefault(f"{cls}.{proc.simple_name}", proc.name)
+        program.member_procedures = out
 
     def _record_declarations(self, root: TSNode, program: Program) -> None:
         """Parameter types (TypeScript), the callees each function is passed to
@@ -298,11 +333,14 @@ class JavaScriptFrontend:
                 for arg_index, a in enumerate(args.named_children):
                     elements = [e for e in a.named_children if e.type != "comment"] if a.type == "array" else [a]
                     for el in elements:                         # `app.get(path, [auth, handler])`
+                        el = self._through_wrappers(el, scope, program, root)
                         target = None
                         if el.type in self._FUNC_LIKE:
                             target = by_span.get((el.start_byte, el.end_byte))
                         elif el.type == "identifier":
                             target = program.procedures.get(self._get_text(el))
+                        elif el.type == "member_expression" and self._get_text(el) in program.member_procedures:
+                            target = program.procedures.get(program.member_procedures[self._get_text(el)])
                         module = self._required_specifier(el)
                         if target is not None or module is not None or el.type in ("identifier", "member_expression"):
                             # kept for callback origins and the project step (receivers handed in,
@@ -326,6 +364,88 @@ class JavaScriptFrontend:
                     for obj in ([a] if a.type == "object" else
                                 [e for e in a.named_children if e.type == "object"] if a.type == "array" else []):
                         self._register_object_functions(obj, vias, by_span, depth=2)
+
+    def _through_wrappers(self, node: TSNode, scope: str, program: Program, root: TSNode) -> TSNode:
+        """The handler a registration is handed through wrappers: `asyncHandler(async (req, res) =>
+        ...)` with a pack's `[[wrapper]]` (express-async-handler), or a wrapper of the file's own
+        that returns a function passing its parameters to the wrapped one (`const catchAsync = fn =>
+        (req, res, next) => fn(req, res, next).catch(next)`): the wrapped function is what runs."""
+        for _ in range(4):
+            node = self._unwrap(node)
+            if node is None or node.type != "call_expression":
+                return node
+            fn, args = node.child_by_field_name("function"), node.child_by_field_name("arguments")
+            first = next((c for c in args.named_children if c.type != "comment"), None) if args is not None else None
+            if fn is None or first is None:
+                return node
+            if not (self._value_id(fn, scope, program) in self._pack_wrappers(program)
+                    or self._passes_through(fn, root)):
+                return node
+            node = first
+        return node
+
+    def _pack_wrappers(self, program: Program) -> Set[str]:
+        cached = self.__dict__.get("_pack_wrapper_cache")
+        if cached is not None and cached[0] is program:
+            return cached[1]
+        packs = self.packs if self.packs is not None else default_packs()
+        found = {w for pack in packs.for_language("javascript") if pack.wrappers and pack_detected(pack, program)
+                 for w in pack.wrappers}
+        self._pack_wrapper_cache = (program, found)
+        return found
+
+    def _passes_through(self, fn: TSNode, root: TSNode) -> bool:
+        """`fn` names a function of the file (bound once) whose first parameter is a function it
+        wraps: it returns a function that calls that parameter with its own parameters, in order."""
+        fn = self._unwrap(fn)
+        if fn is None or fn.type != "identifier":
+            return False
+        binds = self._js_bindings(root).get(self._get_text(fn), [])
+        if len(binds) != 1 or binds[0][0] not in ("value", "function") or self._get_text(fn) in self._rebound_names(root):
+            return False
+        outer = self._unwrap(binds[0][1])
+        if outer is None or (outer.type not in self._FUNC_LIKE
+                             and outer.type not in ("function_declaration", "generator_function_declaration")):
+            return False
+        wrapped = [n for n, *_ in self._parameter_list_of(outer)]
+        if not wrapped:
+            return False
+        body = outer.child_by_field_name("body")
+        inner = None
+        if body is not None and body.type in self._FUNC_LIKE:
+            inner = body
+        elif body is not None and body.type == "statement_block":
+            rets = [c for c in body.named_children if c.type == "return_statement"]
+            value = next((c for c in rets[0].named_children if c.type != "comment"), None) if len(rets) == 1 else None
+            inner = self._unwrap(value)
+        if inner is None or inner.type not in self._FUNC_LIKE:
+            return False
+        own = [n for n, *_ in self._parameter_list_of(inner)]
+        if not own:
+            return False
+        stack = [inner.child_by_field_name("body")]
+        while stack:
+            n = stack.pop()
+            if n is None:
+                continue
+            if n.type == "call_expression":
+                callee, cargs = n.child_by_field_name("function"), n.child_by_field_name("arguments")
+                if callee is not None and callee.type == "identifier" and self._get_text(callee) == wrapped[0] \
+                        and cargs is not None:
+                    passed = [self._get_text(c) if c.type == "identifier" else None
+                              for c in cargs.named_children if c.type != "comment"]
+                    if passed and passed == own[:len(passed)]:
+                        return True
+            if n.type not in self._FUNC_LIKE:
+                stack.extend(n.named_children)
+        return False
+
+    def _parameter_list_of(self, fn: TSNode) -> List[Tuple[str, Any, Any, Any]]:
+        params = fn.child_by_field_name("parameters")
+        if params is not None:
+            return [p for p in self._parameter_list(params) if p[0]]
+        single = fn.child_by_field_name("parameter")          # `fn => ...`
+        return [(self._get_text(single), None, None, None)] if single is not None and single.type == "identifier" else []
 
     def _register_object_functions(self, obj: TSNode, vias: List[str], by_span, depth: int) -> None:
         for prop in obj.named_children:
@@ -799,6 +919,127 @@ class JavaScriptFrontend:
         if proc is not None:
             program.add_procedure(proc)
 
+    _CLASS_TYPES = ("class_declaration", "abstract_class_declaration")
+
+    def _es_exports(self, node: TSNode) -> List[Tuple[Optional[str], TSNode]]:
+        """What an ES `export` statement exports, as (name, value node): `export const pool = ...`
+        and `export { pool as db }` (the local name's identifier), `export default pool` / an
+        expression (name None: the default). Re-exports from another module, functions and
+        classes (procedures of their own) export no value here."""
+        if node.child_by_field_name("source") is not None:
+            return []
+        out: List[Tuple[Optional[str], TSNode]] = []
+        decl, value = node.child_by_field_name("declaration"), node.child_by_field_name("value")
+        if any(c.type == "default" for c in node.children):
+            target = value if value is not None else decl
+            if target is not None and target.type not in self._FUNC_LIKE and target.type not in (
+                    "function_declaration", "generator_function_declaration", "class", "class_declaration",
+                    "abstract_class_declaration"):
+                out.append((None, target))
+            return out
+        if decl is not None and decl.type in ("lexical_declaration", "variable_declaration"):
+            for d in decl.named_children:
+                name = d.child_by_field_name("name") if d.type == "variable_declarator" else None
+                if name is not None and name.type == "identifier":
+                    out.append((self._get_text(name), name))
+        for clause in (c for c in node.named_children if c.type == "export_clause"):
+            for spec in clause.named_children:
+                local, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                if spec.type == "export_specifier" and local is not None and local.type == "identifier":
+                    out.append((self._get_text(alias if alias is not None else local), local))
+        return out
+
+    def _translate_es_export(self, node: TSNode) -> None:
+        """An ES export, lowered the way CommonJS writes it: `module.exports.pool = pool` for a
+        named export, `module.exports = value` for the default, so value origins and the project
+        step read either module system the same way."""
+        loc = self._get_location(node)
+        for name, value in self._es_exports(node):
+            if name is not None:
+                self._add_instr(Assign(loc=loc, id=PVar(f"module.exports.{name}"),
+                                       exp=ExpVar(PVar(self._get_text(value)))))
+                continue
+            inner = self._unwrap_await(value)
+            if inner.type == "object" and self._lower_export_fields(inner, loc):
+                continue
+            if inner.type == "call_expression":
+                self._add_instrs(self._translate_call_assignment("module.exports", inner, loc))
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar("module.exports"), exp=self._translate_expression(inner)))
+
+    def _class_static_members(self, node: TSNode) -> List[TSNode]:
+        body = node.child_by_field_name("body")
+        out = []
+        for m in (body.named_children if body is not None else ()):
+            if m.type == "class_static_block":
+                out.append(m)
+            elif m.type in ("field_definition", "public_field_definition") \
+                    and any(c.type == "static" for c in m.children) and m.child_by_field_name("value") is not None:
+                value = self._unwrap_value(m.child_by_field_name("value"))
+                if value is not None and value.type not in self._FUNC_NODE_TYPES \
+                        and value.type not in self._LITERAL_VALUES:
+                    out.append(m)
+        return out
+
+    def _lower_class_statics(self, node: TSNode) -> None:
+        """A class's static field initializers and static blocks run, in order, when the class is
+        defined: `static pool = mysql.createPool(cfg)` is `C.pool = ...` (a static method's
+        `C.pool.query(...)` then has its value), and `this` in a static block is the class."""
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return
+        cls = self._get_text(name_node)
+        for m in self._class_static_members(node):
+            if m.type == "class_static_block":
+                block = m.child_by_field_name("body") or next(
+                    (c for c in m.named_children if c.type == "statement_block"), None)
+                if block is None or self._current_node is None or self._current_proc is None:
+                    continue
+                start = (self._current_node, len(self._current_node.instrs))
+                known = set(self._current_proc.nodes)
+                self._translate_block(block)
+                self._rename_this(start, known, cls)
+                continue
+            key = m.child_by_field_name("property") or m.child_by_field_name("name")
+            if key is None or key.type not in ("property_identifier", "private_property_identifier"):
+                continue
+            target = f"{cls}.{self._get_text(key)}"
+            loc = self._get_location(m)
+            inner = self._unwrap_await(m.child_by_field_name("value"))
+            if inner.type == "call_expression":
+                self._add_instrs(self._translate_call_assignment(target, inner, loc))
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=self._translate_expression(inner)))
+                self._add_instrs(self._check_expression_for_taint_source(inner, target, loc))
+
+    def _rename_this(self, start, known, cls: str) -> None:
+        """`this` -> `cls` in the instructions lowered since `start` (a static block's)."""
+        import dataclasses
+
+        def fix(v):
+            if isinstance(v, PVar):
+                if v.name == "this" or v.name.startswith("this."):
+                    return PVar(cls + v.name[len("this"):])
+                return v
+            if isinstance(v, tuple):
+                return tuple(fix(x) for x in v)
+            if isinstance(v, list):
+                return [fix(x) for x in v]
+            if isinstance(v, (Exp, Instr)) and dataclasses.is_dataclass(v):
+                for f in dataclasses.fields(v):
+                    cur = getattr(v, f.name)
+                    new = fix(cur)
+                    if new is not cur and new != cur:
+                        object.__setattr__(v, f.name, new)
+                return v
+            return v
+
+        node, offset = start
+        for n in list(self._current_proc.nodes.values()):
+            instrs = n.instrs[offset:] if n is node else (n.instrs if n.id not in known else [])
+            for i in instrs:
+                fix(i)
+
     def _translate_module_scope(self, root: TSNode, program: Program) -> None:
         """Analyze module-level statements as a synthetic ``<module>`` procedure.
 
@@ -812,13 +1053,16 @@ class JavaScriptFrontend:
         stmts = []
         for child in root.children:
             if child.type == "export_statement":
-                # `export const x = ...` -> the declaration; `export default expr`
-                # / `export { a }` carry no module-scope statement worth lowering.
+                # `export const x = ...` -> the declaration, then what the module exports
+                # (`_translate_es_export`: `module.exports.x = x`)
                 decl = child.child_by_field_name("declaration")
-                if decl is not None and decl.type not in self._MODULE_SCOPE_SKIP:
+                if decl is not None and (decl.type not in self._MODULE_SCOPE_SKIP or decl.type in self._CLASS_TYPES):
                     stmts.append(decl)
-            elif child.type not in self._MODULE_SCOPE_SKIP:
-                stmts.append(child)
+                if self._es_exports(child):
+                    stmts.append(child)
+            elif child.type in self._CLASS_TYPES or child.type not in self._MODULE_SCOPE_SKIP:
+                stmts.append(child)               # a class: its static members run when it is defined
+        stmts = [st for st in stmts if st.type not in self._CLASS_TYPES or self._class_static_members(st)]
         if not stmts:
             return
 
@@ -836,7 +1080,12 @@ class JavaScriptFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
         for stmt in stmts:
-            self._translate_statement(stmt)
+            if stmt.type == "export_statement":
+                self._translate_es_export(stmt)
+            elif stmt.type in self._CLASS_TYPES:
+                self._lower_class_statics(stmt)
+            else:
+                self._translate_statement(stmt)
         exit_node = proc.new_node(NodeKind.EXIT)
         proc.add_node(exit_node)
         proc.exit_node = exit_node.id
@@ -1005,26 +1254,31 @@ class JavaScriptFrontend:
                         proc.name = f"{class_name}.{proc.name}"
                         program.add_procedure(proc)
 
-                elif child.type == "field_definition":
-                    # Check for arrow function fields
-                    value = child.child_by_field_name("value")
-                    if value and value.type == "arrow_function":
-                        name_node = child.child_by_field_name("property")
-                        if name_node:
+                elif child.type in ("field_definition", "public_field_definition"):
+                    # A function-valued field (`handle = (req, res) => {...}`, TS `private run =
+                    # async (h: string) => {...}`) is a method of the class; `static` ones too.
+                    value = self._unwrap_value(child.child_by_field_name("value"))
+                    if value is not None and value.type in ("arrow_function", "function", "function_expression"):
+                        name_node = child.child_by_field_name("property") or child.child_by_field_name("name")
+                        if name_node is not None and name_node.type in ("property_identifier",
+                                                                         "private_property_identifier"):
                             seen_ids.add(value.id)
                             method_name = self._get_text(name_node)
                             proc = self._translate_function(value, name=method_name, is_method=True)
                             if proc:
                                 proc.class_name = class_name
                                 proc.name = f"{class_name}.{proc.name}"
+                                proc.is_static = any(c.type == "static" for c in child.children)
                                 program.add_procedure(proc)
 
-        # (A derived class's implicit constructor also passes its arguments to the base's, which
-        # a constructor of its own here would hide: only a class with no base gets one.)
-        if body_node is not None and not has_constructor and not bases and self._field_initializers(body_node):
+        # A derived class's implicit constructor also passes its arguments to the base's, which a
+        # constructor of its own here would hide (`new D(x)` would no longer reach the base's): its
+        # field initializers are a procedure of their own, `D.<fields>`, which value origins read
+        # like a constructor (the fields' values in the class's methods) and nothing calls.
+        if body_node is not None and not has_constructor and self._field_initializers(body_node):
             proc = self._implicit_constructor(node, body_node)
             proc.class_name = class_name
-            proc.name = f"{class_name}.constructor"
+            proc.name = f"{class_name}.{'<fields>' if bases else 'constructor'}"
             program.add_procedure(proc)
         self._current_class = None
 
@@ -2106,7 +2360,7 @@ class JavaScriptFrontend:
         if proc is None or condition is None:
             return
         loc = self._get_location(condition)
-        cond_exp = self._translate_expression(condition)
+        cond_exp = self._translate_condition(condition)
         before = self._current_node
         join = proc.new_node(NodeKind.JOIN)
         proc.add_node(join)
@@ -2318,6 +2572,9 @@ class JavaScriptFrontend:
             self._assign_exp(left, self._translate_assignment(right), loc, literal)
             return ExpVar(PVar(target_name))
 
+        if target_name == "module.exports" and right.type == "object" and self._lower_export_fields(right, loc):
+            return ExpVar(PVar(target_name))
+
         if right.type == "call_expression":
             instrs = self._translate_call_assignment(target_name, right, loc)
             self._add_instrs(instrs)
@@ -2340,6 +2597,45 @@ class JavaScriptFrontend:
         # actually attacker-tainted; a constant right-hand side stays untainted.
         self._assignment_target_sink(left, target_name, literal, loc)
         return ExpVar(PVar(target_name))
+
+    def _lower_export_fields(self, obj: TSNode, loc: Location) -> bool:
+        """`module.exports = { pool, query: run, db: mysql.createPool(cfg) }` as one write per field
+        (`module.exports.pool = pool`, ...), so each export keeps its own value (the object used to be
+        collapsed into one value, the export of its first field). False, writing nothing, for an
+        object with a spread or a computed key."""
+        fields: List[Tuple[str, Optional[TSNode]]] = []
+        for m in obj.named_children:
+            if m.type == "comment":
+                continue
+            if m.type == "shorthand_property_identifier":
+                fields.append((self._get_text(m), m))
+            elif m.type == "pair":
+                key, value = m.child_by_field_name("key"), m.child_by_field_name("value")
+                if key is None or value is None or key.type not in ("property_identifier", "string"):
+                    return False
+                fields.append((self._get_text(key).strip("'\""), value))
+            elif m.type == "method_definition":
+                key = m.child_by_field_name("name")
+                if key is None or key.type != "property_identifier":
+                    return False
+                fields.append((self._get_text(key), None))           # a function: no value to carry
+            else:
+                return False
+        for name, value in fields:
+            target = f"module.exports.{name}"
+            if value is None:
+                continue
+            if value.type == "shorthand_property_identifier":
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=ExpVar(PVar(self._get_text(value)))))
+                continue
+            inner = self._unwrap_await(value)
+            if inner.type == "call_expression":
+                self._add_instrs(self._translate_call_assignment(target, inner, loc))
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=self._translate_expression(inner),
+                                       literal=inner.type if inner.type in ("object", "array") else ""))
+                self._add_instrs(self._check_expression_for_taint_source(inner, target, loc))
+        return True
 
     def _assignment_target_sink(self, left: TSNode, target_name: str, literal: str, loc: Location) -> None:
         sink_spec = self._assignment_sink_spec(left)
@@ -3118,6 +3414,7 @@ class JavaScriptFrontend:
             arg_forms=self._call_arg_forms(func_name, args),
         )
         instrs.append(call_instr)
+        instrs.extend(self._call_value_effects(call_node, func_name, loc))
 
         # Assign to target
         instrs.append(Assign(
@@ -3370,6 +3667,77 @@ class JavaScriptFrontend:
         instrs.extend(self._translate_call_assignment(inner, func_node, loc))
         return inner
 
+    _PLAIN_PATH = re.compile(r"[\w$]+(?:\.[\w$]+)*")
+    _CALLBACK_PREFIX = "$callback@"
+
+    def _call_value_effects(self, call_node: TSNode, func_name: str, loc: Location) -> List[Instr]:
+        """What a builtin method does with its receiver's values (javascript-types.toml), lowered
+        after the call: `[callback_values]` -- `items.forEach(cb)`, `p.then(cb)` call cb with an
+        element / the resolved value, so cb is called with the receiver at that parameter (a
+        placeholder named after the function's span, `_resolve_callback_calls`); `[receiver_writes]`
+        -- `args.push(x)` on a value the file proves an Array stores x in it (`args = args ++ x`)."""
+        func = self._unwrap(call_node.child_by_field_name("function"))
+        if func is None or func.type != "member_expression":
+            return []
+        prop, obj = func.child_by_field_name("property"), self._unwrap(func.child_by_field_name("object"))
+        method = self._get_text(prop) if prop is not None else ""
+        receiver_text = func_name.rpartition(".")[0].replace("?.", ".").rstrip("?")     # `xs?.forEach`
+        if obj is None or not receiver_text or not self._PLAIN_PATH.fullmatch(receiver_text):
+            return []
+        if receiver_text.split(".", 1)[0] in set(self._module_aliases.values()) | set(self._module_aliases):
+            return []                                    # `_.forEach(xs, f)`: a module's function
+        plain = obj.type in ("identifier", "this") or (obj.type == "member_expression" and all(
+            n.type in ("identifier", "this", "property_identifier", "member_expression", ".")
+            for n in self._descendants(obj)))
+        receiver = self._translate_expression(obj) if plain else ExpVar(PVar(receiver_text))
+        args = [a for a in self._get_call_args(call_node)]
+        out: List[Instr] = []
+        position = self._TYPES.callback_values.get(method)
+        if position is not None and args:
+            cb = self._unwrap(args[0])
+            target = None
+            if cb is not None and cb.type in self._FUNC_LIKE:
+                target = f"{self._CALLBACK_PREFIX}{cb.start_byte}:{cb.end_byte}"
+            elif cb is not None and cb.type == "identifier":
+                target = f"{self._CALLBACK_PREFIX}{self._get_text(cb)}"
+            if target is not None:
+                passed = [(ExpConst.null(), Typ.unknown_type())] * position + [(receiver, Typ.unknown_type())]
+                out.append(Call(loc=loc, ret=None, func=ExpConst.string(target), args=passed))
+        first = self._TYPES.receiver_writes.get(method)
+        if first is not None and len(args) > first and plain and obj.type != "this" \
+                and self._value_kind(obj) == "Array":
+            stored = [self._translate_value(a) for a in args[first:]]
+            out.append(Assign(loc=loc, id=PVar(receiver_text), exp=ExpStringConcat([receiver] + stored)))
+        return out
+
+    @staticmethod
+    def _descendants(node: TSNode):
+        stack = list(node.children)
+        while stack:
+            n = stack.pop()
+            yield n
+            stack.extend(n.children)
+
+    def _resolve_callback_calls(self, program: Program) -> None:
+        """The placeholder calls `_call_value_effects` made name the procedure the callback is (by
+        span, or by the name of a function of the file); one that names none is dropped."""
+        by_span = {p.span: p.name for p in program.procedures.values() if p.span}
+        for proc in program.procedures.values():
+            for node in proc.nodes.values():
+                kept = []
+                for i in node.instrs:
+                    text = i.func.value if isinstance(i, Call) and isinstance(i.func, ExpConst) else None
+                    if isinstance(text, str) and text.startswith(self._CALLBACK_PREFIX):
+                        ref = text[len(self._CALLBACK_PREFIX):]
+                        start, _, end = ref.partition(":")
+                        name = by_span.get((int(start), int(end))) if start.isdigit() and end.isdigit() else \
+                            (ref if ref in program.procedures and not program.procedures[ref].is_method else None)
+                        if name is None:
+                            continue
+                        i.func = ExpConst.string(name)
+                    kept.append(i)
+                node.instrs[:] = kept
+
     def _translate_call_expr(self, call_node: TSNode) -> List[Instr]:
         """Translate standalone call: func(args)
 
@@ -3431,6 +3799,7 @@ class JavaScriptFrontend:
             arg_forms=self._call_arg_forms(func_name, args),
         )
         instrs.append(call_instr)
+        instrs.extend(self._call_value_effects(call_node, func_name, loc))
 
         # Check if this is a sink (with suffix matching for chained calls)
         spec = self._lookup_call_spec(func_name, call_node)
@@ -3645,6 +4014,8 @@ class JavaScriptFrontend:
         left_exp = ExpVar(PVar(target_name))
         right_exp = self._translate_expression(right)
         combined = ExpBinOp(bin_op, left_exp, right_exp)
+        if bin_op not in self._TEXT_BINARY_OPS:
+            combined = self._numeric_result(combined)            # `n *= k`, `n |= 0`
 
         self._add_instr(Assign(loc=loc, id=PVar(target_name), exp=combined))
 
@@ -3765,7 +4136,7 @@ class JavaScriptFrontend:
             return
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        condition_exp = self._translate_condition(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
 
@@ -3825,7 +4196,7 @@ class JavaScriptFrontend:
         loc = self._get_location(node)
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        condition_exp = self._translate_condition(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
 
@@ -3898,7 +4269,7 @@ class JavaScriptFrontend:
             proc.connect(before_node.id, loop_head.id)
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) \
+        condition_exp = self._translate_condition(condition) \
             if condition is not None and condition.type != "empty_statement" else ExpConst.boolean(True)
 
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
@@ -4064,7 +4435,7 @@ class JavaScriptFrontend:
         if body is not None:
             self._translate_statement(body)
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition is not None else ExpConst.boolean(True)
+        condition_exp = self._translate_condition(condition) if condition is not None else ExpConst.boolean(True)
         loop_head = proc.new_node(NodeKind.LOOP_HEAD)
         proc.add_node(loop_head)
         loop_head.loop_body_can_exit = body_can_exit_loop(body)
@@ -4152,6 +4523,36 @@ class JavaScriptFrontend:
                     self._add_instr(Return(loc=loc, value=exp))
                 break
 
+    # Operators whose result is a number or a boolean whatever their operands are (every binary
+    # operator but `+` and the value-returning `&&` / `||` / `??`, the unary operators, `.length`):
+    # in a value position the result carries no text from the operands, as `Number(x)` does not.
+    _TEXT_BINARY_OPS = frozenset({"+", "&&", "||", "??"})
+    _NUMERIC_UNARY_OPS = frozenset({"+", "-", "~", "!", "typeof", "void", "delete"})
+
+    def _translate_condition(self, node: TSNode) -> Exp:
+        """A branch condition: comparisons stay as written, since the guards read them."""
+        self._condition_depth = self.__dict__.get("_condition_depth", 0) + 1
+        try:
+            return self._translate_expression(node)
+        finally:
+            self._condition_depth -= 1
+
+    def _translate_value(self, node: TSNode) -> Exp:
+        """An expression whose value is used as data (a call argument, a branch of a ternary)."""
+        depth = self.__dict__.get("_condition_depth", 0)
+        self._condition_depth = 0
+        try:
+            return self._translate_expression(node)
+        finally:
+            self._condition_depth = depth
+
+    def _numeric_result(self, exp: Exp) -> Exp:
+        """`exp` is a number or a boolean: outside a condition it is the numeric conversion of
+        what it reads (the `Number` spec), so text-payload sinks treat it as `Number(x)`."""
+        if self.__dict__.get("_condition_depth", 0):
+            return exp
+        return ExpCall(ExpVar(PVar("Number")), [exp])
+
     def _translate_expression(self, node: TSNode) -> Exp:
         """Translate expression to SIL Exp"""
         if node is None:
@@ -4214,7 +4615,8 @@ class JavaScriptFrontend:
 
             if op == "+":
                 return ExpStringConcat([left_exp, right_exp])
-
+            if op not in self._TEXT_BINARY_OPS:
+                return self._numeric_result(ExpBinOp(op, left_exp, right_exp))
             return ExpBinOp(op, left_exp, right_exp)
 
         elif node.type == "unary_expression":
@@ -4222,6 +4624,8 @@ class JavaScriptFrontend:
             arg = node.child_by_field_name("argument")
             op = self._get_text(op_node) if op_node else "-"
             arg_exp = self._translate_expression(arg)
+            if op in self._NUMERIC_UNARY_OPS:
+                return self._numeric_result(ExpUnOp(op, arg_exp))
             return ExpUnOp(op, arg_exp)
 
         elif node.type == "member_expression":
@@ -4229,6 +4633,8 @@ class JavaScriptFrontend:
             prop = node.child_by_field_name("property")
             obj_exp = self._translate_expression(obj)
             prop_name = self._get_text(prop) if prop else ""
+            if prop_name == "length" and prop is not None and prop.type == "property_identifier":
+                return self._numeric_result(ExpFieldAccess(obj_exp, prop_name))
             return ExpFieldAccess(obj_exp, prop_name)
 
         elif node.type == "subscript_expression" and self._is_const_table_subscript(node):
@@ -4267,7 +4673,7 @@ class JavaScriptFrontend:
             inline = self._inline_require_member(func) if func is not None else None
             if inline is not None:
                 func_exp = ExpVar(PVar(inline))        # `require("m").f` -> `m.f`
-            args = [self._translate_expression(a) for a in self._get_call_args(node)]
+            args = [self._translate_value(a) for a in self._get_call_args(node)]
             # A call nested inside another expression (e.g. `return eval(x)`,
             # `f(exec(y))`) is still a sink -- emit its TaintSink as a side effect
             # so it is not missed just because it is not a standalone statement.
@@ -4334,8 +4740,8 @@ class JavaScriptFrontend:
             # Either branch: the translator takes the one the condition folds to, else both.
             if cond is None or conseq is None or alt is None:
                 return self._translate_expression(conseq) if conseq else ExpConst.null()
-            return ExpTernary(self._translate_expression(cond), self._translate_expression(conseq),
-                              self._translate_expression(alt))
+            return ExpTernary(self._translate_condition(cond), self._translate_value(conseq),
+                              self._translate_value(alt))
 
         elif node.type == "await_expression":
             # await_expression has NO "argument" field -- the awaited expression
@@ -4937,7 +5343,75 @@ class JavaScriptFrontend:
                 target = f"{aliases[head]}.{member}" if head in aliases else (names.get(wrapped) if not head else None)
                 if target:
                     names[self._get_text(pattern)] = target
+
+        # `const run = cp.exec` (at module level or in a function): a name the file binds once, to
+        # a module's function, and never rebinds (no parameter, assignment or other declaration of
+        # that name anywhere in the file) holds that function, so `run(x)` is `child_process.exec(x)`.
+        bindings = self._js_bindings(root)
+        rebound = self._rebound_names(root)
+        for local, binds in bindings.items():
+            if len(binds) != 1 or binds[0][0] != "value" or local in rebound or local in names or local in aliases:
+                continue
+            value = self._unwrap(binds[0][1])
+            target = None
+            if value is not None and value.type == "member_expression":
+                obj, prop = self._unwrap(value.child_by_field_name("object")), value.child_by_field_name("property")
+                if obj is not None and prop is not None and prop.type == "property_identifier":
+                    if obj.type == "identifier" and self._get_text(obj) in aliases:
+                        target = f"{aliases[self._get_text(obj)]}.{self._get_text(prop)}"
+                    else:
+                        spec = self._required_specifier(obj)
+                        if spec:
+                            target = f"{spec[5:] if spec.startswith('node:') else spec}.{self._get_text(prop)}"
+            elif value is not None and value.type == "identifier" and self._get_text(value) in names:
+                target = names[self._get_text(value)]
+            if target:
+                names[local] = target
         return aliases, names
+
+    def _rebound_names(self, root: TSNode) -> Set[str]:
+        """Names the file binds other than by a declaration: parameters (patterns included),
+        catch parameters, assignment and update targets, for-in/of left-hand names."""
+        cached = self.__dict__.get("_rebound_cache")
+        if cached is not None and cached[0] is root:
+            return cached[1]
+        out: Set[str] = set()
+        self._rebound_cache = (root, out)
+
+        def idents(n: TSNode) -> None:
+            if n.type in ("identifier", "shorthand_property_identifier_pattern"):
+                out.add(self._get_text(n))
+            elif n.type not in ("member_expression", "subscript_expression"):
+                for c in n.named_children:
+                    idents(c)
+
+        stack = [root]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "formal_parameters":
+                idents(n)
+            elif n.type == "arrow_function":
+                p = n.child_by_field_name("parameter")
+                if p is not None:
+                    idents(p)
+            elif n.type == "catch_clause":
+                p = n.child_by_field_name("parameter")
+                if p is not None:
+                    idents(p)
+            elif n.type in ("assignment_expression", "augmented_assignment_expression"):
+                left = n.child_by_field_name("left")
+                if left is not None:
+                    idents(left)
+            elif n.type == "update_expression":
+                arg = n.child_by_field_name("argument")
+                if arg is not None:
+                    idents(arg)
+            elif n.type == "for_in_statement":
+                left = n.child_by_field_name("left")
+                if left is not None:
+                    idents(left)
+        return out
 
     def _get_member_chain(self, node: TSNode) -> str:
         """

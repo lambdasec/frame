@@ -1876,6 +1876,9 @@ class SILTranslator:
             if proc is None or f"{func_name}#2" in procs or proc.is_method:
                 return None
             return proc
+        member = (getattr(self.program, "member_procedures", None) or {}).get(func_name)
+        if member is not None and member in procs:
+            return procs[member]       # JS `svc.run(x)`, `U.run(x)`: the file binds the head once
         head, _, method = func_name.rpartition(".")
         if head in ("self", "this", "cls") and caller is not None and caller.class_name:
             owner = caller.class_name.rsplit(".", 1)[-1]
@@ -4330,8 +4333,11 @@ class SILTranslator:
         # Also propagate sanitization even if source isn't tainted
         # This handles cases like: bar = sanitize(param)
         # where bar might get tainted later or where we're tracking
-        # sanitized data that flows to sinks
-        for src_var in source_vars:
+        # sanitized data that flows to sinks. JS/TS: not while another source carries attacker
+        # data (`'ping ' + q + n` with n = Number(q) is not sanitized; the rule below keeps what
+        # every tainted source was sanitized for). (Other languages keep the old union for now.)
+        js = (getattr(self.program, "language", "") or "").lower() in ("javascript", "typescript")
+        for src_var in ([] if js and any(state.is_tainted(v) for v in source_vars) else source_vars):
             if src_var in state.sanitized:
                 existing = state.sanitized.get(target, [])
                 state.sanitized[target] = list(set(existing) | set(state.sanitized[src_var]))
@@ -4696,7 +4702,9 @@ class SILTranslator:
         the call executes. Empty when the call has no result or no tainted input."""
         if not instr.ret:
             return []
-        wrapped = self._wrapped_var_kinds([a for a, _ in instr.args])
+        # the receiver is read as it is (`q.slice(0, Number(q.length))` keeps q's text)
+        recv = func_name.rsplit('.', 1)[0].replace('?.', '.').rstrip('?') if '.' in func_name else None
+        wrapped = self._wrapped_var_kinds([a for a, _ in instr.args] + ([ExpVar(PVar(recv))] if recv else []))
         return [set(state.sanitized.get(v, [])) | wrapped.get(v, set())
                 for v in self._call_taint_inputs(instr, spec, func_name)
                 if state.is_tainted(v)]
@@ -6005,6 +6013,21 @@ class SILTranslator:
             return ExpUnOp(exp.op, self._inline_parsed_urls(exp.operand))
         return exp
 
+    def _guarded_paths_as_names(self, exp):
+        """JS/TS: a field path read in a guard's arguments (`/^[a-z]+$/.test(req.query.h)`) as the
+        name a read of that path is tracked under (`req.query.h`), so the guard proves what it
+        proves for a later read of the same path, as it does through a variable."""
+        if isinstance(exp, ExpFieldAccess):
+            path = self._field_path(exp)
+            return ExpVar(PVar(path)) if path else exp
+        if isinstance(exp, ExpUnOp):
+            return ExpUnOp(exp.op, self._guarded_paths_as_names(exp.operand))
+        if isinstance(exp, ExpBinOp):
+            return ExpBinOp(exp.op, self._guarded_paths_as_names(exp.left), self._guarded_paths_as_names(exp.right))
+        if isinstance(exp, ExpCall):
+            return ExpCall(exp.func, [self._guarded_paths_as_names(a) for a in exp.args])
+        return exp
+
     def _apply_branch_guards(self, state: SymbolicState, condition, is_true_branch: bool) -> SymbolicState:
         """Record what `condition` proves about its variables on the branch where it
         evaluates to `is_true_branch`: sanitization for the sinks it rules out."""
@@ -6012,6 +6035,8 @@ class SILTranslator:
         # `ALLOWED.includes(x)`), a character class (`x.isdigit()`, an anchored safe-charset
         # regex), a URL host in an allowlist. Only constant-looking collections count
         # (UPPER_CASE names or literals), never an arbitrary array.
+        if (getattr(self.program, "language", "") or "").lower() in ("javascript", "typescript"):
+            condition = self._guarded_paths_as_names(condition)
         parsed = self._parsed_url_locals(condition)
         for var, kinds, holds_when in self._guard_facts(
                 self._inline_parsed_urls(condition), getattr(self.program, "constant_regexes", None),

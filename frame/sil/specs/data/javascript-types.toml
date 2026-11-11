@@ -81,3 +81,31 @@ findLastIndex = 1
 flatMap = 1
 reduce = 2
 reduceRight = 2
+
+# Methods that call the function they are handed (argument 0) with what the receiver holds: an
+# Array's elements (ECMAScript Array.prototype iteration methods), a promise's resolved value
+# (`then`'s onFulfilled). The position of the callback parameter that receives it (`reduce`'s is
+# 1, after the accumulator). Read by the JS frontend (`_callback_value_calls`) only to pass the
+# receiver's taint and value origin into that parameter: it never makes a source or a sink, so a
+# receiver of another type with a method of the same name costs at most a propagation.
+[callback_values]
+forEach = 0
+map = 0
+filter = 0
+some = 0
+every = 0
+find = 0
+findIndex = 0
+findLast = 0
+findLastIndex = 0
+flatMap = 0
+reduce = 1
+reduceRight = 1
+then = 0
+
+# Array methods that store their arguments in the receiver (ECMAScript): the first argument
+# position whose value becomes an element (`splice(start, count, ...items)`).
+[receiver_writes]
+push = 0
+unshift = 0
+splice = 2

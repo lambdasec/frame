@@ -4,7 +4,8 @@ language = "javascript"
 description = "HTTP client libraries whose first argument is the request URL (SSRF)"
 detect = { imports = ["axios", "got", "node-fetch", "cross-fetch", "isomorphic-fetch", "superagent", "needle", "undici",
                       "ky", "phin", "request-promise", "request-promise-native", "bent", "make-fetch-happen",
-                      "@angular/common/http", "urllib", "simple-get", "http2-wrapper", "supertest-as-promised"] }
+                      "@angular/common/http", "urllib", "simple-get", "http2-wrapper", "supertest-as-promised",
+                      "teeny-request"] }
 
 [[sink]]
 call = ["superagent", "superagent.get", "superagent.post", "superagent.put", "superagent.patch", "superagent.delete",
@@ -16,7 +17,8 @@ call = ["superagent", "superagent.get", "superagent.post", "superagent.put", "su
         "make-fetch-happen", "phin", "bent", "simple-get", "simple-get.concat", "urllib.request",
         "axios.head", "axios.patch", "axios.options", "axios.getUri", "axios.default", "axios.default.get", "axios.default.post",
         "got.put", "got.patch", "got.delete", "got.head", "got.stream", "got.default",
-        "request-promise", "request-promise-native"]
+        "request-promise", "request-promise-native",
+        "teeny-request.teenyRequest"]     # request-compatible options (`uri`), github.com/googleapis/teeny-request
 args = [0]
 kind = "ssrf"
 description = "HTTP client: the first argument is the URL (or an options object with a url)"

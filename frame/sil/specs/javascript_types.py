@@ -1,6 +1,7 @@
 """The JavaScript / TypeScript type model (`data/javascript-types.toml`): Node core modules,
 in-memory collection libraries, database-handle factories, builtin method result kinds, global
-constructors and factories. Loaded strictly."""
+constructors and factories, the callback parameters builtin methods hand a value, and the methods
+that store their arguments in the receiver. Loaded strictly."""
 
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 PATH = Path(__file__).parent / "data" / "javascript-types.toml"
 _SHAPE = {"modules": {"node_core", "in_memory"},
           "methods": {"array_to_array", "string_to_string"},
-          "string_only_methods": None, "constructors": None, "factories": None, "array_index_params": int}
+          "string_only_methods": None, "constructors": None, "factories": None, "array_index_params": int,
+          "callback_values": int, "receiver_writes": int}
 
 
 class JavaScriptTypes(NamedTuple):
@@ -28,6 +30,8 @@ class JavaScriptTypes(NamedTuple):
     constructors: Dict[str, str]
     factories: Dict[str, str]
     array_index_params: Dict[str, int]
+    callback_values: Dict[str, int]
+    receiver_writes: Dict[str, int]
 
 
 @lru_cache(maxsize=None)
@@ -54,7 +58,7 @@ def load(path: Path = PATH) -> JavaScriptTypes:
         frozenset(m["node_core"]), frozenset(m["in_memory"]),
         frozenset(f["array_to_array"]), frozenset(f["string_to_string"]),
         dict(data["string_only_methods"]), dict(data["constructors"]), dict(data["factories"]),
-        dict(data["array_index_params"]))
+        dict(data["array_index_params"]), dict(data["callback_values"]), dict(data["receiver_writes"]))
 
 
 __all__ = ["PATH", "JavaScriptTypes", "load"]

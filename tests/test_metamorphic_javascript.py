@@ -109,27 +109,7 @@ JS_INLINE = {
                               "  db.query(...build());", "CWE-89"),
 }
 
-KNOWN_GAPS = {
-    "for-of-callback": "a callback a library calls (`forEach`, `map`, `then`) is not resolved: its parameter "
-                       "never receives the elements",
-    "promise-then": "a callback a library calls (`forEach`, `map`, `then`) is not resolved: its parameter "
-                    "never receives the elements",
-    "function-alias": "a function value bound to a name (`const run = cp.exec`) is not followed to the "
-                      "function it names",
-    "object-literal-method": "a method of a same-file object literal is not resolved as a callee",
-    "array-map-callback": "a callback a library calls (`forEach`, `map`, `then`) is not resolved: its parameter "
-                          "never receives the elements",
-    "static-method": "a static method of a same-file class is not resolved as a callee",
-    "export-const-origin": "an ES `export const` / `export default` binding gives the importing file no value "
-                           "origin (value_origins)",
-    "export-default-origin": "an ES `export const` / `export default` binding gives the importing file no value "
-                             "origin (value_origins)",
-    "module-exports-object-origin": "`module.exports = { pool }` gives the importing file no value origin for "
-                                    "the destructured name (value_origins)",
-    "async-wrapper": "a handler wrapped in a helper (`asyncHandler(fn)`) is not seen as registered",
-    "unary-plus": "a numeric conversion by an operator (`+q`) does not clear the value",
-    "comparison": "a comparison (`q === 'yes'`) still carries the request data",
-}
+KNOWN_GAPS: dict = {}
 
 
 def _scan(code, name="app.js", language="javascript"):
@@ -346,39 +326,261 @@ def test_ts_type_forms_are_transparent(form):
     assert "CWE-78" not in _scan(_ts(form, "'localhost'"), "app.ts", "typescript")
 
 
-# Out of scope for the frontend (value origins, callee resolution, numeric facts): strict
-# xfails, each with its reason in KNOWN_GAPS.
-JS_OUT_OF_SCOPE = {
-    "for-of-callback": (["[q].forEach(s => cp.exec('ping ' + s));"], "CWE-78"),
-    "promise-then": (["Promise.resolve(q).then(s => cp.exec('ping ' + s));"], "CWE-78"),
-    "function-alias": (["const run = cp.exec;", "run('ping ' + q);"], "CWE-78"),
-    "object-literal-method": (["const h = { run(s) { cp.exec('ping ' + s); } };", "h.run(q);"], "CWE-78"),
-    "array-map-callback": (["[q].map(s => cp.exec('ping ' + s));"], "CWE-78"),
-    "static-method": (["U.run(q);"], "CWE-78"),
+# Callbacks a builtin method calls with what its receiver holds (javascript-types.toml
+# [callback_values]): an element, a promise's resolved value. Each flow is paired with the same
+# code over a constant.
+JS_CALLBACKS = {
+    "for-of-callback": ["[q].forEach(s => cp.exec('ping ' + s));"],
+    "promise-then": ["Promise.resolve(q).then(s => cp.exec('ping ' + s));"],
+    "array-map-callback": ["[q].map(s => cp.exec('ping ' + s));"],
+    "filter-then-some": ["const xs = [q];", "xs.filter(s => s).some(s => cp.exec('ping ' + s));"],
+    "find-callback": ["q.split(',').find(s => cp.exec('ping ' + s));"],
+    "flat-map-callback": ["q.split(',').flatMap(s => [cp.exec('ping ' + s)]);"],
+    "every-function-expression": ["q.split(',').every(function (s) { cp.exec('ping ' + s); return true; });"],
+    "reduce-element": ["q.split(',').reduce((acc, s) => { cp.exec('ping ' + s); return acc; }, 0);"],
+    "named-callback": ["function run(s) { cp.exec('ping ' + s); }", "[q].forEach(run);"],
+    "optional-chain": ["q.split(',')?.forEach(s => cp.exec('ping ' + s));"],
+    "then-after-await-chain": ["ident(1);", "Promise.resolve(q).then(s => s.trim()).then(s => cp.exec('ping ' + s));"],
 }
 
 
-@pytest.mark.parametrize("case", [pytest.param(c, id=c, marks=_gap(c)) for c in JS_OUT_OF_SCOPE])
-def test_js_out_of_scope_flows(case):
-    lines, cwe = JS_OUT_OF_SCOPE[case]
-    assert cwe in _scan(_js(lines))
+@pytest.mark.parametrize("case", list(JS_CALLBACKS))
+def test_js_callback_parameter_receives_the_receivers_values(case):
+    assert "CWE-78" in _scan(_js(JS_CALLBACKS[case]))
+    assert "CWE-78" not in _scan(_js(_constant(JS_CALLBACKS[case])))
 
 
-@pytest.mark.xfail(reason=KNOWN_GAPS["async-wrapper"], strict=True)
-def test_js_handler_wrapped_in_an_async_helper():
-    code = JS_HEAD + ("const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);\n"
-                      "app.get('/x', asyncHandler(async (req, res) => {\n"
-                      "  cp.exec('ping ' + req.query.q);\n  res.send('ok');\n}));\n")
+def test_js_reduce_accumulator_is_not_the_element():
+    # reduce hands the element to its second parameter; the first is the accumulator
+    assert "CWE-78" not in _scan(_js(["q.split(',').reduce((acc, s) => { cp.exec('ping ' + acc); return acc; },"
+                                      " 'localhost');"]))
+
+
+def test_js_then_hands_its_callback_the_resolved_connection():
+    # the resolved value has the origin of what the receiver is (as `await` gives it)
+    unsafe = "mysql.createConnection({}).then(conn => conn.query(\"SELECT * FROM t WHERE n = '\" + q + \"'\"));"
+    safe = "mysql.createConnection({}).then(conn => conn.query('SELECT * FROM t WHERE n = ?', [q]));"
+    assert "CWE-89" in _scan(_js([unsafe]))
+    assert "CWE-89" not in _scan(_js([safe]))
+
+
+def test_js_callback_of_an_unknown_function_is_not_called():
+    # only a function of the file is called with the receiver's values: a library global handed
+    # as the callback (`xs.forEach(eval)`) is not made a sink by the table
+    code = JS_HEAD + "app.get('/x', (req, res) => {\n  req.query.q.split(',').forEach(unknownLib);\n  res.send('ok');\n});\n"
+    assert not _scan(code)
+
+
+# A function value bound to a name the file never rebinds: calling it is calling the function.
+JS_ALIASES = {
+    "in-handler": (["const run = cp.exec;", "run('ping ' + q);"], "CWE-78"),
+    "of-destructured-import": (["const run = execAlias;", "run('ping ' + q);"], "CWE-78"),
+}
+
+
+@pytest.mark.parametrize("case", list(JS_ALIASES))
+def test_js_function_alias_is_the_function(case):
+    lines, cwe = JS_ALIASES[case]
+    head = "const { exec: execAlias } = require('child_process');\n"
+    assert cwe in _scan(head + _js(lines))
+    assert cwe not in _scan(head + _js(_constant(lines)))
+
+
+def test_js_function_alias_at_module_level():
+    code = ("const express = require('express');\nconst cp = require('child_process');\nconst app = express();\n"
+            "const run = cp.exec;\napp.get('/x', (req, res) => { run('ping ' + req.query.q); res.send('ok'); });\n")
     assert "CWE-78" in _scan(code)
+    assert "CWE-78" not in _scan(code.replace("req.query.q", "'localhost'"))
 
 
-@pytest.mark.parametrize("case", [
-    pytest.param("unary-plus", id="unary-plus", marks=_gap("unary-plus")),
-    pytest.param("comparison", id="comparison", marks=_gap("comparison")),
-])
+def test_js_rebound_function_alias_is_not_followed():
+    # a name the file binds again could hold anything at the call
+    code = ("const express = require('express');\nconst cp = require('child_process');\nconst app = express();\n"
+            "let run = cp.exec;\nrun = console.log;\n"
+            "app.get('/x', (req, res) => { run('ping ' + req.query.q); res.send('ok'); });\n")
+    assert "CWE-78" not in _scan(code)
+
+
+# Methods of a same-file object literal and static methods of a same-file class, as callees.
+JS_MEMBERS = {
+    "object-literal-method": ["const h = { run(s) { cp.exec('ping ' + s); } };", "h.run(q);"],
+    "object-literal-arrow": ["const h = { run: s => cp.exec('ping ' + s) };", "h.run(q);"],
+    "nested-object-method": ["const h = { inner: { run(s) { cp.exec('ping ' + s); } } };", "h.inner.run(q);"],
+    "static-method": ["U.run(q);"],
+}
+
+
+@pytest.mark.parametrize("case", list(JS_MEMBERS))
+def test_js_same_file_member_is_a_callee(case):
+    assert "CWE-78" in _scan(_js(JS_MEMBERS[case]))
+    assert "CWE-78" not in _scan(_js(_constant(JS_MEMBERS[case])))
+
+
+def test_js_static_arrow_field_is_a_static_method():
+    code = ("const express = require('express');\nconst cp = require('child_process');\nconst app = express();\n"
+            "class S { static run = (h) => { cp.exec('ping ' + h); } }\n"
+            "app.get('/x', (req, res) => { S.run(req.query.q); res.send('ok'); });\n")
+    assert "CWE-78" in _scan(code)
+    assert "CWE-78" not in _scan(code.replace("req.query.q", "'localhost'"))
+
+
+def test_ts_arrow_function_fields_are_methods():
+    code = ("import express from 'express';\nimport { exec } from 'child_process';\nconst app = express();\n"
+            "class Ctl {\n  private run = async (h: string) => { exec('ping ' + h); };\n"
+            "  handle = (q: string) => { this.run(q); };\n}\nconst c = new Ctl();\n"
+            "app.get('/x', (req, res) => { c.handle(req.query.q as string); res.send('ok'); });\n")
+    assert "CWE-78" in _scan(code, "app.ts", "typescript")
+    assert "CWE-78" not in _scan(code.replace("this.run(q)", "this.run('localhost')"), "app.ts", "typescript")
+
+
+# A method of an object literal registered as a handler, in the same file and through an export.
+CTL_HANDLER = ("const express = require('express');\nconst cp = require('child_process');\nconst app = express();\n"
+               "const ctl = {ctl};\napp.get('/x', ctl.ping);\n")
+
+
+@pytest.mark.parametrize("ctl", ["{ ping(req, res) { cp.exec('ping ' + req.query.q); res.send('ok'); } }",
+                                 "{ ping: (req, res) => { cp.exec('ping ' + req.query.q); res.send('ok'); } }"],
+                         ids=["method", "arrow"])
+def test_js_object_literal_method_registered_as_handler(ctl):
+    assert "CWE-78" in _scan(CTL_HANDLER.replace("{ctl}", ctl))
+    assert "CWE-78" not in _scan(CTL_HANDLER.replace("{ctl}", ctl.replace("req.query.q", "'localhost'")))
+
+
+@pytest.mark.parametrize("export", ["module.exports = controller;", "export default controller;"],
+                         ids=["commonjs", "es-default"])
+def test_js_exported_object_literal_methods_are_handlers_elsewhere(tmp_path, export):
+    def run(value):
+        ext = ".js" if export.startswith("module") else ".mjs"
+        (tmp_path / f"ctl{ext}").write_text(
+            ("import cp from 'child_process';\n" if ext == ".mjs" else "const cp = require('child_process');\n")
+            + "const controller = { ping(req, res) { cp.exec('ping ' + " + value + "); res.send('ok'); } };\n"
+            + export + "\n")
+        (tmp_path / f"app{ext}").write_text(
+            ("import express from 'express';\nimport ctl from './ctl.mjs';\n" if ext == ".mjs" else
+             "const express = require('express');\nconst ctl = require('./ctl');\n")
+            + "const app = express();\napp.get('/x', ctl.ping);\n")
+        results = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
+        return {v.cwe_id for r in results for v in r.vulnerabilities}
+    assert "CWE-78" in run("req.query.q")
+    assert "CWE-78" not in run("'localhost'")
+
+
+# A handler handed to the registration through a wrapper: a pack's ([[wrapper]],
+# express-async-handler) or one of the file's that passes its parameters through.
+JS_WRAPPERS = {
+    "local-arrow": "const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);\n"
+                   "app.get('/x', asyncHandler(async (req, res) => {\n  cp.exec('ping ' + req.query.q);\n"
+                   "  res.send('ok');\n}));\n",
+    "local-function-of-named-handler": "const catchAsync = fn => (req, res, next) => fn(req, res, next).catch(next);\n"
+                                       "async function ping(req, res) { cp.exec('ping ' + req.query.q); }\n"
+                                       "app.get('/x', catchAsync(ping));\n",
+    "local-function-declaration": "function wrap(fn) { return function (req, res, next) { fn(req, res, next); }; }\n"
+                                  "app.post('/x', wrap(async (req, res) => { cp.exec('ping ' + req.query.q); }));\n",
+    "express-async-handler": "const asyncHandler = require('express-async-handler');\n"
+                             "app.get('/x', asyncHandler(async (req, res) => { cp.exec('ping ' + req.query.q); }));\n",
+}
+
+
+@pytest.mark.parametrize("case", list(JS_WRAPPERS))
+def test_js_handler_wrapped_in_an_async_helper(case):
+    code = JS_HEAD + JS_WRAPPERS[case]
+    assert "CWE-78" in _scan(code)
+    assert "CWE-78" not in _scan(code.replace("req.query.q", "'localhost'"))
+
+
+def test_js_wrapper_that_does_not_pass_the_request_is_not_the_handler():
+    # the wrapped function never runs with the request: it is not the registered handler
+    code = JS_HEAD + ("const later = fn => (req, res, next) => { res.send('x'); };\n"
+                      "app.get('/x', later(async (req, res) => { cp.exec('ping ' + req.query.q); }));\n")
+    assert "CWE-78" not in _scan(code)
+
+
+def test_js_unknown_wrapper_library_is_not_a_wrapper():
+    # without a pack, a library call's argument is not a handler: the call could do anything
+    code = JS_HEAD + ("const wrap = require('some-wrapper');\n"
+                      "app.get('/x', wrap(async (req, res) => { cp.exec('ping ' + req.query.q); }));\n")
+    assert "CWE-78" not in _scan(code)
+
+
+# Number- and boolean-valued operators: the result carries no text of the operands (as Number(x)).
+JS_NUMERIC = {
+    "unary-plus": "+q", "comparison": "q === 'yes'", "negation": "-q", "double-tilde": "~~q",
+    "bit-or": "q | 0", "times-one": "q * 1", "typeof": "typeof q", "not": "!q", "length": "q.length",
+    "page-arithmetic": "(q - 1) * 10", "inline-length": "req.query.name.length", "less-than": "q < 'm'",
+}
+
+
+@pytest.mark.parametrize("case", list(JS_NUMERIC))
 def test_js_numeric_and_boolean_values_are_clean(case):
-    value = {"unary-plus": "+q", "comparison": "q === 'yes'"}[case]
-    assert "CWE-78" not in _scan(_js([f"const v = {value};", "cp.exec('ping ' + v);"]))
+    assert "CWE-78" not in _scan(_js([f"const v = {JS_NUMERIC[case]};", "cp.exec('ping ' + v);"]))
+    assert "CWE-78" not in _scan(_js([f"cp.exec('ping ' + ({JS_NUMERIC[case]}));"]))
+
+
+@pytest.mark.parametrize("value", ["q + 1", "q || 'x'", "q && q.trim()", "q ?? 'x'", "q.slice(0, q.length)",
+                                   "q?.substring(2, q.length - 1)",
+                                   "q.length > 3 ? q : 'x'"])
+def test_js_text_valued_operators_keep_the_data(value):
+    # `+` concatenates, the logical operators return an operand, and a numeric value used as an
+    # argument or a condition does not clear the text it is computed from
+    assert "CWE-78" in _scan(_js([f"const v = {value};", "cp.exec('ping ' + v);"]))
+
+
+@pytest.mark.parametrize("lines", [
+    ["const n = Number(q);", "const v = 'ping ' + q + n;", "cp.exec(v);"],
+    ["const n = q.length;", "let v = 'x';", "v += 'ping ' + q + n;", "cp.exec(v);"],
+    ["const off = (q - 1) * 10;", "db.query(\"SELECT * FROM t WHERE n = '\" + q + \"' LIMIT \" + off);"],
+])
+def test_js_a_numeric_part_does_not_sanitize_the_text_beside_it(lines):
+    # a value built from a number and raw request text keeps the text's taint (the number's
+    # sanitization used to be unioned into the result)
+    assert ({"CWE-78", "CWE-89"} & _scan(_js(lines)))
+
+
+def test_js_compound_numeric_assignment_is_clean():
+    assert "CWE-78" not in _scan(_js(["let v = q;", "v *= 2;", "cp.exec('ping ' + v);"]))
+    assert "CWE-78" in _scan(_js(["let v = 'x';", "v += q;", "cp.exec('ping ' + v);"]))
+
+
+def test_js_comparison_in_a_condition_is_still_a_guard():
+    # an equality with a literal is read as a guard in a branch condition (not as a number)
+    assert "CWE-78" not in _scan(_js(["if (q !== 'localhost') return res.send('no');", "cp.exec('ping ' + q);"]))
+    assert "CWE-78" in _scan(_js(["if (q === 'localhost') return res.send('no');", "cp.exec('ping ' + q);"]))
+
+
+# Class members that run when the class is defined, and a derived class's field initializers.
+CLASS_FIELDS = {
+    "static-field": "class Repo {\n  static pool = mysql.createPool({});\n"
+                    "  static find(n) { return Repo.pool.query({query}); }\n}\n",
+    "static-block": "class Repo {\n  static { this.pool = mysql.createPool({}); }\n"
+                    "  static find(n) { return Repo.pool.query({query}); }\n}\n",
+    "derived-fields": "class Base {}\nclass Repo extends Base {\n  db = mysql.createConnection({});\n"
+                      "  find(n) { return this.db.query({query}); }\n}\nconst repo = new Repo();\n",
+}
+
+
+@pytest.mark.parametrize("case", list(CLASS_FIELDS))
+def test_js_class_member_initializers_give_their_values(case):
+    call = "repo.find(req.query.q)" if case == "derived-fields" else "Repo.find(req.query.q)"
+    code = ("const express = require('express');\nconst mysql = require('mysql');\nconst app = express();\n"
+            + CLASS_FIELDS[case] + "app.get('/x', (req, res) => { " + call + "; res.send('ok'); });\n")
+    assert "CWE-89" in _scan(code.replace("{query}", "\"SELECT * FROM t WHERE n = '\" + n + \"'\""))
+    assert "CWE-89" not in _scan(code.replace("{query}", "'SELECT * FROM t WHERE n = ?', [n]"))
+
+
+# An Array method that stores its arguments in the receiver.
+@pytest.mark.parametrize("how", ["parts.push(q);", "parts.unshift(q);", "parts.splice(1, 0, q);"])
+def test_js_push_stores_its_argument_in_the_array(how):
+    lines = ["const parts = ['ping'];", how, "cp.exec(parts.join(' '));"]
+    assert "CWE-78" in _scan(_js(lines))
+    assert "CWE-78" not in _scan(_js(_constant(lines)))
+
+
+# A guard on a request path written inline clears later reads of the same path.
+@pytest.mark.parametrize("guard", ["if (!/^[a-z]+$/.test(req.query.h)) return res.send('bad');",
+                                   "if (req.query.h !== 'localhost') return res.send('bad');"])
+def test_js_guard_on_an_inline_request_path(guard):
+    assert "CWE-78" not in _scan(_js([guard, "cp.exec('ping ' + req.query.h);"]))
+    assert "CWE-78" in _scan(_js([guard.replace("req.query.h", "req.query.other"), "cp.exec('ping ' + req.query.h);"]))
 
 
 # A connection exported by another module: the importing file must know what it is.
@@ -394,7 +596,7 @@ CROSS_FILE_DB = {
 }
 
 
-@pytest.mark.parametrize("case", [pytest.param(c, id=c, marks=_gap(c)) for c in CROSS_FILE_DB])
+@pytest.mark.parametrize("case", list(CROSS_FILE_DB))
 def test_js_connection_exported_by_another_module(tmp_path, case):
     db_name, db_code, import_line = CROSS_FILE_DB[case]
     app_name = "app.mjs" if db_name.endswith(".mjs") else "app.js"
@@ -408,3 +610,44 @@ def test_js_connection_exported_by_another_module(tmp_path, case):
         "  res.send('ok');\n});\n")
     results = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
     assert "CWE-89" in {v.cwe_id for r in results for v in r.vulnerabilities}
+
+
+# `module.exports = { ... }` keeps each field's own value (it used to collapse into the first).
+def test_js_module_exports_object_keeps_each_field(tmp_path):
+    (tmp_path / "db.js").write_text("const mysql = require('mysql');\nconst cp = require('child_process');\n"
+                                    "module.exports = { runner: cp, pool: mysql.createPool({}) };\n")
+    (tmp_path / "app.js").write_text(
+        "const express = require('express');\nconst db = require('./db');\nconst app = express();\n"
+        "app.get('/x', (req, res) => {\n  db.pool.query({query});\n  res.send('ok');\n});\n")
+    def run(query):
+        text = (tmp_path / "app.js").read_text()
+        (tmp_path / "app.js").write_text(text.replace("{query}", query))
+        results = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
+        (tmp_path / "app.js").write_text(text)
+        return {v.cwe_id for r in results for v in r.vulnerabilities}
+    assert "CWE-89" in run("\"SELECT * FROM t WHERE n = '\" + req.query.q + \"'\"")
+    assert "CWE-89" not in run("'SELECT * FROM t WHERE n = ?', [req.query.q]")
+
+
+
+def test_js_named_export_of_an_object_literal_holds_handlers(tmp_path):
+    def run(value):
+        (tmp_path / "ctl.mjs").write_text(
+            "import cp from 'child_process';\nexport const controller = { ping(req, res) { cp.exec('ping ' + "
+            + value + "); res.send('ok'); } };\n")
+        (tmp_path / "app.mjs").write_text(
+            "import express from 'express';\nimport { controller } from './ctl.mjs';\nconst app = express();\n"
+            "app.get('/x', controller.ping);\n")
+        results = FrameScanner(verify=False).scan_directory(str(tmp_path), None, project_root=str(tmp_path))
+        return {v.cwe_id for r in results for v in r.vulnerabilities}
+    assert "CWE-78" in run("req.query.q")
+    assert "CWE-78" not in run("'localhost'")
+
+
+def test_js_member_of_a_required_module_bound_to_a_name():
+    # `var request = require('teeny-request').teenyRequest`: calls are named after the module's member
+    code = ("const express = require('express');\nvar request = require('teeny-request').teenyRequest;\n"
+            "const app = express();\napp.get('/x', (req, res) => { request({ uri: req.query.u }, () => {}); "
+            "res.send('ok'); });\n")
+    assert "CWE-918" in _scan(code)
+    assert "CWE-918" not in _scan(code.replace("req.query.u", "'https://example.com'"))

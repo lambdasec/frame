@@ -938,6 +938,9 @@ class ProjectIndex:
                         nm = d.child_by_field_name("name")
                         if nm is not None and nm.type == "identifier":
                             mod.exports[_text(nm)] = _text(nm)
+                            value = d.child_by_field_name("value")
+                            if value is not None and value.type == "object":   # `export const ctl = {...}`
+                                self._js_object_exports(mod, value, keep=True, prefix=_text(nm) + ".")
             elif c.type == "export_clause":
                 for sp in c.children:
                     if sp.type != "export_specifier":
@@ -954,6 +957,9 @@ class ProjectIndex:
                 mod.star_reexports.append(source)
             elif c.type == "identifier" and is_default:
                 mod.exports[DEFAULT] = _text(c)
+                held = self._js_object_binding(st.parent, _text(c))
+                if held is not None:                  # `const controller = {...}; export default controller`
+                    self._js_object_exports(mod, held, keep=True)
 
     def _required_module(self, mod: FileModule, node: Any) -> Optional[str]:
         """The project file `require("<relative spec>")` loads, if `node` is that call."""
@@ -964,6 +970,55 @@ class ProjectIndex:
                 or args.named_children[0].type != "string":
             return None
         return self._resolve_js(mod, _text(args.named_children[0])[1:-1])
+
+    def _js_object_exports(self, mod: FileModule, obj: Any, keep: bool = False, prefix: str = "") -> None:
+        """The members of an exported object literal (under `prefix`: `controller.ping` for the
+        object a named export holds); `keep`: never replace an export already recorded (the
+        literal is the value of a name, which other statements may export too)."""
+        def put(name: str, local: str) -> None:
+            name = prefix + name
+            if not keep or name not in mod.exports:
+                mod.exports[name] = local
+        for p in obj.children:
+            spread = self._required_module(mod, p.named_children[0]) \
+                if p.type == "spread_element" and p.named_children else None
+            if spread is not None:        # `{ ...require("./query") }`
+                mod.star_reexports.append(spread)
+                mod.imports.add(spread)
+            elif p.type == "shorthand_property_identifier":
+                put(_text(p), _text(p))
+            elif p.type == "pair":
+                key, val = p.child_by_field_name("key"), p.child_by_field_name("value")
+                if key is not None:
+                    k = _text(key).strip("'\"")
+                    put(k, _text(val) if val is not None and val.type == "identifier" else k)
+            elif p.type == "method_definition":
+                nm = _text(p.child_by_field_name("name"))
+                put(nm, nm)
+
+    @staticmethod
+    def _js_object_binding(root: Any, name: str) -> Optional[Any]:
+        """The object literal a top-level `const name = {...}` declares, when that is the only
+        top-level declaration of the name and nothing at top level assigns it."""
+        found = []
+        for st in (root.children if root is not None else ()):
+            if st.type == "export_statement":
+                st = st.child_by_field_name("declaration") or st
+            if st.type in ("lexical_declaration", "variable_declaration"):
+                for d in st.children:
+                    nm = d.child_by_field_name("name") if d.type == "variable_declarator" else None
+                    if nm is not None and nm.type == "identifier" and _text(nm) == name:
+                        found.append(d.child_by_field_name("value"))
+            elif st.type == "expression_statement":
+                for a in st.children:
+                    if a.type == "assignment_expression" and _text(a.child_by_field_name("left")) == name:
+                        return None
+            elif st.type in ("function_declaration", "class_declaration") \
+                    and _text(st.child_by_field_name("name")) == name:
+                return None
+        if len(found) == 1 and found[0] is not None and found[0].type == "object":
+            return found[0]
+        return None
 
     def _js_assignment_export(self, mod: FileModule, st: Any) -> None:
         for assign in st.children:
@@ -979,25 +1034,12 @@ class ProjectIndex:
                     mod.star_reexports.append(required)
                     mod.imports.add(required)
                 if right.type == "object":
-                    for p in right.children:
-                        spread = self._required_module(mod, p.named_children[0]) \
-                            if p.type == "spread_element" and p.named_children else None
-                        if spread is not None:        # `{ ...require("./query") }`
-                            mod.star_reexports.append(spread)
-                            mod.imports.add(spread)
-                        elif p.type == "shorthand_property_identifier":
-                            mod.exports[_text(p)] = _text(p)
-                        elif p.type == "pair":
-                            key, val = p.child_by_field_name("key"), p.child_by_field_name("value")
-                            if key is not None:
-                                k = _text(key).strip("'\"")
-                                mod.exports[k] = _text(val) if val is not None \
-                                    and val.type == "identifier" else k
-                        elif p.type == "method_definition":
-                            nm = _text(p.child_by_field_name("name"))
-                            mod.exports[nm] = nm
+                    self._js_object_exports(mod, right)
                 elif right.type == "identifier":
                     mod.exports[DEFAULT] = _text(right)
+                    held = self._js_object_binding(st.parent, _text(right))
+                    if held is not None:              # `const controller = {...}; module.exports = controller`
+                        self._js_object_exports(mod, held, keep=True)
                 elif right.type in ("function_expression", "function", "arrow_function",
                                     "generator_function"):
                     # A callable module. The frontend names its procedure by the
@@ -1150,6 +1192,14 @@ class ProjectIndex:
             module = self._module_of(hb) if hb is not None else None
             if module is not None:
                 found = self.lookup_symbol(module, member)
+                if found is not None:
+                    return found
+            elif hb is not None and hb.symbol is not None and mod.family == "javascript":
+                # `import { controller } from './ctl'; controller.ping`, `import ctl from './ctl';
+                # ctl.ping`: a function of the object literal that export holds
+                found = self.lookup_symbol(hb.file, f"{hb.symbol}.{member}")
+                if found is None and hb.symbol == DEFAULT:
+                    found = self.lookup_symbol(hb.file, member)
                 if found is not None:
                     return found
         return self._resolve_method_call(mod, name, caller_class)

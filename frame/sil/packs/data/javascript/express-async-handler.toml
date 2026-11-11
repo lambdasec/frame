@@ -1,0 +1,13 @@
+[pack]
+name = "express-async-handler"
+language = "javascript"
+description = "express-async-handler: a route handler handed to Express wrapped in asyncHandler(fn) is fn"
+detect = { imports = ["express-async-handler"] }
+references = ["https://github.com/Abazhenov/express-async-handler#readme"]
+
+# `express.get('/', asyncHandler(async (req, res, next) => { ... }))`: the module's export takes the
+# handler and returns a middleware calling it with the same (req, res, next), passing a rejected
+# promise to next. The registration's handler is the wrapped function.
+[[wrapper]]
+call = ["express-async-handler"]
+description = "asyncHandler(fn) runs fn with the request, response and next"

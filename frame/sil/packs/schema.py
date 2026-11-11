@@ -489,7 +489,7 @@ class Pack:
     callback_params: List[CallbackParam] = field(default_factory=list)
     registrations: List[Registration] = field(default_factory=list)
     deferred_calls: List[DeferredCall] = field(default_factory=list)
-    wrappers: List[str] = field(default_factory=list)              # Python: calls returning a view wrapped
+    wrappers: List[str] = field(default_factory=list)              # Python/JS: calls returning a handler wrapped
     auth_gates: List[str] = field(default_factory=list)            # decorators/annotations that authenticate a handler
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
@@ -1134,8 +1134,9 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     for i, t in enumerate(data.get("wrapper", [])):
         where = f"[[wrapper]] #{i + 1}"
         _check_keys(origin, where, t, {"call", "description", "references"})
-        if language != "python":
-            raise _fail(origin, where, "wrappers are for Python packs (a handler wrapped by a decorator call)")
+        if language not in ("python", "javascript"):
+            raise _fail(origin, where, "wrappers are for Python and JavaScript packs (a handler handed through a "
+                                       "call that returns it wrapped)")
         pack.wrappers += _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
 
     # An authorization gate: a decorator / annotation / attribute whose presence on a handler (or

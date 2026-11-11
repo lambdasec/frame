@@ -783,6 +783,10 @@ class Program:
     server_handlers: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
     context_links: List[Tuple[str, str, str, int]] = field(default_factory=list)
     object_exports: Dict[str, List[Any]] = field(default_factory=dict)
+    # JavaScript: a call name that is one procedure of the file, other than by the procedure's
+    # own name (`svc.run` with `const svc = { run(h) {...} }` bound once, a class's static method
+    # `U.run`): call name -> procedure name.
+    member_procedures: Dict[str, str] = field(default_factory=dict)
     # (context function, handler, parameter) within this file (registrations.context_links).
     context_handler_links: List[Tuple[str, str, int]] = field(default_factory=list)
     # The directive prologue of the module (`"use server"`, `"use strict"`), for JS/TS.

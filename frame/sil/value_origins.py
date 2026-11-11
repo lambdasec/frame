@@ -471,7 +471,8 @@ def _init_field_origins(program, scopes, python: bool = True) -> Dict[str, Dict[
     out: Dict[str, Dict[str, str]] = {}
     for init in program.procedures.values():
         if not init.is_method or not init.class_name \
-                or init.simple_name != ("__init__" if python else "constructor") or (python and not init.params):
+                or init.simple_name not in (("__init__",) if python else ("constructor", "<fields>")) \
+                or (python and not init.params):
             continue
         receiver = init.params[0][0].name if python else "this"
         found: Dict[str, str] = {}
