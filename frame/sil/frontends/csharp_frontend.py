@@ -110,6 +110,11 @@ class CSharpFrontend:
         self._hoisted: Dict[Tuple[int, int], str] = {}
         # variable -> XML parser configuration flags seen in the procedure being translated
         self._xml_flags: Dict[str, set] = {}
+        # node types lowered as their source text (`Program.unlowered_syntax`)
+        self._unlowered: Dict[str, int] = {}
+        # > 0 while an expression is read without running it (a lambda's body, seen from its owner)
+        self._quiet = 0
+        self._return_type: Optional[str] = None     # the declared return type of the method
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
@@ -118,6 +123,8 @@ class CSharpFrontend:
         self._source_bytes = source_code.encode("utf-8")
         self._node_counter = 0
         self._ident_counter = 0
+        self._unlowered = {}
+        self._quiet = 0
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language="csharp")
@@ -143,6 +150,7 @@ class CSharpFrontend:
         self._record_method_group_registrations(tree.root_node, program)
         self._annotate_calls(program)
         program.import_wildcards = list(self._imports.wildcards)
+        program.unlowered_syntax = dict(self._unlowered)
         finish_program(program, self.packs, source_code)
         return program
 
@@ -205,6 +213,8 @@ class CSharpFrontend:
                 conflicts.add(name)
             found[name] = typ
 
+        # In source order: `var cmd = conn.CreateCommand()` needs conn's type, declared above it
+        # (a parameter, or a local initialised earlier).
         stack = [node]
         while stack:
             n = stack.pop()
@@ -221,13 +231,14 @@ class CSharpFrontend:
                         (c for c in d.children if c.type == "identifier"), None)
                     t = typ
                     if typ == "var":
-                        creation = next((c for c in self._descendants_of(d)
-                                         if c.type == "object_creation_expression"), None)
-                        t = type_text(creation.child_by_field_name("type")) if creation is not None else ""
+                        # the type the initializer creates (never one created inside its arguments)
+                        value = self._unwrap_value(self._declarator_value(d))
+                        t = type_text(value.child_by_field_name("type")) \
+                            if value is not None and value.type == "object_creation_expression" else ""
                         if not t:
                             t = self._call_result_type(d, found) or ""
                     add(self._get_text(nm) if nm is not None else "", t)
-            stack.extend(n.children)
+            stack.extend(reversed(n.children))
         for c in conflicts:
             found.pop(c, None)
         return found
@@ -240,6 +251,9 @@ class CSharpFrontend:
         if fn is None or fn.type != "member_access_expression":
             return None
         obj, name = fn.child_by_field_name("expression"), fn.child_by_field_name("name")
+        if obj is not None and obj.type == "member_access_expression" and \
+                (obj.child_by_field_name("expression") or obj).type in self._THIS:
+            obj = obj.child_by_field_name("name")          # `this._db.CreateCommand()`: the field _db
         if obj is None or name is None or obj.type != "identifier":
             return None
         owner = known.get(self._get_text(obj)) or self._class_fields_of.get(self._current_class or "", {}).get(self._get_text(obj))
@@ -255,6 +269,104 @@ class CSharpFrontend:
             n = stack.pop()
             yield n
             stack.extend(n.children)
+
+    # -- syntax helpers ------------------------------------------------------------
+
+    # `this` is a keyword token in tree-sitter-c-sharp (older grammars: `this_expression`)
+    _THIS = ("this", "this_expression")
+    _CREATIONS = ("object_creation_expression", "implicit_object_creation_expression")
+
+    @staticmethod
+    def _unqualified(name: str) -> str:
+        """`this._db.Query` is a call on the field `_db` (`base.Redirect`: the inherited `Redirect`):
+        the receiver's type is the member's, never that of a variable called `this`."""
+        for prefix in ("this.", "base."):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+        return name
+
+    @staticmethod
+    def _declarator_value(decl: TSNode) -> Optional[TSNode]:
+        """The initializer of a `variable_declarator`: whatever follows `=` (directly, or wrapped in
+        an `equals_value_clause` by older grammars)."""
+        for nc in decl.children:
+            if nc.type == "equals_value_clause":
+                return next((vc for vc in nc.children if vc.type != "="), None)
+        kids = decl.children
+        for i, nc in enumerate(kids[:-1]):
+            if nc.type == "=":
+                return kids[i + 1]
+        return None
+
+    def _unwrap_value(self, node: Optional[TSNode]) -> Optional[TSNode]:
+        """`(x)` and `x!` are the value x."""
+        while node is not None:
+            if node.type == "parenthesized_expression":
+                node = next((c for c in node.named_children), None)
+            elif node.type == "postfix_unary_expression" and any(c.type == "!" for c in node.children):
+                node = next((c for c in node.named_children), None)
+            else:
+                break
+        return node
+
+    @staticmethod
+    def _argument_value(arg: TSNode) -> Optional[TSNode]:
+        """The value an `argument` passes (`a: q` is q, `ref x` is x, `out var y` its declaration)."""
+        label = arg.child_by_field_name("name")
+        return next((c for c in reversed(arg.named_children)
+                     if c.type != "comment" and (label is None or c.id != label.id)), None)
+
+    @staticmethod
+    def _member_parts(node: Optional[TSNode]) -> Optional[Tuple[TSNode, TSNode]]:
+        """(receiver, member name) of `a.M` and of `a?.M` (the null check does not change which
+        member is read), else None."""
+        if node is None:
+            return None
+        if node.type == "member_access_expression":
+            recv, name = node.child_by_field_name("expression"), node.child_by_field_name("name")
+        elif node.type == "conditional_access_expression":
+            recv = node.child_by_field_name("condition")
+            binding = next((c for c in node.named_children if c.type == "member_binding_expression"), None)
+            name = binding.child_by_field_name("name") if binding is not None else None
+        else:
+            return None
+        return (recv, name) if recv is not None and name is not None else None
+
+    def _callee_text(self, func: TSNode) -> str:
+        """A callee as written, with `a?.M` and `a!.M` read as `a.M`: the `?` of a conditional access
+        and the `!` of a null-forgiving operator are dropped (from the syntax tree, not by matching
+        text); neither changes which method is called."""
+        raw = self._source_bytes[func.start_byte:func.end_byte]
+        if b"?" not in raw and b"!" not in raw:
+            return raw.decode("utf-8", errors="replace")
+        cuts = sorted(c.start_byte - func.start_byte for n in [func, *self._descendants_of(func)]
+                      for c in n.children
+                      if (n.type == "conditional_access_expression" and c.type == "?")
+                      or (n.type == "postfix_unary_expression" and c.type == "!"))   # `q!.Trim`: q.Trim
+        out, last = [], 0
+        for cut in cuts:
+            out.append(raw[last:cut])
+            last = cut + 1
+        out.append(raw[last:])
+        return b"".join(out).decode("utf-8", errors="replace")
+
+    def _is_nameof(self, call: TSNode) -> bool:
+        """`nameof(x)`: the operator (a constant), unless the class declares a method so named."""
+        fn = call.child_by_field_name("function")
+        return fn is not None and fn.type == "identifier" and self._get_text(fn) == "nameof" \
+            and "nameof" not in self._declared_methods.get(self._current_class or "", set())
+
+    def _type_text(self, t: Optional[TSNode]) -> str:
+        return self._get_text(t).split("<")[0].rstrip("?").strip() if t is not None else ""
+
+    def _emit(self, instr: Instr) -> None:
+        """An instruction an expression makes happen (a pattern binding, an assignment written inside
+        an expression), unless the expression is only being read (a lambda body seen from its owner)."""
+        if self._quiet == 0 and self._current_proc is not None:
+            self._add_instr(instr)
+
+    def _record_unlowered(self, key: str) -> None:
+        self._unlowered[key] = self._unlowered.get(key, 0) + 1
 
     def _annotate_calls(self, program: Program) -> None:
         """Fill `Call.canonical` from the receiver's declared type (C# calls carry no
@@ -280,10 +392,13 @@ class CSharpFrontend:
                                 ("." not in chain or typed_names(f"{q}.{chain}", "csharp")):
                             instr.canonical = f"{q}.{chain}"
                         continue
+                    # `this._db.Query(sql)` is a call on the field _db; `base.Redirect(q)` the inherited one
+                    via_base = func.startswith("base.")
+                    func = self._unqualified(func)
                     head, dot, rest = func.partition(".")
                     receiver = None
                     if not dot:
-                        if func in own_methods:
+                        if func in own_methods and not via_base:
                             receiver = own_class or None
                         elif func[:1].isupper() and canonical_call(
                                 "csharp", f"{func}.<init>", self._imports, receiver_type=func,
@@ -384,8 +499,12 @@ class CSharpFrontend:
         self._record_class_info(node, program, class_name, full_class_name)
 
         body = node.child_by_field_name("body")
+        # C# 12 primary constructor (`class Repo(SqlConnection conn) { ... }`, a positional record):
+        # its parameters are in scope, with their declared types, in every member of the class
+        primary = next((c for c in node.children if c.type == "parameter_list"), None)
+        primary_types = self._declared_types(primary) if primary is not None else {}
         if body:
-            fields = {}
+            fields = dict(primary_types)
             for member in body.children:
                 if member.type == "field_declaration":
                     fields.update(self._declared_types(member))
@@ -418,6 +537,7 @@ class CSharpFrontend:
                         self._record_member_sources(child, proc)
                         self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
+                        self._translate_local_functions(child, proc, program)
                 elif child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                     # a nested type: its members belong to Outer.Inner
                     saved_ns = self._current_namespace
@@ -434,6 +554,7 @@ class CSharpFrontend:
                         self._record_member_sources(child, proc)
                         self._scopes.append((child.start_byte, child.end_byte, proc))
                         self._translate_lambdas(child, proc, program)
+                        self._translate_local_functions(child, proc, program)
                 elif child.type == "property_declaration":
                     # Properties can have getters/setters
                     procs = self._translate_property(child)
@@ -442,8 +563,33 @@ class CSharpFrontend:
                             proc.class_name = full_class_name
                             program.add_procedure(proc)
             self._translate_literal_fields(body, full_class_name, program)
+            if primary is not None:
+                self._translate_primary_constructor(primary, node, full_class_name, program)
 
         self._current_class = old_class
+
+    def _translate_primary_constructor(self, plist: TSNode, cls: TSNode, class_name: str, program: Program) -> None:
+        """The constructor a primary constructor declares: it stores each parameter where the class's
+        members read it (`this.conn`), so `new Repo(q)` carries q into a member that reads `conn`."""
+        params = self._translate_parameters(cls) or [
+            (PVar(self._get_text(p.child_by_field_name("name"))), Typ.unknown_type())
+            for p in plist.named_children if p.type == "parameter" and p.child_by_field_name("name") is not None]
+        if not params:
+            return
+        proc = Procedure(name=f"{class_name}..ctor", params=params, ret_type=Typ.unknown_type(),
+                         loc=self._get_location(plist), is_method=True)
+        proc.class_name = class_name
+        self._proc_types[id(proc)] = self._declared_types(plist)
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        for p, _ in params:
+            entry.add_instr(Assign(loc=proc.loc, id=PVar(f"this.{p.name}"), exp=ExpVar(PVar(p.name))))
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        proc.connect(entry.id, exit_node.id)
+        program.add_procedure(proc)
 
     def _record_class_info(self, node: TSNode, program: Program, name: str, full_name: str) -> None:
         bases: List[str] = []
@@ -615,20 +761,15 @@ class CSharpFrontend:
                         description="Command line argument"
                     ))
 
-        # Translate body
+        # Translate body: a block, or `=> e` (an expression-bodied method)
+        returns = node.child_by_field_name("returns") or node.child_by_field_name("type")
+        saved_return, self._return_type = self._return_type, self._type_text(returns) or None
         body = node.child_by_field_name("body")
-        if body:
+        if body is not None and body.type == "arrow_expression_clause":
+            self._translate_expression_body(body, returns=self._get_text(returns).strip() != "void")
+        elif body:
             self._translate_block(body)
-
-        # Handle expression body (=>)
-        expr_body = None
-        for child in node.children:
-            if child.type == "arrow_expression_clause":
-                expr_body = child
-                break
-
-        if expr_body:
-            self._translate_arrow_expression(expr_body)
+        self._return_type = saved_return
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -664,9 +805,60 @@ class CSharpFrontend:
                 if call is not None and call.type == "invocation_expression":
                     out.append((n, call))
                     continue            # nested lambdas are found when this one is translated
+            if n.type == "local_function_statement":
+                continue                # translated with the local function (`_translate_local_functions`)
             stack.extend(n.children)
         out.sort(key=lambda t: t[0].start_byte)
         return out
+
+    def _local_functions(self, root: TSNode) -> List[TSNode]:
+        """The outermost local functions declared in `root` (nested ones belong to them)."""
+        out = []
+        stack = list(root.children)
+        while stack:
+            n = stack.pop()
+            if n.type == "local_function_statement":
+                out.append(n)
+                continue
+            if n.type in self._LAMBDA_TYPES:
+                continue
+            stack.extend(n.children)
+        return sorted(out, key=lambda n: n.start_byte)
+
+    def _translate_local_functions(self, owner_node: TSNode, owner: Procedure, program: Program,
+                                   top_level: bool = False) -> None:
+        """`string Id(string s) => s;` declared inside a method (or among top-level statements) is a
+        procedure of its own: a call `Id(q)` resolves to it (to a method of the same class, or, at
+        top level, a function), a method group passes it as a handler (`app.MapGet("/x", Ping)`),
+        and the enclosing variables it reads carry their data in (as a lambda's do). Its body used
+        to be dropped, sinks and all."""
+        owner_types = self._proc_types.get(id(owner), {})
+        for node in self._local_functions(owner_node):
+            saved_class = self._current_class
+            if top_level:
+                self._current_class = None
+            proc = self._translate_method(node)
+            self._current_class = saved_class
+            if proc is None:
+                continue
+            if top_level:
+                proc.is_method = False                    # a function of the program, called by its name
+                if program.has_procedure(proc.name):
+                    proc.name = f"{owner.name}.{proc.name}"
+            else:
+                proc.class_name = owner.class_name or self._current_class
+                proc.name = f"{owner.name}.{proc.name}"
+            own = self._proc_types.get(id(proc), {})
+            self._proc_types[id(proc)] = {**owner_types, **own}
+            proc.parent = owner.name
+            enclosing = (set(owner_types) | {p.name for p, _ in owner.params}) - {p.name for p, _ in proc.params}
+            used = {self._get_text(n) for n in self._descendants_of(node) if n.type == "identifier"}
+            proc.captures = sorted(enclosing & used)
+            program.add_procedure(proc)
+            self._record_member_sources(node, proc)
+            self._scopes.append((node.start_byte, node.end_byte, proc))
+            self._translate_lambdas(node, proc, program)
+            self._translate_local_functions(node, proc, program)
 
     def _record_method_group_registrations(self, root: TSNode, program: Program) -> None:
         """`app.MapGet("/x", Handlers.Get)`: a method passed by name is registered with that call
@@ -709,10 +901,33 @@ class CSharpFrontend:
             if via not in target.registered_via:
                 target.registered_via.append(via)
         parts = callee.split(".")
+        if not all(x.isidentifier() for x in parts):
+            # `app.MapGroup("/api").MapGet(...)`: registered on what app.MapGroup returns
+            parts = self._callee_path(call) or parts
         if scope is not None and len(parts) > 1 and all(x.isidentifier() for x in parts):
             program.registrations.append(Registration(
                 scope=scope.name, callee_text=callee, root=parts[0], rest=tuple(parts[1:]),
                 arg_index=arg_index, target=target.name))
+
+    def _callee_path(self, call: TSNode) -> Optional[List[str]]:
+        """`app.MapGroup("/api").MapGet` as ["app", "MapGroup", "MapGet"]: the names along a callee made
+        of member accesses and calls (their arguments dropped), from the syntax tree; else None."""
+        names: List[str] = []
+        node = call.child_by_field_name("function")
+        while node is not None:
+            if node.type == "invocation_expression":
+                node = node.child_by_field_name("function")
+                continue
+            parts = self._member_parts(node)
+            if parts is not None:
+                names.insert(0, self._strip_generics(self._get_text(parts[1])))
+                node = parts[0]
+                continue
+            if node.type in ("identifier", "generic_name"):
+                names.insert(0, self._strip_generics(self._get_text(node)))
+                return names
+            return None
+        return None
 
     def _translate_lambdas(self, owner_node: TSNode, owner: Procedure, program: Program) -> None:
         owner_types = self._proc_types.get(id(owner), {})
@@ -737,6 +952,7 @@ class CSharpFrontend:
                 used = {self._get_text(n) for n in self._descendants_of(body) if n.type == "identifier"}
                 proc.captures = sorted(enclosing & used)
                 self._translate_lambdas(lam, proc, program)
+                self._translate_local_functions(lam, proc, program)
 
     def _delegate_types(self, lam: TSNode, call: TSNode, owner: Procedure) -> Tuple[str, ...]:
         """The parameter types the library method a lambda is passed to gives it
@@ -836,11 +1052,25 @@ class CSharpFrontend:
             inner = next((c for c in inner.children if c.type not in ("await",)), inner)
         if inner.type == "invocation_expression":
             self._add_instrs(self._translate_invocation(inner))
-        elif inner.type == "object_creation_expression":
-            self._add_instrs(self._translate_object_creation(inner, None, loc))
+        elif inner.type in self._CREATIONS:
+            self._add_instrs(self._translate_object_creation(inner, None, loc, type_name=self._return_type))
         elif inner.type == "assignment_expression":
-            self._translate_assignment(inner)
+            self._translate_assignment(inner)          # its value is what the target now holds
+            self._add_instr(Return(loc=loc, value=self._translate_expression(inner.child_by_field_name("left"))))
+            return
         self._add_instr(Return(loc=loc, value=self._translate_expression(body)))
+
+    def _translate_expression_body(self, clause: TSNode, returns: bool) -> None:
+        """`=> e` of a method, accessor or constructor is `{ return e; }` (`{ e; }` when nothing is
+        returned): its calls, creations and assignments run like any statement's. The clause used to
+        keep only the returned value, so `=> Redirect(q)` reached no sink."""
+        expr = next((c for c in clause.named_children if c.type != "comment"), None)
+        if expr is None:
+            return
+        if returns:
+            self._translate_lambda_expression_body(expr)
+        else:
+            self._translate_effect(expr)
 
     def _translate_top_level(self, statements: List[TSNode], program: Program) -> None:
         """C# 9 top-level statements (`Program.cs` of a minimal API) form one procedure."""
@@ -873,6 +1103,8 @@ class CSharpFrontend:
             self._record_member_sources(gs, proc)
             self._scopes.append((gs.start_byte, gs.end_byte, proc))
             self._translate_lambdas(gs, proc, program)
+        for gs in statements:
+            self._translate_local_functions(gs, proc, program, top_level=True)
 
     def _has_params_array(self, node: TSNode) -> bool:
         """Does the last parameter carry the `params` modifier (varargs)?"""
@@ -906,7 +1138,9 @@ class CSharpFrontend:
         self._current_node = entry
 
         body = node.child_by_field_name("body")
-        if body:
+        if body is not None and body.type == "arrow_expression_clause":
+            self._translate_expression_body(body, returns=False)      # `public C(string a) => _a = a;`
+        elif body:
             self._translate_block(body)
 
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -920,53 +1154,57 @@ class CSharpFrontend:
         return proc
 
     def _translate_property(self, node: TSNode) -> List[Optional[Procedure]]:
-        """Translate property with getter/setter"""
+        """Translate property with getter/setter (blocks or `=>` bodies; `public string P => e;` is a getter)"""
         procs = []
         name_node = node.child_by_field_name("name")
         prop_name = self._get_text(name_node) if name_node else "Property"
+        saved_return, self._return_type = self._return_type, self._type_text(node.child_by_field_name("type")) or None
 
+        value = node.child_by_field_name("value")
+        if value is not None and value.type == "arrow_expression_clause":
+            procs.append(self._accessor_procedure(f"{prop_name}.get", node, value, returns=True))
         for child in node.children:
             if child.type == "accessor_list":
                 for accessor in child.children:
                     if accessor.type == "accessor_declaration":
                         accessor_type = None
                         for ac in accessor.children:
-                            if ac.type in ("get", "set"):
+                            if ac.type in ("get", "set", "init"):
                                 accessor_type = self._get_text(ac)
                                 break
 
                         body = accessor.child_by_field_name("body")
                         if body and accessor_type:
-                            proc_name = f"{prop_name}.{accessor_type}"
-                            proc = Procedure(
-                                name=proc_name,
-                                params=[],
-                                ret_type=Typ.unknown_type(),
-                                loc=self._get_location(accessor),
-                                is_method=True,
-                            )
-
-                            self._current_proc = proc
-                            self._node_counter = 0
-
-                            entry = proc.new_node(NodeKind.ENTRY)
-                            proc.add_node(entry)
-                            proc.entry_node = entry.id
-                            self._current_node = entry
-
-                            self._translate_block(body)
-
-                            exit_node = proc.new_node(NodeKind.EXIT)
-                            proc.add_node(exit_node)
-                            proc.exit_node = exit_node.id
-
-                            if self._current_node:
-                                proc.connect(self._current_node.id, exit_node.id)
-
-                            self._current_proc = None
-                            procs.append(proc)
-
+                            procs.append(self._accessor_procedure(f"{prop_name}.{accessor_type}", accessor,
+                                                                  body, returns=accessor_type == "get"))
+        self._return_type = saved_return
         return procs
+
+    def _accessor_procedure(self, name: str, node: TSNode, body: TSNode, returns: bool) -> Procedure:
+        proc = Procedure(
+            name=name,
+            params=[],
+            ret_type=Typ.unknown_type(),
+            loc=self._get_location(node),
+            is_method=True,
+        )
+        self._current_proc = proc
+        self._node_counter = 0
+        entry = proc.new_node(NodeKind.ENTRY)
+        proc.add_node(entry)
+        proc.entry_node = entry.id
+        self._current_node = entry
+        if body.type == "arrow_expression_clause":
+            self._translate_expression_body(body, returns=returns)
+        else:
+            self._translate_block(body)
+        exit_node = proc.new_node(NodeKind.EXIT)
+        proc.add_node(exit_node)
+        proc.exit_node = exit_node.id
+        if self._current_node:
+            proc.connect(self._current_node.id, exit_node.id)
+        self._current_proc = None
+        return proc
 
     def _get_attributes(self, node: TSNode) -> List[str]:
         """Get attributes from a method or parameter"""
@@ -1025,14 +1263,6 @@ class CSharpFrontend:
             if child.type not in ("{", "}"):
                 self._translate_statement(child)
 
-    def _translate_arrow_expression(self, node: TSNode) -> None:
-        """Translate arrow expression clause (=> expr)"""
-        for child in node.children:
-            if child.type not in ("=>",):
-                exp = self._translate_expression(child)
-                loc = self._get_location(node)
-                self._add_instr(Return(loc=loc, value=exp))
-
     def _translate_statement(self, node: TSNode) -> None:
         """Translate a statement"""
         if node.type == "expression_statement":
@@ -1061,84 +1291,140 @@ class CSharpFrontend:
             self._translate_block(node)
         elif node.type == "using_statement":
             self._translate_using(node)
+        elif node.type == "variable_declaration":             # a `for` initializer
+            self._translate_variable_declaration(node)
+        elif node.type in ("lock_statement", "checked_statement", "unsafe_statement", "labeled_statement"):
+            # `lock (x) { ... }`, `checked { ... }`, `L: stmt`: the body runs (it used to be dropped)
+            body = next((c for c in reversed(node.named_children)
+                         if c.type == "block" or c.type.endswith("_statement")), None)
+            if body is not None:
+                self._translate_statement(body)
+        elif node.type == "fixed_statement":                   # `fixed (char* p = q) { ... }`
+            self._translate_local_declaration(node)
+            body = next((c for c in reversed(node.named_children)
+                         if c.type == "block" or c.type.endswith("_statement")), None)
+            if body is not None:
+                self._translate_statement(body)
+        elif node.type == "yield_statement":
+            self._translate_yield(node)
+        elif node.type in ("preproc_if", "preproc_ifdef", "preproc_elif", "preproc_else"):
+            self._translate_preproc(node)
+        elif node.type in ("local_function_statement", "empty_statement", "break_statement",
+                           "continue_statement", "goto_statement", "comment") or node.type.startswith("preproc_"):
+            pass        # declarations and jumps (a local function's body is not run where it is declared)
+        elif node.is_named:
+            # a statement kind with no lowering of its own: what it holds still runs
+            self._record_unlowered("statement:" + node.type)
+            self._translate_expression_statement(node)
+
+    def _translate_yield(self, node: TSNode) -> None:
+        """`yield return e;` runs e's calls (the path goes on); `yield break;` ends the iterator."""
+        if any(c.type == "break" for c in node.children):
+            self._add_instr(Return(loc=self._get_location(node), value=None))
+            return
+        value = next((c for c in node.named_children if c.type != "comment"), None)
+        inner = self._unwrap_value(value.named_children[0] if value is not None and value.type == "await_expression"
+                                   and value.named_children else value)
+        if inner is not None and inner.type == "invocation_expression":
+            self._add_instrs(self._translate_invocation(inner))
+        elif inner is not None and inner.type in self._CREATIONS:
+            self._add_instrs(self._translate_object_creation(inner, None, self._get_location(node)))
+        elif inner is not None:
+            self._translate_expression(inner)
+
+    def _translate_preproc(self, node: TSNode) -> None:
+        """`#if X ... #elif Y ... #else ... #endif` inside a body: which arm is compiled depends on the
+        build, so each arm is a branch of its own (none taken when there is no `#else`)."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        arm = node
+        has_else = False
+        while arm is not None:
+            arm_node = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm_node)
+            proc.connect(before.id, arm_node.id)
+            self._current_node = arm_node
+            alternative = None
+            for i, c in enumerate(arm.children):
+                if arm.field_name_for_child(i) in ("condition", "alternative"):
+                    if arm.field_name_for_child(i) == "alternative":
+                        alternative = c
+                    continue
+                if c.is_named:
+                    self._translate_statement(c)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+            has_else = has_else or arm.type == "preproc_else"
+            arm = alternative
+        if not has_else:
+            proc.connect(before.id, join.id)
+        self._current_node = join
 
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
         for child in node.children:
-            if child.type == "invocation_expression":
-                instrs = self._translate_invocation(child)
-                self._add_instrs(instrs)
-            elif child.type == "object_creation_expression":
-                self._add_instrs(self._translate_object_creation(
-                    child, None, self._get_location(child)))
-            elif child.type == "assignment_expression":
-                self._translate_assignment(child)
-            elif child.type == "postfix_unary_expression" or child.type == "prefix_unary_expression":
-                self._translate_update(child)
-            elif child.type == "await_expression":
-                self._translate_await(child)
-            elif child.type != ";":
-                # Other expression
-                exp = self._translate_expression(child)
+            if child.is_named:
+                self._translate_effect(child)
+
+    def _translate_effect(self, child: TSNode) -> None:
+        """An expression evaluated for what it does (a statement, a `for` update)."""
+        if child.type in ("block",) or child.type.endswith("_statement"):
+            self._translate_statement(child)          # (a statement kind lowered by its children)
+        elif child.type == "invocation_expression":
+            instrs = self._translate_invocation(child)
+            self._add_instrs(instrs)
+        elif child.type in self._CREATIONS:
+            self._add_instrs(self._translate_object_creation(
+                child, None, self._get_location(child)))
+        elif child.type == "assignment_expression":
+            self._translate_assignment(child)
+        elif child.type == "postfix_unary_expression" or child.type == "prefix_unary_expression":
+            self._translate_update(child)
+        elif child.type == "await_expression":
+            self._translate_await(child)
+        elif child.type == "parenthesized_expression":
+            inner = self._unwrap_value(child)
+            if inner is not None and inner is not child:
+                self._translate_effect(inner)
+        elif child.type != "comment":
+            # Other expression
+            self._translate_expression(child)
 
     def _translate_local_declaration(self, node: TSNode) -> None:
         """Translate local variable declaration"""
         for child in node.children:
             if child.type == "variable_declaration":
-                for decl in child.children:
-                    if decl.type == "variable_declarator":
-                        name_node = decl.child_by_field_name("name")
-                        if not name_node:
-                            # Try identifier
-                            for nc in decl.children:
-                                if nc.type == "identifier":
-                                    name_node = nc
-                                    break
+                self._translate_variable_declaration(child)
 
-                        value_node = None
-                        # First check for equals_value_clause (some tree-sitter versions)
-                        for nc in decl.children:
-                            if nc.type == "equals_value_clause":
-                                for vc in nc.children:
-                                    if vc.type != "=":
-                                        value_node = vc
-                                        break
-                        # Also check for direct invocation/expression child
-                        # Note: Don't match 'identifier' here as it's the variable name, not the value
-                        if not value_node:
-                            for nc in decl.children:
-                                if nc.type in ("invocation_expression", "object_creation_expression",
-                                              "await_expression", "binary_expression",
-                                              "literal_expression", "string_literal", "interpolated_string_expression",
-                                              "member_access_expression", "element_access_expression"):
-                                    value_node = nc
-                                    break
-                        if not value_node:
-                            # the initializer is whatever follows `=` (a cast, `c ? a : b`, `a ?? b`, `x!`, ...)
-                            kids = decl.children
-                            for i, nc in enumerate(kids[:-1]):
-                                if nc.type == "=":
-                                    value_node = kids[i + 1]
-                                    break
-
-                        if name_node:
-                            var_name = self._get_text(name_node)
-                            loc = self._get_location(decl)
-
-                            if value_node:
-                                if value_node.type == "invocation_expression" and self._source_in(value_node) is None:
-                                    instrs = self._translate_call_assignment(var_name, value_node, loc)
-                                    self._add_instrs(instrs)
-                                elif value_node.type == "object_creation_expression":
-                                    self._add_instrs(self._translate_object_creation(value_node, var_name, loc))
-                                elif value_node.type == "await_expression":
-                                    self._translate_await_assignment(var_name, value_node, loc)
-                                else:
-                                    exp = self._translate_expression(value_node)
-                                    self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=exp))
-                                    self._emit_member_source(value_node, var_name, loc)
-                            else:
-                                self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
+    def _translate_variable_declaration(self, node: TSNode) -> None:
+        """`string a = x, b;`, `var (a, b) = (q, "x");`, `SqlCommand cmd = new(sql, conn);`"""
+        tnode = node.child_by_field_name("type")
+        declared = self._type_text(tnode) if tnode is not None else None
+        if declared == "var":
+            declared = None
+        for decl in node.children:
+            if decl.type != "variable_declarator":
+                continue
+            loc = self._get_location(decl)
+            value_node = self._declarator_value(decl)
+            pattern = next((c for c in decl.named_children
+                            if c.type in ("tuple_pattern", "parenthesized_variable_designation")), None)
+            if pattern is not None:                          # `var (a, b) = (q, "x")`
+                self._translate_deconstruction(pattern, value_node, loc)
+                continue
+            name_node = decl.child_by_field_name("name") or next(
+                (nc for nc in decl.children if nc.type == "identifier"), None)
+            if not name_node:
+                continue
+            var_name = self._get_text(name_node)
+            if value_node is not None:
+                self._assign_value(var_name, value_node, loc, declared_type=declared)
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
 
     def _get_member_chain(self, node: TSNode) -> str:
         """Extract a dotted member chain (e.g. 'Request.QueryString') from a
@@ -1191,12 +1477,12 @@ class CSharpFrontend:
             if op is not None and self._get_text(op) in ("+", "??"):
                 yield from self._source_accesses(node.child_by_field_name("left"))
                 yield from self._source_accesses(node.child_by_field_name("right"))
+        elif t == "postfix_unary_expression" and any(c.type == "!" for c in node.children):
+            yield from self._source_accesses(next((c for c in node.named_children), None))
         elif t == "invocation_expression":
-            fn = node.child_by_field_name("function")
-            if fn is not None and fn.type == "member_access_expression":
-                name = fn.child_by_field_name("name")
-                if name is not None and self._get_text(name) in _passthrough().csharp_methods:
-                    yield from self._source_accesses(fn.child_by_field_name("expression"))
+            parts = self._member_parts(node.child_by_field_name("function"))
+            if parts is not None and self._get_text(parts[1]) in _passthrough().csharp_methods:
+                yield from self._source_accesses(parts[0])
 
     def _member_source_spec(self, node: TSNode) -> Optional[ProcSpec]:
         """The source a property / indexer access reads (`Request.Query["a"]`, `ctx.Request.Form`,
@@ -1285,19 +1571,178 @@ class CSharpFrontend:
 
         target = self._get_text(left)
         loc = self._get_location(node)
+        op_node = node.child_by_field_name("operator")
+        op = self._get_text(op_node) if op_node is not None else "="
+        inner = self._unwrap_value(right)
 
-        if right.type == "invocation_expression" and self._source_in(right) is None:
-            instrs = self._translate_call_assignment(target, right, loc)
-            self._add_instrs(instrs)
-        elif right.type == "object_creation_expression":
-            self._add_instrs(self._translate_object_creation(right, target, loc))
-        elif right.type == "await_expression" and self._source_in(right) is None:
-            self._translate_await_assignment(target, right, loc)
+        if left.type in self._TUPLE_TARGETS and op == "=":
+            self._translate_deconstruction(left, right, loc)       # `(a, b) = (q, "x")`
+            return
+        if op != "=":
+            # `sql += x` is `sql = sql + x` (`??=`: `sql = sql ?? x`): the target keeps what it held
+            value = self._compound_value(op, left, right, loc)
+            self._store(left, value, loc)
+            self._assignment_effects(left, right, loc, value)
+            return
+        if inner is not None and inner.type == "assignment_expression":
+            # `a = b = q`: b is assigned, then a takes b's new value
+            value = self._translate_expression(inner)
+            self._store(left, value, loc)
+            innermost = inner
+            while innermost is not None and innermost.type == "assignment_expression":
+                innermost = self._unwrap_value(innermost.child_by_field_name("right"))
+            self._assignment_effects(left, innermost or right, loc, value)
+            return
+        if self._element_container(left) is not None:
+            # `d["k"] = q`: the container (a variable) now holds q as well
+            self._store(left, self._value_exp(right, loc), loc)
+            return
+
+        self._assign_value(target, right, loc, declared_type=self._receiver_types().get(target))
+        self._assignment_effects(left, right, loc)
+
+    _TUPLE_TARGETS = ("tuple_expression", "tuple_pattern", "parenthesized_variable_designation")
+
+    def _assign_value(self, target: str, value: TSNode, loc: Location,
+                      declared_type: Optional[str] = None) -> None:
+        """Lower `target = value` for every kind of value: a call (its spec's sources and sinks), a
+        creation (a target-typed `new(...)` of `declared_type`), an awaited call, an assignment written
+        as the value (`x = y = q`), or any other expression (with the property sources it reads)."""
+        inner = self._unwrap_value(value) or value
+        if inner.type == "assignment_expression":
+            self._add_instr(Assign(loc=loc, id=PVar(target), exp=self._translate_expression(inner)))
+        elif inner.type == "invocation_expression" and self._source_in(inner) is None and not self._is_nameof(inner):
+            self._add_instrs(self._translate_call_assignment(target, inner, loc))
+        elif inner.type in ("object_creation_expression", "implicit_object_creation_expression"):
+            self._add_instrs(self._translate_object_creation(inner, target, loc, type_name=declared_type))
+        elif inner.type == "await_expression" and self._source_in(inner) is None:
+            self._translate_await_assignment(target, inner, loc)
         else:
-            exp = self._translate_expression(right)
+            exp = self._translate_expression(inner)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
-            self._emit_member_source(right, target, loc)
+            self._emit_member_source(inner, target, loc)
 
+    def _value_exp(self, value: TSNode, loc: Location) -> Exp:
+        """The value of an expression as an operand: a call, creation, awaited call or property source
+        is lowered to a temporary first (`$valN`), so its spec, sinks and sources still apply."""
+        inner = self._unwrap_value(value) or value
+        if inner.type in ("invocation_expression", "object_creation_expression",
+                          "implicit_object_creation_expression", "await_expression") \
+                or self._source_in(inner) is not None:
+            tmp = f"$val{self._ident_counter}"
+            self._ident_counter += 1
+            self._assign_value(tmp, inner, loc)
+            return ExpVar(PVar(tmp))
+        return self._translate_expression(inner)
+
+    def _compound_value(self, op: str, left: TSNode, right: TSNode, loc: Location) -> Exp:
+        current = self._translate_expression(left)
+        rhs = self._value_exp(right, loc)
+        if op == "+=":
+            return ExpStringConcat([current, rhs])          # as `+` is lowered
+        if op == "??=":
+            return ExpBinOp("??", current, rhs)
+        return ExpBinOp(op[:-1], current, rhs)
+
+    def _element_container(self, left: TSNode) -> Optional[str]:
+        """`d` of an element target `d[k]` when d is a plain name (a local, parameter or field)."""
+        if left.type != "element_access_expression":
+            return None
+        base = left.child_by_field_name("expression")
+        return self._get_text(base) if base is not None and base.type == "identifier" else None
+
+    def _store(self, left: TSNode, value: Exp, loc: Location) -> None:
+        """Write `value` to an assignment target: a name or member path; an element of a container
+        held in a variable as a weak update (`d = d ?: v`: it holds v as well as what it held); a
+        deconstruction target element by element."""
+        if left.type in self._TUPLE_TARGETS or left.type == "declaration_expression":
+            self._bind_target(left, value, loc)
+            return
+        container = self._element_container(left)
+        if container is not None:
+            self._add_instr(Assign(loc=loc, id=PVar(container),
+                                   exp=ExpBinOp("?:", ExpVar(PVar(container)), value)))
+            return
+        self._add_instr(Assign(loc=loc, id=PVar(self._get_text(left)), exp=value))
+
+    def _tuple_elements(self, node: TSNode) -> List[TSNode]:
+        """The elements of `(a, b)` / `var (a, b)` / `(string a, var b)` / `(q, "x")`."""
+        out = []
+        for c in node.named_children:
+            if c.type == "comment":
+                continue
+            if c.type == "argument":
+                c = self._argument_value(c)
+            if c is not None:
+                out.append(c)
+        return out
+
+    def _translate_deconstruction(self, target: TSNode, value: Optional[TSNode], loc: Location) -> None:
+        """`var (a, b) = (q, "x")`, `(a, b) = (b, a)`: each target its own element when the value is a
+        tuple written out with as many elements (all evaluated first, so a swap swaps); otherwise
+        (`var (a, b) = Pair()`) every target holds the whole value, as an element of it. The targets
+        used to be bound as one variable named by their text, or not at all."""
+        targets = self._tuple_elements(target)
+        value = self._unwrap_value(value) if value is not None else None
+        values = self._tuple_elements(value) if value is not None and value.type == "tuple_expression" else None
+        if values is not None and len(values) == len(targets):
+            nested = []
+            for t, v in zip(targets, values):
+                if t.type in self._TUPLE_TARGETS + ("declaration_expression",) and self._is_tuple_target(t) \
+                        and (self._unwrap_value(v) or v).type == "tuple_expression":
+                    nested.append((t, v))                   # `(v, (a, b)) = (q, (1, 2))`: element by element
+                    continue
+                tmp = f"$unpack{self._ident_counter}"
+                self._ident_counter += 1
+                self._assign_value(tmp, v, loc)
+                nested.append((t, ExpVar(PVar(tmp))))
+            for t, v in nested:
+                if isinstance(v, Exp):
+                    self._bind_target(t, v, loc)
+                else:
+                    self._translate_deconstruction(self._tuple_target_of(t), v, loc)
+            return
+        tmp = f"$unpack{self._ident_counter}"
+        self._ident_counter += 1
+        if value is not None:
+            self._assign_value(tmp, value, loc)
+        else:
+            self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=ExpConst.null()))
+        self._bind_target(target, ExpVar(PVar(tmp)), loc)
+
+    def _tuple_target_of(self, node: TSNode) -> TSNode:
+        """`var (a, b)` written as an element: the parenthesized designation inside it."""
+        if node.type == "declaration_expression":
+            nm = node.child_by_field_name("name")
+            return nm if nm is not None else node
+        return node
+
+    def _is_tuple_target(self, node: TSNode) -> bool:
+        return node.type in self._TUPLE_TARGETS or self._tuple_target_of(node).type in self._TUPLE_TARGETS
+
+    def _bind_target(self, target: TSNode, value: Exp, loc: Location) -> None:
+        """Write `value` to every variable a deconstruction target names."""
+        t = target.type
+        if t in self._TUPLE_TARGETS:
+            for element in self._tuple_elements(target):
+                self._bind_target(element, value, loc)
+        elif t == "declaration_expression":                 # `string a` / `var (a, b)`
+            nm = target.child_by_field_name("name")
+            if nm is not None:
+                typ = target.child_by_field_name("type")
+                held = ExpConst.null() if self._type_text(typ) in self._NON_INJECTABLE_TYPES else value
+                self._bind_target(nm, held, loc)
+        elif t == "identifier":
+            self._add_instr(Assign(loc=loc, id=PVar(self._get_text(target)), exp=value))
+        elif t in ("member_access_expression", "element_access_expression"):
+            self._store(target, value, loc)
+        elif t not in ("discard", "comment"):
+            self._record_unlowered("target:" + t)          # recorded like an unlowered expression
+
+    def _assignment_effects(self, left: TSNode, right: TSNode, loc: Location, value: Optional[Exp] = None) -> None:
+        """What writing a member does beyond holding the value: a TLS callback replaced, a protection
+        switched off, a property that is a sink on its declared type. `value`: what the member now
+        holds, when it is not simply `right` (a compound or chained assignment)."""
         # Assignment to a sink property (e.g. cmd.CommandText = "..."+input)
         # flows the right-hand value into a sink.
         prop = (left.child_by_field_name("name")
@@ -1316,12 +1761,12 @@ class CSharpFrontend:
         sink_kind_str = None
         if prop is not None:                       # a property that is a sink on its declared type
             recv = self._get_member_chain(left.child_by_field_name("expression"))
-            rtype = self._proc_types.get(id(self._current_proc), {}).get(recv, "") if self._current_proc else ""
+            rtype = self._receiver_types().get(recv, "")
             sink_kind_str = self._typed_prop_sink(rtype, self._get_text(prop))
-        if sink_kind_str and right.type not in ("invocation_expression",
-                                                "object_creation_expression"):
+        if sink_kind_str and (value is not None or right.type not in ("invocation_expression",
+                                                                       "object_creation_expression")):
             self._add_instr(TaintSink(
-                loc=loc, exp=self._translate_expression(right),
+                loc=loc, exp=value if value is not None else self._translate_expression(right),
                 kind=resolve_sink_kind(sink_kind_str),
                 description=f"assignment to {self._get_text(prop)} sink", arg_index=0))
 
@@ -1425,11 +1870,11 @@ class CSharpFrontend:
                         out.setdefault(recv, set()).update(self._xml_member_flags(self._get_text(prop), right))
             elif n.type == "variable_declarator":
                 name = n.child_by_field_name("name") or next((c for c in n.children if c.type == "identifier"), None)
-                create = next((c for c in n.children if c.type == "object_creation_expression"), None)
+                create = next((c for c in n.children if c.type in self._CREATIONS), None)
                 if create is None:
                     eq = next((c for c in n.children if c.type == "equals_value_clause"), None)
                     create = next((c for c in (eq.children if eq is not None else ())
-                                   if c.type == "object_creation_expression"), None)
+                                   if c.type in self._CREATIONS), None)
                 if name is not None and create is not None:
                     flags = self._initializer_xml_flags(create)
                     if flags:
@@ -1470,7 +1915,7 @@ class CSharpFrontend:
 
     def _initializer_xml_flags(self, create: TSNode) -> set:
         flags: set = set()
-        init = create.child_by_field_name("initializer")
+        init = self._initializer_of(create)
         for child in (init.children if init is not None else ()):
             if child.type == "assignment_expression":
                 left, right = child.child_by_field_name("left"), child.child_by_field_name("right")
@@ -1486,7 +1931,7 @@ class CSharpFrontend:
         """Settings that parse DTDs and resolve external resources (a variable or an inline `new`)."""
         if node is None:
             return False
-        if node.type == "object_creation_expression":
+        if node.type in self._CREATIONS:
             flags = self._initializer_xml_flags(node)
         else:
             flags = self._xml_flags.get(self._get_text(node), set())
@@ -1526,6 +1971,7 @@ class CSharpFrontend:
         the receiver (`_http.GetStringAsync` with `HttpClient _http` -> `HttpClient.GetStringAsync`),
         then the bare method name (`context.Database.ExecuteSqlCommand` -> `ExecuteSqlCommand`)."""
         declared = self._receiver_types()
+        name = self._unqualified(name)                  # `this._http.GetStringAsync`: the field's type
         spec = self.specs.get(name) or self.specs.get(csharp_without_namespace(name, self._imports.wildcards))
         if "." not in name:
             # an unqualified call is a constructor / function the row names (`SqlCommand`), the
@@ -1694,6 +2140,10 @@ class CSharpFrontend:
         instrs = self._hoist_sanitizers(call_node)
 
         method_name = self._get_method_name(call_node)
+        hoisted = self._hoist_receiver(call_node)
+        if hoisted is not None:
+            receiver_instrs, method_name = hoisted
+            instrs.extend(receiver_instrs)
         args = self._get_method_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
 
@@ -1724,28 +2174,99 @@ class CSharpFrontend:
                     arg_exp = self._translate_expression(args[arg_idx])
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description))
 
-        instrs.extend(self._receiver_chain_instrs(call_node))
+        if hoisted is None:                 # (a hoisted receiver was lowered with its own sinks)
+            instrs.extend(self._receiver_chain_instrs(call_node))
         instrs.extend(self._rsa_padding_instrs(call_node, loc))
         instrs.extend(self._xml_create_instrs(call_node, loc))
         instrs.extend(self._arg_initializer_instrs(call_node, loc))
         return instrs
 
+    def _hoist_receiver(self, call_node: TSNode) -> Optional[Tuple[List[Instr], str]]:
+        """`q.Trim().ToLower()`, `q?.Trim()?.ToLower()`, `new StringBuilder().Append(q).ToString()`,
+        `Process.Start(psi).StandardOutput.ReadToEnd()`: a call made on another call's result. The
+        translator reads a call's receiver as the name before its last dot, which `q.Trim()` is not,
+        so the receiver's value was lost. The inner call is lowered first to a temporary of its own
+        (`$chainN = q.Trim()`, with its own spec, sources and sinks), a member read on its result
+        becomes one too, and the outer call is made on the last (`$chainN.ToLower`). Returns None
+        when the receiver is a plain path (`_db.Users.Find`), whose written name the specs match."""
+        parts = self._member_parts(call_node.child_by_field_name("function"))
+        if parts is None:
+            return None
+        node, method = parts
+        path: List[str] = []                 # members read between the inner call and the method
+        while True:
+            inner = self._member_parts(node)
+            if inner is None:
+                break
+            node, member = inner
+            path.insert(0, self._get_text(member))
+        node = self._unwrap_value(node)
+        if node is None:
+            return None
+        loc = self._get_location(node)
+        if node.type == "invocation_expression":
+            tmp = f"$chain{self._ident_counter}"
+            self._ident_counter += 1
+            instrs = self._translate_call_assignment(tmp, node, loc)
+        elif node.type == "object_creation_expression" and self._created_receiver_type(node) is not None:
+            tmp = f"$new{self._ident_counter}"
+            self._ident_counter += 1
+            instrs = self._translate_object_creation(node, tmp, loc)
+        elif node.type not in self._NAME_RECEIVERS + self._LITERALS + self._CREATIONS:
+            # `(a + q).Trim()`, `d["k"].Trim()`, `("x" + q)?.Trim()` as the grammar reads `"x" + q?.Trim()`
+            tmp = f"$chain{self._ident_counter}"
+            self._ident_counter += 1
+            instrs = [Assign(loc=loc, id=PVar(tmp), exp=self._translate_expression(node))]
+            spec = self._source_in(node)
+            if spec is not None:
+                kind = TaintKind(spec.is_source) if spec.is_source in [t.value for t in TaintKind] else TaintKind.USER_INPUT
+                instrs.append(TaintSource(loc=loc, var=PVar(tmp), kind=kind, description=spec.description))
+        else:
+            return None
+        for member in path:
+            nxt = f"$chain{self._ident_counter}"
+            self._ident_counter += 1
+            instrs.append(Assign(loc=loc, id=PVar(nxt), exp=ExpFieldAccess(ExpVar(PVar(tmp)), member)))
+            tmp = nxt
+        return instrs, f"{tmp}.{self._strip_generics(self._get_text(method))}"
+
+    def _created_receiver_type(self, creation: TSNode) -> Optional[str]:
+        """The type of `new T(...)` used as a receiver when no spec describes T (library types with a
+        spec keep their own handling: `new Regex(p).IsMatch(s)`)."""
+        type_node = creation.child_by_field_name("type")
+        type_name = self._get_text(type_node) if type_node else ""
+        return type_name if type_name and self.specs.get(type_name) is None else None
+
     def _translate_object_creation(self, node: TSNode, target: Optional[str],
-                                   loc: Location) -> List[Instr]:
+                                   loc: Location, type_name: Optional[str] = None) -> List[Instr]:
         """Translate `new Type(args)` so constructor sinks fire: usage-based
         sinks (new MD5CryptoServiceProvider(), new BinaryFormatter()) via the
         emitted Call, and taint-arg sinks (new SqlCommand(q),
-        new DirectorySearcher(filter)) via an explicit TaintSink."""
+        new DirectorySearcher(filter)) via an explicit TaintSink.
+
+        `type_name`: the type a target-typed `new(...)` creates (the declaration's or the target's);
+        it never replaces a type written in the creation."""
         instrs = []
         type_node = node.child_by_field_name("type")
-        type_name = self._get_text(type_node) if type_node else "Object"
+        if type_node is not None or node.type != "implicit_object_creation_expression":
+            type_name = self._get_text(type_node) if type_node else "Object"
         args = self._get_method_args(node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        elements = self._collection_elements(node)          # `new List<string> { q }` holds q
+        if not type_name:
+            # `new(q)` whose type nothing here declares: a value built from what it is given
+            if target is not None:
+                ret = self._new_ident(target)
+                instrs.append(Call(loc=loc, ret=(ret, Typ.unknown_type()), func=ExpConst.string("new"),
+                                   args=args_exp + [(e, Typ.unknown_type()) for e in elements]))
+                instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret)))
+            return instrs
+        members: List[Tuple[str, Exp]] = []
 
         # Object initializer: new T { Prop = value, ... }. Translate the value
         # expressions so dangerous configuration values (e.g.
         # TypeNameHandling = TypeNameHandling.All) are seen by the member hook.
-        init = node.child_by_field_name("initializer")
+        init = self._initializer_of(node)
         if init:
             for child in init.children:
                 if child.type == "object_creation_expression":   # `new List<T> { new T { Sql = q } }`
@@ -1753,7 +2274,9 @@ class CSharpFrontend:
                 elif child.type == "assignment_expression":
                     rhs = child.child_by_field_name("right")
                     if rhs:
-                        self._translate_expression(rhs)
+                        member = child.child_by_field_name("left")
+                        if member is not None and member.type == "identifier":
+                            members.append((self._get_text(member), self._translate_expression(rhs)))
                         lhs = child.child_by_field_name("left")
                         kind = self._typed_prop_sink(type_name, self._get_text(lhs) if lhs else "", init)
                         instrs.extend(self._config_flag_instrs(
@@ -1778,16 +2301,24 @@ class CSharpFrontend:
         instrs.append(Call(loc=loc, ret=None,
                            func=ExpConst.string(type_name), args=args_exp))
         spec = self.specs.get(type_name)
+        held = [(e, Typ.unknown_type()) for e in elements]
         if target is not None and spec is None:
             # A type no spec describes (the project's own `new Job(q)`): the variable is
             # bound to the constructor call, so the project can resolve the constructor
-            # and follow what it stores in the new object's fields.
+            # and follow what it stores in the new object's fields. A collection's
+            # elements follow the constructor's arguments.
             ret = self._new_ident(target)
             instrs.append(Call(loc=loc, ret=(ret, Typ.unknown_type()),
-                               func=ExpConst.string(f"new {type_name}"), args=args_exp))
+                               func=ExpConst.string(f"new {type_name}"), args=args_exp + held))
             instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret)))
         elif target is not None:
-            instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpConst.null()))
+            instrs.append(Assign(loc=loc, id=PVar(target),
+                                 exp=ExpCall(ExpConst.string(f"new {type_name}"), elements) if elements
+                                 else ExpConst.null()))
+        if target is not None:
+            # `new Box { Val = q }` sets b.Val (after the object is bound: binding it replaces its fields)
+            for member, value in members:
+                instrs.append(Assign(loc=loc, id=PVar(f"{target}.{member}"), exp=value))
 
         if spec and spec.is_taint_sink():
             kind = resolve_sink_kind(spec.is_sink)
@@ -1834,9 +2365,8 @@ class CSharpFrontend:
         even though the outer call is the benign ToList(). Emits TaintSink only
         (the outer caller already emits the Call) to avoid double-counting."""
         instrs: List[Instr] = []
-        func = call_node.child_by_field_name("function")
-        recv = func.child_by_field_name("expression") if (
-            func and func.type == "member_access_expression") else None
+        parts = self._member_parts(call_node.child_by_field_name("function"))
+        recv = parts[0] if parts is not None else None
         while recv is not None:
             if recv.type == "invocation_expression":
                 loc = self._get_location(recv)
@@ -1857,11 +2387,11 @@ class CSharpFrontend:
                             instrs.append(TaintSink(
                                 loc=loc, exp=self._translate_expression(rargs[arg_idx]),
                                 kind=kind, description=spec.description, arg_index=arg_idx))
-                f = recv.child_by_field_name("function")
-                recv = f.child_by_field_name("expression") if (
-                    f and f.type == "member_access_expression") else None
-            elif recv.type == "member_access_expression":
-                recv = recv.child_by_field_name("expression")
+                inner = self._member_parts(recv.child_by_field_name("function"))
+                recv = inner[0] if inner is not None else None
+            elif recv.type in ("member_access_expression", "conditional_access_expression"):
+                inner = self._member_parts(recv)
+                recv = inner[0] if inner is not None else None
             elif recv.type == "object_creation_expression":
                 # `new Regex(pattern).IsMatch(s)`: the creation is a call (and a sink) of its own
                 instrs.extend(self._translate_object_creation(recv, None, self._get_location(recv)))
@@ -1909,22 +2439,24 @@ class CSharpFrontend:
 
     def _translate_await(self, node: TSNode) -> None:
         """Translate await expression (standalone)"""
-        for child in node.children:
-            if child.type == "invocation_expression":
-                instrs = self._translate_invocation(child)
-                self._add_instrs(instrs)
+        awaited = self._unwrap_value(next((c for c in node.named_children if c.type != "comment"), None))
+        if awaited is not None and awaited.type == "invocation_expression":
+            self._add_instrs(self._translate_invocation(awaited))
 
     def _translate_await_assignment(self, target: str, node: TSNode, loc: Location) -> None:
         """Translate await expression with assignment"""
-        for child in node.children:
-            if child.type == "invocation_expression":
-                instrs = self._translate_call_assignment(target, child, loc)
-                self._add_instrs(instrs)
+        awaited = self._unwrap_value(next((c for c in node.named_children if c.type != "comment"), None))
+        if awaited is not None and awaited.type == "invocation_expression":
+            self._add_instrs(self._translate_call_assignment(target, awaited, loc))
+        elif awaited is not None:                       # `var r = await task;`: what the task gives
+            self._assign_value(target, awaited, loc)
 
     def _translate_update(self, node: TSNode) -> None:
         """Translate update expression: i++ or ++i"""
         loc = self._get_location(node)
-        operand = node.child_by_field_name("operand")
+        # (tree-sitter-c-sharp names no field here: the operand is the one named child)
+        operand = node.child_by_field_name("operand") or next(
+            (c for c in node.named_children if c.type != "comment"), None)
         if operand and operand.type == "identifier":
             var_name = self._get_text(operand)
             text = self._get_text(node)
@@ -1956,8 +2488,8 @@ class CSharpFrontend:
                     inner = next((c for c in inner.children if c.type != "await"), inner)
                 if inner.type == "invocation_expression":
                     self._add_instrs(self._translate_invocation(inner))
-                elif inner.type == "object_creation_expression":
-                    self._add_instrs(self._translate_object_creation(inner, None, loc))
+                elif inner.type in self._CREATIONS:      # `return new(q);` creates the declared return type
+                    self._add_instrs(self._translate_object_creation(inner, None, loc, type_name=self._return_type))
                 value_exp = self._translate_expression(child)
                 break
 
@@ -2016,12 +2548,17 @@ class CSharpFrontend:
 
         loc = self._get_location(node)
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
 
         before_node = self._current_node
 
         loop_head = proc.new_node(NodeKind.LOOP_HEAD)
         proc.add_node(loop_head)
+        # the condition is evaluated on every iteration: what it does (`(line = r.ReadLine()) != null`)
+        # happens at the head
+        loop_head.instrs.extend(self._loop_widening(loc, condition, node.child_by_field_name("body")))
+        self._current_node = loop_head
+        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        self._current_node = before_node
 
         # `break` has no SIL representation, so record here, the only place the
         # loop's parse tree is still available, whether any statement in the body
@@ -2062,10 +2599,15 @@ class CSharpFrontend:
 
         loc = self._get_location(node)
 
-        # Initialize
-        init = node.child_by_field_name("initializer")
-        if init:
-            self._translate_statement(init)
+        # Initialize: `int i = 0, j = 1` or `i = 0, j = 1` (the field names a node per part)
+        fields = [(node.field_name_for_child(i), c) for i, c in enumerate(node.children) if c.is_named]
+        for field_name, init in fields:
+            if field_name != "initializer":
+                continue
+            if init.type == "variable_declaration":
+                self._translate_variable_declaration(init)
+            else:
+                self._translate_effect(init)
 
         before_node = self._current_node
 
@@ -2082,7 +2624,11 @@ class CSharpFrontend:
             proc.connect(before_node.id, loop_head.id)
 
         condition = node.child_by_field_name("condition")
+        loop_head.instrs.extend(self._loop_widening(
+            loc, condition, node.child_by_field_name("body"), *[u for f, u in fields if f == "update"]))
+        self._current_node = loop_head                  # evaluated on every iteration
         condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        self._current_node = before_node
 
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=True, kind=PruneKind.FOR_ENTER))
         proc.connect(loop_head.id, body_node.id)
@@ -2095,17 +2641,40 @@ class CSharpFrontend:
             self._current_node = body_node
             self._translate_statement(body)
 
-        # Update
-        incrementors = node.child_by_field_name("incrementors")
-        if incrementors and self._current_node:
-            for child in incrementors.children:
-                if child.type not in (",",):
-                    self._translate_expression_statement(child)
+        # Update (`i++, j++`: one `update` field per part). Lowered together with the initializer:
+        # `i = 0` without `i++` would make the loop's exit look unreachable.
+        if self._current_node:
+            for field_name, update in fields:
+                if field_name == "update":
+                    self._translate_effect(update)
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
 
         self._current_node = after_node
+
+    def _loop_widening(self, loc: Location, condition: Optional[TSNode], *parts: Optional[TSNode]) -> List[Instr]:
+        """At a loop's head, a variable the loop itself changes holds whatever the iterations made
+        it, not the constant it had on entry: with `i = 0` before `while (i < 3) { i++; }` the exit
+        must not look unreachable. (The translator re-walks a loop head when taint changes, not when
+        a constant is forgotten at the join, so the exit pruned on the first visit stayed pruned and
+        everything after the loop was lost.) Only variables the condition reads are widened."""
+        if condition is None:
+            return []
+        read = {self._get_text(n) for n in [condition, *self._descendants_of(condition)] if n.type == "identifier"}
+        written = set()
+        for part in (condition,) + parts:
+            for n in ([part, *self._descendants_of(part)] if part is not None else ()):
+                target = None
+                if n.type == "assignment_expression":
+                    target = n.child_by_field_name("left")
+                elif n.type in ("postfix_unary_expression", "prefix_unary_expression") \
+                        and any(c.type in ("++", "--") for c in n.children):
+                    target = next((c for c in n.named_children), None)
+                if target is not None and target.type == "identifier":
+                    written.add(self._get_text(target))
+        return [Assign(loc=loc, id=PVar(v), exp=ExpCall(ExpConst.string("<loop>"), [ExpVar(PVar(v))]))
+                for v in sorted(read & written)]
 
     def _translate_foreach(self, node: TSNode) -> None:
         """Translate foreach loop"""
@@ -2128,7 +2697,17 @@ class CSharpFrontend:
         proc.add_node(loop_head)
 
         body_node = proc.new_node(NodeKind.NORMAL)
-        body_node.add_instr(Assign(loc=loc, id=PVar(loop_var), exp=ExpCall(ExpConst.string("GetEnumerator.Current"), [iterable_exp])))
+        element = ExpCall(ExpConst.string("GetEnumerator.Current"), [iterable_exp])
+        if left is not None and self._is_tuple_target(left):
+            # `foreach (var (k, v) in pairs)`: every name an element of the element
+            tmp = f"$elem{self._ident_counter}"
+            self._ident_counter += 1
+            body_node.add_instr(Assign(loc=loc, id=PVar(tmp), exp=element))
+            saved, self._current_node = self._current_node, body_node
+            self._bind_target(self._tuple_target_of(left), ExpVar(PVar(tmp)), loc)
+            self._current_node = saved
+        else:
+            body_node.add_instr(Assign(loc=loc, id=PVar(loop_var), exp=element))
         proc.add_node(body_node)
 
         after_node = proc.new_node(NodeKind.NORMAL)
@@ -2196,14 +2775,46 @@ class CSharpFrontend:
         self._current_node = after_node
 
     def _translate_switch(self, node: TSNode) -> None:
-        """Translate switch statement (simplified)"""
+        """`switch (x) { case 0: ...; case string s when ...: ...; default: ... }`: each section is a
+        branch of its own (C# has no fall-through into a section with statements), entered with its
+        patterns' variables bound to x; with no `default`, no section may be taken. The sections used
+        to run one after another, so a later one overwrote what an earlier one assigned."""
+        proc = self._current_proc
         body = node.child_by_field_name("body")
-        if body:
-            for child in body.children:
-                if child.type == "switch_section":
-                    for stmt in child.children:
-                        if stmt.type not in ("case_switch_label", "default_switch_label", "break_statement"):
-                            self._translate_statement(stmt)
+        if proc is None or body is None or self._current_node is None:
+            return
+        value = node.child_by_field_name("value")
+        subject = self._translate_expression(value) if value is not None else ExpConst.null()
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        has_default = False
+        for section in body.children:
+            if section.type != "switch_section":
+                continue
+            section_node = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(section_node)
+            proc.connect(before.id, section_node.id)
+            self._current_node = section_node
+            loc = self._get_location(section)
+            has_default = has_default or any(c.type == "default" for c in section.children) \
+                or any(c.type == "default_switch_label" for c in section.named_children)
+            for child in section.named_children:
+                if child.type in ("case_switch_label", "default_switch_label", "break_statement", "comment"):
+                    continue
+                if child.type == "when_clause":
+                    cond = next((c for c in child.named_children), None)
+                    if cond is not None:
+                        self._translate_expression(cond)          # its own pattern bindings
+                elif child.type == "block" or child.type.endswith("_statement"):
+                    self._translate_statement(child)
+                else:                                             # a case label's pattern
+                    self._bind_pattern(child, subject, loc)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        if not has_default:
+            proc.connect(before.id, join.id)
+        self._current_node = join
 
     def _translate_try(self, node: TSNode) -> None:
         """Translate try/catch/finally"""
@@ -2216,12 +2827,36 @@ class CSharpFrontend:
         if body:
             self._translate_block(body)
 
-        for child in node.children:
-            if child.type == "catch_clause":
-                catch_body = child.child_by_field_name("body")
+        # A catch runs only when the body throws, so it is an alternative to the normal exit, not a
+        # continuation of it: in sequence, every path ran every handler (`v = ""` in a handler
+        # overwrote what the body assigned). As in Java, an exception is approximated as leaving
+        # the body at its end; the paths join before the finally block.
+        proc = self._current_proc
+        catches = [c for c in node.children if c.type == "catch_clause"]
+        if proc is not None and catches and self._current_node is not None:
+            after_body = self._current_node
+            join = proc.new_node(NodeKind.JOIN)
+            proc.add_node(join)
+            proc.connect(after_body.id, join.id)
+            for clause in catches:
+                handler = proc.new_node(NodeKind.NORMAL)
+                proc.add_node(handler)
+                proc.connect(after_body.id, handler.id)
+                self._current_node = handler
+                for part in clause.named_children:
+                    if part.type == "catch_filter_clause":          # `when (cond)`: its own effects
+                        cond = next((c for c in part.named_children), None)
+                        if cond is not None:
+                            self._translate_expression(cond)
+                catch_body = clause.child_by_field_name("body") or next(
+                    (c for c in clause.named_children if c.type == "block"), None)
                 if catch_body:
                     self._translate_block(catch_body)
-            elif child.type == "finally_clause":
+                if self._current_node is not None:
+                    proc.connect(self._current_node.id, join.id)
+            self._current_node = join
+        for child in node.children:
+            if child.type == "finally_clause":
                 for fc in child.children:
                     if fc.type == "block":
                         self._translate_block(fc)
@@ -2238,11 +2873,14 @@ class CSharpFrontend:
     def _translate_using(self, node: TSNode) -> None:
         """Translate using statement"""
         # `using (var cmd = new SqlCommand(...))`: the resource is an ordinary local declaration
-        # (its constructor and call sinks apply like any other)
+        # (its constructor and call sinks apply like any other); `using (Open(q))` an expression
         self._translate_local_declaration(node)
+        body = node.child_by_field_name("body")
+        for child in node.named_children:
+            if child.type not in ("variable_declaration", "comment") and (body is None or child.id != body.id):
+                self._translate_effect(child)
 
         # Translate the body
-        body = node.child_by_field_name("body")
         if body:
             self._translate_statement(body)
 
@@ -2282,9 +2920,12 @@ class CSharpFrontend:
             parts = []
             for child in node.children:
                 if child.type == "interpolation":
-                    for ic in child.children:
-                        if ic.type not in ("{", "}"):
-                            parts.append(self._translate_expression(ic))
+                    # `{q}`, `{n:D2}`, `{q,5}`: the expression (braces, alignment and format carry no data)
+                    value = next((ic for ic in child.named_children
+                                  if ic.type not in ("interpolation_brace", "interpolation_alignment_clause",
+                                                     "interpolation_format_clause", "comment")), None)
+                    if value is not None:
+                        parts.append(self._translate_expression(value))
                 elif child.type == "interpolated_string_text":
                     parts.append(ExpConst.string(self._get_text(child)))
             return ExpStringConcat(parts) if parts else ExpConst.string("")
@@ -2355,18 +2996,22 @@ class CSharpFrontend:
             if hoisted is not None:
                 return ExpVar(PVar(hoisted))
             fn = node.child_by_field_name("function")
-            if fn is not None and fn.type == "member_access_expression":
-                name = fn.child_by_field_name("name")
-                recv = fn.child_by_field_name("expression")
-                if (name is not None and self._get_text(name) in _passthrough().csharp_methods
+            if self._is_nameof(node):                 # `nameof(q)` is the constant "q"
+                args = self._get_method_args(node)
+                return ExpConst.string(self._get_text(args[-1]).rsplit(".", 1)[-1] if args else "")
+            parts = self._member_parts(fn)
+            if parts is not None:
+                recv, name = parts
+                if (self._get_text(name) in _passthrough().csharp_methods
                         and self._source_in(recv) is not None):
                     return self._translate_expression(recv)   # Request.Query["a"].ToString() reads like Request.Query["a"]
-            if fn is not None and fn.type == "member_access_expression":
-                recv = fn.child_by_field_name("expression")
-                name = fn.child_by_field_name("name")
-                if recv is not None and name is not None and recv.type == "invocation_expression":
+            if parts is not None:
+                recv, name = parts
+                if recv.type == "invocation_expression" or recv.type in self._VALUE_RECEIVERS:
                     # `_db.Database.SqlQueryRaw(q).ToList()` in an expression: the inner call stays a call
-                    # (its own spec, its own arguments); the method is called on what it returns
+                    # (its own spec, its own arguments); the method is called on what it returns. So is a
+                    # method of any other value that is not a name (`(a + q).Trim()`, `d["k"].Trim()`; the
+                    # grammar reads `"x" + q?.Trim()` as `("x" + q)?.Trim()`), whose text is no variable.
                     return ExpCall(ExpFieldAccess(self._translate_expression(recv), self._get_text(name).split("<", 1)[0]),
                                    [self._translate_expression(a) for a in self._get_method_args(node)])
             local = self._local_url_exp(node)
@@ -2389,9 +3034,10 @@ class CSharpFrontend:
             args_node = node.child_by_field_name("arguments")
             if args_node:
                 for child in args_node.children:
-                    if child.type not in ("(", ")", ","):
+                    if child.type not in ("(", ")", ",", "comment"):
                         args.append(self._translate_expression(child))
-            return ExpCall(ExpConst.string(f"new {type_name}"), args)
+            # `new List<string> { q }`: the collection holds its elements (after the constructor's arguments)
+            return ExpCall(ExpConst.string(f"new {type_name}"), args + self._collection_elements(node))
 
         elif node.type == "parenthesized_expression":
             for child in node.children:
@@ -2412,24 +3058,329 @@ class CSharpFrontend:
             value = node.child_by_field_name("value")
             return self._translate_expression(value)
 
-        elif node.type == "this_expression":
+        elif node.type in self._THIS or node.type == "base":
             return ExpVar(PVar("this"))
 
         elif node.type == "await_expression":
-            for child in node.children:
-                if child.type == "invocation_expression":
-                    return self._translate_expression(child)
+            inner = next((c for c in node.named_children if c.type != "comment"), None)
+            return self._translate_expression(inner) if inner is not None else ExpConst.null()
 
         elif node.type == "lambda_expression":
-            # Simplified lambda handling
+            # A function value: its body runs in a procedure of its own (`_translate_lambda`); read
+            # here only for the value an expression-bodied lambda returns, without running it.
             body = node.child_by_field_name("body")
-            return self._translate_expression(body) if body else ExpConst.null()
+            if body is None or body.type == "block":
+                return ExpConst.null()
+            self._quiet += 1
+            try:
+                return self._translate_expression(body)
+            finally:
+                self._quiet -= 1
 
-        # Default
+        elif node.type == "anonymous_method_expression":
+            return ExpConst.null()                  # `delegate (string s) { ... }`: a function value
+
+        elif node.type in ("predefined_type", "qualified_name", "alias_qualified_name", "generic_name"):
+            # a type named as a static receiver (`string.Join`) or a generic method group: no data
+            return ExpVar(PVar(self._get_text(node)))
+
+        elif node.type == "raw_string_literal":            # `"""SELECT ..."""` (C# 11)
+            content = next((c for c in node.children if c.type == "raw_string_content"), None)
+            return ExpConst.string(self._get_text(content) if content is not None else "")
+
+        elif node.type == "argument":                      # `(a: q, 1)`, `ref x`: the value passed
+            return self._translate_expression(self._argument_value(node))
+
+        elif node.type == "postfix_unary_expression":
+            operand = next((c for c in node.named_children if c.type != "comment"), None)
+            if any(c.type == "!" for c in node.children):  # `q!`: null-forgiving, the value itself
+                return self._translate_expression(operand)
+            # `i++` inside an expression: a number that changes, never a constant the path knows
+            op = next((c.type for c in node.children if not c.is_named), "++")
+            return ExpCall(ExpConst.string(op), [self._translate_expression(operand)])
+
+        elif node.type == "as_expression":                 # `o as string`: o, or null
+            return self._translate_expression(node.child_by_field_name("left"))
+
+        elif node.type == "is_expression":                 # `o is string`: a type test
+            right = node.child_by_field_name("right")
+            return ExpBinOp("is", self._translate_expression(node.child_by_field_name("left")),
+                            ExpConst.string(self._get_text(right)))
+
+        elif node.type == "is_pattern_expression":
+            return self._translate_is_pattern(node)
+
+        elif node.type == "switch_expression":
+            return self._translate_switch_expression(node)
+
+        elif node.type == "conditional_access_expression":
+            # `q?.Length`, `q?[0]`: the member / element of q (or null)
+            base = self._translate_expression(node.child_by_field_name("condition"))
+            binding = next((c for c in node.named_children
+                            if c.type in ("member_binding_expression", "element_binding_expression")), None)
+            if binding is not None and binding.type == "member_binding_expression":
+                name = binding.child_by_field_name("name")
+                return ExpFieldAccess(base, self._get_text(name) if name is not None else "")
+            if binding is not None:
+                return ExpIndex(base, ExpConst.integer(0))
+            return base
+
+        elif node.type == "implicit_object_creation_expression":
+            # `new(sql, conn)` with no target type in sight (an argument): a value built from its
+            # arguments and its collection elements
+            return ExpCall(ExpConst.string("new"), [self._translate_expression(a) for a in self._get_method_args(node)]
+                           + self._collection_elements(node))
+
+        elif node.type in self._ARRAY_VALUES:
+            # `new[] { q }`, `new string[] { q }`, `{ q }`, `[q, "x"]`: an array holding its elements
+            return ExpCall(ExpConst.string("new[]"), self._array_elements(node))
+
+        elif node.type == "anonymous_object_creation_expression":
+            # `new { Name = q }`: an object made of its members' values
+            return ExpCall(ExpConst.string("new <anonymous>"),
+                           [self._translate_expression(v) for v in self._anonymous_member_values(node)])
+
+        elif node.type == "tuple_expression":
+            # `(q, 200)`: a value made of its elements (a deconstruction reads them one by one)
+            return ExpCall(ExpConst.string("<tuple>"),
+                           [self._translate_expression(a) for a in node.named_children if a.type != "comment"])
+
+        elif node.type == "assignment_expression":
+            # `x = y = q`, `while ((line = r.ReadLine()) != null)`: the assignment happens, and its value
+            # is what the target now holds
+            if self._quiet == 0 and self._current_proc is not None:
+                self._translate_assignment(node)
+            return self._translate_expression(node.child_by_field_name("left"))
+
+        elif node.type == "declaration_expression":       # `out var x`: the variable declared
+            nm = node.child_by_field_name("name")
+            return ExpVar(PVar(self._get_text(nm))) if nm is not None and nm.type == "identifier" else ExpConst.null()
+
+        elif node.type in ("default_expression", "throw_expression", "sizeof_expression", "range_expression"):
+            return ExpConst.null()                  # no value (`?? throw ...`), or a number of no one's choosing
+
+        elif node.type in ("checked_expression", "ref_expression"):
+            inner = next((c for c in node.named_children if c.type != "comment"), None)
+            return self._translate_expression(inner)
+
+        elif node.type == "with_expression":
+            # `r with { X = q }`: a copy of r with the members the initializer sets
+            parts = [c for c in node.named_children if c.type != "comment"]
+            values = [self._translate_expression(parts[0])] if parts else []
+            for w in parts[1:]:
+                kids = [c for c in w.named_children if c.type != "comment"]
+                if kids:
+                    values.append(self._translate_expression(kids[-1]))
+            return ExpCall(ExpConst.string("with"), values)
+
+        elif node.type == "query_expression":
+            # `from s in list where ... select s.Trim()`: elements drawn from what it ranges over
+            sources = []
+            for clause in node.named_children:
+                if clause.type in ("from_clause", "join_clause"):
+                    name = clause.child_by_field_name("name")
+                    src = next((c for c in reversed(clause.named_children)
+                                if name is None or c.id != name.id), None)
+                    if src is not None:
+                        sources.append(self._translate_expression(src))
+            return ExpCall(ExpConst.string("<query>"), sources)
+
+        # Default: lowered as a variable named by the source text, so whatever data the node carried is
+        # lost. Each such node type is recorded (`Program.unlowered_syntax`), held to an allowlist of
+        # data-free node types by tests/test_lowering_coverage_csharp.py.
+        self._record_unlowered(node.type)
         text = self._get_text(node)
         if text:
             return ExpVar(PVar(text))
         return ExpConst.null()
+
+    # receivers that are names (a call on one is named after it: `string.Join`, `_db.Users.Find`)
+    _NAME_RECEIVERS = ("identifier", "generic_name", "predefined_type", "qualified_name", "alias_qualified_name",
+                       "this", "this_expression", "base")
+    _LITERALS = ("string_literal", "verbatim_string_literal", "raw_string_literal", "character_literal",
+                 "integer_literal", "real_literal", "boolean_literal", "null_literal")
+
+    # receivers that are values, never names: a call made on one is read through the value
+    _VALUE_RECEIVERS = ("binary_expression", "parenthesized_expression", "element_access_expression",
+                        "cast_expression", "postfix_unary_expression", "conditional_expression",
+                        "as_expression", "await_expression", "switch_expression", "query_expression",
+                        "interpolated_string_expression", "tuple_expression")
+
+    # `new[] { q }`, `new string[] { q }`, `stackalloc`, a bare `{ q }` initializer, `[q, "x"]`
+    _ARRAY_VALUES = ("array_creation_expression", "implicit_array_creation_expression",
+                     "stackalloc_array_creation_expression", "implicit_stackalloc_expression",
+                     "initializer_expression", "element_binding_expression", "collection_expression")
+
+    def _array_elements(self, node: TSNode) -> List[Exp]:
+        """The elements of an array value, nested initializers (`{ {a, b}, {c} }`) flattened."""
+        out: List[Exp] = []
+        for c in node.named_children:
+            if c.type in ("initializer_expression", "element_binding_expression"):
+                out.extend(self._array_elements(c))
+            elif c.type in ("array_type", "array_rank_specifier", "comment") or c.type.endswith("_type"):
+                continue
+            elif c.type == "argument":
+                out.append(self._translate_expression(self._argument_value(c)))
+            else:
+                out.append(self._translate_expression(c))
+        return out
+
+    def _initializer_of(self, creation: TSNode) -> Optional[TSNode]:
+        init = creation.child_by_field_name("initializer")
+        if init is None:
+            init = next((c for c in creation.children if c.type == "initializer_expression"), None)
+        return init
+
+    def _collection_elements(self, creation: TSNode) -> List[Exp]:
+        """The values a collection initializer adds (`new List<string> { q }`, `{ {"k", q} }`,
+        `{ ["k"] = q }`); an object initializer's member assignments (`{ Name = q }`) are not elements."""
+        init = self._initializer_of(creation)
+        out: List[Exp] = []
+        for c in (init.named_children if init is not None else ()):
+            if c.type == "assignment_expression":
+                left = c.child_by_field_name("left")
+                if left is not None and left.type == "element_binding_expression":
+                    out.append(self._translate_expression(c.child_by_field_name("right")))
+            elif c.type == "initializer_expression":
+                out.extend(self._array_elements(c))
+            elif c.type != "comment":
+                out.append(self._translate_expression(c))
+        return out
+
+    @staticmethod
+    def _anonymous_member_values(node: TSNode) -> List[TSNode]:
+        """`new { Name = q, x.Id }`: the member values (a name before `=` is not one)."""
+        kids = node.children
+        out = []
+        for i, c in enumerate(kids):
+            if not c.is_named or c.type == "comment":
+                continue
+            if i + 1 < len(kids) and kids[i + 1].type == "=":
+                continue
+            out.append(c)
+        return out
+
+    # -- patterns ------------------------------------------------------------------
+    #
+    # `o is string s`, `case Box { Val: var v }:`, `x switch { string s => s, ... }`: a pattern tests a
+    # value and may declare variables holding it. C#'s definite assignment lets code read those only
+    # where the match succeeded, so binding them where the test is evaluated gives every read the
+    # compiler permits its value.
+
+    def _translate_is_pattern(self, node: TSNode) -> Exp:
+        loc = self._get_location(node)
+        subject = self._translate_expression(node.child_by_field_name("expression"))
+        pattern = node.child_by_field_name("pattern")
+        held = subject
+        if isinstance(subject, ExpCall) and self._pattern_declares(pattern):
+            tmp = f"$is{self._ident_counter}"          # `Find(q) is string s`: the call's value, once
+            self._ident_counter += 1
+            self._emit(Assign(loc=loc, id=PVar(tmp), exp=subject))
+            held = ExpVar(PVar(tmp))
+        self._bind_pattern(pattern, held, loc)
+        return self._pattern_test(pattern, subject)
+
+    _DECLARING_PATTERNS = ("declaration_pattern", "var_pattern", "recursive_pattern")
+
+    def _pattern_declares(self, pattern: Optional[TSNode]) -> bool:
+        return pattern is not None and any(
+            n.type in self._DECLARING_PATTERNS for n in [pattern, *self._descendants_of(pattern)])
+
+    def _bind_pattern(self, pattern: Optional[TSNode], subject: Exp, loc: Location) -> None:
+        """Bind the variables `pattern` declares to the value it matches (a property subpattern's to
+        that member). A variable of a number or other value type cannot hold text, so it holds
+        nothing a sink could care about."""
+        if pattern is None:
+            return
+        t = pattern.type
+        if t in self._DECLARING_PATTERNS:
+            typ = pattern.child_by_field_name("type")
+            value = ExpConst.null() if self._type_text(typ) in self._NON_INJECTABLE_TYPES else subject
+            self._bind_designation(pattern.child_by_field_name("name")
+                                   or pattern.child_by_field_name("designation"), value, loc)
+        if t == "recursive_pattern":
+            for clause in pattern.named_children:
+                if clause.type == "property_pattern_clause":
+                    for sub in clause.named_children:
+                        kids = [c for c in sub.named_children if c.type != "comment"]
+                        if len(kids) >= 2:              # `Val: var v`: v is subject.Val
+                            member = subject
+                            for part in self._get_text(kids[0]).split("."):
+                                member = ExpFieldAccess(member, part.strip())
+                            self._bind_pattern(kids[-1], member, loc)
+                        elif kids:
+                            self._bind_pattern(kids[0], subject, loc)
+                elif clause.type == "positional_pattern_clause":
+                    for sub in clause.named_children:   # `(var a, var b)`: each an element of subject
+                        kids = [c for c in sub.named_children if c.type != "comment"] if sub.type == "subpattern" else [sub]
+                        if kids:
+                            self._bind_pattern(kids[-1], subject, loc)
+        elif t in ("negated_pattern", "parenthesized_pattern", "and_pattern", "or_pattern",
+                   "list_pattern", "slice_pattern", "subpattern"):
+            for c in pattern.named_children:
+                self._bind_pattern(c, subject, loc)
+
+    def _bind_designation(self, designation: Optional[TSNode], value: Exp, loc: Location) -> None:
+        if designation is None:
+            return
+        if designation.type == "identifier":
+            self._emit(Assign(loc=loc, id=PVar(self._get_text(designation)), exp=value))
+        elif designation.type in ("parenthesized_variable_designation", "tuple_pattern"):
+            for c in designation.named_children:
+                self._bind_designation(c, value, loc)
+
+    def _pattern_test(self, pattern: Optional[TSNode], subject: Exp) -> Exp:
+        """What `subject is <pattern>` tests, as a condition: constant patterns as equality (`x is null`),
+        `not` / `and` / `or` as their connectives, relational patterns as comparisons; a type test
+        or any other pattern is an opaque atom, which proves nothing about the value."""
+        if pattern is None:
+            return ExpBinOp("is", subject, ExpConst.string(""))
+        t = pattern.type
+        kids = [c for c in pattern.named_children if c.type != "comment"]
+        if t == "constant_pattern" and kids:
+            return ExpBinOp("==", subject, self._translate_expression(kids[0]))
+        if t in ("negated_pattern", "parenthesized_pattern") and kids:
+            inner = self._pattern_test(kids[0], subject)
+            return ExpUnOp("!", inner) if t == "negated_pattern" else inner
+        if t in ("and_pattern", "or_pattern"):
+            left, right = pattern.child_by_field_name("left"), pattern.child_by_field_name("right")
+            if left is not None and right is not None:
+                return ExpBinOp("&&" if t == "and_pattern" else "||",
+                                self._pattern_test(left, subject), self._pattern_test(right, subject))
+        if t == "relational_pattern" and kids:
+            op = next((c.type for c in pattern.children if not c.is_named), None)
+            if op in ("<", "<=", ">", ">="):
+                return ExpBinOp(op, subject, self._translate_expression(kids[0]))
+        return ExpBinOp("is", subject, ExpConst.string(self._get_text(pattern)))
+
+    def _translate_switch_expression(self, node: TSNode) -> Exp:
+        """`x switch { 0 => "none", string s => s, _ => q }`: any arm can be the value, so the result
+        carries the taint of every arm (as `c ? a : b` does); the arms' pattern variables hold x."""
+        named = [c for c in node.named_children if c.type != "comment"]
+        if not named:
+            return ExpConst.null()
+        subject = self._translate_expression(named[0])
+        values: List[Exp] = []
+        for arm in named[1:]:
+            if arm.type != "switch_expression_arm":
+                continue
+            loc = self._get_location(arm)
+            parts = [c for c in arm.named_children if c.type not in ("when_clause", "comment")]
+            if len(parts) < 2:
+                continue
+            self._bind_pattern(parts[0], subject, loc)
+            when = next((c for c in arm.named_children if c.type == "when_clause"), None)
+            cond = next((c for c in when.named_children), None) if when is not None else None
+            if cond is not None:
+                self._translate_expression(cond)        # its own pattern bindings
+            if parts[-1].type != "throw_expression":
+                values.append(self._translate_expression(parts[-1]))
+        if not values:
+            return ExpConst.null()
+        result = values[-1]
+        for v in reversed(values[:-1]):
+            result = ExpBinOp("?:", v, result)
+        return result
 
     # =========================================================================
     # Helpers
@@ -2442,6 +3393,7 @@ class CSharpFrontend:
         `Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl`)."""
         from frame.sil.value_origins import typed_names
         proc, program = proc or self._current_proc, getattr(self, "_program", None)
+        func = self._unqualified(func)
         if proc is None or program is None or "." not in func:
             return []
         head, rest = func.split(".", 1)
@@ -2510,7 +3462,7 @@ class CSharpFrontend:
     def _get_method_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
         if func:
-            name = self._strip_generics(self._get_text(func))
+            name = self._strip_generics(self._callee_text(func))
             spec = self._lookup_spec(name) if self._current_proc is not None else self.specs.get(name)
             pos = getattr(spec, "content_type_arg", None)
             if pos is not None:
@@ -2544,9 +3496,9 @@ class CSharpFrontend:
         """Names of C# named arguments (`f(a: x)`), parallel to `_get_method_args`;
         None when no argument is named."""
         out: List[Optional[str]] = []
-        args_node = node.child_by_field_name("arguments")
+        args_node = self._arguments_node(node)
         for child in (args_node.children if args_node else []):
-            if child.type in ("(", ")", ",", "argument_list"):
+            if child.type in ("(", ")", ",", "argument_list", "comment"):
                 continue
             if child.type == "argument":
                 colon = next((c for c in child.children if c.type == ":"), None)
@@ -2560,15 +3512,23 @@ class CSharpFrontend:
                 out.append(None)
         return out if any(n is not None for n in out) else None
 
+    @staticmethod
+    def _arguments_node(node: TSNode) -> Optional[TSNode]:
+        """The argument list of a call or creation (a target-typed `new(...)` has no field for it)."""
+        args = node.child_by_field_name("arguments")
+        if args is None and node.type == "implicit_object_creation_expression":
+            args = next((c for c in node.children if c.type == "argument_list"), None)
+        return args
+
     def _get_method_args(self, node: TSNode) -> List[TSNode]:
         args = []
-        args_node = node.child_by_field_name("arguments")
+        args_node = self._arguments_node(node)
         if args_node:
             for child in args_node.children:
-                if child.type not in ("(", ")", ",", "argument_list"):
+                if child.type not in ("(", ")", ",", "argument_list", "comment"):
                     if child.type == "argument":
                         for ac in child.children:
-                            if ac.type not in (":", "ref", "out", "in"):
+                            if ac.type not in (":", "ref", "out", "in", "comment"):
                                 args.append(ac)
                     else:
                         args.append(child)
