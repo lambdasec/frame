@@ -95,6 +95,9 @@ param_annotation = ["FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeade
                     "Microsoft.AspNetCore.Mvc.FromQuery*", "Microsoft.AspNetCore.Mvc.FromRoute*",
                     "Microsoft.AspNetCore.Mvc.FromBody*", "Microsoft.AspNetCore.Mvc.FromForm*",
                     "Microsoft.AspNetCore.Mvc.FromHeader*"]
+# model binding converts a number, Guid, date or boolean before the action runs: no text reaches it
+exclude_param_type = ["int", "long", "short", "byte", "bool", "double", "float", "decimal", "char", "Guid",
+                      "DateTime", "DateTimeOffset", "TimeSpan", "int?", "long?", "bool?", "Guid?", "DateTime?"]
 
 # Razor Pages: handler methods (OnGet, OnPostLogin, OnGetExport...) take route / query / form values as
 # parameters, and [BindProperty] / [From*] properties are filled from the request before the handler runs.

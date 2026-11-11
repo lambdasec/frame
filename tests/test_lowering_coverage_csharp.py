@@ -14,7 +14,6 @@ from frame.sil.frontends.csharp_frontend import CSharpFrontend
 
 # Node types that may reach the fallback: they carry no data a finding could depend on.
 CS_ALLOWED = {
-    "boolean_literal",      # `true` / `false` (deliberately not constants yet: see test_metamorphic_csharp)
     "comment",
 }
 
@@ -38,6 +37,8 @@ public class C {
         string a, b;
         a = b = q;
         var s1 = q + "x";
+        var flag = n > 0 || false;
+        if (flag == true) { while (true) { break; } }
         s1 += q;
         s1 ??= q;
         var s2 = q!;
@@ -121,5 +122,5 @@ def test_csharp_zoo_lowers_every_data_carrying_node():
 
 def test_the_fallback_is_recorded():
     # The tripwire itself: a construct the frontend does not lower must show up.
-    program = CSharpFrontend().translate("class C { void M(bool q) { var x = true; } }", "t.cs")
-    assert "boolean_literal" in (program.unlowered_syntax or {})
+    program = CSharpFrontend().translate("class C { void M(int q) { var x = __makeref(q); } }", "t.cs")
+    assert "makeref_expression" in (program.unlowered_syntax or {})

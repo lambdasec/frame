@@ -14,8 +14,9 @@ charset_functions = ["isalnum", "isalpha", "isdigit", "islower", "isupper", "isx
 # `x.<method>(PREFIX)`: x starts with PREFIX (JS/Java startsWith, Python startswith, C# StartsWith).
 prefix_methods = ["startsWith", "startswith", "StartsWith"]
 
-# `COLLECTION.<method>(x)`: x is an element (JS Array includes, Java Collection contains, C# Contains).
-membership_methods = ["includes", "contains", "Contains"]
+# `COLLECTION.<method>(x)`: x is an element (JS Array includes, Java Collection contains, C# Contains,
+# a dictionary's ContainsKey).
+membership_methods = ["includes", "contains", "Contains", "ContainsKey"]
 
 # `COLLECTION.<method>(x)`: x's position, -1 when absent (JS Array / String indexOf, lastIndexOf).
 position_methods = ["indexOf", "lastIndexOf"]
@@ -34,7 +35,7 @@ literal_collection_factories = ["of", "asList", "copyOf"]
 # Calls returning a parsed URL whose `host_fields` are its host (urllib.parse urlparse/urlsplit,
 # WHATWG URL, java.net.URL, System.Uri). Also matched by the last part of a dotted callee.
 url_parsers = ["urlparse", "urlsplit", "new URL", "URL", "Uri", "new Uri", "new java.net.URL", "new URL.parse",
-               "new URI", "new java.net.URI"]
+               "new URI", "new java.net.URI", "Uri.TryCreate"]
 host_fields = ["hostname", "netloc", "host", "Host"]
 # Getters returning a parsed URL's host (java.net.URL / URI getHost).
 host_getters = ["getHost"]

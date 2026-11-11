@@ -12,6 +12,19 @@ dangerous_values = ["HashAlgorithmName.MD5", "HashAlgorithmName.SHA1", "CipherMo
 # (the source rows are written against the conventional property name).
 request_types = ["HttpRequest", "HttpRequestBase", "HttpRequestMessage"]
 
+# Methods that hand out an element of their receiver through an `out` argument (a dictionary's
+# TryGetValue, IHeaderDictionary / IQueryCollection / IFormCollection.TryGetValue, a concurrent
+# collection's TryDequeue): the out variable holds what the receiver holds, never the key.
+out_from_receiver = ["TryGetValue", "TryPeek", "TryDequeue", "TryPop", "TryTake", "TryRemove"]
+
+# Members of a collection that read it without changing it (`TABLE.ContainsKey(k)`): a table of
+# literals used only through them, element reads and `foreach` stays a table of constants.
+read_only_collection_methods = ["Contains", "ContainsKey", "ContainsValue", "TryGetValue", "GetValueOrDefault",
+                                "IndexOf", "LastIndexOf", "Count", "Length", "Keys", "Values", "First",
+                                "FirstOrDefault", "Last", "LastOrDefault", "Single", "SingleOrDefault",
+                                "Any", "All", "ElementAt", "ElementAtOrDefault", "Where", "Select", "ToList",
+                                "ToArray", "ToString", "Equals", "GetHashCode", "GetEnumerator"]
+
 # Documented supertypes (simple names): a call on a value of the type is also looked up under each
 # supertype's rows, so a row is written once on the type that declares the member. ADO.NET providers'
 # commands derive from System.Data.Common.DbCommand (which implements IDbCommand); XmlDocument and
@@ -34,6 +47,14 @@ Controller = ["ControllerBase"]
 CSharpCodeProvider = ["CodeDomProvider"]
 VBCodeProvider = ["CodeDomProvider"]
 JsonTextWriter = ["JsonWriter"]
+MemoryStream = ["Stream"]
+FileStream = ["Stream"]
+BufferedStream = ["Stream"]
+NetworkStream = ["Stream"]
+GZipStream = ["Stream"]
+DeflateStream = ["Stream"]
+CryptoStream = ["Stream"]
+UnmanagedMemoryStream = ["Stream"]
 
 # Extension methods by the namespace that brings them into scope and the static class that declares
 # them: C# binds `x.FromSqlRaw(sql)` to the extension method of that name the file's usings make
@@ -57,6 +78,41 @@ Select = "Enumerable"
 FirstOrDefault = "Enumerable"
 SingleOrDefault = "Enumerable"
 ToList = "Enumerable"
+
+# Collection methods that store their arguments in the receiver (System.Collections.Generic and the
+# concurrent collections): after `list.Add(q)` the collection holds q. By the receiver's declared type
+# (simple name, with its [supertypes]) and method, the argument positions stored.
+[stores_arguments]
+List = { Add = [0], AddRange = [0], Insert = [1], InsertRange = [1] }
+IList = { Add = [0], Insert = [1] }
+ICollection = { Add = [0] }
+HashSet = { Add = [0], UnionWith = [0] }
+ISet = { Add = [0], UnionWith = [0] }
+SortedSet = { Add = [0], UnionWith = [0] }
+LinkedList = { AddFirst = [0], AddLast = [0], AddBefore = [1], AddAfter = [1] }
+Queue = { Enqueue = [0] }
+Stack = { Push = [0] }
+Dictionary = { Add = [0, 1], TryAdd = [0, 1] }
+IDictionary = { Add = [0, 1] }
+SortedDictionary = { Add = [0, 1] }
+SortedList = { Add = [0, 1] }
+ConcurrentDictionary = { TryAdd = [0, 1], AddOrUpdate = [0, 1, 2], GetOrAdd = [0, 1] }
+ConcurrentQueue = { Enqueue = [0] }
+ConcurrentStack = { Push = [0], PushRange = [0] }
+ConcurrentBag = { Add = [0] }
+BlockingCollection = { Add = [0], TryAdd = [0] }
+NameValueCollection = { Add = [0, 1], Set = [0, 1] }
+ArrayList = { Add = [0], AddRange = [0], Insert = [1] }
+Hashtable = { Add = [0, 1] }
+
+# Constructors with an overload that reads a stream: given a value of one of `types` at `arg` (what
+# `Request.Body` or `IFormFile.OpenReadStream()` is), the row's path sink does not apply (a Stream
+# names no file). Simple type names, compared with their [supertypes].
+[stream_overloads]
+StreamReader = { arg = 0, types = ["Stream"] }
+StreamWriter = { arg = 0, types = ["Stream"] }
+BinaryReader = { arg = 0, types = ["Stream"] }
+BinaryWriter = { arg = 0, types = ["Stream"] }
 
 # Members that install a TLS server-certificate validation callback (ServicePointManager,
 # HttpClientHandler, HttpWebRequest), and the built-in validator that accepts every certificate.

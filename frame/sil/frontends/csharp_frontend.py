@@ -27,10 +27,11 @@ except ImportError:
 from frame.sil.specs.dotnet_api import load as _dotnet
 from frame.sil.packs import annotation_marks_entry as _glob_any, default_packs
 from frame.sil.specs.parser_hardening import load as _parser_hardening
+from frame.sil.specs.guards import load as _guards
 from frame.sil.types import (
     Ident, PVar, Typ, TypeKind, Location,
     Exp, ExpVar, ExpConst, ExpBinOp, ExpUnOp,
-    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall,
+    ExpFieldAccess, ExpIndex, ExpStringConcat, ExpCall, LITERAL_COLLECTION,
     var, const
 )
 from frame.sil.instructions import (
@@ -112,9 +113,14 @@ class CSharpFrontend:
         self._xml_flags: Dict[str, set] = {}
         # node types lowered as their source text (`Program.unlowered_syntax`)
         self._unlowered: Dict[str, int] = {}
+        self._tables: set = set()           # this file's constant tables (`_constant_tables`)
+        self._extensions: Dict[str, List[Tuple[str, int]]] = {}  # method -> (static class, arity)
+        self._tuple_vars: Dict[str, Dict[str, TSNode]] = {}     # the method's tuple locals by element
         # > 0 while an expression is read without running it (a lambda's body, seen from its owner)
         self._quiet = 0
         self._return_type: Optional[str] = None     # the declared return type of the method
+        # (break target, continue target) of the enclosing loops and switches, innermost last
+        self._jumps: List[Tuple[Optional[Node], Optional[Node]]] = []
 
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """Translate C# source code to SIL Program."""
@@ -146,13 +152,124 @@ class CSharpFrontend:
         self._hoisted = {}
         self._scopes: List[Tuple[int, int, Procedure]] = []    # (start, end, procedure): registrations' scope
 
+        self._tables = self._constant_tables(tree.root_node)
+        self._extensions = self._extension_methods(tree.root_node)
         self._translate_compilation_unit(tree.root_node, program)
         self._record_method_group_registrations(tree.root_node, program)
         self._annotate_calls(program)
         program.import_wildcards = list(self._imports.wildcards)
         program.unlowered_syntax = dict(self._unlowered)
         finish_program(program, self.packs, source_code)
+        program.constant_tables = set(program.constant_tables) | self._tables
         return program
+
+    _LITERAL_TYPES = ("string_literal", "verbatim_string_literal", "raw_string_literal", "character_literal",
+                      "integer_literal", "real_literal", "boolean_literal", "null_literal")
+
+    def _literal_collection(self, node: Optional[TSNode]) -> bool:
+        """`new[] { "a", "b" }`, `{ "a" }`, `new List<string> { "a" }`, `new Dictionary<string, string>
+        { ["k"] = "v" }` / `{ { "k", "v" } }`, `["a", "b"]`: a collection written out of literals (a
+        constructor given arguments is not: `new List<string>(other)`)."""
+        node = self._unwrap_value(node)
+        if node is None:
+            return False
+        if node.type in self._CREATIONS:
+            args = self._arguments_node(node)
+            if args is not None and any(c.type == "argument" for c in args.children):
+                return False
+            init = self._initializer_of(node)
+            return init is not None and self._literal_elements(init)
+        if node.type in ("array_creation_expression", "implicit_array_creation_expression", "initializer_expression",
+                         "collection_expression"):
+            init = node if node.type in ("initializer_expression", "collection_expression") \
+                else self._initializer_of(node)
+            return init is not None and self._literal_elements(init)
+        return False
+
+    def _literal_elements(self, init: TSNode) -> bool:
+        for c in init.named_children:
+            if c.type == "comment" or c.type.endswith("_type") or c.type == "array_rank_specifier":
+                continue
+            if c.type in ("initializer_expression", "collection_expression"):
+                if not self._literal_elements(c):
+                    return False
+            elif c.type == "assignment_expression":           # `["k"] = "v"`
+                left, right = c.child_by_field_name("left"), c.child_by_field_name("right")
+                keys = [self._unwrap_value(self._argument_value(a)) for a in self._descendants_of(left)
+                        if a.type == "argument"] if left is not None else []
+                if left is None or left.type != "element_binding_expression" or right is None or not keys \
+                        or (self._unwrap_value(right) or right).type not in self._LITERAL_TYPES \
+                        or not all(k is not None and k.type in self._LITERAL_TYPES for k in keys):
+                    return False
+            elif c.type == "expression_element":              # `[a, b]`
+                if not all(x.type in self._LITERAL_TYPES for x in c.named_children if x.type != "comment"):
+                    return False
+            elif self._unwrap_value(c).type not in self._LITERAL_TYPES:
+                return False
+        return True
+
+    def _constant_tables(self, root: TSNode) -> set:
+        """C# constant tables (`Program.constant_tables`): a name declared once in the file, initialised
+        with a collection of literals, and never written, rebound, passed to a call or used with a
+        method other than a reading one (`read_only_collection_methods`). `TABLE[key]` is then one of
+        its literals, whatever the key."""
+        declared: Dict[str, int] = {}
+        literal: set = set()
+        spoiled: set = set()
+        reading = _dotnet().read_only_collection_methods
+
+        def root_name(n: Optional[TSNode]) -> Optional[str]:
+            while n is not None:
+                n = self._unwrap_value(n)
+                if n is None:
+                    return None
+                if n.type == "identifier":
+                    return self._get_text(n)
+                if n.type == "member_access_expression":
+                    e = n.child_by_field_name("expression")
+                    if e is not None and e.type in self._THIS:
+                        n = n.child_by_field_name("name")
+                        continue
+                    n = e
+                elif n.type == "element_access_expression":
+                    n = n.child_by_field_name("expression")
+                else:
+                    return None
+            return None
+
+        for n in [root, *self._descendants_of(root)]:
+            t = n.type
+            if t == "variable_declarator":
+                nm = n.child_by_field_name("name") or next((c for c in n.children if c.type == "identifier"), None)
+                if nm is not None:
+                    name = self._get_text(nm)
+                    declared[name] = declared.get(name, 0) + 1
+                    if self._literal_collection(self._declarator_value(n)):
+                        literal.add(name)
+            elif t in ("parameter", "declaration_expression", "foreach_statement", "catch_declaration"):
+                nm = n.child_by_field_name("name") or n.child_by_field_name("left")
+                if nm is not None and nm.type == "identifier":
+                    declared[self._get_text(nm)] = declared.get(self._get_text(nm), 0) + 2
+            elif t == "assignment_expression":
+                name = root_name(n.child_by_field_name("left"))
+                if name:
+                    spoiled.add(name)
+            elif t in ("postfix_unary_expression", "prefix_unary_expression"):
+                name = root_name(next((c for c in n.named_children), None))
+                if name and any(c.type in ("++", "--", "&") for c in n.children):
+                    spoiled.add(name)
+            elif t == "argument":
+                name = root_name(self._argument_value(n))
+                value = self._unwrap_value(self._argument_value(n))
+                if name and value is not None and value.type in ("identifier", "member_access_expression"):
+                    spoiled.add(name)                      # handed to a call (which may change it)
+            elif t == "invocation_expression":
+                parts = self._member_parts(n.child_by_field_name("function"))
+                if parts is not None:
+                    name = root_name(parts[0])
+                    if name and self._strip_generics(self._get_text(parts[1])) not in reading:
+                        spoiled.add(name)
+        return {name for name in literal if declared.get(name) == 1 and name not in spoiled}
 
     # -- canonical ids and declaration facts ---------------------------------
 
@@ -162,7 +279,7 @@ class CSharpFrontend:
         types: Dict[str, str] = {}
 
         def walk(node: TSNode, namespace: str) -> None:
-            for child in node.children:
+            for child in self._declarations(node):
                 if child.type == "using_directive":
                     names = [c for c in child.named_children
                              if c.type in ("identifier", "qualified_name")]
@@ -384,6 +501,8 @@ class CSharpFrontend:
                     if not isinstance(instr, Call) or instr.canonical is not None:
                         continue
                     func = str(getattr(instr.func, "value", instr.func))
+                    if func.endswith(self._STREAM_OVERLOAD_SUFFIX):
+                        continue                                  # not the overload the type's id names
                     built = re.match(r"new ([A-Za-z_][\w.]*)\s*\([^()]*\)\.(.+)$", func)
                     if built:                                     # `new CorsPolicyBuilder().AllowAnyOrigin()`
                         q = qualify_type("csharp", built.group(1), self._imports, self._local_types)
@@ -440,12 +559,31 @@ class CSharpFrontend:
     def _library_base(self, program: Program, type_name: str, member: str) -> Optional[str]:
         return library_base(program, type_name, member, self._imports, self._local_types)
 
+    _PREPROC_ARMS = ("preproc_if", "preproc_ifdef", "preproc_elif", "preproc_else")
+
+    def _declarations(self, node: TSNode) -> List[TSNode]:
+        """The children of a declaration list (a class body, a namespace, the file), with the members of
+        every `#if` / `#elif` / `#else` arm among them: which arm is compiled depends on the build, so
+        each arm's members are declared (they used to be dropped)."""
+        out: List[TSNode] = []
+        for child in node.children:
+            out.extend(self._arm_members(child) if child.type in self._PREPROC_ARMS else [child])
+        return out
+
+    def _arm_members(self, arm: TSNode) -> List[TSNode]:
+        out: List[TSNode] = []
+        for i, c in enumerate(arm.children):
+            if arm.field_name_for_child(i) == "condition" or not c.is_named:
+                continue
+            out.extend(self._arm_members(c) if c.type in self._PREPROC_ARMS else [c])
+        return out
+
     def _translate_compilation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C# compilation unit"""
         top_level = [c for c in root.children if c.type == "global_statement"]
         if top_level:
             self._translate_top_level(top_level, program)
-        for child in root.children:
+        for child in self._declarations(root):
             if child.type == "namespace_declaration":
                 self._translate_namespace(child, program)
             elif child.type == "class_declaration":
@@ -467,7 +605,7 @@ class CSharpFrontend:
 
         body = node.child_by_field_name("body")
         if body:
-            for child in body.children:
+            for child in self._declarations(body):
                 if child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                     self._translate_class(child, program)
                 elif child.type == "namespace_declaration":
@@ -480,7 +618,7 @@ class CSharpFrontend:
         name_node = node.child_by_field_name("name")
         self._current_namespace = self._get_text(name_node) if name_node else ""
 
-        for child in node.children:
+        for child in self._declarations(node):
             if child.type in ("class_declaration", "struct_declaration", "record_declaration"):
                 self._translate_class(child, program)
 
@@ -505,7 +643,7 @@ class CSharpFrontend:
         primary_types = self._declared_types(primary) if primary is not None else {}
         if body:
             fields = dict(primary_types)
-            for member in body.children:
+            for member in self._declarations(body):
                 if member.type == "field_declaration":
                     fields.update(self._declared_types(member))
                 elif member.type == "property_declaration":    # `[Inject] NavigationManager Navigation { get; set; }`
@@ -520,10 +658,10 @@ class CSharpFrontend:
             self._class_fields_of[full_class_name] = fields
             program.declared_fields[full_class_name] = set(fields)
             self._declared_methods[full_class_name] = {
-                self._get_text(c.child_by_field_name("name")) for c in body.children
+                self._get_text(c.child_by_field_name("name")) for c in self._declarations(body)
                 if c.type == "method_declaration" and c.child_by_field_name("name") is not None}
             self._class_has_bases[full_class_name] = any(c.type == "base_list" for c in node.children)
-            for child in body.children:
+            for child in self._declarations(body):
                 if child.type == "method_declaration":
                     if child.child_by_field_name("body") is None:
                         # `abstract` / `extern` / interface member: no body, so no procedure. An empty
@@ -621,7 +759,7 @@ class CSharpFrontend:
         settable: List[str] = []
         if body is None:
             return names, annotations, settable
-        for member in body.children:
+        for member in self._declarations(body):
             if member.type not in ("property_declaration", "field_declaration"):
                 continue
             mods = {self._get_text(c) for c in member.children if c.type == "modifier"}
@@ -679,7 +817,7 @@ class CSharpFrontend:
                                       id=PVar(self._get_text(name_node)),
                                       exp=self._translate_expression(lit)))
 
-        for member in body.children:
+        for member in self._declarations(body):
             if member.type == "field_declaration":
                 for vd in member.children:
                     if vd.type != "variable_declaration":
@@ -743,6 +881,8 @@ class CSharpFrontend:
 
         self._current_proc = proc
         self._node_counter = 0
+        saved_tuples, self._tuple_vars = self._tuple_vars, self._tuple_variables(node)
+        saved_jumps, self._jumps = self._jumps, []
 
         # Create entry node
         entry = proc.new_node(NodeKind.ENTRY)
@@ -770,6 +910,12 @@ class CSharpFrontend:
         elif body:
             self._translate_block(body)
         self._return_type = saved_return
+        outs = self._out_parameters(node)
+        if outs:
+            self._out_returns(proc, outs)
+        elif body is not None and self._is_iterator(body) and self._current_node is not None:
+            # an iterator that runs to its end returns what it yielded
+            self._current_node.add_instr(Return(loc=proc.loc, value=ExpVar(PVar(self._YIELDED))))
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -780,6 +926,7 @@ class CSharpFrontend:
             proc.connect(self._current_node.id, exit_node.id)
 
         self._current_proc = None
+        self._tuple_vars, self._jumps = saved_tuples, saved_jumps
         return proc
 
     # -- lambdas and top-level statements --------------------------------------
@@ -1050,6 +1197,13 @@ class CSharpFrontend:
         inner = body
         if inner.type == "await_expression":
             inner = next((c for c in inner.children if c.type not in ("await",)), inner)
+        unwrapped = self._unwrap_value(inner)
+        if unwrapped is not None and unwrapped.type == "conditional_expression" and self._needs_branches(unwrapped):
+            tmp = f"$ret{self._ident_counter}"             # `=> all ? Redirect("/") : Redirect(q)`
+            self._ident_counter += 1
+            self._lower_conditional(tmp, unwrapped, loc, self._return_type)
+            self._add_instr(Return(loc=loc, value=ExpVar(PVar(tmp))))
+            return
         if inner.type == "invocation_expression":
             self._add_instrs(self._translate_invocation(inner))
         elif inner.type in self._CREATIONS:
@@ -1309,20 +1463,101 @@ class CSharpFrontend:
             self._translate_yield(node)
         elif node.type in ("preproc_if", "preproc_ifdef", "preproc_elif", "preproc_else"):
             self._translate_preproc(node)
-        elif node.type in ("local_function_statement", "empty_statement", "break_statement",
-                           "continue_statement", "goto_statement", "comment") or node.type.startswith("preproc_"):
+        elif node.type in ("break_statement", "continue_statement"):
+            self._translate_jump(node)
+        elif node.type in ("local_function_statement", "empty_statement", "goto_statement",
+                           "comment") or node.type.startswith("preproc_"):
             pass        # declarations and jumps (a local function's body is not run where it is declared)
         elif node.is_named:
             # a statement kind with no lowering of its own: what it holds still runs
             self._record_unlowered("statement:" + node.type)
             self._translate_expression_statement(node)
 
+    def _tuple_variables(self, root: TSNode) -> Dict[str, Dict[str, TSNode]]:
+        """Locals declared once from a written-out tuple and never written again (`var t = (a: "x",
+        b: q);`), with each element by name (`a`, and `Item1`...): a read of `t.a` is that element's,
+        not every element's."""
+        declared: Dict[str, int] = {}
+        tuples: Dict[str, Dict[str, TSNode]] = {}
+        written: set = set()
+        for n in [root, *self._descendants_of(root)]:
+            if n.type == "variable_declarator":
+                nm = n.child_by_field_name("name") or next((c for c in n.children if c.type == "identifier"), None)
+                if nm is None:
+                    continue
+                name = self._get_text(nm)
+                declared[name] = declared.get(name, 0) + 1
+                value = self._unwrap_value(self._declarator_value(n))
+                if value is not None and value.type == "tuple_expression":
+                    fields: Dict[str, TSNode] = {}
+                    elements = [c for c in value.named_children if c.type == "argument"]
+                    for i, arg in enumerate(elements):
+                        v = self._argument_value(arg)
+                        label = arg.child_by_field_name("name")
+                        if v is None:
+                            continue
+                        fields[f"Item{i + 1}"] = v
+                        if label is not None:
+                            fields[self._get_text(label)] = v
+                    tuples[name] = fields
+            elif n.type in ("parameter", "declaration_expression"):
+                nm = n.child_by_field_name("name")
+                if nm is not None:
+                    declared[self._get_text(nm)] = declared.get(self._get_text(nm), 0) + 1
+            elif n.type == "assignment_expression":
+                left = n.child_by_field_name("left")
+                for c in [left, *self._descendants_of(left)] if left is not None else ():
+                    if c.type == "identifier":
+                        written.add(self._get_text(c))
+            elif n.type == "argument" and any(c.type in ("out", "ref") for c in n.children):
+                v = self._argument_value(n)
+                if v is not None and v.type == "identifier":
+                    written.add(self._get_text(v))
+        return {k: v for k, v in tuples.items() if declared.get(k) == 1 and k not in written}
+
+    def _is_iterator(self, body: TSNode) -> bool:
+        """Does the body (not a lambda or local function inside it) `yield`?"""
+        stack = list(body.children)
+        while stack:
+            n = stack.pop()
+            if n.type == "yield_statement":
+                return True
+            if n.type in self._LAMBDA_TYPES or n.type == "local_function_statement":
+                continue
+            stack.extend(n.children)
+        return False
+
+    def _translate_jump(self, node: TSNode) -> None:
+        """`break` goes to the end of the innermost loop or switch, `continue` to the next iteration
+        of the innermost loop: an edge, after which nothing runs on this path. Both used to fall
+        through, so `while (true) { ...; break; }` lost everything after the loop (the exit prune of a
+        constant-true condition is infeasible) and a `break` inside an `if` ran the rest of the body."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        brk = node.type == "break_statement"
+        for break_to, continue_to in reversed(self._jumps):
+            target = break_to if brk else continue_to
+            if target is not None:
+                proc.connect(self._current_node.id, target.id)
+                self._current_node = None
+                return
+
+    _YIELDED = "$yielded"
+
     def _translate_yield(self, node: TSNode) -> None:
-        """`yield return e;` runs e's calls (the path goes on); `yield break;` ends the iterator."""
+        """`yield return e;` runs e's calls (the path goes on) and adds e to what the iterator returns
+        (`$yielded`, returned when it ends); `yield break;` ends the iterator."""
+        loc = self._get_location(node)
         if any(c.type == "break" for c in node.children):
-            self._add_instr(Return(loc=self._get_location(node), value=None))
+            self._add_instr(Return(loc=loc, value=ExpVar(PVar(self._YIELDED))))
             return
         value = next((c for c in node.named_children if c.type != "comment"), None)
+        if value is not None and self._current_proc is not None:
+            v = self._value_exp(value, loc)
+            self._add_instr(Assign(loc=loc, id=PVar(self._YIELDED),
+                                   exp=ExpBinOp("?:", ExpVar(PVar(self._YIELDED)), v)))
+            return
         inner = self._unwrap_value(value.named_children[0] if value is not None and value.type == "await_expression"
                                    and value.named_children else value)
         if inner is not None and inner.type == "invocation_expression":
@@ -1423,6 +1658,10 @@ class CSharpFrontend:
             var_name = self._get_text(name_node)
             if value_node is not None:
                 self._assign_value(var_name, value_node, loc, declared_type=declared)
+                for field, element in self._tuple_vars.get(var_name, {}).items():
+                    # `var t = (a: "x", b: q)`: t.a and t.Item1 hold "x" only
+                    self._add_instr(Assign(loc=loc, id=PVar(f"{var_name}.{field}"),
+                                           exp=self._translate_expression(element)))
             else:
                 self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null()))
 
@@ -1569,7 +1808,7 @@ class CSharpFrontend:
         if not left or not right:
             return
 
-        target = self._get_text(left)
+        target = self._path_name(left)
         loc = self._get_location(node)
         op_node = node.child_by_field_name("operator")
         op = self._get_text(op_node) if op_node is not None else "="
@@ -1617,10 +1856,69 @@ class CSharpFrontend:
             self._add_instrs(self._translate_object_creation(inner, target, loc, type_name=declared_type))
         elif inner.type == "await_expression" and self._source_in(inner) is None:
             self._translate_await_assignment(target, inner, loc)
+        elif inner.type == "conditional_expression" and self._needs_branches(inner):
+            self._lower_conditional(target, inner, loc, declared_type)
         else:
             exp = self._translate_expression(inner)
             self._add_instr(Assign(loc=loc, id=PVar(target), exp=exp))
             self._emit_member_source(inner, target, loc)
+
+    def _needs_branches(self, node: TSNode) -> bool:
+        """A `c ? a : b` whose arm runs a call or a creation (`all ? Redirect("/") : Redirect(q)`), or
+        ends the path (`ok ? q : throw new E()`): lowered as a branch, not as a value."""
+        for field_name in ("consequence", "alternative"):
+            arm = self._unwrap_value(node.child_by_field_name(field_name))
+            if arm is None:
+                continue
+            if arm.type == "throw_expression":
+                return True
+            stack = [arm]
+            while stack:
+                n = stack.pop()
+                if n.type in self._LAMBDA_TYPES:
+                    continue
+                if n.type in ("invocation_expression",) + self._CREATIONS:
+                    return True
+                stack.extend(n.children)
+        return False
+
+    def _lower_conditional(self, target: str, node: TSNode, loc: Location,
+                           declared_type: Optional[str] = None) -> None:
+        """`target = c ? a : b` as `if (c) target = a; else target = b;`: each arm's calls, sinks and
+        creations run on its own branch, guarded by the condition (`Regex.IsMatch(q, p) ? q : throw ...`
+        leaves only a checked q), and a `throw` arm ends its path."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        cond = self._branch_condition(self._translate_expression(node.child_by_field_name("condition")))
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        arms = []
+        for field_name in ("consequence", "alternative"):
+            arm_node = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm_node)
+            arms.append((arm_node, node.child_by_field_name(field_name)))
+        proc.add_node(join)
+        before.add_instr(Prune(loc=loc, condition=cond, is_true_branch=True))
+        proc.connect(before.id, arms[0][0].id)
+        before.add_instr(Prune(loc=loc, condition=cond, is_true_branch=False))
+        proc.connect(before.id, arms[1][0].id)
+        for arm_node, arm in arms:
+            self._current_node = arm_node
+            inner = self._unwrap_value(arm)
+            if inner is None:
+                self._add_instr(Assign(loc=loc, id=PVar(target), exp=ExpConst.null()))
+            elif inner.type == "throw_expression":
+                thrown = next((c for c in inner.named_children if c.type != "comment"), None)
+                if thrown is not None and thrown.type in self._CREATIONS:
+                    self._add_instrs(self._translate_object_creation(thrown, None, loc))
+                self._add_instr(Return(loc=loc, value=None))   # the path ends (an exception is no result)
+                continue
+            else:
+                self._assign_value(target, arm, loc, declared_type)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
 
     def _value_exp(self, value: TSNode, loc: Location) -> Exp:
         """The value of an expression as an operand: a call, creation, awaited call or property source
@@ -1663,7 +1961,7 @@ class CSharpFrontend:
             self._add_instr(Assign(loc=loc, id=PVar(container),
                                    exp=ExpBinOp("?:", ExpVar(PVar(container)), value)))
             return
-        self._add_instr(Assign(loc=loc, id=PVar(self._get_text(left)), exp=value))
+        self._add_instr(Assign(loc=loc, id=PVar(self._path_name(left)), exp=value))
 
     def _tuple_elements(self, node: TSNode) -> List[TSNode]:
         """The elements of `(a, b)` / `var (a, b)` / `(string a, var b)` / `(q, "x")`."""
@@ -1753,16 +2051,18 @@ class CSharpFrontend:
             self._add_instr(Call(loc=loc, ret=None,
                                  func=ExpConst.string("ServerCertificateValidationCallback"),
                                  args=[]))
+        member_type = None
         if prop is not None:
             recv_node = left.child_by_field_name("expression")
-            recv_chain = self._get_member_chain(recv_node)
-            recv_type = self._receiver_types().get(recv_chain, recv_chain)
+            recv_chain = self._unqualified(self._get_member_chain(recv_node))
+            declared = self._receiver_types()
+            # `p.StartInfo.Arguments = x`: the type of a member chain (`Process.StartInfo`)
+            member_type = declared.get(recv_chain) or self._member_type(recv_chain, declared)
+            recv_type = member_type or recv_chain
             self._add_instrs(self._config_flag_instrs(recv_type, self._get_text(prop), right, loc))
         sink_kind_str = None
         if prop is not None:                       # a property that is a sink on its declared type
-            recv = self._get_member_chain(left.child_by_field_name("expression"))
-            rtype = self._receiver_types().get(recv, "")
-            sink_kind_str = self._typed_prop_sink(rtype, self._get_text(prop))
+            sink_kind_str = self._typed_prop_sink(member_type or "", self._get_text(prop))
         if sink_kind_str and (value is not None or right.type not in ("invocation_expression",
                                                                        "object_creation_expression")):
             self._add_instr(TaintSink(
@@ -2031,6 +2331,187 @@ class CSharpFrontend:
         base = library_base(self._program, cls, method, self._imports, self._local_types)
         return base.rsplit(".", 1)[-1] if base else None
 
+    # -- `out` / `ref` arguments ------------------------------------------------------
+    #
+    # `d.TryGetValue(k, out var v)`, `Copy(q, out var v)`, `Pick(ref v)`: the call writes the
+    # variable. A method of the project returns what it leaves in its out/ref parameters (its
+    # returns are `<out>(value, b...)`, `_out_returns`), so its summary carries them; at the call
+    # the variable takes the call's result. A library method takes the result of its spec (a
+    # numeric TryParse sanitizes), or for a method handing out an element of its receiver
+    # (`out_from_receiver`: a dictionary's TryGetValue) what the receiver holds. `out _` discards.
+
+    def _table_membership(self, call: TSNode) -> Optional[Exp]:
+        """`ALLOWED.Contains(x)` on a constant table of this file (`_constant_tables`) is a membership
+        test of a constant collection, `x in <literal-collection>`, which the branch guards read."""
+        parts = self._member_parts(call.child_by_field_name("function"))
+        args = self._get_method_args(call)
+        if parts is None or len(args) != 1 or parts[0].type != "identifier" \
+                or self._get_text(parts[0]) not in self._tables \
+                or self._get_text(parts[1]) not in _guards().membership_methods:
+            return None
+        return ExpBinOp("in", self._translate_expression(args[0]),
+                        ExpCall(ExpConst.string(LITERAL_COLLECTION), []))
+
+    def _out_arguments(self, call: TSNode) -> List[TSNode]:
+        """The values passed by `out` / `ref` in a call's argument list."""
+        args = self._arguments_node(call)
+        out = []
+        for a in (args.children if args is not None else ()):
+            if a.type == "argument" and any(c.type in ("out", "ref") for c in a.children):
+                value = self._argument_value(a)
+                if value is not None:
+                    out.append(value)
+        return out
+
+    def _has_out_arguments(self, call: TSNode) -> bool:
+        return bool(self._out_arguments(call))
+
+    def _out_writes(self, call: TSNode, result: Exp, loc: Location) -> List[Instr]:
+        """What a call leaves in the variables passed to it by `out` / `ref`."""
+        targets = self._out_arguments(call)
+        if not targets:
+            return []
+        parts = self._member_parts(call.child_by_field_name("function"))
+        method = self._strip_generics(self._get_text(parts[1])) if parts is not None else ""
+        value = result
+        if parts is not None and method in _dotnet().out_from_receiver and not self._own_method_call(call):
+            value = self._translate_expression(parts[0])
+            spec = self._source_in(parts[0])
+            if spec is not None:                         # `Request.Headers.TryGetValue("X", out var v)`
+                tmp = f"$recv{self._ident_counter}"
+                self._ident_counter += 1
+                self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=value))
+                self._emit_member_source(parts[0], tmp, loc)
+                value = ExpVar(PVar(tmp))
+        instrs: List[Instr] = []
+        for target in targets:
+            typ = None
+            if target.type == "declaration_expression":
+                typ = self._type_text(target.child_by_field_name("type"))
+                target = target.child_by_field_name("name")
+            if target is None or (target.type == "identifier" and self._get_text(target) == "_"):
+                continue                                 # `out _`: a discard
+            if target.type == "identifier" and not typ:
+                typ = self._receiver_types().get(self._get_text(target))
+            held = ExpConst.null() if (typ or "") in self._NON_INJECTABLE_TYPES else value
+            container = self._element_container(target)
+            if container is not None:                    # `ref a[i]`: the array holds it as well
+                instrs.append(Assign(loc=loc, id=PVar(container),
+                                     exp=ExpBinOp("?:", ExpVar(PVar(container)), held)))
+            elif target.type in ("identifier", "member_access_expression"):
+                instrs.append(Assign(loc=loc, id=PVar(self._path_name(target)), exp=held))
+        return instrs
+
+    def _own_field(self, name: str) -> bool:
+        """`name` is a field of the class being translated that no parameter or local hides."""
+        proc = self._current_proc
+        if proc is None or name not in self._class_fields_of.get(self._current_class or proc.class_name or "", {}):
+            return False
+        return name not in self._proc_types.get(id(proc), {}) and all(p.name != name for p, _ in proc.params)
+
+    def _path_name(self, node: TSNode) -> str:
+        """The name a target or a member path is tracked under: `this._x` (`this._x.Y`) is the field
+        `_x` (`_x.Y`), the name a bare `_x` reads, unless a parameter or local hides the field. The two
+        spellings used to be two variables, so `this._x = q` was not what `_x` read."""
+        text = self._get_text(node)
+        if text.startswith("this."):
+            field = text[5:].split(".", 1)[0]
+            if field.isidentifier() and self._own_field(field):
+                return text[5:]
+        return text
+
+    def _out_parameters(self, node: TSNode) -> List[str]:
+        params = node.child_by_field_name("parameters")
+        out = []
+        for p in (params.children if params is not None else ()):
+            if p.type == "parameter" and any(c.type == "modifier" and self._get_text(c) in ("out", "ref")
+                                             for c in p.children):
+                nm = p.child_by_field_name("name")
+                if nm is not None:
+                    out.append(self._get_text(nm))
+        return out
+
+    def _out_returns(self, proc: Procedure, outs: List[str]) -> None:
+        """A method with out / ref parameters returns them with its value (`<out>(value, b)`), on
+        every return and when it falls off its end, so its summary says what they carry."""
+        from dataclasses import replace
+        held = [ExpVar(PVar(o)) for o in outs]
+        for n in proc.nodes.values():
+            n.instrs = [replace(i, value=ExpCall(ExpConst.string("<out>"), ([i.value] if i.value else []) + held))
+                        if isinstance(i, Return) else i for i in n.instrs]
+        if self._current_node is not None and not any(isinstance(i, Return) for i in self._current_node.instrs):
+            self._current_node.add_instr(Return(loc=proc.loc, value=ExpCall(ExpConst.string("<out>"), list(held))))
+
+    def _extension_methods(self, root: TSNode) -> Dict[str, List[Tuple[str, int]]]:
+        """This file's extension methods (`static string Shell(this string s)` in a static class):
+        method name -> [(class, number of parameters)]."""
+        out: Dict[str, List[Tuple[str, int]]] = {}
+        for n in self._descendants_of(root):
+            if n.type != "method_declaration":
+                continue
+            plist = n.child_by_field_name("parameters")
+            params = [c for c in (plist.children if plist is not None else ()) if c.type == "parameter"]
+            cls = n.parent.parent if n.parent is not None else None
+            name = n.child_by_field_name("name")
+            if not params or name is None or cls is None or cls.type != "class_declaration" \
+                    or not any(c.type == "modifier" and self._get_text(c) == "this" for c in params[0].children):
+                continue
+            cname = cls.child_by_field_name("name")
+            if cname is not None:
+                out.setdefault(self._get_text(name), []).append((self._get_text(cname), len(params)))
+        return out
+
+    def _extension_call(self, call: TSNode) -> Optional[Tuple[str, TSNode]]:
+        """`q.Shell()` calling an extension method this file declares (one by that name taking the
+        receiver plus the arguments; no library row and no method of the receiver's own class by
+        that name): (`Ext.Shell`, the receiver), so the call is lowered as `Ext.Shell(q)`, the static
+        call C# binds it to."""
+        parts = self._member_parts(call.child_by_field_name("function"))
+        if parts is None or not self._extensions:
+            return None
+        method = self._strip_generics(self._get_text(parts[1]))
+        nargs = len(self._get_method_args(call))
+        hits = [c for c, n in self._extensions.get(method, []) if n == nargs + 1]
+        if len(hits) != 1:
+            return None
+        if parts[0].type == "identifier" and self._get_text(parts[0]) in self._local_types \
+                and self._get_text(parts[0]) not in self._receiver_types():
+            return None                                   # `Ext.Shell(q)` written as the static call it is
+        if self._lookup_spec(self._get_method_name(call)) is not None:
+            return None
+        recv_type = self._value_type(parts[0])
+        owner = (recv_type or "").split("<", 1)[0].rsplit(".", 1)[-1]
+        if owner and method in self._declared_methods.get(self._local_types.get(owner, ""), set()):
+            return None                                   # an instance method of the receiver's class wins
+        return f"{hits[0]}.{method}", parts[0]
+
+    def _stored_arguments(self, call: TSNode, loc: Location) -> List[Instr]:
+        """`list.Add(q)`, `d.Add(k, q)`, `queue.Enqueue(q)` on a receiver of a declared collection type
+        (dotnet-api.toml [stores_arguments]): the collection holds the argument as well (a weak update,
+        as an element write is)."""
+        parts = self._member_parts(call.child_by_field_name("function"))
+        if parts is None or parts[0].type not in ("identifier", "member_access_expression"):
+            return []
+        recv = self._path_name(parts[0])
+        typ = self._receiver_types().get(self._unqualified(recv)) or self._receiver_types().get(recv)
+        positions = _dotnet().stored_arguments(typ, self._strip_generics(self._get_text(parts[1]))) if typ else ()
+        args = self._get_method_args(call)
+        values = [self._translate_expression(args[i]) for i in positions if i < len(args)]
+        if not values or not all(x.isidentifier() for x in recv.split(".")):
+            return []
+        held: Exp = ExpVar(PVar(recv))
+        for v in values:
+            held = ExpBinOp("?:", held, v)
+        return [Assign(loc=loc, id=PVar(recv), exp=held)]
+
+    def _sink_call(self, call: TSNode) -> bool:
+        """A call that is a sink by its spec, found through the receiver's type where need be
+        (`_db.Database.ExecuteSqlRaw(sql)`, an extension method): written inside another call's
+        argument (`return Ok(_db.Database.ExecuteSqlRaw(sql))`) it is lowered to a call of its own,
+        as only this frontend can type its receiver."""
+        spec = self._lookup_spec(self._get_method_name(call))
+        return bool(spec and spec.is_taint_sink())
+
     def _sanitizer_spec(self, name: str) -> bool:
         spec = self._lookup_spec(name)
         return bool(spec and spec.is_sanitizer and not spec.is_taint_sink())
@@ -2074,7 +2555,7 @@ class CSharpFrontend:
         GetFileName(x)))`) is lowered to a call of its own first, so the taint that comes
         out of it is the sanitized value; the outer call then reads a temporary."""
         found: List[TSNode] = []
-        args = call_node.child_by_field_name("arguments")
+        args = self._arguments_node(call_node)
         stack = list(args.children) if args is not None else []
         while stack:
             n = stack.pop()
@@ -2082,7 +2563,8 @@ class CSharpFrontend:
                 continue
             if n.type == "invocation_expression" and (n.start_byte, n.end_byte) not in self._hoisted \
                     and (self._sanitizer_spec(self._get_method_name(n)) or self._own_method_call(n)
-                         or self._created_receiver(n) is not None):
+                         or self._created_receiver(n) is not None or self._sink_call(n)
+                         or self._has_out_arguments(n)):
                 found.append(n)
             stack.extend(n.children)
         instrs: List[Instr] = []
@@ -2140,12 +2622,16 @@ class CSharpFrontend:
         instrs = self._hoist_sanitizers(call_node)
 
         method_name = self._get_method_name(call_node)
-        hoisted = self._hoist_receiver(call_node)
+        extension = self._extension_call(call_node)
+        hoisted = self._hoist_receiver(call_node) if extension is None else None
         if hoisted is not None:
             receiver_instrs, method_name = hoisted
             instrs.extend(receiver_instrs)
         args = self._get_method_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        if extension is not None:                         # `q.Trim().Shell()` is `Ext.Shell(q.Trim())`
+            method_name = extension[0]
+            args_exp = [(self._value_exp(extension[1], loc), Typ.unknown_type())] + args_exp
 
         ret_id = self._new_ident(target)
 
@@ -2179,6 +2665,8 @@ class CSharpFrontend:
         instrs.extend(self._rsa_padding_instrs(call_node, loc))
         instrs.extend(self._xml_create_instrs(call_node, loc))
         instrs.extend(self._arg_initializer_instrs(call_node, loc))
+        instrs.extend(self._out_writes(call_node, ExpVar(ret_id), loc))
+        instrs.extend(self._stored_arguments(call_node, loc))
         return instrs
 
     def _hoist_receiver(self, call_node: TSNode) -> Optional[Tuple[List[Instr], str]]:
@@ -2246,7 +2734,7 @@ class CSharpFrontend:
 
         `type_name`: the type a target-typed `new(...)` creates (the declaration's or the target's);
         it never replaces a type written in the creation."""
-        instrs = []
+        instrs = self._hoist_sanitizers(node)              # sinks and sanitizers written in its arguments
         type_node = node.child_by_field_name("type")
         if type_node is not None or node.type != "implicit_object_creation_expression":
             type_name = self._get_text(type_node) if type_node else "Object"
@@ -2268,25 +2756,7 @@ class CSharpFrontend:
         # TypeNameHandling = TypeNameHandling.All) are seen by the member hook.
         init = self._initializer_of(node)
         if init:
-            for child in init.children:
-                if child.type == "object_creation_expression":   # `new List<T> { new T { Sql = q } }`
-                    instrs.extend(self._translate_object_creation(child, None, self._get_location(child)))
-                elif child.type == "assignment_expression":
-                    rhs = child.child_by_field_name("right")
-                    if rhs:
-                        member = child.child_by_field_name("left")
-                        if member is not None and member.type == "identifier":
-                            members.append((self._get_text(member), self._translate_expression(rhs)))
-                        lhs = child.child_by_field_name("left")
-                        kind = self._typed_prop_sink(type_name, self._get_text(lhs) if lhs else "", init)
-                        instrs.extend(self._config_flag_instrs(
-                            type_name, self._get_text(lhs) if lhs else "", rhs, self._get_location(child)))
-                        if kind:
-                            instrs.append(TaintSink(
-                                loc=self._get_location(child), exp=self._translate_expression(rhs),
-                                kind=resolve_sink_kind(kind),
-                                description=f"{type_name} initializer sets {self._get_text(lhs)}",
-                                arg_index=0))
+            instrs.extend(self._initializer_members(init, type_name, "", members))
 
         # A parser configured not to resolve external entities is not an XXE sink.
         if type_name.split(".")[-1] in _parser_hardening().dotnet["parser_types"] and (
@@ -2297,9 +2767,12 @@ class CSharpFrontend:
             return instrs
 
         # Emit a Call named after the type so the translator's usage-based sink
-        # path (empty sink_args) can fire on the constructor.
+        # path (empty sink_args) can fire on the constructor. The overload reading a stream
+        # (`new StreamReader(Request.Body)`) is not the path sink its row describes: renamed.
+        over_stream = self._stream_overload(type_name, args)
         instrs.append(Call(loc=loc, ret=None,
-                           func=ExpConst.string(type_name), args=args_exp))
+                           func=ExpConst.string(type_name + self._STREAM_OVERLOAD_SUFFIX if over_stream
+                                                else type_name), args=args_exp))
         spec = self.specs.get(type_name)
         held = [(e, Typ.unknown_type()) for e in elements]
         if target is not None and spec is None:
@@ -2312,15 +2785,28 @@ class CSharpFrontend:
                                func=ExpConst.string(f"new {type_name}"), args=args_exp + held))
             instrs.append(Assign(loc=loc, id=PVar(target), exp=ExpVar(ret)))
         elif target is not None:
+            # the object carries what it is made from (`new StreamReader(Request.Body)` reads the
+            # body, `new Uri(u)` is u; `new List<string> { q }` holds q). The arguments of a sink
+            # constructor are reported where it is built (`new ProcessStartInfo("sh", q)`): the object
+            # does not carry them on, or every later use of it is the same flow reported again.
+            sink_built = bool(spec.is_taint_sink()) and not over_stream
+            values = ([] if sink_built else [e for e, _ in args_exp]) + elements
             instrs.append(Assign(loc=loc, id=PVar(target),
-                                 exp=ExpCall(ExpConst.string(f"new {type_name}"), elements) if elements
+                                 exp=ExpCall(ExpConst.string(f"new {type_name}"), values) if values
                                  else ExpConst.null()))
+            for a in ([] if sink_built else args):        # a request property read in its arguments
+                source = self._source_in(a)
+                if source is not None:
+                    kind = TaintKind(source.is_source) if source.is_source in [t.value for t in TaintKind] \
+                        else TaintKind.USER_INPUT
+                    instrs.append(TaintSource(loc=loc, var=PVar(target), kind=kind, description=source.description))
+                    break
         if target is not None:
             # `new Box { Val = q }` sets b.Val (after the object is bound: binding it replaces its fields)
             for member, value in members:
                 instrs.append(Assign(loc=loc, id=PVar(f"{target}.{member}"), exp=value))
 
-        if spec and spec.is_taint_sink():
+        if spec and spec.is_taint_sink() and not over_stream:
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in spec.sink_args:
                 if arg_idx < len(args):
@@ -2337,6 +2823,95 @@ class CSharpFrontend:
                 instrs.append(Call(loc=loc, ret=None,
                                    func=ExpConst.string("__weak_key_size__"), args=[]))
         return instrs
+
+    _STREAM_OVERLOAD_SUFFIX = "<stream>"
+
+    def _stream_overload(self, type_name: str, args: List[TSNode]) -> bool:
+        """`new StreamReader(Request.Body)`, `new StreamReader(file.OpenReadStream())`: the constructor
+        overload that reads a Stream (dotnet-api.toml [stream_overloads]), told by the argument's type."""
+        hit = _dotnet().stream_overloads.get(type_name.split("<", 1)[0].rsplit(".", 1)[-1])
+        if hit is None or hit[0] >= len(args):
+            return False
+        typ = self._value_type(args[hit[0]])
+        return bool(typ) and any(t in hit[1] for t in _dotnet().lineage(typ))
+
+    def _value_type(self, node: Optional[TSNode]) -> Optional[str]:
+        """The type of a value, from what the file says: a declared name, a creation, a member chain
+        or a call on a typed receiver through the documented member types ([csharp.returns]; a head
+        the class inherits from a library base: `Request` in a controller). None when unknown."""
+        from frame.sil.value_origins import load as _value_types
+        returns = _value_types().get("csharp", ({}, {}))[0]
+        node = self._unwrap_value(node)
+        if node is None:
+            return None
+        if node.type in self._CREATIONS:
+            t = node.child_by_field_name("type")
+            return self._type_text(t) if t is not None else None
+        if node.type in ("cast_expression",):
+            return self._type_text(node.child_by_field_name("type")) or None
+        if node.type == "identifier":
+            name = self._get_text(node)
+            declared = self._receiver_types().get(name)
+            if declared:
+                return declared
+            if self._program is not None and self._current_class:
+                base = library_base(self._program, self._current_class, name, self._imports, self._local_types)
+                return returns.get(f"{base}.{name}") if base else None
+            return None
+        if node.type in ("member_access_expression", "invocation_expression"):
+            target = node.child_by_field_name("function") if node.type == "invocation_expression" else node
+            parts = self._member_parts(target)
+            if parts is None:
+                return None
+            owner = self._value_type(parts[0])
+            if not owner:
+                return None
+            q = owner if "." in owner else qualify_type("csharp", owner.split("<", 1)[0], self._imports,
+                                                       self._local_types)
+            return returns.get(f"{q}.{self._strip_generics(self._get_text(parts[1]))}") if q else None
+        return None
+
+    def _initializer_members(self, init: TSNode, type_name: str, prefix: str,
+                             members: List[Tuple[str, Exp]]) -> List[Instr]:
+        """An object initializer `{ Prop = value, ... }` of a `type_name`: each value (a call or a
+        creation in it runs first: `StartInfo = new ProcessStartInfo("/bin/sh", "-c " + q)`), the
+        sinks and switched-off protections of the properties it sets, and a nested member initializer
+        (`StartInfo = { Arguments = "-c " + q }`) on the member's documented type ([csharp.returns]).
+        The members set go to `members` as (path, value)."""
+        instrs: List[Instr] = []
+        for child in init.children:
+            if child.type == "object_creation_expression" and not prefix:   # `new List<T> { new T { Sql = q } }`
+                instrs.extend(self._translate_object_creation(child, None, self._get_location(child)))
+            if child.type != "assignment_expression":
+                continue
+            lhs, rhs = child.child_by_field_name("left"), child.child_by_field_name("right")
+            if lhs is None or rhs is None:
+                continue
+            loc = self._get_location(child)
+            prop = self._get_text(lhs)
+            if rhs.type == "initializer_expression" and lhs.type == "identifier":
+                inner_type = self._member_result_type(type_name, prop)
+                if inner_type:
+                    instrs.extend(self._initializer_members(rhs, inner_type, f"{prefix}{prop}.", members))
+                    continue
+            value = self._value_exp(rhs, loc) if lhs.type == "identifier" else self._translate_expression(rhs)
+            if lhs.type == "identifier":
+                members.append((f"{prefix}{prop}", value))
+            kind = self._typed_prop_sink(type_name, prop, init)
+            instrs.extend(self._config_flag_instrs(type_name, prop, rhs, loc))
+            if kind:
+                instrs.append(TaintSink(loc=loc, exp=value, kind=resolve_sink_kind(kind),
+                                        description=f"{type_name.rsplit('.', 1)[-1]} initializer sets {prop}",
+                                        arg_index=0))
+        return instrs
+
+    def _member_result_type(self, type_name: str, member: str) -> Optional[str]:
+        """The documented type of `type_name.member` ([csharp.returns]): `Process.StartInfo` is a
+        ProcessStartInfo."""
+        from frame.sil.value_origins import load as _value_types
+        q = qualify_type("csharp", type_name.split("<", 1)[0], self._imports, self._local_types) \
+            if "." not in type_name else type_name
+        return _value_types().get("csharp", ({}, {}))[0].get(f"{q}.{member}") if q else None
 
     def _rsa_padding_instrs(self, call_node: TSNode, loc: Location) -> List[Instr]:
         """rsa.Encrypt(data, fOAEP=false) selects PKCS#1 v1.5 padding, which is
@@ -2410,10 +2985,16 @@ class CSharpFrontend:
         method_name = self._get_method_name(call_node)
         args = self._get_method_args(call_node)
         args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        extension = self._extension_call(call_node)
+        if extension is not None:                         # `q.Shell()` is `Ext.Shell(q)`
+            method_name = extension[0]
+            args_exp = [(self._translate_expression(extension[1]), Typ.unknown_type())] + args_exp
+        # a call writing `out` / `ref` arguments: they take its result (`_out_writes`)
+        out_ret = self._new_ident("$out") if self._has_out_arguments(call_node) else None
 
         call_instr = Call(
             loc=loc,
-            ret=None,
+            ret=(out_ret, Typ.unknown_type()) if out_ret is not None else None,
             func=ExpConst.string(method_name),
             args=args_exp,
             kwarg_names=self._named_arg_names(call_node),
@@ -2435,6 +3016,9 @@ class CSharpFrontend:
         instrs.extend(self._rsa_padding_instrs(call_node, loc))
         instrs.extend(self._xml_create_instrs(call_node, loc))
         instrs.extend(self._arg_initializer_instrs(call_node, loc))
+        if out_ret is not None:
+            instrs.extend(self._out_writes(call_node, ExpVar(out_ret), loc))
+        instrs.extend(self._stored_arguments(call_node, loc))
         return instrs
 
     def _translate_await(self, node: TSNode) -> None:
@@ -2486,6 +3070,15 @@ class CSharpFrontend:
                 inner = child
                 if inner.type == "await_expression":        # `return await client.GetStringAsync(url);`
                     inner = next((c for c in inner.children if c.type != "await"), inner)
+                unwrapped = self._unwrap_value(inner)
+                if unwrapped is not None and unwrapped.type == "conditional_expression" \
+                        and self._needs_branches(unwrapped):
+                    # `return all ? Redirect("/") : Redirect(q);`: each arm runs on its own branch
+                    tmp = f"$ret{self._ident_counter}"
+                    self._ident_counter += 1
+                    self._lower_conditional(tmp, unwrapped, loc, self._return_type)
+                    value_exp = ExpVar(PVar(tmp))
+                    break
                 if inner.type == "invocation_expression":
                     self._add_instrs(self._translate_invocation(inner))
                 elif inner.type in self._CREATIONS:      # `return new(q);` creates the declared return type
@@ -2503,7 +3096,8 @@ class CSharpFrontend:
             return
 
         condition = node.child_by_field_name("condition")
-        condition_exp = self._translate_expression(condition) if condition else ExpConst.boolean(True)
+        condition_exp = self._branch_condition(
+            self._translate_expression(condition) if condition else ExpConst.boolean(True))
 
         before_node = self._current_node
 
@@ -2539,6 +3133,15 @@ class CSharpFrontend:
             proc.connect(false_node.id, join_node.id)
 
         self._current_node = join_node
+
+    @staticmethod
+    def _branch_condition(exp: Exp) -> Exp:
+        """An `if` on a literal (`if (false)`) as a comparison: the translator folds comparisons over
+        constants, never a bare literal (frontends use one as a loop placeholder), so `if (false) {...}`
+        was reachable. Loop conditions keep the literal (CWE-835 reads it)."""
+        if isinstance(exp, ExpConst) and isinstance(exp.value, bool):
+            return ExpBinOp("==", exp, ExpConst.boolean(True))
+        return exp
 
     def _translate_while(self, node: TSNode) -> None:
         """Translate while loop"""
@@ -2584,7 +3187,11 @@ class CSharpFrontend:
         body = node.child_by_field_name("body")
         if body:
             self._current_node = body_node
-            self._translate_statement(body)
+            self._jumps.append((after_node, loop_head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -2636,17 +3243,26 @@ class CSharpFrontend:
         loop_head.add_instr(Prune(loc=loc, condition=condition_exp, is_true_branch=False, kind=PruneKind.FOR_EXIT))
         proc.connect(loop_head.id, after_node.id)
 
+        # `continue` goes to the update, which runs before the condition is tested again
+        update_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(update_node)
+        self._current_node = body_node
         body = node.child_by_field_name("body")
         if body:
-            self._current_node = body_node
-            self._translate_statement(body)
+            self._jumps.append((after_node, update_node))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
+        if self._current_node:
+            proc.connect(self._current_node.id, update_node.id)
 
         # Update (`i++, j++`: one `update` field per part). Lowered together with the initializer:
         # `i = 0` without `i++` would make the loop's exit look unreachable.
-        if self._current_node:
-            for field_name, update in fields:
-                if field_name == "update":
-                    self._translate_effect(update)
+        self._current_node = update_node
+        for field_name, update in fields:
+            if field_name == "update":
+                self._translate_effect(update)
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -2724,9 +3340,13 @@ class CSharpFrontend:
         proc.connect(loop_head.id, after_node.id)
 
         body = node.child_by_field_name("body")
+        self._current_node = body_node
         if body:
-            self._current_node = body_node
-            self._translate_statement(body)
+            self._jumps.append((after_node, loop_head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -2756,9 +3376,13 @@ class CSharpFrontend:
             proc.connect(before_node.id, body_node.id)
 
         body = node.child_by_field_name("body")
+        self._current_node = body_node
         if body:
-            self._current_node = body_node
-            self._translate_statement(body)
+            self._jumps.append((after_node, loop_head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jumps.pop()
 
         if self._current_node:
             proc.connect(self._current_node.id, loop_head.id)
@@ -2799,8 +3423,9 @@ class CSharpFrontend:
             loc = self._get_location(section)
             has_default = has_default or any(c.type == "default" for c in section.children) \
                 or any(c.type == "default_switch_label" for c in section.named_children)
+            self._jumps.append((join, None))         # `break` ends the section
             for child in section.named_children:
-                if child.type in ("case_switch_label", "default_switch_label", "break_statement", "comment"):
+                if child.type in ("case_switch_label", "default_switch_label", "comment"):
                     continue
                 if child.type == "when_clause":
                     cond = next((c for c in child.named_children), None)
@@ -2810,6 +3435,7 @@ class CSharpFrontend:
                     self._translate_statement(child)
                 else:                                             # a case label's pattern
                     self._bind_pattern(child, subject, loc)
+            self._jumps.pop()
             if self._current_node is not None:
                 proc.connect(self._current_node.id, join.id)
         if not has_default:
@@ -2940,6 +3566,9 @@ class CSharpFrontend:
         elif node.type == "false_literal":
             return ExpConst.boolean(False)
 
+        elif node.type == "boolean_literal":               # `true` / `false` (break/continue are edges)
+            return ExpConst.boolean(self._get_text(node).strip() == "true")
+
         elif node.type == "null_literal":
             return ExpConst.null()
 
@@ -2952,7 +3581,7 @@ class CSharpFrontend:
             op = self._get_text(op_node) if op_node else "+"
             if op == "+":
                 return ExpStringConcat([left_exp, right_exp])
-            return ExpBinOp(op, left_exp, right_exp)
+            return self._compare(op, left_exp, right_exp)
 
         elif node.type == "prefix_unary_expression":
             # the grammar names neither field: `!x` is the operator token then the operand
@@ -2969,6 +3598,12 @@ class CSharpFrontend:
         elif node.type == "member_access_expression":
             expr = node.child_by_field_name("expression")
             name = node.child_by_field_name("name")
+            if expr is not None and expr.type in self._THIS and name is not None \
+                    and self._own_field(self._get_text(name)):
+                return ExpVar(PVar(self._get_text(name)))        # `this._x` reads the field `_x`
+            if expr is not None and expr.type == "identifier" and name is not None \
+                    and self._get_text(name) in self._tuple_vars.get(self._get_text(expr), {}):
+                return ExpVar(PVar(f"{self._get_text(expr)}.{self._get_text(name)}"))   # `t.a` of a tuple
             # Some member-access values are inherently insecure configuration
             # (e.g. TypeNameHandling.All, HashAlgorithmName.MD5, CipherMode.ECB).
             # Emit a Call named after the value so the usage-based sink path
@@ -2981,12 +3616,14 @@ class CSharpFrontend:
             return ExpFieldAccess(self._translate_expression(expr), self._get_text(name) if name else "")
 
         elif node.type == "element_access_expression":
+            # `a[i]`: the grammar names the brackets `subscript` (older grammars `arguments`); the
+            # index used to be read from a field that does not exist, so every index was 0
             expr = node.child_by_field_name("expression")
-            args = node.child_by_field_name("arguments")
+            args = node.child_by_field_name("subscript") or node.child_by_field_name("arguments")
             idx_exp = ExpConst.integer(0)
             if args:
                 for child in args.children:
-                    if child.type not in ("[", "]", ","):
+                    if child.type not in ("[", "]", ",", "comment"):
                         idx_exp = self._translate_expression(child)
                         break
             return ExpIndex(self._translate_expression(expr), idx_exp)
@@ -2999,6 +3636,17 @@ class CSharpFrontend:
             if self._is_nameof(node):                 # `nameof(q)` is the constant "q"
                 args = self._get_method_args(node)
                 return ExpConst.string(self._get_text(args[-1]).rsplit(".", 1)[-1] if args else "")
+            membership = self._table_membership(node)
+            if membership is not None:
+                return membership
+            if self._quiet == 0 and self._current_proc is not None and self._current_node is not None \
+                    and self._has_out_arguments(node):
+                # `if (d.TryGetValue(k, out var v))`: the call runs where the expression is evaluated,
+                # and writes its out arguments
+                tmp = f"$san{len(self._hoisted)}"
+                self._hoisted[(node.start_byte, node.end_byte)] = tmp
+                self._add_instrs(self._translate_call_assignment(tmp, node, self._get_location(node)))
+                return ExpVar(PVar(tmp))
             parts = self._member_parts(fn)
             if parts is not None:
                 recv, name = parts
@@ -3194,6 +3842,17 @@ class CSharpFrontend:
             return ExpVar(PVar(text))
         return ExpConst.null()
 
+    @staticmethod
+    def _compare(op: str, left: Exp, right: Exp) -> Exp:
+        """`c == false` is `!c` (`c != false`, `c == true`: c; `c != true`: `!c`), so a guard
+        written against a boolean literal reads like the plain test (`!Regex.IsMatch(q, p)`)."""
+        if op in ("==", "!="):
+            for value, other in ((right, left), (left, right)):
+                if isinstance(value, ExpConst) and isinstance(value.value, bool) \
+                        and not (isinstance(other, ExpConst) and isinstance(other.value, bool)):
+                    return other if value.value == (op == "==") else ExpUnOp("!", other)
+        return ExpBinOp(op, left, right)
+
     # receivers that are names (a call on one is named after it: `string.Join`, `_db.Users.Find`)
     _NAME_RECEIVERS = ("identifier", "generic_name", "predefined_type", "qualified_name", "alias_qualified_name",
                        "this", "this_expression", "base")
@@ -3338,7 +3997,9 @@ class CSharpFrontend:
         t = pattern.type
         kids = [c for c in pattern.named_children if c.type != "comment"]
         if t == "constant_pattern" and kids:
-            return ExpBinOp("==", subject, self._translate_expression(kids[0]))
+            return self._compare("==", subject, self._translate_expression(kids[0]))
+        if t in self._LITERALS:                                # `x is false` (the literal is the pattern)
+            return self._compare("==", subject, self._translate_expression(pattern))
         if t in ("negated_pattern", "parenthesized_pattern") and kids:
             inner = self._pattern_test(kids[0], subject)
             return ExpUnOp("!", inner) if t == "negated_pattern" else inner
@@ -3459,10 +4120,20 @@ class CSharpFrontend:
     # there, is renamed so the XSS sink spec does not match it.
     _NON_HTML_RESPONSE_SUFFIX = "<non-html>"
 
+    # C# keywords that are aliases of System types (C# spec 8.2.1 and 8.3.4): `int.Parse` is
+    # `Int32.Parse`, the name the type's rows are written under.
+    _PREDEFINED_TYPES = {"int": "Int32", "uint": "UInt32", "long": "Int64", "ulong": "UInt64", "short": "Int16",
+                         "ushort": "UInt16", "byte": "Byte", "sbyte": "SByte", "decimal": "Decimal",
+                         "double": "Double", "float": "Single", "bool": "Boolean", "char": "Char",
+                         "string": "String", "object": "Object"}
+
     def _get_method_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
         if func:
             name = self._strip_generics(self._callee_text(func))
+            head, dot, rest = name.partition(".")
+            if dot and func.type == "member_access_expression" and head in self._PREDEFINED_TYPES:
+                name = f"{self._PREDEFINED_TYPES[head]}.{rest}"
             spec = self._lookup_spec(name) if self._current_proc is not None else self.specs.get(name)
             pos = getattr(spec, "content_type_arg", None)
             if pos is not None:

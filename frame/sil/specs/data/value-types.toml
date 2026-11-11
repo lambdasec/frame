@@ -295,6 +295,17 @@
 "System.Web.HttpContext.Server" = "System.Web.HttpServerUtility"
 "Microsoft.EntityFrameworkCore.DbContext.Database" = "Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade"
 "System.Data.Entity.DbContext.Database" = "System.Data.Entity.Database"
+# System.Diagnostics.Process.StartInfo: the ProcessStartInfo the process starts with
+# (`p.StartInfo.Arguments = ...`, `new Process { StartInfo = { Arguments = ... } }`).
+"System.Diagnostics.Process.StartInfo" = "System.Diagnostics.ProcessStartInfo"
+# Streams: the request body and an uploaded file's contents are a System.IO.Stream (a StreamReader
+# over one reads it; it names no file).
+"Microsoft.AspNetCore.Http.HttpRequest.Body" = "System.IO.Stream"
+"Microsoft.AspNetCore.Http.IFormFile.OpenReadStream" = "System.IO.Stream"
+"System.Web.HttpRequest.InputStream" = "System.IO.Stream"
+"System.Web.HttpRequestBase.InputStream" = "System.IO.Stream"
+"System.Web.HttpPostedFile.InputStream" = "System.IO.Stream"
+"System.Web.HttpPostedFileBase.InputStream" = "System.IO.Stream"
 # Members leading to request data: a controller's / page's user and route data, a page's context,
 # a WebForms FileUpload control's posted file (System.Web.UI.WebControls.FileUpload.PostedFile).
 "Microsoft.AspNetCore.Mvc.ControllerBase.User" = "System.Security.Claims.ClaimsPrincipal"

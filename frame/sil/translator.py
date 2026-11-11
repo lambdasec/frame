@@ -1881,12 +1881,22 @@ class SILTranslator:
             owner = caller.class_name.rsplit(".", 1)[-1]
         else:
             owner = self._in_file_receiver_class(head, caller)
+            if owner is None and self._names_own_class(head, caller):
+                owner = head                         # C# `Helpers.Run(q)`: a static method of this file
             if owner is None:
                 return None
         hits = [p for p in procs.values()
                 if p.is_method and p.class_name and p.class_name.rsplit(".", 1)[-1] == owner
                 and p.simple_name == method]
         return hits[0] if len(hits) == 1 else None
+
+    def _names_own_class(self, head: str, caller: Optional[Procedure]) -> bool:
+        """C#: `head` is a class this file declares, written as the receiver of a static call, and
+        no variable of the caller has that name."""
+        if (getattr(self.program, "language", "") or "").lower() != "csharp" or not head.isidentifier() \
+                or caller is None or head in caller.var_types or any(p.name == head for p, _ in caller.params):
+            return False
+        return any(p.class_name and p.class_name.rsplit(".", 1)[-1] == head for p in self.program.procedures.values())
 
     def _request_proxies(self) -> Dict[str, Optional["RequestType"]]:
         """The names this file reaches a module-level request proxy by (`request` after `from flask
@@ -6002,6 +6012,7 @@ class SILTranslator:
         # `ALLOWED.includes(x)`), a character class (`x.isdigit()`, an anchored safe-charset
         # regex), a URL host in an allowlist. Only constant-looking collections count
         # (UPPER_CASE names or literals), never an arbitrary array.
+        parsed = self._parsed_url_locals(condition)
         for var, kinds, holds_when in self._guard_facts(
                 self._inline_parsed_urls(condition), getattr(self.program, "constant_regexes", None),
                 getattr(self.program, "language", ""), getattr(self.program, "string_macros", None)):
@@ -6020,8 +6031,32 @@ class SILTranslator:
                         kinds.add("filesystem")
                 if kinds:
                     state.add_sanitization(var, list(kinds))
+                    for local in parsed.get(var, ()):       # the parsed URL whose host was checked
+                        state.add_sanitization(local, list(kinds))
 
         return state
+
+    def _parsed_url_locals(self, exp) -> Dict[str, List[str]]:
+        """{u: [p]} for each `p.host` in a condition where `p`'s only definition parses `u` (`p = new
+        Uri(u)`): what the condition proves of u's host it proves of p, the value a later call is
+        often made with (`GetStringAsync(p)` after `Allowed.Contains(p.Host)`)."""
+        out: Dict[str, List[str]] = {}
+        stack = [exp]
+        while stack:
+            e = stack.pop()
+            if isinstance(e, ExpFieldAccess) and isinstance(e.base, ExpVar):
+                local = str(e.base.var)
+                d = self._defining_call(local)
+                source = self._host_var(ExpFieldAccess(d, e.field_name, False)) if isinstance(d, ExpCall) else None
+                if source is not None and local not in out.setdefault(source, []):
+                    out[source].append(local)
+            elif isinstance(e, ExpBinOp):
+                stack.extend((e.left, e.right))
+            elif isinstance(e, ExpUnOp):
+                stack.append(e.operand)
+            elif isinstance(e, ExpCall):
+                stack.extend(e.args)
+        return out
 
     def _exec_taint_source(self, instr: TaintSource, state: SymbolicState) -> SymbolicState:
         """Execute taint source annotation"""

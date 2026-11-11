@@ -65,11 +65,13 @@ description = "File.ReadAllBytes (path traversal)"
 [[spec]]
 name = "StreamReader.ReadLine"
 is_source = "file"
+taint_from_receiver = true
 description = "Stream reader line"
 
 [[spec]]
 name = "StreamReader.ReadToEnd"
 is_source = "file"
+taint_from_receiver = true
 description = "Stream reader contents"
 
 [[spec]]
@@ -894,17 +896,17 @@ description = "RandomNumberGenerator (secure)"
 
 [[spec]]
 name = "String.Concat"
-taint_propagates = [0, 1]
+taint_propagates = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 description = "String.Concat"
 
 [[spec]]
 name = "String.Format"
-taint_propagates = [0, 1]
+taint_propagates = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 description = "String.Format"
 
 [[spec]]
 name = "String.Join"
-taint_propagates = [0, 1]
+taint_propagates = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 description = "String.Join"
 
 [[spec]]
@@ -2048,3 +2050,206 @@ description = "SMO ServerConnection.ExecuteWithResults (T-SQL text)"
 name = "XPathNavigator.Compile"
 is_sink = "xpath"
 description = "XPath expression compiled from text"
+
+# Numeric, Guid, date and boolean conversions (System.Int32.Parse, Convert.ToInt32, Guid.Parse ...): the
+# value is a number, an identifier or a date, never text an injection could carry. A TryParse's out
+# argument takes its result (the C# frontend's `out` lowering).
+[[spec]]
+name = "Int32.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int32.Parse (not text)"
+
+[[spec]]
+name = "Int32.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int32.TryParse (not text)"
+
+[[spec]]
+name = "Int64.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int64.Parse (not text)"
+
+[[spec]]
+name = "Int64.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int64.TryParse (not text)"
+
+[[spec]]
+name = "Int16.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int16.Parse (not text)"
+
+[[spec]]
+name = "Int16.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Int16.TryParse (not text)"
+
+[[spec]]
+name = "UInt32.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "UInt32.Parse (not text)"
+
+[[spec]]
+name = "UInt32.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "UInt32.TryParse (not text)"
+
+[[spec]]
+name = "UInt64.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "UInt64.Parse (not text)"
+
+[[spec]]
+name = "UInt64.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "UInt64.TryParse (not text)"
+
+[[spec]]
+name = "Byte.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Byte.Parse (not text)"
+
+[[spec]]
+name = "Byte.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Byte.TryParse (not text)"
+
+[[spec]]
+name = "Decimal.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Decimal.Parse (not text)"
+
+[[spec]]
+name = "Decimal.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Decimal.TryParse (not text)"
+
+[[spec]]
+name = "Double.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Double.Parse (not text)"
+
+[[spec]]
+name = "Double.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Double.TryParse (not text)"
+
+[[spec]]
+name = "Single.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Single.Parse (not text)"
+
+[[spec]]
+name = "Single.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Single.TryParse (not text)"
+
+[[spec]]
+name = "Guid.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Guid.Parse (not text)"
+
+[[spec]]
+name = "Guid.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Guid.TryParse (not text)"
+
+[[spec]]
+name = "DateTime.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "DateTime.Parse (not text)"
+
+[[spec]]
+name = "DateTime.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "DateTime.TryParse (not text)"
+
+[[spec]]
+name = "DateTimeOffset.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "DateTimeOffset.Parse (not text)"
+
+[[spec]]
+name = "DateTimeOffset.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "DateTimeOffset.TryParse (not text)"
+
+[[spec]]
+name = "TimeSpan.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "TimeSpan.Parse (not text)"
+
+[[spec]]
+name = "TimeSpan.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "TimeSpan.TryParse (not text)"
+
+[[spec]]
+name = "Boolean.Parse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Boolean.Parse (not text)"
+
+[[spec]]
+name = "Boolean.TryParse"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Boolean.TryParse (not text)"
+
+[[spec]]
+name = "Convert.ToInt16"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToInt16 (not text)"
+
+[[spec]]
+name = "Convert.ToInt32"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToInt32 (not text)"
+
+[[spec]]
+name = "Convert.ToInt64"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToInt64 (not text)"
+
+[[spec]]
+name = "Convert.ToUInt16"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToUInt16 (not text)"
+
+[[spec]]
+name = "Convert.ToUInt32"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToUInt32 (not text)"
+
+[[spec]]
+name = "Convert.ToUInt64"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToUInt64 (not text)"
+
+[[spec]]
+name = "Convert.ToByte"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToByte (not text)"
+
+[[spec]]
+name = "Convert.ToDecimal"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToDecimal (not text)"
+
+[[spec]]
+name = "Convert.ToDouble"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToDouble (not text)"
+
+[[spec]]
+name = "Convert.ToSingle"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToSingle (not text)"
+
+[[spec]]
+name = "Convert.ToBoolean"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToBoolean (not text)"
+
+[[spec]]
+name = "Convert.ToDateTime"
+is_sanitizer = ["sql", "nosql", "command", "shell", "html", "xss", "filesystem", "path", "ldap", "xpath", "eval", "code", "regex", "header", "redirect", "ssrf", "template", "xml", "log", "shell_command"]
+description = "Convert.ToDateTime (not text)"

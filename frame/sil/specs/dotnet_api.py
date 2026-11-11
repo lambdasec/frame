@@ -13,7 +13,8 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "data" / "dotnet-api.toml"
 _KEYS = {"dangerous_values", "certificate_callbacks", "key_size", "typed_property_sink",
-         "request_types", "supertypes", "extension_methods"}
+         "request_types", "supertypes", "extension_methods", "stores_arguments", "out_from_receiver",
+         "read_only_collection_methods", "stream_overloads"}
 
 
 class TypedPropertySink(NamedTuple):
@@ -33,6 +34,18 @@ class DotnetApi(NamedTuple):
     request_types: FrozenSet[str]
     supertypes: Dict[str, Tuple[str, ...]]
     extension_methods: Dict[str, Dict[str, str]]      # namespace -> method -> declaring static class
+    stores_arguments: Dict[str, Dict[str, Tuple[int, ...]]]   # type -> method -> argument positions stored
+    out_from_receiver: FrozenSet[str]
+    read_only_collection_methods: FrozenSet[str]
+    stream_overloads: Dict[str, Tuple[int, Tuple[str, ...]]]  # constructor -> (argument, stream types)
+
+    def stored_arguments(self, type_name: str, method: str) -> Tuple[int, ...]:
+        """The argument positions `method` stores in a receiver of `type_name` (or a supertype)."""
+        for simple in self.lineage(type_name):
+            hit = self.stores_arguments.get(simple, {}).get(method)
+            if hit is not None:
+                return hit
+        return ()
 
     def lineage(self, type_name: str) -> Tuple[str, ...]:
         """The type (simple name, without type arguments) and its documented supertypes, nearest first."""
@@ -76,6 +89,16 @@ def load(path: Path = PATH) -> DotnetApi:
     if not isinstance(ext, dict) or not all(isinstance(m, dict) and m and all(isinstance(c, str) and c for c in m.values())
                                             for m in ext.values()):
         raise ValueError(f"{name}: [extension_methods] maps a namespace to method -> static class")
+    stores = data["stores_arguments"]
+    if not isinstance(stores, dict) or not all(
+            isinstance(m, dict) and m and all(isinstance(v, list) and v and all(isinstance(i, int) and i >= 0 for i in v)
+                                             for v in m.values()) for m in stores.values()):
+        raise ValueError(f"{name}: [stores_arguments] maps a type to method -> argument positions")
+    streams = data["stream_overloads"]
+    if not isinstance(streams, dict) or not all(
+            isinstance(v, dict) and set(v) == {"arg", "types"} and isinstance(v["arg"], int) and v["arg"] >= 0
+            for v in streams.values()):
+        raise ValueError(f"{name}: [stream_overloads] maps a constructor to {{arg, types}}")
     typed = []
     for i, t in enumerate(data["typed_property_sink"]):
         if not isinstance(t, dict) or set(t) - {"type", "property", "kind", "when"} \
@@ -95,7 +118,13 @@ def load(path: Path = PATH) -> DotnetApi:
         typed_property_sinks=tuple(typed),
         request_types=frozenset(_strings(name, "request_types", data["request_types"])),
         supertypes={k: tuple(v) for k, v in supers.items()},
-        extension_methods={ns: dict(m) for ns, m in ext.items()})
+        extension_methods={ns: dict(m) for ns, m in ext.items()},
+        stores_arguments={t: {m: tuple(v) for m, v in ms.items()} for t, ms in stores.items()},
+        out_from_receiver=frozenset(_strings(name, "out_from_receiver", data["out_from_receiver"])),
+        read_only_collection_methods=frozenset(_strings(name, "read_only_collection_methods",
+                                                        data["read_only_collection_methods"])),
+        stream_overloads={c: (v["arg"], _strings(name, f"stream_overloads.{c}.types", v["types"]))
+                          for c, v in streams.items()})
 
 
 __all__ = ["DotnetApi", "PATH", "TypedPropertySink", "load"]

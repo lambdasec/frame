@@ -62,7 +62,7 @@
 "Microsoft.Data.Sqlite" = ["SqliteConnection"]
 "System.Data.SQLite" = ["SQLiteConnection"]
 "Oracle.ManagedDataAccess.Client" = ["OracleConnection"]
-"Microsoft.AspNetCore.Http" = ["HttpRequest", "HttpResponse", "HttpContext", "Results", "TypedResults"]
+"Microsoft.AspNetCore.Http" = ["HttpRequest", "HttpResponse", "HttpContext", "Results", "TypedResults", "IFormFile"]
 "Microsoft.AspNetCore.Components" = ["NavigationManager", "MarkupString", "ComponentBase"]
 "Microsoft.Azure.Functions.Worker.Http" = ["HttpRequestData"]
 "Microsoft.EntityFrameworkCore" = ["DbContext"]
