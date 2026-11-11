@@ -36,6 +36,15 @@ The engine audit that removed every framework and benchmark heuristic from the c
 - C#: none left as strict xfails. Approximations kept: a project method's `out`/`ref` parameters and its return value share one summary (each out variable may take the others' data), a ternary written inside a larger expression is still a value (only an assigned or returned one becomes branches), and Razor brace matching does not parse markup text (an apostrophe in a one-line block can hide its closing brace).
 - C/C++: none left as strict xfails (function-like macros are expanded, struct fields cross calls through pointer arguments both ways, field paths of locals have path facts and strong updates, C++ lambda captures, constructor/setter member taint, container element writes and `using` resolution are modelled). Approximations kept: a write through a pointer that is not provably one local's address is still a weak update, a lambda's captures are flow-insensitive over the enclosing function (a by-copy capture sees later writes), a container is one value (element positions are not told apart), constructors resolve only when the class has one, and a call through `using` resolves only when no global function or library row of the same name is visible.
 
+**Business-logic hunting (planned, not started).** `--hunt-authz` covers authorization (IDOR, missing authorization, privilege escalation), mass assignment and client-controlled server values, but its unit ranking, its engine tools (`guards`, `check`, `siblings`) and its benchmark (BAC-Bench) are built for access control, so other business-logic flaws are barely hunted. The plan keeps the pipeline (scouts, units, one agent per unit, a verdict that needs an invariant and a concrete violating request) and makes the flaw class pluggable: each class brings its prompt, its unit-ranking signals and its engine tools, chosen with `--hunt` and a `[hunt] classes` key (`--hunt-authz` stays as the authorization class). The engine nominates candidates and proves facts; the agent judges intent. Classes, in order:
+1. Missing limits (CWE-20/1284): a request number reaching a stored balance, quantity or date without a bound on every path, decided by the Z3 range machinery the allocation-size check already uses.
+2. Races and double-spend (CWE-362/367): a read and a later write of the same record in one handler with no transaction or lock between them.
+3. Workflow bypass (CWE-841): the state field one handler checks and a sibling step does not; one-time tokens that are not consumed.
+4. Replay and idempotency: a state-changing handler with no nonce or uniqueness check.
+5. Brute force (CWE-307): a credential or one-time-code check with no rate-limit gate (pack data, like `[[auth_gate]]`).
+
+Measured on a held-out set built from real advisories (GHSA entries tagged CWE-362/840/841/1284) before any tuning, so nothing is fitted to one corpus.
+
 **Not planned**: more SAST languages (PHP, Go, Swift, Kotlin, Rust `unsafe`), and detecting AI-generated code (authorship does not change whether code is vulnerable; the guardrails cover the need).
 
 ## Licensing
