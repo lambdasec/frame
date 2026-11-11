@@ -328,6 +328,7 @@ description = "strstr() - find substring"
 name = "strdup"
 allocates = "heap"
 returns_null = "on_exhaustion"
+taint_propagates = [0]
 description = "strdup (string duplication)"
 
 [[spec]]
@@ -335,6 +336,7 @@ name = "strndup"
 size_args = [1]
 allocates = "heap"
 returns_null = "on_exhaustion"
+taint_propagates = [0]
 description = "strndup (bounded string duplication)"
 
 [[spec]]
@@ -355,6 +357,7 @@ size_args = [2]
 dereferences = [0, 1]
 is_sink = "buffer"
 sink_args = [2]
+taint_to_dest = [1]
 description = "memcpy() - attacker-controlled length (buffer overflow)"
 
 [[spec]]
@@ -363,6 +366,7 @@ size_args = [2]
 dereferences = [0, 1]
 is_sink = "buffer"
 sink_args = [2]
+taint_to_dest = [1]
 description = "memmove() - attacker-controlled length (buffer overflow)"
 
 [[spec]]
@@ -726,24 +730,28 @@ description = "execlp() - command injection sink"
 name = "execv"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 1
 description = "execv() - command injection sink"
 
 [[spec]]
 name = "execve"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 1
 description = "execve() - command injection sink"
 
 [[spec]]
 name = "execvp"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 1
 description = "execvp() - command injection sink"
 
 [[spec]]
 name = "execvpe"
 is_sink = "command"
 sink_args = [0, 1]
+argv_from = 1
 description = "execvpe() - command injection sink"
 
 [[spec]]

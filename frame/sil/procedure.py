@@ -176,7 +176,9 @@ class ProcSpec:
 
     # The position where an exec-style argument list starts (`execl(path, arg0, arg1, ..., NULL)`:
     # 1). When the program is a shell (`shells.toml`) and an argument is a command flag (`-c`),
-    # the argument after it is a command line (a command sink).
+    # the argument after it is a command line (a command sink). A single array argument there
+    # (`execv(path, argv)`, `Runtime.exec(String[])`) is the vector itself, read the same way
+    # when its elements are written out.
     argv_from: Optional[int] = None
 
     # A digest of some arguments (`digest_of`) is written into `digest_into` (an argument position;
@@ -586,8 +588,10 @@ class Procedure:
 
     @property
     def simple_name(self) -> str:
-        """The method/function name as called: `f` for `A.f` and `A.f#2`."""
-        return self.name.rsplit(".", 1)[-1].split("#", 1)[0]
+        """The method/function name as called: `f` for `A.f` and `A.f#2`, and for a C++
+        method `ns::A::f`."""
+        name = self.name.rsplit(".", 1)[-1].split("#", 1)[0]
+        return name.rsplit("::", 1)[-1] if self.is_method else name
 
     def accepts_arity(self, n_args: int) -> bool:
         """Can a call with `n_args` arguments resolve to this overload? With no

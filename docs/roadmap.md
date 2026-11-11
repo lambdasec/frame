@@ -34,6 +34,7 @@ The engine audit that removed every framework and benchmark heuristic from the c
 - Python: none left (dicts per key, `match` captures, list literals, `d[k] += v`, lambdas and inline `functools.partial` are lowered).
 - JavaScript/TypeScript: library callbacks (`forEach`, `map`, `then`), function aliases (`const run = cp.exec`), methods of same-file object literals and static methods as callees, async-error wrappers, numeric and boolean results of operators keeping string taint, ES `export` values across files, static class fields.
 - C#: none left as strict xfails. Approximations kept: a project method's `out`/`ref` parameters and its return value share one summary (each out variable may take the others' data), a ternary written inside a larger expression is still a value (only an assigned or returned one becomes branches), and Razor brace matching does not parse markup text (an apostrophe in a one-line block can hide its closing brace).
+- C/C++: function-like macro expansion, struct field taint through a pointer argument (`go(&c)`, a callee filling `c->f`), path facts and strong updates on fields, C++ lambda captures, member taint across a constructor or setter call, container element writes (`push_back`), calls resolved through `using namespace`.
 
 **Not planned**: more SAST languages (PHP, Go, Swift, Kotlin, Rust `unsafe`), and detecting AI-generated code (authorship does not change whether code is vulnerable; the guardrails cover the need).
 

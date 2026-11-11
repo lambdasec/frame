@@ -42,7 +42,7 @@ from frame.sil.instructions import (
     TaintKind, SinkKind, PruneKind, resolve_sink_kind
 )
 from frame.sil.procedure import Procedure, Node, NodeKind, ProcSpec, Program
-from frame.sil.c_int_model import LIMITS
+from frame.sil.c_int_model import INT_TYPES, LIMITS
 from frame.sil.specs.shells import is_shell, load as shells
 from frame.sil.frontends._syntax import first_syntax_error_line
 from frame.sil.metadata import ClassInfo, ImportTable, annotate_program_calls
@@ -191,6 +191,13 @@ class CFrontend:
         self._ref_aliases: Dict[int, Dict[str, str]] = {}    # id(Procedure) -> {C++ reference: the local it names}
         self._class_field_types: Dict[str, Dict[str, str]] = {}
         self._lambda_parent: Dict[int, Procedure] = {}
+        # node types lowered as their source text, and statement kinds with no lowering
+        # (`Program.unlowered_syntax`, held to an allowlist by tests/test_lowering_coverage_c.py)
+        self._unlowered: Dict[str, int] = {}
+        self._pointees: Dict[int, Dict[str, Optional[str]]] = {}   # function node -> {p: x of `p = &x`}
+        self._labels: Dict[str, Node] = {}                  # goto targets of the current function
+        self._pending_gotos: Dict[str, List[Node]] = {}     # gotos seen before their label
+        self._lambda_vars: Dict[int, Dict[str, Optional[str]]] = {}   # id(Procedure) -> {var: lambda}
 
         tree = self.parser.parse(self._source_bytes)
         program = Program(library_specs=self.specs.copy(), language=self.LANGUAGE)
@@ -228,6 +235,7 @@ class CFrontend:
         program.language = self.LANGUAGE
         self._credit_escapers(program, tree, source_code)
         finish_program(program, self.packs, source_code)
+        program.unlowered_syntax = dict(self._unlowered)
         return program
 
     def _credit_escapers(self, program: Program, tree, source_code: str) -> None:
@@ -286,6 +294,12 @@ class CFrontend:
                 value = eval_macro_integer(bodies[0], known)
                 if value is not None:
                     known[name] = value
+        # `#define ARG data` / `#define run_shell system`: the same rules, for one identifier (the
+        # macro is that name wherever it is written; read as its own name it named nothing)
+        self._alias_macros = {
+            name: bodies[0].strip() for name, bodies in defs.items()
+            if name not in undef and len(bodies) == 1 and bodies[0] is not None
+            and re.fullmatch(r"[A-Za-z_]\w*", bodies[0].strip()) and bodies[0].strip() != name}
         # `#define ALLOWED "https://api.partner.example/"`: the same rules, for one string literal.
         self._string_macro_values = {
             name: bodies[0].strip()[1:-1] for name, bodies in defs.items()
@@ -379,6 +393,7 @@ class CFrontend:
 
         # Get function name
         func_name = self._get_function_name(declarator)
+        self._written_function_name = func_name             # before any namespace / class prefix
         if not func_name:
             return None
 
@@ -410,6 +425,7 @@ class CFrontend:
 
         self._current_proc = proc
         self._node_counter = 0
+        self._function_node = node
 
         # Create entry node
         entry = proc.new_node(NodeKind.ENTRY)
@@ -449,8 +465,10 @@ class CFrontend:
 
         # Translate body
         body = node.child_by_field_name("body")
+        saved_labels = self._begin_labels()
         if body:
             self._translate_compound_statement(body)
+        self._end_labels(saved_labels)
 
         # Create exit node
         exit_node = proc.new_node(NodeKind.EXIT)
@@ -593,28 +611,202 @@ class CFrontend:
         elif node.type in ("preproc_if", "preproc_ifdef"):
             self._translate_preproc_conditional(node)
         elif node.type == "goto_statement":
-            # A goto leaves the straight-line path. The jump target is not
-            # modelled, so end the path here the way a call that never returns
-            # does; otherwise `if (!p) goto error;` falls through with p still
-            # null and the code after it is analysed as if the guard did nothing.
-            self._add_instr(Call(loc=self._get_location(node), ret=None,
-                                 func=ExpConst.string("__frame_goto__"), args=[]))
+            self._translate_goto(node)
+        elif node.type == "labeled_statement":
+            self._translate_labeled(node)
+        elif node.type == "for_range_loop":
+            self._translate_range_for(node)
+        elif node.type == "try_statement":
+            self._translate_try(node)
+        elif node.type == "throw_statement":
+            self._translate_throw(node)
+        elif node.type == "attributed_statement":
+            # `[[fallthrough]];`, `[[likely]] if (...)`: the attribute changes nothing the
+            # statement does
+            for child in node.named_children:
+                if child.type != "attribute_declaration":
+                    self._translate_statement(child)
+        elif node.type == "case_statement":
+            # a case label below a switch body's top level (Duff's device): its statements run
+            value = node.child_by_field_name("value")
+            for child in node.named_children:
+                if child.type != "comment" and (value is None or child.id != value.id):
+                    self._translate_statement(child)
+        elif node.type in self._NO_EFFECT_STATEMENTS:
+            pass
+        else:
+            # a statement kind with no lowering: whatever it does is lost, so it is recorded
+            key = "statement:" + node.type
+            self._unlowered[key] = self._unlowered.get(key, 0) + 1
+
+    # Statements that neither compute nor jump: declarations of types and names, assertions
+    # checked at compile time, preprocessor lines, empty statements, nested definitions (a
+    # local class's methods are not run by the enclosing function).
+    _NO_EFFECT_STATEMENTS = frozenset({
+        ";", "{", "}", "comment", "empty_statement", "type_definition", "struct_specifier",
+        "union_specifier", "enum_specifier", "class_specifier", "static_assert_declaration",
+        "alias_declaration", "using_declaration", "namespace_alias_definition", "preproc_def",
+        "preproc_function_def", "preproc_call", "preproc_include", "function_definition",
+        "template_declaration", "concept_definition", "ERROR",
+    })
+
+    # -- jumps: goto and labels -----------------------------------------------------------
+
+    def _begin_labels(self):
+        saved = (self._labels, self._pending_gotos)
+        self._labels, self._pending_gotos = {}, {}
+        return saved
+
+    def _end_labels(self, saved) -> None:
+        """A `goto` whose label this function does not define (a macro hid it, or a parse
+        error): its path ends there, as at a call that never returns."""
+        for nodes in self._pending_gotos.values():
+            for jump in nodes:
+                jump.add_instr(Call(loc=Location.unknown(), ret=None,
+                                    func=ExpConst.string("__frame_goto__"), args=[]))
+        self._labels, self._pending_gotos = saved
+
+    def _translate_goto(self, node: TSNode) -> None:
+        """`goto L;` is an edge to the statement labelled L (a backward one makes a loop: the
+        walk merges states at every node), then a fresh unreachable node. Ending the path
+        instead (as this used to) dropped everything after the label, where C keeps its error
+        handling and cleanup: `if (!p) goto fail; ... fail: free(buf);`."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        label = node.child_by_field_name("label")
+        name = self._get_text(label) if label is not None else ""
+        jump = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(jump)
+        proc.connect(self._current_node.id, jump.id)
+        if name in self._labels:
+            proc.connect(jump.id, self._labels[name].id)
+        else:
+            self._pending_gotos.setdefault(name, []).append(jump)
+        unreachable = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(unreachable)
+        self._current_node = unreachable
+
+    def _translate_labeled(self, node: TSNode) -> None:
+        """`L: stmt`: a node that every `goto L` reaches, as does the code before it."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        label = node.child_by_field_name("label")
+        name = self._get_text(label) if label is not None else ""
+        target = proc.new_node(NodeKind.JOIN)
+        proc.add_node(target)
+        proc.connect(self._current_node.id, target.id)
+        for jump in self._pending_gotos.pop(name, []):
+            proc.connect(jump.id, target.id)
+        if name:
+            self._labels[name] = target
+        self._current_node = target
+        for child in node.named_children:
+            if label is None or child.id != label.id:
+                self._translate_statement(child)
 
     def _translate_expression_statement(self, node: TSNode) -> None:
         """Translate expression statement"""
         for child in node.children:
-            if child.type == "call_expression":
-                instrs = self._translate_call(child)
-                self._add_instrs(instrs)
-            elif child.type == "assignment_expression":
-                self._translate_assignment(child)
-            elif child.type == "update_expression":
-                self._translate_update(child)
-            elif child.type == "delete_expression":
-                self._translate_delete(child)
-            elif child.type != ";":
-                # Other expression - translate for side effects
-                exp = self._translate_expression(child)
+            if child.type not in (";", "comment"):
+                self._effect(child)
+
+    def _effect(self, node: TSNode) -> None:
+        """Lower an expression evaluated for its effects only. A call stays a call statement
+        through `(void)` casts, parentheses and comma lists (`(void)system(cmd);`,
+        `n = 0, run(cmd);` were expressions whose calls never became Call instructions, so no
+        sink saw them); `c ? f(x) : g(y);` and `ok && f(x);` are branches."""
+        t = node.type
+        if t == "call_expression":
+            self._add_instrs(self._translate_call(node))
+        elif t == "assignment_expression":
+            self._translate_assignment(node)
+        elif t == "update_expression":
+            self._translate_update(node)
+        elif t == "delete_expression":
+            self._translate_delete(node)
+        elif t == "parenthesized_expression":
+            for child in node.named_children:
+                if child.type != "comment":
+                    self._effect(child)
+        elif t == "cast_expression":
+            value = node.child_by_field_name("value")
+            if value is not None:
+                self._effect(value)
+        elif t == "comma_expression":
+            self._effect(node.child_by_field_name("left"))
+            self._effect(node.child_by_field_name("right"))
+        elif t == "conditional_expression":
+            alt = node.child_by_field_name("alternative")
+            self._effect_branch(node.child_by_field_name("condition"),
+                                node.child_by_field_name("consequence"), alt)
+        elif t == "binary_expression" and self._get_text(node.child_by_field_name("operator")) in ("&&", "||"):
+            # `a && f(x);` runs f when a holds, `a || f(x);` when it does not
+            left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+            if self._get_text(node.child_by_field_name("operator")) == "&&":
+                self._effect_branch(left, right, None)
+            else:
+                self._effect_branch(left, None, right)
+        elif t == "binary_expression" and self._stream_insertion_root(node) is not None:
+            # `os << "ls " << cmd;` writes into the stream: os now holds what it held and cmd
+            root = self._stream_insertion_root(node)
+            name = self._alias_of(self._get_text(root))
+            self._add_instr(Assign(loc=self._get_location(node), id=PVar(name),
+                                   exp=self._translate_expression(node)))
+        elif node is not None:
+            self._translate_expression(node)
+
+    def _effect_branch(self, cond: Optional[TSNode], then: Optional[TSNode], other: Optional[TSNode]) -> None:
+        """`cond ? then : other` evaluated for its effects: an if/else over the two operands."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None or cond is None:
+            return
+        loc = self._get_location(cond)
+        cond_exp = self._translate_expression(cond)
+        before = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        for truth, operand in ((True, then), (False, other)):
+            arm = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm)
+            before.add_instr(Prune(loc=loc, condition=cond_exp, is_true_branch=truth))
+            proc.connect(before.id, arm.id)
+            self._current_node = arm
+            if operand is not None:
+                self._effect(operand)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
+
+    def _stream_insertion_root(self, node: TSNode) -> Optional[TSNode]:
+        """For C++ `a << b << c` whose leftmost operand is a variable of a declared class type
+        (a stream: never a scalar, where `<<` is a shift and the statement does nothing), that
+        variable; else None."""
+        if self.LANGUAGE != "cpp":
+            return None
+        cur = node
+        while cur is not None and cur.type == "binary_expression" \
+                and self._get_text(cur.child_by_field_name("operator")) == "<<":
+            cur = cur.child_by_field_name("left")
+        if cur is None or cur.type != "identifier" or cur.id == node.id or self._current_proc is None:
+            return None
+        name = self._alias_of(self._get_text(cur))
+        declared = (self._var_types.get(id(self._current_proc), {}).get(name)
+                    or (self._current_proc.param_types or {}).get(name))
+        if not declared or "*" in declared:
+            return None
+        base = " ".join(re.sub(r"\b(const|volatile|struct|class|typename|static|mutable)\b|&", " ",
+                               declared).split())
+        if (not base or base in INT_TYPES or _cpp_types().is_scalar_typedef(base)
+                or set(base.split()) <= self._FUNDAMENTAL_TYPE_WORDS):
+            return None
+        return cur
+
+    # the words C and C++ spell their built-in arithmetic types with (a `<<` on one is a shift)
+    _FUNDAMENTAL_TYPE_WORDS = frozenset({
+        "void", "bool", "_Bool", "char", "wchar_t", "char8_t", "char16_t", "char32_t", "short", "int",
+        "long", "signed", "unsigned", "float", "double", "auto"})
 
     def _translate_delete(self, node: TSNode) -> None:
         """Translate a C++ `delete p` / `delete[] p` into a deallocator call.
@@ -683,8 +875,17 @@ class CFrontend:
                 self._note_element_type(child, type_node)
                 if var_name:
                     loc = self._get_location(child)
-                    self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null(),
-                                           is_uninit_decl=not self._is_default_constructed(child, type_node)))
+                    if self._is_default_constructed(child, type_node):
+                        # `std::vector<int> xs;` runs the default constructor: xs is an object,
+                        # never a null pointer (lowered as `xs = null`, `xs[0]` was CWE-476)
+                        ret_id = self._new_ident(var_name)
+                        self._add_instr(Call(loc=loc, ret=(ret_id, Typ.unknown_type()),
+                                             func=ExpConst.string(self._type_base_name(self._get_text(type_node))),
+                                             args=[]))
+                        self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpVar(ret_id)))
+                    else:
+                        self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpConst.null(),
+                                               is_uninit_decl=True))
 
     def _record_array_from_string_init(self, declarator: Optional[TSNode],
                                        value: Optional[TSNode]) -> None:
@@ -899,17 +1100,39 @@ class CFrontend:
         if not declarator:
             return
 
+        binding = declarator
+        while binding is not None and binding.type == "reference_declarator":
+            binding = next((c for c in binding.named_children), None)
+        if binding is not None and binding.type == "structured_binding_declarator" and value is not None:
+            # `auto [k, v] = f();`: each name is one element of the value (the declaration used
+            # to be dropped whole, call included, as it names no single variable)
+            loc = self._get_location(node)
+            self._return_tmp_counter += 1
+            tmp = f"$bind{self._return_tmp_counter}"
+            if value.type == "call_expression":
+                self._add_instrs(self._translate_call_assignment(tmp, value, loc))
+            else:
+                self._add_instr(Assign(loc=loc, id=PVar(tmp), exp=self._translate_expression(value)))
+            for i, name in enumerate(self._declared_names(binding)):
+                self._record_local(name)
+                self._add_instr(Assign(loc=loc, id=PVar(name),
+                                       exp=ExpIndex(ExpVar(PVar(tmp)), ExpConst.integer(i))))
+            return
+
         var_name = self._extract_identifier(declarator)
         if not var_name:
+            self._record_unlowered("declarator:" + declarator.type)
             return
 
         loc = self._get_location(node)
 
-        if (value is not None and value.type == "argument_list" and type_node is not None
+        braced = (value is not None and value.type == "initializer_list" and self.LANGUAGE == "cpp"
+                  and not any(c.type == "=" for c in node.children))     # `std::string s{q};`
+        if (value is not None and (value.type == "argument_list" or braced) and type_node is not None
                 and type_node.type in ("type_identifier", "qualified_identifier", "template_type")):
             # constructor-style initialisation `QFile f(path);` / `std::ifstream in(path);`:
             # a call to the type's constructor, so specs and packs can see it
-            args = [a for a in value.children if a.type not in ("(", ")", ",", "comment")]
+            args = [a for a in value.named_children if a.type != "comment"]
             for a in args:
                 if a.type == "lambda_expression":
                     self._lower_lambda(a)
@@ -921,6 +1144,8 @@ class CFrontend:
             self._add_instr(Assign(loc=loc, id=PVar(var_name), exp=ExpVar(ret_id)))
             return
 
+        if value is not None and value.type == "lambda_expression":
+            self._note_lambda_binding(var_name, value)
         if value:
             if value.type == "call_expression":
                 instrs = self._translate_call_assignment(var_name, value, loc)
@@ -969,16 +1194,27 @@ class CFrontend:
         op_node = node.child_by_field_name("operator")
         op = self._get_text(op_node) if op_node is not None else "="
 
+        while left.type == "parenthesized_expression" and left.named_child_count == 1:
+            left = left.named_children[0]                   # `(*p) = v`, `(x) = v`
+
+        def value() -> Exp:
+            # `a[i] += e` / `s.n -= e` / `*p |= e` combine with the old value (as `x += e` does)
+            rhs = self._translate_expression(right)
+            return rhs if op == "=" else ExpBinOp(op[:-1], self._translate_expression(left), rhs)
+
         # Get target variable/field
         if left.type == "identifier":
             self._assign_to_identifier(self._get_text(left), right, op, loc)
+        elif left.type == "pointer_expression" and self._pointee(left.child_by_field_name("argument")) is not None \
+                and self._get_text(left.child_by_field_name("operator")) == "*":
+            # `*p = v` with `p = &x`: a write of x
+            self._assign_to_identifier(self._pointee(left.child_by_field_name("argument")), right, op, loc)
         elif left.type == "pointer_expression":
             # *ptr = value (store)
             inner = left.child_by_field_name("argument")
             if inner:
                 ptr_exp = self._translate_expression(inner)
-                val_exp = self._translate_expression(right)
-                self._add_instr(Store(loc=loc, addr=ptr_exp, value=val_exp, typ=Typ.unknown_type()))
+                self._add_instr(Store(loc=loc, addr=ptr_exp, value=value(), typ=Typ.unknown_type()))
         elif left.type == "subscript_expression":
             # arr[i] = value
             arr = left.child_by_field_name("argument")
@@ -986,10 +1222,11 @@ class CFrontend:
             if arr and idx:
                 arr_exp = self._translate_expression(arr)
                 idx_exp = self._translate_expression(idx)
-                val_exp = self._translate_expression(right)
                 # Model as store to arr + idx
                 addr = ExpBinOp("+", arr_exp, idx_exp)
-                self._add_instr(Store(loc=loc, addr=addr, value=val_exp, typ=Typ.unknown_type()))
+                self._add_instr(Store(loc=loc, addr=addr, value=value(), typ=Typ.unknown_type()))
+            else:
+                self._record_unlowered("assignment:" + left.type)
         elif left.type == "field_expression":
             # struct.field = value or ptr->field = value
             obj = left.child_by_field_name("argument")
@@ -997,8 +1234,21 @@ class CFrontend:
             if obj and field:
                 obj_exp = self._translate_expression(obj)
                 field_name = self._get_text(field)
-                # Model as assignment to synthetic variable
-                target = f"{self._get_text(obj)}_{field_name}"
+                # The written field is the path a read of it names (`p->next->name` is
+                # `p.next.name`, `this->cmd` is `this.cmd`). It used to be a variable named
+                # `<receiver text>_<field>`, which no read ever looked up: a struct field
+                # never carried the data written into it.
+                target = self._field_target(left)
+                if target is None:
+                    # `a[i].name = v`, `get()->name = v`: a store into the object
+                    self._add_instr(Store(loc=loc, addr=ExpFieldAccess(obj_exp, field_name,
+                                                                        self._is_arrow_access(left)),
+                                          value=value(), typ=Typ.unknown_type()))
+                    return
+                marker = f"{self._get_text(obj)}_{field_name}"
+                if op != "=":
+                    self._add_instr(Assign(loc=loc, id=PVar(target), exp=value()))
+                    return
                 if right.type == "call_expression" and op == "=" and self._current_node is not None:
                     # `out->key = strdup(s)`: the call is its own Call bound to a temporary and the
                     # field receives the temporary, exactly as for `p = strdup(s)`. The ownership
@@ -1016,9 +1266,185 @@ class CFrontend:
                     # (a dummy temp bound to `p->f`) for the null/freed-pointer
                     # checks. The marker adds no taint and no value flow.
                     self._add_instr(Assign(
-                        loc=loc, id=PVar(f"$deref_{target}"),
+                        loc=loc, id=PVar(f"$deref_{marker}"),
                         exp=ExpFieldAccess(obj_exp, field_name, True)))
                 self._add_instr(Assign(loc=loc, id=PVar(target), exp=val_exp))
+
+    _LITERAL_ELEMENTS = frozenset({"number_literal", "string_literal", "char_literal", "true", "false",
+                                   "null", "nullptr", "concatenated_string", "comment"})
+
+    def _literal_initializer(self, node: TSNode) -> bool:
+        """Is this brace list made of literals only (nested lists and `-1` included)?"""
+        for e in node.named_children:
+            if e.type == "initializer_list":
+                if not self._literal_initializer(e):
+                    return False
+            elif e.type == "unary_expression" and e.child_by_field_name("argument") is not None:
+                if e.child_by_field_name("argument").type != "number_literal":
+                    return False
+            elif e.type not in self._LITERAL_ELEMENTS:
+                return False
+        return True
+
+    def _initializer_value(self, node: TSNode) -> Exp:
+        """`{q, "x"}` / `{.name = q}` / `std::vector<std::string> v{q}`: the aggregate holds
+        every element's data. A list of literals keeps its written form, which the translator
+        reads as a constant table (`_literal_tables`, hard-coded keys); any other list used to
+        be a variable named by its text, so an element that was a call or a field read was
+        lost (only a plain name survived, through a brace-splitting rule)."""
+        if self._literal_initializer(node):
+            return ExpVar(PVar(self._get_text(node)))
+        values = [self._translate_expression(e) for e in node.named_children if e.type != "comment"]
+        return ExpCall(ExpConst.string("<initializer-list>"), values)
+
+    def _condition_declaration(self, node: TSNode) -> Exp:
+        """`if (char *t = q)` / `while (auto n = next())`: the variable is declared and
+        initialised where the condition is evaluated; the condition is its value."""
+        cached = self._hoisted_calls.get(node.id)
+        if cached is not None:
+            return cached
+        declarator = node.child_by_field_name("declarator")
+        value = node.child_by_field_name("value")
+        if declarator is not None and declarator.type == "init_declarator":
+            value = value or declarator.child_by_field_name("value")
+            declarator = declarator.child_by_field_name("declarator")
+        name = self._extract_identifier(declarator) if declarator is not None else None
+        if not name or self._current_node is None:
+            return self._translate_expression(value) if value is not None else ExpConst.boolean(True)
+        type_node = node.child_by_field_name("type")
+        self._record_local(name)
+        self._note_var_type(name, type_node)
+        self._note_scalar_type(declarator, type_node)
+        self._note_element_type(declarator, type_node)
+        loc = self._get_location(node)
+        if value is not None and value.type == "initializer_list" and value.named_child_count == 1:
+            value = value.named_children[0]                 # `if (auto t{q})`
+        if value is not None and value.type == "call_expression":
+            self._add_instrs(self._translate_call_assignment(name, value, loc))
+        else:
+            self._add_instr(Assign(loc=loc, id=PVar(name), exp=self._translate_expression(value)))
+        result = ExpVar(PVar(name))
+        self._hoisted_calls[node.id] = result
+        return result
+
+    def _sizeof_value(self, node: TSNode) -> Optional[int]:
+        """`sizeof(T)` for an integer type of fixed width (c_int_model.INT_TYPES), `sizeof x` for a
+        local array of such elements with a known bound, or for a scalar local of such a type;
+        else None (pointers, `long`, structs: the platform decides)."""
+        def width(type_text: str) -> Optional[int]:
+            t = " ".join(re.sub(r"\b(const|volatile)\b", " ", type_text).split())
+            return INT_TYPES[t][0] // 8 if t in INT_TYPES else None
+        type_node = node.child_by_field_name("type")
+        if type_node is not None:
+            return width(self._get_text(type_node))
+        value = node.child_by_field_name("value")
+        while value is not None and value.type == "parenthesized_expression" and value.named_child_count == 1:
+            value = value.named_children[0]
+        proc = self._current_proc
+        if value is None or value.type != "identifier" or proc is None:
+            return None
+        name = self._alias_of(self._get_text(value))
+        bound = proc.fixed_array_bounds.get(name)
+        if name in proc.array_locals:
+            elem = width(proc.element_types.get(name, ""))
+            return bound * elem if bound and bound > 0 and elem else None
+        declared = proc.scalar_types.get(name)
+        return width(declared) if declared else None
+
+    def _pointee(self, node: Optional[TSNode]) -> Optional[str]:
+        """For a pointer `p` declared once in this function as `T *p = &x` (x a local or
+        parameter) and never written, incremented or address-taken anywhere else, x: `*p` and
+        `p->f` are x and `x.f`. Lowered as a store through p, a write `*p = v` reached nothing
+        that later read x."""
+        fn = getattr(self, "_function_node", None)
+        if node is None or node.type != "identifier" or fn is None or self._current_proc is None:
+            return None
+        cache = self._pointees.setdefault(fn.id, {})
+        name = self._get_text(node)
+        if name in cache:
+            target = cache[name]
+        else:
+            target = cache[name] = self._find_pointee(fn, name)
+        return target if target is not None and self._is_local_name(target) else None
+
+    def _find_pointee(self, fn: TSNode, name: str) -> Optional[str]:
+        decls = [d for d in self._descendants(fn, "init_declarator")
+                 if self._extract_identifier(d.child_by_field_name("declarator")) == name]
+        params = fn.child_by_field_name("declarator")
+        if len(decls) != 1 or (params is not None and any(
+                self._get_text(i) == name for i in self._descendants(params, "identifier"))):
+            return None
+        decl, value = decls[0].child_by_field_name("declarator"), decls[0].child_by_field_name("value")
+        if decl is None or decl.type != "pointer_declarator" or value is None \
+                or value.type != "pointer_expression" or self._get_text(value.child_by_field_name("operator")) != "&":
+            return None
+        target = value.child_by_field_name("argument")
+        if target is None or target.type != "identifier":
+            return None
+        for n in self._descendants(fn, "assignment_expression"):
+            left = n.child_by_field_name("left")
+            if left is not None and self._get_text(left) == name:
+                return None
+        for t in ("update_expression", "pointer_expression"):
+            for n in self._descendants(fn, t):
+                arg = n.child_by_field_name("argument")
+                op = self._get_text(n.child_by_field_name("operator")) if t == "pointer_expression" else "++"
+                if op != "*" and arg is not None and self._get_text(arg) == name:
+                    return None
+        return self._get_text(target)
+
+    def _record_unlowered(self, key: str) -> None:
+        self._unlowered[key] = self._unlowered.get(key, 0) + 1
+
+    def _field_target(self, node: TSNode) -> Optional[str]:
+        """The dotted path a field read of `node` is tracked under (`s.name`, `p.next.name`
+        for `p->next->name`, `this.cmd`), or None when the object is not a plain variable."""
+        parts: List[str] = []
+        cur = node
+        while cur is not None and cur.type == "field_expression":
+            field = cur.child_by_field_name("field")
+            if field is None:
+                return None
+            parts.append(self._get_text(field))
+            cur = cur.child_by_field_name("argument")
+        if cur is None:
+            return None
+        if cur.type == "identifier" and self._pointee(cur) is not None \
+                and self._is_arrow_access(cur.parent):
+            root = self._alias_of(self._pointee(cur))          # `p->f` with `p = &x` is `x.f`
+        elif cur.type == "identifier":
+            root = self._alias_of(self._get_text(cur))
+        elif cur.type == "this":
+            root = "this"
+        else:
+            return None
+        return ".".join([root] + parts[::-1])
+
+    def _write_exp(self, left: TSNode, value: Exp, loc: Location) -> None:
+        """Write an already lowered value into the location `left` names (an assignment or an
+        increment inside an expression: `v = s.name = q`, `a[i]++`, `p->n++`)."""
+        while left.type == "parenthesized_expression" and left.named_child_count == 1:
+            left = left.named_children[0]
+        if left.type == "identifier":
+            self._add_instr(Assign(loc=loc, id=PVar(self._alias_of(self._get_text(left))), exp=value))
+        elif left.type == "field_expression" and self._field_target(left) is not None:
+            self._add_instr(Assign(loc=loc, id=PVar(self._field_target(left)), exp=value))
+        elif left.type == "field_expression":
+            self._add_instr(Store(loc=loc, addr=self._translate_expression(left), value=value,
+                                  typ=Typ.unknown_type()))
+        elif left.type == "pointer_expression" and self._pointee(left.child_by_field_name("argument")) is not None \
+                and self._get_text(left.child_by_field_name("operator")) == "*":
+            self._add_instr(Assign(loc=loc, id=PVar(self._alias_of(self._pointee(left.child_by_field_name("argument")))),
+                                   exp=value))
+        elif left.type == "pointer_expression" and left.child_by_field_name("argument") is not None:
+            self._add_instr(Store(loc=loc, addr=self._translate_expression(left.child_by_field_name("argument")),
+                                  value=value, typ=Typ.unknown_type()))
+        elif left.type == "subscript_expression" and self._subscript_index(left) is not None:
+            addr = ExpBinOp("+", self._translate_expression(left.child_by_field_name("argument")),
+                            self._translate_expression(self._subscript_index(left)))
+            self._add_instr(Store(loc=loc, addr=addr, value=value, typ=Typ.unknown_type()))
+        else:
+            self._record_unlowered("assignment:" + left.type)
 
     @staticmethod
     def _is_arrow_access(field_node: TSNode) -> bool:
@@ -1043,7 +1469,7 @@ class CFrontend:
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
         self._lower_lambda_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        args_exp = self._call_args_exp(func_name, args)
 
         ret_id = self._new_ident(target)
         instrs.extend(self._alias_chain_receiver(func_name, loc))
@@ -1068,7 +1494,7 @@ class CFrontend:
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in list(spec.sink_args) + self._shell_command_args(spec, args):
                 if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
+                    arg_exp = self._sink_exp(spec, args, arg_idx)
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,
                                             arg_index=arg_idx, call=func_name))
 
@@ -1087,6 +1513,56 @@ class CFrontend:
         flags = shells().command_flags
         return [i + 1 for i in range(start + 1, len(args) - 1)
                 if literal[i] is not None and literal[i].lower() in flags]
+
+    def _call_args_exp(self, func_name: str, args: List[TSNode]) -> List[Tuple[Exp, Typ]]:
+        """A call's arguments; an argument vector of a command sink as the sink reads it."""
+        spec = self.specs.get(func_name)
+        pos = spec.argv_from if spec is not None and spec.is_taint_sink() else None
+        return [(self._sink_exp(spec, args, i) if i == pos else self._translate_expression(a), Typ.unknown_type())
+                for i, a in enumerate(args)]
+
+    def _sink_exp(self, spec: ProcSpec, args: List[TSNode], arg_idx: int) -> Exp:
+        """What the sink at `arg_idx` reads. For the argument vector of `execv`/`execvp`
+        (`argv_from` naming a single array argument) written out in a local brace list that
+        nothing else touches, the program runs the vector's elements as they are, without a
+        shell, unless argv[0] names a shell given a command flag (`{"/bin/sh", "-c", cmd}`,
+        shells.toml): the sink reads argv[0] and such command lines, as the Java frontend reads
+        `Runtime.exec(String[])`. Any other vector is read whole."""
+        node = args[arg_idx]
+        if spec.argv_from == arg_idx and node.type == "identifier":
+            elements = self._argv_elements(node)
+            if elements is not None:
+                literal = [self._string_literal_value(e) if e.type == "string_literal"
+                           else self._string_macro_values.get(self._get_text(e)) if e.type == "identifier"
+                           else None for e in elements]
+                program = self._string_literal_value(args[0]) if args else None
+                parts = elements[:1]
+                if any(v is not None and is_shell(v) for v in (program, literal[0] if literal else None)):
+                    flags = shells().command_flags
+                    parts += [elements[i + 1] for i in range(1, len(elements) - 1)
+                              if literal[i] is not None and literal[i].lower() in flags]
+                exps = [self._translate_expression(p) for p in parts]
+                return exps[0] if len(exps) == 1 else ExpStringConcat(exps) if exps else ExpConst.null()
+        return self._translate_expression(node)
+
+    def _argv_elements(self, node: TSNode) -> Optional[List[TSNode]]:
+        """The elements of a local array initialised with a brace list and named nowhere else in
+        the function than its declaration and this argument, else None."""
+        fn = getattr(self, "_function_node", None)
+        if fn is None:
+            return None
+        name = self._get_text(node)
+        uses = [n for n in self._descendants(fn, "identifier") if self._get_text(n) == name]
+        if len(uses) != 2:
+            return None
+        decls = [d for d in self._descendants(fn, "init_declarator")
+                 if self._extract_identifier(d.child_by_field_name("declarator")) == name]
+        if len(decls) != 1:
+            return None
+        value = decls[0].child_by_field_name("value")
+        if value is None or value.type != "initializer_list":
+            return None
+        return [c for c in value.named_children if c.type != "comment"]
 
     def _string_literal_value(self, node: TSNode) -> Optional[str]:
         if node is None or node.type != "string_literal":
@@ -1133,7 +1609,7 @@ class CFrontend:
         func_name = self._get_call_name(call_node)
         args = self._get_call_args(call_node)
         self._lower_lambda_args(call_node)
-        args_exp = [(self._translate_expression(a), Typ.unknown_type()) for a in args]
+        args_exp = self._call_args_exp(func_name, args)
 
         instrs.extend(self._alias_chain_receiver(func_name, loc))
         instrs.extend(self._nested_usage_sink_calls(args, loc))
@@ -1150,7 +1626,7 @@ class CFrontend:
             kind = resolve_sink_kind(spec.is_sink)
             for arg_idx in list(spec.sink_args) + self._shell_command_args(spec, args):
                 if arg_idx < len(args):
-                    arg_exp = self._translate_expression(args[arg_idx])
+                    arg_exp = self._sink_exp(spec, args, arg_idx)
                     instrs.append(TaintSink(loc=loc, exp=arg_exp, kind=kind, description=spec.description,
                                             arg_index=arg_idx, call=func_name))
 
@@ -1232,26 +1708,18 @@ class CFrontend:
         `for (i = 0, j = s; ...; i++, j += step)`."""
         if node is None:
             return
-        if node.type == "comma_expression":
-            self._translate_effects(node.child_by_field_name("left"))
-            self._translate_effects(node.child_by_field_name("right"))
-        elif node.type == "assignment_expression":
-            self._translate_assignment(node)
-        elif node.type == "update_expression":
-            self._translate_update(node)
-        elif node.type in ("parenthesized_expression", "condition_clause"):
-            for child in node.children:
-                if child.type not in ("(", ")"):
-                    self._translate_effects(child)
+        if node.type == "condition_clause":
+            for child in node.named_children:
+                self._translate_effects(child)
         else:
-            self._translate_expression(node)
+            self._effect(node)
 
     def _translate_update(self, node: TSNode) -> None:
         """Translate update expression: i++ or ++i"""
         loc = self._get_location(node)
         arg = node.child_by_field_name("argument")
         if arg and arg.type == "identifier":
-            var_name = self._get_text(arg)
+            var_name = self._alias_of(self._get_text(arg))
             op = self._get_text(node.child_by_field_name("operator")) if node.child_by_field_name("operator") else "++"
             if "++" in self._get_text(node):
                 self._add_instr(Assign(
@@ -1265,6 +1733,10 @@ class CFrontend:
                     id=PVar(var_name),
                     exp=ExpBinOp("-", ExpVar(PVar(var_name)), ExpConst.integer(1))
                 ))
+        elif arg is not None:
+            # `s.count++`, `a[i]--`, `(*p)++`: a write of the location too
+            op = "+" if "++" in self._get_text(node) else "-"
+            self._write_exp(arg, ExpBinOp(op, self._translate_expression(arg), ExpConst.integer(1)), loc)
 
     def _translate_return(self, node: TSNode) -> None:
         """Translate return statement"""
@@ -1307,7 +1779,12 @@ class CFrontend:
         if spec is None:
             return False
         usage_sink = bool(spec.is_sink) and spec.sink_args is not None and not spec.sink_args
+        # a taint sink too: `if (system(cmd) != 0)`, `n ? popen(cmd, "r") : NULL` are calls whose
+        # arguments reach the sink as surely as a call statement's do. Not an allocator: the
+        # heap analyses read `p = (T *)malloc(n)` as the value it is, and check its size there.
+        taint_sink = spec.is_taint_sink() and not spec.allocates and not spec.frees
         return (bool(getattr(spec, "taint_out_args", None)) or spec.algorithm_arg is not None or usage_sink
+                or taint_sink
                 or spec.checks_path is not None or spec.uses_path is not None)
 
     def _is_value_call(self, call_node: TSNode) -> bool:
@@ -1436,15 +1913,12 @@ class CFrontend:
         if init:
             if init.type == "declaration":
                 self._translate_declaration(init)
-            elif init.type in ("assignment_expression", "comma_expression",
-                               "update_expression"):
-                # A bare `for(i = 0; ...)` or `for(i = 0, j = s; ...)` initializer
-                # is an expression, not a statement, so `_translate_statement`
+            else:
+                # A bare `for(i = 0; ...)`, `for(i = 0, j = s; ...)` or `for (reset(); ...)`
+                # initializer is an expression, not a statement, so `_translate_statement`
                 # would silently drop it (leaving the loop variables with no
                 # definition); lower each effect directly.
                 self._translate_effects(init)
-            else:
-                self._translate_statement(init)
 
         before_node = self._current_node
 
@@ -1658,35 +2132,164 @@ class CFrontend:
 
         self._current_node = after_node
 
+    def _translate_range_for(self, node: TSNode) -> None:
+        """C++ `for (T x : range) body`: a loop whose body first binds x (every name of a
+        structured binding `auto [k, v]`) to an element of the range, which carries the range's
+        data. The statement used to be dropped whole, body included."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        loc = self._get_location(node)
+        init = node.child_by_field_name("initializer")
+        if init is not None:                                # C++20 `for (auto v = f(); auto x : v)`
+            for child in init.named_children:
+                self._translate_statement(child)
+        right = node.child_by_field_name("right")
+        range_exp = self._translate_expression(right) if right is not None else ExpConst.null()
+        head = proc.new_node(NodeKind.LOOP_HEAD)
+        proc.add_node(head)
+        proc.connect(self._current_node.id, head.id)
+        body_node = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(body_node)
+        after = proc.new_node(NodeKind.NORMAL)
+        proc.add_node(after)
+        more = ExpVar(self._new_ident("$range_more"))       # whether another element is left: unknown
+        head.add_instr(Prune(loc=loc, condition=more, is_true_branch=True, kind=PruneKind.LOOP_ENTER))
+        proc.connect(head.id, body_node.id)
+        head.add_instr(Prune(loc=loc, condition=more, is_true_branch=False, kind=PruneKind.LOOP_EXIT))
+        proc.connect(head.id, after.id)
+        self._current_node = body_node
+        element = ExpIndex(range_exp, ExpVar(self._new_ident("$range_at")))
+        declarator = node.child_by_field_name("declarator")
+        type_node = node.child_by_field_name("type")
+        for name in self._declared_names(declarator):
+            self._record_local(name)
+            self._note_var_type(name, type_node)
+            self._add_instr(Assign(loc=loc, id=PVar(name), exp=element))
+        body = node.child_by_field_name("body")
+        if body is not None:
+            self._jump_targets.append(("loop", after, head))
+            try:
+                self._translate_statement(body)
+            finally:
+                self._jump_targets.pop()
+        if self._current_node is not None:
+            proc.connect(self._current_node.id, head.id)
+        self._current_node = after
+
+    def _declared_names(self, declarator: Optional[TSNode]) -> List[str]:
+        """The names a declarator binds: one, or each of a structured binding's."""
+        if declarator is None:
+            return []
+        stack, names = [declarator], []
+        while stack:
+            d = stack.pop(0)
+            if d.type == "structured_binding_declarator":
+                names.extend(self._get_text(c) for c in d.named_children if c.type == "identifier")
+            elif d.type == "identifier":
+                names.append(self._get_text(d))
+            else:
+                stack.extend(c for c in d.named_children
+                             if c.type in ("identifier", "structured_binding_declarator", "pointer_declarator",
+                                           "reference_declarator"))
+        return names
+
+    def _translate_try(self, node: TSNode) -> None:
+        """C++ `try { body } catch (...) { handler }`: the body, then each handler as a branch
+        after it (as the Java frontend lowers handlers), rejoining after the statement. The
+        whole statement used to be dropped."""
+        proc = self._current_proc
+        if proc is None or self._current_node is None:
+            return
+        body = node.child_by_field_name("body")
+        if body is not None:
+            self._translate_statement(body)
+        if self._current_node is None:
+            return
+        handlers = [c for c in node.named_children if c.type == "catch_clause"]
+        if not handlers:
+            return
+        after_body = self._current_node
+        join = proc.new_node(NodeKind.JOIN)
+        proc.add_node(join)
+        proc.connect(after_body.id, join.id)
+        for handler in handlers:
+            arm = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm)
+            proc.connect(after_body.id, arm.id)
+            self._current_node = arm
+            params = handler.child_by_field_name("parameters")
+            for name, _ in self._params_from_list(params) if params is not None else []:
+                self._record_local(name.name)        # the exception object: a value, never null
+            hbody = handler.child_by_field_name("body")
+            if hbody is not None:
+                self._translate_statement(hbody)
+            if self._current_node is not None:
+                proc.connect(self._current_node.id, join.id)
+        self._current_node = join
+
+    def _translate_throw(self, node: TSNode) -> None:
+        """`throw e;` evaluates e (calls in it run) and leaves the function, as a value-less
+        return does (the Java frontend's lowering); it used to be dropped, so the code after a
+        `if (!ok) throw ...;` guard ran on the failing path too."""
+        for child in node.named_children:
+            if child.type != "comment":
+                self._effect(child)
+        self._add_instr(Return(loc=self._get_location(node), value=None))
+
     def _translate_switch(self, node: TSNode) -> None:
-        """Translate a switch: one unguarded branch per case, fall-through edges between
-        neighbouring cases, `break` as an edge to the join after the switch, and an edge past
-        every case when there is no `default`. Lowering the cases one after another on a
-        single path (as this used to) made `default: return 2;` end the path for every
-        statement after it -- the usual getopt loop lost all its assignments."""
+        """Translate a switch as a compiler does: a chain of two-way tests `cond == v` that
+        enters the arm of the first matching case (else `default`, else the join after the
+        switch), fall-through edges between neighbouring arms, and `break` as an edge to the
+        join. Lowering the cases one after another on a single path (as this once did) made
+        `default: return 2;` end the path for every statement after it; entering every arm
+        unguarded (as it did next) let `switch (strcmp(cmd, "status")) { case 0: system(cmd); }`
+        run the sink with cmd unchecked, and a constant `switch (7)` take its `case 6`."""
         body = node.child_by_field_name("body")
         proc = self._current_proc
         if not body or proc is None or self._current_node is None:
             return
+        condition = node.child_by_field_name("condition")
+        # evaluated once, before any case: `switch (c = getc(f))`, `switch (system(cmd))`
+        # (it used to be skipped, with every call and write in it)
+        cond_exp = self._translate_expression(condition) if condition is not None else None
         before = self._current_node
         join = proc.new_node(NodeKind.JOIN)
         proc.add_node(join)
+        cases = [c for c in body.children if c.type == "case_statement"]
+        arms: List[Node] = []
+        for _ in cases:
+            arm = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(arm)
+            arms.append(arm)
+        # the dispatch: one clean two-way branch per case value, in the written order
+        test, default_arm = before, None
+        for child, arm in zip(cases, arms):
+            value = child.child_by_field_name("value")
+            if value is None:
+                default_arm = arm
+                continue
+            if cond_exp is None or "..." in self._get_text(child).split(":", 1)[0]:
+                proc.connect(test.id, arm.id)              # a GNU case range: entered unguarded
+                continue
+            matches = ExpBinOp("==", cond_exp, self._translate_expression(value))
+            loc = self._get_location(child)
+            test.add_instr(Prune(loc=loc, condition=matches, is_true_branch=True))
+            proc.connect(test.id, arm.id)
+            test.add_instr(Prune(loc=loc, condition=matches, is_true_branch=False))
+            nxt = proc.new_node(NodeKind.NORMAL)
+            proc.add_node(nxt)
+            proc.connect(test.id, nxt.id)
+            test = nxt
+        proc.connect(test.id, (default_arm or join).id)
         self._jump_targets.append(("switch", join, None))
-        has_default = False
         fallthrough: Optional[Node] = None
         try:
-            for child in body.children:
-                if child.type != "case_statement":
-                    continue
-                arm = proc.new_node(NodeKind.NORMAL)
-                proc.add_node(arm)
-                proc.connect(before.id, arm.id)
+            for child, arm in zip(cases, arms):
                 if fallthrough is not None:
                     proc.connect(fallthrough.id, arm.id)
                 self._current_node = arm
                 value = child.child_by_field_name("value")
-                if value is None:
-                    has_default = True
                 for stmt in child.children:
                     if not stmt.is_named or stmt.type == "comment" or (value is not None and stmt.id == value.id):
                         continue
@@ -1700,8 +2303,6 @@ class CFrontend:
                 fallthrough = None if ended else self._current_node
             if fallthrough is not None:
                 proc.connect(fallthrough.id, join.id)
-            if not has_default:
-                proc.connect(before.id, join.id)
         finally:
             self._jump_targets.pop()
         self._current_node = join
@@ -1712,7 +2313,7 @@ class CFrontend:
             return ExpConst.null()
 
         if node.type == "identifier":
-            text = self._alias_of(self._get_text(node))
+            text = self._alias_of(self._expand_alias_macro(self._get_text(node)))
             if text in self._int_macros:
                 return ExpConst.integer(self._int_macros[text])     # the preprocessor's view
             return ExpVar(PVar(text))
@@ -1771,6 +2372,8 @@ class CFrontend:
             arg = node.child_by_field_name("argument")
             if op:
                 op_str = self._get_text(op)
+                if op_str == "*" and self._pointee(arg) is not None:
+                    return ExpVar(PVar(self._alias_of(self._pointee(arg))))      # `*p` of `p = &x`
                 if op_str in ("*", "&"):
                     return ExpUnOp(op_str, self._translate_expression(arg))
             return self._translate_expression(arg)
@@ -1785,6 +2388,9 @@ class CFrontend:
         elif node.type == "field_expression":
             obj = node.child_by_field_name("argument")
             field = node.child_by_field_name("field")
+            if self._is_arrow_access(node) and self._pointee(obj) is not None:   # `p->f` of `p = &x`
+                return ExpFieldAccess(ExpVar(PVar(self._alias_of(self._pointee(obj)))),
+                                      self._get_text(field) if field else "", False)
             return ExpFieldAccess(self._translate_expression(obj),
                                   self._get_text(field) if field else "",
                                   self._is_arrow_access(node))
@@ -1846,7 +2452,71 @@ class CFrontend:
             # array form (a `new_declarator` child, the `[n]`) is a distinct
             # allocator whose only correct release is `delete[]`.
             is_array = any(c.type == "new_declarator" for c in node.children)
-            return ExpCall(ExpConst.string("new[]" if is_array else "new"), [])
+            # `new std::string(cmd)` / `new Job{cmd}`: the object holds what its constructor is
+            # given (the arguments used to be dropped, so `unique_ptr<T> p(new T(x))` lost x)
+            ctor = node.child_by_field_name("arguments")
+            args = [self._translate_expression(a) for a in ctor.named_children
+                    if a.type != "comment"] if ctor is not None and not is_array else []
+            return ExpCall(ExpConst.string("new[]" if is_array else "new"), args)
+
+        elif node.type == "this":
+            return ExpVar(PVar("this"))
+
+        elif node.type == "initializer_list":
+            return self._initializer_value(node)
+
+        elif node.type in ("initializer_pair", "field_designator"):
+            value = node.child_by_field_name("value")
+            return self._translate_expression(value) if value is not None else ExpConst.null()
+
+        elif node.type == "compound_literal_expression":
+            # `(struct S){ .name = cmd }`: the literal's value is its initializer list
+            value = node.child_by_field_name("value")
+            return self._translate_expression(value) if value is not None else ExpConst.null()
+
+        elif node.type == "concatenated_string":
+            # `"ls " "-l"`: adjacent literals are one literal
+            return ExpConst.string("".join(
+                self._string_literal_value(c) or "" for c in node.named_children if c.type == "string_literal"))
+
+        elif node.type in ("nullptr", "null"):
+            return ExpConst.null()
+
+        elif node.type == "raw_string_literal":
+            content = next((c for c in node.children if c.type == "raw_string_content"), None)
+            return ExpConst.string(self._get_text(content) if content is not None else "")
+
+        elif node.type == "user_defined_literal":
+            # `"abc"s`, `5ms`: the literal's value (the suffix makes a std::string / duration of it)
+            literal = next((c for c in node.named_children if c.type != "literal_suffix"), None)
+            return self._translate_expression(literal) if literal is not None else ExpConst.null()
+
+        elif node.type in ("qualified_identifier", "offsetof_expression"):
+            # a named entity (`std::string::npos`, `Color::Red`) or a compile-time constant:
+            # it carries no data, and its name is its identity
+            return ExpVar(PVar(" ".join(self._get_text(node).split())))
+
+        elif node.type == "fold_expression":
+            # `(args + ... + 0)`: combines every element of the pack
+            operands = [c for c in (node.child_by_field_name("left"), node.child_by_field_name("right"))
+                        if c is not None]
+            return ExpCall(ExpConst.string("<fold>"), [self._translate_expression(c) for c in operands])
+
+        elif node.type == "generic_expression":
+            # `_Generic(x, int: a, default: b)` is one of its associations' values (the
+            # controlling expression is not evaluated)
+            named = [c for c in node.named_children if c.type not in ("type_descriptor", "comment")]
+            return ExpCall(ExpConst.string("<_Generic>"), [self._translate_expression(c) for c in named[1:]])
+
+        elif node.type == "declaration":
+            # a declaration used as a value: `if (char *t = q)`, `while (auto n = next())`;
+            # its value is the declared variable's
+            return self._condition_declaration(node)
+
+        elif node.type == "init_statement":
+            for child in node.named_children:
+                self._translate_statement(child)
+            return ExpConst.boolean(True)
 
         elif node.type == "parenthesized_expression":
             for child in node.children:
@@ -1857,6 +2527,12 @@ class CFrontend:
             # C++ wraps `if` / `while` / `switch` conditions in a clause (`if (x > 0)`, also
             # `if (init; cond)`); its value is the condition. Read as text it was an opaque name,
             # so no C++ branch said anything to the solver.
+            # `if (init; cond)`: the init statement runs first (it used to be dropped)
+            init = node.child_by_field_name("initializer")
+            if init is not None and self._current_node is not None and init.id not in self._hoisted_calls:
+                self._hoisted_calls[init.id] = ExpConst.boolean(True)
+                for child in init.named_children:
+                    self._translate_statement(child)
             value = node.child_by_field_name("value")
             if value is not None:
                 return self._translate_expression(value)
@@ -1879,8 +2555,14 @@ class CFrontend:
             value = node.child_by_field_name("value")
             return self._translate_expression(value)
 
-        elif node.type == "sizeof_expression":
-            return ExpConst.integer(0)  # Placeholder
+        elif node.type in ("sizeof_expression", "alignof_expression"):
+            # A compile-time constant: its value where the file fixes it (`sizeof(buf)` of
+            # `char buf[16]`, `sizeof(int)`), else one unknown constant per operand. It used to be 0,
+            # a false fact: `if (sizeof(buf) > 4) system(cmd);` was a branch never taken.
+            size = self._sizeof_value(node) if node.type == "sizeof_expression" else None
+            if size is not None:
+                return ExpConst.integer(size)
+            return ExpVar(PVar(" ".join(self._get_text(node).split())))
 
         elif node.type == "assignment_expression":
             # An assignment nested in an expression (`while ((e = next(f)))`,
@@ -1890,15 +2572,21 @@ class CFrontend:
             # condition becomes a guard on `e` and the IR sees `e` change.
             left = node.child_by_field_name("left")
             right = node.child_by_field_name("right")
+            cached = self._hoisted_calls.get(node.id)
+            if cached is not None:                          # already lowered (translated twice)
+                return cached
             rhs = self._translate_expression(right)
-            if (left is not None and left.type == "identifier"
-                    and self._current_node is not None):
-                name = self._get_text(left)
+            if left is not None and self._current_node is not None:
+                # also `v = s.name = q`, `if ((p->buf = malloc(n)) == NULL)`, `x = a[i] = q`:
+                # the field, element or pointee is written, and the value is what it now holds
                 op_node = node.child_by_field_name("operator")
                 op = self._get_text(op_node) if op_node is not None else "="
-                value = rhs if op == "=" else ExpBinOp(op[:-1], ExpVar(PVar(name)), rhs)
-                self._add_instr(Assign(loc=self._get_location(node), id=PVar(name), exp=value))
-                return ExpVar(PVar(name))
+                value = rhs if op == "=" else ExpBinOp(op[:-1], self._translate_expression(left), rhs)
+                self._write_exp(left, value, self._get_location(node))
+                result = self._translate_expression(left) if left.type in (
+                    "identifier", "field_expression", "parenthesized_expression") else value
+                self._hoisted_calls[node.id] = result
+                return result
             return rhs
 
         elif node.type == "update_expression":
@@ -1906,20 +2594,35 @@ class CFrontend:
             # writes x. Lower the write in the current node; a postfix form
             # yields x's old value through a fresh temporary.
             arg = node.child_by_field_name("argument")
+            cached = self._hoisted_calls.get(node.id)
+            if cached is not None:                          # already lowered (translated twice)
+                return cached
             if (arg is not None and arg.type == "identifier"
                     and self._current_node is not None):
-                name = self._get_text(arg)
+                name = self._alias_of(self._get_text(arg))
                 text = self._get_text(node).strip()
                 loc = self._get_location(node)
                 bump = Assign(loc=loc, id=PVar(name), exp=ExpBinOp(
                     "+" if "++" in text else "-", ExpVar(PVar(name)), ExpConst.integer(1)))
                 if text.startswith(("++", "--")):
                     self._add_instr(bump)
-                    return ExpVar(PVar(name))
-                old = self._new_ident(name)
-                self._add_instr(Assign(loc=loc, id=old, exp=ExpVar(PVar(name))))
-                self._add_instr(bump)
-                return ExpVar(old)
+                    result = ExpVar(PVar(name))
+                else:
+                    old = self._new_ident(name)
+                    self._add_instr(Assign(loc=loc, id=old, exp=ExpVar(PVar(name))))
+                    self._add_instr(bump)
+                    result = ExpVar(old)
+                self._hoisted_calls[node.id] = result
+                return result
+            if arg is not None and self._current_node is not None:
+                # `a[i]++`, `p->n--` inside an expression: the location is written as well
+                text = self._get_text(node).strip()
+                current = self._translate_expression(arg)
+                self._write_exp(arg, ExpBinOp("+" if "++" in text else "-", current, ExpConst.integer(1)),
+                                self._get_location(node))
+                result = self._translate_expression(arg) if text.startswith(("++", "--")) else current
+                self._hoisted_calls[node.id] = result
+                return result
             return self._translate_expression(arg)
 
         elif node.type == "comma_expression":
@@ -1928,7 +2631,10 @@ class CFrontend:
             right = node.child_by_field_name("right")
             return self._translate_expression(right)
 
-        # Default
+        # Default: the node's source text as a variable name. Whatever data the node carries is
+        # lost, so each node type that reaches here is recorded (`Program.unlowered_syntax`,
+        # held to an allowlist by tests/test_lowering_coverage_c.py).
+        self._record_unlowered(node.type)
         text = self._get_text(node)
         if text:
             return ExpVar(PVar(text))
@@ -1937,6 +2643,16 @@ class CFrontend:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    @staticmethod
+    def _descendants(root: TSNode, node_type: str) -> List[TSNode]:
+        out, stack = [], [root]
+        while stack:
+            n = stack.pop()
+            if n.type == node_type:
+                out.append(n)
+            stack.extend(n.children)
+        return out
 
     def _get_text(self, node: TSNode) -> str:
         if node is None:
@@ -2065,8 +2781,10 @@ class CFrontend:
         proc.entry_node = entry.id
         self._current_node = entry
         body = node.child_by_field_name("body")
+        saved_labels = self._begin_labels()
         if body:
             self._translate_compound_statement(body)
+        self._end_labels(saved_labels)
         exit_node = proc.new_node(NodeKind.EXIT)
         proc.add_node(exit_node)
         proc.exit_node = exit_node.id
@@ -2079,10 +2797,74 @@ class CFrontend:
             program.add_procedure(proc)
         return name
 
+    def _note_lambda_binding(self, name: str, lam: TSNode) -> None:
+        """`auto run = [](const char *c) { system(c); };` names the lambda: a later `run(x)`
+        calls that procedure. Only for a name declared once in the function and never written
+        again (an assignment, an increment, its address taken)."""
+        proc, fn = self._current_proc, getattr(self, "_function_node", None)
+        if proc is None or fn is None:
+            return
+        bindings = self._lambda_vars.setdefault(id(proc), {})
+        if name in bindings:
+            bindings[name] = None
+            return
+        for n in self._descendants(fn, "assignment_expression"):
+            left = n.child_by_field_name("left")
+            if left is not None and self._get_text(left) == name:
+                bindings[name] = None
+                return
+        for t in ("update_expression", "pointer_expression"):
+            for n in self._descendants(fn, t):
+                arg = n.child_by_field_name("argument")
+                op = self._get_text(n.child_by_field_name("operator")) if t == "pointer_expression" else "++"
+                if op != "*" and arg is not None and self._get_text(arg) == name:
+                    bindings[name] = None
+                    return
+        declared = [d for d in self._descendants(fn, "init_declarator")
+                    if self._extract_identifier(d.child_by_field_name("declarator")) == name]
+        bindings[name] = self._lower_lambda(lam) if len(declared) == 1 else None
+
+    def _expand_alias_macro(self, name: str) -> str:
+        """The identifier an object-like macro naming one identifier stands for (`#define ARG
+        data`), followed through chains; anything else unchanged."""
+        seen = {name}
+        aliases = getattr(self, "_alias_macros", {})
+        while name in aliases and name not in self._int_macros and aliases[name] not in seen:
+            name = aliases[name]
+            seen.add(name)
+        return name
+
+    def _own_method_call(self, name: str) -> Optional[str]:
+        """C++: an unqualified `run(x)` inside a member function of a class that declares `run`
+        calls the member (class scope is searched before namespace scope), i.e. `this->run(x)`,
+        unless a local or parameter of that name hides it."""
+        if self.LANGUAGE != "cpp" or self._current_proc is None or self._is_local_name(name):
+            return None
+        cls = getattr(self, "_current_class", None)
+        if not cls:
+            written = (getattr(self, "_written_function_name", None) or "").split("::")
+            cls = written[-2].split("<")[0] if len(written) >= 2 else None
+        methods = getattr(self, "_class_methods", {}).get(cls or "", ())
+        return f"this.{name}" if name in methods else None
+
     def _get_call_name(self, node: TSNode) -> str:
         func = node.child_by_field_name("function")
+        if func is not None and func.type == "identifier":
+            own = self._own_method_call(self._get_text(func))
+            if own is not None:
+                return own
+        if func is not None and func.type == "identifier" and self._current_proc is not None:
+            chain, cur = [], self._current_proc                # a lambda sees its function's names
+            while cur is not None and cur not in chain:
+                chain.append(cur)
+                bound = self._lambda_vars.get(id(cur), {}).get(self._get_text(func))
+                if bound:
+                    return bound
+                cur = self._lambda_parent.get(id(cur))
         if func:
             text = self._get_text(func)
+            if func.type == "identifier":
+                text = self._expand_alias_macro(text)        # `#define run_shell system`
             # `p->m()` and `o.m()` are the same call shape to every spec and to the
             # translator's receiver handling, which looks for a '.'
             if self.LANGUAGE == "cpp" and func.type == "field_expression" and "->" in text:
@@ -2184,12 +2966,24 @@ class CppFrontend(CFrontend):
 
     def _translate_translation_unit(self, root: TSNode, program: Program) -> None:
         """Translate C++ translation unit"""
+        if root.type == "translation_unit":
+            # the namespaces this file declares: `ns::f` defined out of line is not a method
+            self._namespaces = {self._get_text(n.child_by_field_name("name"))
+                                for n in self._descendants(root, "namespace_definition")
+                                if n.child_by_field_name("name") is not None}
+            self._class_methods = self._declared_methods(root)
         for child in root.children:
             if child.type == "function_definition":
+                self._written_function_name = None
                 proc = self._translate_function(child)
                 if proc:
-                    # Detect class methods defined outside class body (e.g., ClassName::MethodName)
-                    if '::' in proc.name:
+                    # Detect class methods defined outside class body (e.g., ClassName::MethodName).
+                    # Only the qualifier written in the definition names a class, and never a
+                    # namespace: a function inside `namespace ns { ... }` (named `ns::f` here) or
+                    # defined as `void ns::f()` is a plain function, and marking it a method of a
+                    # class `ns` left every call to it unresolved.
+                    written = (self._written_function_name or "").split("::")
+                    if len(written) >= 2 and written[-2].split("<")[0] not in getattr(self, "_namespaces", ()):
                         parts = proc.name.split('::')
                         if len(parts) >= 2:
                             # Last part is method name, second-to-last is class name
@@ -2219,6 +3013,36 @@ class CppFrontend(CFrontend):
                 self._translate_translation_unit(child, program)
             elif child.type == "declaration":
                 pass  # Skip global declarations
+
+    def _declared_methods(self, root: TSNode) -> Dict[str, Set[str]]:
+        """The member functions each class of the file declares or defines (in its body, or out
+        of line as `void C::m()`)."""
+        out: Dict[str, Set[str]] = {}
+        for kind in ("class_specifier", "struct_specifier"):
+            for cls in self._descendants(root, kind):
+                name, body = cls.child_by_field_name("name"), cls.child_by_field_name("body")
+                if name is None or body is None:
+                    continue
+                methods = out.setdefault(self._get_text(name), set())
+                for member in body.named_children:
+                    if member.type == "template_declaration":
+                        member = next((c for c in member.named_children
+                                       if c.type in ("function_definition", "field_declaration", "declaration")),
+                                      member)
+                    decl = member.child_by_field_name("declarator") \
+                        if member.type in ("function_definition", "field_declaration", "declaration") else None
+                    while decl is not None and decl.type in ("pointer_declarator", "reference_declarator"):
+                        decl = decl.child_by_field_name("declarator") or next(iter(decl.named_children), None)
+                    if decl is not None and decl.type == "function_declarator":
+                        fname = self._get_function_name(decl)
+                        if fname:
+                            methods.add(fname.rsplit("::", 1)[-1])
+        for fn in self._descendants(root, "function_definition"):
+            decl = fn.child_by_field_name("declarator")
+            written = (self._get_function_name(decl) or "").split("::") if decl is not None else []
+            if len(written) >= 2 and written[-2] in out:
+                out[written[-2]].add(written[-1])
+        return out
 
     def _translate_class(self, node: TSNode, program: Program) -> None:
         """Translate C++ class/struct"""
