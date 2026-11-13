@@ -2,6 +2,7 @@
 offline from its recorded data, prints the lines the README shows. A change that alters what a
 user would see breaks this test instead of silently outdating the docs."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -506,3 +507,36 @@ def test_configs_walkthrough(tmp_path):
     line = ("Warning: FRAME_LLM_MAX_TOKENS is no longer read; set llm.max_tokens in .frame.toml "
             "(or [tool.frame]) instead")
     assert line in out and line in readme, out
+
+
+def test_engine_query_walkthrough(tmp_path):
+    work = tmp_path / "engine-query"
+    shutil.copytree(EXAMPLES / "engine-query", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("callers", "--name", "run_query"), [
+            '"caller": "items",', '"caller": "order",', '"caller": "refund",',
+            '"code": "return str(run_query(\\"SELECT * FROM items WHERE name = \'\\" + name + \\"\'\\"))"']),
+        (("trace", "--name", "run_query"), ['"cwe": "CWE-89",', '"source": "request.args",',
+                                            '"evidence": "solver-verified"']),
+        (("siblings", "--name", "refund"), [
+            '"noreturn_guard@21: !(current_user.is_admin) -> abort(403)"',
+            '"guards_at_data_access": []']),
+        (("check", "--name", "order", "--line", "23", "--kind", "guarded_by", "--pattern", "is_admin"), [
+            '"verdict": "proved",',
+            '"reason": "every feasible path to line 23 passes !(current_user.is_admin) -> abort(403)"']),
+        (("check", "--name", "refund", "--line", "28", "--kind", "guarded_by", "--pattern", "is_admin"), [
+            '"verdict": "refuted",',
+            '"reason": "a feasible path reaches line 28 without a condition matching \'is_admin\'"']),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, "query", ".", *args, "--root", ".")
+        for line in lines:
+            assert line in out, (args, line, out[-2000:])
+            assert line in readme, f"README does not show {line!r}"
+    proc = subprocess.run([sys.executable, "-m", "frame.cli", "query", ".", "--serve", "--root", "."],
+                          cwd=work, env=env, capture_output=True, text=True, timeout=600,
+                          input='{"id": 1, "tool": "callers", "args": {"name": "run_query"}}\n')
+    answer = json.loads(proc.stdout)
+    assert answer["id"] == 1 and len(answer["result"]["callers"]) == 3

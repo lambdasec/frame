@@ -1010,6 +1010,9 @@ class FrameScanner:
         self._llm_config = llm_config
         self._hunt_programs: List[Any] = []  # translated programs collected for the hunt engine facts
         self._collecting_hunt_programs = False
+        # Keep each file's translated program after a directory scan without running the hunt
+        # (`frame query`, frame/sil/engine_query.py reads them through `_hunt_programs`).
+        self.collect_programs = False
         self.last_hunt_status: Optional[Dict[str, Any]] = None  # how the last hunt ended (_apply_hunt_authz)
         self._llm_client = None
         self.library_mode = library_mode
@@ -1207,7 +1210,7 @@ class FrameScanner:
             # Retain the translated program (it carries the per-handler authorization
             # facts) for a repo-scale authorization hunt. Works in every mode -- project
             # or single-file -- because it is collected here, per file.
-            if self.hunt_authz and self._collecting_hunt_programs:
+            if (self.hunt_authz or self.collect_programs) and self._collecting_hunt_programs:
                 self._hunt_programs.append(program)
 
             if self.verbose:
@@ -1572,7 +1575,7 @@ class FrameScanner:
         per_file_detect = self.llm_detect
         if repo_scale:
             self.llm_detect = False          # suppress the per-file LLM pass
-        if self.hunt_authz:                  # collect each file's program as it is scanned
+        if self.hunt_authz or self.collect_programs:   # collect each file's program as it is scanned
             self._hunt_programs = []
             self._collecting_hunt_programs = True
 
@@ -1614,12 +1617,31 @@ class FrameScanner:
             raw: Iterable[Path] = self._selected_files(dir_path, only_files, pattern, extensions)
         elif pattern is None:
             exts = {e.lower() for e in (extensions or EXTENSION_LANGUAGES)}
-            raw = sorted(p for p in dir_path.rglob("*") if p.suffix.lower() in exts or not p.suffix)
+            walked = sorted(p for p in self._walk_files(dir_path, excluded_dirs)
+                            if p.suffix.lower() in exts or not p.suffix)
+            # The walk never entered an excluded directory: no per-file exclusion test.
+            return [p for p in walked
+                    if p.is_file() and (p.suffix or self._is_script(p, extensions))]
         else:
             raw = dir_path.glob(pattern)
         return [p for p in raw
                 if p.is_file() and not self._is_excluded_dir_member(p, dir_path, excluded_dirs)
                 and (p.suffix or pattern is not None or self._is_script(p, extensions))]
+
+    @classmethod
+    def _walk_files(cls, root: Path,
+                    excluded_dirs: FrozenSet[Union[str, Tuple[str, ...]]]) -> Iterable[Path]:
+        """Every file under `root`, never descending into an excluded directory. A directory is
+        pruned exactly when a file inside it would be excluded (`_is_excluded_dir_member`), so the
+        result equals `rglob("*")` filtered file by file; walking `.venv` or `node_modules` only to
+        drop each file cost most of a scan's time in a large checkout."""
+        for dirpath, dirnames, filenames in os.walk(root):
+            here = Path(dirpath)
+            if excluded_dirs:
+                dirnames[:] = [d for d in dirnames
+                               if not cls._is_excluded_dir_member(here / d / "_", root, excluded_dirs)]
+            for f in filenames:
+                yield here / f
 
     @staticmethod
     def _is_script(path: Path, extensions: Optional[Iterable[str]]) -> bool:

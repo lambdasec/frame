@@ -162,6 +162,8 @@ class JavaScriptFrontend:
 
         self._proto_test_cache = {}             # function node -> tests a value against __proto__...
         self._tree_root = tree.root_node
+        self._name_uses_index = None            # per-file indexes (_name_uses, _enclosing_local_names)
+        self._local_names_cache = {}
 
         # Module bindings (`const cp = require('child_process')`, `import {exec}
         # from 'child_process'`): calls through them are named after the module
@@ -2092,19 +2094,26 @@ class JavaScriptFrontend:
         an outer local often holds attacker-derived data (e.g. a filepath built
         from req.url) that flows into a sink several callbacks deep."""
         names = set()
+        cache = self.__dict__.setdefault("_local_names_cache", {})
         cur = node.parent
         while cur is not None:
             if cur.type in self._FUNC_LIKE:
-                body = cur.child_by_field_name("body")
-                if body is not None:
-                    stack = [body]
-                    while stack:
-                        c = stack.pop()
-                        if c.type == "variable_declarator":
-                            nm = c.child_by_field_name("name")
-                            if nm is not None and nm.type == "identifier":
-                                names.add(self._get_text(nm))
-                        stack.extend(c.children)
+                key = (cur.start_byte, cur.end_byte, cur.type)
+                found = cache.get(key)
+                if found is None:            # each function's body is walked once per file
+                    found = set()
+                    body = cur.child_by_field_name("body")
+                    if body is not None:
+                        stack = [body]
+                        while stack:
+                            c = stack.pop()
+                            if c.type == "variable_declarator":
+                                nm = c.child_by_field_name("name")
+                                if nm is not None and nm.type == "identifier":
+                                    found.add(self._get_text(nm))
+                            stack.extend(c.children)
+                    cache[key] = found
+                names |= found
             cur = cur.parent
         return names
 
@@ -2945,7 +2954,7 @@ class JavaScriptFrontend:
             return None
         home = self._declaring_scope(name_node, name)
         kinds = set()
-        for n in self._descendants_js(self._tree_root):
+        for n in self._name_uses(name):
             if n.type == "shorthand_property_identifier" and self._get_text(n) == name:
                 return None                                # `{ g }`: stored or exported
             if n.type != "identifier" or n == name_node or self._get_text(n) != name:
@@ -2960,6 +2969,18 @@ class JavaScriptFrontend:
                 return None
             kinds.add(self._value_kind(argv[index], depth + 1))
         return "Array" if kinds == {"Array"} else None
+
+    def _name_uses(self, name: str) -> List[TSNode]:
+        """The file's identifier and shorthand-property nodes spelled `name`, in the order
+        `_descendants_js(self._tree_root)` visits them (indexed once per file: scanning the whole
+        tree for every function made a bundled library quadratic)."""
+        if self._name_uses_index is None:
+            index: Dict[str, List[TSNode]] = {}
+            for n in self._descendants_js(self._tree_root):
+                if n.type in ("identifier", "shorthand_property_identifier"):
+                    index.setdefault(self._get_text(n), []).append(n)
+            self._name_uses_index = index
+        return self._name_uses_index.get(name, [])
 
     def _call_result_kind(self, call: TSNode, depth: int) -> Optional[str]:
         func = call.child_by_field_name("function")

@@ -8,7 +8,7 @@ body:
     attributes:
       label: Frame version
       description: Output of `frame --version`.
-      placeholder: frame 1.1.4
+      placeholder: frame 1.1.5
     validations:
       required: true
   - type: dropdown

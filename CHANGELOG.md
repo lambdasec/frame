@@ -4,6 +4,16 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-13
+
+### Added
+
+- **`frame query`: the engine as a query service for coding agents.** The tools Frame's authorization hunt gives its agents (`handlers`, `handler_facts`, `siblings`, `trace`, `callers`, `callees`, `guards`, `check`) now answer for any agent or script, with no model. Each answer carries the evidence it rests on, how names were resolved, its limits, the index it was computed over and the query time; call sites carry their line of code. `frame query DIR --serve` keeps the translated project in memory and rebuilds only when a source file changes; frame-mcp 0.3.0 exposes the tools as `engine_*` MCP tools over one such process per project.
+
+### Changed
+
+- **Faster directory scans in large checkouts.** The file walk no longer descends into excluded directories (`.venv`, `node_modules`, `.git`...) only to drop each file afterwards, and the JavaScript frontend indexes a file's identifiers once instead of re-walking the tree for every function (a bundled library was quadratic). Findings are unchanged.
+
 ## [1.1.4] - 2026-11-11
 
 ### Fixed
@@ -78,7 +88,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/lambdasec/frame/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/lambdasec/frame/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/lambdasec/frame/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/lambdasec/frame/compare/v1.1.1...v1.1.2

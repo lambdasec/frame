@@ -85,7 +85,7 @@ frame scan src/ -f sarif -o frame.sarif --fail-on high
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/lambdasec/frame
-    rev: v1.1.4
+    rev: v1.1.5
     hooks:
       - id: frame
         # args: [--baseline, .frame-baseline.json]
@@ -120,9 +120,9 @@ args = ["frame-mcp"]
 | `verify` | Re-check earlier findings: fixed, present, suppressed, uncertain |
 | `fix` | Patch findings and re-scan to confirm (needs a model) |
 | `exploit` | Attack a live target you are authorized to test |
-| `diff` | Compare two scan JSONs: introduced / fixed findings by fingerprint |
 | `packs_list`, `packs_check` | List and validate framework packs |
 | `solve` | Check a separation logic entailment |
+| `engine_handlers`, `engine_handler_facts`, `engine_siblings`, `engine_trace`, `engine_callers`, `engine_callees`, `engine_guards`, `engine_check` | Ask the engine about the project ([`frame query`](#frame-query-dir-tool)): answered from a warm index, each with its evidence, resolution and limits |
 
 A `security-review` prompt runs scan, verify and fix in one go. The model for the AI tools comes from the `FRAME_LLM_*` variables set for the server or the project's `[llm]` table ([ai.md](ai.md)). Without MCP, an agent gets the same check by running `frame scan . --files <edited files>` after each edit.
 
@@ -365,6 +365,22 @@ Provider credentials anywhere in the git history: every line each commit added (
 ### `frame diff OLD.json NEW.json`
 
 Pairs two `frame scan -f json` runs by fingerprint (exact, then loose by nearest line) and reports which findings a change introduced, fixed, or left unchanged, so a reviewer sees "this PR introduces 2, fixes 1" rather than diffing a baseline file by hand. Exit 1 when any finding was introduced, else 0. `-f text|json`.
+
+### `frame query [dir] TOOL`
+
+Asks the engine about a project: the facts the authorization hunt's agents use, for any agent or script. The project is scanned symbolically once (no model) and every file's translated program is kept; each tool answers over it. Tools: `handlers` (every entry point with whether it is protected, whether it reaches a resource, its sink kinds), `handler_facts`, `siblings` (the handlers of the same class or file, with the guards at their data accesses), `trace` (the engine's data flows in a function, each with its evidence level), `callers`, `callees`, `guards` (the conditions that hold on every feasible path to a line) and `check` (a claim decided over the feasible paths: `guarded_by` a pattern, or `scoped_by_identity`; `proved`, `refuted` with a witness path, or `unknown`). Arguments: `--name`, `--file` (to pick among same-named functions), `--line`, `--kind`, `--pattern`; `-l LANG`, `--pack PATH` (repeatable), `--no-verify` (skip solver verification of the scan's flows: a faster build), `--root DIR` (the project root, as for `frame scan`: the files between it and the target are read as context).
+
+Every answer has the same envelope: `result`, the `evidence` it rests on, the `resolution` (how a name became a function: callers and callees match by simple name, not by type), its `limits`, the `index` it was computed over (`files`, `handlers`, `build_ms`, `rebuilt`) and `query_ms`. Call sites carry their line of code. Exit 2 on an unknown tool or missing argument.
+
+```
+$ frame query . check --name admin --line 22 --kind guarded_by --pattern is_admin
+  "result": {"verdict": "proved", "witness": [],
+             "reason": "every feasible path to line 22 passes !(current_user.is_admin) -> abort(403)"},
+  "index": {"files": 1, "handlers": 2, "build_ms": 127.5, "rebuilt": true, ...},
+  "query_ms": 0.09
+```
+
+`--serve` keeps the index in memory: one JSON request per line on stdin (`{"id": 1, "tool": "callers", "args": {"name": "run_query"}}`; `{"tool": "tools"}` lists them), one JSON answer per line on stdout (with the request's `id`). Before each answer it compares the size and mtime of every source file under the project root and the mtime of every directory (an added or removed file), and rebuilds only when something changed, so a coding agent's questions are answered from memory between edits. frame-mcp holds one such process per project.
 
 ### `frame inventory [dir]`
 

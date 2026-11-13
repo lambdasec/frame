@@ -121,6 +121,34 @@ def create_parser() -> argparse.ArgumentParser:
     diff_parser.add_argument("-f", "--format", default="text", choices=["text", "json"],
                              help="Output format (default: text)")
 
+    # === QUERY command ===
+    query_parser = subparsers.add_parser(
+        "query",
+        help="Ask the engine about a project: handlers, callers, callees, data flows, guards, claims",
+        description="Translate a project once and answer engine queries over it (the tools the "
+                    "authorization hunt's agents use), each with its evidence, how names were resolved "
+                    "and its limits. One query and exit, or --serve: JSON requests on stdin, answers on "
+                    "stdout, the index kept in memory and rebuilt when a file changes."
+    )
+    query_parser.add_argument("target", nargs="?", default=".", help="Project directory (default: .)")
+    query_parser.add_argument("tool", nargs="?", default=None,
+                              help="handlers, handler_facts, siblings, trace, callers, callees, guards or check")
+    query_parser.add_argument("--name", default=None, help="Function or handler name")
+    query_parser.add_argument("--file", dest="query_file", default=None,
+                              help="File (relative to the project) to pick among same-named functions")
+    query_parser.add_argument("--line", type=int, default=None, help="Line (guards, check)")
+    query_parser.add_argument("--kind", default=None, help="Claim kind for check: guarded_by or scoped_by_identity")
+    query_parser.add_argument("--pattern", default=None, help="Condition pattern for check guarded_by")
+    query_parser.add_argument("--serve", action="store_true",
+                              help="Answer JSON requests from stdin, one per line, keeping the index warm")
+    query_parser.add_argument("-l", "--language", default=None, help="Only files of this language")
+    query_parser.add_argument("--pack", dest="packs", action="append", default=None,
+                              help="Extra framework pack file or directory (repeatable)")
+    query_parser.add_argument("--root", dest="query_root", default=None,
+                              help="Project root imports resolve under (default: the git top level, as for scan)")
+    query_parser.add_argument("--no-verify", action="store_true",
+                              help="Skip solver verification of the scan's flows (faster index build)")
+
     # === DEPS command ===
     deps_parser = subparsers.add_parser(
         "deps",
@@ -1151,6 +1179,27 @@ def _diff_findings(old: List[dict], new: List[dict]):
     return introduced, fixed, unchanged
 
 
+def cmd_query(args) -> int:
+    """`frame query DIR TOOL ...` / `frame query DIR --serve`: engine facts over a project."""
+    from frame.sil.engine_query import TOOLS, QueryIndex, serve
+    target = Path(args.target)
+    if not target.is_dir():
+        print(f"Error: {target} is not a directory", file=sys.stderr)
+        return 2
+    index = QueryIndex(str(target), language=args.language, packs=args.packs,
+                       verify=not args.no_verify, project_root=args.query_root)
+    if args.serve:
+        return serve(index, sys.stdin, sys.stdout)
+    if not args.tool:
+        print("Error: name a tool (" + ", ".join(sorted(TOOLS)) + ") or pass --serve", file=sys.stderr)
+        return 2
+    qargs = {k: v for k, v in (("name", args.name), ("file", args.query_file), ("line", args.line),
+                                ("kind", args.kind), ("pattern", args.pattern)) if v is not None}
+    answer = index.query(args.tool, qargs)
+    print(json.dumps(answer, indent=2))
+    return 2 if "error" in answer else 0
+
+
 def cmd_diff(args) -> int:
     """`frame diff OLD.json NEW.json`: introduced / fixed findings between two scans."""
     try:
@@ -2122,6 +2171,7 @@ def main(argv: List[str] = None) -> int:
         "iac": cmd_iac,
         "history": cmd_history,
         "diff": cmd_diff,
+        "query": cmd_query,
         "deps": cmd_deps,
         "exploit": cmd_exploit,
         "fix": cmd_fix,
