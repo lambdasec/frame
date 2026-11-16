@@ -29,6 +29,18 @@ fields = ["args", "kwargs"]
 objects = { request = "Request" }
 references = ["https://www.django-rest-framework.org/api-guide/views/"]
 
+# A model serializer's save() creates or updates the instance it was given (ModelSerializer.save
+# calls create() / update()), a project serializer typed through its base. A marker that the
+# handler writes stored data (business-logic hunt ranking, the missing-authorization check),
+# never a taint sink.
+# https://www.django-rest-framework.org/api-guide/serializers/#saving-instances
+[[sink]]
+call = ["rest_framework.serializers.ModelSerializer.save",
+        "rest_framework.serializers.HyperlinkedModelSerializer.save"]
+kind = "resource_modify"
+args = []
+description = "ModelSerializer.save() writes the model instance"
+
 [[entrypoint]]
 id = "api-view-instance"
 extends = ["rest_framework.views.APIView", "rest_framework.generics.*", "rest_framework.viewsets.*",

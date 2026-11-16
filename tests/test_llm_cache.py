@@ -101,6 +101,80 @@ def test_chat_raw_retries_on_transient_then_fails():
     assert c.stats["calls"] == 2                            # initial + 1 retry
 
 
+def test_a_rescued_call_keeps_why_and_when_its_attempts_failed(monkeypatch):
+    # A call rescued by a retry logged only `retries`: an outage could not be told apart
+    # (DNS, refused, reset) or placed in time. Each failed attempt now keeps both.
+    monkeypatch.setattr("frame.sil.llm_client.time.sleep", lambda s: None)
+    c = LLMClient(LLMConfig(base_url="http://x", model="m", api_key="", agent_retries=2))
+    replies = [urllib.error.URLError(OSError(-3, "Temporary failure in name resolution")),
+               urllib.error.HTTPError("http://x", 503, "Unavailable", {}, None),
+               b'{"choices": [{"message": {"content": "ok"}}], "usage": {}}']
+    def flaky(req):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c._urlopen_read = flaky
+    assert c.chat_raw([{"role": "user", "content": "a"}])["content"] == "ok"
+    rec = c.last_call
+    assert rec["status"] == "ok" and rec["retries"] == 2
+    assert rec["at"].endswith("Z")
+    first, second = rec["failures"]
+    assert first["error"] == "URLError" and "name resolution" in first["reason"]
+    assert second["error"] == "HTTP 503"
+    assert all(f["at"].endswith("Z") for f in rec["failures"])
+
+
+def _http_error(code, retry_after=None):
+    from email.message import Message
+    h = Message()
+    if retry_after is not None:
+        h["Retry-After"] = retry_after
+    return urllib.error.HTTPError("http://x", code, "err", h, None)
+
+
+def test_a_rate_limited_agent_call_waits_what_retry_after_asks(monkeypatch):
+    # A per-minute limit counts refused requests too: retrying on our own schedule inside the
+    # same minute wastes the budget. Retry-After says when the window resets.
+    slept = []
+    monkeypatch.setattr("frame.sil.llm_client.time.sleep", slept.append)
+    c = LLMClient(LLMConfig(base_url="http://x", model="m", api_key="", agent_retries=3))
+    replies = [_http_error(429, "17"), _http_error(503),
+               b'{"choices": [{"message": {"content": "ok"}}], "usage": {}}']
+    def call(req):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c._urlopen_read = call
+    assert c.chat_raw([{"role": "user", "content": "a"}])["content"] == "ok"
+    assert 17 <= slept[0] < 18                           # what the server asked, plus jitter
+    assert slept[1] == LLMClient._agent_backoff(1)       # no header: the usual backoff
+
+
+def test_retry_after_reads_seconds_and_dates_and_ignores_other_errors():
+    from email.utils import format_datetime
+    from datetime import datetime, timedelta, timezone
+    assert 5 <= LLMClient._retry_after(_http_error(429, "5")) < 6
+    when = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+    assert 25 <= LLMClient._retry_after(_http_error(503, when)) < 32
+    assert LLMClient._retry_after(_http_error(429, "99999")) < LLMClient._RETRY_AFTER_CAP + 1
+    assert LLMClient._retry_after(_http_error(429)) is None             # no header
+    assert LLMClient._retry_after(_http_error(500, "5")) is None        # not a rate limit
+    assert LLMClient._retry_after(_http_error(429, "soon")) is None     # unreadable
+    assert LLMClient._retry_after(urllib.error.URLError("x")) is None
+
+
+def test_a_failed_call_records_the_reason():
+    c = LLMClient(LLMConfig(base_url="http://x", model="m", api_key="", agent_retries=0))
+    def refused(req):
+        raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+    c._urlopen_read = refused
+    assert c.chat_raw([{"role": "user", "content": "a"}]) is None
+    assert c.last_call["status"] == "error" and "Connection refused" in c.last_call["detail"]
+    assert c.last_call["failures"][0]["reason"] == c.last_call["detail"]
+
+
 def test_usage_record_keeps_the_finish_reason():
     # A refusal or a truncation must be visible in the per-call log, not read as a quiet answer.
     rec = LLMClient._usage_record({"choices": [{"finish_reason": "content_filter", "message": {}}],

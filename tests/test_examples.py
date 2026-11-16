@@ -509,6 +509,31 @@ def test_configs_walkthrough(tmp_path):
     assert line in out and line in readme, out
 
 
+def test_business_logic_bounds_walkthrough(tmp_path):
+    work = tmp_path / "business-logic"
+    shutil.copytree(EXAMPLES / "business-logic", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("add_item", "12", "order.quantity"), [
+            '"verdict": "refuted",', '"equals": 0,', '"from": "request.form"',
+            '"reason": "a feasible path reaches line 12 with order.quantity = 0 (no condition on it on that path)",',
+            '"origin": "order.quantity <- qty <- $qty_1 <- int(request.form[\\"qty\\"])"']),
+        (("set_item", "23", "order.quantity"), [
+            '"verdict": "proved",',
+            '"reason": "every feasible path to line 23 entails order.quantity >= 1 (from: (!qty < 1 & !qty > 100))",']),
+        (("pay", "33", "amount"), [
+            '"equals": "NaN",',
+            '"reason": "a feasible path reaches line 33 with amount = NaN (it passes: !amount <= 0)",']),
+    ]
+    for (name, line, var), lines in shown:
+        out = frame(work, env, "query", ".", "check", "--name", name, "--line", line, "--kind",
+                    "lower_bound", "--var", var, "--bound", "1", "--root", ".")
+        for want in lines:
+            assert want in out, (name, want, out[-2000:])
+            assert want in readme, f"README does not show {want!r}"
+
+
 def test_engine_query_walkthrough(tmp_path):
     work = tmp_path / "engine-query"
     shutil.copytree(EXAMPLES / "engine-query", work)

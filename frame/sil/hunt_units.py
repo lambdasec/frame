@@ -43,6 +43,7 @@ class Unit:
     leads: List[Dict[str, Any]] = field(default_factory=list)        # soundness leads / gates in these files
     score: float = 0.0
     reasons: List[str] = field(default_factory=list)
+    hunt_class: str = "authz"     # the flaw class its agent hunts (hunt_classes.CLASSES)
 
     def names(self) -> List[str]:
         return [m.name if hasattr(m, "name") else str(m.get("name", "")) for m in self.members]

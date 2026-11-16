@@ -32,13 +32,21 @@ sys.path.insert(0, str(HERE))
 from match import _same_file, case_detected, regions_holding  # noqa: E402
 
 
-def _cases(workspace: Path) -> dict:
-    manifest = yaml.safe_load((HERE / "manifest.yaml").read_text())
-    ds = workspace / "_dataset" / manifest["dataset"]["records"]
+def _cases(workspace: Path, manifest_path: Path = HERE / "manifest.yaml") -> dict:
+    """The case records: the pinned dataset clone's, or a local dataset beside the manifest
+    (`dataset.local`). A manifest's `scoring.cwe_families` gives each case the CWE family of its
+    `class` (`match_cwes`), which the matcher uses in place of the access-control family."""
+    manifest = yaml.safe_load(manifest_path.read_text())
+    ds_meta = manifest["dataset"]
+    ds = manifest_path.parent / ds_meta["local"] if ds_meta.get("local") else \
+        workspace / "_dataset" / ds_meta["records"]
+    families = (manifest.get("scoring") or {}).get("cwe_families") or {}
     out = {}
     for line in ds.read_text().splitlines():
         if line.strip():
             r = json.loads(line)
+            if r.get("class") in families and "match_cwes" not in r:
+                r["match_cwes"] = list(families[r["class"]])
             out[r["id"]] = r
     return out
 
@@ -252,8 +260,9 @@ def funnel(sysdir: Path, cases: dict, agent_per_case: dict) -> dict:
             "per_case": per_case}
 
 
-def score(workspace: Path, results: Path, judge=None, regions: bool = True) -> dict:
-    cases = _cases(workspace)
+def score(workspace: Path, results: Path, judge=None, regions: bool = True,
+          manifest: Path = HERE / "manifest.yaml") -> dict:
+    cases = _cases(workspace, manifest)
     if regions:
         attach_regions(cases, workspace)
     return score_cases(cases, results, judge)
@@ -316,7 +325,10 @@ def main() -> int:
     ap.add_argument("--judge-base-url", default="", help="judge endpoint (default: FRAME_LLM_BASE_URL)")
     ap.add_argument("--judge-key-env", default="FRAME_LLM_API_KEY",
                     help="NAME of the environment variable holding the judge's API key")
+    ap.add_argument("--manifest", default=str(HERE / "manifest.yaml"),
+                    help="the benchmark's manifest (default: BAC-Bench's)")
     args = ap.parse_args()
+    manifest = Path(args.manifest).resolve()
     results = Path(args.results)
     judge = None
     if args.judge:
@@ -329,11 +341,12 @@ def main() -> int:
             return 2
         judge = Judge(LLMClient(cfg), results / "judge_cache.json", model=cfg.model)
     report = score(Path(args.workspace).expanduser().resolve(), results, judge,
-                   regions=not args.window_only)
+                   regions=not args.window_only, manifest=manifest)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print(f"BAC-Bench: {report['n_cases']} cases")
+        name = (yaml.safe_load(manifest.read_text()) or {}).get("title") or "BAC-Bench"
+        print(f"{name}: {report['n_cases']} cases")
         for name, s in report["systems"].items():
             err = f"  hunt-errors {s['hunt_errors']}" if s.get("hunt_errors") else ""
             print(f"  {name:16s} detected {s['detected']}/{s['n']}  "

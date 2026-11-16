@@ -278,6 +278,18 @@ def create_parser() -> argparse.ArgumentParser:
              "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
              "LLM endpoint (FRAME_LLM_* or [llm] in .frame.toml)."
     )
+    scan_parser.add_argument(
+        "--hunt",
+        dest="hunt_classes",
+        default=None,
+        metavar="CLASSES",
+        help="Agentic hunt for the named flaw classes, comma-separated: authz (as --hunt-authz), "
+             "limits (a client number stored without its bound), race (read, decide, write "
+             "without a lock), workflow (a required state or one-time token skipped), replay (a "
+             "state change accepted twice), bruteforce (a guessable secret with no attempt limit), "
+             "logic (every business-logic class) or all. Default from [hunt] classes. Needs an LLM "
+             "endpoint."
+    )
 
     return parser
 
@@ -413,6 +425,19 @@ def format_json_result(results: List[ScanResult], directory: bool = False,
     return json.dumps(doc, indent=2)
 
 
+def _hunt_options(args) -> dict:
+    """The hunt's options from the scan flags: the flaw classes `--hunt` names (validated here,
+    so a typo is an error before the scan runs); `--hunt-authz` alone keeps the configured ones."""
+    raw = getattr(args, "hunt_classes", None)
+    if not raw:
+        return {}
+    from frame.sil.hunt_classes import parse
+    classes = parse(raw)
+    if getattr(args, "hunt_authz", False) and "authz" not in classes:
+        classes = ["authz"] + classes
+    return {"classes": classes}
+
+
 def hunt_summary(status: Optional[dict]) -> Optional[dict]:
     """The authorization hunt's outcome for the scan output (`--hunt-authz`), None when no hunt
     ran: how it ended, the units audited and deferred, the coverage wave, and every member an
@@ -422,6 +447,7 @@ def hunt_summary(status: Optional[dict]) -> Optional[dict]:
     units = status.get("units") or []
     cov = status.get("coverage") or {}
     return {"stop": status["stop"],
+            "classes": list(status.get("classes") or ["authz"]),
             "units": sum(1 for u in units if u.get("stop") != "deferred"),
             "deferred_units": int(status.get("deferred_units") or 0),
             "coverage_units": int(cov.get("units") or 0),
@@ -429,7 +455,9 @@ def hunt_summary(status: Optional[dict]) -> Optional[dict]:
 
 
 def format_hunt_text(hunt: dict) -> str:
-    rows = [f"Authorization hunt: {hunt['units']} units audited ({hunt['stop']})"
+    classes = hunt.get("classes") or ["authz"]
+    title = "Authorization hunt" if classes == ["authz"] else f"Hunt ({', '.join(classes)})"
+    rows = [f"{title}: {hunt['units']} units audited ({hunt['stop']})"
             + (f", {hunt['coverage_units']} of them for code other units relied on"
                if hunt["coverage_units"] else "")
             + (f", {hunt['deferred_units']} deferred by max_units" if hunt["deferred_units"] else "")]
@@ -649,6 +677,12 @@ def cmd_scan(args) -> int:
         print(f"Error: Target not found: {args.target}", file=sys.stderr)
         return 2
 
+    try:
+        _hunt_options(args)
+    except ValueError as e:
+        print(f"Error: --hunt: {e}", file=sys.stderr)
+        return 2
+
     changed_ref = getattr(args, "changed", None)
     only_paths = getattr(args, "files", None)
     narrowed = changed_ref is not None or only_paths is not None
@@ -728,7 +762,8 @@ def cmd_scan(args) -> int:
             llm_detect=ai or getattr(args, "llm_detect", False),
             llm_triage=ai or getattr(args, "llm_triage", False),
             llm_repo_scale=getattr(args, "repo_scale", False),
-            hunt_authz=getattr(args, "hunt_authz", False),
+            hunt_authz=getattr(args, "hunt_authz", False) or bool(getattr(args, "hunt_classes", None)),
+            hunt_options=_hunt_options(args),
             respect_suppressions=not getattr(args, "no_suppress", False),
             disabled_rules=disabled_rules,
             packs=pack_paths,
@@ -850,11 +885,13 @@ def cmd_scan(args) -> int:
                   "summaries settled; some flows between files may be missing", file=sys.stderr)
         if scope.get("cross_file") is False and scope.get("reason"):
             print(f"Warning: {scope['reason']}", file=sys.stderr)
+        if scope.get("alone"):
+            print(f"Warning: {scope['alone']}", file=sys.stderr)
     hunt = hunt_summary(getattr(scanner, "last_hunt_status", None))
     if hunt is not None:
         extra["hunt"] = hunt
         if hunt["stop"] not in ("finished", "no_targets"):
-            print(f"Warning: the authorization hunt did not finish ({hunt['stop']}); its "
+            print(f"Warning: the hunt did not finish ({hunt['stop']}); its "
                   f"absence of findings is not a clean result", file=sys.stderr)
     if baseline_entries is not None:
         fixed = apply_baseline(results, baseline_entries, root)

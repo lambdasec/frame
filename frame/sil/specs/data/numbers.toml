@@ -1,0 +1,92 @@
+# Calls that turn a client's text into a number, per language, and what that number can be.
+# Read by frame/sil/logic_facts.py, which decides bounds on client-chosen values (the business-logic
+# hunt's `check` kinds `lower_bound` / `upper_bound`); nothing in the analysis reads it.
+#
+#   calls    callee names as the frontend writes them (a module-qualified id or a plain name)
+#   integer  the result is a whole number
+#   nan      the result can be NaN, which fails every ordered comparison: `if (v < 1) reject`
+#            lets it through, `if (!(v >= 1)) reject` does not
+#
+# `[raw]` is a client value used with no conversion: in JavaScript a JSON body field can be any
+# number, and a non-numeric string compares like NaN. Python, Java and C# do not compare text with
+# numbers, so a raw value there is not a number the engine can bound.
+
+[[conversion]]
+language = "python"
+calls = ["int"]
+integer = true
+
+[[conversion]]
+language = "python"
+calls = ["float"]
+nan = true
+
+[[conversion]]
+language = "python"
+calls = ["Decimal", "decimal.Decimal"]
+# Decimal('NaN') raises InvalidOperation on an ordered comparison: no NaN gets past a guard.
+
+[[conversion]]
+language = "javascript"
+calls = ["Number", "parseFloat", "Number.parseFloat"]
+nan = true
+
+[[conversion]]
+language = "javascript"
+calls = ["parseInt", "Number.parseInt", "Math.trunc", "Math.floor", "Math.round", "Math.ceil"]
+integer = true
+nan = true
+
+[[conversion]]
+language = "java"
+calls = ["Integer.parseInt", "Integer.valueOf", "Long.parseLong", "Long.valueOf",
+         "Short.parseShort", "Byte.parseByte"]
+integer = true
+
+[[conversion]]
+language = "java"
+calls = ["Double.parseDouble", "Double.valueOf", "Float.parseFloat", "Float.valueOf"]
+nan = true
+
+[[conversion]]
+language = "java"
+calls = ["new BigDecimal", "BigDecimal.valueOf", "new BigInteger"]
+
+[[conversion]]
+language = "csharp"
+calls = ["Int32.Parse", "Int64.Parse", "Int16.Parse", "int.Parse", "long.Parse",
+         "Convert.ToInt32", "Convert.ToInt64"]
+integer = true
+
+[[conversion]]
+language = "csharp"
+calls = ["Double.Parse", "Single.Parse", "double.Parse", "float.Parse", "Convert.ToDouble"]
+nan = true
+
+[[conversion]]
+language = "csharp"
+calls = ["Decimal.Parse", "decimal.Parse", "Convert.ToDecimal"]
+
+[raw]
+javascript = { nan = true }
+
+# Declared types of a handler parameter or local that make it a number (Spring's
+# `@RequestParam int qty`, ASP.NET's `[FromForm] decimal amount`, a TypeScript `qty: number`,
+# a Python annotation `amount: float` that the framework converts the request value to).
+[types.python]
+integer = ["int"]
+nan = ["float"]
+other = ["Decimal"]
+
+[types.java]
+integer = ["int", "long", "short", "byte", "Integer", "Long", "Short", "Byte", "BigInteger"]
+nan = ["double", "float", "Double", "Float"]
+other = ["BigDecimal"]
+
+[types.csharp]
+integer = ["int", "long", "short", "byte", "uint", "ulong", "Int32", "Int64", "Int16", "UInt32", "UInt64"]
+nan = ["double", "float", "Double", "Single"]
+other = ["decimal", "Decimal"]
+
+[types.javascript]
+nan = ["number"]

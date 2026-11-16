@@ -15,6 +15,16 @@ decorator = ["django.contrib.auth.decorators.login_required",
 references = ["https://docs.djangoproject.com/en/stable/topics/auth/default/#the-login-required-decorator"]
 
 # QuerySet.extra() splices where / select / order_by / tables strings into the SQL.
+# A model instance's save() / delete() (built from the model class or fetched through its
+# manager) writes the row. A marker that the handler writes stored data, never a taint sink.
+# https://docs.djangoproject.com/en/5.1/ref/models/instances/#saving-objects
+[[sink]]
+call = ["django.db.models.Model.save", "django.db.models.Model.delete",
+        "django.db.models.Model.objects.**.save", "django.db.models.Model.objects.**.delete"]
+kind = "resource_modify"
+args = []
+description = "Model.save() / delete() writes the row"
+
 [[sink]]
 # A model's manager (`Model.objects`, typed by the model's base class, value-types.toml) and the
 # querysets it returns.

@@ -114,6 +114,8 @@ class JavaScriptFrontend:
                     "Install with: pip install tree-sitter-typescript"
                 )
             self.parser = Parser(Language(tstypescript.language_typescript()))
+            # `.tsx` is its own grammar: the TypeScript one reads JSX as type assertions and errors
+            self._tsx_parser = Parser(Language(tstypescript.language_tsx()))
         else:
             if not TREE_SITTER_JS_AVAILABLE:
                 raise ImportError(
@@ -139,6 +141,13 @@ class JavaScriptFrontend:
         # the C# action-parameter lever.
         self.taint_function_params: bool = False
 
+    def _parser_for(self, filename: str):
+        """The TSX grammar for a `.tsx` file, else the frontend's own."""
+        tsx = getattr(self, "_tsx_parser", None)
+        if tsx is not None and str(filename).lower().endswith(".tsx"):
+            return tsx
+        return self.parser
+
     def translate(self, source_code: str, filename: str = "<unknown>") -> Program:
         """
         Translate JavaScript/TypeScript source code to SIL Program.
@@ -158,7 +167,7 @@ class JavaScriptFrontend:
         self._unlowered = {}
 
         # Parse source code
-        tree = self.parser.parse(self._source_bytes)
+        tree = self._parser_for(filename).parse(self._source_bytes)
 
         self._proto_test_cache = {}             # function node -> tests a value against __proto__...
         self._tree_root = tree.root_node
@@ -308,6 +317,8 @@ class JavaScriptFrontend:
                 body = n.child_by_field_name("body")
                 if proc is not None and body is not None and body.type == "statement_block":
                     proc.directives = self._directive_prologue(body)
+                if proc is not None and body is not None:
+                    proc.renders = self._returns_markup(body)
                 params = n.child_by_field_name("parameters")
                 if proc is None or params is None:
                     continue
@@ -467,6 +478,39 @@ class JavaScriptFrontend:
                 via = f"{base}.{prop_name}"
                 if fn is not None and via not in fn.registered_via:
                     fn.registered_via.append(via)
+
+    _MARKUP = ("jsx_element", "jsx_self_closing_element", "jsx_fragment")
+
+    def _returns_markup(self, body: TSNode) -> bool:
+        """Does the function return a JSX element or fragment (an arrow's expression body, or a
+        `return` of its own, through parentheses, `?:`, `&&` and `||`)? Nested functions are
+        their own."""
+        def markup(e: Optional[TSNode]) -> bool:
+            if e is None:
+                return False
+            if e.type in self._MARKUP:
+                return True
+            if e.type == "parenthesized_expression":
+                return any(markup(c) for c in e.named_children)
+            if e.type == "ternary_expression":
+                return markup(e.child_by_field_name("consequence")) or \
+                    markup(e.child_by_field_name("alternative"))
+            if e.type == "binary_expression":
+                return markup(e.child_by_field_name("right")) or markup(e.child_by_field_name("left"))
+            return False
+        if body.type != "statement_block":
+            return markup(body)
+        stack = list(body.named_children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNC_LIKE or n.type in ("class_declaration", "class"):
+                continue
+            if n.type == "return_statement":
+                if any(markup(c) for c in n.named_children):
+                    return True
+                continue
+            stack.extend(n.named_children)
+        return False
 
     def _directive_prologue(self, node: TSNode) -> List[str]:
         """The directives a module or function body starts with (`"use server"`, `"use strict"`):

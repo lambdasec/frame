@@ -73,6 +73,9 @@ def hunt_options(args, out_root: Path, case_id: str) -> dict:
         opts["unit_steps"] = args.hunt_unit_steps
     if getattr(args, "hunt_concurrency", None) is not None:
         opts["concurrency"] = args.hunt_concurrency
+    if getattr(args, "hunt_classes", None):
+        from frame.sil.hunt_classes import parse
+        opts["classes"] = parse(args.hunt_classes)
     if getattr(args, "hunt_verdict_cache", False):
         opts["verdict_cache"] = str(Path(out_root) / "frame_hunt" / "cache" / f"{case_id}.json")
     return opts
@@ -142,6 +145,13 @@ def _scan(checkout: Path, language: str, system: str, cap: int = 0,
             signal.alarm(0)
         if status is not None and hunt:
             status.update(getattr(sc, "last_hunt_status", None) or {"stop": "not_run"})
+        scope = getattr(sc, "last_project_scope", None)
+        if status is not None and scope:
+            # a fallback to per-file analysis changes what the engine sees; never leave it silent
+            status["project_scope"] = dict(scope)
+            note = scope.get("reason") if scope.get("cross_file") is False else scope.get("alone")
+            if note:
+                print(f"[scope] {checkout.name}: {note}", flush=True)
     return findings
 
 
@@ -295,6 +305,9 @@ def main() -> int:
                     help="frame_hunt: step budget of each unit's agent (default: the scanner's)")
     ap.add_argument("--hunt-concurrency", type=int, default=None,
                     help="frame_hunt: unit agents run at once (default: the scanner's)")
+    ap.add_argument("--hunt-classes", default=None,
+                    help="frame_hunt: the flaw classes to hunt (as `frame scan --hunt`: authz, "
+                         "limits, race, workflow, replay, bruteforce, logic, all; default: authz)")
     ap.add_argument("--hunt-verdict-cache", action="store_true",
                     help="frame_hunt: keep each unit's verdict in <output>/frame_hunt/cache/<case>.json "
                          "and reuse it on the fixed commit when the unit's files are unchanged")

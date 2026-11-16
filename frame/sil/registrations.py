@@ -451,6 +451,52 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
             JavaScriptFrontend._entry_taint_into_closures(program)   # callbacks nested in the handlers
 
 
+def link_class_lineage(ctx, index, packs_for: Callable[[str], Any]) -> None:
+    """Give each Python / JS / TS class what it inherits through project classes in other
+    files (`ClassInfo.project_bases`), and apply the packs' entry points to the methods of the
+    classes whose lineage grew. A view written `class E(BaseAPIView)`, with the project's
+    `BaseAPIView(APIView)` in another file, is a Django REST framework view: the file's own
+    lineage stops at `BaseAPIView`. A base resolves only through the project index (an import,
+    a re-export, `module.Class`); a base it cannot resolve adds nothing."""
+    from .packs.apply import apply_entrypoints_to
+    programs: Dict[str, Any] = {k: p for k, p in ctx.programs.items()
+                                if (p.language or "") in ("javascript", "typescript", "python")}
+
+    def lineage(key: str, cls: str, seen: Set[Tuple[str, str]], depth: int) -> List[str]:
+        program = programs.get(key)
+        info = program.class_info.get(cls) if program is not None else None
+        if info is None or depth > 16:
+            return []
+        out: List[str] = []
+        for written in info.bases:
+            where = index.resolve_class(key, written)
+            if where is None or where in seen or where[0] not in programs:
+                continue
+            seen.add(where)
+            base = programs[where[0]].class_info.get(where[1])
+            if base is not None:
+                out += [*base.bases, *base.canonical_bases]
+            out += lineage(where[0], where[1], seen, depth + 1)
+        return out
+
+    for key, program in programs.items():
+        grown: Set[str] = set()
+        for cls, info in program.class_info.items():
+            if not info.bases:
+                continue
+            known = set(info.bases) | set(info.canonical_bases) | set(info.project_bases)
+            extra = [b for b in dict.fromkeys(lineage(key, cls, {(key, cls)}, 0)) if b not in known]
+            if extra:
+                info.project_bases.extend(extra)
+                grown.add(cls)
+        if not grown:
+            continue
+        names = [name for name, proc in program.procedures.items()
+                 if proc.class_name and proc.class_name.rsplit(".", 1)[-1] in grown]
+        if names:
+            apply_entrypoints_to(program, sorted(names), packs_for(program.language))
+
+
 def link_openapi(ctx, index, packs_for: Callable[[str], Any]) -> None:
     """Python frameworks that dispatch an OpenAPI operation to the function its `operationId`
     names (a pack's `[[operation_dispatch]]`: connexion): read the project's OpenAPI documents,

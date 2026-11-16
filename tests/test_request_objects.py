@@ -173,6 +173,40 @@ def test_drf_views_and_requests():
     assert _lines(code, "CWE-78") == [7, 9, 10, 14]
 
 
+def test_a_view_extending_a_project_base_view_in_another_file_is_a_handler(tmp_path):
+    # The file's own lineage stops at the project's base class; the framework's class is two
+    # files away (Plane's endpoints extend views/base.py's BaseAPIView(APIView)).
+    files = {
+        "app/__init__.py": "",
+        "app/views/__init__.py": "from .base import BaseAPIView\nfrom .api import TokenEndpoint\n",
+        "app/views/base.py": ("from rest_framework.views import APIView\n\n"
+                              "class Mixin:\n    pass\n\n"
+                              "class BaseAPIView(Mixin, APIView):\n    pass\n"),
+        "app/views/api.py": ("import os\nfrom .base import BaseAPIView\n\n"
+                             "class TokenEndpoint(BaseAPIView):\n"
+                             "    def patch(self, request, pk):\n"
+                             "        os.system(request.data['label'])\n\n"
+                             "class Child(TokenEndpoint):\n"
+                             "    def get(self, request):\n"
+                             "        os.system(request.query_params['q'])\n\n"
+                             "class NotAView:\n"
+                             "    def get(self, request):\n"
+                             "        os.system(request.query_params['q'])\n"),
+        "app/other.py": ("import os\nfrom app.views import BaseAPIView\n\n"
+                         "class Reexported(BaseAPIView):\n"
+                         "    def post(self, request):\n"
+                         "        os.system(request.data['x'])\n"),
+    }
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    res = FrameScanner(verify=False).scan_directory(str(tmp_path), None)
+    found = sorted((r.filename.rsplit("/", 1)[-1], v.line) for r in res for v in r.vulnerabilities
+                   if v.cwe_id == "CWE-78")
+    assert found == [("api.py", 6), ("api.py", 10), ("other.py", 6)]
+
+
 # ---- Python: other frameworks -------------------------------------------------------------------
 
 def test_aiohttp_handlers_by_registration_decorator_type_and_view():

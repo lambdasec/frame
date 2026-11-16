@@ -118,7 +118,8 @@ def _detected(pack: Pack, program: Program) -> bool:
             return True
     if pack.detect_extends:
         for info in program.class_info.values():
-            if _glob(pack.detect_extends, *info.bases, *info.canonical_bases):
+            if _glob(pack.detect_extends, *info.bases, *info.canonical_bases,
+                     *getattr(info, "project_bases", ())):
                 return True
     if pack.detect_files:
         names = [PurePath(f).name.lower() for f in getattr(program, "source_files", ())]
@@ -524,7 +525,7 @@ def _bases_closure(program: Program, class_name: str) -> List[str]:
         info = program.class_info.get(cur)
         if info is None:
             continue
-        for b in [*info.bases, *info.canonical_bases]:
+        for b in [*info.bases, *info.canonical_bases, *getattr(info, "project_bases", ())]:
             if b not in seen:
                 seen.add(b)
                 order.append(b)

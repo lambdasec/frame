@@ -1423,6 +1423,10 @@ class SILTranslator:
         # `check_claim`): which conditions hold on every feasible path to each line. Recorded on
         # the reporting pass only, as pure bookkeeping: nothing in the analysis reads it.
         self._path_guards: Dict[str, Dict[str, Any]] = {}
+        # Per procedure, the value facts the business-logic hunt queries (`logic_facts.check_bound`:
+        # can a client-chosen number be outside a bound at a line). Same rules: reporting pass only,
+        # never read by the analysis.
+        self._value_facts: Dict[str, Dict[str, Any]] = {}
         self._prepare()
 
         # Inter-procedural summaries first, to a fixpoint (`run_ipa_fixpoint`).
@@ -1456,6 +1460,7 @@ class SILTranslator:
             setattr(self.program, "authz_gates", dict(self._authz_gates))
             setattr(self.program, "resource_proc_callees", set(self._resource_proc_callees))
             setattr(self.program, "path_guards", dict(self._path_guards))
+            setattr(self.program, "value_facts", dict(self._value_facts))
         except (AttributeError, TypeError):
             pass
 
@@ -1527,6 +1532,11 @@ class SILTranslator:
             {"edges": set(), "terms": {}, "owner": set(), "scoped": {}, "resource": {}}
             if isinstance(getattr(self, "_path_guards", None), dict) and not self._ipa_summarising
             else None)
+        vf: Optional[Dict[str, Any]] = None
+        if pg is not None and getattr(self, "record_value_facts", False) and \
+                isinstance(getattr(self, "_value_facts", None), dict) and not self._is_c_lang:
+            from .logic_facts import new_record
+            vf = new_record()
 
         # Initialize state with parameters potentially tainted
         initial_state = self._init_state_for_procedure(proc)
@@ -1582,6 +1592,9 @@ class SILTranslator:
                 self._cur_pos = (node_id, instr_idx)
                 if pg is not None:
                     self._note_guard_facts(pg, instr, current_state)
+                if vf is not None:
+                    from .logic_facts import note as _note_values
+                    _note_values(vf, instr, current_state, self._CLIENT_KINDS)
                 node_checks, current_state = self._execute_instr(
                     instr, current_state, proc.name
                 )
@@ -1780,6 +1793,21 @@ class SILTranslator:
 
         if pg is not None:
             self._record_path_guards(proc, pg)
+        if vf is not None:
+            try:
+                from .logic_facts import finish as _finish_values
+                facts = _finish_values(proc, vf)
+                # What the hunt ranks a member by: it touches stored data (a resource / database
+                # sink), and whether the file is test code (never the application's behaviour).
+                kinds = self._proc_resource_kinds(proc)
+                facts["data"] = bool(kinds)
+                facts["writes"] = "resource_modify" in kinds
+                # a query call (SQL, NoSQL, ORM) may read or write; only a selection only reads
+                facts["may_write"] = bool(kinds - {"resource_select"})
+                facts["test"] = self._program_is_test()
+                self._value_facts[proc.name] = facts
+            except Exception:
+                pass
         return checks
 
     _ENTRY_TAINT_ROUNDS = 6
@@ -6802,6 +6830,8 @@ class SILTranslator:
         return scoped
 
     _RESOURCE_SINK_KINDS = frozenset({"resource_select", "resource_modify", "sql", "nosql", "orm"})
+    # Data a remote caller chooses (what the business-logic value facts treat as client-chosen).
+    _CLIENT_KINDS = frozenset({TaintKind.USER_INPUT, TaintKind.NETWORK_INPUT})
 
     def _proc_reaches_resource(self, proc) -> bool:
         """Does this handler perform a resource / database operation (a call resolved to a
@@ -6817,6 +6847,23 @@ class SILTranslator:
             if spec is not None and getattr(spec, "is_sink", None) in self._RESOURCE_SINK_KINDS:
                 return True
         return False
+
+    def _proc_resource_kinds(self, proc) -> Set[str]:
+        """The resource / database sink kinds this procedure's calls resolve to (resource_select,
+        resource_modify, sql, nosql, orm): what the business-logic hunt ranks a member by."""
+        out: Set[str] = set()
+        for instr in proc.get_all_instrs():
+            if not isinstance(instr, Call):
+                continue
+            spec = self.program.spec_for_call(instr)
+            if spec is None:
+                name = instr.get_full_name().strip('"') if hasattr(instr, "get_full_name") else ""
+                spec = self._spec_of_name(name) if name else None
+            kind = getattr(spec, "is_sink", None) if spec is not None else None
+            kind = str(getattr(kind, "value", kind)) if kind is not None else None
+            if kind in self._RESOURCE_SINK_KINDS:
+                out.add(kind)
+        return out
 
     def _program_is_test(self) -> bool:
         """Is the program under analysis test code (a `*.spec.js` / `test_*.py` module registering

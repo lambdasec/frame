@@ -477,6 +477,17 @@ def test_a_full_scan_over_the_limit_analyses_files_alone_with_a_warning(clean_re
     assert doc["scope"]["cross_file"] is False and "exceed the cross-file limit" in err
 
 
+def test_the_limit_is_per_language_family(clean_repo, capsys):
+    # a Python import never names a JS file, so JS files over the limit leave Python cross-file
+    (clean_repo / "views.py").write_text(
+        views("from db import run_query", 'run_query(request.args.get("n"))'))
+    write(clean_repo, {f"web/w{i}.js": f"export const w{i} = {i};\n" for i in range(3)})
+    rc, doc, err = run_scan(capsys, "--cross-file-limit", "2", "--fail-on", "none")
+    assert ("db.py", "CWE-89") in new_cwes(doc)
+    assert doc["scope"]["cross_file"] is True and doc["scope"]["files"] == 2
+    assert "3 javascript files exceed the cross-file limit (2)" in err
+
+
 def test_a_narrow_scan_over_the_limit_is_truncated_with_a_warning(clean_repo, capsys):
     (clean_repo / "views.py").write_text(
         views("from db import run_query", 'run_query(request.args.get("n"))'))

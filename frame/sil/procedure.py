@@ -534,6 +534,8 @@ class Procedure:
     entry_kinds: List[str] = field(default_factory=list)
     # Python: the body has an `assert` statement of its own (pytest's tests; frame/sil/test_code.py).
     asserts: bool = False
+    # JS/TS: the function returns markup (a JSX element or fragment): it renders a view.
+    renders: bool = False
     parent: Optional[str] = None
     span: Optional[Tuple[int, int]] = None
     # The definition's last source line (1-based); `span` is in BYTES. 0 when not recorded.

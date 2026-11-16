@@ -1206,6 +1206,10 @@ class FrameScanner:
 
             if translator is None:
                 translator = SILTranslator(program, verbose=self.verbose)
+            # The business-logic value facts (logic_facts.py) are kept only for a hunt or
+            # `frame query`, which read the program afterwards; a plain scan never pays for them.
+            translator.record_value_facts = bool(
+                (self.hunt_authz or self.collect_programs) and self._collecting_hunt_programs)
             checks = translator.translate_program()
             # Retain the translated program (it carries the per-handler authorization
             # facts) for a repo-scale authorization hunt. Works in every mode -- project
@@ -1699,12 +1703,23 @@ class FrameScanner:
             if context_note:
                 self.last_project_scope = {"cross_file": False, "reason": context_note}
             return selected
+        alone_note = None
         if not narrowed and not widen and len(files) > limit:
-            self.last_project_scope = {
-                "cross_file": False,
-                "reason": f"{len(files)} Python/JS/TS files exceed the cross-file limit "
-                          f"({limit}); each is analysed alone (--cross-file-limit raises it)"}
-            return selected
+            # Imports resolve only within a language family (a Python import never names a
+            # TypeScript file), so the limit is per family: a family within it keeps its
+            # cross-file analysis, one over it is analysed file by file.
+            families: Dict[str, List[Path]] = {}
+            for p in files:
+                families.setdefault(language_family(p) or "", []).append(p)
+            over = {f: len(ps) for f, ps in families.items() if len(ps) > limit}
+            kept = [p for f, ps in families.items() if f not in over for p in ps]
+            alone_note = (", ".join(f"{n} {f} files" for f, n in sorted(over.items()))
+                          + f" exceed the cross-file limit ({limit}); each is analysed alone "
+                          "(--cross-file-limit raises it)")
+            if len(kept) < 2:
+                self.last_project_scope = {"cross_file": False, "reason": alone_note}
+                return selected
+            files = kept
 
         frontends: Dict[str, Any] = {}
 
@@ -1741,6 +1756,8 @@ class FrameScanner:
             self.last_project_scope["context_root"] = str(base)
         if context_note:
             self.last_project_scope["context"] = context_note
+        if alone_note:
+            self.last_project_scope["alone"] = alone_note
         return to_scan
 
     @staticmethod
@@ -2510,7 +2527,11 @@ class FrameScanner:
             import importlib
             import tree_sitter
             mod = importlib.import_module(f"tree_sitter_{grammar}")
-            lang = tree_sitter.Language(mod.language_typescript() if grammar == "typescript" else mod.language())
+            if grammar == "typescript":
+                tsx = str(filename).lower().endswith(".tsx")
+                lang = tree_sitter.Language(mod.language_tsx() if tsx else mod.language_typescript())
+            else:
+                lang = tree_sitter.Language(mod.language())
             try:
                 parser = tree_sitter.Parser(lang)
             except TypeError:                                  # older bindings

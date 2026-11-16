@@ -197,6 +197,12 @@ def _compact_messages(messages: List[Dict[str, Any]], client=None,
 
 # ---- The loop ------------------------------------------------------------------
 
+MAX_TRUNCATED = 3
+TRUNCATED_NUDGE = ("(Your last reply was cut off at the output limit before you called a tool or "
+                   "answered. Do not deliberate at length: make the next tool call now, or give "
+                   "your final answer briefly.)")
+
+
 def run_agent(messages: List[Dict[str, Any]], client, *,
               tools: list, exec_tool: Callable[[str, Dict[str, Any]], str],
               max_steps: int,
@@ -277,6 +283,7 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             for _m in messages:
                 trace.append_message(_m)
     step = 0
+    truncated = 0                   # consecutive replies cut off at the output limit
     for step in range(1, max_steps + 1):
         # Oracle-driven agents: did the previous action achieve the objective?
         if check_done is not None:
@@ -315,10 +322,20 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             trace.append_call(getattr(client, "last_call", {}))
 
         if tool_calls:
+            truncated = 0
             _exec_tool_calls(tool_calls)
             continue
 
-        # No tool call.
+        # No tool call. A reply cut off at the output limit is not an answer: a reasoning model
+        # that spends its whole budget thinking returns empty content, which read as "done"
+        # and ended a scout with nothing recorded (frappe LMS: 16,000 reasoning tokens, no
+        # inventory, no units). Ask again, a few times in a row at most.
+        if (getattr(client, "last_call", None) or {}).get("finish_reason") == "length" \
+                and truncated < MAX_TRUNCATED:
+            truncated += 1
+            messages.append({"role": "user", "content": TRUNCATED_NUDGE})
+            _t_msg()
+            continue
         if finalize is not None:
             nudge = on_final(msg.get("content") or "") if on_final is not None else None
             if nudge:

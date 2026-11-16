@@ -46,13 +46,17 @@ def _same_file(a: str, b: str) -> bool:
     return a == b or a.endswith("/" + b) or b.endswith("/" + a)
 
 
-def _cwe_ok(finding_cwe: str, expected: List[str]) -> bool:
+def _cwe_ok(finding_cwe: str, expected: List[str], family: Optional[List[str]] = None) -> bool:
+    """The finding's CWE is one the case expects, or a sibling in the case's family: the access-
+    control family by default, or the case's own `match_cwes` (another benchmark's class, e.g. a
+    business-logic case where 1284 and 20 describe the same missing bound)."""
     fc = norm_cwe(finding_cwe)
     exp = {norm_cwe(c) for c in (expected or [])}
     if fc in exp:
         return True
-    # A sibling access-control weakness for the same issue (e.g. Frame 639 vs advisory 862).
-    return bool(fc in ACCESS_CONTROL_CWES and (exp & ACCESS_CONTROL_CWES))
+    fam = {norm_cwe(c) for c in family} if family else ACCESS_CONTROL_CWES
+    # A sibling weakness for the same issue (e.g. Frame 639 vs advisory 862).
+    return bool(fc in fam and (exp & fam))
 
 
 def _location_ok(finding: Dict[str, Any], case: Dict[str, Any], window: int) -> bool:
@@ -102,7 +106,7 @@ def regions_holding(findings: List[Dict[str, Any]], case: Dict[str, Any],
     actually found on this checkout."""
     out = set()
     for f in findings or []:
-        if not _cwe_ok(f.get("cwe", ""), case.get("expected_cwes") or []):
+        if not _cwe_ok(f.get("cwe", ""), case.get("expected_cwes") or [], case.get("match_cwes")):
             continue
         for r in regions or []:
             if r.get("name") and _in_region(f, [r]):
@@ -115,7 +119,7 @@ def finding_matches_case(finding: Dict[str, Any], case: Dict[str, Any], window: 
     """True if `finding` (normalised: file, line, cwe) plausibly describes `case`'s defect:
     an access-control CWE in a recorded source location of the case, or in one of its code
     `regions` for the checkout being scored."""
-    return _cwe_ok(finding.get("cwe", ""), case.get("expected_cwes") or []) and \
+    return _cwe_ok(finding.get("cwe", ""), case.get("expected_cwes") or [], case.get("match_cwes")) and \
         (_location_ok(finding, case, window) or _in_region(finding, regions))
 
 

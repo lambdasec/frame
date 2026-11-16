@@ -78,12 +78,16 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                    "the reader to decide"],
     },
     "check": {
-        "args": ["name", "line", "kind", "pattern?", "file?"],
+        "args": ["name", "line", "kind", "pattern?", "var?", "bound?", "file?"],
         "evidence": "decided over the engine's feasible paths: `proved` holds on every path, "
-                    "`refuted` comes with a witness path, `unknown` when the engine has no facts",
-        "resolution": "kind guarded_by (pattern: regex or substring of a condition or gate) or "
-                      "scoped_by_identity",
-        "limits": ["matching is by condition text; read the polarity in the reason"],
+                    "`refuted` comes with a witness (a path, or the value that gets through), "
+                    "`unknown` when the engine has no facts",
+        "resolution": "kind guarded_by (pattern: regex or substring of a condition or gate), "
+                      "scoped_by_identity, or lower_bound / upper_bound (var >= / <= bound, "
+                      "decided by Z3 over the path conditions)",
+        "limits": ["guarded_by matches by condition text; read the polarity in the reason",
+                   "a bound is refuted only for a value the caller chooses (a request read, "
+                   "copied or converted to a number); a computed or stored value is unknown"],
     },
 }
 
@@ -244,7 +248,7 @@ class QueryIndex:
             if not a.get("line") or not a.get("kind"):
                 raise ValueError("`line` and `kind` are required")
             out = _parse(ctx.check(name, int(a["line"]), str(a["kind"]), str(a.get("pattern") or ""),
-                                   file))
+                                   file, str(a.get("var") or ""), a.get("bound")))
         return out
 
 

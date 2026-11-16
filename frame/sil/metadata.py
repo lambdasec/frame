@@ -54,6 +54,10 @@ class ClassInfo:
     kind: str = "class"                         # class | interface | enum | struct
     bases: List[str] = field(default_factory=list)            # as written
     canonical_bases: List[str] = field(default_factory=list)  # resolved where possible, else as written
+    # What it inherits through project classes in other files (`class E(BaseAPIView)` with
+    # BaseAPIView(APIView) in base.py): those classes' bases as written and resolved, filled by
+    # the project step (registrations.link_class_lineage), so `extends` entry points hold.
+    project_bases: List[str] = field(default_factory=list)
     annotations: List[Annotation] = field(default_factory=list)
     package: Optional[str] = None               # Java package / C# namespace
     fields: List[str] = field(default_factory=list)   # declared instance fields / properties

@@ -66,6 +66,7 @@ SCHEMA: Dict[str, Dict[str, _Spec]] = {
         "max_scouts": (int, None, 16),
         "coverage_readers": (int, None, 2),
         "trajectory_dir": (str, None, ""),
+        "classes": (list, None, ["authz"]),
     },
     "kb": {
         "enabled": (bool, "FRAME_KB", True),
@@ -146,6 +147,10 @@ def _check(section: str, key: str, value: Any, source: str) -> Any:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise SettingsError(f"{where} must be a number")
         return float(value)
+    if kind is list:
+        if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+            raise SettingsError(f"{where} must be a list of strings")
+        return list(value)
     if not isinstance(value, str):
         raise SettingsError(f"{where} must be a string")
     return value

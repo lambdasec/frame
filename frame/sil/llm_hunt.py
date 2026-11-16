@@ -35,7 +35,7 @@ from frame.sil.llm_client import LLMClient, LLMConfig, _extract_json_object
 from frame.sil.llm_agent import run_agent, INVESTIGATION_TOOLS, _repo_exec, sandbox_python
 from frame.sil.llm_detect import _repo_inventory
 from frame.sil.llm_trace import TraceWriter, read_stf
-from frame.sil.hunt_units import AUTHZ_CWES, proc_end_line
+from frame.sil.hunt_units import AUTHZ_CWES, proc_end_line, simple_name
 
 
 # ---- Engine facts the agent can query ------------------------------------------
@@ -475,16 +475,26 @@ def _corroborated(f: Dict[str, Any], index: EngineIndex) -> bool:
 
 
 def _to_vuln(f: Dict[str, Any], index: EngineIndex, verified: bool):
+    from frame.sil.hunt_classes import CLASSES
     from frame.sil.scanner import Vulnerability, Severity
     from frame.sil.translator import VulnType
     mech = str(f.get("mechanism", "")).strip().lower()
-    cwe = str(f.get("cwe") or "").strip() or _MECH_CWE.get(mech, "")
-    if not cwe.upper().startswith("CWE-"):
-        cwe = _MECH_CWE.get(mech, "")
-    if not cwe:
-        return None
-    vt = next((c for c in VulnType if c.value == mech), None) or \
-        getattr(VulnType, "MISSING_AUTHORIZATION", getattr(VulnType, "TAINT_FLOW", list(VulnType)[0]))
+    cls = CLASSES.get(str(f.get("hunt_class") or "authz"), CLASSES["authz"])
+    if cls.name != "authz":
+        # a business-logic class: its own mechanisms, finding types and CWE family
+        vtype, default_cwe = cls.mechanisms.get(mech) or next(iter(cls.mechanisms.values()))
+        cwe = str(f.get("cwe") or "").strip().upper()
+        if cwe not in cls.cwes:
+            cwe = default_cwe
+        vt = next((c for c in VulnType if c.value == vtype), VulnType.BUSINESS_LOGIC_FLAW)
+    else:
+        cwe = str(f.get("cwe") or "").strip() or _MECH_CWE.get(mech, "")
+        if not cwe.upper().startswith("CWE-"):
+            cwe = _MECH_CWE.get(mech, "")
+        if not cwe:
+            return None
+        vt = next((c for c in VulnType if c.value == mech), None) or \
+            getattr(VulnType, "MISSING_AUTHORIZATION", getattr(VulnType, "TAINT_FLOW", list(VulnType)[0]))
     try:
         line = int(f.get("line") or 0)
     except (TypeError, ValueError):
@@ -497,10 +507,20 @@ def _to_vuln(f: Dict[str, Any], index: EngineIndex, verified: bool):
     rel = str(f.get("file") or "") or (h.file if h is not None else "")
     path = os.path.join(index.repo_root, rel) if index.repo_root and not os.path.isabs(rel) else rel
     tier = "llm_verified" if verified else "llm_detect"
+    fact = f.get("engine_fact") if verified else None
+    engine = ""
+    if isinstance(fact, dict):
+        w = (fact.get("witness") or [{}])[0] if isinstance(fact.get("witness"), list) else {}
+        if fact.get("kind") in ("lower_bound", "upper_bound") and isinstance(w, dict) and "equals" in w:
+            engine = (f"engine: {w.get('value')} = {w.get('equals')} reaches line {fact.get('line')} "
+                      f"on a feasible path ({fact.get('kind')} {fact.get('bound')} refuted). ")
+        else:
+            engine = f"engine: {fact.get('kind')} {fact.get('pattern') or ''} refuted at line {fact.get('line')}. "
     return Vulnerability(
         type=vt, severity=Severity.HIGH if verified else Severity.MEDIUM,
         location=path, line=(h.line if (h is not None and not line) else line), column=0,
-        description=("[LLM-verified] " if verified else "[LLM-detected] ") + str(f.get("reasoning", ""))[:200],
+        description=("[LLM-verified] " if verified else "[LLM-detected] ") + engine
+                    + str(f.get("reasoning", ""))[:200],
         procedure="<llm-hunt>", source_var=tier,
         confidence=min(conf, 0.9 if verified else 0.7),
         cwe_id=cwe.upper(), evidence=("llm-verified" if verified else "llm-detected"))
@@ -521,6 +541,52 @@ def _engine_already_proved_authz(h) -> bool:
                for p in (getattr(h, "proven", None) or []))
 
 
+def _merge_layers(findings: list, ctx) -> list:
+    """One business-logic flaw reported at two layers -- the handler and the service function it
+    calls, by two units -- is one finding. For two findings of the same class and mechanism where
+    one's function calls the other's (the call graph, a name with one definition), the callee's is
+    kept (it is where the value is stored or the state changes) and names the caller; the caller's
+    is kept instead only when it alone is backed by the engine. Authorization findings are left
+    as they are."""
+    logic = [f for f in findings if isinstance(f, dict) and str(f.get("hunt_class") or "authz") != "authz"]
+    if len(logic) < 2 or ctx is None or not hasattr(ctx, "graph"):
+        return findings
+    try:
+        defs, calls = ctx.graph()
+    except Exception:
+        return findings
+
+    def callees_of(f) -> set:
+        loc = ctx.locate(str(f.get("handler") or ""), f.get("file") or None)
+        if loc is None:
+            return set()
+        out = set()
+        for callee, _ in calls.get((loc["file"], loc["proc"])) or []:
+            ds = defs.get(simple_name(callee)) or []
+            if len(ds) == 1:
+                out.add(simple_name(ds[0]["name"]))
+        return out
+
+    dropped: set = set()
+    for a in logic:
+        down = callees_of(a)
+        if not down:
+            continue
+        for b in logic:
+            if a is b or id(a) in dropped or id(b) in dropped:
+                continue
+            if (a.get("hunt_class"), a.get("mechanism")) != (b.get("hunt_class"), b.get("mechanism")):
+                continue
+            if simple_name(str(b.get("handler") or "")) not in down:
+                continue
+            keep, drop = (a, b) if a.get("engine_fact") and not b.get("engine_fact") else (b, a)
+            dropped.add(id(drop))
+            keep["reasoning"] = (str(keep.get("reasoning") or "")
+                                 + f" (also reported at {drop.get('file')}:{drop.get('line')} "
+                                   f"{drop.get('handler')}, which {'calls' if keep is b else 'is called by'} it)")
+    return [f for f in findings if id(f) not in dropped]
+
+
 def _findings_to_vulns(findings: list, index: EngineIndex) -> list:
     out = []
     emitted: set = set()
@@ -534,9 +600,13 @@ def _findings_to_vulns(findings: list, index: EngineIndex) -> list:
         # but only an authorization-class proof suppresses it (see _AUTHZ_CWES), never an
         # unrelated finding (XSS, log injection) that happens to sit in the same function.
         h = index.handler(str(f.get("handler", "")), f.get("file"))
-        if h is not None and _engine_already_proved_authz(h):
+        logic = str(f.get("hunt_class") or "authz") != "authz"
+        if not logic and h is not None and _engine_already_proved_authz(h):
             continue
-        v = _to_vuln(f, index, _corroborated(f, index))
+        # A business-logic finding is backed by the engine answer its agent got (a refuted check
+        # in that function), never by the model's flag; authorization keeps its handler facts.
+        verified = bool(f.get("engine_fact")) if logic else _corroborated(f, index)
+        v = _to_vuln(f, index, verified)
         if v is not None:
             emitted.add(key)
             out.append(v)
@@ -550,7 +620,8 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
                status: Optional[Dict[str, Any]] = None,
                max_units: Optional[int] = None, unit_steps: Optional[int] = None,
                concurrency: Optional[int] = None, verdict_cache: Optional[str] = None,
-               scout_steps: Optional[int] = None, max_scouts: Optional[int] = None) -> list:
+               scout_steps: Optional[int] = None, max_scouts: Optional[int] = None,
+               classes: Any = None) -> list:
     """Run the agentic authorization / business-logic hunt. `programs` is the project's
     translated programs (one per file), a single program, or None.
 
@@ -574,14 +645,24 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
     run_code to confirm a candidate flaw by exercising the app (off by default: a scan never runs
     model-authored code unless asked). `max_steps`, when given, is the per-agent step budget.
 
+    `classes` are the flaw classes to hunt (hunt_classes.parse: `authz`, the business-logic
+    classes `limits`, `race`, `workflow`, `replay`, `bruteforce`, `logic` for all of those, or
+    `all`; default `[hunt] classes`, else authz). Each unit is audited once per class its engine
+    facts make it matter for, by an agent with that class's instructions; a business-logic finding
+    is `llm_verified` only when an engine `check` the agent ran refuted the guard or the bound in
+    that function.
+
     `status`, when given, is filled with how the hunt ended (`stop`: finished / partial / budget
     / transport_error / exception / no_targets, LLM call and error counts, and in unit mode the
     route map's files, every unit with its verdicts, and the profile), so a hunt that died on a
     dropped connection is distinguishable from one that looked and found nothing.
     """
+    from frame.sil.hunt_classes import parse as _parse_classes
     if status is None:
         status = {}
     status["stop"] = "no_targets"
+    chosen = _parse_classes(classes if classes is not None else _hunt_setting("classes"))
+    status["classes"] = chosen
     index = build_index(programs, symbolic_findings, repo_root)
     has_programs = bool(programs) if isinstance(programs, (list, tuple)) else programs is not None
     scouting = (scout_steps if scout_steps is not None else _hunt_setting("scout_steps")) > 0
@@ -593,7 +674,7 @@ def hunt_authz(programs, symbolic_findings: Optional[list], repo_root: str,
                            status=status, max_units=max_units,
                            unit_steps=unit_steps if unit_steps is not None else max_steps,
                            concurrency=concurrency, verdict_cache=verdict_cache,
-                           scout_steps=scout_steps, max_scouts=max_scouts)
+                           scout_steps=scout_steps, max_scouts=max_scouts, classes=chosen)
     return _hunt_single(index, repo_root, config, client, max_steps, language, dynamic,
                         interpreter, status)
 
@@ -806,6 +887,14 @@ SCOUT_SYSTEM = (
     "app registers them (decorators, base classes, router calls, a file-system convention, a "
     "routes table). Also the SERVICE functions that read or change stored data, and the "
     "authorization HELPERS (permission checks, ownership filters, access policies).\n"
+    "     A route runs ON THE SERVER. Code that runs in the browser is never a route, a service "
+    "or a data access, whatever it is called: pages and components that render in the browser, "
+    "hooks, client stores, and functions that send a request to the app's own API (fetch / "
+    "axios / a fetch wrapper). The browser's user controls all of it; record and teach the "
+    "SERVER code that receives the request instead. A call to the app's own backend is never a "
+    "sink. An area that is all browser code (a single-page app, a component library) has "
+    "nothing to record or teach: once a few files and its build config show that, say so in "
+    "your summary and finish.\n"
     "  2. Record them with record_inventory (in batches). The engine's handlers in your area are "
     "listed in the first message; record those too only if you have something to add.\n"
     "  3. If routes you found are missing from the engine's list, the engine does not know how this "
@@ -872,6 +961,7 @@ class _UnitRun:
     read: set = field(default_factory=set)
     ranges: Dict[str, List[Tuple[int, int]]] = field(default_factory=dict)   # file -> lines read
     unresolved: List[Dict[str, Any]] = field(default_factory=list)          # mark_unresolved entries
+    checks: List[Dict[str, Any]] = field(default_factory=list)              # engine check() answers
     stop: str = "not_run"
     steps: int = 0
     investigated: bool = False
@@ -906,9 +996,12 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text)[:120] or "unit"
 
 
-def _unit_tools(dynamic: bool) -> list:
+def _unit_tools(dynamic: bool, hunt_class: str = "authz") -> list:
+    from frame.sil.hunt_classes import CLASSES, report_tool
     from frame.sil.hunt_tools import UNIT_TOOLS
-    return UNIT_TOOLS + ([RUN_CODE_TOOL] if dynamic else [])
+    cls = CLASSES.get(hunt_class, CLASSES["authz"])
+    tools = [report_tool(cls, t) if t["function"]["name"] == "report_finding" else t for t in UNIT_TOOLS]
+    return tools + ([RUN_CODE_TOOL] if dynamic else [])
 
 
 def _unit_source(ctx, unit) -> str:
@@ -959,6 +1052,23 @@ _ROLE_TEXT = {
 }
 
 
+def _class_facts(ctx, unit, member) -> str:
+    """For a business-logic class, what the engine knows about a member that the class cares
+    about (client numbers, a secret compared with a guess)."""
+    if getattr(unit, "hunt_class", "authz") == "authz":
+        return ""
+    from frame.sil.hunt_classes import member_facts
+    f = member_facts(ctx, member)
+    bits = []
+    if f["numeric"]:
+        bits.append("client_numbers=[" + ", ".join(f["numeric"][:8]) + "]")
+    if f["writes"]:
+        bits.append("writes_data=True")
+    if f["credential"]:
+        bits.append("compares_a_secret=True")
+    return ("  " + "  ".join(bits)) if bits else ""
+
+
 def _unit_intro(ctx, unit, profile: str) -> str:
     rows: List[str] = []
     if profile:
@@ -985,7 +1095,8 @@ def _unit_intro(ctx, unit, profile: str) -> str:
             rows.append(f"- {h.name}  ({h.file}:{h.line}-{h.end_line or h.line})  "
                         f"protected={h.protected}  reaches_data={h.reaches_resource}"
                         + (f"  decorators={decos}" if decos else "")
-                        + (f"  sinks=[{sinks}]" if sinks else ""))
+                        + (f"  sinks=[{sinks}]" if sinks else "")
+                        + _class_facts(ctx, unit, h))
     elif unit.kind == "scouted":
         rows.append("\nFOUND BY THE SCOUTS -- no engine facts (no pack describes this code yet), so read "
                     "it; a verdict is required for EACH:")
@@ -1060,6 +1171,16 @@ def _run_unit(ctx, run: "_UnitRun", client, steps: int, profile: str, dynamic: b
                 return sandbox_python(str(args.get("code") or ""), ctx.repo_root, timeout_s=60,
                                       interpreter=interpreter)
             out = repo_exec(ctx, name, args, run.read, run.ranges)
+            if name == "check" and out:
+                try:
+                    r = json.loads(out)
+                    run.checks.append({"name": str(args.get("name") or ""), "line": args.get("line"),
+                                       "kind": str(args.get("kind") or ""), "var": args.get("var"),
+                                       "bound": args.get("bound"), "pattern": args.get("pattern"),
+                                       "verdict": r.get("verdict"), "witness": r.get("witness"),
+                                       "reason": str(r.get("reason") or "")[:300]})
+                except (TypeError, ValueError):
+                    pass
             return out if out is not None else "ERROR: unknown tool"
         except Exception as e:                       # a tool bug must not end the unit
             return f"ERROR: tool failed: {type(e).__name__}"
@@ -1081,18 +1202,35 @@ def _run_unit(ctx, run: "_UnitRun", client, steps: int, profile: str, dynamic: b
         harvest(content)
         return run.collected
 
+    from frame.sil.hunt_classes import CLASSES, system_prompt
+    cls = CLASSES.get(getattr(unit, "hunt_class", "authz"), CLASSES["authz"])
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": UNIT_SYSTEM},
+        {"role": "system", "content": system_prompt(cls, UNIT_SYSTEM)},
         {"role": "user", "content": [{"type": "text", "text": _unit_intro(ctx, unit, profile),
                                       "cache_control": {"type": "ephemeral"}}]},
     ]
     trace, messages = _setup_trace(ctx.repo_root, messages, sub="units/" + _slug(unit.id))
-    res = run_agent(messages, client, tools=_unit_tools(dynamic), exec_tool=_exec,
+    res = run_agent(messages, client, tools=_unit_tools(dynamic, cls.name), exec_tool=_exec,
                     max_steps=steps, finalize=finalize, on_final=on_final, final_nudge=UNIT_FINAL,
                     compact_at_chars=getattr(ctx, "compact_at", None), trace=trace,
                     dedupe_tools=READ_ONLY)
     run.stop = res.stop or ("finished" if res.done else "budget")
     run.steps = res.steps
+    _tag_findings(run, cls)
+
+
+def _tag_findings(run: "_UnitRun", cls) -> None:
+    """Each finding carries its class and, for a business-logic class, the engine answer from the
+    agent's own session that backs it (`hunt_classes.corroboration`), if there is one."""
+    from frame.sil.hunt_classes import corroboration
+    for f in run.collected:
+        f["hunt_class"] = cls.name
+        if cls.name != "authz":
+            fact = corroboration(cls, f, run.checks)
+            if fact is not None:
+                f["engine_fact"] = fact
+            else:
+                f.pop("engine_fact", None)
 
 
 def _scout_intro(ctx, area) -> str:
@@ -1333,11 +1471,39 @@ def _coverage_wave(ctx, runs: List["_UnitRun"], planned: list, min_readers: int,
     return wave, held
 
 
+def _class_units(ctx, planned: list, classes: List[str], budget: Optional[int]) -> tuple:
+    """(selected, deferred) units for several flaw classes. Each class audits the planned units
+    its engine facts give a score (hunt_classes.score; authorization keeps its own ranking), as
+    its own unit (`<id>::<class>`, so its verdicts are cached apart). The classes' ranked lists are
+    interleaved, so a `max_units` budget is shared between them instead of going to one class."""
+    import dataclasses
+    from frame.sil.hunt_classes import CLASSES, score
+    lists: List[list] = []
+    for name in classes:
+        cls = CLASSES[name]
+        if name == "authz":
+            lists.append(sorted(planned, key=lambda u: (-u.score, u.id)))
+            continue
+        mine = []
+        for u in planned:
+            s, why = score(cls, u, ctx)
+            if s > 0:
+                mine.append(dataclasses.replace(u, id=f"{u.id}::{name}", score=s, reasons=why,
+                                                candidates=[], leads=[], hunt_class=name))
+        lists.append(sorted(mine, key=lambda u: (-u.score, u.id)))
+    merged = [u for i in range(max((len(x) for x in lists), default=0))
+              for x in lists if i < len(x) for u in [x[i]]]
+    if budget is None or budget <= 0:
+        return merged, []
+    return merged[:budget], merged[budget:]
+
+
 def _hunt_units(index: EngineIndex, programs, symbolic_findings, repo_root: str, config,
                 client, *, language: str, dynamic: bool, interpreter: Optional[str],
                 status: Dict[str, Any], max_units: Optional[int], unit_steps: Optional[int],
                 concurrency: Optional[int], verdict_cache: Optional[str],
-                scout_steps: Optional[int], max_scouts: Optional[int]) -> list:
+                scout_steps: Optional[int], max_scouts: Optional[int],
+                classes: Optional[List[str]] = None) -> list:
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from frame.sil.hunt_tools import HuntContext, VerdictCache
@@ -1370,11 +1536,18 @@ def _hunt_units(index: EngineIndex, programs, symbolic_findings, repo_root: str,
             status.update(stop="exception", error=type(exc).__name__, **_client_stats(clients))
             return []
     status["profile"] = (profile or "")[:3000]
+    # the routes the scouts found are entry points for what a request reaches (hunt_classes)
+    ctx.scouted_routes = [(m["file"], m["name"]) for m in scouted if m.get("role") == "scouted_route"]
     status["taught_packs"] = len(ctx.taught)
     _save_taught(ctx)
 
     budget = max_units if max_units is not None else _hunt_setting("max_units")
-    units, deferred = plan_units(ctx.index, language, budget, scouted=scouted)
+    classes = list(classes or ["authz"])
+    if classes == ["authz"]:
+        units, deferred = plan_units(ctx.index, language, budget, scouted=scouted)
+    else:
+        planned, _ = plan_units(ctx.index, language, None, scouted=scouted)
+        units, deferred = _class_units(ctx, planned, classes, budget)
     if "scout" in status:
         status["scout"]["scouted_units"] = sum(1 for u in units + deferred if u.kind == "scouted")
         status["scout"]["scouted_members"] = sum(len(u.members) for u in units + deferred
@@ -1434,6 +1607,9 @@ def _hunt_units(index: EngineIndex, programs, symbolic_findings, repo_root: str,
     readers = _hunt_setting("coverage_readers")
     if interrupted is None and not stop.is_set() and readers > 0:
         wave, held = _coverage_wave(ctx, runs, units + deferred, readers, budget, len(units), status)
+        if classes != ["authz"]:
+            wave, extra = _class_units(ctx, wave, classes, None)
+            held = held + extra
         deferred += held
         more = [_UnitRun(u) for u in wave]
         runs += more
@@ -1442,15 +1618,16 @@ def _hunt_units(index: EngineIndex, programs, symbolic_findings, repo_root: str,
         if r.stop == "not_run":
             r.stop = "cancelled"
 
-    findings = [f for r in runs for f in r.collected]
+    findings = _merge_layers([f for r in runs for f in r.collected], ctx)
     vulns = _findings_to_vulns(findings, ctx.index)
-    rows = [{"id": r.unit.id, "kind": r.unit.kind, "files": r.unit.files, "handlers": r.unit.names(),
+    rows = [{"id": r.unit.id, "kind": r.unit.kind, "class": r.unit.hunt_class, "files": r.unit.files,
+             "handlers": r.unit.names(),
              "investigated": r.investigated, "reused": r.reused, "stop": r.stop, "steps": r.steps,
              "verdicts": r.verdicts, "findings": len(r.collected), "score": r.unit.score,
              "reasons": r.unit.reasons} for r in runs]
     unresolved = [{"unit": r.unit.id, **_member_place(r.unit, u["handler"]), **u}
                   for r in runs for u in r.unresolved]
-    rows += [{"id": u.id, "kind": u.kind, "files": u.files, "handlers": u.names(),
+    rows += [{"id": u.id, "kind": u.kind, "class": u.hunt_class, "files": u.files, "handlers": u.names(),
               "investigated": False, "reused": False, "stop": "deferred", "steps": 0,
               "verdicts": {n: "none" for n in u.names()}, "findings": 0, "score": u.score,
               "reasons": u.reasons} for u in deferred]

@@ -1,0 +1,37 @@
+# Business-logic hunt benchmark: real, disclosed business-logic advisories in open-source web
+# applications, each pinned to a vulnerable and a fixing commit. Built by Frame (unlike BAC-Bench,
+# which is external) and KEYED BEFORE FRAME WAS RUN ON ANY OF IT: the ground truth (files, line
+# ranges, CWEs) comes from each advisory and its fixing commit's diff, never from Frame's output,
+# so the first run's score is blind. Scores after fixes that run drove are not.
+#
+# The applications are not vendored: benchmarks/bacbench/prepare.py clones each upstream at the
+# pinned commits (--manifest benchmarks/logicbench/manifest.yaml). Scoring is BAC-Bench's
+# (score.py --manifest ...): detected on the vulnerable commit, paired when gone on the fixed one,
+# positive-only.
+
+benchmark: logicbench
+title: "Business-logic benchmark"
+version: "0.1.0"
+
+dataset:
+  local: cases.jsonl
+  note: >
+    One record per advisory: class, repo, vulnerable and fixed commits, expected CWEs, the
+    invariant, and the vulnerable-side locations from the fix diff.
+
+systems:
+  - frame_symbolic
+  - frame_hunt
+
+scoring:
+  unit: advisory_at_vulnerable_commit
+  paired_requires_clean_fixed_commit: true
+  positive_only: true
+  # A finding matches a case when its CWE is one the case expects or a sibling in the case's
+  # class family (an advisory's CWE-20 and the hunt's CWE-1284 describe the same missing bound).
+  cwe_families:
+    limits: ["CWE-20", "CWE-1284", "CWE-682", "CWE-840", "CWE-839"]
+    race: ["CWE-362", "CWE-367", "CWE-366", "CWE-820", "CWE-821"]
+    workflow: ["CWE-841", "CWE-840", "CWE-640", "CWE-613", "CWE-672"]
+    replay: ["CWE-837", "CWE-294", "CWE-799", "CWE-841"]
+    bruteforce: ["CWE-307", "CWE-799", "CWE-1216"]

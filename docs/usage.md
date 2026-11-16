@@ -163,7 +163,8 @@ model = "anthropic/claude-haiku-5.5"
 api_key_env = "OPENROUTER_API_KEY"   # the variable holding the key; never the key itself
 stream = true
 
-[hunt]                               # frame scan --hunt-authz
+[hunt]                               # frame scan --hunt-authz / --hunt
+classes = ["authz", "limits"]
 concurrency = 8
 trajectory_dir = ".frame/traces"
 ```
@@ -192,7 +193,7 @@ The settings tables:
 | `llm.max_tool_steps` | 30 | tool calls per agentic detect/triage session |
 | `llm.agent_max_tokens` | 16000 | completion budget per agent turn |
 | `llm.agent_context_budget_chars` | 400000 | context an agent session keeps before old tool results are elided |
-| `llm.agent_retries` | 5 | retries for a failed agent turn (backoff 2, 4, 8, 16, 30 s) |
+| `llm.agent_retries` | 5 | retries for a failed agent turn (backoff 2, 4, 8, 16, 30 s; a 429 or 503 waits what its `Retry-After` header asks, up to 120 s) |
 | `llm.exploit_max_steps` | 250 | `exploit` steps (`--max-steps` wins) |
 | `llm.hunt_max_steps` | 200 | turns for the single-agent hunt, where Frame has no frontend for the language |
 | `hunt.concurrency` | 8 | unit agents at once |
@@ -202,6 +203,7 @@ The settings tables:
 | `hunt.max_scouts` | 16 | scouts that explore the repository before the units |
 | `hunt.coverage_readers` | 2 | code read by this many units and owned by none gets a unit of its own after the first wave; 0 turns this off |
 | `hunt.trajectory_dir` | | write each agent run's trace (HF Session-Trace JSONL) here; an interrupted trace is resumed |
+| `hunt.classes` | `["authz"]` | the flaw classes the hunt looks for: `authz`, `limits`, `race`, `workflow`, `replay`, `bruteforce`, `logic` (every business-logic class) or `all` ([ai.md](ai.md#hunting-business-logic-flaws---hunt)) |
 | `kb.enabled` | true | false uses built-in packs only and no advisories (`FRAME_KB=off`) |
 | `kb.source`, `kb.cache` | `hf:lambdasec/frame-kb`, `~/.cache/frame/kb` | where `kb pull` gets packs and where packs and advisories are cached |
 | `sca.advisories_source` | the last advisories pull's source, else `hf:lambdasec/frame-advisories` | where advisories come from |
@@ -266,7 +268,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--baseline FILE` / `--write-baseline FILE` | report only findings not in the baseline / record this run's findings |
 | `--root DIR` | the root that finding paths and fingerprints are relative to |
 | `--no-cross-file` | analyse each file alone |
-| `--cross-file-limit N` | most files one cross-file analysis spans (default 2000) |
+| `--cross-file-limit N` | most files of one language family (Python; JavaScript and TypeScript; Java and C#) one cross-file analysis spans (default 2000); a family over it is analysed file by file, with a warning |
 | `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
 | `--verify-secrets` | ask each found credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider); network, off by default) |
 | `--confirm-proofs` | compile and run each directly constructible C integer-overflow or out-of-bounds finding under AddressSanitizer+UndefinedBehaviorSanitizer; an observed fault raises it to the `exploit-confirmed` evidence level (runs compiled code, opt-in, offline, no model; [ai.md](ai.md#proof-carrying-findings---confirm-proofs)) |
@@ -283,6 +285,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--model MODEL` | the model for this run (wins over `FRAME_LLM_MODEL` and `llm.model`) |
 | `--repo-scale` | one LLM session for the whole repository (with `--ai` or `--llm-detect`) |
 | `--hunt-authz` | agentic hunt for authorization and business-logic flaws, with a verdict on every handler (a finding, safe, or unresolved); adds a `hunt` section to the output ([ai.md](ai.md#hunting-authorization-flaws---hunt-authz)) |
+| `--hunt CLASSES` | the hunt for the named flaw classes, comma-separated: `authz`, `limits`, `race`, `workflow`, `replay`, `bruteforce`, `logic` or `all` (default: `hunt.classes`); with `--hunt-authz`, authorization is added ([ai.md](ai.md#hunting-business-logic-flaws---hunt)) |
 
 ### `frame verify <findings.json>`
 
@@ -368,7 +371,7 @@ Pairs two `frame scan -f json` runs by fingerprint (exact, then loose by nearest
 
 ### `frame query [dir] TOOL`
 
-Asks the engine about a project: the facts the authorization hunt's agents use, for any agent or script. The project is scanned symbolically once (no model) and every file's translated program is kept; each tool answers over it. Tools: `handlers` (every entry point with whether it is protected, whether it reaches a resource, its sink kinds), `handler_facts`, `siblings` (the handlers of the same class or file, with the guards at their data accesses), `trace` (the engine's data flows in a function, each with its evidence level), `callers`, `callees`, `guards` (the conditions that hold on every feasible path to a line) and `check` (a claim decided over the feasible paths: `guarded_by` a pattern, or `scoped_by_identity`; `proved`, `refuted` with a witness path, or `unknown`). Arguments: `--name`, `--file` (to pick among same-named functions), `--line`, `--kind`, `--pattern`; `-l LANG`, `--pack PATH` (repeatable), `--no-verify` (skip solver verification of the scan's flows: a faster build), `--root DIR` (the project root, as for `frame scan`: the files between it and the target are read as context).
+Asks the engine about a project: the facts the authorization hunt's agents use, for any agent or script. The project is scanned symbolically once (no model) and every file's translated program is kept; each tool answers over it. Tools: `handlers` (every entry point with whether it is protected, whether it reaches a resource, its sink kinds), `handler_facts`, `siblings` (the handlers of the same class or file, with the guards at their data accesses), `trace` (the engine's data flows in a function, each with its evidence level), `callers`, `callees`, `guards` (the conditions that hold on every feasible path to a line) and `check` (a claim decided over the feasible paths: `guarded_by` a pattern, `scoped_by_identity`, or `lower_bound` / `upper_bound` with `--var` and `--bound`; `proved`, `refuted` with a witness, or `unknown`). A bound is decided by Z3 over the path conditions at the line, for a value the caller chooses (a request read, copied, converted to a number with a call in [`numbers.toml`](../frame/sil/specs/data/numbers.toml), or a handler parameter of a number type); `refuted` names the value that gets through, `NaN` included when a guard is written as a rejection (`if (v < 1) reject`), which NaN passes like every failed comparison. A computed or stored value is `unknown`. Arguments: `--name`, `--file` (to pick among same-named functions), `--line`, `--kind`, `--pattern`, `--var`, `--bound`; `-l LANG`, `--pack PATH` (repeatable), `--no-verify` (skip solver verification of the scan's flows: a faster build), `--root DIR` (the project root, as for `frame scan`: the files between it and the target are read as context).
 
 Every answer has the same envelope: `result`, the `evidence` it rests on, the `resolution` (how a name became a function: callers and callees match by simple name, not by type), its `limits`, the `index` it was computed over (`files`, `handlers`, `build_ms`, `rebuilt`) and `query_ms`. Call sites carry their line of code. Exit 2 on an unknown tool or missing argument.
 

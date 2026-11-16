@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -24,6 +25,8 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional
 
 _log = logging.getLogger("frame.llm")
@@ -313,14 +316,15 @@ class LLMClient:
                 last_err = exc
                 self.stats["errors"] += 1
                 first_fail = first_fail or time.time()
+                asked = self._retry_after(exc)      # a rate limit says when to come back
                 if i + 1 < attempts:        # transient blip -> back off and retry
                     _log.warning("LLM call to %s failed (attempt %d/%d): %s -- retrying",
                                  self.config.base_url, i + 1, attempts, exc)
-                    time.sleep(1.5 * (i + 1))
+                    time.sleep(asked if asked is not None else 1.5 * (i + 1))
                     i += 1
                     continue
                 wait = self._outage_delay(exc, first_fail)
-                if wait is None or not self._pause(wait):
+                if wait is None or not self._pause(asked if asked is not None else wait):
                     break
                 i += 1
         _log.error("LLM endpoint %s unreachable after %d attempts: %s",
@@ -355,6 +359,10 @@ class LLMClient:
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
         streaming = bool(getattr(self.config, "stream", False))
         first_fail: Optional[float] = None
+        # Every failed attempt of this call: when, which error and why. The call record keeps
+        # them even when a retry succeeds, so an outage can be told apart (DNS, refused, reset,
+        # timeout) and placed in time; before, a rescued call logged only `retries`.
+        failures: List[Dict[str, Any]] = []
         i = -1
         while True:
             i += 1
@@ -362,34 +370,45 @@ class LLMClient:
             try:
                 self.stats["calls"] += 1
                 if streaming:
-                    return self._chat_stream(url, body, headers)
+                    msg = self._chat_stream(url, body, headers)
+                    self._finish_record(t0, i, failures)
+                    return msg
                 req = urllib.request.Request(url, data=data, headers=headers)
                 out = json.loads(self._urlopen_read(req).decode("utf-8"))
                 self.last_call = self._usage_record(out, time.time() - t0, i)
+                self._finish_record(t0, i, failures)
                 self.stats["prompt_tokens"] += self.last_call.get("prompt_tokens") or 0
                 self.stats["cached_tokens"] += self.last_call.get("cached_tokens") or 0
                 self.stats["completion_tokens"] += self.last_call.get("completion_tokens") or 0
                 return out["choices"][0]["message"]
             except urllib.error.HTTPError as exc:
                 self.stats["errors"] += 1
+                detail = self._error_detail(exc)
+                self._note_failure(failures, t0, f"HTTP {exc.code}", detail)
                 self.last_call = {"status": "error", "error": f"HTTP {exc.code}",
                                   "latency_s": round(time.time() - t0, 2), "retries": i,
-                                  "detail": self._error_detail(exc)}
+                                  "detail": detail}
+                self._finish_record(t0, i, failures)
                 if exc.code in (400, 401):        # malformed request / bad auth: retrying cannot help
                     return None
                 first_fail = first_fail or t0
+                asked = self._retry_after(exc)      # a rate limit says when to come back
                 if i + 1 < attempts:
-                    time.sleep(self._agent_backoff(i))
+                    time.sleep(asked if asked is not None else self._agent_backoff(i))
                     continue
                 wait = self._outage_delay(exc, first_fail)
-                if wait is not None and self._pause(wait):
+                if wait is not None and self._pause(asked if asked is not None else wait):
                     continue
                 return None
             except (_DroppedStream, urllib.error.URLError, KeyError, ValueError,
                     TimeoutError, OSError) as exc:
                 self.stats["errors"] += 1
+                reason = self._failure_reason(exc)
+                self._note_failure(failures, t0, type(exc).__name__, reason)
                 self.last_call = {"status": "error", "error": type(exc).__name__,
-                                  "latency_s": round(time.time() - t0, 2), "retries": i}
+                                  "latency_s": round(time.time() - t0, 2), "retries": i,
+                                  "detail": reason}
+                self._finish_record(t0, i, failures)
                 first_fail = first_fail or t0
                 if i + 1 < attempts:      # transient blip / dropped stream -> back off and retry
                     time.sleep(self._agent_backoff(i))
@@ -398,6 +417,70 @@ class LLMClient:
                 if wait is not None and self._pause(wait):
                     continue
                 return None
+
+    _RETRY_AFTER_CAP = 120.0   # seconds; a longer wait goes through the outage window instead
+
+    @classmethod
+    def _retry_after(cls, exc: BaseException) -> Optional[float]:
+        """The wait a 429 or 503 asks for in its `Retry-After` header (seconds, or an HTTP date),
+        plus up to a second of jitter so agents refused together do not all come back at the
+        same instant (a per-minute limit resets for everyone at once); None when the error is
+        not one of those or carries no usable header. Retrying sooner wastes the budget: a
+        refused request counts against the limit too."""
+        if not isinstance(exc, urllib.error.HTTPError) or exc.code not in (429, 503):
+            return None
+        raw = (exc.headers.get("Retry-After") if exc.headers is not None else None) or ""
+        raw = str(raw).strip()
+        if not raw:
+            return None
+        try:
+            secs = float(raw)
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(raw)
+            except (TypeError, ValueError):
+                return None
+            if when is None:
+                return None
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            secs = (when - datetime.now(timezone.utc)).total_seconds()
+        if secs != secs or secs < 0:
+            secs = 0.0
+        return min(secs, cls._RETRY_AFTER_CAP) + random.uniform(0.0, 1.0)
+
+    _MAX_FAILURES = 20   # failed attempts kept per call record (an hour-long outage is ~120)
+
+    @staticmethod
+    def _failure_reason(exc: BaseException) -> str:
+        """Why a connection-level attempt failed, as the error says it: a URLError's `reason`
+        ("[Errno -3] Temporary failure in name resolution", "[Errno 111] Connection refused",
+        "timed out"...), else the exception's own message, with its class when it has none."""
+        reason = getattr(exc, "reason", None) if isinstance(exc, urllib.error.URLError) else None
+        text = str(reason if reason is not None else exc) or type(exc).__name__
+        return text[:300]
+
+    @staticmethod
+    def _timestamp(t: float) -> str:
+        return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z"
+
+    def _note_failure(self, failures: List[Dict[str, Any]], t0: float, error: str,
+                      reason: str) -> None:
+        """Record one failed attempt (UTC start time, error, reason) and log it."""
+        if len(failures) < self._MAX_FAILURES:
+            failures.append({"at": self._timestamp(t0), "error": error, "reason": reason,
+                             "latency_s": round(time.time() - t0, 2)})
+        _log.info("LLM attempt to %s failed after %.1fs: %s (%s)", self.config.base_url,
+                  time.time() - t0, error, reason)
+
+    def _finish_record(self, t0: float, retries: int, failures: List[Dict[str, Any]]) -> None:
+        """Stamp the call record with the final attempt's UTC start time, its retry count, and
+        the failed attempts before it (if any)."""
+        rec = self.last_call
+        rec["at"] = self._timestamp(t0)
+        rec["retries"] = retries
+        if failures:       # the first _MAX_FAILURES; `retries` still counts them all
+            rec["failures"] = list(failures)
 
     @staticmethod
     def _error_detail(exc: "urllib.error.HTTPError") -> str:
@@ -558,7 +641,14 @@ class LLMClient:
             except Exception:
                 pass
         msg, usage = self._assemble_stream(events)
-        self.last_call = self._usage_record({"usage": usage}, time.time() - t0, 0)
+        # the last chunk that names one says why generation stopped (a truncation must not read
+        # as an agent that answered)
+        finish = next((c.get("finish_reason") for obj in reversed(events) if isinstance(obj, dict)
+                       for c in (obj.get("choices") or [])[:1]
+                       if isinstance(c, dict) and c.get("finish_reason")), None)
+        self.last_call = self._usage_record(
+            {"usage": usage, **({"choices": [{"finish_reason": finish}]} if finish else {})},
+            time.time() - t0, 0)
         if first_token_s is not None:
             self.last_call["first_token_s"] = round(first_token_s, 2)
         self.stats["prompt_tokens"] += self.last_call.get("prompt_tokens") or 0

@@ -89,12 +89,18 @@ GUARDS = _fn("guards", "The conditions the engine proves hold on EVERY feasible 
              "decorators). Without `line`, it reports them at the function's data accesses.",
              {"name": _NAME, "line": {"type": "integer"}, "file": _FILE}, ["name"])
 CHECK = _fn("check", "Ask the engine to prove or refute a claim at a line: kind='guarded_by' "
-            "with a `pattern` (a check every path must pass, e.g. 'owner' or 'has_perm') or "
-            "kind='scoped_by_identity' (the data access is filtered by the caller). Returns "
-            "proved / refuted (with a path that avoids it) / unknown.",
+            "with a `pattern` (a check every path must pass, e.g. 'owner' or 'has_perm'), "
+            "kind='scoped_by_identity' (the data access is filtered by the caller), or "
+            "kind='lower_bound' / 'upper_bound' with `var` and `bound` (on every path to the line "
+            "`var >= bound` / `var <= bound`, e.g. var='qty', bound=1 at the line that stores it). "
+            "Returns proved / refuted (with a path that avoids it, or the value that gets through: "
+            "a number, or NaN past a guard written as `if (v < 1) reject`) / unknown.",
             {"name": _NAME, "line": {"type": "integer"},
-             "kind": {"type": "string", "enum": ["guarded_by", "scoped_by_identity"]},
-             "pattern": {"type": "string"}, "file": _FILE}, ["name", "line", "kind"])
+             "kind": {"type": "string", "enum": ["guarded_by", "scoped_by_identity",
+                                                 "lower_bound", "upper_bound"]},
+             "pattern": {"type": "string"},
+             "var": {"type": "string", "description": "the value as the code names it (qty, order.quantity)"},
+             "bound": {"type": "number"}, "file": _FILE}, ["name", "line", "kind"])
 ENGINE_SCAN = _fn("engine_scan", "Run Frame's engine (solver-verified) on up to 5 files now -- "
                   "e.g. a service module the handler list does not cover -- and get its findings "
                   "and handler facts for them.",
@@ -534,11 +540,19 @@ class HuntContext:
         return json.dumps({"function": loc["name"], "file": loc["file"], "guards_by_line": out})
 
     def check(self, name: str, line: int, kind: str, pattern: str = "",
-              file: Optional[str] = None) -> str:
+              file: Optional[str] = None, var: str = "", bound: Any = None) -> str:
         loc = self.locate(name, file)
         if loc is None:
             return json.dumps({"verdict": "unknown", "reason": f"no handler or function named {name!r}",
                                "witness": []})
+        if kind in ("lower_bound", "upper_bound"):
+            from frame.sil.logic_facts import check_bound
+            if bound is None:
+                return json.dumps({"verdict": "unknown", "witness": [],
+                                   "reason": f"{kind} needs `var` and `bound`"})
+            with ENGINE_LOCK:
+                r = check_bound(loc["program"], loc["proc"], int(line or 0), var, kind, bound)
+            return json.dumps(r)
         try:
             from frame.sil.authz_guards import check_claim
         except ImportError:
@@ -805,7 +819,8 @@ def repo_exec(ctx: HuntContext, name: str, args: Dict[str, Any],
         return ctx.guards(str(args.get("name", "")), _int(args.get("line")), file)
     if name == "check":
         return ctx.check(str(args.get("name", "")), _int(args.get("line")) or 0,
-                         str(args.get("kind", "")), str(args.get("pattern") or ""), file)
+                         str(args.get("kind", "")), str(args.get("pattern") or ""), file,
+                         str(args.get("var") or ""), args.get("bound"))
     if name == "engine_scan":
         paths = args.get("paths") or []
         return ctx.engine_scan(paths if isinstance(paths, list) else [str(paths)])

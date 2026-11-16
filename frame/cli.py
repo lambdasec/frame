@@ -137,8 +137,11 @@ def create_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--file", dest="query_file", default=None,
                               help="File (relative to the project) to pick among same-named functions")
     query_parser.add_argument("--line", type=int, default=None, help="Line (guards, check)")
-    query_parser.add_argument("--kind", default=None, help="Claim kind for check: guarded_by or scoped_by_identity")
+    query_parser.add_argument("--kind", default=None,
+                              help="Claim kind for check: guarded_by, scoped_by_identity, lower_bound or upper_bound")
     query_parser.add_argument("--pattern", default=None, help="Condition pattern for check guarded_by")
+    query_parser.add_argument("--var", default=None, help="The value for check lower_bound / upper_bound (e.g. qty)")
+    query_parser.add_argument("--bound", type=float, default=None, help="The bound for check lower_bound / upper_bound")
     query_parser.add_argument("--serve", action="store_true",
                               help="Answer JSON requests from stdin, one per line, keeping the index warm")
     query_parser.add_argument("-l", "--language", default=None, help="Only files of this language")
@@ -356,6 +359,18 @@ def create_parser() -> argparse.ArgumentParser:
              "server values). The agent reasons over the engine's handler facts; a "
              "corroborated finding is the llm_verified tier, else llm_detect. Needs an "
              "LLM endpoint (FRAME_LLM_* or [llm] in .frame.toml)."
+    )
+    scan_parser.add_argument(
+        "--hunt",
+        dest="hunt_classes",
+        default=None,
+        metavar="CLASSES",
+        help="Agentic hunt for the named flaw classes, comma-separated: authz (as --hunt-authz), "
+             "limits (a client number stored without its bound), race (read, decide, write "
+             "without a lock), workflow (a required state or one-time token skipped), replay (a "
+             "state change accepted twice), bruteforce (a guessable secret with no attempt limit), "
+             "logic (every business-logic class) or all. Default from [hunt] classes. Needs an LLM "
+             "endpoint."
     )
 
     # === EXPLOIT command ===
@@ -1194,7 +1209,8 @@ def cmd_query(args) -> int:
         print("Error: name a tool (" + ", ".join(sorted(TOOLS)) + ") or pass --serve", file=sys.stderr)
         return 2
     qargs = {k: v for k, v in (("name", args.name), ("file", args.query_file), ("line", args.line),
-                                ("kind", args.kind), ("pattern", args.pattern)) if v is not None}
+                                ("kind", args.kind), ("pattern", args.pattern), ("var", args.var),
+                                ("bound", args.bound)) if v is not None}
     answer = index.query(args.tool, qargs)
     print(json.dumps(answer, indent=2))
     return 2 if "error" in answer else 0

@@ -65,6 +65,14 @@ def test_framework(program, language: str) -> Optional[str]:
         for name, proc in program.procedures.items():
             if name.startswith(catalog.python_test_prefix) and "." not in name and getattr(proc, "asserts", False):
                 return f"pytest test function {name}()"
+        # unittest's discovery: `Case.test_*` asserting through the TestCase API on `self`
+        from frame.sil.instructions import Call
+        for name, proc in program.procedures.items():
+            if "." not in name or not name.rsplit(".", 1)[-1].startswith(catalog.python_test_prefix):
+                continue
+            for ins in proc.get_all_instrs():
+                if isinstance(ins, Call) and ins.get_full_name().strip('"').startswith(catalog.python_case_assertion):
+                    return f"unittest test method {name}()"
     return None
 
 

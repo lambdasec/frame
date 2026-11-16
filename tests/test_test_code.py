@@ -23,6 +23,9 @@ def scan(language, code, filename):
     ("python", "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
                "        password = 'hunter2hunter2'\n        self.assertTrue(password)\n", "checks.py"),
     ("python", "def test_login():\n    password = 'hunter2hunter2'\n    assert login(password)\n", "checks.py"),
+    # unittest's discovery through a project base class in another file (frappe's `BaseTestUtils`)
+    ("python", "from app.helpers import BaseCase\n\nclass TestLogin(BaseCase):\n    def test_a(self):\n"
+               "        password = 'hunter2hunter2'\n        self.assertEqual(login(password), 1)\n", "test_utils.py"),
     ("java", "import org.junit.jupiter.api.Test;\nclass LoginIT {\n  @Test void a() {\n"
              "    String password = \"hunter2hunter2\";\n  }\n}\n", "LoginIT.java"),
     ("java", "class LoginIT {\n  @org.testng.annotations.Test void a() {\n    String password = \"hunter2hunter2\";\n"
@@ -49,6 +52,9 @@ def test_a_named_credential_in_test_code_is_low_and_tagged(language, code, filen
     ("python", "def login():\n    password = 'hunter2hunter2'\n    return password\n", "test_utils.py"),
     # a production helper called test_*: it does not assert
     ("python", "def test_connection():\n    password = 'hunter2hunter2'\n    return connect(password)\n", "db.py"),
+    # a production method called test_* that asserts nothing through TestCase
+    ("python", "class Db:\n    def test_connection(self):\n        password = 'hunter2hunter2'\n"
+               "        return self.connect(password)\n", "db.py"),
     # unittest named in a string is not an import
     ("python", "MODE = 'unittest'\npassword = 'hunter2hunter2'\n", "settings.py"),
     # the project's own @Test annotation is not JUnit's

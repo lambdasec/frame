@@ -74,3 +74,13 @@ def test_case_detected_returns_first_match():
 
 def test_norm_cwe_forms():
     assert norm_cwe("862") == "CWE-862" and norm_cwe("cwe-862") == "CWE-862"
+
+
+def test_a_case_with_its_own_cwe_family_matches_siblings_in_it_only():
+    case = {"expected_cwes": ["CWE-20"], "match_cwes": ["CWE-20", "CWE-1284", "CWE-840"],
+            "sink_files": ["shop/cart.py"], "sink_locations": [
+                {"file": "shop/cart.py", "line_start": 10, "line_end": 14}]}
+    assert finding_matches_case({"file": "shop/cart.py", "line": 12, "cwe": "CWE-1284"}, case)
+    assert not finding_matches_case({"file": "shop/cart.py", "line": 12, "cwe": "CWE-639"}, case)
+    plain = {k: v for k, v in case.items() if k != "match_cwes"}
+    assert not finding_matches_case({"file": "shop/cart.py", "line": 12, "cwe": "CWE-1284"}, plain)

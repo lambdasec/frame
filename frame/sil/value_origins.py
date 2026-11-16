@@ -165,10 +165,13 @@ def _expression_call_origin(exp, imports: Dict[str, str], returning: Optional[Di
 def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str, str]] = None,
              params: Optional[Dict[str, str]] = None, python: bool = False,
              returning: Optional[Dict[str, str]] = None,
-             extra: Optional[Dict[str, List[Optional[str]]]] = None) -> Dict[str, str]:
+             extra: Optional[Dict[str, List[Optional[str]]]] = None,
+             classes: Optional[Set[str]] = None) -> Dict[str, str]:
     """Origins of the names bound once in `proc`; with `fill`, also give unresolved calls on
     them their callee id. `params`: origins of parameters every caller agrees on (a project's
-    `require("./routes")(app)` with `app = express()`), else a parameter has none."""
+    `require("./routes")(app)` with `app = express()`), else a parameter has none. `classes`:
+    Python names that are classes; calling one whose origin is known builds an instance of that
+    origin (`TokenSerializer(...)` with TokenSerializer a kind of `ModelSerializer`)."""
     imports = imports or {}
     imported_modules = {v for v in imports.values() if v}
     defs = _definitions(proc)
@@ -250,6 +253,8 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
                     produced = produced[:-len(".<init>")]
                 if text and returning and text in returning:                # a function returning one value
                     produced = returning[text]
+                if python and classes and text in classes and of(text) is not None:
+                    produced = of(text)                   # an instance of the class's library base
                 if python and produced and produced in through and i.args:  # `contextlib.closing(x)` is x
                     arg = i.args[through[produced]][0] if through[produced] < len(i.args) else None
                     produced = (of(str(arg.var)) if isinstance(arg, ExpVar) else
@@ -540,6 +545,12 @@ def _annotate_scopes(program, param_origins, imports, python, returning) -> Dict
     return scopes
 
 
+def _origin_classes(program) -> Set[str]:
+    """Python names that are classes in this file: its own, and those it imports from project
+    files (`link_python_modules` records them, through re-exports)."""
+    return set(getattr(program, "class_info", None) or {}) | set(getattr(program, "imported_classes", None) or ())
+
+
 def _annotate_scopes_once(program, param_origins, imports, python, returning,
                           paths: Dict[str, str]) -> Dict[str, Dict[str, str]]:
     if python:
@@ -550,9 +561,11 @@ def _annotate_scopes_once(program, param_origins, imports, python, returning,
     globals_ = {} if python else {
         name: value for name, value in (getattr(program, "global_origins", None) or {}).items()
         if name not in imports and (module is None or name not in _definitions(module))}
+    classes = _origin_classes(program) if python else None
     outer = _origins(module, dict(globals_), fill=True, imports=imports,
                      params=_module_params(program, param_origins, imports),
-                     python=python, returning=returning, extra=extra.get(MODULE)) \
+                     python=python, returning=returning, extra=extra.get(MODULE),
+                     classes=classes) \
         if module is not None else _module_params(program, param_origins, imports)
     outer = {**paths, **globals_, **outer}
     scopes[MODULE] = outer
@@ -568,7 +581,7 @@ def _annotate_scopes_once(program, param_origins, imports, python, returning,
         if parent not in scopes:
             scopes[parent] = _origins(program.procedures[parent], out, fill=True, imports=imports,
                                       params=param_origins.get(parent), python=python, returning=returning,
-                                      extra=extra.get(parent))
+                                      extra=extra.get(parent), classes=classes)
         out.update(scopes[parent])
         if not python and not getattr(proc, "lexical_this", False):
             out = {k: v for k, v in out.items() if not k.startswith("this.")}
@@ -577,7 +590,8 @@ def _annotate_scopes_once(program, param_origins, imports, python, returning,
     for name, proc in program.procedures.items():
         if name != MODULE and name not in scopes:
             scopes[name] = _origins(proc, visible(name, set()), fill=True, imports=imports, python=python,
-                                    params=param_origins.get(name), returning=returning, extra=extra.get(name))
+                                    params=param_origins.get(name), returning=returning, extra=extra.get(name),
+                                    classes=classes)
     return scopes
 
 
@@ -690,8 +704,13 @@ def link_python_modules(programs: Dict[str, object], bindings) -> None:
                 continue
             found: Dict[str, str] = {}
             calls: Dict[str, str] = {}
+            imported_classes: Set[str] = set()
             for local, (file, symbol) in bindings(key).items():
                 target = programs.get(file)
+                if target is not None and local not in program.procedures and (
+                        symbol in (getattr(target, "class_info", None) or {})
+                        or symbol in (getattr(target, "imported_classes", None) or ())):
+                    imported_classes.add(local)
                 scopes = getattr(target, "value_origins", None) or {} if target is not None else {}
                 origin = scopes.get(MODULE, {}).get(symbol)
                 if origin and local not in program.procedures:
@@ -699,6 +718,9 @@ def link_python_modules(programs: Dict[str, object], bindings) -> None:
                 returned = (getattr(target, "return_origins", None) or {}).get(symbol) if target is not None else None
                 if returned and local not in program.procedures:
                     calls[local] = returned          # an imported function returning one value
+            if imported_classes - set(getattr(program, "imported_classes", None) or ()):
+                program.imported_classes = set(getattr(program, "imported_classes", None) or ()) | imported_classes
+                changed = True
             if calls != (getattr(program, "call_origins", None) or {}):
                 program.call_origins = calls
                 annotate(program, getattr(program, "param_origins", None) or {})

@@ -15,7 +15,7 @@ except ModuleNotFoundError:                 # pragma: no cover - 3.10
 
 PATH = Path(__file__).parent / "data" / "test-frameworks.toml"
 _SHAPE = {"imports": {"python", "java", "javascript", "c"}, "java": {"annotation_packages"},
-          "csharp": {"attributes"}, "javascript": {"runner_globals"}, "python": {"test_function_prefix"}}
+          "csharp": {"attributes"}, "javascript": {"runner_globals"}, "python": {"test_function_prefix", "case_assertion_prefix"}}
 
 
 class TestFrameworks(NamedTuple):
@@ -24,6 +24,7 @@ class TestFrameworks(NamedTuple):
     csharp_attributes: FrozenSet[str]
     js_runner_globals: FrozenSet[str]
     python_test_prefix: str
+    python_case_assertion: str
 
 
 def _names(name: str, where: str, value) -> Tuple[str, ...]:
@@ -44,12 +45,15 @@ def load(path: Path = PATH) -> TestFrameworks:
     prefix = data["python"]["test_function_prefix"]
     if not isinstance(prefix, str) or not prefix:
         raise ValueError(f"{name}: [python] test_function_prefix must be a name")
+    assertion = data["python"]["case_assertion_prefix"]
+    if not isinstance(assertion, str) or not assertion:
+        raise ValueError(f"{name}: [python] case_assertion_prefix must be a name")
     return TestFrameworks(
         imports={lang: _names(name, f"[imports] {lang}", v) for lang, v in data["imports"].items()},
         java_annotation_packages=_names(name, "[java] annotation_packages", data["java"]["annotation_packages"]),
         csharp_attributes=frozenset(_names(name, "[csharp] attributes", data["csharp"]["attributes"])),
         js_runner_globals=frozenset(_names(name, "[javascript] runner_globals", data["javascript"]["runner_globals"])),
-        python_test_prefix=prefix)
+        python_test_prefix=prefix, python_case_assertion=assertion)
 
 
 __all__ = ["PATH", "TestFrameworks", "load"]

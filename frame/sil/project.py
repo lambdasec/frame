@@ -1595,6 +1595,8 @@ class ProjectContext:
         def packs_for(language: str):
             fe = frontend_for(language)
             return getattr(fe, "packs", None) or default_packs()
+        from frame.sil.registrations import link_class_lineage
+        link_class_lineage(ctx, index, packs_for)
         link_project(ctx, index, packs_for)
         from frame.sil.registrations import link_openapi, link_settings
         link_openapi(ctx, index, packs_for)
