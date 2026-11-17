@@ -4,6 +4,10 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- **A CVE record's packages no longer change an advisory OSV already has.** In 1.1.6 the packages a CVE record names were merged with OSV's records of the same CVE, so where the two disagreed the wider range won (OWASP dependency-check 9.0.6 is fixed per GitHub's advisory and last affected per the CNA). They now only fill packages OSV does not file the CVE under. On today's OSV exports this adds 2,049 advisories across Maven, npm, Go, Packagist, crates.io, PyPI and NuGet, and changes no existing one.
+
 ## [1.1.6] - 2026-11-17
 
 ### Added

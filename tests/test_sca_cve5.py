@@ -202,3 +202,23 @@ def test_package_urls_and_registry_collections():
                         "versions": [{"status": "affected", "version": "0", "lessThan": "4.17.21",
                                       "versionType": "semver"}]}]))
     assert rec["affected"][0]["package"] == {"ecosystem": "npm", "name": "lodash"}
+
+
+def test_an_osv_record_of_the_same_cve_wins_for_its_package():
+    """The CVE record only fills a package OSV does not file the CVE under: where a GHSA aliasing
+    the CVE names the package, its reviewed ranges are kept and the CNA's dropped (the two disagree
+    on real advisories: a version GHSA calls fixed is the CNA's `lessThanOrEqual`)."""
+    from frame.sca.osv import compact, is_affected
+    from frame.sca.cve5 import to_osv
+    ghsa = {"id": "GHSA-test-only-axis", "aliases": [AXIS], "modified": "2026-11-15T00:00:00Z",
+            "affected": [{"package": {"ecosystem": "Maven", "name": "axis:axis"},
+                          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "1.2"}, {"fixed": "1.4"}]}]}]}
+    tbl = compact([to_osv(CVE), ghsa], "Maven")["packages"]
+    [adv] = tbl["axis:axis"]
+    assert adv["id"] == "GHSA-test-only-axis" and AXIS in adv["aliases"]
+    assert adv["ranges"] == ghsa["affected"][0]["ranges"]
+    assert not is_affected("Maven", "1.4", adv) and is_affected("Maven", "1.3", adv)
+    assert "fallback" not in adv
+    # the package GHSA does not name keeps the CNA's statement
+    [other] = tbl["org.apache.axis:axis"]
+    assert other["id"] == AXIS and is_affected("Maven", "1.4", other) and "fallback" not in other

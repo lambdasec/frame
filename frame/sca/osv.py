@@ -187,7 +187,8 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
             # pruned here, not only in `table`: a range of this entry still covers the version
             # after the merge, and the listed versions were half of a full build's memory
             "ranges": ranges, "versions": _uncovered(eco, [str(v) for v in aff.get("versions") or []], ranges),
-            "functions": _functions(aff)}
+            "functions": _functions(aff),
+            **({"fallback": True} if (rec.get("database_specific") or {}).get("source") == "cve-record" else {})}
 
 
 def git_entries(rec: dict) -> Iterable[Tuple[str, dict]]:
@@ -312,6 +313,9 @@ def _merge_aliases(advs: List[dict]) -> List[dict]:
         groups.setdefault(find(i), []).append(a)
     out = []
     for group in groups.values():
+        # a CVE record's packages (`cve5`) only fill what OSV does not file: any OSV record of the
+        # same vulnerability for this package replaces them
+        group = [a for a in group if not a.get("fallback")] or group
         ids = {a["id"] for a in group}
         aliases = {x for a in group for x in a["aliases"]} | ids
         primary = _primary(ids)

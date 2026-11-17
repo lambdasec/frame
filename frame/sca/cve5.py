@@ -22,8 +22,11 @@ with registry version ranges can come out as GIT commit ranges alone. CVE-2026-9
 * GIT entries are not converted (OSV's own record already carries them, and the C/C++ matching
   reads that), so adding CVE records to a build changes no GIT shard.
 
-The result goes through the same `osv.entries` as every OSV record and is merged by id or alias
-with OSV's records for the same vulnerability (affected if any says so).
+The result goes through the same `osv.entries` as every OSV record, as a fallback
+(`osv._merge_aliases`): where an OSV record names the same vulnerability (by id or alias) for the
+same package, OSV's reviewed ranges win and the CNA's are dropped. The two disagree on real
+advisories (a version GHSA calls fixed is the CNA's `lessThanOrEqual`), and a merge would report
+the fixed version.
 """
 
 from __future__ import annotations
@@ -56,6 +59,7 @@ _VERSION_TYPES = {
     PACKAGIST: {"composer", "packagist", "semver"}, PUB: {"pub", "semver"}, HEX: {"hex", "semver"},
 }
 _VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_~:-]*")
+SOURCE = "cve-record"          # `database_specific.source` of a converted record
 
 
 def is_cve_record(doc: object) -> bool:
@@ -178,7 +182,7 @@ def to_osv(doc: dict) -> Optional[dict]:
                                         if isinstance(d, dict) and str(d.get("lang", "")).startswith("en")), "")
     rec = {"id": meta["cveId"], "aliases": [], "summary": str(summary or ""),
            "published": meta.get("datePublished"), "modified": meta.get("dateUpdated"),
-           "severity": severity, "affected": affected}
-    if label:
-        rec["database_specific"] = {"severity": label}
+           "severity": severity, "affected": affected,
+           # a fallback: where OSV files this CVE under the package itself, OSV's record wins
+           "database_specific": {"source": SOURCE, **({"severity": label} if label else {})}}
     return rec
