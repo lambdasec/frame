@@ -1,4 +1,4 @@
-"""Advisories: build the dataset from OSV exports, load it from the cache, and match a
+"""Advisories: build the dataset from OSV exports (and CVE records, `cve5`), load it from the cache, and match a
 dependency graph against it.
 
 The dataset is a knowledge-base revision of its own (default `hf:lambdasec/frame-advisories`,
@@ -93,7 +93,19 @@ def _gz_json(obj) -> bytes:
 # building
 
 def _records(inputs: Sequence[Path]) -> Iterator[dict]:
-    """OSV records from `all.zip` exports, directories of `<id>.json` files, or single files."""
+    """OSV records from `all.zip` exports, directories of `<id>.json` files, or single files. A
+    CVE record (CVE JSON 5, `cvelistV5`) among them becomes the OSV-shaped record of the registry
+    packages its CNA names (`frame.sca.cve5`), or nothing."""
+    from frame.sca.cve5 import is_cve_record, to_osv
+    for rec in _raw_records(inputs):
+        if is_cve_record(rec):
+            rec = to_osv(rec)
+            if rec is None:
+                continue
+        yield rec
+
+
+def _raw_records(inputs: Sequence[Path]) -> Iterator[dict]:
     from frame.sca.suse_oval import FILE as SUSE_OVAL
     for p in inputs:
         p = Path(p)

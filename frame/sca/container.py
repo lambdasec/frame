@@ -17,7 +17,7 @@ Language packages installed in the image are read too, from what the package man
 
     */site-packages/*.dist-info/METADATA, *.egg-info     Python (PyPI): Name and Version
     */node_modules/<name>/package.json                    npm: name and version
-    *.jar (and jars inside it, a Spring Boot or WAR)      Maven: META-INF/maven/**/pom.properties
+    *.jar, *.war, *.ear (and the jars inside them)        Maven: META-INF/maven/**/pom.properties
     executables (ELF)                                     Go build info, Rust `cargo auditable`
                                                           (`frame.sca.binaries`)
 
@@ -201,6 +201,12 @@ def _pom_properties(text: str) -> Dict[str, str]:
     return out
 
 
+def _java_archive(path: str) -> bool:
+    """A jar, or a web / enterprise archive (a WAR's WEB-INF/lib jars, an EAR's modules): all zips
+    whose Maven coordinates are their pom.properties."""
+    return path.endswith((".jar", ".war", ".ear"))
+
+
 def _jar_coordinates(data: bytes, depth: int = 0) -> Tuple[List[Tuple[str, str, str]], int]:
     """Maven coordinates in a jar and the jars inside it, and how many jars had none."""
     coords: List[Tuple[str, str, str]] = []
@@ -217,7 +223,7 @@ def _jar_coordinates(data: bytes, depth: int = 0) -> Tuple[List[Tuple[str, str, 
                 if p.get("groupId") and p.get("artifactId") and p.get("version"):
                     coords.append((p["groupId"], p["artifactId"], p["version"]))
                     found = True
-            elif name.endswith(".jar") and depth < 2:
+            elif _java_archive(name) and depth < 2:
                 inner, n = _jar_coordinates(z.read(name), depth + 1)
                 coords += inner
                 unnamed += n
@@ -282,7 +288,7 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
                 top = path[:path.index("node_modules/") + len("node_modules")]
                 group(NPM, top).add(Package(NPM, doc["name"], doc["version"]))
             continue
-        if path.endswith(".jar") and isinstance(text, bytes):
+        if _java_archive(path) and isinstance(text, bytes):
             if path in owned:
                 skipped += 1
                 continue
@@ -301,7 +307,7 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
 
 
 def _language_file(path: str) -> bool:
-    return bool(_PY_META.search(path) or _NPM_JSON.search(path) or path.endswith(".jar")
+    return bool(_PY_META.search(path) or _NPM_JSON.search(path) or _java_archive(path)
                 or (path.startswith(DPKG_INFO) and path.endswith(".list")))
 
 
@@ -405,7 +411,7 @@ def read_rootfs(root: Path) -> Tuple[List[DependencyFile], List[str]]:
                 full, rel = full / "PKG-INFO", rel + "/PKG-INFO"
             if not full.is_file() or full.is_symlink():
                 continue
-            if rel.endswith(".jar"):
+            if _java_archive(rel):
                 if full.stat().st_size > MAX_JAR:
                     warnings.append(f"{root}:/{rel}: larger than {MAX_JAR >> 20} MB, not read")
                     continue
@@ -451,12 +457,12 @@ def read_image_tar(tar_path: Path, origin: Optional[str] = None) -> Tuple[List[D
                         else:
                             files.pop(name, None)                   # replaced by something else
                     elif m.isfile() and _wanted(name):
-                        if name.endswith(".jar") and m.size > MAX_JAR:
+                        if _java_archive(name) and m.size > MAX_JAR:
                             continue
                         f = layer.extractfile(m)
                         if f is not None:
                             data = f.read()
-                            files[name] = (data if name.endswith(".jar") or _binary_os_file(name)
+                            files[name] = (data if _java_archive(name) or _binary_os_file(name)
                                            else data.decode("utf-8", "replace"))
     return read_files(files, origin)
 

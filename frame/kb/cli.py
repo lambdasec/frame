@@ -55,8 +55,9 @@ def add_kb_command(subparsers) -> None:
     bd.add_argument("out", help="Output directory (publish it, mirror it, or pull from it)")
     bd.add_argument("--revision", required=True, help="Revision id written to the manifest")
     bd.add_argument("--specs", metavar="DIR", help="Directory of library spec tables (<table>.toml) to include")
-    ba = sub.add_parser("build-advisories", help="Lay out an advisories revision from OSV exports")
-    ba.add_argument("inputs", nargs="+", help="OSV all.zip exports, directories of OSV JSON, or JSON files")
+    ba = sub.add_parser("build-advisories", help="Lay out an advisories revision from OSV exports and CVE records")
+    ba.add_argument("inputs", nargs="+", help="OSV all.zip exports, directories of OSV JSON, or JSON files; CVE JSON 5 records (cvelistV5) "
+                    "among them add the registry packages their CNA names")
     ba.add_argument("out", help="Output directory")
     ba.add_argument("--revision", required=True, help="Revision id written to the manifest")
     ba.add_argument("--ecosystems", help="Comma-separated OSV ecosystems (default: every one Frame reads)")
