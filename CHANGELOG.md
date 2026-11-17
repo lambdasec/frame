@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-11-17
+
 ### Added
 
 - **Business-logic hunting: `frame scan --hunt CLASSES`.** The hunt's pipeline (scouts, units, one agent per unit, a verdict on every member) now takes a flaw class: `authz` (the authorization hunt, unchanged), `limits` (a client number stored without its bound), `race`, `workflow`, `replay` and `bruteforce`, or `logic` for all of the business-logic classes (also `[hunt] classes`). Each class brings its own instructions and ranks units from the engine's facts, never from names. A business-logic finding is `llm-verified` only when an engine check the agent ran refuted the bound or the guard in that function, and the witness is in its description.
@@ -107,7 +109,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.6...HEAD
+[1.1.6]: https://github.com/lambdasec/frame/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/lambdasec/frame/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/lambdasec/frame/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/lambdasec/frame/compare/v1.1.2...v1.1.3
