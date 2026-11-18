@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-11-18
+
 ### Added
 
 - **Language runtimes in images.** A JDK, Node.js, CPython, .NET or Ruby that an image installs from a tarball (`eclipse-temurin`, `node`, `python`, `ruby`, `mcr.microsoft.com/dotnet`) is in no package database, so Frame missed it. Each is now read from its own version file (a JDK's `release`, `node_version.h`, `patchlevel.h`, the shared framework's `deps.json`, `rbconfig.rb`) and matched against the runtime's own advisories: OpenJDK's vulnerability advisories (new `OpenJDK` table), the Node.js security WG's (`Node.js`), the Ruby advisory database's (`Ruby`), OSV's CPython records by release tag, and GitHub's advisories for the .NET runtime packs. `frame deps --image eclipse-temurin:17-jre --vulns` now reports CVE-2026-114938 ("Java4Shell"). A JDK on a release line OpenJDK no longer lists gets a note, an OpenJ9 JDK a warning. See `examples/container-runtimes`.
@@ -118,7 +120,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.6...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.7...HEAD
+[1.1.7]: https://github.com/lambdasec/frame/compare/v1.1.6...v1.1.7
 [1.1.6]: https://github.com/lambdasec/frame/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/lambdasec/frame/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/lambdasec/frame/compare/v1.1.3...v1.1.4
