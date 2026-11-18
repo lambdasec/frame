@@ -324,6 +324,11 @@ def format_text(report: DependencyReport) -> str:
         if ranged:
             detail += f", {ranged} without an exact version"
         lines.append(f"  {f.path}  ({f.ecosystem} {f.kind}): {len(pkgs)} packages, {detail}")
+        for h in f.startup_hooks:
+            runs = f"runs {h['executes']} line{'s' if h['executes'] != 1 else ''}" if h["kind"] == "pth" else "is imported"
+            owner = (f"installed by {h['owner']}" if h.get("owner") and h["owner"] != "os package" else
+                     "owned by an OS package" if h.get("owner") else "no installed package lists it")
+            lines.append(f"    startup hook: {h['file']} {runs} at every Python start, imported or not ({owner})")
     for eco, s in report.summary().items():
         lines.append(f"{eco}: {s['packages']} distinct packages ({s['direct']} direct, {s['dev']} dev only)")
     for w in report.warnings:
@@ -347,6 +352,19 @@ def _about(f: dict) -> str:
     return text or ', '.join(ids)[:80]
 
 
+ROTATE = "rotate every credential the machine or CI runner that installed it could reach"
+
+
+def _malicious_advice(f: dict) -> str:
+    """A malicious package ran its code when it was installed or imported: removing it does not
+    undo what it took."""
+    if f.get("every_version"):
+        return f"malicious package, every release: remove it (check the name was not a typosquat) and {ROTATE}"
+    if f["fixed"]:
+        return f"malicious release: move to {f['fixed'][0]} and {ROTATE}"
+    return f"malicious release: pin a release the advisory does not list and {ROTATE}"
+
+
 def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: int = 0) -> str:
     """`missing`: ecosystems with no advisories cached; `undecided`: advisories matching could
     not decide (an untagged commit, see the warnings). Neither is ever called "no known
@@ -360,7 +378,10 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: i
     lines = [f"{len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}:"]
     for f in findings:
         sev = (f["severity"] or "unknown").upper()
-        fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
+        fix = (_malicious_advice(f) if f.get("kind") == "malicious" else
+               f"{f['kind']}, no fix will come: replace it (see the advisory)"
+               if f.get("kind") == "unmaintained" and not f["fixed"] else
+               f"fixed in {f['fixed'][0]}" if f["fixed"] else
                ("fixed upstream after this commit (see the advisory)" if f.get("commit") else "fixed upstream after this tag (see the advisory)") if f.get("repo") else
                f"no fixed version named; last affected {f['last_affected'][0]}" if f.get("last_affected") else "no fixed version")
         kind = ("runtime" if f["ecosystem"] in RUNTIME_ECOSYSTEMS or f["package"] == CPYTHON_REPO else
@@ -368,7 +389,8 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: i
                 "os package" if f["ecosystem"].split(":", 1)[0] in DISTRO_FAMILIES else "dependency")
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""
-        lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{level}) "
+        nature = f", {f['kind']}" if f.get("kind") else ""
+        lines.append(f"  {sev:8} {f['package']}@{f['version']} ({kind}{', dev' if f['dev'] else ''}{nature}{level}) "
                      f"{f['id']}: {_about(f)}; {fix}  [{f['path']}]")
         if len(f["via"]) > 1:
             lines.append(f"           via {' -> '.join(f['via'])}")

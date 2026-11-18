@@ -599,3 +599,41 @@ def test_container_runtimes_walkthrough(tmp_path):
             assert line in out, (args, line, out[-2000:])
             assert line in readme, f"README does not show {line!r}"
     assert "CVE-2026-114938" not in frame(work, env, "deps", "--rootfs", "temurin-8-jre", "--vulns")
+
+
+def test_malicious_packages_walkthrough(tmp_path):
+    work = tmp_path / "malicious-packages"
+    shutil.copytree(EXAMPLES / "malicious-packages", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    assert "2 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "PyPI,crates.io")
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("deps", "project", "--vulns"), [
+            "2 known vulnerabilities:",
+            "CRITICAL agent-framework@1.26.1 (direct, malicious) MAL-2026-20101: Malicious code in agent-framework "
+            "(PyPI); malicious release: pin a release the advisory does not list and rotate every credential the "
+            "machine or CI runner that installed it could reach  [requirements.txt]",
+            "UNKNOWN  adler@1.0.2 (direct, unmaintained) RUSTSEC-2025-0056: adler crate is unmaintained, use adler2 "
+            "instead; unmaintained, no fix will come: replace it (see the advisory)  [Cargo.lock]"]),
+        (("deps", "project", "--vulns", "--plan"), [
+            "adler@1.0.2: unmaintained, no fix will come; replace it with a maintained package (RUSTSEC-2025-0056: "
+            "see the advisory)  [Cargo.lock]",
+            "agent-framework@1.26.1: malicious release: pin a release other than 1.26.1, 1.26.2, then rotate every "
+            "credential the machine or CI runner that installed it could reach (its code ran at install or start-up) "
+            "(MAL-2026-20101)  [requirements.txt]"]),
+        (("deps", "project", "--rootfs", "app-image", "--vulns"), [
+            "startup hook: agent_framework_init.pth runs 1 line at every Python start, imported or not "
+            "(installed by agent-framework 1.26.1)",
+            "startup hook: distutils-precedence.pth runs 1 line at every Python start, imported or not "
+            "(installed by setuptools 80.9.0)",
+            "startup hook: zz_unclaimed.pth runs 1 line at every Python start, imported or not "
+            "(no installed package lists it)"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out, (args, line)
+            assert line in readme, line
+

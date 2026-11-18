@@ -9,7 +9,8 @@ where an advisory is
     {"id", "aliases", "summary", "severity", "score", "cvss", "published", "modified",
      "ranges": [{"type": "ECOSYSTEM" | "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.2"}]}],
      "versions": [...],                       # explicitly listed affected versions
-     "functions": [{"id": "pkg.mod.func", "source": "osv"}]}
+     "functions": [{"id": "pkg.mod.func", "source": "osv"}],
+     "kind": "malicious" | "unmaintained" | "unsound" | "notice"}   # only when the record says so
 
 Records about the same vulnerability under several ids (a GHSA and a PYSEC entry naming each
 other as aliases) are merged into one advisory per package, so a finding is reported once with
@@ -134,6 +135,27 @@ RPM_FAMILIES = ("AlmaLinux", "Rocky Linux", "Red Hat", "Azure Linux", "openSUSE"
 # patch under a module the image does not record, and leave out the cumulative history.   # versions epoch:version-release
 
 
+# CWE-506 "Embedded Malicious Code" and its children (trojan horse, non-replicating and
+# replicating malicious code, trapdoor, logic bomb, spyware): GitHub files malware it reviews
+# (`Malicious Package in m-backdoor`, a compromised release) under these, OpenSSF under `MAL-` ids
+MALICIOUS_CWES = frozenset(f"CWE-{n}" for n in range(506, 513))
+# RustSec's informational advisories (`affected[].database_specific.informational`): a notice
+# about the crate, not a flaw with a fix
+INFORMATIONAL = ("unmaintained", "unsound", "notice")
+
+
+def advisory_kind(rec: dict, affected: dict) -> Optional[str]:
+    """What the record is about when it is not an ordinary flaw: a malicious package or release,
+    or one of RustSec's informational notices. Read from the record's own fields, never its text."""
+    db = rec.get("database_specific") if isinstance(rec.get("database_specific"), dict) else {}
+    cwes = db.get("cwe_ids") if isinstance(db.get("cwe_ids"), list) else []
+    if rec.get("id", "").startswith("MAL-") or MALICIOUS_CWES & {str(c) for c in cwes}:
+        return "malicious"
+    es = affected.get("database_specific") if isinstance(affected.get("database_specific"), dict) else {}
+    info = es.get("informational")
+    return info if info in INFORMATIONAL else None
+
+
 def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, dict]]:
     """(ecosystem, normalised package name, advisory entry) for each `affected` package of a
     record in `ecosystems`. Malicious-package records (OpenSSF, `MAL-` ids) carry no rating;
@@ -188,6 +210,7 @@ def entries(rec: dict, ecosystems: Iterable[str]) -> Iterable[Tuple[str, str, di
             # after the merge, and the listed versions were half of a full build's memory
             "ranges": ranges, "versions": _uncovered(eco, [str(v) for v in aff.get("versions") or []], ranges),
             "functions": _functions(aff),
+            **({"kind": kind} if (kind := advisory_kind(rec, aff)) else {}),
             **({"fallback": True} if (rec.get("database_specific") or {}).get("source") == "cve-record" else {})}
 
 
@@ -290,6 +313,16 @@ def _primary(ids: Iterable[str]) -> str:
     return min(ids, key=rank)
 
 
+def _merged_kind(group: List[dict]) -> Optional[str]:
+    """Malicious if any record of the vulnerability says so (OpenSSF's MAL- and GitHub's GHSA
+    for one release); a notice only when every record is that notice (a flaw filed beside it
+    is a flaw)."""
+    kinds = [a.get("kind") for a in group]
+    if "malicious" in kinds:
+        return "malicious"
+    return kinds[0] if kinds[0] and len(set(kinds)) == 1 else None
+
+
 def _merge_aliases(advs: List[dict]) -> List[dict]:
     """Advisories for one package that name each other (directly or through a shared alias)
     become one: ids united, ranges kept side by side (affected if any says so), the highest
@@ -338,6 +371,7 @@ def _merge_aliases(advs: List[dict]) -> List[dict]:
             "ranges": [r for a in group for r in a["ranges"]],
             "versions": sorted({v for a in group for v in a["versions"]}),
             "functions": functions,
+            **({"kind": kind} if (kind := _merged_kind(group)) else {}),
             **({"commits": [c for a in group for c in a.get("commits", [])]}
                if any(a.get("commits") for a in group) else {})})
     return sorted(out, key=lambda a: a["id"])

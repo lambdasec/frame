@@ -424,6 +424,26 @@ def _note_jdk_line(pkg, where: str, db: AdvisoryDB) -> None:
                         "OpenJDK fixes, and vulnerabilities found since are not known to Frame")
 
 
+def finding_kind(adv: dict) -> Optional[str]:
+    """`malicious`, `unmaintained`, `unsound`, `notice` (`osv.advisory_kind`), or None for an
+    ordinary flaw. A table built before the field existed still names OpenSSF's MAL- id."""
+    kind = adv.get("kind")
+    if kind is None and any(i.startswith("MAL-") for i in [adv.get("id", ""), *adv.get("aliases", [])]):
+        kind = "malicious"
+    return kind
+
+
+def affects_every_version(adv: dict) -> bool:
+    """Whether the advisory marks every release: a range opened at the start and never closed
+    (a malicious package published only to steal, a crate abandoned for good)."""
+    for r in adv.get("ranges", ()):
+        events = [e for e in r.get("events") or [] if isinstance(e, dict)]
+        if (any(str(e.get("introduced")) in ("0", "0.0.0", "0.0.0-0") for e in events)
+                and not any(k in e for e in events for k in ("fixed", "last_affected", "limit"))):
+            return True
+    return False
+
+
 def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
     """One finding per (manifest, package version, advisory)."""
     out: List[dict] = []
@@ -493,6 +513,8 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     "via": [f"{df.packages[k].name}@{df.packages[k].version}" for k in chain],
                     "functions": adv.get("functions", []),
                     "classes": adv.get("classes", []),
+                    **({"kind": kind, "every_version": affects_every_version(adv)}
+                       if (kind := finding_kind(adv)) else {}),
                     "category": "dependency", "evidence": "matched"})
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, None: 4}
     out.sort(key=lambda f: (rank.get(f["severity"], 4), f["path"], f["package"], f["id"]))

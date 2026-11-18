@@ -145,6 +145,9 @@ class DependencyFile:
     binary_functions: frozenset = frozenset()
     binary_platform: Tuple[str, str] = ("", "")   # its GOOS, GOARCH
     warnings: List[str] = field(default_factory=list)
+    # an installed site-packages: files Python runs at every interpreter start (`.pth` lines,
+    # sitecustomize), each {file, kind, executes?, owner} (`container._startup_hooks`)
+    startup_hooks: List[dict] = field(default_factory=list)
 
     def add(self, pkg: Package) -> Package:
         """Add `pkg`, merging with an entry of the same key (direct and non-dev win)."""
@@ -184,4 +187,5 @@ class DependencyFile:
         return {"path": self.path, "ecosystem": self.ecosystem, "kind": self.kind,
                 "packages": [p.to_dict() for p in pkgs],
                 "edges": {k: sorted(v) for k, v in sorted(self.edges.items())},
-                "warnings": self.warnings}
+                "warnings": self.warnings,
+                **({"startup_hooks": self.startup_hooks} if self.startup_hooks else {})}

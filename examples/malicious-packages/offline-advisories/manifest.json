@@ -1,0 +1,22 @@
+{
+  "files": {
+    "advisories/PyPI.json.gz": {
+      "advisories": 2,
+      "kind": "advisories",
+      "language": "pypi",
+      "name": "PyPI",
+      "sha256": "4cc7dc29d17e1784437377b3d48621a5c093d98e821dadf8288591ea2cd7eea9",
+      "size": 656
+    },
+    "advisories/crates.io.json.gz": {
+      "advisories": 1,
+      "kind": "advisories",
+      "language": "crates.io",
+      "name": "crates.io",
+      "sha256": "be76ff1046e2f01433af327c6b432cdf87508e5026d551463909aae869e7afd5",
+      "size": 280
+    }
+  },
+  "revision": "example",
+  "schema": 1
+}

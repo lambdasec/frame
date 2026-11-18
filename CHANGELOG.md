@@ -4,6 +4,11 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **Malicious packages get malware advice.** OpenSSF's `MAL-` records and GitHub's CWE-506 advisories (a compromised release, a typosquat) are now labelled `malicious`, and the advice is no longer `no fixed version`: a package malicious in every release is to be removed, a malicious release pinned away from (the plan names the releases to avoid), and in both cases the credentials the installing machine could reach rotated. MAL-2026-20101 (agent-framework 1.26.1 and 1.26.2) is reported this way. RustSec's informational advisories are labelled too (`unmaintained`, `unsound`, `notice`), and an unmaintained crate's advice is to replace it. See `examples/malicious-packages`.
+- **Python start-up hooks in installed environments.** `frame deps --rootfs` / `--image` list each `.pth` file whose lines Python executes at start-up, and `sitecustomize` / `usercustomize`, with the distribution that installed it (or none). A credential stealer that runs from a start-up hook is visible before any advisory exists.
+
 ## [1.1.7] - 2026-11-18
 
 ### Added

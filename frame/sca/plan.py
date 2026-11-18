@@ -137,6 +137,16 @@ def plan(findings: List[dict], files: List[DependencyFile], db, registry=None) -
                 requirers.append({"by": label, "spec": spec,
                                   "admits_target": satisfies(eco, target, spec) if target else None})
         entry["requirers"] = requirers
+        bad = [f for f in fs if f.get("kind") == "malicious"]
+        if bad:
+            # what the malicious advisories list: the releases not to pin (OpenSSF lists them, no range)
+            listed = sorted_versions(eco, {v for f in bad for v in by_id.get(f["id"], {}).get("versions", ())})
+            entry["malicious"] = {"ids": sorted({f["id"] for f in bad}),
+                                  "every_version": any(f.get("every_version") for f in bad),
+                                  "listed": listed}
+        unmaintained = sorted({f["id"] for f in fs if f.get("kind") == "unmaintained"})
+        if unmaintained:
+            entry["unmaintained"] = unmaintained
         kind = df.kind if df is not None else ""
         if target is None:
             action = "no-fix"
@@ -276,14 +286,31 @@ def _brings(df: DependencyFile, reg, change, changed: set) -> List[dict]:
     return out
 
 
+ROTATE = ("rotate every credential the machine or CI runner that installed it could reach "
+          "(its code ran at install or start-up)")
+
+
 def format_plan(plans: List[dict]) -> str:
     if not plans:
         return ""
     lines = [f"\nUpgrade plan ({len(plans)} package{'s' if len(plans) != 1 else ''}):"]
     for p in plans:
         tag = " [major]" if p["major"] else ""
+        bad = p.get("malicious")
+        if bad and (bad["every_version"] or p["action"] == "no-fix"):
+            if bad["every_version"]:
+                how = "every release is malicious: remove it (check the name was not a typosquat of the one meant)"
+            else:
+                how = (f"malicious release: pin a release other than {', '.join(bad['listed'][:5])}" if bad["listed"]
+                       else "malicious release: pin a release the advisory does not list")
+            lines.append(f"  {p['package']}@{p['current']}: {how}, then {ROTATE} ({', '.join(bad['ids'])})  "
+                         f"[{p['path']}]")
+            continue
         if p["action"] == "no-fix":
-            if p["ecosystem"] == "GIT":
+            if p.get("unmaintained") and set(p["unfixed"]) <= set(p["unmaintained"]):
+                lines.append(f"  {p['package']}@{p['current']}: unmaintained, no fix will come; replace it with a "
+                             f"maintained package ({', '.join(p['unmaintained'])}: see the advisory)  [{p['path']}]")
+            elif p["ecosystem"] == "GIT":
                 # OSV's GIT records name the fixing commit, not the release that first contains it
                 lines.append(f"  {p['package']}@{p['current']}: fixed upstream by commit (OSV names no release); "
                              f"update to a release after the fix ({', '.join(p['unfixed'])})  [{p['path']}]")
@@ -312,6 +339,8 @@ def format_plan(plans: List[dict]) -> str:
         if p.get("unfixed"):
             gain += f"; {len(p['unfixed'])} with no fix stay open: {', '.join(p['unfixed'][:3])}"
         lines.append(f"  {p['package']} {p['current']} -> {p['target']}{tag}: {what}  [{p['path']}; {gain}]")
+        if bad:
+            lines.append(f"      {p['current']} is a malicious release ({', '.join(bad['ids'])}): {ROTATE}")
         if p.get("requires_go"):
             df_go = p.get("within_go")
             lines.append(f"      needs Go {p['requires_go']} (go.mod says go {p['module_go']})" + (

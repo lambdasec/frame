@@ -60,6 +60,11 @@ DPKG_STATUS_D = "var/lib/dpkg/status.d/"
 APK_INSTALLED = "lib/apk/db/installed"
 DPKG_INFO = "var/lib/dpkg/info/"
 _PY_META = re.compile(r"(?:^|/)(?:site|dist)-packages/[^/]+\.(?:dist-info/METADATA|egg-info/PKG-INFO|egg-info)$")
+# what Python runs at every interpreter start from a site-packages directory, whether or not
+# anything imports the package: `site.addpackage` execs each `.pth` line that starts with
+# `import` followed by a space or tab, and `site` imports sitecustomize / usercustomize
+_PY_HOOK = re.compile(r"(?:^|/)(?:site|dist)-packages/(?:[^/]+\.pth|sitecustomize\.py|usercustomize\.py|sitecustomize/__init__\.py)$")
+_PY_RECORD = re.compile(r"(?:^|/)(?:site|dist)-packages/[^/]+\.dist-info/RECORD$")
 _NPM_JSON = re.compile(r"(?:^|/)node_modules/((?:@[^/]+/)?[^/@.][^/]*)/package\.json$")
 MAX_JAR = 512 * 1024 * 1024                  # a larger archive is skipped with a warning
 MAX_BINARY = 512 * 1024 * 1024
@@ -302,6 +307,7 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
             if unnamed:
                 warnings.append(f"{origin}:/{path}: {unnamed} jar(s) without Maven coordinates (pom.properties); "
                                 "not identified")
+    _startup_hooks(files, owned, group)
     if old_go:
         warnings.append(f"{origin}: {old_go} Go binary(ies) built before Go 1.18 (module list not read)")
     if skipped:
@@ -310,8 +316,53 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
     return [groups[k] for k in sorted(groups)], warnings
 
 
+def pth_executes(text: str) -> List[str]:
+    """The lines of a `.pth` file Python executes (CPython's `site.addpackage`: comments and
+    blank lines skipped, a line starting `import ` or `import\\t` is exec'd, any other line is a
+    directory added to sys.path)."""
+    return [line.rstrip("\r\n") for line in text.splitlines()
+            if not line.startswith("#") and line.startswith(("import ", "import\t"))]
+
+
+def _startup_hooks(files: Dict[str, FileData], owned: Set[str], group) -> None:
+    """Record, on each site-packages directory's PyPI entry, the files Python runs at start-up:
+    `.pth` files with executed lines, and sitecustomize / usercustomize. Each names the
+    distribution whose RECORD lists it (none: no installed package claims it) or the OS
+    package that owns it. A path-only `.pth` (what most editable installs write) runs nothing."""
+    owners: Dict[str, str] = {}
+    for path in files:
+        if not _PY_RECORD.search(path) or not isinstance(files[path], str):
+            continue
+        site, dist = path.rsplit("/", 2)[:2]
+        meta = files.get(f"{site}/{dist}/METADATA")
+        h = _headers(meta) if isinstance(meta, str) else {}
+        label = f"{h['name']} {h['version']}" if h.get("name") and h.get("version") else dist
+        for line in files[path].splitlines():
+            rel = line.split(",", 1)[0].strip()
+            if rel:
+                owners.setdefault(f"{site}/{rel}", label)
+    for path in sorted(files):
+        text = files[path]
+        if not _PY_HOOK.search(path) or not isinstance(text, str):
+            continue
+        name = path.rsplit("/", 1)[1]
+        site = path[:path.index("-packages/") + len("-packages")]
+        if name.endswith(".pth"):
+            run = pth_executes(text)
+            if not run:
+                continue
+            hook = {"file": name, "kind": "pth", "executes": len(run)}
+        else:
+            if name == "__init__.py":
+                name = "sitecustomize"
+            hook = {"file": name, "kind": name.split(".", 1)[0]}
+        rel = path[len(site) + 1:]
+        hook["owner"] = "os package" if path in owned else owners.get(path)
+        group(PYPI, site).startup_hooks.append(hook)
+
+
 def _language_file(path: str) -> bool:
-    return bool(_PY_META.search(path) or _NPM_JSON.search(path) or _java_archive(path) or runtime_file(path)
+    return bool(_PY_META.search(path) or _PY_HOOK.search(path) or _PY_RECORD.search(path) or _NPM_JSON.search(path) or _java_archive(path) or runtime_file(path)
                 or (path.startswith(DPKG_INFO) and path.endswith(".list")))
 
 
