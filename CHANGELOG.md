@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-11-18
+
 ### Added
 
 - **Malicious packages get malware advice.** OpenSSF's `MAL-` records and GitHub's CWE-506 advisories (a compromised release, a typosquat) are now labelled `malicious`, and the advice is no longer `no fixed version`: a package malicious in every release is to be removed, a malicious release pinned away from (the plan names the releases to avoid), and in both cases the credentials the installing machine could reach rotated. MAL-2026-20101 (agent-framework 1.26.1 and 1.26.2) is reported this way. RustSec's informational advisories are labelled too (`unmaintained`, `unsound`, `notice`), and an unmaintained crate's advice is to replace it. See `examples/malicious-packages`.
@@ -125,7 +127,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.7...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/lambdasec/frame/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/lambdasec/frame/compare/v1.1.6...v1.1.7
 [1.1.6]: https://github.com/lambdasec/frame/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/lambdasec/frame/compare/v1.1.4...v1.1.5
