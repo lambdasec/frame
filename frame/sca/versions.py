@@ -13,7 +13,8 @@ import re
 from functools import cmp_to_key, lru_cache
 from typing import Any, List, Optional, Tuple
 
-from frame.sca.model import CARGO, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT
+from frame.sca.model import (CARGO, GO, HEX, MAVEN, NODEJS, NPM, NUGET, OPENJDK, PACKAGIST, PUB, PYPI, RUBY,
+                             RUBYGEMS, SWIFT)
 
 
 class _Inf:
@@ -371,8 +372,30 @@ def _go(v: str) -> Optional[Tuple]:
     return _semver(v if v.startswith("v") else "v" + v)
 
 
+# ---------------------------------------------------------------------------------------------
+# OpenJDK: `java.lang.Runtime.Version` (JEP 322): $FEATURE.$INTERIM.$UPDATE.$PATCH... compared
+# number by number, trailing zeros insignificant (`27` is `27.0.0`), a pre-release (`27-ea`) before
+# its release, the build (`+9`) not part of the order. JDK 8 and earlier write `1.8.0_512`
+# (a release file's JAVA_VERSION) or `8u512` (OpenJDK's advisories): both are 8, update 512.
+
+def _jdk(v: str) -> Optional[Tuple]:
+    v = v.strip().split("+", 1)[0]
+    m = re.fullmatch(r"1\.(\d+)\.0(?:_(\d+))?(?:-b\d+)?", v) or re.fullmatch(r"(\d+)u(\d+)(?:-b\d+)?", v)
+    if m:
+        nums, pre = [int(m.group(1)), 0, int(m.group(2) or 0)], None
+    else:
+        m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?", v)
+        if not m:
+            return None
+        nums, pre = [int(x) for x in m.group(1).split(".")], m.group(2)
+    while len(nums) > 1 and nums[-1] == 0:
+        nums.pop()
+    return (tuple(nums), _prerelease_key(pre))
+
+
 _PARSERS = {PYPI: _pep440, NPM: _semver, CARGO: _semver, SWIFT: _semver, NUGET: _nuget, MAVEN: _maven, GO: _go,
-            RUBYGEMS: _rubygems, PACKAGIST: _packagist, PUB: _semver, HEX: _semver}
+            RUBYGEMS: _rubygems, PACKAGIST: _packagist, PUB: _semver, HEX: _semver,
+            OPENJDK: _jdk, NODEJS: _semver, RUBY: _rubygems}
 
 
 def _distro_parser(ecosystem: str):

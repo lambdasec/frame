@@ -22,13 +22,15 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 import hashlib
 
-from frame.sca.model import (CARGO, CONAN, GIT, GO, HEX, MAVEN, NPM, NUGET, PACKAGIST, PUB, PYPI, RUBYGEMS, SWIFT, VCPKG,
+from frame.sca.model import (CARGO, CONAN, GIT, GO, HEX, MAVEN, NODEJS, NPM, NUGET, OPENJDK, PACKAGIST, PUB, PYPI,
+                             RUBY, RUBYGEMS, SWIFT, VCPKG,
                              DependencyFile, normalize_name)
 from frame.sca.osv import (DISTRO_FAMILIES, SCHEMA, entries, fixed_versions, git_entries, hoist_summaries,
+                           last_affected_versions,
                            is_affected, restore_summaries, table)
 
 DEFAULT_SOURCE = "hf:lambdasec/frame-advisories"
-ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT, RUBYGEMS, PACKAGIST, PUB, HEX)
+ECOSYSTEMS = (PYPI, NPM, MAVEN, NUGET, GO, CARGO, SWIFT, RUBYGEMS, PACKAGIST, PUB, HEX, OPENJDK, NODEJS, RUBY)
 # C/C++ packages are matched against GIT advisories (by repository), sharded so a project
 # pulls only the repositories it depends on
 CPP_ECOSYSTEMS = (CONAN, VCPKG, GIT)
@@ -95,9 +97,15 @@ def _gz_json(obj) -> bytes:
 def _records(inputs: Sequence[Path]) -> Iterator[dict]:
     """OSV records from `all.zip` exports, directories of `<id>.json` files, or single files. A
     CVE record (CVE JSON 5, `cvelistV5`) among them becomes the OSV-shaped record of the registry
-    packages its CNA names (`frame.sca.cve5`), or nothing."""
+    packages its CNA names (`frame.sca.cve5`), or nothing. A runtimes directory (OpenJDK, Node.js
+    and Ruby advisories, `frame.sca.runtime_advisories`) gives the records of those runtimes."""
     from frame.sca.cve5 import is_cve_record, to_osv
-    for rec in _raw_records(inputs):
+    from frame.sca.runtime_advisories import is_runtimes_dir
+    from frame.sca.runtime_advisories import records as runtime_records
+    for p in inputs:
+        if is_runtimes_dir(Path(p)):
+            yield from runtime_records(Path(p))
+    for rec in _raw_records([p for p in inputs if not is_runtimes_dir(Path(p))]):
         if is_cve_record(rec):
             rec = to_osv(rec)
             if rec is None:
@@ -396,6 +404,26 @@ def _paths_to_direct(df: DependencyFile, key: str) -> List[str]:
     return [key]
 
 
+def _note_jdk_line(pkg, where: str, db: AdvisoryDB) -> None:
+    """A JDK on a release line OpenJDK's latest advisory no longer lists (JDK 26 after 27 shipped)
+    gets no fixes there, and what was found since is not known to Frame: say so rather than look
+    clean."""
+    from frame.sca.versions import sort_key
+    advs = db.advisories(OPENJDK, pkg.name)
+    key = sort_key(OPENJDK, pkg.version)
+    if not advs or key is None:
+        return
+    latest = max(str(a.get("published") or "") for a in advs)
+    lines = {sort_key(OPENJDK, str(e.get("introduced")))[0][0]
+             for a in advs if str(a.get("published") or "") == latest
+             for r in a.get("ranges", ()) for e in r.get("events") or [] if "introduced" in e
+             and sort_key(OPENJDK, str(e.get("introduced")))}
+    if key[0][0] not in lines:
+        db.notes.append(f"OpenJDK {pkg.version} ({where}): release line {key[0][0]} is not in OpenJDK's latest "
+                        f"advisory ({latest[:10]}, lines {', '.join(str(x) for x in sorted(lines))}); it gets no "
+                        "OpenJDK fixes, and vulnerabilities found since are not known to Frame")
+
+
 def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
     """One finding per (manifest, package version, advisory)."""
     out: List[dict] = []
@@ -443,6 +471,8 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
             else:
                 candidates = [(adv, is_affected(pkg.ecosystem, pkg.version, adv))
                               for adv in db.advisories(pkg.ecosystem, pkg.name)]
+                if pkg.ecosystem == OPENJDK:
+                    _note_jdk_line(pkg, df.path, db)
             for adv, affected in candidates:
                 if not affected:
                     continue
@@ -453,6 +483,8 @@ def match(files: Iterable[DependencyFile], db: AdvisoryDB) -> List[dict]:
                     "ecosystem": pkg.ecosystem, "package": pkg.name, "version": pkg.version,
                     "purl": pkg.purl, "path": df.path, "direct": pkg.direct, "dev": pkg.dev,
                     "fixed": [] if pkg.repo else fixed_versions(pkg.ecosystem, pkg.version, adv),
+                    **({"last_affected": la} if not pkg.repo and (la := last_affected_versions(pkg.ecosystem, pkg.version, adv))
+                       else {}),
                     **({"repo": pkg.repo, "tag": next(t for t in pkg.tags if t in adv.get("versions", ()))}
                        if pkg.repo and pkg.tags else
                        {"repo": pkg.repo, "tags": [next(t for t in tags if t in adv.get("versions", ()))

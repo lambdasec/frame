@@ -4,6 +4,11 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **Language runtimes in images.** A JDK, Node.js, CPython, .NET or Ruby that an image installs from a tarball (`eclipse-temurin`, `node`, `python`, `ruby`, `mcr.microsoft.com/dotnet`) is in no package database, so Frame missed it. Each is now read from its own version file (a JDK's `release`, `node_version.h`, `patchlevel.h`, the shared framework's `deps.json`, `rbconfig.rb`) and matched against the runtime's own advisories: OpenJDK's vulnerability advisories (new `OpenJDK` table), the Node.js security WG's (`Node.js`), the Ruby advisory database's (`Ruby`), OSV's CPython records by release tag, and GitHub's advisories for the .NET runtime packs. `frame deps --image eclipse-temurin:17-jre --vulns` now reports CVE-2026-114938 ("Java4Shell"). A JDK on a release line OpenJDK no longer lists gets a note, an OpenJ9 JDK a warning. See `examples/container-runtimes`.
+- **The last affected version in findings.** An advisory that names no fix but a last affected version (all of OpenJDK's) now says so: `no fixed version named; last affected 17.0.21.0.3`.
+
 ### Fixed
 
 - **A CVE record's packages no longer change an advisory OSV already has.** In 1.1.6 the packages a CVE record names were merged with OSV's records of the same CVE, so where the two disagreed the wider range won (OWASP dependency-check 9.0.6 is fixed per GitHub's advisory and last affected per the CNA). They now only fill packages OSV does not file the CVE under. On today's OSV exports this adds 2,049 advisories across Maven, npm, Go, Packagist, crates.io, PyPI and NuGet, and changes no existing one.

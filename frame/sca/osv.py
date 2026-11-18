@@ -419,6 +419,23 @@ def is_affected(ecosystem: str, version: str, advisory: dict) -> bool:
     return any(in_range(ecosystem, version, r) for r in advisory.get("ranges", ()))
 
 
+def last_affected_versions(ecosystem: str, version: str, advisory: dict) -> List[str]:
+    """`last_affected` events at or above `version`, lowest first: where an advisory names no fix
+    (OpenJDK's name each line's last affected version), what it does say."""
+    v = sort_key(ecosystem, version)
+    out = set()
+    for r in advisory.get("ranges", ()):
+        if r.get("type") not in ("ECOSYSTEM", "SEMVER"):
+            continue
+        for e in r.get("events") or []:
+            la = e.get("last_affected") if isinstance(e, dict) else None
+            k = sort_key(ecosystem, str(la)) if la is not None else None
+            if k is not None and v is not None and k >= v:
+                out.add(str(la))
+    from frame.sca.versions import sorted_versions
+    return sorted_versions(ecosystem, out)
+
+
 def fixed_versions(ecosystem: str, version: str, advisory: dict) -> List[str]:
     """`fixed` events above `version`, lowest first: the upgrades that leave this range."""
     v = sort_key(ecosystem, version)

@@ -14,6 +14,10 @@ GO, CARGO, SWIFT = "Go", "crates.io", "SwiftURL"
 # C / C++: no OSV package ecosystem; matched by upstream repository and release tag (OSV GIT)
 CONAN, VCPKG, GIT = "ConanCenter", "vcpkg", "GIT"
 RUBYGEMS, PACKAGIST, PUB, HEX = "RubyGems", "Packagist", "Pub", "Hex"
+# language runtimes installed in an image, with no OSV ecosystem (frame/sca/runtimes.py): OpenJDK's,
+# Node.js's and Ruby's own advisories (frame/sca/runtime_advisories.py)
+OPENJDK, NODEJS, RUBY = "OpenJDK", "Node.js", "Ruby"
+RUNTIME_ECOSYSTEMS = (OPENJDK, NODEJS, RUBY)
 
 
 def normalize_name(ecosystem: str, name: str) -> str:

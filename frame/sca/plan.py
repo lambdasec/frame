@@ -61,7 +61,11 @@ IN_IMAGE = {"PyPI": "upgrade it in the image's pip install step (or its requirem
             "npm": "upgrade it in the project whose node_modules the image copies, and rebuild",
             "Maven": "replace the jar the image copies (or rebuild the application with the fixed version)",
             "Go": "rebuild the binary with the module upgraded (go get, then go build)",
-            "crates.io": "rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)"}
+            "crates.io": "rebuild the binary with the crate upgraded (cargo update -p, then cargo auditable build)",
+            "OpenJDK": "upgrade the JDK the image installs (a newer base image, such as a newer eclipse-temurin tag)",
+            "Node.js": "upgrade Node.js in the image (a newer node base image tag)",
+            "Ruby": "upgrade Ruby in the image (a newer ruby base image tag)",
+            "NuGet": "upgrade the package, or for a .NET runtime pack the runtime (a newer dotnet base image tag)"}
 
 
 def in_image(p: dict) -> str:
@@ -283,6 +287,10 @@ def format_plan(plans: List[dict]) -> str:
                 # OSV's GIT records name the fixing commit, not the release that first contains it
                 lines.append(f"  {p['package']}@{p['current']}: fixed upstream by commit (OSV names no release); "
                              f"update to a release after the fix ({', '.join(p['unfixed'])})  [{p['path']}]")
+            elif p["ecosystem"] == "OpenJDK":
+                # OpenJDK's advisories name each line's last affected version, not the release that fixes it
+                lines.append(f"  {p['package']}@{p['current']}: OpenJDK names the last affected version, not the fix; "
+                             f"upgrade the JDK to a later release of its line ({', '.join(p['unfixed'])})  [{p['path']}]")
             else:
                 lines.append(f"  {p['package']}@{p['current']}: no fixed version known ({', '.join(p['unfixed'])})  "
                              f"[{p['path']}]")

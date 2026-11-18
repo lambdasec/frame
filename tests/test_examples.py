@@ -565,3 +565,37 @@ def test_engine_query_walkthrough(tmp_path):
                           input='{"id": 1, "tool": "callers", "args": {"name": "run_query"}}\n')
     answer = json.loads(proc.stdout)
     assert answer["id"] == 1 and len(answer["result"]["callers"]) == 3
+
+
+def test_container_runtimes_walkthrough(tmp_path):
+    work = tmp_path / "container-runtimes"
+    shutil.copytree(EXAMPLES / "container-runtimes", work)
+    env = {**os.environ, "FRAME_KB_CACHE": str(tmp_path / "kb"), "PYTHONPATH": str(ROOT)}
+    env.pop("FRAME_ADVISORIES_SOURCE", None)
+    assert "1 files" in frame(work, env, "kb", "pull", "--advisories", "--source", "offline-advisories",
+                              "--ecosystems", "OpenJDK")
+    readme = (work / "README.md").read_text()
+    shown = [
+        (("deps", "--rootfs", "temurin-17-jre", "--rootfs", "temurin-8-jre", "--rootfs", "semeru-17-jre"), [
+            "temurin-17-jre:/opt/java/openjdk  (OpenJDK image): 1 packages, direct unknown",
+            "OpenJDK: 2 distinct packages (0 direct, 0 dev only)",
+            "JDK 17.0.21.0.3: its JVM is Openj9 (IBM Corporation), not HotSpot"]),
+        (("deps", "--rootfs", "temurin-17-jre", "--vulns"), [
+            "10 known vulnerabilities:",
+            "HIGH     openjdk@17.0.21 (runtime) CVE-2026-114938: OpenJDK hotspot/compiler vulnerability; "
+            "no fixed version named; last affected 17.0.21.0.3  [temurin-17-jre:/opt/java/openjdk]"]),
+        (("deps", "--rootfs", "temurin-8-jre", "--vulns"), [
+            "5 known vulnerabilities:",
+            "HIGH     openjdk@1.8.0_512 (runtime) CVE-2026-114939: OpenJDK security-libs/org.ietf.jgss vulnerability; "
+            "no fixed version named; last affected 8u512"]),
+        (("deps", "--rootfs", "temurin-17-jre", "--vulns", "--plan"), [
+            "Upgrade plan (1 package):",
+            "openjdk@17.0.21: OpenJDK names the last affected version, not the fix; upgrade the JDK to a later "
+            "release of its line (CVE-2026-114820, CVE-2026-114938"]),
+    ]
+    for args, lines in shown:
+        out = frame(work, env, *args)
+        for line in lines:
+            assert line in out, (args, line, out[-2000:])
+            assert line in readme, f"README does not show {line!r}"
+    assert "CVE-2026-114938" not in frame(work, env, "deps", "--rootfs", "temurin-8-jre", "--vulns")

@@ -13,7 +13,8 @@ from frame.sca.jvm import (GRADLE_REPORT_FILES, MAVEN_TREE_FILES, MAVEN_TREE_JSO
 from frame.sca.lockfiles import (DEV_FLAGGED, LOCKFILES, LockfileError, _propagate_dev, _pyproject_direct,
                                  central_package_versions, lockfile_ecosystem, manifest_ecosystem,
                                  manifest_parser, parse_csproj, parse_requirements)
-from frame.sca.model import MAVEN, PYPI, DependencyFile, normalize_name
+from frame.sca.model import MAVEN, PYPI, RUNTIME_ECOSYSTEMS, DependencyFile, normalize_name
+from frame.sca.runtimes import CPYTHON_REPO
 
 # build-tool reports read as resolved graphs (they stand in for a lockfile of their ecosystem)
 REPORTS: Dict[str, Callable[[str, str], DependencyFile]] = {
@@ -360,8 +361,10 @@ def format_vulns(findings: List[dict], missing: Sequence[str] = (), undecided: i
     for f in findings:
         sev = (f["severity"] or "unknown").upper()
         fix = (f"fixed in {f['fixed'][0]}" if f["fixed"] else
-               ("fixed upstream after this commit (see the advisory)" if f.get("commit") else "fixed upstream after this tag (see the advisory)") if f.get("repo") else "no fixed version")
-        kind = ("direct" if f["direct"] else "transitive" if f["direct"] is False else
+               ("fixed upstream after this commit (see the advisory)" if f.get("commit") else "fixed upstream after this tag (see the advisory)") if f.get("repo") else
+               f"no fixed version named; last affected {f['last_affected'][0]}" if f.get("last_affected") else "no fixed version")
+        kind = ("runtime" if f["ecosystem"] in RUNTIME_ECOSYSTEMS or f["package"] == CPYTHON_REPO else
+                "direct" if f["direct"] else "transitive" if f["direct"] is False else
                 "os package" if f["ecosystem"].split(":", 1)[0] in DISTRO_FAMILIES else "dependency")
         reach = f.get("reachability") or {}
         level = f", {reach['level']}" if reach.get("level") in ("imported", "called") else ""

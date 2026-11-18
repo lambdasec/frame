@@ -20,6 +20,9 @@ Language packages installed in the image are read too, from what the package man
     *.jar, *.war, *.ear (and the jars inside them)        Maven: META-INF/maven/**/pom.properties
     executables (ELF)                                     Go build info, Rust `cargo auditable`
                                                           (`frame.sca.binaries`)
+    <java home>/release, include/node/node_version.h,    the runtimes themselves: JDKs, Node.js,
+    include/python3.X/patchlevel.h, .NET deps.json,       CPython, .NET, Ruby (`frame.sca.runtimes`)
+    lib/ruby/*/*/rbconfig.rb
 
 A jar without `pom.properties` is counted, never named from its file name. A package whose files
 an OS package owns (dpkg's `info/*.list`, apk's `F:` lines) is left to the distribution's
@@ -44,6 +47,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 from frame.sca.binaries import Binary, read_binary
 from frame.sca.model import MAVEN, NPM, PYPI, DependencyFile, Package
 from frame.sca.rpmdb import RPMDB_PATHS, SQLITE_PATHS, read_rpmdb
+from frame.sca.runtimes import read_runtimes, runtime_file
 
 # how each rpm distribution's OSV records name packages: Rocky Linux by source package
 # (RLSA-2024:6783 names `openssl`), AlmaLinux by binary package (`openssl-libs`, `openssl-devel`)
@@ -307,18 +311,23 @@ def read_language_packages(files: Dict[str, FileData], origin: str,
 
 
 def _language_file(path: str) -> bool:
-    return bool(_PY_META.search(path) or _NPM_JSON.search(path) or _java_archive(path)
+    return bool(_PY_META.search(path) or _NPM_JSON.search(path) or _java_archive(path) or runtime_file(path)
                 or (path.startswith(DPKG_INFO) and path.endswith(".list")))
 
 
 def read_files(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFile], List[str]]:
     """From {path in the image: text, or bytes for a jar}: the installed packages, and warnings."""
-    lang, lang_warnings = read_language_packages(files, origin)
+    owned = _owned(files)
+    lang, lang_warnings = read_language_packages(files, origin, owned)
+    release_text = next((files[p] for p in OS_RELEASE if p in files), None)
+    distro_supported = isinstance(release_text, str) and ecosystem_of(os_release(release_text)) is not None
+    runtimes, runtime_warnings = read_runtimes(files, origin, owned, distro_supported)
+    lang = runtimes + lang
     os_files, os_warnings = _read_os(files, origin)
     if lang and os_warnings and not os_files:
         # an image with no distribution (scratch, distroless-static) can still hold language packages
         os_warnings = [w for w in os_warnings if "no /etc/os-release" not in w]
-    return os_files + lang, os_warnings + lang_warnings
+    return os_files + lang, os_warnings + runtime_warnings + lang_warnings
 
 
 def _read_os(files: Dict[str, FileData], origin: str) -> Tuple[List[DependencyFile], List[str]]:

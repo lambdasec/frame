@@ -1,0 +1,14 @@
+{
+  "files": {
+    "advisories/OpenJDK.json.gz": {
+      "advisories": 262,
+      "kind": "advisories",
+      "language": "openjdk",
+      "name": "OpenJDK",
+      "sha256": "b7bf1fdd15ac7633beea39a3b00b49671f75de19c26538d69693b84098b0e124",
+      "size": 5190
+    }
+  },
+  "revision": "example-openjdk-2026-11-17",
+  "schema": 1
+}
