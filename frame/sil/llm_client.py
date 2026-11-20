@@ -103,6 +103,10 @@ class LLMConfig:
     # (an inter-token stall) and the call is re-issued. Opt-in so non-streaming stays default.
     stream: bool = False
     stream_stall_timeout: int = 60
+    # Wire format: "openai" (chat/completions), "anthropic" (Messages API: prompt caching and
+    # thinking blocks kept across tool turns; Anthropic's OpenAI-compatible layer caches
+    # nothing), or "auto": anthropic when the endpoint is api.anthropic.com.
+    api: str = "auto"
     enabled: bool = False
 
     @classmethod
@@ -268,8 +272,26 @@ class LLMClient:
             raise box["error"]
         return box["raw"]
 
+    def _anthropic(self) -> bool:
+        from frame.sil.llm_anthropic import is_anthropic
+        return is_anthropic(self.config.base_url, getattr(self.config, "api", "auto"))
+
+    def _post_messages(self, messages, tools, max_tokens: int,
+                       response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """One native Messages API call, returned as an OpenAI-shaped completion."""
+        from frame.sil import llm_anthropic as la
+        body = la.to_request(messages, tools, self.config.model, max_tokens, response_format)
+        req = urllib.request.Request(f"{self.config.base_url}/messages",
+                                     data=json.dumps(body).encode("utf-8"),
+                                     headers=la.headers(self.config.api_key or ""))
+        return la.from_response(json.loads(self._urlopen_read(req).decode("utf-8")))
+
     def _post_chat(self, messages: List[Dict[str, str]], max_tokens: Optional[int],
                    response_format: Optional[Dict[str, Any]]) -> str:
+        if self._anthropic():
+            out = self._post_messages(messages, None, max_tokens or self.config.max_tokens,
+                                      response_format)
+            return out["choices"][0]["message"]["content"]
         url = f"{self.config.base_url}/chat/completions"
         body: Dict[str, Any] = {
             "model": self.config.model,
@@ -393,7 +415,8 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         data = json.dumps(body).encode("utf-8")
         attempts = max(1, getattr(self.config, "agent_retries", 2) + 1)
-        streaming = bool(getattr(self.config, "stream", False))
+        native = self._anthropic()          # Messages API (prompt caching); never streamed here
+        streaming = bool(getattr(self.config, "stream", False)) and not native
         first_fail: Optional[float] = None
         # Every failed attempt of this call: when, which error and why. The call record keeps
         # them even when a retry succeeds, so an outage can be told apart (DNS, refused, reset,
@@ -405,12 +428,15 @@ class LLMClient:
             t0 = time.time()
             try:
                 self.stats["calls"] += 1
-                if streaming:
+                if native:
+                    out = self._post_messages(messages, tools, body["max_tokens"])
+                elif streaming:
                     msg = self._chat_stream(url, body, headers)
                     self._finish_record(t0, i, failures)
                     return msg
-                req = urllib.request.Request(url, data=data, headers=headers)
-                out = json.loads(self._urlopen_read(req).decode("utf-8"))
+                else:
+                    req = urllib.request.Request(url, data=data, headers=headers)
+                    out = json.loads(self._urlopen_read(req).decode("utf-8"))
                 self.last_call = self._usage_record(out, time.time() - t0, i)
                 self._finish_record(t0, i, failures)
                 self.stats["prompt_tokens"] += self.last_call.get("prompt_tokens") or 0
@@ -420,7 +446,7 @@ class LLMClient:
             except urllib.error.HTTPError as exc:
                 self.stats["errors"] += 1
                 detail = self._error_detail(exc)
-                if self._temperature_rejected(exc, body, detail):
+                if not native and self._temperature_rejected(exc, body, detail):
                     data = json.dumps(body).encode("utf-8")
                     i -= 1                    # not a failed attempt: the same call, resent
                     continue
@@ -586,6 +612,8 @@ class LLMClient:
         rec: Dict[str, Any] = {"status": "ok", "latency_s": round(latency_s, 2), "retries": retries,
                                "prompt_tokens": u.get("prompt_tokens"),
                                "cached_tokens": pd.get("cached_tokens"),
+                               **({"cache_write_tokens": pd["cache_write_tokens"]}
+                                  if pd.get("cache_write_tokens") else {}),
                                "completion_tokens": u.get("completion_tokens"),
                                "reasoning_tokens": cd.get("reasoning_tokens")}
         # Why generation stopped. A safety refusal ("content_filter" / "refusal") otherwise reads

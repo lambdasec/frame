@@ -39,6 +39,15 @@ api_key_env = "OPENROUTER_API_KEY"   # the variable that holds the key; never th
 stream = true
 ```
 
+Frame speaks both wire formats. An OpenAI-compatible endpoint (OpenRouter, OptiQ, vLLM, llama.cpp, MLX) takes chat completions; Anthropic's own endpoint takes the Messages API, chosen automatically for `base_url = "https://api.anthropic.com/v1"` (`[llm] api` forces either). On the Messages API the agents' prompts are cached: each turn reads the conversation so far from cache, so a hunt unit pays full price only for what is new (in our runs, 84 to 87% of input tokens came from cache with Claude Haiku 5.5). Anthropic's OpenAI-compatible layer caches nothing, so point Frame at the native endpoint rather than at `/v1/chat/completions`.
+
+```toml
+[llm]
+base_url = "https://api.anthropic.com/v1"
+model = "claude-haiku-5-5"
+api_key_env = "ANTHROPIC_API_KEY"
+```
+
 Everything else about the model (timeouts, streaming, retries, agent budgets, waiting out an outage) is a key of `[llm]`, listed in [usage.md](usage.md#configuration); [`examples/configs/ai.toml`](../examples/configs/ai.toml) is a starting point. `--model` overrides the model for one run. A directory scan gives the agents' file tools the scanned directory as their root (`--root` names another).
 
 With a hosted endpoint, code snippets leave the machine; a server on your own machine keeps them local ([below](#local-on-apple-silicon)).

@@ -183,6 +183,7 @@ class JavaScriptFrontend:
         self._ctor_fields = self._constructor_field_paths(tree.root_node) if self.taint_function_params else {}
         self._const_sets = self._collect_const_sets(tree.root_node)
         self._binding_cache = {}
+        self._assigned_cache = {}
         self._values_cache = {}
         self._tree_root = tree.root_node
         self._roots_called_cache = None
@@ -3313,18 +3314,48 @@ class JavaScriptFrontend:
                                      or self._pattern_binds(left, name))
 
     def _assigns(self, root: TSNode, name: str) -> bool:
+        """Does anything under `root` write `name` (an assignment, `x op= v`, `x++`, a pattern
+        target, a declaration-less for-in/of head)? The names a subtree writes are collected once
+        per subtree: asked once per typed call, the walk made a large file quadratic (a C# app's
+        bundled scripts took hours)."""
+        cache = self.__dict__.setdefault("_assigned_cache", {})
+        key = (root.start_byte, root.end_byte, root.type)
+        names = cache.get(key)
+        if names is None:
+            names = cache[key] = self._assigned_names(root)
+        return name in names
+
+    def _pattern_names(self, target: Optional[TSNode]) -> Set[str]:
+        """The names a pattern target writes (what `_pattern_binds` tests one at a time)."""
+        if target is None or target.type not in self._PATTERNS:
+            return set()
+        return {self._get_text(x) for x in self._descendants_js(target)
+                if x.type in ("identifier", "shorthand_property_identifier_pattern")
+                and not (x.parent is not None and x.parent.type == "pair_pattern"
+                         and x.parent.child_by_field_name("key") == x)}
+
+    def _assigned_names(self, root: TSNode) -> Set[str]:
+        out: Set[str] = set()
         for n in self._descendants_js(root):
-            if self._rebinds(n, name):
-                return True
-            if n.type in ("assignment_expression", "augmented_assignment_expression"):
+            if n.type == "assignment_expression":
                 left = n.child_by_field_name("left")
-                if left is not None and left.type == "identifier" and self._get_text(left) == name:
-                    return True
+                out |= self._pattern_names(left)
+                if left is not None and left.type == "identifier":
+                    out.add(self._get_text(left))
+            elif n.type == "augmented_assignment_expression":
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    out.add(self._get_text(left))
             elif n.type == "update_expression":
                 arg = n.child_by_field_name("argument")
-                if arg is not None and arg.type == "identifier" and self._get_text(arg) == name:
-                    return True
-        return False
+                if arg is not None and arg.type == "identifier":
+                    out.add(self._get_text(arg))
+            elif n.type == "for_in_statement" and n.child_by_field_name("kind") is None:
+                left = n.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    out.add(self._get_text(left))
+                out |= self._pattern_names(left)
+        return out
 
     def _declares(self, fn: TSNode, name: str) -> bool:
         """Does this function scope bind `name` itself (shadowing ours)?"""

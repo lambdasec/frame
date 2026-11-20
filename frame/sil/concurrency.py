@@ -181,6 +181,58 @@ def check_atomic_write(program, proc_name: str, line: int,
                       "nothing in it or its callers locks the row, checks a version or writes atomically"}
 
 
+def _heads(names) -> set:
+    return {str(n).split(".", 1)[0].split("[", 1)[0] for n in names}
+
+
+def _instrs_in_order(proc) -> List[Any]:
+    out = []
+    for node in (getattr(proc, "nodes", {}) or {}).values():
+        out += list(getattr(node, "instrs", []) or [])
+    return sorted(out, key=_line)
+
+
+def decided_read_writes(program, proc_name: str) -> List[Tuple[int, int, int]]:
+    """(read, decision, write) lines: an unprotected read-then-write whose code branches on the
+    value it read before writing (`c = get(...)`; `if c.uses < c.limit:`; `c.save()`), the
+    check-then-act shape two concurrent requests both pass. The read's value is followed
+    through copies and values computed from it (`left = c.limit - c.uses`)."""
+    pairs = unprotected_read_writes(program, proc_name)
+    if not pairs:
+        return []
+    proc = (getattr(program, "procedures", {}) or {}).get(proc_name)
+    order = _instrs_in_order(proc)
+    out = []
+    for r, w in pairs:
+        held: set = set()
+        decision = 0
+        for ins in order:
+            ln = _line(ins)
+            if ln < r or ln >= w:
+                continue
+            kind = type(ins).__name__
+            if kind == "Call" and ln == r and getattr(ins, "ret", None):
+                held.add(str(ins.ret[0]))
+            elif kind == "Assign" and held:
+                try:
+                    used = _heads(ins.exp.free_vars())
+                except Exception:
+                    used = set()
+                if used & held:
+                    held.add(str(ins.id).split(".", 1)[0])
+            elif kind == "Prune" and held:
+                try:
+                    used = _heads(ins.condition.free_vars())
+                except Exception:
+                    used = set()
+                if used & held:
+                    decision = ln
+                    break
+        if decision:
+            out.append((r, decision, w))
+    return out
+
+
 def unprotected_read_writes(program, proc_name: str) -> List[Tuple[int, int]]:
     """(read line, write line) pairs in `proc_name` that `check_atomic_write` would refute when no
     caller protects them: what the hunt's `race` class ranks a unit by. Callers are not asked

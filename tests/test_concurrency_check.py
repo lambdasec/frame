@@ -173,3 +173,33 @@ def test_unprotected_read_writes_rank_race_units(tmp_path):
     prog = next(p for p in q.ctx.programs if "redeem" in p.procedures)
     assert unprotected_read_writes(prog, "redeem") == [(4, 7)]
     assert unprotected_read_writes(prog, "redeem_locked") == []
+
+
+def test_check_then_act_is_told_apart_from_a_plain_read_then_write(tmp_path):
+    """Get-then-save is everywhere in a Django app (plane: ~500 handlers); what a race needs is a
+    decision on the value read before the write."""
+    from frame.sil.concurrency import decided_read_writes
+    files = {**MODELS, "shop/views.py": """
+        from shop.models import Coupon
+
+        def redeem(code):
+            c = Coupon.objects.get(code=code)
+            left = c.limit - c.uses
+            if left > 0:
+                c.uses = c.uses + 1
+                c.save()
+
+        def rename(code, name):
+            c = Coupon.objects.get(code=code)
+            c.name = name
+            c.save()
+    """}
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(text).lstrip("\n"))
+    q = QueryIndex(str(tmp_path))
+    q.build()
+    prog = next(p for p in q.ctx.programs if "redeem" in p.procedures)
+    assert decided_read_writes(prog, "redeem") == [(4, 6, 8)]
+    assert decided_read_writes(prog, "rename") == []

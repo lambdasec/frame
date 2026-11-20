@@ -175,7 +175,8 @@ The settings tables:
 
 | Key | Default | |
 |---|---|---|
-| `llm.base_url`, `llm.model` | | the OpenAI-compatible endpoint and model (`FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL` win) |
+| `llm.base_url`, `llm.model` | | the endpoint and model (`FRAME_LLM_BASE_URL`, `FRAME_LLM_MODEL` win) |
+| `llm.api` | `auto` | the wire format: `openai` (chat completions: OpenRouter, OptiQ, vLLM, llama.cpp, MLX...), `anthropic` (the Messages API, with prompt caching), or `auto`, which picks `anthropic` for `api.anthropic.com` |
 | `llm.api_key_env` | `FRAME_LLM_API_KEY` | the variable holding the key (set it to `""` to send none) |
 | `llm.temperature` | 0.0 | sampling temperature |
 | `llm.max_tokens` | 4096 | completion budget per call |

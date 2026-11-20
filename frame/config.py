@@ -38,6 +38,9 @@ SCHEMA: Dict[str, Dict[str, _Spec]] = {
         "model": (str, "FRAME_LLM_MODEL", ""),
         # The key itself never goes in a file: name the variable that holds it.
         "api_key_env": (str, None, "FRAME_LLM_API_KEY"),
+        # Wire format: "openai" (chat/completions), "anthropic" (the native Messages API, with
+        # prompt caching), or "auto" (anthropic for api.anthropic.com, else openai).
+        "api": (("auto", "openai", "anthropic"), None, "auto"),
         "temperature": (float, None, 0.0),
         "max_tokens": (int, None, 4096),
         "timeout": (int, None, 60),

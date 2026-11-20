@@ -203,6 +203,14 @@ TRUNCATED_NUDGE = ("(Your last reply was cut off at the output limit before you 
                    "your final answer briefly.)")
 
 
+def _native_blocks(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """The provider's own content blocks for this assistant turn (the Anthropic Messages API's,
+    thinking included), kept on the message so the next request sends them back unchanged:
+    a tool loop on a thinking model must return them as they came."""
+    native = msg.get("anthropic_content")
+    return {"anthropic_content": native} if native else {}
+
+
 def run_agent(messages: List[Dict[str, Any]], client, *,
               tools: list, exec_tool: Callable[[str, Dict[str, Any]], str],
               max_steps: int,
@@ -316,7 +324,8 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
 
         tool_calls = msg.get("tool_calls") or []
         messages.append({"role": "assistant", "content": msg.get("content") or "",
-                         **({"tool_calls": tool_calls} if tool_calls else {})})
+                         **({"tool_calls": tool_calls} if tool_calls else {}),
+                         **_native_blocks(msg)})
         _t_msg()
         if trace is not None:
             trace.append_call(getattr(client, "last_call", {}))
@@ -367,7 +376,7 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
             tc = (msg or {}).get("tool_calls") or []
             content = (msg or {}).get("content") or ""
             messages.append({"role": "assistant", "content": content,
-                             **({"tool_calls": tc} if tc else {})})
+                             **({"tool_calls": tc} if tc else {}), **_native_blocks(msg or {})})
             _t_msg()
             if not tc:
                 break                       # a content-only turn is the final answer
