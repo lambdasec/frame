@@ -193,7 +193,7 @@ The settings tables:
 | `llm.triage_agentic` | false | let triage use tools to read more of the repository |
 | `llm.max_tool_steps` | 30 | tool calls per agentic detect/triage session |
 | `llm.agent_max_tokens` | 16000 | completion budget per agent turn |
-| `llm.agent_context_budget_chars` | 400000 | context an agent session keeps before old tool results are elided |
+| `llm.agent_context_budget_chars` | 400000 | context an agent session keeps before it is compacted. On the Messages API the endpoint compacts at a quarter of this in tokens (at least 50,000) and the history is never rewritten; elsewhere the oldest tool results are elided, then the oldest turns folded into a progress note, down to half of it, and only when that frees a tenth: a compaction rewrites history and so costs the prefix cache, so it is rare and large |
 | `llm.agent_retries` | 5 | retries for a failed agent turn (backoff 2, 4, 8, 16, 30 s; a 429 or 503 waits what its `Retry-After` header asks, up to 120 s) |
 | `llm.exploit_max_steps` | 250 | `exploit` steps (`--max-steps` wins) |
 | `llm.hunt_max_steps` | 200 | turns for the single-agent hunt, where Frame has no frontend for the language |

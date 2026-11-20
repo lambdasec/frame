@@ -255,3 +255,55 @@ def test_dedupe_off_by_default_reexecutes():
                     c, tools=[], exec_tool=lambda n, a: ran.__setitem__("n", ran["n"] + 1) or "ok",
                     max_steps=10, finalize=lambda s: s)   # no dedupe_tools
     assert ran["n"] == 2                 # both ran (side-effecting commands must not be deduped)
+
+
+def test_compaction_shrinks_oldest_first_and_declines_small_savings():
+    """A compaction rewrites history, which costs the endpoint's prefix cache from the first edited
+    message on, so it should be rare and large (OptiQ Code measured 26 compactions taking 68% of a
+    run's model time). It elides the OLDEST tool results until the transcript is at half the
+    budget, keeping more recent context than eliding everything outside the tail, and it is
+    declined when it would free less than a tenth of the budget (a protected tail near the budget
+    otherwise meant a rewrite on every turn)."""
+    import copy
+    from frame.sil.llm_agent import _ELIDED, _compact_messages, _context_chars
+
+    head = [{"role": "system", "content": "S"}, {"role": "user", "content": "TASK"}]
+    middle = []
+    for i in range(10):
+        middle += [{"role": "assistant", "content": "", "tool_calls": [{"id": str(i), "function": {
+            "name": "read_file", "arguments": "{}"}}]},
+                   {"role": "tool", "tool_call_id": str(i), "content": "X" * 2000}]
+    tail = [{"role": "user", "content": f"recent {i}"} for i in range(6)]
+    msgs = head + middle + tail
+    out = _compact_messages(msgs, None, keep_recent=6, target_chars=12000)
+    elided = [m for m in out if m.get("role") == "tool" and _ELIDED in m["content"]]
+    assert 0 < len(elided) < 10                                   # only as many as needed...
+    assert all(_ELIDED in m["content"] for m in out[2:2 + 2 * len(elided)] if m.get("role") == "tool")  # ...oldest first
+    assert _context_chars(out) <= 12000
+
+    class Recorder(_StubClient):
+        def __init__(self):
+            super().__init__()
+            self.sent = []
+
+        def chat_raw(self, messages, tools=None):
+            self.sent.append(copy.deepcopy(messages))
+            return {"content": "", "tool_calls": [{"id": str(len(self.sent)), "function": {
+                "name": "run", "arguments": json.dumps({"cmd": "probe"})}}]}
+
+    # a protected tail (6 turns) near the budget: every compaction reaches half the budget, so
+    # the history then grows for several turns instead of being rewritten on each one
+    def rewrites_over(steps: int, budget: int, result: int) -> int:
+        c = Recorder()
+        run_agent([{"role": "system", "content": "S"}, {"role": "user", "content": "TASK"}], c,
+                  tools=[], exec_tool=lambda n, a: "X" * result, max_steps=steps, check_done=lambda: None,
+                  compact_at_chars=budget, keep_recent=6)
+        assert max(_context_chars(m) for m in c.sent) <= budget + result + 200     # bounded
+        for sent in c.sent:                       # every tool result still answers a call it follows
+            calls = {tc["id"] for m in sent if m.get("tool_calls") for tc in m["tool_calls"]}
+            assert {m["tool_call_id"] for m in sent if m.get("role") == "tool"} <= calls
+        return sum(1 for prev, cur in zip(c.sent, c.sent[1:]) if cur[:len(prev)] != prev)
+    # before: 163 rewrites in 200 turns here, 101 at a 50k budget (placeholders and assistant
+    # turns alone passed half the budget); folding the oldest turns brings them to 39 and 45
+    assert rewrites_over(200, 12000, 1600) <= 50
+    assert rewrites_over(200, 50000, 8000) <= 55

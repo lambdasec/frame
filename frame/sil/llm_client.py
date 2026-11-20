@@ -276,14 +276,25 @@ class LLMClient:
         from frame.sil.llm_anthropic import is_anthropic
         return is_anthropic(self.config.base_url, getattr(self.config, "api", "auto"))
 
+    @property
+    def server_compacts(self) -> bool:
+        """The endpoint compacts long agent conversations itself (the Messages API's threshold
+        compaction), so the agent loop must not rewrite its own history."""
+        from frame.sil import llm_anthropic as la
+        return self._anthropic() and la.compaction_trigger(
+            getattr(self.config, "agent_context_budget_chars", 0)) is not None
+
     def _post_messages(self, messages, tools, max_tokens: int,
                        response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """One native Messages API call, returned as an OpenAI-shaped completion."""
+        """One native Messages API call, returned as an OpenAI-shaped completion. Tool loops
+        get server-side compaction at the agent's context budget."""
         from frame.sil import llm_anthropic as la
-        body = la.to_request(messages, tools, self.config.model, max_tokens, response_format)
+        trigger = la.compaction_trigger(getattr(self.config, "agent_context_budget_chars", 0)) if tools else None
+        body = la.to_request(messages, tools, self.config.model, max_tokens, response_format,
+                             compact_at_tokens=trigger)
         req = urllib.request.Request(f"{self.config.base_url}/messages",
                                      data=json.dumps(body).encode("utf-8"),
-                                     headers=la.headers(self.config.api_key or ""))
+                                     headers=la.headers(self.config.api_key or "", compaction=bool(trigger)))
         return la.from_response(json.loads(self._urlopen_read(req).decode("utf-8")))
 
     def _post_chat(self, messages: List[Dict[str, str]], max_tokens: Optional[int],
@@ -615,6 +626,7 @@ class LLMClient:
                                **({"cache_write_tokens": pd["cache_write_tokens"]}
                                   if pd.get("cache_write_tokens") else {}),
                                "completion_tokens": u.get("completion_tokens"),
+                               **({"compactions": u["compactions"]} if u.get("compactions") else {}),
                                "reasoning_tokens": cd.get("reasoning_tokens")}
         # Why generation stopped. A safety refusal ("content_filter" / "refusal") otherwise reads
         # as an agent that answered briefly and stopped, and a truncation ("length") as one that

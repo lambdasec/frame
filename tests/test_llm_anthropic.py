@@ -194,3 +194,53 @@ def test_strict_json_schema_becomes_structured_output():
     assert body["output_config"] == {"format": {"type": "json_schema", "schema": schema}}
     assert "output_config" not in la.to_request([{"role": "user", "content": "x"}], None, "m", 10,
                                                 {"type": "json_object"})
+
+
+def test_server_side_compaction_on_tool_loops():
+    body = la.to_request([{"role": "user", "content": "x"}], TOOLS, "m", 10, compact_at_tokens=100000)
+    assert body["context_management"] == {"edits": [{"type": "compact_20260112",
+                                                      "trigger": {"type": "input_tokens", "value": 100000}}]}
+    assert la.to_request([{"role": "user", "content": "x"}], TOOLS, "m", 10,
+                         compact_at_tokens=10)["context_management"]["edits"][0]["trigger"]["value"] == la.MIN_TRIGGER
+    assert "context_management" not in la.to_request([{"role": "user", "content": "x"}], None, "m", 10)
+    assert la.headers("sk-ant-api03-x", compaction=True)["anthropic-beta"] == la.COMPACTION_BETA
+    assert la.headers("sk-ant-oat01-x", compaction=True)["anthropic-beta"] == "compact-2026-01-12,oauth-2025-04-20"
+    assert la.compaction_trigger(400000) == 100000 and la.compaction_trigger(0) is None
+    # a compaction pass is billed as its own iteration: counted in the call's tokens
+    out = la.from_response({"content": [{"type": "compaction", "content": "summary"},
+                                        {"type": "text", "text": "go on"}],
+                            "stop_reason": "end_turn",
+                            "usage": {"input_tokens": 3000, "output_tokens": 100,
+                                      "iterations": [{"type": "compaction", "input_tokens": 120000, "output_tokens": 2000},
+                                                     {"type": "message", "input_tokens": 3000, "output_tokens": 100}]}})
+    assert out["usage"]["prompt_tokens"] == 123000 and out["usage"]["completion_tokens"] == 2100
+    assert out["usage"]["compactions"] == 1
+    assert out["choices"][0]["message"]["anthropic_content"][0]["type"] == "compaction"   # sent back as is
+
+
+def test_the_agent_loop_does_not_rewrite_history_for_a_compacting_endpoint(stub):
+    """Frame's own compaction elides old tool results; on the Messages API that edit would
+    invalidate the thinking blocks and the cached prefix, so the endpoint compacts instead."""
+    client = LLMClient(stub.config(agent_context_budget_chars=400000))
+    assert client.server_compacts is True
+    run_agent([{"role": "system", "content": "s"}, {"role": "user", "content": "Audit a.py"}], client,
+              tools=TOOLS, exec_tool=lambda n, a: "x" * 5000, max_steps=5, finalize=lambda t: t,
+              compact_at_chars=100)                       # would compact every turn on an OpenAI endpoint
+    tool_results = [b for m in stub.requests[-1]["body"]["messages"] for b in m["content"]
+                    if b.get("type") == "tool_result"]
+    assert tool_results and tool_results[0]["content"] == "x" * 5000        # not elided
+    assert stub.requests[-1]["body"]["context_management"]["edits"][0]["type"] == "compact_20260112"
+    assert stub.requests[-1]["headers"]["anthropic-beta"] == la.COMPACTION_BETA
+    assert LLMClient(LLMConfig(base_url="https://openrouter.ai/api/v1", model="m")).server_compacts is False
+
+
+def test_turns_before_the_last_compaction_are_not_resent():
+    msgs = [{"role": "user", "content": "task"},
+            {"role": "assistant", "content": "", "anthropic_content": [{"type": "text", "text": "old"}]},
+            {"role": "user", "content": "old result"},
+            {"role": "assistant", "content": "", "anthropic_content": [{"type": "compaction", "content": "summary"},
+                                                                       {"type": "text", "text": "next"}]},
+            {"role": "user", "content": "new result"}]
+    body = la.to_request(msgs, TOOLS, "m", 10, compact_at_tokens=100000)
+    assert [t["content"][0].get("text") or t["content"][0].get("type") for t in body["messages"]] == \
+        ["task", "compaction", "new result"]

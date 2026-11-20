@@ -27,9 +27,17 @@ from urllib.parse import urlparse
 
 API_VERSION = "2026-10-21"
 CACHE = {"type": "ephemeral"}
+# Server-side compaction at a token threshold: when a request's input reaches the trigger, the
+# API replaces the older turns with a summary (a `compaction` block at the start of the reply,
+# sent back like any block; the API ignores everything before the last one). The history the
+# client sends stays append-only, which keeps thinking blocks valid and the cache prefix intact,
+# where Frame's own compaction rewrites old tool results.
+COMPACTION_BETA = "compact-2026-01-12"
+MIN_TRIGGER = 50000
 # OpenAI finish reasons for Anthropic stop reasons (what the agent loop reads).
 FINISH = {"end_turn": "stop", "stop_sequence": "stop", "tool_use": "tool_calls",
-          "max_tokens": "length", "refusal": "content_filter", "pause_turn": "stop"}
+          "max_tokens": "length", "refusal": "content_filter", "pause_turn": "stop",
+          "compaction": "stop"}
 
 
 def is_anthropic(base_url: str, api: str = "auto") -> bool:
@@ -40,16 +48,27 @@ def is_anthropic(base_url: str, api: str = "auto") -> bool:
     return (urlparse(base_url or "").hostname or "") == "api.anthropic.com"
 
 
-def headers(api_key: str) -> Dict[str, str]:
+def headers(api_key: str, compaction: bool = False) -> Dict[str, str]:
     """`x-api-key` for an API key; an OAuth access token (`sk-ant-oat...`) goes on
     `Authorization: Bearer` with the OAuth beta header."""
     h = {"Content-Type": "application/json", "anthropic-version": API_VERSION}
+    betas = [COMPACTION_BETA] if compaction else []
     if api_key.startswith("sk-ant-oat"):
         h["Authorization"] = f"Bearer {api_key}"
-        h["anthropic-beta"] = "oauth-2025-04-20"
+        betas.append("oauth-2025-04-20")
     elif api_key:
         h["x-api-key"] = api_key
+    if betas:
+        h["anthropic-beta"] = ",".join(betas)
     return h
+
+
+def compaction_trigger(budget_chars: Optional[int]) -> Optional[int]:
+    """The input-token trigger for server-side compaction from the agent's context budget in
+    characters (about four per token), never below the API's minimum. None turns it off."""
+    if not budget_chars or budget_chars <= 0:
+        return None
+    return max(MIN_TRIGGER, int(budget_chars) // 4)
 
 
 def _text(content: Any) -> str:
@@ -97,7 +116,8 @@ def output_format(response_format: Optional[Dict[str, Any]]) -> Optional[Dict[st
 
 
 def to_request(messages: List[Dict[str, Any]], tools: Optional[list], model: str,
-               max_tokens: int, response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+               max_tokens: int, response_format: Optional[Dict[str, Any]] = None,
+               compact_at_tokens: Optional[int] = None) -> Dict[str, Any]:
     """An OpenAI-shaped conversation as a Messages API request body."""
     system: List[str] = []
     turns: List[Dict[str, Any]] = []
@@ -126,12 +146,23 @@ def to_request(messages: List[Dict[str, Any]], tools: Optional[list], model: str
                           "content": _text(m.get("content")) or "(empty)"}])
         else:
             add("user", _user_blocks(m.get("content")))
+    # The API ignores everything before the last compaction block: send the first turn (the task)
+    # and the turns from that block on, not the whole transcript every time.
+    last = max((i for i, t in enumerate(turns) if t["role"] == "assistant"
+                and any(b.get("type") == "compaction" for b in t["content"] if isinstance(b, dict))),
+               default=None)
+    if last is not None and last > 1:
+        turns = turns[:1] + turns[last:]
     if turns and turns[0]["role"] != "user":
         turns.insert(0, {"role": "user", "content": [{"type": "text", "text": "(start)"}]})
     body: Dict[str, Any] = {"model": model, "max_tokens": int(max_tokens), "messages": turns,
                             "cache_control": dict(CACHE)}
     if system:
         body["system"] = [{"type": "text", "text": "\n".join(system), "cache_control": dict(CACHE)}]
+    if compact_at_tokens:
+        body["context_management"] = {"edits": [{
+            "type": "compact_20260112",
+            "trigger": {"type": "input_tokens", "value": max(MIN_TRIGGER, int(compact_at_tokens))}}]}
     fmt = output_format(response_format)
     if fmt is not None:
         body["output_config"] = {"format": fmt}
@@ -160,8 +191,18 @@ def from_response(resp: Dict[str, Any]) -> Dict[str, Any]:
     read = int(u.get("cache_read_input_tokens") or 0)
     write = int(u.get("cache_creation_input_tokens") or 0)
     plain = int(u.get("input_tokens") or 0)
-    usage = {"prompt_tokens": plain + read + write, "completion_tokens": int(u.get("output_tokens") or 0),
-             "prompt_tokens_details": {"cached_tokens": read, "cache_write_tokens": write}}
+    out = int(u.get("output_tokens") or 0)
+    # A compaction pass is billed as its own iteration; the top-level counts leave it out.
+    passes = [it for it in (u.get("iterations") or []) if isinstance(it, dict) and it.get("type") == "compaction"]
+    c_in = sum(int(it.get("input_tokens") or 0) + int(it.get("cache_read_input_tokens") or 0)
+               + int(it.get("cache_creation_input_tokens") or 0) for it in passes)
+    c_out = sum(int(it.get("output_tokens") or 0) for it in passes)
+    usage = {"prompt_tokens": plain + read + write + c_in, "completion_tokens": out + c_out,
+             "prompt_tokens_details": {"cached_tokens": read + sum(int(it.get("cache_read_input_tokens") or 0)
+                                                                   for it in passes),
+                                       "cache_write_tokens": write}}
+    if passes:
+        usage["compactions"] = len(passes)
     return {"choices": [{"message": msg, "finish_reason": FINISH.get(resp.get("stop_reason") or "",
                                                                       resp.get("stop_reason"))}],
             "usage": usage, "stop_reason": resp.get("stop_reason")}

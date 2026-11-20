@@ -39,7 +39,7 @@ api_key_env = "OPENROUTER_API_KEY"   # the variable that holds the key; never th
 stream = true
 ```
 
-Frame speaks both wire formats. An OpenAI-compatible endpoint (OpenRouter, OptiQ, vLLM, llama.cpp, MLX) takes chat completions; Anthropic's own endpoint takes the Messages API, chosen automatically for `base_url = "https://api.anthropic.com/v1"` (`[llm] api` forces either). On the Messages API the agents' prompts are cached: each turn reads the conversation so far from cache, so a hunt unit pays full price only for what is new (in our runs, 84 to 87% of input tokens came from cache with Claude Haiku 5.5). Anthropic's OpenAI-compatible layer caches nothing, so point Frame at the native endpoint rather than at `/v1/chat/completions`.
+Frame speaks both wire formats. An OpenAI-compatible endpoint (OpenRouter, OptiQ, vLLM, llama.cpp, MLX) takes chat completions; Anthropic's own endpoint takes the Messages API, chosen automatically for `base_url = "https://api.anthropic.com/v1"` (`[llm] api` forces either). On the Messages API the agents' prompts are cached: each turn reads the conversation so far from cache, so a hunt unit pays full price only for what is new (in our runs, 84 to 87% of input tokens came from cache with Claude Haiku 5.5). Anthropic's OpenAI-compatible layer caches nothing, so point Frame at the native endpoint rather than at `/v1/chat/completions`. A long agent conversation is compacted by the API itself there (threshold compaction): Frame sends the history unedited, so the thinking blocks of earlier turns stay valid and the cached prefix stays intact. On OpenAI-compatible endpoints, which also cache by prefix (OptiQ, vLLM, llama.cpp, MLX), Frame compacts rarely and in large steps for the same reason.
 
 ```toml
 [llm]

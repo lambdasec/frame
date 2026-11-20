@@ -164,6 +164,7 @@ def investigation_exec(repo_root: str,
 # ---- Context compaction (keeps long sessions inside the window) ----------------
 
 _ELIDED = "[earlier tool result elided to save context]"
+_FOLD_MARK = "[Progress so far, earlier steps folded to save context; calls made:]"
 
 
 def _context_chars(messages: List[Dict[str, Any]]) -> int:
@@ -171,28 +172,72 @@ def _context_chars(messages: List[Dict[str, Any]]) -> int:
 
 
 def _compact_messages(messages: List[Dict[str, Any]], client=None,
-                      keep_recent: int = 6) -> List[Dict[str, Any]]:
+                      keep_recent: int = 6, target_chars: Optional[int] = None) -> List[Dict[str, Any]]:
     """Shrink a long transcript by replacing OLD tool-result content with a short placeholder,
     keeping the stable prefix (system + task, messages[0:2]) and the last `keep_recent` turns in
     full. No model call -- unlike a summary this is cheap, deterministic, and preserves the
     cached prefix (the big, stable task prompt keeps hitting the provider cache), as OptiQ does.
     Tool results (file contents, grep dumps) are the bulk of a long run; the assistant turns
     (reasoning + tool calls) are small and kept, so the record of WHAT was done stays intact and
-    every tool_call_id still pairs with its result. `client` is unused (kept for signature)."""
+    every tool_call_id still pairs with its result. `client` is unused (kept for signature).
+
+    With `target_chars`, only the OLDEST tool results are elided, until the transcript fits
+    `target_chars`: a compaction is a rewrite that costs the endpoint's prefix cache from the
+    first edited message on, so it should be rare and large (OptiQ Code's measured lesson). Eliding
+    everything outside the recent tail on every turn past the budget edited the history at a new
+    place each turn, so every turn re-read its prompt uncached."""
     prefix = 2 if len(messages) >= 2 and messages[1].get("role") in ("user", "system") else 1
     if len(messages) <= keep_recent + prefix:
         return messages
     head = messages[:prefix]
     middle = messages[prefix:len(messages) - keep_recent]
     tail = messages[len(messages) - keep_recent:]
-    compacted: List[Dict[str, Any]] = []
-    for m in middle:
-        if m.get("role") == "tool" and len(str(m.get("content") or "")) > len(_ELIDED):
-            gist = str(m.get("content") or "")[:60].replace("\n", " ")
-            compacted.append({**m, "content": f"{_ELIDED} (was: {gist}...)"})
-        else:
-            compacted.append(m)
-    return head + compacted + tail
+    size = _context_chars(messages)
+
+    def shrink(part: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        nonlocal size
+        out: List[Dict[str, Any]] = []
+        for m in part:
+            content = str(m.get("content") or "")
+            if m.get("role") == "tool" and len(content) > len(_ELIDED) + 80 and (
+                    target_chars is None or size > target_chars):
+                gist = content[:60].replace("\n", " ")
+                short = f"{_ELIDED} (was: {gist}...)"
+                size -= len(content) - len(short)
+                out.append({**m, "content": short})
+            else:
+                out.append(m)
+        return out
+
+    middle = shrink(middle)
+    if target_chars is not None and size > target_chars and middle:
+        # Placeholders and assistant turns cannot be elided, so over a long run they alone pass the
+        # target and every turn compacts again. Fold the oldest whole turns (a call with its
+        # results, so tool-call ids still pair) into a progress note on the task message, built
+        # from the calls themselves (no model call), as OptiQ Code does.
+        folded: List[str] = []
+        while middle and size > target_chars:
+            group = [middle.pop(0)]
+            ids = {tc.get("id") for tc in (group[0].get("tool_calls") or [])}
+            while middle and middle[0].get("role") == "tool" and middle[0].get("tool_call_id") in ids:
+                group.append(middle.pop(0))
+            size -= sum(len(str(m.get("content") or "")) for m in group)
+            for tc in group[0].get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                folded.append(f"{fn.get('name')}({str(fn.get('arguments') or '')[:60]})")
+        if folded and isinstance(head[-1].get("content"), str):
+            task = head[-1]["content"].split(_FOLD_MARK, 1)
+            earlier = task[1].strip() if len(task) > 1 else ""
+            calls = ((earlier + "; ") if earlier else "") + "; ".join(folded)
+            note = f"{_FOLD_MARK} {calls[-2000:]}"
+            head = head[:-1] + [{**head[-1], "content": task[0].rstrip() + "\n\n" + note}]
+            size += len(note) + 2 - (len(_FOLD_MARK) + 1 + len(earlier) if earlier else 0)
+    if target_chars is not None and size > target_chars and len(tail) > 2:
+        # the recent tail is protected by count, but a few big results can hold it above the
+        # target, and a compaction that cannot reach it recurs on the next turn: cap it by size,
+        # keeping the last two messages word for word
+        tail = shrink(tail[:-2]) + tail[-2:]
+    return head + middle + tail
 
 
 # ---- The loop ------------------------------------------------------------------
@@ -306,8 +351,17 @@ def run_agent(messages: List[Dict[str, Any]], client, *,
                 messages.append({"role": "user", "content": nudge})
                 _t_msg()
 
-        if compact_at_chars and _context_chars(messages) > compact_at_chars:
-            messages = _compact_messages(messages, client, keep_recent)
+        # An endpoint that compacts on its own (the Messages API) gets the history unedited:
+        # rewriting old turns would invalidate their thinking blocks and the cached prefix.
+        # Elsewhere a compaction is rare and large: shrink to half the budget, and keep the
+        # result only when it frees a tenth of the budget (a smaller saving costs more cache
+        # than it saves); between compactions the history only grows.
+        size = _context_chars(messages)
+        if compact_at_chars and getattr(client, "server_compacts", False) is not True \
+                and size > compact_at_chars:
+            smaller = _compact_messages(messages, client, keep_recent, target_chars=compact_at_chars // 2)
+            if size - _context_chars(smaller) >= compact_at_chars // 10:
+                messages = smaller
 
         msg = client.chat_raw(messages, tools)
         if msg is None:
