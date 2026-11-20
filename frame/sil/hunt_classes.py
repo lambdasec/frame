@@ -122,10 +122,14 @@ RACE = FlawClass(
         "write fail, optimistic versioning (@Version, a version column in the WHERE), or a lock "
         "held around the code. A transaction alone, at the default isolation level, does not stop "
         "the second request from reading the old value.\n"
+        "  3. Ask the engine: check(name, line, kind='atomic_write') at the write. `proved` names "
+        "the lock or atomic write; `refuted` means it saw the read before the write and no lock, "
+        "version or atomic write in the function or its callers; `unknown` means it cannot tell "
+        "(read the code).\n"
         "The violating request is N identical requests sent at the same moment: say what each "
         "reads and why all of them succeed."),
     mechanisms={"race_condition": ("race_condition", "CWE-362")},
-    unit_kinds=_ALL_KINDS, corroborating=frozenset(),
+    unit_kinds=_ALL_KINDS, corroborating=frozenset({"atomic_write"}),
     cwes=frozenset({"CWE-362", "CWE-367", "CWE-366", "CWE-820", "CWE-821"}))
 
 WORKFLOW = FlawClass(

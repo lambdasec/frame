@@ -252,3 +252,30 @@ call = ["django.contrib.auth.decorators.login_required", "django.contrib.auth.de
         "django.views.decorators.gzip.gzip_page"]
 references = ["https://docs.djangoproject.com/en/stable/topics/http/decorators/",
               "https://docs.djangoproject.com/en/stable/topics/auth/default/#the-login-required-decorator"]
+
+# A read-then-write is safe against a concurrent request when the row is locked first
+# (`select_for_update()`, inside a transaction) or the database computes the new value itself
+# (`F("n") + 1` in `update()` / `save()`). `transaction.atomic` alone is not a lock.
+# https://docs.djangoproject.com/en/5.1/ref/models/querysets/#select-for-update
+# https://docs.djangoproject.com/en/5.1/ref/models/expressions/#avoiding-race-conditions-using-f
+[[concurrency]]
+call = ["django.db.models.Model.objects.select_for_update", "django.db.models.Model.objects.**.select_for_update",
+        "django.db.models.QuerySet.select_for_update"]
+kind = "lock"
+
+[[concurrency]]
+call = ["django.db.models.F"]
+kind = "atomic"
+
+# Calls that read stored rows: for the read-then-write check only, never a taint sink.
+# https://docs.djangoproject.com/en/5.1/ref/models/querysets/#methods-that-do-not-return-querysets
+[[concurrency]]
+call = ["django.db.models.Model.objects.**.get", "django.db.models.Model.objects.get",
+        "django.db.models.Model.objects.**.first", "django.db.models.Model.objects.first",
+        "django.db.models.Model.objects.**.last", "django.db.models.Model.objects.last",
+        "django.db.models.Model.objects.**.count", "django.db.models.Model.objects.count",
+        "django.db.models.Model.objects.**.exists", "django.db.models.Model.objects.exists",
+        "django.db.models.Model.objects.**.aggregate", "django.db.models.Model.objects.aggregate",
+        "django.db.models.Model.objects.**.get_or_create", "django.db.models.Model.objects.get_or_create",
+        "django.db.models.Model.refresh_from_db"]
+kind = "read"

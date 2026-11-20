@@ -92,12 +92,15 @@ CHECK = _fn("check", "Ask the engine to prove or refute a claim at a line: kind=
             "with a `pattern` (a check every path must pass, e.g. 'owner' or 'has_perm'), "
             "kind='scoped_by_identity' (the data access is filtered by the caller), or "
             "kind='lower_bound' / 'upper_bound' with `var` and `bound` (on every path to the line "
-            "`var >= bound` / `var <= bound`, e.g. var='qty', bound=1 at the line that stores it). "
+            "`var >= bound` / `var <= bound`, e.g. var='qty', bound=1 at the line that stores it), "
+            "or kind='atomic_write' at a write of stored data (a concurrent request cannot act on the "
+            "same old value: the write is atomic or a lock comes first; refuted when the function "
+            "reads first and nothing in it or its callers locks, versions or writes atomically). "
             "Returns proved / refuted (with a path that avoids it, or the value that gets through: "
             "a number, or NaN past a guard written as `if (v < 1) reject`) / unknown.",
             {"name": _NAME, "line": {"type": "integer"},
              "kind": {"type": "string", "enum": ["guarded_by", "scoped_by_identity",
-                                                 "lower_bound", "upper_bound"]},
+                                                 "lower_bound", "upper_bound", "atomic_write"]},
              "pattern": {"type": "string"},
              "var": {"type": "string", "description": "the value as the code names it (qty, order.quantity)"},
              "bound": {"type": "number"}, "file": _FILE}, ["name", "line", "kind"])
@@ -499,6 +502,20 @@ class HuntContext:
         return json.dumps({"function": loc["name"], "file": loc["file"], "calls": out[:60],
                            "note": "callees resolved by name; several definitions = ambiguous"})
 
+    def _caller_procs(self, name: str) -> List[Tuple[Any, Any]]:
+        """(program, procedure) of every function calling `name` (by simple name, as `callers`)."""
+        want = simple_name(name)
+        _, calls = self.graph()
+        wanted = {(pf, pname) for (pf, pname), cs in calls.items()
+                  if any(simple_name(callee) == want for callee, _ in cs)}
+        out = []
+        for prog in self.programs:
+            pf = _program_file(prog, self.repo_root)
+            for pname, proc in (getattr(prog, "procedures", {}) or {}).items():
+                if (pf, pname) in wanted:
+                    out.append((prog, proc))
+        return out
+
     def callers(self, name: str) -> str:
         want = simple_name(name)
         _, calls = self.graph()
@@ -545,6 +562,15 @@ class HuntContext:
         if loc is None:
             return json.dumps({"verdict": "unknown", "reason": f"no handler or function named {name!r}",
                                "witness": []})
+        if kind == "atomic_write":
+            from frame.sil.concurrency import check_atomic_write
+            with ENGINE_LOCK:
+                try:
+                    r = check_atomic_write(loc["program"], loc["proc"], int(line or 0),
+                                           callers=self._caller_procs(loc["proc"]))
+                except Exception as e:
+                    r = {"verdict": "unknown", "reason": f"engine error: {type(e).__name__}"}
+            return json.dumps(r)
         if kind in ("lower_bound", "upper_bound"):
             from frame.sil.logic_facts import check_bound
             if bound is None:

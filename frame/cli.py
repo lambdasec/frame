@@ -138,7 +138,7 @@ def create_parser() -> argparse.ArgumentParser:
                               help="File (relative to the project) to pick among same-named functions")
     query_parser.add_argument("--line", type=int, default=None, help="Line (guards, check)")
     query_parser.add_argument("--kind", default=None,
-                              help="Claim kind for check: guarded_by, scoped_by_identity, lower_bound or upper_bound")
+                              help="Claim kind for check: guarded_by, scoped_by_identity, lower_bound, upper_bound or atomic_write")
     query_parser.add_argument("--pattern", default=None, help="Condition pattern for check guarded_by")
     query_parser.add_argument("--var", default=None, help="The value for check lower_bound / upper_bound (e.g. qty)")
     query_parser.add_argument("--bound", type=float, default=None, help="The bound for check lower_bound / upper_bound")

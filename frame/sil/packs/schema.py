@@ -87,7 +87,7 @@ _TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "returned_response", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
-             "policy", "define", "provided_action"}
+             "policy", "define", "provided_action", "concurrency"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
 # `<converter(args):name>` (Flask, Quart): a rule must start with "/".
@@ -507,6 +507,9 @@ class Pack:
     deferred_calls: List[DeferredCall] = field(default_factory=list)
     wrappers: List[str] = field(default_factory=list)              # Python/JS: calls returning a handler wrapped
     auth_gates: List[str] = field(default_factory=list)            # decorators/annotations that authenticate a handler
+    # Calls / annotations that protect a read-then-write from a concurrent request
+    # (frame/sil/concurrency.py): {"call": [ids], "kind": lock | atomic | version}
+    concurrency: List[Dict[str, Any]] = field(default_factory=list)
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
     # (controller extension keys, the id the handler is registered as)
@@ -1183,6 +1186,20 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     # its class) means the framework authenticates or authorizes the caller before the body runs
     # (`login_required`, `@PreAuthorize`, `[Authorize]`). A handler carrying one is gated; one that
     # reaches a resource operation with no gate and no identity is a missing-authorization finding.
+    # What makes a read-then-write safe against a concurrent request (the hunt's `atomic_write`
+    # check, frame/sil/concurrency.py): a row lock taken before the write (`lock`), a write the
+    # database computes itself (`atomic`: `F("n") + 1`, `increment`), or an optimistic version
+    # check (`version`). A transaction alone is not one. `read` names the calls that read stored
+    # rows (for this check only; never a taint sink).
+    for i, t in enumerate(data.get("concurrency", [])):
+        where = f"[[concurrency]] #{i + 1}"
+        _check_keys(origin, where, t, {"call", "kind", "description", "references"})
+        calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
+        kind = t.get("kind")
+        if kind not in ("lock", "atomic", "version", "read"):
+            raise _fail(origin, where, "kind must be lock, atomic, version or read")
+        pack.concurrency.append({"call": calls, "kind": kind})
+
     for i, t in enumerate(data.get("auth_gate", [])):
         where = f"[[auth_gate]] #{i + 1}"
         _check_keys(origin, where, t, {"decorator", "description", "references"})

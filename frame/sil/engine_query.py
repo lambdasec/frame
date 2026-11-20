@@ -83,11 +83,15 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                     "`refuted` comes with a witness (a path, or the value that gets through), "
                     "`unknown` when the engine has no facts",
         "resolution": "kind guarded_by (pattern: regex or substring of a condition or gate), "
-                      "scoped_by_identity, or lower_bound / upper_bound (var >= / <= bound, "
-                      "decided by Z3 over the path conditions)",
+                      "scoped_by_identity, lower_bound / upper_bound (var >= / <= bound, "
+                      "decided by Z3 over the path conditions), or atomic_write (a write a "
+                      "concurrent request cannot race: atomic, or locked first)",
         "limits": ["guarded_by matches by condition text; read the polarity in the reason",
                    "a bound is refuted only for a value the caller chooses (a request read, "
-                   "copied or converted to a number); a computed or stored value is unknown"],
+                   "copied or converted to a number); a computed or stored value is unknown",
+                   "atomic_write knows a lock or atomic write only from the packs' [[concurrency]] "
+                   "facts; a protection written as data or SQL text is not seen (unknown, never "
+                   "refuted, when a caller of the same name locks)"],
     },
 }
 

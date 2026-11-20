@@ -39,3 +39,11 @@ call = ["jakarta.persistence.EntityManager.persist", "jakarta.persistence.Entity
         "org.hibernate.Session.remove"]
 kind = "resource_modify"
 description = "JPA / Hibernate write"
+
+# Locking an entity (`em.lock(entity, LockModeType.PESSIMISTIC_WRITE)`, Hibernate `session.lock`)
+# before changing it is safe against a concurrent request.
+# https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager#lock(java.lang.Object,jakarta.persistence.LockModeType)
+[[concurrency]]
+call = ["jakarta.persistence.EntityManager.lock", "javax.persistence.EntityManager.lock",
+        "org.hibernate.Session.lock"]
+kind = "lock"

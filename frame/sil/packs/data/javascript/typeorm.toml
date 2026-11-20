@@ -60,3 +60,26 @@ call = ["typeorm.Repository.save", "typeorm.Repository.insert", "typeorm.Reposit
         "typeorm.EntityManager.decrement"]
 kind = "resource_modify"
 description = "TypeORM write"
+
+# A read-then-write is safe when the row is locked first (`setLock("pessimistic_write")` on a
+# query builder) or the database computes the new value (`increment` / `decrement`).
+# https://typeorm.io/docs/query-builder/select-query-builder/#lock-modes
+# https://typeorm.io/docs/working-with-entity-manager/repository-api/
+[[concurrency]]
+call = ["typeorm.SelectQueryBuilder.setLock"]
+kind = "lock"
+
+[[concurrency]]
+call = ["typeorm.Repository.increment", "typeorm.Repository.decrement",
+        "typeorm.EntityManager.increment", "typeorm.EntityManager.decrement"]
+kind = "atomic"
+
+# Calls that read stored rows: for the read-then-write check only, never a taint sink.
+# https://typeorm.io/docs/working-with-entity-manager/find-options/
+[[concurrency]]
+call = ["typeorm.Repository.find*", "typeorm.Repository.count*", "typeorm.Repository.exist*",
+        "typeorm.EntityManager.find*", "typeorm.EntityManager.count*",
+        "typeorm.SelectQueryBuilder.getOne*", "typeorm.SelectQueryBuilder.getMany*",
+        "typeorm.SelectQueryBuilder.getCount", "typeorm.SelectQueryBuilder.getRawOne",
+        "typeorm.SelectQueryBuilder.getRawMany"]
+kind = "read"
