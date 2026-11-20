@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-11-20
+
 ### Added
 
 - **Anthropic's Messages API, with prompt caching.** Frame speaks both wire formats: OpenAI-compatible chat completions (OpenRouter, OptiQ, vLLM, llama.cpp, MLX) and Anthropic's native Messages API, chosen automatically for `api.anthropic.com` (`[llm] api = "openai" | "anthropic" | "auto"`). On the Messages API every agent turn reads the conversation so far from cache: 84 to 87% of input tokens came from cache with Claude Haiku 5.5 across detection, triage, the hunt, `frame fix` and the reproduction agent, where Anthropic's OpenAI-compatible layer cached none (it does not support prompt caching). Thinking blocks are sent back unchanged across tool turns, strict JSON schemas become structured outputs, and the call log records cache reads and writes.
@@ -142,7 +144,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.8...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.9...HEAD
+[1.1.9]: https://github.com/lambdasec/frame/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/lambdasec/frame/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/lambdasec/frame/compare/v1.1.6...v1.1.7
 [1.1.6]: https://github.com/lambdasec/frame/compare/v1.1.5...v1.1.6
