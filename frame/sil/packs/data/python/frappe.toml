@@ -1,0 +1,83 @@
+[pack]
+name = "frappe"
+language = "python"
+description = "Frappe whitelisted methods, form data, document writes and raw SQL"
+detect = { imports = ["frappe"] }
+references = ["https://docs.frappe.io/framework/user/en/api/rest#remote-method-calls",
+              "https://docs.frappe.io/framework/user/en/api/document",
+              "https://docs.frappe.io/framework/user/en/api/database"]
+
+# A function decorated with @frappe.whitelist() (allow_guest=True for unauthenticated callers) is
+# callable at /api/method/<dotted.path>; the request's form and query values are passed to it as
+# keyword arguments ("Remote Method Calls").
+[[entrypoint]]
+id = "whitelisted-method"
+decorator = ["frappe.whitelist"]
+params = "all"
+description = "an argument of a whitelisted method (/api/method/...)"
+
+# A DocType controller (a Document subclass) runs its lifecycle hooks when a client creates, saves,
+# submits or deletes a document through /api/resource/<DocType>, with the document's fields set
+# from the request ("Controller hooks"): the instance is client data, except what the framework
+# keeps on it. Helpers the hooks call are reached through them.
+[[request_type]]
+id = "Document"
+fields = ["*"]
+server_state = ["meta", "flags", "doctype", "_doc_before_save", "_original_modified", "_action",
+                "get_doc_before_save", "has_value_changed", "is_new", "db_set", "save", "insert",
+                "delete", "submit", "cancel", "reload", "run_method", "get_title"]
+references = ["https://docs.frappe.io/framework/user/en/basics/doctypes/controllers"]
+
+[[entrypoint]]
+id = "doctype-controller-hook"
+extends = ["frappe.model.document.Document"]
+method = ["before_validate", "validate", "before_insert", "after_insert", "before_save", "on_update",
+          "on_change", "before_submit", "on_submit", "before_cancel", "on_cancel", "on_trash",
+          "after_delete", "before_rename", "after_rename", "before_update_after_submit",
+          "on_update_after_submit"]
+receiver = true
+request_type = "Document"
+description = "a DocType controller hook: the document's fields come from the client"
+
+# The current request's values (frappe.form_dict, also frappe.local.form_dict) and the werkzeug
+# request (frappe.request) are module-level objects every function of the request can read.
+[[request_type]]
+id = "FormDict"
+fields = ["*"]
+proxies = ["frappe.form_dict", "frappe.local.form_dict"]
+references = ["https://docs.frappe.io/framework/user/en/api/form"]
+
+[[request_type]]
+id = "Request"
+fields = ["args", "form", "values", "data", "json", "files", "cookies", "headers", "get_data", "get_json"]
+headers = ["headers"]
+proxies = ["frappe.request", "frappe.local.request"]
+kinds = { files = "file" }
+references = ["https://werkzeug.palletsprojects.com/en/stable/wrappers/#werkzeug.wrappers.Request"]
+
+# frappe.db.sql runs its first argument as SQL text; values belong in its second argument.
+[[sink]]
+call = ["frappe.db.sql", "frappe.database.database.Database.sql"]
+args = [0]
+kind = "sql"
+description = "Frappe raw SQL"
+
+# Document and database writes change stored data: a marker for the business-logic hunt, never a
+# taint sink or a finding by itself.
+[[sink]]
+call = ["frappe.get_doc.save", "frappe.get_doc.insert", "frappe.get_doc.delete", "frappe.get_doc.submit",
+        "frappe.get_doc.cancel", "frappe.get_doc.db_set", "frappe.new_doc.save", "frappe.new_doc.insert",
+        "frappe.get_cached_doc.save", "frappe.model.document.Document.save",
+        "frappe.model.document.Document.insert", "frappe.model.document.Document.delete",
+        "frappe.model.document.Document.submit", "frappe.model.document.Document.cancel",
+        "frappe.model.document.Document.db_set",
+        "frappe.db.set_value", "frappe.db.delete", "frappe.db.insert", "frappe.delete_doc"]
+kind = "resource_modify"
+description = "Frappe document / database write"
+
+# Calls that read stored rows, for the read-then-write race check only (never a taint sink).
+[[concurrency]]
+call = ["frappe.get_doc", "frappe.get_cached_doc", "frappe.db.get_value", "frappe.db.get_values",
+        "frappe.db.get_all", "frappe.db.get_list", "frappe.get_all", "frappe.get_list",
+        "frappe.db.exists", "frappe.db.count", "frappe.get_doc.reload"]
+kind = "read"

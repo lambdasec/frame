@@ -4,6 +4,14 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **Frappe** (`python/frappe`): `@frappe.whitelist()` methods are entry points with their arguments as client data, DocType controller hooks (`validate`, `before_insert`, `on_update` ...) with the document's fields as client data, `frappe.form_dict` and `frappe.request` as request data, `frappe.db.sql` as a SQL sink, and document and database writes as data facts for the business-logic hunt. Frappe LMS's 102 whitelisted endpoints were invisible to Frame: its hunt planned no unit at all; now 155, with the vulnerable one ranked 4th.
+
+### Fixed
+
+- **JavaScript parameter kinds are worked out once per function.** Whether a parameter holds an array was decided again, from every caller's argument, each time a call on it was typed; in a large CMS (Apostrophe) that was a fifth of the scan.
+
 ## [1.1.10] - 2026-11-20
 
 ### Fixed

@@ -184,6 +184,7 @@ class JavaScriptFrontend:
         self._const_sets = self._collect_const_sets(tree.root_node)
         self._binding_cache = {}
         self._assigned_cache = {}
+        self._every_call_cache = {}
         self._values_cache = {}
         self._tree_root = tree.root_node
         self._roots_called_cache = None
@@ -2944,7 +2945,13 @@ class JavaScriptFrontend:
             return None                                    # a default value or a pattern: unknown
         if self._kinds().entails_kind(ident, "Array", scope):
             return "Array"                                 # the path's type tests prove it (_js_kinds)
-        return self._kind_at_every_call(scope, index, depth)
+        # what every call passes depends only on the function and the position, not on this use:
+        # worked out once (asked per typed call, it re-read every call site each time)
+        cache = self.__dict__.setdefault("_every_call_cache", {})
+        key = (scope.start_byte, scope.end_byte, index, depth)
+        if key not in cache:
+            cache[key] = self._kind_at_every_call(scope, index, depth)
+        return cache[key]
 
     def _kinds(self):
         """Kind facts over this file (frontends/_js_kinds.py), built once per translation."""

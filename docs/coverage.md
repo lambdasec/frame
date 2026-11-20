@@ -20,7 +20,7 @@ Frame knows what makes data safe (parameterised queries, `shlex.quote`, `basenam
 
 | Language | Frameworks and libraries |
 |---|---|
-| **Python** | Flask, Django, DRF, FastAPI, Starlette, Tornado, aiohttp, Sanic, Bottle, Falcon, Pyramid, CherryPy, Jinja2/Mako, SQLAlchemy, peewee, pymongo, requests/httpx |
+| **Python** | Flask, Django, DRF, FastAPI, Starlette, Tornado, aiohttp, Sanic, Bottle, Falcon, Pyramid, CherryPy, Frappe, Jinja2/Mako, SQLAlchemy, peewee, pymongo, requests/httpx |
 | **JavaScript / TypeScript** | Express, Koa, Fastify, Hapi, Restify, NestJS, Next.js, Sails, Apollo, Socket.IO, AWS Lambda, Electron, React, Angular, MongoDB driver, Mongoose, Prisma, Sequelize, Knex, TypeORM, MikroORM, mysql/mysql2, pg, pg-promise, sqlite3, better-sqlite3, mssql, oracledb |
 | **Java** | Spring MVC/Boot/WebFlux, JAX-RS (Jersey, RESTEasy, Quarkus), Struts 2, JSF, Servlet/JSP, Vert.x, Spark, Javalin, Micronaut, Play, Hibernate/JPA, MyBatis, jOOQ, Kafka's wire readers |
 | **C#** | ASP.NET Core MVC and Web API, Minimal APIs, Razor Pages, Blazor, SignalR, Azure Functions, WebForms, WCF/gRPC, EF Core/EF6, Dapper, NHibernate |

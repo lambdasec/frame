@@ -1,0 +1,4 @@
+language = "python"
+packs = ["python/frappe"]
+requires_pack = true
+description = "Frappe whitelisted methods (form arguments as parameters), frappe.form_dict, frappe.db.sql"
