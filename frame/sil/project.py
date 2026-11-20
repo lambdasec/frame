@@ -179,6 +179,8 @@ class ProjectIndex:
             mod.imports.discard(mod.key)
             for target in mod.imports:
                 self._importers.setdefault(target, set()).add(mod.key)
+        self._class_cache = {}          # anything resolved while the index was being read
+        self._receiver_cache = {}
 
     def _apply_star_imports(self) -> None:
         """Bind the public names a `from m import *` brings in. A name defined
@@ -1234,6 +1236,21 @@ class ProjectIndex:
         """(file, class) a class reference written as `text` in file `key` means:
         a class of this file, an imported class, or `module.Class` -- or, for a
         function, the one class its returns build (a factory)."""
+        # The index does not change once built, so an answer is kept, except one reached while
+        # the cycle guard below cut a path short: that depends on who asked. Without this, a
+        # receiver's class was worked out again for every call naming it, through every factory
+        # on the way (a C# app's bundled scripts spent most of a three-hour scan here).
+        cache = self.__dict__.setdefault("_class_cache", {})
+        memo = (key, text, depth)
+        if memo in cache:
+            return cache[memo]
+        cuts = self.__dict__.get("_class_cuts", 0)
+        found = self._resolve_class_uncached(key, text, depth)
+        if self.__dict__.get("_class_cuts", 0) == cuts:
+            cache[memo] = found
+        return found
+
+    def _resolve_class_uncached(self, key: str, text: str, depth: int) -> Optional[Tuple[str, str]]:
         mark = text.startswith(_FACTORY_MARK)
         text = text[len(_FACTORY_MARK):] if mark else text
         found = None if mark else self._resolve_class_text(key, text, depth)
@@ -1242,6 +1259,7 @@ class ProjectIndex:
             # ask for this one (`a = b.make(); b = a.make()`): a cycle resolves to nothing.
             guard = self.__dict__.setdefault("_class_guard", set())
             if (key, text) in guard:
+                self._class_cuts = self.__dict__.get("_class_cuts", 0) + 1
                 return None
             guard.add((key, text))
             try:
@@ -1304,8 +1322,24 @@ class ProjectIndex:
             texts = mod.receiver_types.get((None, receiver))
         if not texts:
             return None
-        classes = {self.resolve_class(mod.key, t) for t in texts}
-        return next(iter(classes)) if len(classes) == 1 and None not in classes else None
+        # asked once per call on the receiver, and a receiver of bundled code can carry thousands
+        # of type texts: keep the answer (as resolve_class does), and stop at the first text
+        # that settles it as "no single class"
+        cache = self.__dict__.setdefault("_receiver_cache", {})
+        memo = (mod.key, receiver, caller_class)
+        if memo in cache:
+            return cache[memo]
+        cuts = self.__dict__.get("_class_cuts", 0)
+        found: Optional[Tuple[str, str]] = None
+        for t in texts:
+            cls = self.resolve_class(mod.key, t)
+            if cls is None or (found is not None and cls != found):
+                found = None
+                break
+            found = cls
+        if self.__dict__.get("_class_cuts", 0) == cuts:
+            cache[memo] = found
+        return found
 
     def _resolve_method_call(self, mod: FileModule, name: str,
                              caller_class: Optional[str]) -> Optional[ProcRef]:
