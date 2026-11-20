@@ -4,6 +4,12 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-11-20
+
+### Fixed
+
+- **Cross-file analysis of large projects is no longer exponential.** Working out a receiver's class follows factory chains (`a = b.make()`, `b = c.build()`), and nothing remembered an answer, so a class was resolved again for every call naming it, through every factory on the way; a receiver of bundled code carrying thousands of type texts was walked whole for each call. Class and receiver answers are now kept for the index's lifetime (never one reached while the cycle guard cut a path short), and a receiver's check stops at the first text that settles it. SimplCommerce (810 C# files plus its bundled scripts) went from over three and a half hours unfinished to 8.5 minutes. Results are unchanged.
+
 ## [1.1.9] - 2026-11-20
 
 ### Added
@@ -145,7 +151,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.9...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.10...HEAD
+[1.1.10]: https://github.com/lambdasec/frame/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/lambdasec/frame/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/lambdasec/frame/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/lambdasec/frame/compare/v1.1.6...v1.1.7
