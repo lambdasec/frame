@@ -509,7 +509,7 @@ def member_facts(ctx, member) -> Dict[str, Any]:
     out = {"numeric": [], "reads": False, "writes": False, "may_write": False, "credential": False,
            "known": False, "parsed": False,
            "entry": False, "test": False, "client": False, "browser": False, "view": False,
-           "reached": True, "passes": False}
+           "reached": True, "passes": False, "read_writes": []}
     try:
         if hasattr(member, "program"):
             program, proc_name, file = member.program, member.name, getattr(member, "file", "")
@@ -546,6 +546,8 @@ def member_facts(ctx, member) -> Dict[str, Any]:
         out["browser"] = _browser_program(program, proc)
         out["view"] = bool(getattr(proc, "renders", False))
         out["passes"] = _passes_client_data(proc, vf)
+        from frame.sil.concurrency import unprotected_read_writes
+        out["read_writes"] = unprotected_read_writes(program, proc_name)
         if not out["entry"]:
             reached = _reached_files(ctx)
             out["reached"] = reached is None or file in reached
@@ -607,6 +609,11 @@ def score(cls: FlawClass, unit, ctx) -> Tuple[float, List[str]]:
             s += 1
             why.append("an entry point takes client data")
     elif cls.name == "race":
+        rmw = [(f["read_writes"][0]) for f in server if f.get("read_writes")]
+        if rmw:
+            s += 4
+            why.append(f"reads stored data at line {rmw[0][0]} and writes at line {rmw[0][1]} "
+                       "with no lock, version or atomic write (engine)")
         if writes:
             s += 3
             why.append("writes stored data")

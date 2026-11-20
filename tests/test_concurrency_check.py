@@ -9,8 +9,7 @@ import textwrap
 import pytest
 
 from frame.sil.engine_query import QueryIndex
-import tomllib
-
+from frame.sil.packs.loader import tomllib
 from frame.sil.packs.schema import PackError, parse_pack
 
 
@@ -145,3 +144,32 @@ def test_a_refuted_atomic_write_corroborates_a_race_finding():
     assert corroboration(CLASSES["race"], {"handler": "redeem"}, checks)["line"] == 7
     assert corroboration(CLASSES["race"], {"handler": "reset"}, checks) is None
     assert corroboration(CLASSES["limits"], {"handler": "redeem"}, checks) is None
+
+
+def test_unprotected_read_writes_rank_race_units(tmp_path):
+    """The `race` class ranks a unit by the read-then-write pairs the check would refute: plane's
+    sign-up view scored like hundreds of handlers that merely touch data and sorted 613th."""
+    from frame.sil.concurrency import unprotected_read_writes
+    files = {**MODELS, "shop/views.py": """
+        from shop.models import Coupon
+
+        def redeem(code):
+            c = Coupon.objects.get(code=code)
+            if c.uses < c.limit:
+                c.uses = c.uses + 1
+                c.save()
+
+        def redeem_locked(code):
+            c = Coupon.objects.select_for_update().get(code=code)
+            c.uses = c.uses + 1
+            c.save()
+    """}
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(text).lstrip("\n"))
+    q = QueryIndex(str(tmp_path))
+    q.build()
+    prog = next(p for p in q.ctx.programs if "redeem" in p.procedures)
+    assert unprotected_read_writes(prog, "redeem") == [(4, 7)]
+    assert unprotected_read_writes(prog, "redeem_locked") == []

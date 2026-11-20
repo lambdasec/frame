@@ -179,3 +179,29 @@ def check_atomic_write(program, proc_name: str, line: int,
                         {"line": int(line), "event": "writes it back, no lock, version or atomic update"}],
             "reason": f"{proc_name} reads stored data at line {reads[0]} and writes at line {line}; "
                       "nothing in it or its callers locks the row, checks a version or writes atomically"}
+
+
+def unprotected_read_writes(program, proc_name: str) -> List[Tuple[int, int]]:
+    """(read line, write line) pairs in `proc_name` that `check_atomic_write` would refute when no
+    caller protects them: what the hunt's `race` class ranks a unit by. Callers are not asked
+    (ranking only; the check itself asks them)."""
+    proc = (getattr(program, "procedures", {}) or {}).get(proc_name)
+    if proc is None:
+        return []
+    table = entries(program)
+    if not any(e["kind"] != "read" for e in table):
+        return []
+    here = _protections(program, proc, table)
+    if any(k in ("lock", "version") for _, k in here):
+        return []
+    atomic = {ln for ln, k in here if k == "atomic"}
+    reads = sorted({ln for ln, k in here if k == "read" and ln > 0} |
+                   {_line(i) for i in _calls(proc) if _line(i) > 0 and _data_kind(program, i) in READS})
+    out = []
+    for w in sorted({_line(i) for i in _calls(proc) if _data_kind(program, i) in WRITES}):
+        if w in atomic or any(a < w for a in atomic):
+            continue
+        earlier = [r for r in reads if r < w]
+        if earlier:
+            out.append((earlier[0], w))
+    return out
