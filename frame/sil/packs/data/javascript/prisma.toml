@@ -15,3 +15,15 @@ call = ["@prisma/client.PrismaClient.$queryRawUnsafe", "@prisma/client.PrismaCli
 args = [0]
 kind = "sql"
 description = "Prisma raw SQL"
+
+# A model delegate's writes (`prisma.user.update(...)`) change stored rows: a marker that the code
+# writes stored data (read by the business-logic hunt), never a taint sink or a finding.
+# https://www.prisma.io/docs/orm/reference/prisma-client-reference#model-queries
+[[sink]]
+call = ["@prisma/client.PrismaClient.*.create", "@prisma/client.PrismaClient.*.createMany",
+        "@prisma/client.PrismaClient.*.createManyAndReturn", "@prisma/client.PrismaClient.*.update",
+        "@prisma/client.PrismaClient.*.updateMany", "@prisma/client.PrismaClient.*.updateManyAndReturn",
+        "@prisma/client.PrismaClient.*.upsert", "@prisma/client.PrismaClient.*.delete",
+        "@prisma/client.PrismaClient.*.deleteMany"]
+kind = "resource_modify"
+description = "Prisma model write"

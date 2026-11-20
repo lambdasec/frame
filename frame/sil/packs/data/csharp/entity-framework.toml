@@ -12,3 +12,16 @@ call = ["Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade.SqlQueryRaw
         "Microsoft.EntityFrameworkCore.DbContext.Database.SqlQueryRaw"]
 kind = "sql"
 description = "EF Core raw SQL query: the first argument is SQL text"
+
+# SaveChanges writes every tracked change; Add / Update / Remove (and their Range forms) on the
+# context stage a write. A marker that the code writes stored data (read by the business-logic
+# hunt), never a taint sink or a finding.
+# https://learn.microsoft.com/en-us/ef/core/saving/basic
+[[sink]]
+call = ["Microsoft.EntityFrameworkCore.DbContext.SaveChanges", "Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync",
+        "Microsoft.EntityFrameworkCore.DbContext.Add", "Microsoft.EntityFrameworkCore.DbContext.AddAsync",
+        "Microsoft.EntityFrameworkCore.DbContext.AddRange", "Microsoft.EntityFrameworkCore.DbContext.AddRangeAsync",
+        "Microsoft.EntityFrameworkCore.DbContext.Update", "Microsoft.EntityFrameworkCore.DbContext.UpdateRange",
+        "Microsoft.EntityFrameworkCore.DbContext.Remove", "Microsoft.EntityFrameworkCore.DbContext.RemoveRange"]
+kind = "resource_modify"
+description = "EF Core write"

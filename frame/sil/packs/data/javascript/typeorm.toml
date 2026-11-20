@@ -43,3 +43,20 @@ description = "MikroORM native SQL"
 registered_via = ["typeorm.DataSource.transaction", "typeorm.EntityManager.transaction"]
 position = 0
 origin = "typeorm.EntityManager"
+
+# A Repository's / EntityManager's writes change stored rows. A marker that the code writes stored
+# data (the business-logic hunt's `race`, `limits`, `replay` classes and the service-layer list
+# read it), never a taint sink and never a finding by itself.
+# https://typeorm.io/docs/working-with-entity-manager/repository-api/
+[[sink]]
+call = ["typeorm.Repository.save", "typeorm.Repository.insert", "typeorm.Repository.update",
+        "typeorm.Repository.upsert", "typeorm.Repository.delete", "typeorm.Repository.remove",
+        "typeorm.Repository.softDelete", "typeorm.Repository.softRemove", "typeorm.Repository.restore",
+        "typeorm.Repository.increment", "typeorm.Repository.decrement",
+        "typeorm.EntityManager.save", "typeorm.EntityManager.insert", "typeorm.EntityManager.update",
+        "typeorm.EntityManager.upsert", "typeorm.EntityManager.delete", "typeorm.EntityManager.remove",
+        "typeorm.EntityManager.softDelete", "typeorm.EntityManager.softRemove",
+        "typeorm.EntityManager.restore", "typeorm.EntityManager.increment",
+        "typeorm.EntityManager.decrement"]
+kind = "resource_modify"
+description = "TypeORM write"

@@ -175,6 +175,10 @@ class LLMClient:
         # Set (a threading.Event) by a caller that may cancel this client's calls: an outage
         # wait ends as soon as it is set, so a cancelled hunt never sits out the whole window.
         self.abort: Optional[Any] = None
+        # Set once the endpoint has rejected `temperature` (Claude 5 models on Anthropic's
+        # OpenAI-compatible endpoint answer 400 "temperature is deprecated for this model"):
+        # later requests leave the field out instead of failing every call. Remembered per
+        # (endpoint, model) for the process: a hunt makes one client per unit.
         if getattr(config, "cache_path", ""):
             try:
                 with open(config.cache_path, encoding="utf-8") as fh:
@@ -270,20 +274,52 @@ class LLMClient:
         body: Dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
-            "temperature": self.config.temperature,
             "max_tokens": max_tokens or self.config.max_tokens,
         }
+        self._set_temperature(body)
         if response_format is not None:
             body["response_format"] = response_format
-        payload = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json", "x-session-id": self.session_id}
         # Some local servers (e.g. OptiQ) reject *any* Authorization header; only
         # send one when a key is actually configured. Set the key's variable to "" to omit.
         if self.config.api_key and self.config.api_key.lower() not in ("none", "anything"):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        data = json.loads(self._urlopen_read(req).decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
+        while True:
+            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                         headers=headers)
+            try:
+                data = json.loads(self._urlopen_read(req).decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                if self._temperature_rejected(exc, body):
+                    continue
+                raise
+            return data["choices"][0]["message"]["content"]
+
+    _NO_TEMPERATURE: set = set()
+
+    @property
+    def _omit_temperature(self) -> bool:
+        return (self.config.base_url, self.config.model) in LLMClient._NO_TEMPERATURE
+
+    def _set_temperature(self, body: Dict[str, Any]) -> None:
+        if not self._omit_temperature:
+            body["temperature"] = self.config.temperature
+
+    def _temperature_rejected(self, exc: "urllib.error.HTTPError", body: Dict[str, Any],
+                              detail: Optional[str] = None) -> bool:
+        """True (and `temperature` dropped from `body` and every later request) when the
+        endpoint answered 400 because of the `temperature` field."""
+        if exc.code != 400 or "temperature" not in body:
+            return False
+        if detail is None:
+            detail = self._error_detail(exc)
+        if "temperature" not in detail:
+            return False
+        if not self._omit_temperature:
+            _log.warning("LLM endpoint rejects `temperature`; sending requests without it")
+        LLMClient._NO_TEMPERATURE.add((self.config.base_url, self.config.model))
+        body.pop("temperature", None)
+        return True
 
     def complete(self, messages: List[Dict[str, str]], *,
                  max_tokens: Optional[int] = None, force_json: bool = True,
@@ -346,9 +382,9 @@ class LLMClient:
         url = f"{self.config.base_url}/chat/completions"
         body: Dict[str, Any] = {
             "model": self.config.model, "messages": messages,
-            "temperature": self.config.temperature,
             "max_tokens": getattr(self.config, "agent_max_tokens", 16000),
         }
+        self._set_temperature(body)
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -384,6 +420,10 @@ class LLMClient:
             except urllib.error.HTTPError as exc:
                 self.stats["errors"] += 1
                 detail = self._error_detail(exc)
+                if self._temperature_rejected(exc, body, detail):
+                    data = json.dumps(body).encode("utf-8")
+                    i -= 1                    # not a failed attempt: the same call, resent
+                    continue
                 self._note_failure(failures, t0, f"HTTP {exc.code}", detail)
                 self.last_call = {"status": "error", "error": f"HTTP {exc.code}",
                                   "latency_s": round(time.time() - t0, 2), "retries": i,

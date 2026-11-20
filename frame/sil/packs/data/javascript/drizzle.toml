@@ -1,0 +1,36 @@
+[pack]
+name = "drizzle"
+language = "javascript"
+description = "Drizzle ORM writes"
+detect = { imports = ["drizzle-orm", "drizzle-orm/*"] }
+references = ["https://orm.drizzle.team/docs/insert", "https://orm.drizzle.team/docs/update",
+              "https://orm.drizzle.team/docs/delete", "https://orm.drizzle.team/docs/transactions",
+              "https://orm.drizzle.team/docs/connect-overview"]
+
+# The database is what a driver entry point's `drizzle(...)` returns (`drizzle-orm/node-postgres`,
+# `drizzle-orm/mysql2`, ...), or a value declared with the driver's database type
+# (`NodePgDatabase`, `MySql2Database`, ...; the dialect cores' `PgDatabase`, `MySqlDatabase`,
+# `BaseSQLiteDatabase`). `db.insert(t)`, `db.update(t)` and `db.delete(t)` start a write of table t:
+# a marker that the code writes stored data (read by the business-logic hunt), never a taint sink
+# or a finding. Their SQL is parameterised; `sql.raw` is the unescaped fragment.
+[[sink]]
+call = ["drizzle-orm/*.drizzle.insert", "drizzle-orm/*.drizzle.update", "drizzle-orm/*.drizzle.delete",
+        "drizzle-orm/*.*Database.insert", "drizzle-orm/*.*Database.update",
+        "drizzle-orm/*.*Database.delete",
+        "drizzle-orm/*.*Transaction.insert", "drizzle-orm/*.*Transaction.update",
+        "drizzle-orm/*.*Transaction.delete"]
+kind = "resource_modify"
+description = "Drizzle write"
+
+# db.transaction(async (tx) => ...) calls back with the transaction, which writes like the database.
+[[callback_param]]
+registered_via = ["drizzle-orm/*.drizzle.transaction", "drizzle-orm/*.*Database.transaction"]
+position = 0
+origin = "drizzle-orm/transaction.Transaction"
+
+# sql.raw(text) is spliced into the statement unescaped.
+[[sink]]
+call = ["drizzle-orm.sql.raw"]
+args = [0]
+kind = "sql"
+description = "Drizzle raw SQL fragment"

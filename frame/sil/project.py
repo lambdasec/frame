@@ -1451,10 +1451,10 @@ def _normalise(path: Path) -> str:
 
 
 def _project_library_base(programs: Dict[str, Any], index: "ProjectIndex", key: str, type_name: str,
-                          member: str) -> Optional[str]:
-    """C#: the library type a member of the project class `type_name` (as written in file `key`)
-    comes from: the nearest base outside the project, qualified with its declaring file's imports,
-    unless a project class on the way declares `member`."""
+                          member: str, language: str = "csharp") -> Optional[str]:
+    """C# / Java: the library type a member of the project class `type_name` (as written in file
+    `key`) comes from: the nearest base outside the project, qualified with its declaring file's
+    imports, unless a project class on the way declares `member`."""
     from frame.sil.metadata import program_import_table, qualify_type
 
     def declares(cls: Tuple[str, str]) -> bool:
@@ -1477,9 +1477,10 @@ def _project_library_base(programs: Dict[str, Any], index: "ProjectIndex", key: 
         bases = mod.bases.get(cls[1], []) if mod is not None else []
         if not bases:
             return None
-        nxt = index.resolve_java_type(cls[0], bases[0])
+        base = bases[0].split("<", 1)[0].strip()
+        nxt = index.resolve_java_type(cls[0], base)
         if nxt is None:                                       # outside the project: the library type
-            return qualify_type("csharp", bases[0], program_import_table(programs[cls[0]]))
+            return qualify_type(language, base, program_import_table(programs[cls[0]]))
         cls = nxt
     return None
 
@@ -1495,6 +1496,9 @@ def _link_library_bases(programs: Dict[str, Any], index: "ProjectIndex") -> None
         return _project_library_base(programs, index, key, type_name, member)
 
     for key, program in programs.items():
+        if (program.language or "") == "java":
+            _link_java_library_bases(programs, index, key, program)
+            continue
         if (program.language or "") != "csharp":
             continue
         for proc in program.procedures.values():
@@ -1515,6 +1519,29 @@ def _link_library_bases(programs: Dict[str, Any], index: "ProjectIndex") -> None
                     if name:
                         i.canonical = name
                         program.origins_moved = True
+
+
+def _link_java_library_bases(programs: Dict[str, Any], index: "ProjectIndex", key: str, program) -> None:
+    """Java: a call on a value of a project type is named after the library type the method comes
+    from when no project type on the way declares it: `repo.save(c)` with `interface
+    CouponRepository extends JpaRepository<Coupon, Long>` is
+    `org.springframework.data.jpa.repository.JpaRepository.save`."""
+    from frame.sil.instructions import Call
+
+    for proc in program.procedures.values():
+        for node in proc.nodes.values():
+            for i in node.instrs:
+                if not isinstance(i, Call) or i.canonical is not None:
+                    continue
+                typ = getattr(i, "receiver_type", None) or ""
+                func = str(getattr(i.func, "value", i.func))
+                head, dot, method = func.rpartition(".")
+                if not typ or not dot or not method.isidentifier():
+                    continue
+                lib = _project_library_base(programs, index, key, typ, method, language="java")
+                if lib:
+                    i.canonical = f"{lib}.{method}"
+                    program.origins_moved = True
 
 
 class ProjectContext:

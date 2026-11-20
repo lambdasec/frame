@@ -21,12 +21,19 @@ The scripts are BAC-Bench's, pointed at this manifest:
 ```bash
 python benchmarks/bacbench/prepare.py --manifest benchmarks/logicbench/manifest.yaml --workspace /tmp/frame-logicbench
 python benchmarks/bacbench/run.py --workspace /tmp/frame-logicbench --systems frame_hunt \
-    --hunt-classes logic --output benchmarks/logicbench/results/v1        # needs FRAME_LLM_*
+    --hunt-classes logic --hunt-cross-file --hunt-max-units 150 \
+    --output benchmarks/logicbench/results/v1                              # needs FRAME_LLM_*
 python benchmarks/bacbench/score.py --manifest benchmarks/logicbench/manifest.yaml \
     --workspace /tmp/frame-logicbench --results benchmarks/logicbench/results/v1
 ```
 
 `prepare.py` clones each application from its public upstream at the pinned commits; no application source is vendored into Frame.
+
+Pass `--hunt-cross-file`. The runner builds the hunt's engine facts per file by default (a BAC-Bench time saving), and per file a handler whose models, services or ORM repository live in another file shows no data access, so the `race`, `workflow` and `replay` classes skip it. `frame scan --hunt` is cross-file by default. Cross-file facts plan many more units (plane: 49 to about 1,100), so cap them with `--hunt-max-units`.
+
+## Results
+
+The first blind run (Claude Haiku 5.5, 2026-11-19) detected **3 of 32**, all three paired: courselit-wqfg and shopizer-w8rc (`limits`) and duplicati-p9x4 (`bruteforce`), all in the LLM tier. It was run per file, and its Java and C# cases were scanned as Python (a runner bug, since fixed), so it measures less than Frame can do. The vulnerable code was planned as a unit in 10 of the 32 cases: most misses happened before any agent looked. The score is in [`results/v1-haiku/score.json`](results/v1-haiku/score.json). Scores after the fixes this run drove are not blind.
 
 ## Scoring
 

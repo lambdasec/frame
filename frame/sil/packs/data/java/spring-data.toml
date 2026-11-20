@@ -1,0 +1,32 @@
+[pack]
+name = "spring-data"
+language = "java"
+description = "Spring Data repository writes"
+detect = { imports = ["org.springframework.data"] }
+references = ["https://docs.spring.io/spring-data/commons/reference/repositories/core-concepts.html",
+              "https://docs.spring.io/spring-data/jpa/reference/jpa/getting-started.html"]
+
+# A repository is an application interface extending one of Spring Data's (`interface
+# CouponRepository extends JpaRepository<Coupon, Long>`); a call on it is named after the Spring
+# Data type that declares the method. Its writes change stored data: a marker read by the
+# business-logic hunt, never a taint sink or a finding.
+[[sink]]
+call = ["org.springframework.data.repository.*Repository.save",
+        "org.springframework.data.repository.*Repository.saveAll",
+        "org.springframework.data.repository.*Repository.delete",
+        "org.springframework.data.repository.*Repository.deleteById",
+        "org.springframework.data.repository.*Repository.deleteAll",
+        "org.springframework.data.repository.*Repository.deleteAllById",
+        "org.springframework.data.repository.reactive.*Repository.save",
+        "org.springframework.data.repository.reactive.*Repository.saveAll",
+        "org.springframework.data.repository.reactive.*Repository.delete",
+        "org.springframework.data.repository.reactive.*Repository.deleteById",
+        "org.springframework.data.repository.reactive.*Repository.deleteAll",
+        "org.springframework.data.jpa.repository.JpaRepository.save*",
+        "org.springframework.data.jpa.repository.JpaRepository.delete*",
+        "org.springframework.data.jpa.repository.JpaRepository.flush",
+        "org.springframework.data.mongodb.repository.*Repository.save*",
+        "org.springframework.data.mongodb.repository.*Repository.insert",
+        "org.springframework.data.mongodb.repository.*Repository.delete*"]
+kind = "resource_modify"
+description = "Spring Data repository write"

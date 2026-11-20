@@ -983,6 +983,9 @@ class FrameScanner:
         self.respect_suppressions = respect_suppressions
         self.disabled_rules = list(disabled_rules or [])
         self.language = language
+        # What the caller asked for: `scan_file` moves `self.language` to each file's language,
+        # so after a directory scan it names whatever file came last. The hunt needs this one.
+        self.requested_language = language
         self.verify = verify
         self.timeout = timeout
         self.verbose = verbose
@@ -1871,7 +1874,7 @@ class FrameScanner:
             resolved_root = dir_path.resolve()
             symbolic = [v for r in results for v in r.vulnerabilities]
             found = hunt_authz(self._hunt_programs, symbolic, str(resolved_root),
-                               config, self._llm_client, language=self.language,
+                               config, self._llm_client, language=self.requested_language or "",
                                dynamic=self.hunt_dynamic, interpreter=self.hunt_interpreter,
                                status=self.last_hunt_status, **self.hunt_options)
         except Exception as e:

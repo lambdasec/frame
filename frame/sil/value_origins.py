@@ -415,6 +415,11 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
     a nested function seeing its enclosing functions' names). Idempotent; run again with
     `param_origins` (procedure -> parameter -> origin) once callers are known."""
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    # TypeScript type aliases naming a library type, this file's and the ones it imports
+    # (`link_modules`): a parameter declared with one is typed like the library type
+    for name, typed in {**_local_type_aliases(program, imports),
+                        **(getattr(program, "type_imports", None) or {})}.items():
+        imports[name] = typed
     python = (getattr(program, "language", "") or "") == "python"
     if python:
         for proc in program.procedures.values():
@@ -450,6 +455,19 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
         program.origins_moved = _settle_filled(program) or getattr(program, "origins_moved", False)
     program.export_origin = scopes.get(MODULE, {}).get("module.exports")
     program.export_fields = _export_fields(program, scopes.get(MODULE, {}))
+
+
+def _local_type_aliases(program, imports: Dict[str, str]) -> Dict[str, str]:
+    """This file's TypeScript aliases of a library type (`type DB = MySql2Database<S>`), as the
+    library type's id (`drizzle-orm/mysql2.MySql2Database`). An alias of a relative import or of
+    another alias names nothing here (an imported alias is `link_modules`' business)."""
+    out: Dict[str, str] = {}
+    for alias, written in (getattr(program, "type_aliases", None) or {}).items():
+        head, _, rest = written.partition(".")
+        module = imports.get(head)
+        if module and not module.startswith(".") and alias not in imports:
+            out[alias] = f"{module}.{rest}" if rest else module
+    return out
 
 
 def _export_fields(program, module_scope: Dict[str, str]) -> Dict[str, str]:
@@ -748,10 +766,19 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
         scopes = getattr(program, "value_origins", None)
         bound: Dict[str, str] = {}                    # local name -> the value it is bound to
         module = scopes.setdefault(MODULE, {}) if scopes is not None else {}
+        types: Dict[str, str] = {}                    # imported type aliases of a library type
         for name, spec in (getattr(program, "imports", None) or {}).items():
             spec = str(spec)
             if not spec.startswith("."):
                 continue
+            mod, _, symbol = spec.rpartition(".")
+            alias_file = resolve(key, mod) if mod and symbol else None
+            aliased = programs.get(alias_file) if alias_file else None
+            if aliased is not None and symbol in (getattr(aliased, "type_aliases", None) or {}):
+                held = _local_type_aliases(aliased, {k: str(v) for k, v in
+                                                     (getattr(aliased, "imports", None) or {}).items()})
+                if symbol in held:
+                    types[name] = held[symbol]
             target = resolve(key, spec)
             origin = getattr(programs.get(target), "export_origin", None) if target else None
             if target is None and "." in spec.lstrip("."):   # `const { pool } = require("./db")`
@@ -768,8 +795,24 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                 if f"{name}.{field}" not in module:
                     module[f"{name}.{field}"] = held
                     program.origins_moved = True
+        if types != (getattr(program, "type_imports", None) or {}):
+            program.type_imports = types
+            # origins recorded before the alias was known name its import path
+            # (`this.db` = `../db/database.interface.DBSchema`): drop them so they are found again
+            stale = tuple(str(program.imports[n]) for n in types if n in (program.imports or {}))
+            def fresh(v: str) -> bool:
+                return not any(v == s or v.startswith(s + ".") for s in stale)
+            kept = {proc: {k: v for k, v in held.items() if fresh(v)}
+                    for proc, held in (getattr(program, "param_origins", None) or {}).items()}
+            annotate(program, kept)
+            program.origins_moved = True
         for proc in program.procedures.values():
             for i in _instrs(proc):
+                if isinstance(i, Call) and i.canonical is not None and i.canonical.startswith("."):
+                    typed = _through_declared_return(key, i.canonical, programs, resolve)
+                    if typed:
+                        i.canonical = typed
+                        program.origins_moved = True
                 if not isinstance(i, Call) or i.canonical is not None:
                     continue
                 text = _call_text(i)
@@ -797,6 +840,49 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                         if i.canonical is not None:
                             program.origins_moved = True    # the packs' rules meet it now
                         break
+
+
+def _declared_returns(program) -> Dict[str, str]:
+    """`Class.method` -> the library type its TypeScript declaration says it returns
+    (`getRepository(...): Repository<E>` with `Repository` imported from typeorm is
+    `typeorm.Repository`). A type the file declares or imports from the project names nothing."""
+    cached = getattr(program, "_declared_returns", None)
+    if cached is not None:
+        return cached
+    imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
+    imports.update(_local_type_aliases(program, imports))
+    out: Dict[str, str] = {}
+    for proc in program.procedures.values():
+        written = getattr(proc, "return_type", "") or ""
+        if not written or "#" in proc.name:
+            continue
+        head, _, rest = written.partition(".")
+        module = imports.get(head)
+        if module and not module.startswith("."):
+            out[proc.name] = f"{module}.{rest}" if rest else module
+    program._declared_returns = out
+    return out
+
+
+def _through_declared_return(key, canonical: str, programs, resolve) -> Optional[str]:
+    """`../conn.TransactionalConnection.getRepository.update` -> `typeorm.Repository.update` when
+    that project method is declared to return a library type: a call on its result is a call on
+    that type. None when the module, the method or its declared type is unknown."""
+    cut = len(canonical)
+    while True:
+        cut = canonical.rfind(".", 0, cut)
+        if cut <= 0:
+            return None
+        target = resolve(key, canonical[:cut])
+        if target is None:
+            continue
+        returns = _declared_returns(programs.get(target)) if programs.get(target) is not None else {}
+        parts = canonical[cut + 1:].split(".")
+        for n in range(len(parts) - 1, 0, -1):          # the longest `Class.method` it has
+            owner = ".".join(parts[:n])
+            if owner in returns:
+                return ".".join([returns[owner]] + parts[n:])
+        return None
 
 
 # -- what library calls return ------------------------------------------------------------------

@@ -26,3 +26,16 @@ description = "a raw SQL fragment inside a Criteria query"
 # An EntityManager the container injects is a collaborator, not request-bound state.
 [[injected_field]]
 annotations = ["PersistenceContext", "PersistenceUnit", "javax.persistence.Persistence*", "jakarta.persistence.Persistence*"]
+
+# An EntityManager's / Hibernate Session's writes change stored rows: a marker that the code
+# writes stored data (read by the business-logic hunt), never a taint sink or a finding.
+# https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager
+[[sink]]
+call = ["jakarta.persistence.EntityManager.persist", "jakarta.persistence.EntityManager.merge",
+        "jakarta.persistence.EntityManager.remove", "javax.persistence.EntityManager.persist",
+        "javax.persistence.EntityManager.merge", "javax.persistence.EntityManager.remove",
+        "org.hibernate.Session.save", "org.hibernate.Session.update", "org.hibernate.Session.saveOrUpdate",
+        "org.hibernate.Session.persist", "org.hibernate.Session.merge", "org.hibernate.Session.delete",
+        "org.hibernate.Session.remove"]
+kind = "resource_modify"
+description = "JPA / Hibernate write"

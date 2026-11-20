@@ -24,7 +24,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SYSTEMS = ("frame_symbolic", "frame_hunt")
-_LANG = {"python": "python", "javascript": "javascript", "typescript": "javascript"}
+# The scanner's language for a case's language. A language missing here used to fall back to
+# Python, so Java and C# cases were scanned as Python: no engine program for their code at all.
+_LANG = {"python": "python", "javascript": "javascript", "typescript": "javascript",
+         "java": "java", "csharp": "csharp"}
 
 
 class _Timeout(Exception):
@@ -91,7 +94,7 @@ def _hunt_grep(checkout: Path, language: str, cap: int = 0,
     trajectory for analysis."""
     from frame.sil.llm_hunt import hunt_authz
     from frame.sil.llm_triage import TriageConfig
-    lang = _LANG.get(language, "python")
+    lang = _LANG[language]
     use_alarm = cap > 0 and hasattr(signal, "SIGALRM")
     if use_alarm:
         signal.signal(signal.SIGALRM, lambda s, f: (_ for _ in ()).throw(_Timeout()))
@@ -123,7 +126,7 @@ def _scan(checkout: Path, language: str, system: str, cap: int = 0,
     `last_hunt_status`), so a hunt that never reached the model is recorded as such, and
     `options` are the hunt's keyword options (see hunt_options)."""
     from frame.sil import FrameScanner
-    lang = _LANG.get(language, "python")
+    lang = _LANG[language]
     hunt = system == "frame_hunt"
     extra = {"hunt_options": dict(options or {})} if hunt else {}
     sc = FrameScanner(language=lang, verify=not hunt, hunt_authz=hunt, timeout=8000,

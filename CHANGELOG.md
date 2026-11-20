@@ -4,6 +4,17 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **ORM writes in JavaScript/TypeScript, Java and C# are data facts.** TypeORM repository and entity-manager writes, Prisma model writes, Drizzle `insert` / `update` / `delete` (new `javascript/drizzle` pack, transactions included), JPA `EntityManager` and Hibernate `Session` writes, Spring Data repository writes (new `java/spring-data` pack) and EF Core `SaveChanges` / `Add` / `Update` / `Remove` mark the code as writing stored data, as Django's `save()` already did. The business-logic hunt plans its service-layer units and its `race` / `limits` / `workflow` / `replay` audits from these facts; before, a NestJS or Next.js service that wrote through an ORM was invisible to it. They are markers, never findings.
+- **Calls named after the library type they come from.** A Java call on a project type is named after the library type that declares the method (`repo.save(c)` with `CouponRepository extends JpaRepository<...>` is `JpaRepository.save`), as C# already was across files; a C# call on a field of a `DbContext` subclass (`_db.SaveChanges()`) is `DbContext.SaveChanges`.
+- **TypeScript types followed further.** A type alias of a library type (`type DB = MySql2Database<S> & { $client: Pool }`), in the same file or imported from another, types a value declared with it; and a project method declared to return a library type (`getRepository(...): Repository<E>`, `Promise<T>` read as T) types the calls on its result.
+
+### Fixed
+
+- **The hunt runs in the language the scan was asked for.** A directory scan moved `FrameScanner.language` to each file's language, so the hunt got the last file's: a Python app with a `#!/usr/bin/env node` script was hunted as JavaScript, its scouts laid out over the front end and its backend counted as one file.
+- **Claude 5 models on Anthropic's OpenAI-compatible endpoint.** They reject any request carrying `temperature` (HTTP 400), so every LLM call failed and a hunt ended with no findings. The client now drops the field once the endpoint rejects it and remembers that for the endpoint and model; other endpoints still receive `[llm] temperature`.
+
 ## [1.1.8] - 2026-11-18
 
 ### Added

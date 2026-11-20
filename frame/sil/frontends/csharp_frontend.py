@@ -530,6 +530,10 @@ class CSharpFrontend:
                             instr.canonical = _inherited_member(program, proc, func, self._imports, self._local_types)
                             continue
                     elif "." not in rest:
+                        lib = self._library_base(program, types[head], rest) if types.get(head) else None
+                        if lib:                                   # `_db.SaveChanges()`, AppDb : DbContext
+                            instr.canonical = f"{lib}.{rest}"
+                            continue
                         receiver = types.get(head) or (head if head[:1].isupper() else None)
                     elif types.get(head):                         # `_db.Database.SqlQueryRaw(sql)`
                         lib = self._library_base(program, types[head], rest.split(".", 1)[0])

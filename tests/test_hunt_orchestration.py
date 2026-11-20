@@ -498,3 +498,28 @@ def test_scan_output_shows_the_hunt_and_what_it_left_unresolved():
     text = format_hunt_text(h)
     assert "Authorization hunt: 2 units audited (finished)" in text
     assert "app.py:10 Docs.del_doc: any user deletes any doc" in text and "needs: proxy config" in text
+
+
+def test_hunt_gets_the_requested_language_not_the_last_files(tmp_path, monkeypatch):
+    """`scan_file` moves `FrameScanner.language` to each file's language, so after a directory
+    scan it names the last file (a `#!/usr/bin/env node` script in a Python app). The hunt laid
+    out its scouts by that language: plane's Python backend was one area of one file."""
+    import frame.sil.llm_hunt as llm_hunt
+    from frame.sil import FrameScanner
+    from frame.sil.llm_client import LLMConfig
+
+    (tmp_path / "app.py").write_text("def f(x):\n    return x\n")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "run").write_text("#!/usr/bin/env node\nconsole.log(1)\n")
+    seen = {}
+
+    def fake_hunt(programs, symbolic, root, config, client, language="", **kw):
+        seen["language"] = language
+        return []
+
+    monkeypatch.setattr(llm_hunt, "hunt_authz", fake_hunt)
+    sc = FrameScanner(language="python", hunt_authz=True)
+    sc._llm_config = LLMConfig(base_url="http://127.0.0.1:9/v1", model="m", api_key="x")
+    list(sc.scan_directory(str(tmp_path), None, project_root=str(tmp_path)))
+    assert sc.language != "python"            # the drift this guards against still happens
+    assert seen["language"] == "python"

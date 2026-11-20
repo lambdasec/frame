@@ -1,0 +1,366 @@
+{
+  "n_cases": 32,
+  "systems": {
+    "frame_hunt": {
+      "detected": 3,
+      "paired": 3,
+      "n": 32,
+      "recall": 0.094,
+      "hunt_errors": 0,
+      "per_case": {
+        "courselit-wqfg": "paired",
+        "ecommerce-template-5222": "miss",
+        "lms-g5jj": "miss",
+        "plane-xfgr": "miss",
+        "shopizer-w8rc": "paired",
+        "vendure-wm63": "miss",
+        "appsmith-9wcp": "miss",
+        "medusa-6r9h": "miss",
+        "plane-p548": "miss",
+        "simplcommerce-jphx": "miss",
+        "sync-in-phhw": "miss",
+        "vendure-8ghm": "miss",
+        "zipline-wq7g": "miss",
+        "dnn-56m6": "miss",
+        "ghost-4wx2": "miss",
+        "ghost-q734": "miss",
+        "keycloak-4gv3": "miss",
+        "lms-c4xh": "miss",
+        "plane-rmmf": "miss",
+        "sentry-jv85": "miss",
+        "anything-llm-vv8w": "miss",
+        "keycloak-w4p5": "miss",
+        "misskey-2m5x": "miss",
+        "outline-cprf": "miss",
+        "parse-server-4hf6": "miss",
+        "vulnerability-lookup-w4vj": "miss",
+        "apostrophe-653j": "miss",
+        "duplicati-p9x4": "paired",
+        "keycloak-gc7q": "miss",
+        "sync-in-274f": "miss",
+        "weblate-57jg": "miss",
+        "wger-gr58": "miss"
+      },
+      "by_tier": {
+        "llm": {
+          "detected": 3,
+          "paired": 3,
+          "n": 32,
+          "recall": 0.094,
+          "hunt_errors": 0,
+          "per_case": {
+            "courselit-wqfg": "paired",
+            "ecommerce-template-5222": "miss",
+            "lms-g5jj": "miss",
+            "plane-xfgr": "miss",
+            "shopizer-w8rc": "paired",
+            "vendure-wm63": "miss",
+            "appsmith-9wcp": "miss",
+            "medusa-6r9h": "miss",
+            "plane-p548": "miss",
+            "simplcommerce-jphx": "miss",
+            "sync-in-phhw": "miss",
+            "vendure-8ghm": "miss",
+            "zipline-wq7g": "miss",
+            "dnn-56m6": "miss",
+            "ghost-4wx2": "miss",
+            "ghost-q734": "miss",
+            "keycloak-4gv3": "miss",
+            "lms-c4xh": "miss",
+            "plane-rmmf": "miss",
+            "sentry-jv85": "miss",
+            "anything-llm-vv8w": "miss",
+            "keycloak-w4p5": "miss",
+            "misskey-2m5x": "miss",
+            "outline-cprf": "miss",
+            "parse-server-4hf6": "miss",
+            "vulnerability-lookup-w4vj": "miss",
+            "apostrophe-653j": "miss",
+            "duplicati-p9x4": "paired",
+            "keycloak-gc7q": "miss",
+            "sync-in-274f": "miss",
+            "weblate-57jg": "miss",
+            "wger-gr58": "miss"
+          }
+        },
+        "symbolic": {
+          "detected": 0,
+          "paired": 0,
+          "n": 32,
+          "recall": 0.0,
+          "hunt_errors": 0,
+          "per_case": {
+            "courselit-wqfg": "miss",
+            "ecommerce-template-5222": "miss",
+            "lms-g5jj": "miss",
+            "plane-xfgr": "miss",
+            "shopizer-w8rc": "miss",
+            "vendure-wm63": "miss",
+            "appsmith-9wcp": "miss",
+            "medusa-6r9h": "miss",
+            "plane-p548": "miss",
+            "simplcommerce-jphx": "miss",
+            "sync-in-phhw": "miss",
+            "vendure-8ghm": "miss",
+            "zipline-wq7g": "miss",
+            "dnn-56m6": "miss",
+            "ghost-4wx2": "miss",
+            "ghost-q734": "miss",
+            "keycloak-4gv3": "miss",
+            "lms-c4xh": "miss",
+            "plane-rmmf": "miss",
+            "sentry-jv85": "miss",
+            "anything-llm-vv8w": "miss",
+            "keycloak-w4p5": "miss",
+            "misskey-2m5x": "miss",
+            "outline-cprf": "miss",
+            "parse-server-4hf6": "miss",
+            "vulnerability-lookup-w4vj": "miss",
+            "apostrophe-653j": "miss",
+            "duplicati-p9x4": "miss",
+            "keycloak-gc7q": "miss",
+            "sync-in-274f": "miss",
+            "weblate-57jg": "miss",
+            "wger-gr58": "miss"
+          }
+        }
+      },
+      "funnel": {
+        "cases_with_map": 32,
+        "in_map": 10,
+        "investigated": 9,
+        "reported_on_gt": 3,
+        "safe_on_gt": 5,
+        "unresolved_on_gt": 1,
+        "detected": 3,
+        "paired": 3,
+        "per_case": {
+          "courselit-wqfg": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "reported",
+            "detected": true,
+            "paired": true
+          },
+          "ecommerce-template-5222": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "safe",
+            "detected": false,
+            "paired": false
+          },
+          "lms-g5jj": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "plane-xfgr": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "shopizer-w8rc": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": true,
+            "paired": true
+          },
+          "vendure-wm63": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "unresolved",
+            "detected": false,
+            "paired": false
+          },
+          "appsmith-9wcp": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "medusa-6r9h": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "plane-p548": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "reported",
+            "detected": false,
+            "paired": false
+          },
+          "simplcommerce-jphx": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "sync-in-phhw": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "vendure-8ghm": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "zipline-wq7g": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "safe",
+            "detected": false,
+            "paired": false
+          },
+          "dnn-56m6": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "ghost-4wx2": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "ghost-q734": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "keycloak-4gv3": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "lms-c4xh": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "plane-rmmf": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "sentry-jv85": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "anything-llm-vv8w": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "keycloak-w4p5": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "misskey-2m5x": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "outline-cprf": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "parse-server-4hf6": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "vulnerability-lookup-w4vj": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "safe",
+            "detected": false,
+            "paired": false
+          },
+          "apostrophe-653j": {
+            "in_map": true,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "duplicati-p9x4": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "safe",
+            "detected": true,
+            "paired": true
+          },
+          "keycloak-gc7q": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "sync-in-274f": {
+            "in_map": false,
+            "investigated": false,
+            "verdict_on_gt": "none",
+            "detected": false,
+            "paired": false
+          },
+          "weblate-57jg": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "safe",
+            "detected": false,
+            "paired": false
+          },
+          "wger-gr58": {
+            "in_map": true,
+            "investigated": true,
+            "verdict_on_gt": "reported",
+            "detected": false,
+            "paired": false
+          }
+        }
+      }
+    }
+  }
+}

@@ -495,6 +495,9 @@ class Procedure:
     # Declared type of each parameter as written (`Request`, `HttpServletRequest`),
     # for the languages whose syntax declares one.
     param_types: Dict[str, str] = field(default_factory=dict)
+    # Declared return type as written (TypeScript `): Repository<E>`, an async function's
+    # `Promise<T>` read as T), without type arguments; "" when none is declared.
+    return_type: str = ""
     # A destructuring parameter (`({ body, query: q }) => ...`) is one positional parameter named
     # `$argN`, its names bound at entry from it; this maps `$argN` to the pattern as written.
     param_patterns: Dict[str, str] = field(default_factory=dict)

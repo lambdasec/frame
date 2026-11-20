@@ -320,6 +320,9 @@ class JavaScriptFrontend:
                 if proc is not None and body is not None:
                     proc.renders = self._returns_markup(body)
                 params = n.child_by_field_name("parameters")
+                returned = n.child_by_field_name("return_type")
+                if proc is not None and returned is not None:
+                    proc.return_type = self._declared_type_name(returned)
                 if proc is None or params is None:
                     continue
                 for name, _, _, ty in self._parameter_list(params):
@@ -327,6 +330,8 @@ class JavaScriptFrontend:
                         text = self._get_text(ty).lstrip(":").strip().split("<")[0].strip()
                         if text:
                             proc.param_types[name] = text
+            if n.type == "type_alias_declaration":
+                self._record_type_alias(n, program)
             if n.type in ("call_expression", "new_expression"):
                 self._object_registrations(n, by_span, program, root)
             if n.type in ("export_statement", "assignment_expression"):
@@ -2958,6 +2963,42 @@ class JavaScriptFrontend:
         if param.type == "required_parameter" and param.child_by_field_name("value") is None:
             param = param.child_by_field_name("pattern")
         return param.text.decode("utf-8", "replace") if param is not None and param.type == "identifier" else None
+
+    def _declared_type_name(self, annotation: TSNode) -> str:
+        """The type a TypeScript annotation names, without type arguments: `Repository<E>` is
+        `Repository`, `Promise<Repository<E>>` (what an async function's caller awaits) is
+        `Repository`, `a.B` is `a.B`; a union, an array, a function or an object type is ""."""
+        node = annotation.named_children[0] if annotation.type == "type_annotation" and annotation.named_children else annotation
+        for _ in range(2):
+            if node.type != "generic_type" or not node.named_children:
+                break
+            head = node.named_children[0]
+            args = next((c for c in node.named_children if c.type == "type_arguments"), None)
+            if self._get_text(head) == "Promise" and args is not None and len(args.named_children) == 1:
+                node = args.named_children[0]
+                continue
+            node = head
+        return self._get_text(node) if node.type in ("type_identifier", "nested_type_identifier") else ""
+
+    def _record_type_alias(self, node: TSNode, program: Program) -> None:
+        """`type DB = MySql2Database<S> & { $client: Pool }`: a value of type DB is a
+        MySql2Database, so a parameter declared DB (here or in a file importing it) is typed by
+        it (`Program.type_aliases`: alias -> the type as written, resolved through the imports in
+        value origins). An intersection is each of its members, so its first named type is taken;
+        a union, a conditional or a mapped type could be any of several and names nothing."""
+        name, value = node.child_by_field_name("name"), node.child_by_field_name("value")
+        if name is None or value is None:
+            return
+        while value.type in ("intersection_type", "parenthesized_type") and value.named_children:
+            value = value.named_children[0]
+        if value.type == "generic_type" and value.named_children:
+            value = value.named_children[0]
+        if value.type not in ("type_identifier", "nested_type_identifier"):
+            return
+        aliases = getattr(program, "type_aliases", None)
+        if aliases is None:
+            aliases = program.type_aliases = {}
+        aliases[self._get_text(name)] = self._get_text(value)
 
     @staticmethod
     def _binds_parameter(param: TSNode, name: str) -> bool:
