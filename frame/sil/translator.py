@@ -710,6 +710,45 @@ class ReturnSummary:
     # field -> taint, with the kinds every path sanitized it for.
     return_fields: Dict[str, Tuple[TaintInfo, Set[str]]] = field(default_factory=dict)
 
+    def joined(self, other: "ReturnSummary") -> "ReturnSummary":
+        """Every flow of either summary, sanitized only for the kinds both paths
+        sanitized (the widening `translate_procedure` applies to a summary that keeps
+        changing)."""
+        def kinds(a, b):
+            return set(a) & set(b)
+
+        def merged(a, b):
+            out = {k: set(v) for k, v in a.items()}
+            for k, v in b.items():
+                out[k] = kinds(out[k], v) if k in out else set(v)
+            return out
+
+        def merged_taint(a, b):
+            out = dict(a)
+            for k, (info, ks) in b.items():
+                out[k] = (out[k][0], kinds(out[k][1], ks)) if k in out else (info, set(ks))
+            return out
+
+        source = self.source or other.source
+        if self.source is None or other.source is None:
+            source_sanitized = self.source_sanitized if other.source is None else other.source_sanitized
+        else:
+            source_sanitized = kinds(self.source_sanitized or (), other.source_sanitized or ())
+        stores = {f: dict(ps) for f, ps in self.stores.items()}
+        for f, ps in other.stores.items():
+            stores[f] = merged(stores.get(f, {}), ps)
+        param_fields = {p: dict(fs) for p, fs in self.param_fields.items()}
+        for p, fs in other.param_fields.items():
+            param_fields[p] = merged_taint(param_fields.get(p, {}), fs)
+        param_reads = {p: set(r) for p, r in self.param_reads.items()}
+        for p, r in other.param_reads.items():
+            param_reads.setdefault(p, set()).update(r)
+        return ReturnSummary(source=source, source_sanitized=source_sanitized,
+                             params=merged(self.params, other.params), stores=stores,
+                             param_fields=param_fields, param_reads=param_reads,
+                             param_whole=self.param_whole | other.param_whole,
+                             return_fields=merged_taint(self.return_fields, other.return_fields))
+
     def key(self):
         return (self.source.source_var if self.source else None,
                 frozenset(self.source_sanitized or ()),
@@ -766,6 +805,9 @@ class IPAState:
     # context function, its resolvers' third argument): handler -> [(function, parameter index)]
     # (registrations.context_links).
     context_sources: Dict[ProcRef, List[Tuple[ProcRef, int]]] = field(default_factory=dict)
+    # How many times each procedure's return summary has changed (`translate_procedure`
+    # widens one that keeps changing).
+    summary_changes: Dict[ProcRef, int] = field(default_factory=dict)
 
 
 # The fixpoint analyses each procedure once, then again only when something it
@@ -774,6 +816,12 @@ class IPAState:
 # budget stops a pathological oscillation, and `IPAState.incomplete` says so.
 IPA_VISITS_PER_PROC = 25
 IPA_EXTRA_VISITS = 1000
+# A summary that has changed this many times is joined with its previous value from
+# then on, so it only grows and the fixpoint settles. Recomputing a summary from
+# scratch is not monotone: a function calling itself with its parameters shifted
+# (`return body(null, req, token, ...)`) cycles through which parameter reaches
+# its return, one shift per visit, forever.
+IPA_WIDEN_AFTER = 3
 
 
 def run_ipa_fixpoint(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> None:
@@ -794,6 +842,9 @@ def run_ipa_fixpoint(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> 
                          for name in tr.program.procedures))
     queued = set(queue)
     budget = IPA_VISITS_PER_PROC * len(queue) + IPA_EXTRA_VISITS
+    # The cap is also per procedure: one procedure that changes on every visit
+    # would otherwise spend the whole project's budget on itself.
+    visits: Dict[ProcRef, int] = {}
     try:
         while queue:
             if budget <= 0:
@@ -806,12 +857,17 @@ def run_ipa_fixpoint(translators: Dict[str, "SILTranslator"], ipa: IPAState) -> 
             proc = tr.program.procedures.get(ref[1]) if tr else None
             if proc is None:
                 continue
+            visits[ref] = visits.get(ref, 0) + 1
             ipa.dirty = set()
             tr.translate_procedure(proc)
             for changed in sorted(ipa.dirty):
-                if changed not in queued:
-                    queue.append(changed)
-                    queued.add(changed)
+                if changed in queued:
+                    continue
+                if visits.get(changed, 0) >= IPA_VISITS_PER_PROC:
+                    ipa.incomplete = True
+                    continue
+                queue.append(changed)
+                queued.add(changed)
     finally:
         ipa.dirty = set()
         for tr in translators.values():
@@ -1483,9 +1539,15 @@ class SILTranslator:
             if self._ipa_summarising:
                 ref = (self._file_key, proc.name)
                 previous = self._ipa.return_summaries.get(ref)
-                if previous is None or previous.key() != self._return_acc.key():
+                summary = self._return_acc
+                if previous is not None and previous.key() != summary.key():
+                    changes = self._ipa.summary_changes.get(ref, 0) + 1
+                    self._ipa.summary_changes[ref] = changes
+                    if changes > IPA_WIDEN_AFTER:
+                        summary = previous.joined(summary)
+                if previous is None or previous.key() != summary.key():
                     self._ipa.dirty.update(self._ipa.callers.get(ref, ()))
-                self._ipa.return_summaries[ref] = self._return_acc
+                self._ipa.return_summaries[ref] = summary
             return checks
         finally:
             self._return_acc = outer
@@ -8574,11 +8636,12 @@ class SILTranslator:
         what is left on each side. If either side has nothing beyond the shared
         facts the disjunction is just those facts. Over-long disjunctions are
         dropped, which only ever weakens the condition (never unsound)."""
-        k1 = {str(g) for g in pc1}
-        k2 = {str(g) for g in pc2}
-        common = [g for g in pc1 if str(g) in k2]
-        rest1 = [g for g in pc1 if str(g) not in k2]
-        rest2 = [g for g in pc2 if str(g) not in k1]
+        s1 = [str(g) for g in pc1]
+        s2 = [str(g) for g in pc2]
+        k1, k2 = set(s1), set(s2)
+        common = [g for g, s in zip(pc1, s1) if s in k2]
+        rest1 = [g for g, s in zip(pc1, s1) if s not in k2]
+        rest2 = [g for g, s in zip(pc2, s2) if s not in k1]
         if not rest1 or not rest2:
             return common
         disj = Or(self._build_conjunction(rest1), self._build_conjunction(rest2))

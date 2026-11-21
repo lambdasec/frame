@@ -605,6 +605,37 @@ def test_an_exhausted_budget_is_reported_not_silent(tmp_path, monkeypatch, capsy
     assert "ran out of its budget" in captured.err
 
 
+def test_a_self_call_with_shifted_parameters_settles(tmp_path, monkeypatch, capsys):
+    # Recomputed from scratch, pick's summary cycles through which parameter reaches its
+    # return (one shift per visit) and used to spend the whole visit budget (passport-bridge's
+    # `return body(null, req, accessToken, ...)`). Widened, it settles and stays complete.
+    from frame.sil import translator
+    visits = []
+    original = translator.SILTranslator.translate_procedure
+
+    def counted(self, proc):
+        visits.append(proc.name)
+        return original(self, proc)
+
+    monkeypatch.setattr(translator.SILTranslator, "translate_procedure", counted)
+    write(tmp_path, {"a.js": (
+        "function pick(a, b, c, d, e) {\n"
+        "  if (a !== null && !a.res) {\n"
+        "    return pick(null, a, b, c, d);\n"
+        "  }\n"
+        "  return [a, d];\n"
+        "}\n"
+        "function use(x) {\n"
+        "  return pick(x, 1, 2, 3, 4);\n"
+        "}\n"
+        "module.exports = { pick, use };\n"),
+        "b.js": "const { use } = require('./a');\nmodule.exports = (q) => use(q);\n"})
+    monkeypatch.chdir(tmp_path)
+    frame_main(["scan", ".", "--no-verify", "-f", "json", "--fail-on", "none"])
+    assert json.loads(capsys.readouterr().out)["scope"]["complete"] is True
+    assert visits.count("pick") < 2 * translator.IPA_WIDEN_AFTER + 4
+
+
 # ---- callable and default-exported functions --------------------------------------------------
 
 def test_js_callable_module(tmp_path):
