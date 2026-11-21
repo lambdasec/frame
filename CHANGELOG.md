@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.11] - 2026-11-22
+
 ### Added
 
 - **Frappe** (`python/frappe`): `@frappe.whitelist()` methods are entry points with their arguments as client data, DocType controller hooks (`validate`, `before_insert`, `on_update` ...) with the document's fields as client data, `frappe.form_dict` and `frappe.request` as request data, `frappe.db.sql` as a SQL sink, and document and database writes as data facts for the business-logic hunt. Frappe LMS's 102 whitelisted endpoints were invisible to Frame: its hunt planned no unit at all; now 155, with the vulnerable one ranked 4th.
@@ -11,6 +13,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 ### Fixed
 
 - **JavaScript parameter kinds are worked out once per function.** Whether a parameter holds an array was decided again, from every caller's argument, each time a call on it was typed; in a large CMS (Apostrophe) that was a fifth of the scan.
+
+- **The inter-procedural fixpoint settles on a function that calls itself with shifted parameters.** Apostrophe's passport-bridge has `return body(null, req, accessToken, refreshToken, profile)`: rebuilt from scratch on each visit, its summary cycled through which parameter reaches the return and was re-analysed over 2,000 times, spending the visit budget meant for the rest of the project. A summary that keeps changing is now joined with its previous value, so it only grows and settles; visits are also capped per procedure, and a path-condition join builds each formula's text once. Apostrophe's scan went from about 22 minutes (over an hour on some runs) to under 10.
 
 ## [1.1.10] - 2026-11-20
 
@@ -159,7 +163,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.10...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.11...HEAD
+[1.1.11]: https://github.com/lambdasec/frame/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/lambdasec/frame/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/lambdasec/frame/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/lambdasec/frame/compare/v1.1.7...v1.1.8
