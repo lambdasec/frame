@@ -6920,19 +6920,33 @@ class SILTranslator:
 
     def _proc_resource_kinds(self, proc) -> Set[str]:
         """The resource / database sink kinds this procedure's calls resolve to (resource_select,
-        resource_modify, sql, nosql, orm): what the business-logic hunt ranks a member by."""
+        resource_modify, sql, nosql, orm): what the business-logic hunt ranks a member by. Calls
+        written inside another call's arguments or a condition count too
+        (`check(await this.db.update(t).set(v), 1)`)."""
+        from .concurrency import _nested_calls
         out: Set[str] = set()
-        for instr in proc.get_all_instrs():
-            if not isinstance(instr, Call):
-                continue
-            spec = self.program.spec_for_call(instr)
-            if spec is None:
-                name = instr.get_full_name().strip('"') if hasattr(instr, "get_full_name") else ""
-                spec = self._spec_of_name(name) if name else None
+
+        def note(spec) -> None:
             kind = getattr(spec, "is_sink", None) if spec is not None else None
             kind = str(getattr(kind, "value", kind)) if kind is not None else None
             if kind in self._RESOURCE_SINK_KINDS:
                 out.add(kind)
+
+        for instr in proc.get_all_instrs():
+            if isinstance(instr, Call):
+                spec = self.program.spec_for_call(instr)
+                if spec is None:
+                    name = instr.get_full_name().strip('"') if hasattr(instr, "get_full_name") else ""
+                    spec = self._spec_of_name(name) if name else None
+                note(spec)
+            for value in vars(instr).values():
+                if type(value).__name__.startswith("Exp") or isinstance(value, (list, tuple)):
+                    for name in _nested_calls(value):
+                        if name and not name.startswith(("$", "<")):
+                            try:
+                                note(self._spec_of_name(name))
+                            except Exception:
+                                pass
         return out
 
     def _program_is_test(self) -> bool:

@@ -75,11 +75,19 @@ def _nested_calls(exp, depth: int = 0) -> Iterable[str]:
     """Names of calls written inside an argument (`F("n") + 1` in `update(n=...)`)."""
     if exp is None or depth > 12:
         return
+    if isinstance(exp, (list, tuple)):              # a Call's arguments are (exp, type) pairs
+        for e in exp:
+            yield from _nested_calls(e, depth + 1)
+        return
     if type(exp).__name__ == "ExpCall":
         func = getattr(exp, "func", None)
         name = str(getattr(func, "value", func) or getattr(exp, "name", "") or "")
-        if name:
+        # a method called on a call's result (`db.update(t).set(..)`) has no name of its own;
+        # the call it is chained on does
+        if name and "(" not in name:
             yield name.strip('"')
+        if type(func).__name__ == "ExpFieldAccess":
+            yield from _nested_calls(getattr(func, "base", None), depth + 1)
         for a in getattr(exp, "args", []) or []:
             yield from _nested_calls(a, depth + 1)
         return

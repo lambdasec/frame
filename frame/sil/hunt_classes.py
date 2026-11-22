@@ -274,12 +274,42 @@ def report_tool(cls: FlawClass, base: Dict[str, Any]) -> Dict[str, Any]:
 @lru_cache(maxsize=None)
 def credential_checks(path: Path = CREDENTIAL_CHECKS) -> Dict[str, Tuple[str, ...]]:
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    data.pop("bases", None)
+    return _id_lists(data, path, "call ids")
+
+
+@lru_cache(maxsize=None)
+def credential_bases(path: Path = CREDENTIAL_CHECKS) -> Dict[str, Tuple[str, ...]]:
+    """Library classes whose own methods compare a guess with a stored secret, per language."""
+    data = tomllib.loads(Path(path).read_text(encoding="utf-8")).get("bases") or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{Path(path).name}: [bases] must be a table of class id lists")
+    return _id_lists(data, path, "class ids")
+
+
+def _id_lists(data: Dict[str, Any], path: Path, what: str) -> Dict[str, Tuple[str, ...]]:
     out: Dict[str, Tuple[str, ...]] = {}
     for lang, ids in data.items():
         if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
-            raise ValueError(f"{Path(path).name}: {lang} must be a list of call ids")
+            raise ValueError(f"{Path(path).name}: {lang} must be a list of {what}")
         out[lang] = tuple(ids)
     return out
+
+
+def _inherits_credential_check(program, proc_name: str) -> bool:
+    """Is `proc_name` a method of a class built on a library class that checks credentials in
+    its own methods (`credential_bases`)? The class's resolved bases and the ones it inherits
+    through the project's own classes are compared."""
+    ids = credential_bases().get(_lang(program)) or ()
+    if not ids or "." not in proc_name:
+        return False
+    cls = proc_name.split("#", 1)[0].rsplit(".", 1)[0]
+    info = (getattr(program, "class_info", None) or {}).get(cls)
+    if info is None:
+        return False
+    lineage = [str(b) for b in (list(getattr(info, "canonical_bases", None) or [])
+                                + list(getattr(info, "project_bases", None) or []))]
+    return any(b == i or b.endswith("." + i) for b in lineage for i in ids)
 
 
 def _lang(program) -> str:
@@ -456,19 +486,28 @@ def _reached_files(ctx) -> Optional[set]:
     return out
 
 
+def _resolve(ctx, defs, file: str, proc_name: str, callee: str) -> Optional[Dict[str, Any]]:
+    """The project function a call names (`HuntContext.resolve_call`), else the one definition
+    of its name."""
+    if hasattr(ctx, "resolve_call"):
+        return ctx.resolve_call(file, proc_name, callee)
+    from frame.sil.hunt_units import simple_name
+    ds = defs.get(simple_name(callee)) or []
+    return ds[0] if len(ds) == 1 else None
+
+
 def _callee_data(ctx, file: str, proc_name: str) -> Tuple[bool, bool, bool]:
-    """Does a function this one calls (one hop, a name with one definition in the project) read,
+    """Does a function this one calls (one hop, resolved to one project function) read,
     write, or run a query that may write stored data? A route that stores through a helper in
     another file is server code."""
     reads = writes = may_write = False
     try:
         defs, calls = ctx.graph()
-        from frame.sil.hunt_units import simple_name
         for callee, _line in (calls.get((file, proc_name)) or [])[:40]:
-            ds = defs.get(simple_name(callee)) or []
-            if len(ds) != 1:
+            d = _resolve(ctx, defs, file, proc_name, callee)
+            if d is None:
                 continue
-            loc = ctx.locate(ds[0]["name"], ds[0]["file"] or None)
+            loc = ctx.locate(d["name"], d["file"] or None)
             if loc is None or loc.get("program") is None:
                 continue
             vf = (getattr(loc["program"], "value_facts", None) or {}).get(loc["proc"]) or {}
@@ -493,34 +532,54 @@ def _callee_credential(ctx, file: str, proc_name: str) -> bool:
     name with one definition in the project, compare a guess with a stored secret?"""
     try:
         defs, calls = ctx.graph()
-        from frame.sil.hunt_units import simple_name
-        memo = ctx.__dict__.setdefault("_credential_memo", {})
         seen = {(file, proc_name)}
         frontier = [(file, proc_name)]
         for _ in range(CREDENTIAL_DEPTH):
             nxt = []
             for key in frontier:
                 for callee, _line in (calls.get(key) or [])[:40]:
-                    ds = defs.get(simple_name(callee)) or []
-                    if len(ds) != 1:
+                    d = _resolve(ctx, defs, key[0], key[1], callee)
+                    if d is None:
                         continue
-                    ckey = (ds[0]["file"], ds[0]["name"])
+                    ckey = (d["file"], d["name"])
                     if ckey in seen:
                         continue
                     seen.add(ckey)
-                    if ckey not in memo:
-                        loc = ctx.locate(ds[0]["name"], ds[0]["file"] or None)
-                        proc = None
-                        if loc is not None and loc.get("program") is not None:
-                            proc = (getattr(loc["program"], "procedures", {}) or {}).get(loc["proc"])
-                        memo[ckey] = bool(proc is not None and _calls_credential_check(loc["program"], proc))
-                    if memo[ckey]:
+                    if _checks_credential_itself(ctx, ckey):
                         return True
                     nxt.append(ckey)
             frontier = nxt
     except Exception:
         pass
     return False
+
+
+def _checks_credential_itself(ctx, key: Tuple[str, str]) -> bool:
+    """Does the project function (file, name) itself call a credential check? Memoised."""
+    memo = ctx.__dict__.setdefault("_credential_memo", {})
+    if key not in memo:
+        loc = ctx.locate(key[1], key[0] or None)
+        proc = None
+        if loc is not None and loc.get("program") is not None:
+            proc = (getattr(loc["program"], "procedures", {}) or {}).get(loc["proc"])
+        memo[key] = bool(proc is not None and _calls_credential_check(loc["program"], proc))
+    return memo[key]
+
+
+def _credential_callers(ctx, file: str, proc_name: str) -> int:
+    """How many functions calling this one compare a guess with a stored secret themselves or
+    through their own callees. A write such a function makes is the attempt bookkeeping a
+    lockout depends on (Sync-in's `updateAccesses`, called by `logUser` after `bcrypt.compare`)."""
+    if not hasattr(ctx, "callers_of"):
+        return 0
+    n = 0
+    try:
+        for key in ctx.callers_of(file, proc_name)[:40]:
+            if _checks_credential_itself(ctx, key) or _callee_credential(ctx, key[0], key[1]):
+                n += 1
+    except Exception:
+        pass
+    return n
 
 
 def _file_facts(ctx, file: str, out: Dict[str, Any]) -> None:
@@ -548,6 +607,7 @@ def member_facts(ctx, member) -> Dict[str, Any]:
     writes, a credential check, whether it is an entry point and whether its file is test code.
     `known` is False when the engine has no program for it."""
     out = {"numeric": [], "reads": False, "writes": False, "may_write": False, "credential": False,
+           "credential_callers": 0,
            "known": False, "parsed": False,
            "entry": False, "test": False, "client": False, "browser": False, "view": False,
            "reached": True, "passes": False, "read_writes": [], "decided": []}
@@ -583,8 +643,11 @@ def member_facts(ctx, member) -> Dict[str, Any]:
             out["reads"], out["writes"], out["may_write"] = _callee_data(ctx, file, proc_name)
         out["numeric"] = _numeric_inputs(program, proc_name)
         out["client"] = bool(vf.get("entry")) or any(bool(v) for v in (vf.get("client") or {}).values())
-        out["credential"] = _calls_credential_check(program, proc) or (
+        out["credential"] = _calls_credential_check(program, proc) or \
+            _inherits_credential_check(program, proc_name) or (
             hasattr(ctx, "graph") and _callee_credential(ctx, file, proc_name))
+        if out["may_write"] and not out["credential"]:
+            out["credential_callers"] = _credential_callers(ctx, file, proc_name)
         out["browser"] = _browser_program(program, proc)
         out["view"] = bool(getattr(proc, "renders", False))
         out["passes"] = _passes_client_data(proc, vf)
@@ -688,6 +751,11 @@ def score(cls: FlawClass, unit, ctx) -> Tuple[float, List[str]]:
         if cred:
             s += 5
             why.append(f"{cred} member(s) compare a guess with a stored secret")
+        books = [f["credential_callers"] for f in live if f.get("credential_callers")]
+        if books:
+            s += 3
+            why.append(f"writes stored data for {max(books)} caller(s) that compare a guess with a "
+                       "stored secret (attempt counting)")
     return s, why
 
 
@@ -709,5 +777,5 @@ def corroboration(cls: FlawClass, finding: Dict[str, Any], checks: List[Dict[str
     return None
 
 
-__all__ = ["AUTHZ", "CLASSES", "FlawClass", "LOGIC", "corroboration", "credential_checks",
+__all__ = ["AUTHZ", "CLASSES", "FlawClass", "LOGIC", "corroboration", "credential_bases", "credential_checks",
            "member_facts", "parse", "report_tool", "score", "system_prompt"]

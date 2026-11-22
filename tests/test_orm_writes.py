@@ -191,3 +191,19 @@ def test_ef_core_context_write(tmp_path):
     services, writes = _facts(tmp_path)
     assert "CouponService.Redeem" in writes and "CouponService.Redeem" in services
     assert "CouponService.Look" not in writes
+
+
+def test_a_write_inside_another_call_s_argument_is_a_write(tmp_path):
+    # Sync-in: `dbCheckAffectedRows(await this.db.update(users).set(set)..., 1)`; the write is an
+    # expression in the argument, and the method chained on its result has no name of its own.
+    _write(tmp_path, {"q.ts": """
+        import { drizzle } from 'drizzle-orm/node-postgres';
+        import { check } from './u';
+        const db = drizzle(process.env.DATABASE_URL);
+        export class Q {
+            async nested(id: number) { check(await db.update(users).set({ a: 1 }), 1); }
+            async reads(id: number) { return check(1, 1); }
+        }
+    """, "u.ts": "export function check(r: any, n: number) { return r }\n"})
+    _, writes = _facts(tmp_path)
+    assert "Q.nested" in writes and "Q.reads" not in writes

@@ -308,10 +308,8 @@ def _nested_call_names(ins) -> List[str]:
     from frame.sil.concurrency import _nested_calls
     out: List[str] = []
     for value in vars(ins).values():
-        items = value if isinstance(value, (list, tuple)) else [value]
-        for v in items:
-            if type(v).__name__.startswith("Exp"):
-                out.extend(n for n in _nested_calls(v) if n and not n.startswith(("$", "<")))
+        if type(value).__name__.startswith("Exp") or isinstance(value, (list, tuple)):
+            out.extend(n for n in _nested_calls(value) if n and not n.startswith(("$", "<")))
     return out
 
 
@@ -331,6 +329,9 @@ class HuntContext:
         self.taught_text: List[str] = []
         self._workdir: Optional[str] = None
         self._graph: Optional[Tuple[Dict[str, List[Dict[str, Any]]], Dict[Tuple[str, str], List[Tuple[str, int]]]]] = None
+        self._canon: Dict[Tuple[str, str], Dict[str, str]] = {}
+        self._callers: Optional[Dict[Tuple[str, str], List[Tuple[str, str]]]] = None
+        self._programs_by_file: Dict[str, Any] = {}
 
     # -- lookup ---------------------------------------------------------------------------
     def handler(self, name: str, file: Optional[str] = None):
@@ -368,8 +369,11 @@ class HuntContext:
         if self._graph is None:
             defs: Dict[str, List[Dict[str, Any]]] = {}
             calls: Dict[Tuple[str, str], List[Tuple[str, int]]] = {}
+            canon: Dict[Tuple[str, str], Dict[str, str]] = {}
+            self._programs_by_file = {}
             for prog in self.programs:
                 pf = _program_file(prog, self.repo_root)
+                self._programs_by_file.setdefault(pf, prog)
                 for pname, proc in (getattr(prog, "procedures", {}) or {}).items():
                     loc = getattr(proc, "loc", None)
                     defs.setdefault(simple_name(pname), []).append(
@@ -391,14 +395,66 @@ class HuntContext:
                             if not callee or callee.startswith(("$", "<")):
                                 continue
                             out.append((callee, line))
+                            if getattr(ins, "canonical", None):
+                                canon.setdefault((pf, pname), {})[callee] = str(ins.canonical)
                     calls[(pf, pname)] = sorted(set(out), key=lambda c: (c[1], c[0]))
+            self._canon = canon
+            self._callers = None
             self._graph = (defs, calls)
         return self._graph
+
+    def resolve_call(self, file: str, proc: str, callee: str) -> Optional[Dict[str, Any]]:
+        """The project function a call in `proc` names, or None when it cannot be told: a name
+        with one definition, else the one definition the call's callee id names
+        (`../users.service.UsersManager.updateAccesses` beside `UsersQueries.updateAccesses`),
+        else, for `this.m` / `self.m`, the method of the caller's own class."""
+        defs, _ = self.graph()
+        ds = defs.get(simple_name(callee)) or []
+        if len(ds) <= 1:
+            return ds[0] if ds else None
+        cid = (self._canon.get((file, proc)) or {}).get(callee)
+        if not cid and callee.count(".") >= 2:
+            # a call written in an expression has no callee id: name it after its receiver's
+            # value (`this.usersQueries.m` inside a condition, the field typed `UsersQueries`)
+            receiver, _, method = callee.rpartition(".")
+            prog = self._programs_by_file.get(file)
+            if prog is not None:
+                try:
+                    from frame.sil.value_origins import origin_in_scope
+                    origin = origin_in_scope(prog, proc, receiver)
+                except Exception:
+                    origin = None
+                cid = f"{origin}.{method}" if origin else None
+        if cid:
+            hit = [d for d in ds if cid == d["name"] or cid.endswith("." + d["name"])]
+            if len(hit) == 1:
+                return hit[0]
+        head, _, member = callee.partition(".")
+        if head in ("this", "self") and member and "." not in member and "." in proc:
+            own = proc.rsplit(".", 1)[0] + "." + member
+            hit = [d for d in ds if d["file"] == file and d["name"] == own]
+            if len(hit) == 1:
+                return hit[0]
+        return None
+
+    def callers_of(self, file: str, name: str) -> List[Tuple[str, str]]:
+        """(file, procedure) of every function whose call `resolve_call` resolves to this one."""
+        if self._callers is None:
+            _, calls = self.graph()
+            rev: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+            for key, cs in calls.items():
+                for callee in {c for c, _ in cs}:
+                    d = self.resolve_call(key[0], key[1], callee)
+                    if d is not None and (d["file"], d["name"]) != key:
+                        rev.setdefault((d["file"], d["name"]), []).append(key)
+            self._callers = rev
+        return list(self._callers.get((file, name)) or [])
 
     def rebuild_index(self) -> None:
         from frame.sil.llm_hunt import build_index
         self.index = build_index(self.programs, self.raw_findings, self.repo_root)
         self._graph = None
+        self._callers = None
 
     # -- tools ----------------------------------------------------------------------------
     def handler_facts(self, name: str, file: Optional[str] = None) -> str:

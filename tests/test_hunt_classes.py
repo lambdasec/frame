@@ -854,3 +854,73 @@ def test_bruteforce_sees_a_password_check_written_inside_a_condition(tmp_path):
     login = _scouted({"name": "App.Web.Auth.Login", "file": "Web/Auth.cs", "role": "route"})
     s, why = score(CLASSES["bruteforce"], login, ctx)
     assert s > 0 and any("compare a guess with a stored secret" in w for w in why), why
+
+
+ATTEMPT_COUNTER = {
+    "src/users-queries.service.ts": (
+        "import { drizzle } from 'drizzle-orm/node-postgres';\n"
+        "import { check } from './utils';\n"
+        "const db = drizzle(process.env.DATABASE_URL);\n"
+        "export class UsersQueries {\n"
+        "  async updateAccesses(id: number, mode: string) {\n"
+        "    check(await db.update(users).set({ attempts: mode }), 1)\n"
+        "    return true\n  }\n"
+        "  async rename(id: number, name: string) {\n"
+        "    check(await db.update(users).set({ name }), 1)\n  }\n}\n"),
+    "src/utils.ts": "export function check(r: any, n: number) { return r }\n",
+    "src/users-manager.service.ts": (
+        "import bcrypt from 'bcryptjs';\n"
+        "import { UsersQueries } from './users-queries.service';\n"
+        "export class UsersManager {\n"
+        "  constructor(private readonly usersQueries: UsersQueries) {}\n"
+        "  async logUser(user: any, password: string) {\n"
+        "    const ok: boolean = await bcrypt.compare(password, user.password)\n"
+        "    this.updateAccesses(user, ok).catch((e: Error) => console.log(e))\n"
+        "    return ok\n  }\n"
+        "  async updateAccesses(user: any, ok: boolean) {\n"
+        "    if (!(await this.usersQueries.updateAccesses(user.id, ok ? 'reset' : 'increment'))) {\n"
+        "      throw new Error('not updated')\n    }\n  }\n"
+        "  async rename(user: any, name: string) {\n"
+        "    await this.usersQueries.rename(user.id, name)\n  }\n}\n"),
+}
+
+
+def test_bruteforce_ranks_the_attempt_counter_a_password_check_writes(tmp_path):
+    # Sync-in: the lockout flaw is in `UsersManager.updateAccesses`, which writes the failed-attempt
+    # count for `logUser` after `bcrypt.compare`. The write is nested in another call's argument,
+    # and `this.usersQueries.updateAccesses` shares its name with the caller (resolved by callee id).
+    _, ctx = _ctx(tmp_path, ATTEMPT_COUNTER)
+    counter = _scouted({"name": "UsersManager.updateAccesses", "file": "src/users-manager.service.ts",
+                        "role": "service"})
+    rename = _scouted({"name": "UsersManager.rename", "file": "src/users-manager.service.ts",
+                       "role": "service"})
+    s, why = score(CLASSES["bruteforce"], counter, ctx)
+    assert s > 0 and any("attempt counting" in w for w in why), why
+    assert score(CLASSES["bruteforce"], rename, ctx)[0] == 0
+
+
+WEBAUTHN_VIEW = {
+    "accounts/views.py": (
+        "from django.views.generic import View\n"
+        "from django_otp_webauthn.views import CompleteCredentialAuthenticationView\n\n"
+        "class SecondFactorMixin(View):\n"
+        "    def second_factor_completed(self, device):\n        return device\n\n"
+        "class CompleteView(SecondFactorMixin, CompleteCredentialAuthenticationView):\n"
+        "    def complete_auth(self, device):\n        return self.second_factor_completed(device)\n\n"
+        "class ProfileView(SecondFactorMixin):\n"
+        "    def get(self, request):\n        return request.user\n"),
+    "accounts/urls.py": ("from django.urls import path\nfrom accounts.views import CompleteView, ProfileView\n"
+                         "urlpatterns = [path('webauthn/', CompleteView.as_view()),\n"
+                         "               path('profile/', ProfileView.as_view())]\n"),
+}
+
+
+def test_bruteforce_sees_a_check_the_view_inherits_from_its_library_base(tmp_path):
+    # Weblate: the WebAuthn view verifies the assertion in django-otp-webauthn's own methods;
+    # nothing the application writes calls a check.
+    _, ctx = _ctx(tmp_path, WEBAUTHN_VIEW)
+    view = _scouted({"name": "CompleteView.complete_auth", "file": "accounts/views.py", "role": "route"})
+    other = _scouted({"name": "ProfileView.get", "file": "accounts/views.py", "role": "route"})
+    s, why = score(CLASSES["bruteforce"], view, ctx)
+    assert s > 0 and any("compare a guess with a stored secret" in w for w in why), why
+    assert score(CLASSES["bruteforce"], other, ctx)[0] == 0
