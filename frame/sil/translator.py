@@ -1059,6 +1059,14 @@ class SILTranslator:
         # procedure -> list of (scoped_on_path, loc) for each `return True` grant, for the
         # authorization-soundness check (_authorization_soundness_checks).
         self._grant_paths: Dict[str, List[Tuple[bool, Location]]] = {}
+        # Reset per program by translate_program, but a project's fixpoint translates
+        # procedures before that runs (wger crashed in the soundness check on a missing list).
+        self._authz_soundness: List[Dict[str, Any]] = []
+        self._service_functions: Dict[str, Tuple[bool, bool, Location]] = {}
+        self._authz_gates: Dict[str, Location] = {}
+        self._resource_proc_callees: set = set()
+        self._path_guards: Dict[str, Dict[str, Any]] = {}
+        self._value_facts: Dict[str, Dict[str, Any]] = {}
         # CWE-401 leak bookkeeping: allocation identity -> its source location, so
         # a leak reported when an allocation is lost or outlives its scope points
         # at the allocation site rather than the point of loss.

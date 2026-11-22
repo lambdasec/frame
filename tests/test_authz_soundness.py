@@ -121,3 +121,25 @@ def test_django_get_object_or_404_reaches_a_resource():
     # A project's own function that happens to share the name is NOT a resource select.
     assert not reaches("def get_object_or_404(m, **k):\n    return 1\n"
                        "def view(request, pk):\n    return get_object_or_404(Thing, pk=pk)\n")
+
+
+def test_soundness_check_runs_inside_a_project_fixpoint(tmp_path):
+    # A project's fixpoint translates procedures before translate_program sets up its per-program
+    # state; the soundness check appended to a list that did not exist yet (wger crashed).
+    (tmp_path / "access.py").write_text(
+        HEAD +
+        "def has_access(file):\n"
+        "    if file.user_id == current_user.id:\n"
+        "        return True\n"
+        "    for sc in lookup_shared(file.id):\n"
+        "        if sc.active:\n"
+        "            return True\n"
+        "    return False\n")
+    (tmp_path / "views.py").write_text(
+        "from access import has_access\n\n"
+        "def check(file):\n"
+        "    return has_access(file)\n")
+    results = list(FrameScanner(language="python", verify=False).scan_directory(
+        str(tmp_path), None, project_root=str(tmp_path), cross_file=True))
+    cwes = [v.cwe_id for r in results for v in r.vulnerabilities]
+    assert "CWE-863" in cwes, cwes
