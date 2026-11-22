@@ -303,6 +303,18 @@ def _program_file(program, root: str) -> str:
     return ""
 
 
+def _nested_call_names(ins) -> List[str]:
+    """Names of the calls written inside an instruction's expressions."""
+    from frame.sil.concurrency import _nested_calls
+    out: List[str] = []
+    for value in vars(ins).values():
+        items = value if isinstance(value, (list, tuple)) else [value]
+        for v in items:
+            if type(v).__name__.startswith("Exp"):
+                out.extend(n for n in _nested_calls(v) if n and not n.startswith(("$", "<")))
+    return out
+
+
 class HuntContext:
     """What the hunt's tools work over: the engine index, the translated programs, the raw
     symbolic findings, and the packs taught during this run. Shared read-only by the unit
@@ -365,6 +377,11 @@ class HuntContext:
                     out: List[Tuple[str, int]] = []
                     for node in (getattr(proc, "nodes", {}) or {}).values():
                         for ins in getattr(node, "instrs", []) or []:
+                            line = getattr(getattr(ins, "loc", None), "line", 0) or 0
+                            # a call written inside a condition, a value or an argument is an
+                            # expression, not a Call (`if (!s.VerifyPassword(p))`)
+                            for callee in _nested_call_names(ins):
+                                out.append((callee, line))
                             if type(ins).__name__ != "Call":
                                 continue
                             try:
@@ -373,7 +390,7 @@ class HuntContext:
                                 continue
                             if not callee or callee.startswith(("$", "<")):
                                 continue
-                            out.append((callee, getattr(getattr(ins, "loc", None), "line", 0) or 0))
+                            out.append((callee, line))
                     calls[(pf, pname)] = sorted(set(out), key=lambda c: (c[1], c[0]))
             self._graph = (defs, calls)
         return self._graph

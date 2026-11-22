@@ -803,3 +803,54 @@ def test_a_tsx_file_is_parsed_with_the_tsx_grammar(tmp_path):
     prog = next(p for p in ctx.programs if "Page" in p.procedures)
     assert prog.procedures["Page"].renders
     assert getattr(prog, "syntax_error_line", None) is None
+
+
+PASSWORD_HELPERS = {
+    "app/security.py": ("from werkzeug.security import check_password_hash\n\n"
+                        "def _verify(stored, guess):\n    return check_password_hash(stored, guess)\n\n"
+                        "def password_ok(user, guess):\n    return _verify(user.password_hash, guess)\n"),
+    "app/views.py": ("from flask import Flask, request\nfrom app.security import password_ok\n"
+                     "app = Flask(__name__)\n\n"
+                     "@app.route('/login', methods=['POST'])\n"
+                     "def login():\n"
+                     "    user = find_user(request.form['name'])\n"
+                     "    if password_ok(user, request.form['password']):\n        return 'ok'\n"
+                     "    return 'no', 401\n\n"
+                     "@app.route('/ping')\n"
+                     "def ping():\n    return 'pong'\n"),
+}
+
+
+def test_bruteforce_follows_a_password_check_through_the_application_s_helpers(tmp_path):
+    # The route verifies the guess through two project helpers before the library call
+    # (duplicati: VerifyWebserverPassword -> PbkdfConfig.VerifyPassword -> FixedTimeEquals).
+    _, ctx = _ctx(tmp_path, PASSWORD_HELPERS)
+    login = _scouted({"name": "login", "file": "app/views.py", "role": "route"})
+    ping = _scouted({"name": "ping", "file": "app/views.py", "role": "route"})
+    s, why = score(CLASSES["bruteforce"], login, ctx)
+    assert s > 0 and any("compare a guess with a stored secret" in w for w in why)
+    assert score(CLASSES["bruteforce"], ping, ctx)[0] == 0
+
+
+CSHARP_PASSWORD = {
+    "Server/Settings.cs": ("using System;\nusing System.Security.Cryptography;\n\nnamespace App.Server\n{\n"
+                           "    public class Settings\n    {\n        public string Hash;\n"
+                           "        public bool VerifyPassword(string password)\n"
+                           "            => CryptographicOperations.FixedTimeEquals(Convert.FromBase64String(Hash), "
+                           "Convert.FromBase64String(password));\n    }\n}\n"),
+    "Web/Auth.cs": ("using App.Server;\n\nnamespace App.Web\n{\n    public class Auth\n    {\n"
+                    "        private Settings settings;\n"
+                    "        public string Login(string password)\n        {\n"
+                    "            if (!settings.VerifyPassword(password))\n"
+                    "                throw new UnauthorizedAccessException(\"no\");\n"
+                    "            return \"token\";\n        }\n    }\n}\n"),
+}
+
+
+def test_bruteforce_sees_a_password_check_written_inside_a_condition(tmp_path):
+    # `if (!settings.VerifyPassword(p))` is an expression in the branch condition, not a Call, and
+    # the helper's `CryptographicOperations.FixedTimeEquals` is resolved through its using.
+    _, ctx = _ctx(tmp_path, CSHARP_PASSWORD)
+    login = _scouted({"name": "App.Web.Auth.Login", "file": "Web/Auth.cs", "role": "route"})
+    s, why = score(CLASSES["bruteforce"], login, ctx)
+    assert s > 0 and any("compare a guess with a stored secret" in w for w in why), why

@@ -482,6 +482,47 @@ def _callee_data(ctx, file: str, proc_name: str) -> Tuple[bool, bool, bool]:
     return reads, writes, may_write or writes
 
 
+# How many project calls deep a credential check is looked for: an endpoint verifies a password
+# through the application's own helpers (duplicati: `VerifyWebserverPassword` ->
+# `PbkdfConfig.VerifyPassword` -> `CryptographicOperations.FixedTimeEquals`).
+CREDENTIAL_DEPTH = 3
+
+
+def _callee_credential(ctx, file: str, proc_name: str) -> bool:
+    """Does a function this one calls, through at most CREDENTIAL_DEPTH project calls each to a
+    name with one definition in the project, compare a guess with a stored secret?"""
+    try:
+        defs, calls = ctx.graph()
+        from frame.sil.hunt_units import simple_name
+        memo = ctx.__dict__.setdefault("_credential_memo", {})
+        seen = {(file, proc_name)}
+        frontier = [(file, proc_name)]
+        for _ in range(CREDENTIAL_DEPTH):
+            nxt = []
+            for key in frontier:
+                for callee, _line in (calls.get(key) or [])[:40]:
+                    ds = defs.get(simple_name(callee)) or []
+                    if len(ds) != 1:
+                        continue
+                    ckey = (ds[0]["file"], ds[0]["name"])
+                    if ckey in seen:
+                        continue
+                    seen.add(ckey)
+                    if ckey not in memo:
+                        loc = ctx.locate(ds[0]["name"], ds[0]["file"] or None)
+                        proc = None
+                        if loc is not None and loc.get("program") is not None:
+                            proc = (getattr(loc["program"], "procedures", {}) or {}).get(loc["proc"])
+                        memo[ckey] = bool(proc is not None and _calls_credential_check(loc["program"], proc))
+                    if memo[ckey]:
+                        return True
+                    nxt.append(ckey)
+            frontier = nxt
+    except Exception:
+        pass
+    return False
+
+
 def _file_facts(ctx, file: str, out: Dict[str, Any]) -> None:
     """For a member the engine parsed the file of but has no procedure for by that name (a
     method written as a wrapped class field, `getRole = computedFn(() => ...)`): what the file
@@ -542,7 +583,8 @@ def member_facts(ctx, member) -> Dict[str, Any]:
             out["reads"], out["writes"], out["may_write"] = _callee_data(ctx, file, proc_name)
         out["numeric"] = _numeric_inputs(program, proc_name)
         out["client"] = bool(vf.get("entry")) or any(bool(v) for v in (vf.get("client") or {}).values())
-        out["credential"] = _calls_credential_check(program, proc)
+        out["credential"] = _calls_credential_check(program, proc) or (
+            hasattr(ctx, "graph") and _callee_credential(ctx, file, proc_name))
         out["browser"] = _browser_program(program, proc)
         out["view"] = bool(getattr(proc, "renders", False))
         out["passes"] = _passes_client_data(proc, vf)

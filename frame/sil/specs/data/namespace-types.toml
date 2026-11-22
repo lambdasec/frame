@@ -46,7 +46,8 @@
 "Microsoft.Security.Application" = ["Encoder"]
 "System.Xml" = ["XmlDocument", "XmlReader", "XmlTextReader", "XmlReaderSettings"]
 "System.Security.Cryptography" = ["MD5", "SHA1", "SHA256", "DES", "TripleDES", "AES", "Aes", "RSA",
-                                  "RNGCryptoServiceProvider", "MD5CryptoServiceProvider", "SHA1CryptoServiceProvider"]
+                                  "RNGCryptoServiceProvider", "MD5CryptoServiceProvider", "SHA1CryptoServiceProvider",
+                                  "CryptographicOperations"]
 "System.Runtime.Serialization.Formatters.Binary" = ["BinaryFormatter"]
 "System.Reflection" = ["Assembly", "MethodInfo"]
 "Microsoft.AspNetCore.Mvc" = ["Controller", "ControllerBase", "IUrlHelper", "RedirectResult", "LocalRedirectResult",
