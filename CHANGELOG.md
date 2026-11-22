@@ -4,6 +4,13 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.1.12] - 2026-11-22
+
+### Fixed
+
+- **A cross-file scan no longer crashes when the authorization-soundness check fires during the project's fixpoint.** The fixpoint translates procedures before the per-program tables are set up, so a project with an unsound grant helper called from another file stopped with an `AttributeError` (wger).
+- **The business-logic hunt's `bruteforce` class finds credential checks behind the application's own helpers.** A login handler that verifies a password through up to three project functions (`password_ok` -> `_verify` -> `check_password_hash`), or through a call written inside a condition (`if (!settings.VerifyPassword(p))`), now counts as checking a credential; `CryptographicOperations` is known as a `System.Security.Cryptography` type. Duplicati's vulnerable login, never audited before, now ranks 4th.
+
 ## [1.1.11] - 2026-11-22
 
 ### Added
@@ -163,7 +170,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.11...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.12...HEAD
+[1.1.12]: https://github.com/lambdasec/frame/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/lambdasec/frame/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/lambdasec/frame/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/lambdasec/frame/compare/v1.1.8...v1.1.9
