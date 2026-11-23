@@ -36,3 +36,13 @@ call = ["mongoose.Model.distinct", "mongoose.Query.distinct"]
 args = [1]
 kind = "nosql"
 description = "Mongoose distinct filter"
+
+# Update operators the server applies to the stored document (`{ $inc: { stock: -1 } }`).
+# https://mongoosejs.com/docs/api/model.html#Model.updateOne()
+# https://www.mongodb.com/docs/manual/reference/operator/update/
+[[concurrency]]
+call = ["mongoose.Model.updateOne", "mongoose.Model.updateMany", "mongoose.Model.update",
+        "mongoose.Model.findOneAndUpdate", "mongoose.Model.findByIdAndUpdate", "mongoose.Model.bulkWrite",
+        "mongoose.Query.updateOne", "mongoose.Query.updateMany", "mongoose.Query.findOneAndUpdate"]
+keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
+kind = "atomic"

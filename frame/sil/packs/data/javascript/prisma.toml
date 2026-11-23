@@ -27,3 +27,21 @@ call = ["@prisma/client.PrismaClient.*.create", "@prisma/client.PrismaClient.*.c
         "@prisma/client.PrismaClient.*.deleteMany"]
 kind = "resource_modify"
 description = "Prisma model write"
+
+# An update the database applies to the stored value (`data: { stock: { decrement: 1 } }`, an
+# atomic number operation) cannot lose a concurrent request's change.
+# https://www.prisma.io/docs/orm/reference/prisma-client-reference#atomic-number-operations
+[[concurrency]]
+call = ["@prisma/client.PrismaClient.*.update", "@prisma/client.PrismaClient.*.updateMany",
+        "@prisma/client.PrismaClient.*.updateManyAndReturn", "@prisma/client.PrismaClient.*.upsert"]
+keys = ["increment", "decrement", "multiply", "divide"]
+kind = "atomic"
+
+# Calls that read stored rows: for the read-then-write check only, never a taint sink.
+# https://www.prisma.io/docs/orm/reference/prisma-client-reference#model-queries
+[[concurrency]]
+call = ["@prisma/client.PrismaClient.*.findUnique", "@prisma/client.PrismaClient.*.findUniqueOrThrow",
+        "@prisma/client.PrismaClient.*.findFirst", "@prisma/client.PrismaClient.*.findFirstOrThrow",
+        "@prisma/client.PrismaClient.*.findMany", "@prisma/client.PrismaClient.*.count",
+        "@prisma/client.PrismaClient.*.aggregate", "@prisma/client.PrismaClient.*.groupBy"]
+kind = "read"

@@ -751,6 +751,31 @@ class PythonFrontend:
             stack.extend(n.children)
         return table.finish()
 
+    def _literal_keys(self, call_node: TSNode) -> Optional[List[str]]:
+        """String keys of the dict literals written in the call's arguments, nested ones too
+        (`update_one(q, {"$inc": {"stock": -1}})` -> $inc, stock): `Call.literal_keys`."""
+        args_node = call_node.child_by_field_name("arguments")
+        out: List[str] = []
+        stack = [(c, 0) for c in (args_node.named_children if args_node else [])]
+        while stack and len(out) < 64:
+            node, depth = stack.pop()
+            if depth > 6:
+                continue
+            if node.type == "keyword_argument":
+                value = node.child_by_field_name("value")
+                if value is not None:
+                    stack.append((value, depth))
+            elif node.type == "dictionary":
+                for pair in node.named_children:
+                    k, v = pair.child_by_field_name("key"), pair.child_by_field_name("value")
+                    if pair.type == "pair" and k is not None and k.type == "string":
+                        out.append(self._get_string_content(k))
+                    if v is not None:
+                        stack.append((v, depth + 1))
+            elif node.type in ("list", "tuple"):
+                stack.extend((c, depth + 1) for c in node.named_children)
+        return out or None
+
     def _dict_kwargs(self, call_node: TSNode) -> Optional[Dict[str, Dict[str, str]]]:
         """Keyword arguments written as a dict literal, with their string-keyed literal entries
         (`options={"verify_signature": False}` -> {"options": {"verify_signature": "False"}})."""
@@ -1796,7 +1821,8 @@ class PythonFrontend:
             func=ExpConst.string(func_name),
             args=args_exp,
             kwarg_names=self._kwarg_names(call_node),
-            dict_kwargs=self._dict_kwargs(call_node)
+            dict_kwargs=self._dict_kwargs(call_node),
+            literal_keys=self._literal_keys(call_node)
         )
         instrs.append(call_instr)
 
@@ -1912,7 +1938,8 @@ class PythonFrontend:
                     func=ExpConst.string(func_name),
                     args=args_exp,
                     kwarg_names=self._kwarg_names(n),
-                    dict_kwargs=self._dict_kwargs(n)
+                    dict_kwargs=self._dict_kwargs(n),
+                    literal_keys=self._literal_keys(n)
                 )
                 instrs.append(call_instr)
 
@@ -2008,7 +2035,8 @@ class PythonFrontend:
             func=ExpConst.string(func_name),
             args=args_exp,
             kwarg_names=self._kwarg_names(call_node),
-            dict_kwargs=self._dict_kwargs(call_node)
+            dict_kwargs=self._dict_kwargs(call_node),
+            literal_keys=self._literal_keys(call_node)
         )
         instrs.append(call_instr)
 

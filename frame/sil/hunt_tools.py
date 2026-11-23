@@ -346,12 +346,17 @@ class HuntContext:
             hs = [h for h in hs if h.file == file or h.file.endswith("/" + file)] or hs
         return hs[0] if hs else None
 
-    def locate(self, name: str, file: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """A handler or any project function: {program, proc, name, file, line, end_line}."""
+    def locate(self, name: str, file: Optional[str] = None,
+               line: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """A handler or any project function: {program, proc, name, file, line, end_line}. With
+        `line`, the one whose body holds it wins (two classes' `post` in one file)."""
         h = self.handler(name, file)
+        hloc = None
         if h is not None and getattr(h, "program", None) is not None:
-            return {"program": h.program, "proc": h.name, "name": h.name, "file": h.file,
+            hloc = {"program": h.program, "proc": h.name, "name": h.name, "file": h.file,
                     "line": h.line, "end_line": h.end_line or h.line, "handler": h}
+            if not line or hloc["line"] <= int(line) <= hloc["end_line"]:
+                return hloc
         want = simple_name(name)
         found = []
         for prog in self.programs:
@@ -367,6 +372,12 @@ class HuntContext:
                                   "handler": h})
         exact = [f for f in found if f["name"] == name]
         pick = (exact or found)
+        if line:
+            inside = [f for f in pick if f["line"] <= int(line) <= (f["end_line"] or f["line"])]
+            if inside:
+                return inside[0]
+        if hloc is not None:
+            return hloc
         return pick[0] if pick else None
 
     def graph(self):
@@ -605,7 +616,7 @@ class HuntContext:
                            "note": "matched by name across the project"})
 
     def guards(self, name: str, line: Optional[int] = None, file: Optional[str] = None) -> str:
-        loc = self.locate(name, file)
+        loc = self.locate(name, file, line)
         if loc is None:
             return f"ERROR: no handler or function named {name!r}"
         try:
@@ -635,7 +646,7 @@ class HuntContext:
 
     def check(self, name: str, line: int, kind: str, pattern: str = "",
               file: Optional[str] = None, var: str = "", bound: Any = None) -> str:
-        loc = self.locate(name, file)
+        loc = self.locate(name, file, line)
         if loc is None:
             return json.dumps({"verdict": "unknown", "reason": f"no handler or function named {name!r}",
                                "witness": []})

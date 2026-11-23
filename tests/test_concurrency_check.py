@@ -203,3 +203,180 @@ def test_check_then_act_is_told_apart_from_a_plain_read_then_write(tmp_path):
     prog = next(p for p in q.ctx.programs if "redeem" in p.procedures)
     assert decided_read_writes(prog, "redeem") == [(4, 6, 8)]
     assert decided_read_writes(prog, "rename") == []
+
+
+# -- protections written as data or SQL text -------------------------------------------------
+
+def test_a_prisma_atomic_number_operation_is_proved_and_a_computed_value_refuted(tmp_path):
+    files = {"stock.ts": """
+        import { PrismaClient } from '@prisma/client';
+        const prisma = new PrismaClient();
+        export async function take(id: number) {
+            const item = await prisma.item.findUnique({ where: { id } });
+            await prisma.item.update({ where: { id }, data: { stock: { decrement: 1 } } });
+        }
+        export async function takeComputed(id: number) {
+            const item = await prisma.item.findUnique({ where: { id } });
+            await prisma.item.update({ where: { id }, data: { stock: item.stock - 1 } });
+        }
+    """}
+    assert _check(tmp_path, files, "take", 5)["verdict"] == "proved"
+    r = _check(tmp_path, files, "takeComputed", 9)
+    assert r["verdict"] == "refuted", r
+
+
+def test_a_mongo_update_operator_is_proved_and_a_set_of_a_read_value_refuted(tmp_path):
+    files = {"shop/stock.py": """
+        from pymongo import MongoClient
+
+        client = MongoClient()
+        items = client.shop.items
+
+
+        def take(item_id):
+            doc = items.find_one({"_id": item_id})
+            items.update_one({"_id": item_id}, {"$inc": {"stock": -1}})
+
+
+        def take_set(item_id):
+            doc = items.find_one({"_id": item_id})
+            items.update_one({"_id": item_id}, {"$set": {"stock": doc["stock"] - 1}})
+    """}
+    assert _check(tmp_path, files, "take", 9)["verdict"] == "proved"
+    r = _check(tmp_path, files, "take_set", 14)
+    assert r["verdict"] == "refuted", r
+
+
+SQL_STOCK = {"shop/stock.py": """
+    import sqlite3
+
+    conn = sqlite3.connect("shop.db")
+
+
+    def take(item_id):
+        cur = conn.cursor()
+        cur.execute("SELECT stock FROM items WHERE id = ?", (item_id,))
+        cur.execute("UPDATE items SET stock = stock - 1 WHERE id = ?", (item_id,))
+
+
+    def take_value(item_id):
+        cur = conn.cursor()
+        row = cur.execute("SELECT stock FROM items WHERE id = ?", (item_id,)).fetchone()
+        cur.execute("UPDATE items SET stock = ? WHERE id = ?", (row[0] - 1, item_id))
+
+
+    def take_locked(item_id):
+        cur = conn.cursor()
+        row = cur.execute("SELECT stock FROM items WHERE id = ? FOR UPDATE", (item_id,)).fetchone()
+        cur.execute("UPDATE items SET stock = ? WHERE id = ?", (row[0] - 1, item_id))
+
+
+    def redeem(code):
+        cur = conn.cursor()
+        cur.execute("SELECT used FROM coupons WHERE code = ?", (code,))
+        sql = "UPDATE coupons SET used = 1 WHERE code = ? AND used = 0"
+        cur.execute(sql, (code,))
+"""}
+
+
+def test_sql_that_computes_from_the_column_or_locks_first_is_proved(tmp_path):
+    assert _check(tmp_path, SQL_STOCK, "take", 9)["verdict"] == "proved"
+    r = _check(tmp_path, SQL_STOCK, "take_value", 15)
+    assert r["verdict"] == "refuted", r
+    assert _check(tmp_path, SQL_STOCK, "take_locked", 21)["verdict"] == "proved"
+    # a compare-and-set held in a local: the WHERE re-checks the column the statement sets
+    assert _check(tmp_path, SQL_STOCK, "redeem", 28)["verdict"] == "proved"
+
+
+def test_sequelize_models_increment_and_lock(tmp_path):
+    files = {"wallet.js": """
+        const { Sequelize, Model, DataTypes } = require('sequelize');
+        const sequelize = new Sequelize('sqlite::memory:');
+        class Wallet extends Model {}
+        Wallet.init({ balance: DataTypes.INTEGER }, { sequelize });
+        async function spend(id, amt) {
+          const w = await Wallet.findOne({ where: { id } });
+          await Wallet.increment('balance', { by: -amt, where: { id } });
+        }
+        async function spendComputed(id, amt) {
+          const w = await Wallet.findOne({ where: { id } });
+          await Wallet.update({ balance: w.balance - amt }, { where: { id } });
+        }
+        async function spendLocked(id, amt, t) {
+          const w = await Wallet.findOne({ where: { id }, lock: true, transaction: t });
+          await Wallet.update({ balance: w.balance - amt }, { where: { id }, transaction: t });
+        }
+        module.exports = { spend, spendComputed, spendLocked };
+    """}
+    assert _check(tmp_path, files, "spend", 7)["verdict"] == "proved"
+    r = _check(tmp_path, files, "spendComputed", 11)
+    assert r["verdict"] == "refuted", r
+    assert _check(tmp_path, files, "spendLocked", 15)["verdict"] == "proved"
+
+
+def test_sqlalchemy_with_for_update_and_column_expressions(tmp_path):
+    files = {"bank/service.py": """
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+        from bank.models import Wallet
+
+
+        def spend(session: Session, wid, amt):
+            w = session.query(Wallet).filter_by(id=wid).one()
+            w.balance = w.balance - amt
+            session.commit()
+
+
+        def spend_locked(session: Session, wid, amt):
+            w = session.query(Wallet).filter_by(id=wid).with_for_update().one()
+            w.balance = w.balance - amt
+            session.commit()
+
+
+        def spend_in_sql(session: Session, wid, amt):
+            w = session.query(Wallet).filter_by(id=wid).one()
+            session.execute(update(Wallet).where(Wallet.id == wid).values(balance=Wallet.balance - amt))
+            session.commit()
+
+
+        def spend_value(session: Session, wid, amt):
+            w = session.query(Wallet).filter_by(id=wid).one()
+            session.execute(update(Wallet).where(Wallet.id == wid).values(balance=w.balance - amt))
+    """}
+    r = _check(tmp_path, files, "spend", 9)
+    assert r["verdict"] == "refuted", r
+    assert _check(tmp_path, files, "spend_locked", 15)["verdict"] == "proved"
+    assert _check(tmp_path, files, "spend_in_sql", 20)["verdict"] == "proved"
+    r = _check(tmp_path, files, "spend_value", 26)
+    assert r["verdict"] != "proved", r
+
+
+def test_concurrency_keys_and_write_entries_are_validated():
+    head = {"pack": {"name": "x", "language": "python"}}
+    pack = parse_pack({**head, "concurrency": [{"call": ["a.update"], "kind": "atomic", "keys": ["$inc"]},
+                                              {"call": ["a.commit"], "kind": "write"},
+                                              {"call": ["a.values"], "kind": "atomic", "self_reference": True}]})
+    assert [e["kind"] for e in pack.concurrency] == ["atomic", "write", "atomic"]
+    with pytest.raises(PackError):
+        parse_pack({**head, "concurrency": [{"call": ["a.b"], "kind": "atomic", "self_reference": "yes"}]})
+
+
+def test_a_line_picks_the_method_among_same_named_ones(tmp_path):
+    files = {**MODELS, "shop/views.py": """
+        from shop.models import Coupon
+
+
+        class First:
+            def post(self, request, cid):
+                c = Coupon.objects.get(id=cid)
+                return c
+
+
+        class Second:
+            def post(self, request, cid):
+                c = Coupon.objects.get(id=cid)
+                c.uses = c.uses + 1
+                c.save()
+    """}
+    r = _check(tmp_path, files, "post", 14)
+    assert r["verdict"] == "refuted", r

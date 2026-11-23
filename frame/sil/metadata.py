@@ -408,6 +408,8 @@ def annotate_program_calls(program, table: ImportTable,
                         instr.canonical = inherited
                 if instr.canonical is None and program.language == "java":
                     instr.canonical = _java_qualified_member(proc, func)
+                if instr.canonical is None and program.language in ("javascript", "typescript"):
+                    instr.canonical = _js_inherited_static(program, proc, func)
 
 
 def _java_inherited_method(program, proc, func: str, table: ImportTable, local_types: Dict[str, str]) -> Optional[str]:
@@ -433,6 +435,38 @@ def _java_inherited_method(program, proc, func: str, table: ImportTable, local_t
             continue
         qualified = qualify_type("java", bases[0], table, local_types)
         return f"{qualified}.{func}" if qualified else None
+    return None
+
+
+def _js_inherited_static(program, proc, func: str) -> Optional[str]:
+    """JavaScript: `C.m(...)` on a class the file declares, when neither it nor a base declared in
+    the file has a method `m`, is the static method its nearest library base provides
+    (`class Wallet extends Model` with Sequelize's `Model`: `Wallet.findOne` is
+    `sequelize.Model.findOne`), as the prototype chain resolves it. A head the procedure binds
+    itself (a parameter or local of that name) is not the class."""
+    head, dot, member = func.partition(".")
+    if not dot or "." in member or not member.isidentifier():
+        return None
+    infos = getattr(program, "class_info", None) or {}
+    if head not in infos or head in {str(p) for p, _ in proc.params}:
+        return None
+
+    def declares(cls: str) -> bool:
+        return any(p.class_name and p.class_name.rsplit(".", 1)[-1] == cls and p.simple_name == member
+                   for p in program.procedures.values())
+    current, seen = head, set()
+    while current in infos and current not in seen:
+        seen.add(current)
+        if declares(current):
+            return None
+        info = infos[current]
+        if not info.bases:
+            return None
+        if info.bases[0] in infos:
+            current = info.bases[0]
+            continue
+        base = (info.canonical_bases or [None])[0]
+        return f"{base}.{member}" if base and base != info.bases[0] else None
     return None
 
 

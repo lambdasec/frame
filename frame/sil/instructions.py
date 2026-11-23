@@ -610,6 +610,11 @@ class Call(Instr):
     # keyword arguments written as a dict literal: keyword -> {string key: literal value as written}
     # (`options={"verify_signature": False}`), which the argument expression itself does not keep
     dict_kwargs: Optional[Dict[str, Dict[str, str]]] = None
+    # Keys written in object / dict literals inside the arguments, at any depth, as written
+    # (`update({ where: {...}, data: { n: { decrement: 1 } } })` -> where, data, n, decrement):
+    # what an update operator written as data says (`$inc`, Prisma's `increment`), which the
+    # lowered argument values do not keep. None when there are none.
+    literal_keys: Optional[List[str]] = None
     # A ProcSpec a framework pack resolved for THIS call (canonical id, then
     # name), already merged over the built-in spec; Program.spec_for_call
     # returns it before any name lookup. See frame/sil/packs.

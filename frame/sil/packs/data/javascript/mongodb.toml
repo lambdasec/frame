@@ -39,3 +39,12 @@ call = ["mongodb.Collection.distinct"]
 args = [1]
 kind = "nosql"
 description = "MongoDB distinct filter"
+
+# Update operators the server applies to the stored document (`{ $inc: { stock: -1 } }`, array
+# pushes and pulls) cannot lose a concurrent request's change; `$set` of a value read earlier can.
+# https://www.mongodb.com/docs/manual/reference/operator/update/
+[[concurrency]]
+call = ["mongodb.Collection.updateOne", "mongodb.Collection.updateMany", "mongodb.Collection.update",
+        "mongodb.Collection.findOneAndUpdate", "mongodb.Collection.bulkWrite"]
+keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
+kind = "atomic"

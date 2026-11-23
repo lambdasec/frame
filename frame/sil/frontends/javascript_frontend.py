@@ -3558,6 +3558,7 @@ class JavaScriptFrontend:
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
             arg_forms=self._call_arg_forms(func_name, args),
+            literal_keys=self._literal_keys(args),
         )
         instrs.append(call_instr)
         instrs.extend(self._call_value_effects(call_node, func_name, loc))
@@ -3943,6 +3944,7 @@ class JavaScriptFrontend:
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
             arg_forms=self._call_arg_forms(func_name, args),
+            literal_keys=self._literal_keys(args),
         )
         instrs.append(call_instr)
         instrs.extend(self._call_value_effects(call_node, func_name, loc))
@@ -3982,6 +3984,30 @@ class JavaScriptFrontend:
         names |= {k.rsplit(".", 1)[-1] for k, sp in self.specs.items() if getattr(sp, "renders_view", False)}
         self._render_method_cache = frozenset(names)
         return self._render_method_cache
+
+    def _literal_keys(self, args: List[TSNode]) -> Optional[List[str]]:
+        """Keys of the object literals written in the call's arguments, nested ones too
+        (`update({ data: { stock: { decrement: 1 } } })` -> data, stock, decrement):
+        `Call.literal_keys`. A computed key (`[k]: v`) has no name and is left out."""
+        out: List[str] = []
+        stack = [(a, 0) for a in args]
+        while stack and len(out) < 64:
+            node, depth = stack.pop()
+            if depth > 6:
+                continue
+            if node.type == "object":
+                for child in node.named_children:
+                    if child.type == "pair":
+                        key, value = child.child_by_field_name("key"), child.child_by_field_name("value")
+                        if key is not None and key.type in ("property_identifier", "string", "number"):
+                            out.append(self._get_text(key).strip("'\"`"))
+                        if value is not None:
+                            stack.append((value, depth + 1))
+                    elif child.type == "shorthand_property_identifier":
+                        out.append(self._get_text(child))
+            elif node.type in ("array", "parenthesized_expression", "as_expression", "satisfies_expression"):
+                stack.extend((c, depth + 1) for c in node.named_children)
+        return out or None
 
     def _call_arg_forms(self, func_name: str, args: List[TSNode]) -> Optional[dict]:
         """The argument forms a sink known only later (by the receiver's origin) may choose

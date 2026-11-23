@@ -46,3 +46,34 @@ call = ["databases.Database.fetch_all", "databases.Database.fetch_one", "databas
 kind = "sql"
 args = [0]
 arg_names = ["query"]
+
+# SQLAlchemy, for the read-then-write check only: `with_for_update()` locks the selected rows,
+# `update(T).values(n=T.n - 1)` is computed by the database (a value that reads its own column),
+# loads read rows and the session's commit / flush writes the objects changed since. A query
+# `update` or `delete` writes too. None of these is a taint sink or a resource marker.
+# https://docs.sqlalchemy.org/en/20/orm/queryguide/query.html#sqlalchemy.orm.Query.with_for_update
+# https://docs.sqlalchemy.org/en/20/core/dml.html#sqlalchemy.sql.expression.ValuesBase.values
+# https://docs.sqlalchemy.org/en/20/orm/session_basics.html#flushing
+[[concurrency]]
+call = ["sqlalchemy.**.with_for_update", "flask_sqlalchemy.**.with_for_update"]
+kind = "lock"
+
+[[concurrency]]
+call = ["sqlalchemy.update.**.values", "sqlalchemy.sql.expression.update.**.values",
+        "sqlalchemy.sql.update.**.values", "sqlalchemy.**.on_conflict_do_update"]
+self_reference = true
+kind = "atomic"
+
+[[concurrency]]
+call = ["sqlalchemy.orm.Session.get", "sqlalchemy.orm.Session.scalar", "sqlalchemy.orm.Session.scalars",
+        "sqlalchemy.orm.Session.query.**.one", "sqlalchemy.orm.Session.query.**.one_or_none",
+        "sqlalchemy.orm.Session.query.**.first", "sqlalchemy.orm.Session.query.**.all",
+        "sqlalchemy.orm.Session.query.**.scalar", "sqlalchemy.orm.Session.query.**.get",
+        "sqlalchemy.orm.Session.execute.**.scalar*", "sqlalchemy.orm.Session.execute.**.one*",
+        "sqlalchemy.orm.Session.execute.**.first", "sqlalchemy.orm.Session.execute.**.all"]
+kind = "read"
+
+[[concurrency]]
+call = ["sqlalchemy.orm.Session.commit", "sqlalchemy.orm.Session.flush",
+        "sqlalchemy.orm.Session.query.**.update", "sqlalchemy.orm.Session.query.**.delete"]
+kind = "write"

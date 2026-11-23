@@ -92,8 +92,10 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                    "a bound is refuted only for a value the caller chooses (a request read, "
                    "copied or converted to a number); a computed or stored value is unknown",
                    "atomic_write knows a lock or atomic write only from the packs' [[concurrency]] "
-                   "facts; a protection written as data or SQL text is not seen (unknown, never "
-                   "refuted, when a caller of the same name locks)",
+                   "facts (call ids, update operators written as data such as $inc or Prisma's "
+                   "decrement) and from SQL text it can read (SET n = n - 1, a WHERE on a column "
+                   "the statement sets, SELECT ... FOR UPDATE); a version column is not read yet, "
+                   "and a caller of the same name that locks makes it unknown, never refuted",
                    "attempt_limit knows a limiter only from the packs' [[rate_limit]] facts; a "
                    "limiter outside the code (a proxy, a gateway) is not seen, and an "
                    "application-wide limiter or a write of stored data (a lockout counter) makes "

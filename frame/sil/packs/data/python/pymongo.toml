@@ -31,3 +31,13 @@ arg_names = ["filter", "pipeline"]
 [[sanitizer]]
 call = ["bson.ObjectId", "bson.objectid.ObjectId", "builtins.str", "builtins.int", "builtins.float"]
 kinds = ["nosql"]
+
+# Update operators the server applies to the stored document (`{"$inc": {"stock": -1}}`).
+# https://www.mongodb.com/docs/manual/reference/operator/update/
+[[concurrency]]
+call = ["pymongo.MongoClient.**.update_one", "pymongo.MongoClient.**.update_many",
+        "pymongo.MongoClient.**.find_one_and_update", "pymongo.MongoClient.**.bulk_write",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.update_one", "motor.motor_asyncio.AsyncIOMotorClient.**.update_many",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.find_one_and_update"]
+keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
+kind = "atomic"

@@ -15,3 +15,33 @@ call = ["sequelize.Sequelize.query", "sequelize.Sequelize.literal", "sequelize.l
 args = [0]
 kind = "sql"
 description = "Sequelize raw SQL"
+
+# Model calls, for the read-then-write check only (never taint sinks or resource markers). A model
+# is a class extending `Model` (its static calls are named after it) or `sequelize.define(...)`.
+# `increment` / `decrement` are computed by the database; a find with `lock` (`lock: true`,
+# `lock: t.LOCK.UPDATE`, inside a transaction) locks the rows it returns.
+# https://sequelize.org/docs/v6/core-concepts/model-instances/#incrementing-and-decrementing-integer-values
+# https://sequelize.org/docs/v6/other-topics/transactions/#locks
+[[concurrency]]
+call = ["sequelize.Model.increment", "sequelize.Model.decrement", "sequelize.Model.*.increment",
+        "sequelize.Model.*.decrement", "sequelize.Sequelize.define.increment", "sequelize.Sequelize.define.decrement",
+        "sequelize.Sequelize.define.*.increment", "sequelize.Sequelize.define.*.decrement"]
+kind = "atomic"
+
+[[concurrency]]
+call = ["sequelize.Model.find*", "sequelize.Sequelize.define.find*"]
+keys = ["lock"]
+kind = "lock"
+
+[[concurrency]]
+call = ["sequelize.Model.find*", "sequelize.Model.count", "sequelize.Model.max", "sequelize.Model.min",
+        "sequelize.Model.sum", "sequelize.Sequelize.define.find*", "sequelize.Sequelize.define.count"]
+kind = "read"
+
+[[concurrency]]
+call = ["sequelize.Model.update", "sequelize.Model.create", "sequelize.Model.bulkCreate", "sequelize.Model.upsert",
+        "sequelize.Model.destroy", "sequelize.Model.*.save", "sequelize.Model.*.update", "sequelize.Model.*.destroy",
+        "sequelize.Sequelize.define.update", "sequelize.Sequelize.define.create", "sequelize.Sequelize.define.upsert",
+        "sequelize.Sequelize.define.destroy", "sequelize.Sequelize.define.*.save",
+        "sequelize.Sequelize.define.*.update", "sequelize.Sequelize.define.*.destroy"]
+kind = "write"

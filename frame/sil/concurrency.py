@@ -3,25 +3,30 @@
 `check(name, line, kind="atomic_write")` at a write of stored data asks whether two requests
 running it at the same moment can both act on the same old value:
 
-  proved   the write is atomic (`F("n") + 1`, `increment(...)`) or a lock is taken before it in
-           the function (`select_for_update`, `with_for_update`, `EntityManager.lock`);
+  proved   the write is atomic (`F("n") + 1`, `increment(...)`, an update operator written as data
+           such as `{ $inc: ... }`, a SQL `UPDATE ... SET n = n - 1` or one whose WHERE tests a
+           column it sets) or a lock is taken before it in the function (`select_for_update`,
+           `with_for_update`, `EntityManager.lock`, a SQL read `... FOR UPDATE`);
   refuted  the function reads stored data before the write, and neither it nor any function that
            calls it takes a lock, versions the row or writes atomically;
   unknown  anything else: no write the engine recognises at the line, no read before it, or a
            protection somewhere the engine cannot place (a caller of the same name).
 
-What protects is pack data (`[[concurrency]]`: `kind` lock / atomic / version, `call` ids), so
-the check knows nothing about any library. A transaction alone is not a protection: at the
+What protects is pack data (`[[concurrency]]`: `kind` lock / atomic / version, `call` ids, and
+`keys` an object literal in the arguments must hold), so the check knows nothing about any
+library; SQL text is read for what the statement itself guarantees. A transaction alone is not a protection: at the
 default isolation level the second request still reads the old value. Never changes a finding.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 READS = frozenset({"resource_select", "sql", "nosql", "orm", "resource_modify"})
 WRITES = frozenset({"resource_modify", "sql", "nosql", "orm"})
-KINDS = ("lock", "atomic", "version", "read")
+KINDS = ("lock", "atomic", "version", "read", "write")
+PROTECTIONS = ("lock", "atomic", "version")
 _BUILTIN: Dict[str, List[Dict[str, Any]]] = {}
 
 
@@ -101,8 +106,107 @@ def _nested_calls(exp, depth: int = 0) -> Iterable[str]:
             yield from _nested_calls(sub, depth + 1)
 
 
-def _kind_of(program, names: List[str], table: List[Dict[str, Any]]) -> Optional[str]:
+def _bound_names(proc) -> set:
+    """Names the procedure binds: its parameters and every local it assigns."""
+    out = {str(p) for p, _ in (getattr(proc, "params", None) or [])}
+    for node in (getattr(proc, "nodes", {}) or {}).values():
+        for ins in getattr(node, "instrs", []) or []:
+            if type(ins).__name__ == "Assign":
+                out.add(str(getattr(ins, "id", "")).split(".", 1)[0])
+            ret = getattr(ins, "ret", None)
+            if ret:
+                out.add(str(ret[0]))
+    return out
+
+
+def _self_referencing(call, proc=None) -> bool:
+    """Does a keyword argument's value read the attribute it is named after through a name the
+    function does not bind (`values(balance=Wallet.balance - amt)`, the model class): a column
+    the database computes from itself? `w.balance` of a row loaded earlier is a stale value."""
+    names = getattr(call, "kwarg_names", None) or []
+    bound = _bound_names(proc) if proc is not None else set()
+    for arg, kw in zip(getattr(call, "args", []) or [], names):
+        exp = arg[0] if isinstance(arg, tuple) else arg
+        for n in _value_names(exp):
+            head, _, attr = str(n).rpartition(".")
+            if kw and attr == kw and head and head.split(".", 1)[0] not in bound:
+                return True
+    return False
+
+
+def _chain_name(exp, depth: int = 0) -> Optional[str]:
+    """`update(T).where(c).values(n=...)` as `update.where.values`: the dotted name of a call
+    chained on calls, read through the chain (None when a link is not a name)."""
+    if depth > 12:
+        return None
+    kind = type(exp).__name__
+    if kind == "ExpVar":
+        return str(getattr(exp, "var", "")) or None
+    if kind == "ExpCall":
+        return _chain_name(getattr(exp, "func", None), depth + 1)
+    if kind == "ExpFieldAccess":
+        base = _chain_name(getattr(exp, "base", None), depth + 1)
+        field = getattr(exp, "field_name", None)
+        return f"{base}.{field}" if base and field else None
+    if kind == "ExpConst" and isinstance(getattr(exp, "value", None), str):
+        return exp.value.strip('"') or None
+    return None
+
+
+def _nested_chain_calls(exp, depth: int = 0) -> Iterable[Tuple[str, Any]]:
+    """(dotted name, call) of every call written inside an argument, chained ones named by
+    their chain."""
+    if exp is None or depth > 12:
+        return
+    if isinstance(exp, (list, tuple)):
+        for e in exp:
+            yield from _nested_chain_calls(e, depth + 1)
+        return
+    if type(exp).__name__ == "ExpCall":
+        name = _chain_name(exp)
+        if name:
+            yield name, exp
+        func = getattr(exp, "func", None)
+        if type(func).__name__ == "ExpFieldAccess":
+            yield from _nested_chain_calls(getattr(func, "base", None), depth + 1)
+        for a in getattr(exp, "args", []) or []:
+            yield from _nested_chain_calls(a, depth + 1)
+        return
+    for attr in ("left", "right", "exp", "operand", "value", "base", "then_exp", "else_exp", "parts", "args"):
+        sub = getattr(exp, attr, None)
+        for s_ in (sub if isinstance(sub, (list, tuple)) else [sub]):
+            if s_ is not None and type(s_).__name__.startswith("Exp"):
+                yield from _nested_chain_calls(s_, depth + 1)
+
+
+def _value_names(exp, depth: int = 0) -> Iterable[str]:
+    """Variable and attribute names read by an expression (`Wallet.balance`, `balance`)."""
+    if exp is None or depth > 12:
+        return
+    kind = type(exp).__name__
+    if kind == "ExpVar":
+        yield str(getattr(exp, "var", ""))
+        return
+    if kind == "ExpFieldAccess":
+        base = _chain_name(getattr(exp, "base", None))
+        field = getattr(exp, "field_name", "")
+        yield f"{base}.{field}" if base else str(field)
+    for attr in ("left", "right", "exp", "operand", "base", "then_exp", "else_exp", "parts", "args"):
+        sub = getattr(exp, attr, None)
+        for s in (sub if isinstance(sub, (list, tuple)) else [sub]):
+            if isinstance(s, tuple):
+                s = s[0]
+            if s is not None and type(s).__name__.startswith("Exp"):
+                yield from _value_names(s, depth + 1)
+
+
+def _kind_of(program, names: List[str], table: List[Dict[str, Any]],
+             keys: Optional[Iterable[str]] = None, call=None, proc=None) -> Optional[str]:
+    """The kind of the first entry `names` match; an entry with `keys` only when `keys` (the
+    call's literal keys) holds one of them, one with `self_reference` only when `call` computes
+    a column from itself."""
     from frame.sil.packs.apply import _glob
+    held = set(keys or ())
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
     qualified = list(names)
     for n in names:                                  # `F("n")` with `from django.db.models import F`
@@ -110,9 +214,106 @@ def _kind_of(program, names: List[str], table: List[Dict[str, Any]]) -> Optional
         if head in imports:
             qualified.append(f"{imports[head]}.{rest}" if rest else imports[head])
     for e in table:
+        if e.get("keys") and not (held & set(e["keys"])):
+            continue
+        if e.get("self_reference") and (call is None or not _self_referencing(call, proc)):
+            continue
         if _glob(e.get("call", []), *qualified):
             return e["kind"]
     return None
+
+
+# -- SQL text: what a statement guarantees by itself -------------------------------------------
+
+_FOR_UPDATE = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b|\bWITH\s*\(\s*(?:ROWLOCK\s*,\s*)?UPDLOCK\b",
+                         re.IGNORECASE)
+_UPSERT_SET = re.compile(r"\bON\s+(?:CONFLICT\b.*?\bDO\s+UPDATE\s+SET|DUPLICATE\s+KEY\s+UPDATE)\s+",
+                         re.IGNORECASE | re.DOTALL)
+_IDENT_RE = re.compile(r"[A-Za-z_][\w$]*")
+
+
+def _assignments(sql: str, start: int) -> Optional[List[Tuple[str, str]]]:
+    """(column, expression) pairs of a SET list starting at `start`, up to WHERE / RETURNING /
+    FROM / the end; None when it cannot be read."""
+    from frame.sil.sql_credentials import _WHERE, _column, _split_top
+    rest = sql[start:]
+    end = _WHERE.search(rest)
+    parts = _split_top(rest[:end.start()] if end else rest)
+    if not parts:
+        return None
+    out = []
+    for part in parts:
+        col, eq, exp = part.partition("=")
+        if not eq or not col.strip():
+            return None
+        out.append((_column(col.strip()).lower(), exp.strip()))
+    return out
+
+
+def _reads_column(exp: str, column: str) -> bool:
+    """Does a SQL expression read `column` (bare, or qualified: `t.n`, `"n"`, `excluded.n` is the
+    new row and does not count)?"""
+    text = re.sub(r"'[^']*'", " ", exp)
+    for m in re.finditer(r"((?:[\w\"`\[\]]+\.)?)([\"`\[]?)([A-Za-z_]\w*)[\"`\]]?", text):
+        if m.group(3).lower() == column and m.group(1).strip(".").strip('"`[]').lower() not in ("excluded",):
+            return True
+    return False
+
+
+def sql_guarantee(sql: str) -> Optional[str]:
+    """What a SQL statement guarantees against a concurrent request by itself: `atomic` for an
+    UPDATE (or an upsert's update) that computes a column from its current value (`SET n = n - 1`)
+    or whose WHERE tests a column it sets (`SET used = 1 WHERE id = ? AND used = 0`: the database
+    re-checks the row it writes), `lock` for a read that locks the rows it returns
+    (`SELECT ... FOR UPDATE`, SQL Server's `WITH (UPDLOCK)`), else None. A statement this cannot
+    read guarantees nothing."""
+    from frame.sil.sql_credentials import _UPDATE, _WHERE
+    if not sql:
+        return None
+    m = _UPDATE.match(sql) or _UPSERT_SET.search(sql)
+    if m:
+        pairs = _assignments(sql, m.end())
+        if pairs:
+            if any(_reads_column(exp, col) for col, exp in pairs):
+                return "atomic"
+            where = _WHERE.search(sql, m.end())
+            if where and where.group(0).strip().upper() == "WHERE":
+                cond = sql[where.end():]
+                if any(_reads_column(cond, col) for col, _ in pairs):
+                    return "atomic"
+        return None
+    if re.match(r"\s*(?:\(\s*)?SELECT\b", sql, re.IGNORECASE) and _FOR_UPDATE.search(sql):
+        return "lock"
+    return None
+
+
+def _sql_text(proc, exp, depth: int = 0) -> str:
+    """The statement text a SQL argument holds: a literal, literal parts joined (`?` for the
+    rest), or a local bound once in the procedure to one of those."""
+    kind = type(exp).__name__
+    if kind == "ExpConst" and isinstance(getattr(exp, "value", None), str):
+        return exp.value
+    if kind == "ExpStringConcat":
+        return "".join(_sql_text(proc, p, depth + 1) or "?" for p in getattr(exp, "parts", []) or [])
+    if kind == "ExpVar" and depth < 2 and proc is not None:
+        name = str(getattr(exp, "var", ""))
+        defs = [ins for node in (getattr(proc, "nodes", {}) or {}).values()
+                for ins in getattr(node, "instrs", []) or []
+                if type(ins).__name__ == "Assign" and str(getattr(ins, "id", "")) == name]
+        if len(defs) == 1:
+            return _sql_text(proc, defs[0].exp, depth + 1)
+    return ""
+
+
+def _sql_kind(program, proc, ins) -> Optional[str]:
+    """`sql_guarantee` of a SQL call's statement (its first argument)."""
+    if _data_kind(program, ins) != "sql":
+        return None
+    args = getattr(ins, "args", []) or []
+    if not args:
+        return None
+    first = args[0][0] if isinstance(args[0], tuple) else args[0]
+    return sql_guarantee(_sql_text(proc, first))
 
 
 def _data_kind(program, ins) -> Optional[str]:
@@ -127,11 +328,17 @@ def _data_kind(program, ins) -> Optional[str]:
 def _protections(program, proc, table) -> List[Tuple[int, str]]:
     found = []
     for ins in _calls(proc):
-        kind = _kind_of(program, _names(ins), table)
+        kind = _kind_of(program, _names(ins), table, getattr(ins, "literal_keys", None), ins, proc) \
+            or _sql_kind(program, proc, ins)
         if kind:
             found.append((_line(ins), kind))
         for a in getattr(ins, "args", []) or []:
             k = _kind_of(program, list(_nested_calls(a)), table)
+            if not k:
+                for name, call in _nested_chain_calls(a):
+                    k = _kind_of(program, [name], table, call=call, proc=proc)
+                    if k:
+                        break
             if k:
                 found.append((_line(ins), k))
     for ann in getattr(proc, "annotations", None) or []:          # `@Lock(PESSIMISTIC_WRITE)`
@@ -151,11 +358,12 @@ def check_atomic_write(program, proc_name: str, line: int,
     if proc is None:
         return {**unknown, "reason": f"no procedure {proc_name!r}"}
     table = entries(program)
+    here = _protections(program, proc, table)
+    marked = {ln for ln, k in here if k in ("write", "atomic")}     # an atomic call is a write
     writes = [ins for ins in _calls(proc) if _line(ins) == int(line) and (
-        _data_kind(program, ins) in WRITES)]
+        _data_kind(program, ins) in WRITES or _line(ins) in marked)]
     if not writes:
         return {**unknown, "reason": f"no write of stored data the engine recognises at line {line}"}
-    here = _protections(program, proc, table)
     atomic = [ln for ln, k in here if k == "atomic" and ln == int(line)]
     if atomic:
         return {"verdict": "proved", "witness": [],
@@ -179,7 +387,7 @@ def check_atomic_write(program, proc_name: str, line: int,
         if any(k in ("lock", "version") for _, k in _protections(cprog, cproc, entries(cprog))):
             return {**unknown, "reason": f"{proc_name} reads at line {reads[0]} and writes at line {line} "
                     f"with no lock, but a caller ({getattr(cproc, 'name', '?')}) takes one"}
-    if not any(e["kind"] != "read" for e in table):
+    if not any(e["kind"] in PROTECTIONS for e in table):
         return {**unknown, "reason": "no [[concurrency]] facts for this language, so the engine "
                 "cannot tell a lock from any other call"}
     return {"verdict": "refuted",
@@ -249,7 +457,7 @@ def unprotected_read_writes(program, proc_name: str) -> List[Tuple[int, int]]:
     if proc is None:
         return []
     table = entries(program)
-    if not any(e["kind"] != "read" for e in table):
+    if not any(e["kind"] in PROTECTIONS for e in table):
         return []
     here = _protections(program, proc, table)
     if any(k in ("lock", "version") for _, k in here):
@@ -258,7 +466,8 @@ def unprotected_read_writes(program, proc_name: str) -> List[Tuple[int, int]]:
     reads = sorted({ln for ln, k in here if k == "read" and ln > 0} |
                    {_line(i) for i in _calls(proc) if _line(i) > 0 and _data_kind(program, i) in READS})
     out = []
-    for w in sorted({_line(i) for i in _calls(proc) if _data_kind(program, i) in WRITES}):
+    marked = {ln for ln, k in here if k == "write" and ln > 0}
+    for w in sorted({_line(i) for i in _calls(proc) if _data_kind(program, i) in WRITES} | marked):
         if w in atomic or any(a < w for a in atomic):
             continue
         earlier = [r for r in reads if r < w]

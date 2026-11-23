@@ -508,7 +508,8 @@ class Pack:
     wrappers: List[str] = field(default_factory=list)              # Python/JS: calls returning a handler wrapped
     auth_gates: List[str] = field(default_factory=list)            # decorators/annotations that authenticate a handler
     # Calls / annotations that protect a read-then-write from a concurrent request
-    # (frame/sil/concurrency.py): {"call": [ids], "kind": lock | atomic | version}
+    # (frame/sil/concurrency.py): {"call": [ids], "kind": lock | atomic | version | read,
+    # "keys": [literal keys the call's arguments must hold, or none]}
     concurrency: List[Dict[str, Any]] = field(default_factory=list)
     # What limits how often a caller can try a guess (frame/sil/attempt_limits.py, the hunt's
     # `attempt_limit` check): {"call": [ids], "name": [last name parts], "kind": decorator |
@@ -1197,12 +1198,26 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     # rows (for this check only; never a taint sink).
     for i, t in enumerate(data.get("concurrency", [])):
         where = f"[[concurrency]] #{i + 1}"
-        _check_keys(origin, where, t, {"call", "kind", "description", "references"})
+        _check_keys(origin, where, t, {"call", "kind", "keys", "self_reference", "description", "references"})
         calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
         kind = t.get("kind")
-        if kind not in ("lock", "atomic", "version", "read"):
-            raise _fail(origin, where, "kind must be lock, atomic, version or read")
-        pack.concurrency.append({"call": calls, "kind": kind})
+        if kind not in ("lock", "atomic", "version", "read", "write"):
+            raise _fail(origin, where, "kind must be lock, atomic, version, read or write")
+        self_ref = t.get("self_reference", False)
+        if not isinstance(self_ref, bool):
+            raise _fail(origin, where, "self_reference must be true or false")
+        # `keys`: the call is one only when an object / dict literal in its arguments holds one of
+        # these keys (`$inc`, Prisma's `decrement`, Sequelize's `lock`): an operator written as data
+        keys = _strings(origin, f"{where}.keys", t.get("keys", []), allow_empty=True)
+        # `self_reference`: only when a keyword argument's value reads the column it names
+        # (`values(balance=Wallet.balance - amt)`); `write`: a call that writes stored rows for
+        # this check only (a unit of work's `commit`), never a taint sink or a resource marker
+        entry: Dict[str, Any] = {"call": calls, "kind": kind}
+        if keys:
+            entry["keys"] = keys
+        if self_ref:
+            entry["self_reference"] = True
+        pack.concurrency.append(entry)
 
     # What limits how often one caller can send a guess (the hunt's `attempt_limit` check,
     # frame/sil/attempt_limits.py): a decorator / annotation / attribute on the handler or its
