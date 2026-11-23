@@ -41,3 +41,15 @@ call = ["pymongo.MongoClient.**.update_one", "pymongo.MongoClient.**.update_many
         "motor.motor_asyncio.AsyncIOMotorClient.**.find_one_and_update"]
 keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
 kind = "atomic"
+
+# A filter (the first argument) on a field the update document changes makes the write a
+# compare-and-set (`update_one({"_id": i, "stock": {"$gt": 0}}, {"$inc": {"stock": -1}})`).
+# https://www.mongodb.com/docs/manual/core/write-operations-atomicity/
+[[concurrency]]
+call = ["pymongo.MongoClient.**.update_one", "pymongo.MongoClient.**.update_many",
+        "pymongo.MongoClient.**.find_one_and_update", "pymongo.MongoClient.**.replace_one",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.update_one", "motor.motor_asyncio.AsyncIOMotorClient.**.update_many",
+        "motor.motor_asyncio.AsyncIOMotorClient.**.find_one_and_update"]
+kind = "write"
+filter = ["0"]
+update = ["1"]

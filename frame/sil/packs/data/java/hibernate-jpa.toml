@@ -47,3 +47,11 @@ description = "JPA / Hibernate write"
 call = ["jakarta.persistence.EntityManager.lock", "javax.persistence.EntityManager.lock",
         "org.hibernate.Session.lock"]
 kind = "lock"
+
+# An entity with a `@Version` field is optimistically locked: an update of a row another
+# transaction changed since it was read fails (OptimisticLockException), so a write of it is safe
+# against a concurrent request. Matched on the fields of the entity a write saves.
+# https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/version
+[[concurrency]]
+call = ["jakarta.persistence.Version", "javax.persistence.Version"]
+kind = "version"

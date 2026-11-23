@@ -1044,6 +1044,20 @@ def test_ts_paths_alias_resolves_through_tsconfig(tmp_path):
     assert ("shell.ts", "CWE-78") in findings(tmp_path)
 
 
+def test_ts_paths_alias_with_glob_includes_and_no_base_url(tmp_path):
+    """`"@/*"` and `"**/*.ts"` hold `/*` and `*/` inside strings: stripping comments must leave
+    strings alone, or the tsconfig stops parsing and every alias is lost (zipline's layout)."""
+    write(tmp_path, {
+        "tsconfig.json": ('{\n  "compilerOptions": {\n    "strict": true, // checked\n'
+                          '    "paths": { "@/*": ["./src/*"] }\n  },\n'
+                          '  "include": ["vite-env.d.ts", "**/*.ts", "**/*.tsx"]\n}\n'),
+        "src/shell.ts": "import { exec } from 'child_process';\nexport function ls(d: string) { exec('ls ' + d); }\n",
+        "src/app.ts": ("import express from 'express';\nimport { ls } from '@/shell';\nconst app = express();\n"
+                       "app.get('/', (req, res) => { ls(req.query.d as string); res.send('ok'); });\n"),
+    })
+    assert ("shell.ts", "CWE-78") in findings(tmp_path)
+
+
 def test_ts_base_url_resolves_bare_project_specifiers(tmp_path):
     write(tmp_path, {
         "tsconfig.json": '{ // comment\n "compilerOptions": { "baseUrl": "src" } }',

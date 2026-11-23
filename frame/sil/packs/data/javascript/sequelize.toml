@@ -45,3 +45,11 @@ call = ["sequelize.Model.update", "sequelize.Model.create", "sequelize.Model.bul
         "sequelize.Sequelize.define.destroy", "sequelize.Sequelize.define.*.save",
         "sequelize.Sequelize.define.*.update", "sequelize.Sequelize.define.*.destroy"]
 kind = "write"
+
+# `Model.update(values, { where })`: a where on a field the values change is a compare-and-set.
+# https://sequelize.org/docs/v6/core-concepts/model-querying-basics/#simple-update-queries
+[[concurrency]]
+call = ["sequelize.Model.update", "sequelize.Sequelize.define.update"]
+kind = "write"
+filter = ["where"]
+update = ["0"]

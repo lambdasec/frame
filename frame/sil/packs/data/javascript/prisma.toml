@@ -45,3 +45,30 @@ call = ["@prisma/client.PrismaClient.*.findUnique", "@prisma/client.PrismaClient
         "@prisma/client.PrismaClient.*.findMany", "@prisma/client.PrismaClient.*.count",
         "@prisma/client.PrismaClient.*.aggregate", "@prisma/client.PrismaClient.*.groupBy"]
 kind = "read"
+
+# A write that states in `where` a field its `data` (or an upsert's `update`) changes is a
+# compare-and-set the database checks on the row it writes
+# (`updateMany({ where: { id, uses: { lt: max } }, data: { uses: { increment: 1 } } })`).
+# https://www.prisma.io/docs/orm/reference/prisma-client-reference#updatemany
+[[concurrency]]
+call = ["@prisma/client.PrismaClient.*.update", "@prisma/client.PrismaClient.*.updateMany",
+        "@prisma/client.PrismaClient.*.updateManyAndReturn", "@prisma/client.PrismaClient.*.upsert"]
+kind = "write"
+filter = ["where"]
+update = ["data", "update"]
+
+# Raw statements, for the read-then-write check only: their SQL text is read (a SELECT ... FOR
+# UPDATE locks the rows it returns). The tagged-template forms parameterise their substitutions.
+# https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries
+[[concurrency]]
+call = ["@prisma/client.PrismaClient.$queryRaw", "@prisma/client.PrismaClient.$executeRaw",
+        "@prisma/client.PrismaClient.$queryRawUnsafe", "@prisma/client.PrismaClient.$executeRawUnsafe"]
+kind = "read"
+statement = true
+
+# An interactive transaction hands its callback a client that queries like the one it came from.
+# https://www.prisma.io/docs/orm/prisma-client/queries/transactions#interactive-transactions
+[[callback_param]]
+registered_via = ["@prisma/client.PrismaClient.$transaction"]
+position = 0
+origin = "@prisma/client.PrismaClient"

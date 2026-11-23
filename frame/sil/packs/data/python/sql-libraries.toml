@@ -77,3 +77,12 @@ kind = "read"
 call = ["sqlalchemy.orm.Session.commit", "sqlalchemy.orm.Session.flush",
         "sqlalchemy.orm.Session.query.**.update", "sqlalchemy.orm.Session.query.**.delete"]
 kind = "write"
+
+# `update(T).where(T.n < max).values(n=...)`: a where on a column the values set is a
+# compare-and-set.
+[[concurrency]]
+call = ["sqlalchemy.update.**.values", "sqlalchemy.sql.expression.update.**.values",
+        "sqlalchemy.sql.update.**.values"]
+kind = "write"
+filter = [".where"]
+update = [".values"]

@@ -470,6 +470,8 @@ class HuntContext:
         self.index = build_index(self.programs, self.raw_findings, self.repo_root)
         self._graph = None
         self._callers = None
+        for memo in ("_race_summaries", "_race_classes", "_rate_limit_globals", "_credential_memo"):
+            self.__dict__.pop(memo, None)
 
     # -- tools ----------------------------------------------------------------------------
     def handler_facts(self, name: str, file: Optional[str] = None) -> str:
@@ -655,7 +657,8 @@ class HuntContext:
             with ENGINE_LOCK:
                 try:
                     r = check_atomic_write(loc["program"], loc["proc"], int(line or 0),
-                                           callers=self._caller_procs(loc["proc"]))
+                                           callers=self._caller_procs(loc["proc"]), ctx=self,
+                                           file=loc.get("file") or "")
                 except Exception as e:
                     r = {"verdict": "unknown", "reason": f"engine error: {type(e).__name__}"}
             return json.dumps(r)

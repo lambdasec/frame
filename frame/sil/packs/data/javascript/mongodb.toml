@@ -48,3 +48,13 @@ call = ["mongodb.Collection.updateOne", "mongodb.Collection.updateMany", "mongod
         "mongodb.Collection.findOneAndUpdate", "mongodb.Collection.bulkWrite"]
 keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
 kind = "atomic"
+
+# A filter (the first argument) on a field the update document (the second) changes makes the
+# write a compare-and-set (`updateOne({ _id, stock: { $gt: 0 } }, { $inc: { stock: -1 } })`).
+# https://www.mongodb.com/docs/manual/core/write-operations-atomicity/
+[[concurrency]]
+call = ["mongodb.Collection.updateOne", "mongodb.Collection.updateMany", "mongodb.Collection.update",
+        "mongodb.Collection.findOneAndUpdate", "mongodb.Collection.replaceOne", "mongodb.Collection.findOneAndReplace"]
+kind = "write"
+filter = ["0"]
+update = ["1"]

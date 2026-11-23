@@ -65,6 +65,9 @@ class ClassInfo:
     settable_fields: List[str] = field(default_factory=list)  # public members code outside can assign (C#)
     line: int = 0                               # the declaration's first and last source lines, where recorded
     end_line: int = 0
+    # The declared type of each field / property, as written (`DbSet<Product>`, `CouponRepository`;
+    # Java and C#): what a member chain such as `_db.Products` holds.
+    field_types: Dict[str, str] = field(default_factory=dict)
 
 
 class ImportTable:

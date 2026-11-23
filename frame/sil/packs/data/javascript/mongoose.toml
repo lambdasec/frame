@@ -46,3 +46,13 @@ call = ["mongoose.Model.updateOne", "mongoose.Model.updateMany", "mongoose.Model
         "mongoose.Query.updateOne", "mongoose.Query.updateMany", "mongoose.Query.findOneAndUpdate"]
 keys = ["$inc", "$mul", "$min", "$max", "$push", "$addToSet", "$pull", "$pullAll", "$pop"]
 kind = "atomic"
+
+# A filter on a field the update changes makes the write a compare-and-set.
+# https://www.mongodb.com/docs/manual/core/write-operations-atomicity/
+[[concurrency]]
+call = ["mongoose.Model.updateOne", "mongoose.Model.updateMany", "mongoose.Model.update",
+        "mongoose.Model.findOneAndUpdate", "mongoose.Model.replaceOne", "mongoose.Model.findOneAndReplace",
+        "mongoose.Query.updateOne", "mongoose.Query.updateMany", "mongoose.Query.findOneAndUpdate"]
+kind = "write"
+filter = ["0"]
+update = ["1"]

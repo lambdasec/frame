@@ -401,6 +401,10 @@ class ExpCall(Exp):
     args: List[Exp]
     # Parallel to args: each argument's keyword (Python `f(x=v)`), else None; None when unknown.
     kwarg_names: Optional[List[Optional[str]]] = field(default=None, compare=False, repr=False)
+    # As on a Call instruction: object-literal key paths in the arguments and what each
+    # non-object value reads (`instructions.Call.literal_keys`); None when there are none.
+    literal_keys: Optional[List[str]] = field(default=None, compare=False, repr=False)
+    literal_reads: Optional[Dict[str, List[str]]] = field(default=None, compare=False, repr=False)
 
     def __str__(self) -> str:
         args_str = ", ".join(str(a) for a in self.args)

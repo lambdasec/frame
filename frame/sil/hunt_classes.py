@@ -655,8 +655,9 @@ def member_facts(ctx, member) -> Dict[str, Any]:
         out["view"] = bool(getattr(proc, "renders", False))
         out["passes"] = _passes_client_data(proc, vf)
         from frame.sil.concurrency import decided_read_writes, unprotected_read_writes
-        out["read_writes"] = unprotected_read_writes(program, proc_name)
-        out["decided"] = decided_read_writes(program, proc_name) if out["read_writes"] else []
+        race_ctx = ctx if hasattr(ctx, "graph") else None
+        out["read_writes"] = unprotected_read_writes(program, proc_name, race_ctx, file)
+        out["decided"] = decided_read_writes(program, proc_name, race_ctx, file) if out["read_writes"] else []
         if not out["entry"]:
             reached = _reached_files(ctx)
             out["reached"] = reached is None or file in reached

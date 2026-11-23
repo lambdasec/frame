@@ -3558,7 +3558,7 @@ class JavaScriptFrontend:
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
             arg_forms=self._call_arg_forms(func_name, args),
-            literal_keys=self._literal_keys(args),
+            **self._literal_fields(args),
         )
         instrs.append(call_instr)
         instrs.extend(self._call_value_effects(call_node, func_name, loc))
@@ -3944,7 +3944,7 @@ class JavaScriptFrontend:
             receiver_type=self._receiver_kind(call_node),
             kwarg_names=kwarg_names,
             arg_forms=self._call_arg_forms(func_name, args),
-            literal_keys=self._literal_keys(args),
+            **self._literal_fields(args),
         )
         instrs.append(call_instr)
         instrs.extend(self._call_value_effects(call_node, func_name, loc))
@@ -3985,29 +3985,64 @@ class JavaScriptFrontend:
         self._render_method_cache = frozenset(names)
         return self._render_method_cache
 
-    def _literal_keys(self, args: List[TSNode]) -> Optional[List[str]]:
-        """Keys of the object literals written in the call's arguments, nested ones too
-        (`update({ data: { stock: { decrement: 1 } } })` -> data, stock, decrement):
-        `Call.literal_keys`. A computed key (`[k]: v`) has no name and is left out."""
-        out: List[str] = []
-        stack = [(a, 0) for a in args]
-        while stack and len(out) < 64:
-            node, depth = stack.pop()
+    def _literal_fields(self, args: List[TSNode]) -> dict:
+        """`Call.literal_keys` and `Call.literal_reads`: the key paths of the object literals in
+        the call's arguments (`update({ data: { stock: { decrement: 1 } } })` -> 0.data,
+        0.data.stock, 0.data.stock.decrement) and, for an entry whose value is not an object, the
+        names that value reads. A computed key (`[k]: v`) has no name and is left out."""
+        keys: List[str] = []
+        reads: Dict[str, List[str]] = {}
+        stack = [(a, str(i), 0) for i, a in enumerate(args)]
+        while stack and len(keys) < 96:
+            node, path, depth = stack.pop()
             if depth > 6:
                 continue
-            if node.type == "object":
+            if node.type in ("parenthesized_expression", "as_expression", "satisfies_expression",
+                             "non_null_expression"):
+                stack.extend((c, path, depth) for c in node.named_children[:1])
+            elif node.type == "array":
+                stack.extend((c, path, depth + 1) for c in node.named_children)
+            elif node.type == "object":
                 for child in node.named_children:
                     if child.type == "pair":
                         key, value = child.child_by_field_name("key"), child.child_by_field_name("value")
-                        if key is not None and key.type in ("property_identifier", "string", "number"):
-                            out.append(self._get_text(key).strip("'\"`"))
-                        if value is not None:
-                            stack.append((value, depth + 1))
+                        if key is None or key.type not in ("property_identifier", "string", "number"):
+                            continue
+                        sub = f"{path}.{self._get_text(key).strip(chr(39) + chr(34) + chr(96))}"
+                        keys.append(sub)
+                        if value is None:
+                            continue
+                        if value.type in ("object", "array"):
+                            stack.append((value, sub, depth + 1))
+                        else:
+                            names = self._names_read(value)
+                            if names:
+                                reads[sub] = names
                     elif child.type == "shorthand_property_identifier":
-                        out.append(self._get_text(child))
-            elif node.type in ("array", "parenthesized_expression", "as_expression", "satisfies_expression"):
-                stack.extend((c, depth + 1) for c in node.named_children)
-        return out or None
+                        sub = f"{path}.{self._get_text(child)}"
+                        keys.append(sub)
+                        reads[sub] = [self._get_text(child)]
+        return {"literal_keys": keys or None, "literal_reads": reads or None}
+
+    def _names_read(self, node: TSNode, limit: int = 8) -> List[str]:
+        """Variables and dotted member paths an expression reads (`sql`${t.n} + 1`` -> sql, t.n),
+        functions written inside it excluded."""
+        out: List[str] = []
+        stack = [node]
+        while stack and len(out) < limit:
+            n = stack.pop()
+            if n.type in self._FUNC_LIKE:
+                continue
+            if n.type == "member_expression":
+                text = self._get_text(n)
+                if re.fullmatch(r"[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+", text):
+                    out.append(text.replace("?.", "."))
+                    continue
+            elif n.type == "identifier":
+                out.append(self._get_text(n))
+                continue
+            stack.extend(reversed(n.named_children))
+        return out
 
     def _call_arg_forms(self, func_name: str, args: List[TSNode]) -> Optional[dict]:
         """The argument forms a sink known only later (by the receiver's origin) may choose
@@ -4845,12 +4880,16 @@ class JavaScriptFrontend:
             inline = self._inline_require_member(func) if func is not None else None
             if inline is not None:
                 func_exp = ExpVar(PVar(inline))        # `require("m").f` -> `m.f`
-            args = [self._translate_value(a) for a in self._get_call_args(node)]
+            arg_nodes = self._get_call_args(node)
+            args = [self._translate_value(a) for a in arg_nodes]
             # A call nested inside another expression (e.g. `return eval(x)`,
             # `f(exec(y))`) is still a sink -- emit its TaintSink as a side effect
             # so it is not missed just because it is not a standalone statement.
             self._emit_nested_call_sink(node, args)
-            return ExpCall(func_exp, args)
+            nested = ExpCall(func_exp, args)
+            literal = self._literal_fields(arg_nodes)
+            nested.literal_keys, nested.literal_reads = literal["literal_keys"], literal["literal_reads"]
+            return nested
 
         elif node.type == "regex":
             # ReDoS is detected by a dedicated whole-file pass (_scan_redos), so
@@ -5158,7 +5197,10 @@ class JavaScriptFrontend:
         reported on the line of its method name, not on the line the chain starts."""
         func = call_node.child_by_field_name("function")
         prop = func.child_by_field_name("property") if func is not None and func.type == "member_expression" else None
-        if prop is None or prop.start_point[0] == call_node.start_point[0]:
+        # the location handed down is the outer call's, which may already sit on a later link's line
+        # (`db.update(t).set(v)` then `.where(c)` on the next line): every link keeps its own line
+        if prop is None or prop.start_point[0] + 1 == getattr(loc, "line", None) or (
+                prop.start_point[0] == call_node.start_point[0] and call_node.start_point[0] + 1 == getattr(loc, "line", None)):
             return loc
         return Location(file=self._filename, line=prop.start_point[0] + 1, column=prop.start_point[1],
                         end_line=call_node.end_point[0] + 1, end_column=call_node.end_point[1])

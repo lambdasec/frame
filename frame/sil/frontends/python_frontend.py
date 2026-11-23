@@ -751,30 +751,67 @@ class PythonFrontend:
             stack.extend(n.children)
         return table.finish()
 
-    def _literal_keys(self, call_node: TSNode) -> Optional[List[str]]:
-        """String keys of the dict literals written in the call's arguments, nested ones too
-        (`update_one(q, {"$inc": {"stock": -1}})` -> $inc, stock): `Call.literal_keys`."""
+    def _literal_fields(self, call_node: TSNode) -> dict:
+        """`Call.literal_keys` / `Call.literal_reads`: the string-key paths of the dict literals in
+        the call's arguments, under the argument's position or keyword (`update_one(q, {"$inc":
+        {"stock": -1}})` -> 1.$inc, 1.$inc.stock), and the names a non-dict value reads."""
         args_node = call_node.child_by_field_name("arguments")
-        out: List[str] = []
-        stack = [(c, 0) for c in (args_node.named_children if args_node else [])]
-        while stack and len(out) < 64:
-            node, depth = stack.pop()
+        keys: List[str] = []
+        reads: Dict[str, List[str]] = {}
+        stack = []
+        position = 0
+        for child in (args_node.named_children if args_node else []):
+            if child.type == "comment":
+                continue
+            if child.type == "keyword_argument":
+                name, value = child.child_by_field_name("name"), child.child_by_field_name("value")
+                if name is not None and value is not None:
+                    stack.append((value, self._get_text(name), 0))
+                continue
+            stack.append((child, str(position), 0))
+            position += 1
+        while stack and len(keys) < 96:
+            node, path, depth = stack.pop()
             if depth > 6:
                 continue
-            if node.type == "keyword_argument":
-                value = node.child_by_field_name("value")
-                if value is not None:
-                    stack.append((value, depth))
-            elif node.type == "dictionary":
+            if node.type == "dictionary":
                 for pair in node.named_children:
                     k, v = pair.child_by_field_name("key"), pair.child_by_field_name("value")
-                    if pair.type == "pair" and k is not None and k.type == "string":
-                        out.append(self._get_string_content(k))
-                    if v is not None:
-                        stack.append((v, depth + 1))
-            elif node.type in ("list", "tuple"):
-                stack.extend((c, depth + 1) for c in node.named_children)
-        return out or None
+                    if pair.type != "pair" or k is None or k.type != "string":
+                        continue
+                    sub = f"{path}.{self._get_string_content(k)}"
+                    keys.append(sub)
+                    if v is None:
+                        continue
+                    if v.type in ("dictionary", "list", "tuple"):
+                        stack.append((v, sub, depth + 1))
+                    else:
+                        names = self._names_read(v)
+                        if names:
+                            reads[sub] = names
+            elif node.type in ("list", "tuple", "parenthesized_expression"):
+                stack.extend((c, path, depth + 1) for c in node.named_children)
+        return {"literal_keys": keys or None, "literal_reads": reads or None}
+
+    def _names_read(self, node: TSNode, limit: int = 8) -> List[str]:
+        """Variables and dotted attribute paths an expression reads (`Wallet.balance - amt` ->
+        Wallet.balance, amt), lambdas excluded."""
+        out: List[str] = []
+        stack = [node]
+        while stack and len(out) < limit:
+            n = stack.pop()
+            if n.type == "lambda":
+                continue
+            if n.type == "attribute":
+                text = self._get_text(n)
+                if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", text):
+                    out.append(text)
+                    continue
+            elif n.type == "identifier":
+                out.append(self._get_text(n))
+                continue
+            stack.extend(reversed(n.named_children))
+        return out
 
     def _dict_kwargs(self, call_node: TSNode) -> Optional[Dict[str, Dict[str, str]]]:
         """Keyword arguments written as a dict literal, with their string-keyed literal entries
@@ -1822,7 +1859,7 @@ class PythonFrontend:
             args=args_exp,
             kwarg_names=self._kwarg_names(call_node),
             dict_kwargs=self._dict_kwargs(call_node),
-            literal_keys=self._literal_keys(call_node)
+            **self._literal_fields(call_node)
         )
         instrs.append(call_instr)
 
@@ -1939,7 +1976,7 @@ class PythonFrontend:
                     args=args_exp,
                     kwarg_names=self._kwarg_names(n),
                     dict_kwargs=self._dict_kwargs(n),
-                    literal_keys=self._literal_keys(n)
+                    **self._literal_fields(n)
                 )
                 instrs.append(call_instr)
 
@@ -2036,7 +2073,7 @@ class PythonFrontend:
             args=args_exp,
             kwarg_names=self._kwarg_names(call_node),
             dict_kwargs=self._dict_kwargs(call_node),
-            literal_keys=self._literal_keys(call_node)
+            **self._literal_fields(call_node)
         )
         instrs.append(call_instr)
 

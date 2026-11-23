@@ -744,25 +744,28 @@ class CSharpFrontend:
         kind = {"struct_declaration": "struct", "interface_declaration": "interface",
                 "enum_declaration": "enum"}.get(node.type, "class")
         members = node.child_by_field_name("body")
-        fields, field_annotations, settable = self._members(members)
+        fields, field_annotations, settable, field_types = self._members(members)
         program.class_info[name] = ClassInfo(
             name=name, kind=kind, bases=bases, fields=fields, field_annotations=field_annotations,
+            field_types=field_types,
             settable_fields=settable,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports) for a in attrs],
             package=self._current_namespace or None)
 
     def _members(self, body: Optional[TSNode]
-                 ) -> Tuple[List[str], Dict[str, List[Annotation]], List[str]]:
-        """`ClassInfo.fields`, `field_annotations` and `settable_fields` for C#: every instance field
-        and property, the attributes each carries, and the public ones code outside the class can
-        assign (not `readonly`, a property with a `set`/`init` accessor). Which of them a framework
-        fills from the request is the packs' business (`fields = "annotated"` / `"settable"`)."""
+                 ) -> Tuple[List[str], Dict[str, List[Annotation]], List[str], Dict[str, str]]:
+        """`ClassInfo.fields`, `field_annotations`, `settable_fields` and `field_types` for C#:
+        every instance field and property, the attributes each carries, the public ones code
+        outside the class can assign (not `readonly`, a property with a `set`/`init` accessor), and
+        each one's declared type as written. Which of them a framework fills from the request is
+        the packs' business (`fields = "annotated"` / `"settable"`)."""
         names: List[str] = []
         annotations: Dict[str, List[Annotation]] = {}
         settable: List[str] = []
+        types: Dict[str, str] = {}
         if body is None:
-            return names, annotations, settable
+            return names, annotations, settable, types
         for member in self._declarations(body):
             if member.type not in ("property_declaration", "field_declaration"):
                 continue
@@ -776,8 +779,11 @@ class CSharpFrontend:
                 can_set = can_set and bool(re.search(r"\b(set|init)\b", text))
                 nm = member.child_by_field_name("name")
                 declared = [self._get_text(nm)] if nm is not None else []
+                ty = member.child_by_field_name("type")
             else:
                 declared = []
+                decl = next((c for c in member.named_children if c.type == "variable_declaration"), None)
+                ty = decl.child_by_field_name("type") if decl is not None else None
                 for d in self._descendants_of(member):
                     if d.type == "variable_declarator":
                         nm = d.child_by_field_name("name") or next(
@@ -791,7 +797,9 @@ class CSharpFrontend:
                     annotations[n] = attrs
                 if can_set:
                     settable.append(n)
-        return names, annotations, settable
+                if ty is not None:
+                    types[n] = re.sub(r"\s+", "", self._get_text(ty))
+        return names, annotations, settable, types
 
     _STRING_LITERAL_TYPES = frozenset({
         "string_literal", "verbatim_string_literal", "raw_string_literal"})

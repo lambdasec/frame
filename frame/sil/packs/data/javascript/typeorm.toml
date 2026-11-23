@@ -83,3 +83,18 @@ call = ["typeorm.Repository.find*", "typeorm.Repository.count*", "typeorm.Reposi
         "typeorm.SelectQueryBuilder.getCount", "typeorm.SelectQueryBuilder.getRawOne",
         "typeorm.SelectQueryBuilder.getRawMany"]
 kind = "read"
+
+# `update(criteria, partial)` / `update(Entity, criteria, partial)`: criteria on a field the partial
+# changes make the write a compare-and-set (`update({ id, stock: MoreThan(0) }, { stock: ... })`).
+# https://typeorm.io/docs/working-with-entity-manager/repository-api/
+[[concurrency]]
+call = ["typeorm.Repository.update"]
+kind = "write"
+filter = ["0"]
+update = ["1"]
+
+[[concurrency]]
+call = ["typeorm.EntityManager.update"]
+kind = "write"
+filter = ["1"]
+update = ["2"]

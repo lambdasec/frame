@@ -1,0 +1,16 @@
+# Client libraries a project generates into its own tree, read from the project's configuration.
+# An import of the generated directory is the library's own module, so the library's packs and
+# value types apply to it (`import { PrismaClient } from "@/prisma/client"` with the schema's
+# generator writing to `src/prisma` is `@prisma/client.PrismaClient`). Read by
+# frame/sil/generated_clients.py; each entry names the configuration files, the block that
+# declares a generated client, the key holding its output directory (relative to the file),
+# and, optionally, the providers that generate this library.
+
+[[client]]
+module = "@prisma/client"
+files = ["*.prisma"]
+block = "generator"
+output = "output"
+providers = ["prisma-client-js", "prisma-client"]
+references = ["https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/generating-prisma-client#using-a-custom-output-path",
+              "https://www.prisma.io/docs/orm/reference/prisma-schema-reference#generator"]

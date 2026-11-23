@@ -25,3 +25,38 @@ call = ["Microsoft.EntityFrameworkCore.DbContext.SaveChanges", "Microsoft.Entity
         "Microsoft.EntityFrameworkCore.DbContext.Remove", "Microsoft.EntityFrameworkCore.DbContext.RemoveRange"]
 kind = "resource_modify"
 description = "EF Core write"
+
+# A property marked as a concurrency token (`[ConcurrencyCheck]`, a `[Timestamp]` row version) makes
+# SaveChanges fail with DbUpdateConcurrencyException when the row changed since it was read: an
+# optimistic lock on the entity. Matched on the fields of the entities a write saves.
+# https://learn.microsoft.com/en-us/ef/core/saving/concurrency
+[[concurrency]]
+call = ["System.ComponentModel.DataAnnotations.ConcurrencyCheckAttribute",
+        "System.ComponentModel.DataAnnotations.TimestampAttribute"]
+kind = "version"
+
+# Reading entities through a DbSet, for the read-then-write check only (never taint sinks).
+# https://learn.microsoft.com/en-us/ef/core/querying/
+[[concurrency]]
+call = ["Microsoft.EntityFrameworkCore.DbSet.Find", "Microsoft.EntityFrameworkCore.DbSet.FindAsync",
+        "Microsoft.EntityFrameworkCore.DbSet.First*", "Microsoft.EntityFrameworkCore.DbSet.Single*",
+        "Microsoft.EntityFrameworkCore.DbSet.Last*", "Microsoft.EntityFrameworkCore.DbSet.Where",
+        "Microsoft.EntityFrameworkCore.DbSet.Any*", "Microsoft.EntityFrameworkCore.DbSet.Count*",
+        "Microsoft.EntityFrameworkCore.DbSet.ToList*", "Microsoft.EntityFrameworkCore.DbSet.Include"]
+kind = "read"
+
+# `ExecuteUpdate` / `ExecuteDelete` run one UPDATE / DELETE in the database (EF Core 7+): a
+# `Where` testing a column a `SetProperty` changes is a compare-and-set, and a `SetProperty` whose
+# value reads its own column (`x => x.Stock - 1`) is computed by the database.
+# https://learn.microsoft.com/en-us/ef/core/saving/execute-insert-update-delete
+[[concurrency]]
+call = ["Microsoft.EntityFrameworkCore.DbSet.**.ExecuteUpdate", "Microsoft.EntityFrameworkCore.DbSet.**.ExecuteUpdateAsync",
+        "Microsoft.EntityFrameworkCore.DbSet.ExecuteUpdate", "Microsoft.EntityFrameworkCore.DbSet.ExecuteUpdateAsync"]
+kind = "write"
+filter = [".Where"]
+update = [".SetProperty"]
+
+[[concurrency]]
+call = ["Microsoft.EntityFrameworkCore.DbSet.**.ExecuteDelete", "Microsoft.EntityFrameworkCore.DbSet.**.ExecuteDeleteAsync",
+        "Microsoft.EntityFrameworkCore.DbSet.ExecuteDelete", "Microsoft.EntityFrameworkCore.DbSet.ExecuteDeleteAsync"]
+kind = "write"

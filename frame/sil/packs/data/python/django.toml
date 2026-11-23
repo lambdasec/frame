@@ -279,3 +279,13 @@ call = ["django.db.models.Model.objects.**.get", "django.db.models.Model.objects
         "django.db.models.Model.objects.**.get_or_create", "django.db.models.Model.objects.get_or_create",
         "django.db.models.Model.refresh_from_db"]
 kind = "read"
+
+# `filter(...)` on a field the chained `update(...)` changes is a compare-and-set
+# (`filter(id=i, uses__lt=F("limit")).update(uses=F("uses") + 1)`), one UPDATE ... WHERE.
+# https://docs.djangoproject.com/en/5.1/ref/models/querysets/#update
+[[concurrency]]
+call = ["django.db.models.Model.objects.**.update", "django.db.models.Model.objects.update",
+        "django.db.models.QuerySet.update"]
+kind = "write"
+filter = [".filter", ".exclude"]
+update = [".update"]

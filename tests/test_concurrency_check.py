@@ -43,7 +43,7 @@ def test_read_then_write_with_no_protection_is_refuted(tmp_path):
                 c.save()
     """}, "redeem", 7)
     assert r["verdict"] == "refuted", r
-    assert [w["line"] for w in r["witness"]] == [4, 7]
+    assert [w["line"] for w in r["witness"]] == [4, 5, 7]     # read, decision, write
 
 
 def test_select_for_update_first_is_proved(tmp_path):
@@ -380,3 +380,311 @@ def test_a_line_picks_the_method_among_same_named_ones(tmp_path):
     """}
     r = _check(tmp_path, files, "post", 14)
     assert r["verdict"] == "refuted", r
+
+
+# -- check-then-act, compare-and-set, and the project's own functions ---------------------------
+
+def test_an_atomic_increment_after_a_decision_on_the_same_field_is_refuted(tmp_path):
+    """sync-in's link limit: the increment is computed by the database, but the limit was checked
+    on the value read before it, so two requests both pass the check."""
+    files = {**MODELS, "shop/views.py": """
+        from django.db.models import F
+        from shop.models import Coupon
+
+
+        def redeem(cid):
+            c = Coupon.objects.get(id=cid)
+            if c.uses < c.limit:
+                Coupon.objects.filter(id=cid).update(uses=F("uses") + 1)
+
+
+        def redeem_guarded(cid):
+            c = Coupon.objects.get(id=cid)
+            if c.uses < c.limit:
+                Coupon.objects.filter(id=cid, uses__lt=F("limit")).update(uses=F("uses") + 1)
+
+
+        def touch(cid):
+            c = Coupon.objects.get(id=cid)
+            if c is not None:
+                Coupon.objects.filter(id=cid).update(uses=F("uses") + 1)
+    """}
+    r = _check(tmp_path, files, "redeem", 8)
+    assert r["verdict"] == "refuted", r
+    assert [w["line"] for w in r["witness"]] == [6, 7, 8]
+    assert "check-then-act" in r["reason"]
+    assert _check(tmp_path, files, "redeem_guarded", 14)["verdict"] == "proved"
+    assert _check(tmp_path, files, "touch", 20)["verdict"] == "proved"     # a null check decides nothing
+
+
+PRISMA_INVITE = {"invite.ts": """
+    import { PrismaClient } from '@prisma/client';
+    const prisma = new PrismaClient();
+    export async function useInvite(code: string) {
+        const invite = await prisma.invite.findFirst({ where: { code } });
+        if (invite.uses >= invite.maxUses) throw new Error('used up');
+        await prisma.invite.update({ where: { id: invite.id }, data: { uses: { increment: 1 } } });
+    }
+    export async function useInviteGuarded(code: string, max: number) {
+        const invite = await prisma.invite.findFirst({ where: { code } });
+        if (invite.uses >= invite.maxUses) throw new Error('used up');
+        await prisma.invite.updateMany({ where: { id: invite.id, uses: { lt: max } }, data: { uses: { increment: 1 } } });
+    }
+    export async function useInviteLocked(code: string) {
+        return prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Invite" WHERE code = ${code} FOR UPDATE`;
+            const invite = await tx.invite.findFirst({ where: { code } });
+            if (invite.uses >= invite.maxUses) throw new Error('used up');
+            await tx.invite.update({ where: { id: invite.id }, data: { uses: invite.uses + 1 } });
+        });
+    }
+"""}
+
+
+def test_prisma_check_then_increment_compare_and_set_and_a_raw_lock(tmp_path):
+    r = _check(tmp_path, PRISMA_INVITE, "useInvite", 6)
+    assert r["verdict"] == "refuted", r
+    assert _check(tmp_path, PRISMA_INVITE, "useInviteGuarded", 11)["verdict"] == "proved"
+    r = _check(tmp_path, PRISMA_INVITE, "anonymous", 18)
+    assert r["verdict"] == "proved", r
+
+
+DRIZZLE_LINKS = {"links.ts": """
+    import { drizzle } from 'drizzle-orm/node-postgres';
+    import { and, eq, lt, sql } from 'drizzle-orm';
+    import { links } from './schema';
+    const db = drizzle(process.env.DB);
+    export async function access(uuid: string) {
+        const [link] = await db.select().from(links).where(eq(links.uuid, uuid));
+        if (link.nbAccess >= link.limitAccess) throw new Error('exceeded');
+        await db.update(links).set({ nbAccess: sql`${links.nbAccess} + 1` }).where(eq(links.uuid, uuid));
+    }
+    export async function accessGuarded(uuid: string) {
+        const [link] = await db.select().from(links).where(eq(links.uuid, uuid));
+        if (link.nbAccess >= link.limitAccess) throw new Error('exceeded');
+        await db.update(links).set({ nbAccess: sql`${links.nbAccess} + 1` })
+            .where(and(eq(links.uuid, uuid), lt(links.nbAccess, links.limitAccess)));
+    }
+    export async function count(uuid: string) {
+        const [link] = await db.select().from(links).where(eq(links.uuid, uuid));
+        await db.update(links).set({ nbAccess: sql`${links.nbAccess} + 1` }).where(eq(links.uuid, uuid));
+    }
+    export async function countStale(uuid: string) {
+        const [link] = await db.select().from(links).where(eq(links.uuid, uuid));
+        await db.update(links).set({ nbAccess: link.nbAccess + 1 }).where(eq(links.uuid, uuid));
+    }
+"""}
+
+
+def test_drizzle_atomic_set_compare_and_set_and_a_stale_value(tmp_path):
+    r = _check(tmp_path, DRIZZLE_LINKS, "access", 8)
+    assert r["verdict"] == "refuted", r
+    assert _check(tmp_path, DRIZZLE_LINKS, "accessGuarded", 13)["verdict"] == "proved"
+    assert _check(tmp_path, DRIZZLE_LINKS, "count", 18)["verdict"] == "proved"
+    r = _check(tmp_path, DRIZZLE_LINKS, "countStale", 22)
+    assert r["verdict"] == "refuted", r
+
+
+def test_mongo_and_sqlalchemy_compare_and_set(tmp_path):
+    files = {"shop/stock.py": """
+        from pymongo import MongoClient
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+        from shop.models import Wallet
+
+        items = MongoClient().shop.items
+
+
+        def take(item_id):
+            doc = items.find_one({"_id": item_id})
+            if doc["stock"] > 0:
+                items.update_one({"_id": item_id, "stock": {"$gt": 0}}, {"$inc": {"stock": -1}})
+
+
+        def spend(session: Session, wid, amt):
+            w = session.query(Wallet).filter_by(id=wid).one()
+            if w.balance >= amt:
+                session.execute(update(Wallet).where(Wallet.id == wid, Wallet.balance >= amt)
+                                .values(balance=Wallet.balance - amt))
+    """}
+    assert _check(tmp_path, files, "take", 12)["verdict"] == "proved"
+    assert _check(tmp_path, files, "spend", 18)["verdict"] == "proved"
+
+
+def test_reads_writes_and_locks_through_the_project_s_functions(tmp_path):
+    files = {**MODELS, "shop/repo.py": """
+        from shop.models import Coupon
+
+
+        def load(cid):
+            return Coupon.objects.get(id=cid)
+
+
+        def load_locked(cid):
+            return Coupon.objects.select_for_update().get(id=cid)
+
+
+        def store(c: Coupon):
+            c.save()
+    """, "shop/views.py": """
+        from shop.repo import load, load_locked, store
+
+
+        def redeem(cid):
+            c = load(cid)
+            if c.uses < c.limit:
+                c.uses = c.uses + 1
+                store(c)
+
+
+        def redeem_locked(cid):
+            c = load_locked(cid)
+            if c.uses < c.limit:
+                c.uses = c.uses + 1
+                store(c)
+    """}
+    r = _check(tmp_path, files, "redeem", 8)
+    assert r["verdict"] == "refuted", r
+    assert [w["line"] for w in r["witness"]] == [5, 6, 8]
+    r = _check(tmp_path, files, "redeem_locked", 15)
+    assert r["verdict"] == "proved", r
+
+
+def test_a_lock_after_the_read_is_not_a_protection(tmp_path):
+    r = _check(tmp_path, {**MODELS, "shop/views.py": """
+        from shop.models import Coupon
+
+        def redeem(cid):
+            c = Coupon.objects.get(id=cid)
+            Coupon.objects.select_for_update().get(id=cid)
+            c.uses = c.uses + 1
+            c.save()
+    """}, "redeem", 7)
+    assert r["verdict"] == "unknown", r
+    assert "after the read" in r["reason"]
+
+
+def test_sql_claims_and_selects(tmp_path):
+    from frame.sil.concurrency import sql_effect
+    assert sql_effect("INSERT INTO claims (k) VALUES (?) ON CONFLICT (k) DO NOTHING")["guarantee"] == "conditional"
+    assert sql_effect("INSERT IGNORE INTO claims (k) VALUES (?)")["guarantee"] == "conditional"
+    assert sql_effect("UPDATE c SET used = 1 WHERE id = ? AND used = 0")["guarantee"] == "conditional"
+    assert sql_effect("UPDATE c SET n = n + 1 WHERE id = ?")["guarantee"] == "atomic"
+    assert sql_effect("SELECT n FROM c WHERE id = ?") == {"write": False, "read": True, "guarantee": None,
+                                                          "columns": set()}
+    r = _check(tmp_path, SQL_STOCK, "take", 8)              # the SELECT line is not a write
+    assert "no write" in r["reason"], r
+
+
+def _check_lang(tmp_path, files, language, name, line):
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(text).lstrip("\n"))
+    q = QueryIndex(str(tmp_path), language=language)
+    q.build()
+    return json.loads(q.ctx.check(name, line, "atomic_write"))
+
+
+JPA = {"shop/CouponRepository.java": """
+    package shop;
+    import org.springframework.data.jpa.repository.JpaRepository;
+    public interface CouponRepository extends JpaRepository<Coupon, Long> {}
+""", "shop/CouponService.java": """
+    package shop;
+    import org.springframework.stereotype.Service;
+    @Service
+    public class CouponService {
+      private final CouponRepository repo;
+      public CouponService(CouponRepository repo) { this.repo = repo; }
+      public void redeem(Long id) {
+        Coupon c = repo.findById(id).orElseThrow();
+        if (c.getUses() < 10) {
+          c.setUses(c.getUses() + 1);
+          repo.save(c);
+        }
+      }
+    }
+"""}
+
+COUPON = """
+    package shop;
+    import jakarta.persistence.Entity;
+    import jakarta.persistence.Id;
+    import jakarta.persistence.Version;
+    @Entity
+    public class Coupon {
+      @Id private Long id;
+      private int uses;
+      {version}
+      public int getUses() { return uses; }
+      public void setUses(int u) { uses = u; }
+    }
+"""
+
+
+@pytest.mark.parametrize("version, verdict", [("@Version private Long version;", "proved"),
+                                              ("private Long version;", "refuted")])
+def test_a_jpa_version_field_is_an_optimistic_lock(tmp_path, version, verdict):
+    files = {**JPA, "shop/Coupon.java": COUPON.replace("{version}", version)}
+    r = _check_lang(tmp_path, files, "java", "CouponService.redeem", 11)
+    assert r["verdict"] == verdict, r
+
+
+EF = """
+    using System.ComponentModel.DataAnnotations;
+    using Microsoft.EntityFrameworkCore;
+    public class Product {
+      public int Id { get; set; }
+      public int Stock { get; set; }
+      {token}public int Version { get; set; }
+    }
+    public class ShopContext : DbContext {
+      public DbSet<Product> Products { get; set; }
+    }
+    public class OrderService {
+      private readonly ShopContext _db;
+      public OrderService(ShopContext db) { _db = db; }
+      public void Buy(int id) {
+        var p = _db.Products.Find(id);
+        if (p.Stock > 0) {
+          p.Stock = p.Stock - 1;
+          _db.SaveChanges();
+        }
+      }
+    }
+"""
+
+
+@pytest.mark.parametrize("token, verdict", [("[ConcurrencyCheck] ", "proved"), ("", "refuted")])
+def test_an_ef_concurrency_token_is_an_optimistic_lock(tmp_path, token, verdict):
+    r = _check_lang(tmp_path, {"Shop.cs": EF.replace("{token}", token)}, "csharp", "OrderService.Buy", 18)
+    assert r["verdict"] == verdict, r
+
+
+EF_EXECUTE = """
+    using System.Linq;
+    using Microsoft.EntityFrameworkCore;
+    public class Product { public int Id { get; set; } public int Stock { get; set; } }
+    public class ShopContext : DbContext { public DbSet<Product> Products { get; set; } }
+    public class OrderService {
+      private readonly ShopContext _db;
+      public OrderService(ShopContext db) { _db = db; }
+      public void Buy(int id) {
+        var p = _db.Products.Find(id);
+        if (p.Stock > 0) {
+          _db.Products.Where(x => x.Id == id{guard}).ExecuteUpdate(s => s.SetProperty(x => x.Stock, {value}));
+        }
+      }
+    }
+"""
+
+
+@pytest.mark.parametrize("guard, value, verdict", [
+    (" && x.Stock > 0", "x => x.Stock - 1", "proved"),      # compare-and-set
+    ("", "x => x.Stock - 1", "refuted"),                    # atomic, but decided on the stale read
+    ("", "p.Stock - 1", "refuted")])                        # the value read before
+def test_ef_execute_update(tmp_path, guard, value, verdict):
+    text = EF_EXECUTE.replace("{guard}", guard).replace("{value}", value)
+    r = _check_lang(tmp_path, {"Shop.cs": text}, "csharp", "OrderService.Buy", 11)
+    assert r["verdict"] == verdict, r

@@ -301,6 +301,8 @@ class JavaFrontend:
         name = self._get_text(nm)
         bases = self._declared_bases(node)
         fields: List[str] = []
+        field_annotations: Dict[str, List[Any]] = {}
+        field_types: Dict[str, str] = {}
         injected = [a for p in self._file_packs() for a in p.injected_field_annotations]   # [[injected_field]]
         body = node.child_by_field_name("body")
         for member in (body.named_children if body is not None else ()):
@@ -308,9 +310,16 @@ class JavaFrontend:
                 # Fields that something else fills in or that never change are not the object's
                 # externally-bound state: collaborators a container injects (the packs'
                 # `[[injected_field]]` annotations), constants.
-                managed = any(_glob_any(injected, a.name, a.canonical)
-                              for a in (parse_annotation(t, self._imports, value_alias=True)
-                                        for t in self._get_annotations(member)))
+                anns = [parse_annotation(t, self._imports, value_alias=True) for t in self._get_annotations(member)]
+                ty = member.child_by_field_name("type")
+                for d in member.named_children:          # declared types and annotations of every field
+                    if d.type == "variable_declarator" and d.child_by_field_name("name") is not None:
+                        fname = self._get_text(d.child_by_field_name("name"))
+                        if ty is not None:
+                            field_types[fname] = re.sub(r"\s+", "", self._get_text(ty))
+                        if anns:
+                            field_annotations[fname] = anns
+                managed = any(_glob_any(injected, a.name, a.canonical) for a in anns)
                 mods = next((c for c in member.children if c.type == "modifiers"), None)
                 fixed = mods is not None and bool(re.search(r"\b(static|final)\b", self._get_text(mods)))
                 if managed or fixed:
@@ -320,6 +329,7 @@ class JavaFrontend:
                         fields.append(self._get_text(d.child_by_field_name("name")))
         program.class_info[name] = ClassInfo(
             name=name, kind=kind, bases=bases, fields=fields,
+            field_annotations=field_annotations, field_types=field_types,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports, value_alias=True)
                          for a in self._get_annotations(node)],

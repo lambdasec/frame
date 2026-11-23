@@ -34,3 +34,33 @@ call = ["drizzle-orm.sql.raw"]
 args = [0]
 kind = "sql"
 description = "Drizzle raw SQL fragment"
+
+# For the read-then-write check only (never taint sinks or findings): an update's `.where(...)`
+# testing a column its `.set({...})` changes is a compare-and-set; a `.set` value that reads its
+# own column through the table (`set({ n: sql`${t.n} + 1` })`) is computed by the database;
+# selects and relational queries read rows.
+# https://orm.drizzle.team/docs/update
+# https://orm.drizzle.team/docs/sql
+# https://orm.drizzle.team/docs/rqb
+[[concurrency]]
+call = ["drizzle-orm/*.drizzle.update", "drizzle-orm/*.*Database.update", "drizzle-orm/*.*Transaction.update"]
+kind = "write"
+filter = [".where"]
+update = [".set"]
+
+[[concurrency]]
+call = ["drizzle-orm/*.drizzle.update.set", "drizzle-orm/*.*Database.update.set",
+        "drizzle-orm/*.*Transaction.update.set"]
+kind = "atomic"
+self_reference = true
+
+[[concurrency]]
+call = ["drizzle-orm/*.drizzle.select", "drizzle-orm/*.*Database.select", "drizzle-orm/*.*Transaction.select",
+        "drizzle-orm/*.drizzle.query.*.find*", "drizzle-orm/*.*Database.query.*.find*",
+        "drizzle-orm/*.*Transaction.query.*.find*"]
+kind = "read"
+
+[[concurrency]]
+call = ["drizzle-orm/*.drizzle.select.**.for", "drizzle-orm/*.*Database.select.**.for",
+        "drizzle-orm/*.*Transaction.select.**.for"]
+kind = "lock"

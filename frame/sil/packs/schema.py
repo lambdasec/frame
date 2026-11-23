@@ -1198,7 +1198,8 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     # rows (for this check only; never a taint sink).
     for i, t in enumerate(data.get("concurrency", [])):
         where = f"[[concurrency]] #{i + 1}"
-        _check_keys(origin, where, t, {"call", "kind", "keys", "self_reference", "description", "references"})
+        _check_keys(origin, where, t, {"call", "kind", "keys", "self_reference", "filter", "update",
+                                       "statement", "description", "references"})
         calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
         kind = t.get("kind")
         if kind not in ("lock", "atomic", "version", "read", "write"):
@@ -1217,6 +1218,21 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             entry["keys"] = keys
         if self_ref:
             entry["self_reference"] = True
+        # `filter` / `update`: where the write states its condition and its new values (an argument
+        # position "1", a top-level key of an object argument "where", or a chained call's method
+        # ".set"); a field in both makes the write a compare-and-set the database re-checks
+        for sel in ("filter", "update"):
+            values = _strings(origin, f"{where}.{sel}", t.get(sel, []), allow_empty=True)
+            if values:
+                entry[sel] = values
+        # `statement`: the call's first argument is SQL text, read for what it guarantees (a raw
+        # query that is not a taint sink, such as Prisma's tagged `$queryRaw`)
+        if t.get("statement", False) is not False:
+            if t["statement"] is not True:
+                raise _fail(origin, where, "statement must be true or false")
+            entry["statement"] = True
+        if bool(entry.get("filter")) != bool(entry.get("update")):
+            raise _fail(origin, where, "filter and update go together")
         pack.concurrency.append(entry)
 
     # What limits how often one caller can send a guess (the hunt's `attempt_limit` check,

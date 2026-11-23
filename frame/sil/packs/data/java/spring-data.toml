@@ -30,3 +30,19 @@ call = ["org.springframework.data.repository.*Repository.save",
         "org.springframework.data.mongodb.repository.*Repository.delete*"]
 kind = "resource_modify"
 description = "Spring Data repository write"
+
+# Spring Data's own `@Version` (JDBC, MongoDB, R2DBC repositories): an optimistic lock on the entity.
+# https://docs.spring.io/spring-data/relational/reference/jdbc/entity-persistence.html#jdbc.entity-persistence.optimistic-locking
+[[concurrency]]
+call = ["org.springframework.data.annotation.Version"]
+kind = "version"
+
+# Repository reads, for the read-then-write check only (never taint sinks).
+# https://docs.spring.io/spring-data/commons/reference/repositories/core-concepts.html
+[[concurrency]]
+call = ["org.springframework.data.repository.*Repository.find*", "org.springframework.data.repository.*Repository.get*",
+        "org.springframework.data.repository.*Repository.count*", "org.springframework.data.repository.*Repository.exists*",
+        "org.springframework.data.jpa.repository.JpaRepository.find*", "org.springframework.data.jpa.repository.JpaRepository.get*",
+        "org.springframework.data.mongodb.repository.*Repository.find*",
+        "org.springframework.data.repository.reactive.*Repository.find*"]
+kind = "read"

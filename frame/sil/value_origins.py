@@ -182,7 +182,15 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
     if True:                                            # a parameter declared as a library type
         for name, text in (getattr(proc, "param_types", None) or {}).items():
             head, _, rest = text.partition(".")
-            if name not in origin and head.isidentifier() and head in imports:
+            if name in origin or not head.isidentifier():
+                continue
+            # a class whose value the module knows (`Coupon`, a project model whose base is
+            # Django's `Model`, linked from the file that defines it) types the parameter as an
+            # instance of that, rather than by its import path
+            known = outer.get(head) if python and head not in defs else None
+            if known:
+                origin[name] = f"{known}.{rest}" if rest else known
+            elif head in imports:
                 origin[name] = f"{imports[head]}.{rest}" if rest else imports[head]
     modules: Set[str] = set()          # names holding a module itself (`require("express")`), not a call's result
     params_ = {str(p) for p, _ in proc.params}
@@ -770,7 +778,10 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
         for name, spec in (getattr(program, "imports", None) or {}).items():
             spec = str(spec)
             if not spec.startswith("."):
-                continue
+                # a tsconfig `paths` alias (`@/lib/db`) the project resolves to one of its files
+                head = spec.rpartition(".")[0] or spec
+                if not (head and (resolve(key, head) or resolve(key, spec))):
+                    continue
             mod, _, symbol = spec.rpartition(".")
             alias_file = resolve(key, mod) if mod and symbol else None
             aliased = programs.get(alias_file) if alias_file else None
@@ -804,6 +815,14 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                 return not any(v == s or v.startswith(s + ".") for s in stale)
             kept = {proc: {k: v for k, v in held.items() if fresh(v)}
                     for proc, held in (getattr(program, "param_origins", None) or {}).items()}
+            # a callee id built on the import path, whoever gave it (the frontend types
+            # `this.db.update` from the parameter's declared type), is found again from the origin
+            for proc in program.procedures.values():
+                for i in _instrs(proc):
+                    if isinstance(i, Call) and i.canonical and not fresh(str(i.canonical)):
+                        i.canonical = None
+                        i.canonical_by_origin = None
+                        i.pack_spec = None
             annotate(program, kept)
             program.origins_moved = True
         for proc in program.procedures.values():
@@ -813,10 +832,16 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                     if typed:
                         i.canonical = typed
                         program.origins_moved = True
-                if not isinstance(i, Call) or i.canonical is not None:
+                if not isinstance(i, Call):
                     continue
                 text = _call_text(i)
                 head, dot, rest = (text or "").partition(".")
+                if i.canonical is not None:
+                    # an id the import path gave (`@/lib/db.prisma.invite.update`) is replaced
+                    # by the value the module exports, like a call with no id
+                    written = str((getattr(program, "imports", None) or {}).get(head, ""))
+                    if not (dot and head in bound and written and i.canonical == f"{written}.{rest}"):
+                        continue
                 if dot and head in bound and rest and head not in _definitions(proc):
                     i.canonical = f"{bound[head]}.{rest}"      # `reporting.query()`, reporting a pool
                     program.origins_moved = True
@@ -851,15 +876,20 @@ def _declared_returns(program) -> Dict[str, str]:
         return cached
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
     imports.update(_local_type_aliases(program, imports))
-    out: Dict[str, str] = {}
+    # overloads are kept apart (`getRepository`, `getRepository#2`, ...): a method returns a type
+    # when every overload that declares a library type declares the same one, and none declares
+    # a project type
+    found: Dict[str, Set[Optional[str]]] = {}
     for proc in program.procedures.values():
         written = getattr(proc, "return_type", "") or ""
-        if not written or "#" in proc.name:
+        if not written:
             continue
         head, _, rest = written.partition(".")
         module = imports.get(head)
-        if module and not module.startswith("."):
-            out[proc.name] = f"{module}.{rest}" if rest else module
+        value = (f"{module}.{rest}" if rest else module) if module and not module.startswith(".") else None
+        found.setdefault(proc.name.split("#", 1)[0], set()).add(value)
+    out: Dict[str, str] = {name: next(iter(values)) for name, values in found.items()
+                           if len(values) == 1 and None not in values}
     program._declared_returns = out
     return out
 
