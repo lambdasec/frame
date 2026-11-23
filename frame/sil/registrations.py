@@ -45,6 +45,7 @@ class Registration:
     ref: Optional[str] = None           # the handler as written when it is not (`controller.list`)
     event: Optional[str] = None         # the call's first argument when it is a literal (`"connection"`)
     module: Optional[str] = None        # the handler is `require("<module>")`, a file's export
+    line: int = 0                       # the registering call's line (its other arguments: middleware)
 
 
 @dataclass(frozen=True)

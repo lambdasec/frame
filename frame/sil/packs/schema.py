@@ -87,7 +87,7 @@ _TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "returned_response", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
-             "policy", "define", "provided_action", "concurrency"}
+             "policy", "define", "provided_action", "concurrency", "rate_limit"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
 # `<converter(args):name>` (Flask, Quart): a rule must start with "/".
@@ -510,6 +510,10 @@ class Pack:
     # Calls / annotations that protect a read-then-write from a concurrent request
     # (frame/sil/concurrency.py): {"call": [ids], "kind": lock | atomic | version}
     concurrency: List[Dict[str, Any]] = field(default_factory=list)
+    # What limits how often a caller can try a guess (frame/sil/attempt_limits.py, the hunt's
+    # `attempt_limit` check): {"call": [ids], "name": [last name parts], "kind": decorator |
+    # middleware | call | global | exempt | attribute | state}
+    rate_limits: List[Dict[str, Any]] = field(default_factory=list)
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
     # (controller extension keys, the id the handler is registered as)
@@ -1199,6 +1203,31 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if kind not in ("lock", "atomic", "version", "read"):
             raise _fail(origin, where, "kind must be lock, atomic, version or read")
         pack.concurrency.append({"call": calls, "kind": kind})
+
+    # What limits how often one caller can send a guess (the hunt's `attempt_limit` check,
+    # frame/sil/attempt_limits.py): a decorator / annotation / attribute on the handler or its
+    # class (`decorator`), a value handed in the handler's own route registration (`middleware`:
+    # `app.post("/login", limiter, h)`; the same value registered anywhere else may cover every
+    # route, so it counts as `global`), a call in the handler or a function it calls that spends
+    # an attempt (`call`), configuration that installs a limiter for the whole application
+    # (`global`, also matched against settings lists and string constants), a decorator that
+    # turns the limiter off for one handler (`exempt`), and a class attribute whose value decides
+    # (`attribute`: DRF's `throttle_classes`, read by name only). `call` matches callee ids, `name`
+    # the last part of a call as written (C# extension methods, whose receiver has no type).
+    # `state` names stores that keep data across requests outside the database (a cache, Redis),
+    # where an application may count attempts itself.
+    for i, t in enumerate(data.get("rate_limit", [])):
+        where = f"[[rate_limit]] #{i + 1}"
+        _check_keys(origin, where, t, {"call", "name", "kind", "description", "references"})
+        calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=True)
+        names = _strings(origin, f"{where}.name", t.get("name", []), allow_empty=True)
+        if not calls and not names:
+            raise _fail(origin, where, "needs `call` or `name`")
+        kind = t.get("kind")
+        if kind not in ("decorator", "middleware", "call", "global", "exempt", "attribute", "state"):
+            raise _fail(origin, where, "kind must be decorator, middleware, call, global, exempt, attribute "
+                                       "or state")
+        pack.rate_limits.append({"call": calls, "name": names, "kind": kind})
 
     for i, t in enumerate(data.get("auth_gate", [])):
         where = f"[[auth_gate]] #{i + 1}"

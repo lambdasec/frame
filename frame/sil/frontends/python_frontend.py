@@ -325,7 +325,8 @@ class PythonFrontend:
             program.registrations.append(Registration(
                 scope=scope, callee_text=callee_text, root=chain[0] if chain else None,
                 rest=chain[1] if chain else (), arg_index=arg_index,
-                target=target.name if target is not None else None, ref=ref))
+                target=target.name if target is not None else None, ref=ref,
+                line=call_or_callee.start_point[0] + 1))
             if target is None:
                 return
             for via in [callee_text] + ([callee_id] if callee_id and callee_id != callee_text else []):

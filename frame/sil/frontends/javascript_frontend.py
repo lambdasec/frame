@@ -371,7 +371,7 @@ class JavaScriptFrontend:
                                 root=chain[0] if chain else None, rest=chain[1] if chain else (),
                                 arg_index=arg_index, target=target.name if target is not None else None,
                                 ref=None if target is not None or module is not None else self._get_text(el),
-                                event=event, module=module))
+                                event=event, module=module, line=n.start_point[0] + 1))
                         if target is None:
                             continue
                         for via in vias:

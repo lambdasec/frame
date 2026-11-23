@@ -1,0 +1,84 @@
+[pack]
+name = "rate-limits"
+language = "python"
+description = "Rate limiters and lockouts that limit how often a caller can try a guess (the hunt's attempt_limit check)"
+
+# django-ratelimit: `@ratelimit(key=..., rate=...)` on a view, `is_ratelimited(...)` in its body.
+# Version 4 renamed the package from `ratelimit` to `django_ratelimit`.
+# https://django-ratelimit.readthedocs.io/en/stable/usage.html
+[[rate_limit]]
+call = ["django_ratelimit.decorators.ratelimit", "ratelimit.decorators.ratelimit"]
+kind = "decorator"
+
+[[rate_limit]]
+call = ["django_ratelimit.core.is_ratelimited", "ratelimit.core.is_ratelimited"]
+kind = "call"
+
+# Flask-Limiter: `@limiter.limit("5/minute")` on a route; `@limiter.exempt` takes a route out of
+# the defaults, which a Limiter applies to every route when given `default_limits` (or the
+# RATELIMIT_DEFAULT setting), so building one is an application-wide limiter.
+# https://flask-limiter.readthedocs.io/en/stable/recipes.html
+[[rate_limit]]
+call = ["flask_limiter.Limiter.limit", "flask_limiter.Limiter.shared_limit"]
+kind = "decorator"
+
+[[rate_limit]]
+call = ["flask_limiter.Limiter.exempt"]
+kind = "exempt"
+
+[[rate_limit]]
+call = ["flask_limiter.Limiter"]
+kind = "global"
+
+# slowapi (Starlette / FastAPI): `@limiter.limit(...)` on an endpoint; `SlowAPIMiddleware` applies
+# the default limits to every route.
+# https://slowapi.readthedocs.io/en/latest/
+[[rate_limit]]
+call = ["slowapi.Limiter.limit", "slowapi.Limiter.shared_limit", "slowapi.extension.Limiter.limit",
+        "slowapi.extension.Limiter.shared_limit"]
+kind = "decorator"
+
+[[rate_limit]]
+call = ["slowapi.Limiter.exempt", "slowapi.extension.Limiter.exempt"]
+kind = "exempt"
+
+[[rate_limit]]
+call = ["slowapi.middleware.SlowAPIMiddleware", "slowapi.middleware.SlowAPIASGIMiddleware"]
+kind = "middleware"
+
+# Django REST framework throttles: `@throttle_classes([AnonRateThrottle])` on a function view, the
+# `throttle_classes` attribute of a class-based view (an empty list turns throttling off), and
+# DEFAULT_THROTTLE_CLASSES in the REST_FRAMEWORK setting for every view.
+# https://www.django-rest-framework.org/api-guide/throttling/
+[[rate_limit]]
+call = ["rest_framework.throttling.*"]
+kind = "middleware"
+
+[[rate_limit]]
+call = ["rest_framework.throttling.*"]
+kind = "global"
+
+[[rate_limit]]
+name = ["throttle_classes"]
+kind = "attribute"
+
+# django-axes counts failed logins and locks the caller out, installed through MIDDLEWARE and
+# AUTHENTICATION_BACKENDS for every login of the application.
+# https://django-axes.readthedocs.io/en/latest/2_installation.html
+[[rate_limit]]
+call = ["axes.middleware.AxesMiddleware", "axes.backends.AxesBackend", "axes.backends.AxesStandaloneBackend",
+        "axes.backends.AxesModelBackend"]
+kind = "global"
+
+# Stores that keep data across requests outside the database, where an application counts
+# attempts itself (Weblate's `rate_limit` over Django's cache): a function on the path that
+# writes one leaves the answer to the agent. A session is not one (the caller drops the cookie).
+# https://docs.djangoproject.com/en/5.1/topics/cache/#basic-usage
+# https://redis-py.readthedocs.io/en/stable/commands.html
+[[rate_limit]]
+call = ["django.core.cache.cache.set", "django.core.cache.cache.add", "django.core.cache.cache.incr",
+        "django.core.cache.cache.decr", "django.core.cache.cache.get_or_set", "django.core.cache.cache.set_many",
+        "redis.Redis.incr*", "redis.Redis.set*", "redis.Redis.hincrby*", "redis.Redis.zadd",
+        "redis.StrictRedis.incr*", "redis.StrictRedis.set*", "redis.StrictRedis.hincrby*", "redis.StrictRedis.zadd",
+        "redis.asyncio.Redis.incr*", "redis.asyncio.Redis.set*", "redis.asyncio.Redis.hincrby*", "redis.asyncio.Redis.zadd"]
+kind = "state"

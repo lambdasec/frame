@@ -1,0 +1,22 @@
+[pack]
+name = "rate-limits"
+language = "java"
+description = "Rate limiters that limit how often a caller can try a guess (the hunt's attempt_limit check)"
+
+# Resilience4j: `@RateLimiter(name = "...")` on a method.
+# https://resilience4j.readme.io/docs/getting-started-3#annotations
+[[rate_limit]]
+call = ["io.github.resilience4j.ratelimiter.annotation.RateLimiter"]
+kind = "decorator"
+
+# Bucket4j: `bucket.tryConsume(n)` spends tokens and says whether any were left.
+# https://bucket4j.com/8.10.1/toc.html#quick-start
+[[rate_limit]]
+call = ["io.github.bucket4j.Bucket.tryConsume", "io.github.bucket4j.Bucket.tryConsumeAndReturnRemaining"]
+kind = "call"
+
+# Guava: `rateLimiter.tryAcquire()` / `acquire()` take a permit.
+# https://guava.dev/releases/33.0.0-jre/api/docs/com/google/common/util/concurrent/RateLimiter.html
+[[rate_limit]]
+call = ["com.google.common.util.concurrent.RateLimiter.tryAcquire", "com.google.common.util.concurrent.RateLimiter.acquire"]
+kind = "call"

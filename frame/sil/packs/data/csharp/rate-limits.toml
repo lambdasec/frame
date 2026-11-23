@@ -1,0 +1,30 @@
+[pack]
+name = "rate-limits"
+language = "csharp"
+description = "Rate limiters that limit how often a caller can try a guess (the hunt's attempt_limit check)"
+
+# ASP.NET Core rate limiting: `[EnableRateLimiting("policy")]` on a controller or action,
+# `.RequireRateLimiting("policy")` on a minimal-API endpoint, `[DisableRateLimiting]` to take one
+# out, and `app.UseRateLimiter()`, which also enforces a GlobalLimiter for every endpoint.
+# https://learn.microsoft.com/en-us/aspnet/core/performance/rate-limit
+[[rate_limit]]
+call = ["Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute", "Microsoft.AspNetCore.RateLimiting.EnableRateLimiting"]
+kind = "decorator"
+
+[[rate_limit]]
+call = ["Microsoft.AspNetCore.RateLimiting.DisableRateLimitingAttribute", "Microsoft.AspNetCore.RateLimiting.DisableRateLimiting"]
+kind = "exempt"
+
+[[rate_limit]]
+name = ["RequireRateLimiting"]
+kind = "middleware"
+
+[[rate_limit]]
+name = ["UseRateLimiter"]
+kind = "global"
+
+# AspNetCoreRateLimit: IP / client rate limiting middleware for every endpoint.
+# https://github.com/stefanprodan/AspNetCoreRateLimit/wiki/IpRateLimitMiddleware
+[[rate_limit]]
+name = ["UseIpRateLimiting", "UseClientRateLimiting"]
+kind = "global"

@@ -85,13 +85,19 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         "resolution": "kind guarded_by (pattern: regex or substring of a condition or gate), "
                       "scoped_by_identity, lower_bound / upper_bound (var >= / <= bound, "
                       "decided by Z3 over the path conditions), or atomic_write (a write a "
-                      "concurrent request cannot race: atomic, or locked first)",
+                      "concurrent request cannot race: atomic, or locked first), or "
+                      "attempt_limit (a credential check one caller cannot repeat at will: a "
+                      "rate limit, limiter middleware or attempt-spending call covers it)",
         "limits": ["guarded_by matches by condition text; read the polarity in the reason",
                    "a bound is refuted only for a value the caller chooses (a request read, "
                    "copied or converted to a number); a computed or stored value is unknown",
                    "atomic_write knows a lock or atomic write only from the packs' [[concurrency]] "
                    "facts; a protection written as data or SQL text is not seen (unknown, never "
-                   "refuted, when a caller of the same name locks)"],
+                   "refuted, when a caller of the same name locks)",
+                   "attempt_limit knows a limiter only from the packs' [[rate_limit]] facts; a "
+                   "limiter outside the code (a proxy, a gateway) is not seen, and an "
+                   "application-wide limiter or a write of stored data (a lockout counter) makes "
+                   "it unknown"],
     },
 }
 

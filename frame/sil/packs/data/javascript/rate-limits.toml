@@ -1,0 +1,54 @@
+[pack]
+name = "rate-limits"
+language = "javascript"
+description = "Rate limiters and lockouts that limit how often a caller can try a guess (the hunt's attempt_limit check)"
+
+# express-rate-limit / express-slow-down: middleware built by the package's default export,
+# passed in a route (`app.post("/login", limiter, h)`) or to `app.use` for every route.
+# https://express-rate-limit.mintlify.app/reference/configuration
+# https://express-rate-limit.github.io/express-slow-down/
+[[rate_limit]]
+call = ["express-rate-limit", "express-rate-limit.rateLimit", "express-rate-limit.default",
+        "express-slow-down", "express-slow-down.slowDown", "express-slow-down.default"]
+kind = "middleware"
+
+# express-brute: `bruteforce.prevent` of an ExpressBrute instance, as route middleware.
+# https://github.com/AdamPflug/express-brute#readme
+[[rate_limit]]
+call = ["express-brute", "express-brute.**"]
+kind = "middleware"
+
+# koa-ratelimit and @fastify/rate-limit: middleware / a plugin (global unless configured per route).
+# https://github.com/koajs/ratelimit#readme
+# https://github.com/fastify/fastify-rate-limit#readme
+[[rate_limit]]
+call = ["koa-ratelimit", "@fastify/rate-limit", "fastify-rate-limit"]
+kind = "middleware"
+
+# rate-limiter-flexible: `limiter.consume(key)` spends one point and rejects when none are left.
+# https://github.com/animir/node-rate-limiter-flexible/wiki/API-methods
+[[rate_limit]]
+call = ["rate-limiter-flexible.*.consume"]
+kind = "call"
+
+# @nestjs/throttler: `@UseGuards(ThrottlerGuard)` on a controller or handler (`@Throttle` only
+# configures the guard), the guard as an APP_GUARD provider of a module for every route, and
+# `@SkipThrottle()` to take a handler out.
+# https://docs.nestjs.com/security/rate-limiting
+[[rate_limit]]
+call = ["@nestjs/throttler.ThrottlerGuard"]
+kind = "middleware"
+
+[[rate_limit]]
+call = ["@nestjs/throttler.SkipThrottle"]
+kind = "exempt"
+
+# Stores that keep data across requests outside the database, where an application counts
+# attempts itself: Redis clients (ioredis, node-redis). A session is not one.
+# https://redis.github.io/ioredis/classes/Redis.html
+# https://github.com/redis/node-redis#readme
+[[rate_limit]]
+call = ["ioredis.incr*", "ioredis.set*", "ioredis.hincrby*", "ioredis.zadd",
+        "redis.createClient.incr*", "redis.createClient.set*", "redis.createClient.hIncrBy*",
+        "redis.createClient.hincrby*", "redis.createClient.zAdd", "redis.createClient.zadd"]
+kind = "state"

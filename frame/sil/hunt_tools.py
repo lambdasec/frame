@@ -95,12 +95,16 @@ CHECK = _fn("check", "Ask the engine to prove or refute a claim at a line: kind=
             "`var >= bound` / `var <= bound`, e.g. var='qty', bound=1 at the line that stores it), "
             "or kind='atomic_write' at a write of stored data (a concurrent request cannot act on the "
             "same old value: the write is atomic or a lock comes first; refuted when the function "
-            "reads first and nothing in it or its callers locks, versions or writes atomically). "
+            "reads first and nothing in it or its callers locks, versions or writes atomically), "
+            "or kind='attempt_limit' at a function that compares a guess with a stored secret (a "
+            "rate limit, limiter middleware or attempt-spending call covers it; refuted when nothing "
+            "in the code limits attempts). "
             "Returns proved / refuted (with a path that avoids it, or the value that gets through: "
             "a number, or NaN past a guard written as `if (v < 1) reject`) / unknown.",
             {"name": _NAME, "line": {"type": "integer"},
              "kind": {"type": "string", "enum": ["guarded_by", "scoped_by_identity",
-                                                 "lower_bound", "upper_bound", "atomic_write"]},
+                                                 "lower_bound", "upper_bound", "atomic_write",
+                                                 "attempt_limit"]},
              "pattern": {"type": "string"},
              "var": {"type": "string", "description": "the value as the code names it (qty, order.quantity)"},
              "bound": {"type": "number"}, "file": _FILE}, ["name", "line", "kind"])
@@ -643,6 +647,14 @@ class HuntContext:
                                            callers=self._caller_procs(loc["proc"]))
                 except Exception as e:
                     r = {"verdict": "unknown", "reason": f"engine error: {type(e).__name__}"}
+            return json.dumps(r)
+        if kind == "attempt_limit":
+            from frame.sil.attempt_limits import check_attempt_limit
+            with ENGINE_LOCK:
+                try:
+                    r = check_attempt_limit(self, loc["program"], loc["proc"], loc.get("file") or "")
+                except Exception as e:
+                    r = {"verdict": "unknown", "witness": [], "reason": f"engine error: {type(e).__name__}"}
             return json.dumps(r)
         if kind in ("lower_bound", "upper_bound"):
             from frame.sil.logic_facts import check_bound

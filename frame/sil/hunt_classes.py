@@ -182,12 +182,15 @@ BRUTEFORCE = FlawClass(
         "  1. Find the comparison of the guess with the secret.\n"
         "  2. Find the limit: a rate-limit decorator, guard or middleware on this route or the "
         "whole application (read where the app registers its middleware and its settings), an "
-        "attempt counter with a lockout, a throttle in the framework's configuration.\n"
+        "attempt counter with a lockout, a throttle in the framework's configuration. Ask the "
+        "engine: check(name, line, kind='attempt_limit') at the function that compares the guess; "
+        "`proved` names the limiter, `refuted` means nothing in the code limits attempts, `unknown` "
+        "says what to read (an application-wide limiter, an attempt counter it may keep).\n"
         "  3. Size the attack: how many guesses the secret space needs (a 6-digit code is 10^6) "
         "and whether the secret expires first.\n"
         "The violating request is the guess, repeated: say how many and how fast."),
     mechanisms={"brute_force": ("credential_stuffing", "CWE-307")},
-    unit_kinds=frozenset({"handlers", "scouted", "service"}), corroborating=frozenset(),
+    unit_kinds=frozenset({"handlers", "scouted", "service"}), corroborating=frozenset({"attempt_limit"}),
     cwes=frozenset({"CWE-307", "CWE-799", "CWE-1216"}))
 
 CLASSES: Dict[str, FlawClass] = {c.name: c for c in (AUTHZ, LIMITS, RACE, WORKFLOW, REPLAY, BRUTEFORCE)}

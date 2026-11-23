@@ -1058,7 +1058,7 @@ class CSharpFrontend:
         if scope is not None and len(parts) > 1 and all(x.isidentifier() for x in parts):
             program.registrations.append(Registration(
                 scope=scope.name, callee_text=callee, root=parts[0], rest=tuple(parts[1:]),
-                arg_index=arg_index, target=target.name))
+                arg_index=arg_index, target=target.name, line=call.start_point[0] + 1))
 
     def _callee_path(self, call: TSNode) -> Optional[List[str]]:
         """`app.MapGroup("/api").MapGet` as ["app", "MapGroup", "MapGet"]: the names along a callee made
