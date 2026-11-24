@@ -861,3 +861,176 @@ def test_a_field_an_ancestor_declares_with_a_type_parameter_has_the_type_the_sub
         """}, language="java")
     d = ctx.resolve_call("src/UserServiceImpl.java", "UserServiceImpl.isUsersEmpty", "repository.isUsersEmpty")
     assert d is not None and d["name"] == "CustomUserRepositoryImpl.isUsersEmpty", d
+
+
+# -- a project's own fluent query builder (appsmith's QueryAllParams) --------------------------
+
+FLUENT = {
+    "src/com/acme/params/QueryAllParams.java": """
+        package com.acme.params;
+        import com.acme.repo.BaseRepositoryImpl;
+        import org.springframework.data.mongodb.core.query.Criteria;
+        import reactor.core.publisher.Flux;
+        import reactor.core.publisher.Mono;
+        public class QueryAllParams<T> {
+            private final BaseRepositoryImpl<T> repo;
+            private int limit;
+            public QueryAllParams(BaseRepositoryImpl<T> repo) { this.repo = repo; }
+            public QueryAllParams<T> criteria(Criteria c) {
+                if (c == null) {
+                    return this;
+                }
+                return this;
+            }
+            public QueryAllParams<T> limit(int n) { this.limit = n; return this; }
+            public Flux<T> all() { return repo.queryAllExecute(this); }
+            public <P> Flux<P> all(Class<P> projection) { return repo.queryAllExecute(this, projection); }
+            public Mono<Long> count() { return repo.countExecute(this); }
+            public Mono<Integer> touch() { return repo.touchExecute(this); }
+        }
+    """,
+    "src/com/acme/repo/BaseRepositoryImpl.java": """
+        package com.acme.repo;
+        import com.acme.params.QueryAllParams;
+        import org.springframework.data.mongodb.core.ReactiveMongoOperations;
+        import org.springframework.data.mongodb.core.query.Query;
+        import reactor.core.publisher.Flux;
+        import reactor.core.publisher.Mono;
+        public class BaseRepositoryImpl<T> {
+            protected ReactiveMongoOperations mongoOperations;
+            protected Class<T> genericDomain;
+            public QueryAllParams<T> queryBuilder() { return new QueryAllParams<>(this); }
+            public Flux<T> queryAllExecute(QueryAllParams<T> params) {
+                return mongoOperations.find(new Query(), genericDomain);
+            }
+            public <P> Flux<P> queryAllExecute(QueryAllParams<T> params, Class<P> projection) {
+                return mongoOperations.find(new Query(), projection);
+            }
+            public Mono<Long> countExecute(QueryAllParams<T> params) {
+                return mongoOperations.count(new Query(), genericDomain);
+            }
+            public Mono<Integer> touchExecute(QueryAllParams<T> params) { return Mono.just(1); }
+        }
+    """,
+    "src/com/acme/repo/UserRepositoryImpl.java": """
+        package com.acme.repo;
+        import org.springframework.data.mongodb.core.query.Criteria;
+        import reactor.core.publisher.Mono;
+        public class UserRepositoryImpl extends BaseRepositoryImpl<User> {
+            public Mono<Boolean> isUsersEmpty() {
+                return queryBuilder()
+                        .criteria(Criteria.where("isSystemGenerated").is(false))
+                        .limit(1)
+                        .all(IdOnly.class)
+                        .count()
+                        .map(count -> count == 0);
+            }
+            public Mono<Integer> touchAll() {
+                return queryBuilder().limit(1).all().then(queryBuilder().touch());
+            }
+        }
+    """,
+    "src/com/acme/Signup.java": """
+        package com.acme;
+        import com.acme.repo.UserRepositoryImpl;
+        import org.springframework.data.mongodb.core.ReactiveMongoOperations;
+        import reactor.core.publisher.Mono;
+        public class Signup {
+            private final UserRepositoryImpl repository;
+            private final ReactiveMongoOperations mongoOperations;
+            public Signup(UserRepositoryImpl repository, ReactiveMongoOperations mongoOperations) {
+                this.repository = repository;
+                this.mongoOperations = mongoOperations;
+            }
+            public Mono<User> signupSuper(String email) {
+                return repository
+                        .isUsersEmpty()
+                        .flatMap(isEmpty -> {
+                            if (!Boolean.TRUE.equals(isEmpty)) {
+                                return Mono.error(new IllegalStateException("exists"));
+                            }
+                            final User user = new User();
+                            return mongoOperations.save(user);
+                        });
+            }
+        }
+    """,
+}
+
+
+def test_a_read_made_through_the_project_s_own_fluent_query_builder(tmp_path):
+    """appsmith: `queryBuilder().criteria(..).limit(1).all(IdOnly.class).count()`, each link a
+    method of the project class `QueryAllParams` that `queryBuilder` is declared to return; `all`
+    reads through the repository's two-argument `queryAllExecute` (an overload named by its callee
+    id is chosen by arity). The `count()` called on the Flux `all` returns is the library's, not
+    the builder's own `count`."""
+    from frame.sil.concurrency import events, _fluent_links
+    ctx = _index(tmp_path, FLUENT, language="java")
+    rel = "src/com/acme/repo/UserRepositoryImpl.java"
+    prog = next(p for p in ctx.programs if "UserRepositoryImpl.isUsersEmpty" in p.procedures)
+    proc = prog.procedures["UserRepositoryImpl.isUsersEmpty"]
+    linked = [(c.get_func_name().rsplit(".", 1)[-1], d["name"]) for c, d in _fluent_links(ctx, rel, proc)]
+    assert linked == [("criteria", "QueryAllParams.criteria"), ("limit", "QueryAllParams.limit"),
+                      ("all", "QueryAllParams.all#2")], linked
+    ev, _ = events(prog, proc, ctx=ctx, file=rel)
+    assert set(ev.reads.values()) == {"QueryAllParams.all#2"}, ev.reads
+
+
+def test_a_check_on_a_read_made_through_the_builder_then_a_write_is_refuted(tmp_path):
+    ctx = _index(tmp_path, FLUENT, language="java")
+    rel = "src/com/acme/Signup.java"
+    r = json.loads(ctx.check("Signup.signupSuper", _line_of(tmp_path, rel, "mongoOperations.save"), "atomic_write"))
+    assert r["verdict"] == "refuted", r
+    assert [w["line"] for w in r["witness"]][:2] == [
+        _line_of(tmp_path, rel, "return repository"), _line_of(tmp_path, rel, "if (!Boolean")], r
+
+
+def test_a_repository_field_declared_with_a_type_parameter_of_a_base_service(tmp_path):
+    """appsmith: `protected final R repository` in `BaseService<R, T, ID>`, `UserServiceCEImpl
+    extends BaseService<UserRepository, User, String>`, `UserRepository` a Spring Data
+    repository: `repository.findFirstBy..()` and `repository.save(u)` inside a lambda are the
+    repository's read and write, so a check between them is check-then-act."""
+    ctx = _index(tmp_path, {
+        "src/com/acme/svc/BaseService.java": """
+            package com.acme.svc;
+            import com.acme.repo.BaseRepository;
+            public abstract class BaseService<R extends BaseRepository<T, ID>, T, ID> {
+                protected final R repository;
+                public BaseService(R repository) { this.repository = repository; }
+            }
+        """,
+        "src/com/acme/repo/BaseRepository.java": """
+            package com.acme.repo;
+            import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
+            public interface BaseRepository<T, ID> extends ReactiveMongoRepository<T, ID> {}
+        """,
+        "src/com/acme/repo/UserRepository.java": """
+            package com.acme.repo;
+            import com.acme.User;
+            import reactor.core.publisher.Mono;
+            public interface UserRepository extends BaseRepository<User, String> {
+                Mono<User> findFirstByEmail(String email);
+            }
+        """,
+        "src/com/acme/svc/UserService.java": """
+            package com.acme.svc;
+            import com.acme.User;
+            import com.acme.repo.UserRepository;
+            import reactor.core.publisher.Mono;
+            public class UserService extends BaseService<UserRepository, User, String> {
+                public UserService(UserRepository r) { super(r); }
+                public Mono<User> enable(String email) {
+                    return repository.findFirstByEmail(email).flatMap(saved -> {
+                        if (saved.isEnabled()) {
+                            return Mono.error(new IllegalStateException("exists"));
+                        }
+                        saved.setEnabled(true);
+                        return repository.save(saved);
+                    });
+                }
+            }
+        """}, language="java")
+    rel = "src/com/acme/svc/UserService.java"
+    r = json.loads(ctx.check("UserService.enable", _line_of(tmp_path, rel, "repository.save"), "atomic_write"))
+    assert r["verdict"] == "refuted", r
+    assert r["witness"][0]["line"] == _line_of(tmp_path, rel, "repository.findFirstByEmail"), r

@@ -400,7 +400,8 @@ class HuntContext:
                 for pname, proc in (getattr(prog, "procedures", {}) or {}).items():
                     loc = getattr(proc, "loc", None)
                     defs.setdefault(simple_name(pname), []).append(
-                        {"name": pname, "file": pf, "line": getattr(loc, "line", 0) if loc else 0})
+                        {"name": pname, "file": pf, "line": getattr(loc, "line", 0) if loc else 0,
+                         "params": len(getattr(proc, "params", None) or [])})
                     out: List[Tuple[str, int]] = []
                     for node in (getattr(proc, "nodes", {}) or {}).values():
                         for ins in getattr(node, "instrs", []) or []:
@@ -430,11 +431,14 @@ class HuntContext:
             self._graph = (defs, calls)
         return self._graph
 
-    def resolve_call(self, file: str, proc: str, callee: str) -> Optional[Dict[str, Any]]:
+    def resolve_call(self, file: str, proc: str, callee: str,
+                     n_args: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """The project function a call in `proc` names, or None when it cannot be told: a name
         with one definition, else the one definition the call's callee id names
         (`../users.service.UsersManager.updateAccesses` beside `UsersQueries.updateAccesses`),
-        else, for `this.m` / `self.m`, the method of the caller's own class."""
+        else, for `this.m` / `self.m`, the method of the caller's own class. `n_args` (the
+        call's argument count) only chooses between overloads of the class a receiver's
+        declared type names."""
         defs, _ = self.graph()
         ds = defs.get(simple_name(callee)) or []
         if len(ds) <= 1:
@@ -453,10 +457,16 @@ class HuntContext:
                     origin = None
                 cid = f"{origin}.{method}" if origin else None
         if cid:
-            hit = [d for d in ds if cid == d["name"] or cid.endswith("." + d["name"])]
+            def bare(d) -> str:
+                return str(d["name"]).split("#", 1)[0]
+            hit = [d for d in ds if cid == bare(d) or cid.endswith("." + bare(d))]
+            if len(hit) > 1 and n_args is not None:      # overloads (`m`, `m#2`): by arity
+                hit = [d for d in hit if d.get("params") == n_args] or hit
+            if len(hit) > 1:                             # else the one named exactly, as before
+                hit = [d for d in hit if cid == d["name"] or cid.endswith("." + d["name"])]
             if len(hit) == 1:
                 return hit[0]
-        typed = self._by_receiver_type(file, proc, callee, ds)
+        typed = self._by_receiver_type(file, proc, callee, ds, n_args)
         if typed is not None:
             return typed
         head, _, member = callee.partition(".")
@@ -468,7 +478,7 @@ class HuntContext:
         return None
 
     def _by_receiver_type(self, file: str, proc: str, callee: str,
-                          ds: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                          ds: List[Dict[str, Any]], n_args: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Java / C#: the definition a call names through its receiver's declared type
         (`Call.callee_class`): the method of that class, else of the one project class that
         implements or extends it (`IRepository<T>` -> `Repository<T>`). None when it does not
@@ -481,6 +491,8 @@ class HuntContext:
         def owner(d) -> str:
             return str(d["name"]).split("#", 1)[0].rsplit(".", 1)[0].rsplit(".", 1)[-1]
         own = [d for d in ds if owner(d) == cls]
+        if len(own) > 1 and n_args is not None:          # overloads: the one taking that many
+            own = [d for d in own if d.get("params") == n_args] or own
         if len(own) == 1:
             return own[0]
         if own:
@@ -595,7 +607,8 @@ class HuntContext:
         self._graph = None
         self._callers = None
         for memo in ("_race_summaries", "_race_classes", "_rate_limit_globals", "_credential_memo",
-                     "_race_returns", "_race_configured", "_race_models", "_class_infos"):
+                     "_race_returns", "_race_configured", "_race_models", "_class_infos",
+                     "_race_returned_class"):
             self.__dict__.pop(memo, None)
 
     # -- tools ----------------------------------------------------------------------------

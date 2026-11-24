@@ -1282,9 +1282,25 @@ def events(program, proc, ctx=None, file: str = "", depth: int = 0) -> Tuple[_Ev
     for ins in _calls(proc):
         by_line.setdefault(_line(ins), ins)
         by_callee.setdefault((ins.get_func_name(), _line(ins)), ins)
+
+    def fold(ln: int, s: Dict[str, Any], ins) -> None:
+        if ins is not None and (s["reads"] or s["write"] is not None or s.get("decides")):
+            at.setdefault(ln, ins)
+        if s["reads"]:
+            ev.reads.setdefault(ln, s["name"])
+        if s["write"] is not None:
+            ev.write(ln, _Write(s["write"].how, s["write"].fields, s["write"].what, s["write"].tracked))
+        if s["lock"]:
+            ev.locks.setdefault(ln, s["name"])
+            ev.lock_lines.add(ln)
+        if s.get("decides"):
+            ev.decides.setdefault(ln, set()).update(s["decides"])
+
     for callee, ln in listed[:MAX_CALLS]:
+        ins = by_callee.get((callee, ln))
         try:
-            d = ctx.resolve_call(file, proc.name, callee)
+            d = ctx.resolve_call(file, proc.name, callee,
+                                 len(getattr(ins, "args", None) or []) if ins is not None else None)
         except Exception:
             d = None
         if d is None or (d["file"], d["name"]) == (file, proc.name):
@@ -1295,26 +1311,120 @@ def events(program, proc, ctx=None, file: str = "", depth: int = 0) -> Tuple[_Ev
             _inline(ev, at, events(program, nested, ctx=ctx, file=file, depth=depth), by_callee[(callee, ln)], nested)
             continue
         s = _summary(ctx, d["file"], d["name"], depth + 1)
-        if not s:
-            continue
-        if s["reads"]:
-            ev.reads.setdefault(ln, s["name"])
-            if ln in by_line:
-                at.setdefault(ln, by_line[ln])
-        if s["write"] is not None:
-            ev.write(ln, _Write(s["write"].how, s["write"].fields, s["write"].what, s["write"].tracked))
-            if ln in by_line:
-                at.setdefault(ln, by_line[ln])
-        if s["lock"]:
-            ev.locks.setdefault(ln, s["name"])
-            ev.lock_lines.add(ln)
-        if s.get("decides"):
-            ev.decides.setdefault(ln, set()).update(s["decides"])
-            if ln in by_line:
-                at.setdefault(ln, by_line[ln])
+        if s:
+            fold(ln, s, by_line.get(ln))
+    for call, d in _fluent_links(ctx, file, proc):
+        s = _summary(ctx, d["file"], d["name"], depth + 1)
+        if s:
+            fold(_line(call), s, call)
     _tracked_changes(proc, ev, at)
     _versioned_documents(program, proc, ev, at, ctx, file)
     return ev, at
+
+
+def _owner(name: str) -> str:
+    return str(name).split("#", 1)[0].rsplit(".", 1)[0].rsplit(".", 1)[-1]
+
+
+def _returned_class(ctx, d: Dict[str, Any]) -> Optional[str]:
+    """The project class a project function's declared return type names (`QueryAllParams<T>
+    queryBuilder()` -> QueryAllParams), or None. Memoised."""
+    memo = ctx.__dict__.setdefault("_race_returned_class", {})
+    key = (d["file"], d["name"])
+    if key not in memo:
+        memo[key] = None
+        loc = ctx.locate(d["name"], d["file"] or None)
+        prog = loc.get("program") if loc else None
+        callee = (getattr(prog, "procedures", {}) or {}).get(loc["proc"]) if prog is not None else None
+        written = (getattr(callee, "ret_type_name", None) or getattr(callee, "return_type", "") or "") \
+            if callee is not None else ""
+        name = _type_name(str(written)) if written else ""
+        if name and name in ctx._class_index():
+            memo[key] = name
+    return memo[key]
+
+
+def _method_of(ctx, cls: str, method: str, n_args: int) -> Optional[Dict[str, Any]]:
+    """The method a call of `method` with `n_args` arguments names on a project class: the
+    class's own, else the nearest ancestor's that has one; overloads chosen by arity, None when
+    that leaves more than one."""
+    defs, _ = ctx.graph()
+    ds = defs.get(method) or []
+    if not ds:
+        return None
+
+    def arity_ok(d) -> bool:
+        return d.get("params") == n_args
+    ctx._class_bases()
+    order = [cls]
+    seen = {cls}
+    frontier = [cls]
+    while frontier:                     # breadth first: the nearest ancestor declaring it wins
+        nxt = []
+        for c in frontier:
+            for b in sorted(getattr(ctx, "_supertypes", {}).get(c, ())):
+                if b not in seen:
+                    seen.add(b)
+                    order.append(b)
+                    nxt.append(b)
+        frontier = nxt
+    for c in order:
+        hit = [d for d in ds if _owner(d["name"]) == c and arity_ok(d)]
+        if hit:
+            return hit[0] if len(hit) == 1 else None
+    return None
+
+
+def _fluent_links(ctx, file: str, proc) -> List[Tuple[Any, Dict[str, Any]]]:
+    """Links of a chain called on what a project method returns when that is a project class (a
+    fluent builder: `queryBuilder().criteria(..).limit(1).all(..)` with `queryBuilder` declared
+    to return `QueryAllParams<T>`), each with the method of that class it calls; the result of a
+    link typed the same way carries the chain on (`criteria` returns `QueryAllParams<T>`), one
+    of a library type (`all` returning `Flux<P>`) ends it."""
+    if not hasattr(ctx, "_class_index"):
+        return []
+    calls = list(_calls(proc))
+    by_ret = _result_names(proc, calls)
+    typed: Dict[int, str] = {}
+    out: List[Tuple[Any, Dict[str, Any]]] = []
+    done: set = set()
+    ctx._class_bases()
+    for _ in range(len(calls) + 1):
+        changed = False
+        for c in calls:
+            if id(c) in done:
+                continue
+            text = _func_text(c)
+            head = text.split(".", 1)[0]
+            src = by_ret.get(head) if _TEMPORARY.match(head) else None
+            if src is not None and src is not c:
+                if id(src) not in done:
+                    continue
+                done.add(id(c))
+                changed = True
+                cls = typed.get(id(src))
+                d = _method_of(ctx, cls, _method(c), len(getattr(c, "args", None) or [])) if cls else None
+                if d is None:
+                    continue
+                out.append((c, d))
+                ret = _returned_class(ctx, d)
+                if ret:
+                    typed[id(c)] = ret
+                continue
+            done.add(id(c))
+            changed = True
+            if text.startswith("$"):
+                continue
+            try:
+                d = ctx.resolve_call(file, proc.name, c.get_func_name())
+            except Exception:
+                d = None
+            ret = _returned_class(ctx, d) if d is not None else None
+            if ret:
+                typed[id(c)] = ret
+        if not changed:
+            break
+    return out
 
 
 # -- documents of a versioned model: Mongoose's optimisticConcurrency ---------------------------

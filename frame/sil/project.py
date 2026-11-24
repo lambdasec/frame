@@ -1579,6 +1579,68 @@ def _link_library_bases(programs: Dict[str, Any], index: "ProjectIndex") -> None
                         program.origins_moved = True
 
 
+def _java_inherited_field_type(programs: Dict[str, Any], index: "ProjectIndex", key: str, proc,
+                               head: str) -> Optional[Tuple[str, str]]:
+    """Java: (file, type as written there) of a field of the calling class that a call is made on
+    (`repository.save(u)`, `this.repository...`) when the frontend could not type it: declared by
+    a project base class in another file, possibly with one of that class's type parameters,
+    which takes what the subclass binds it to (`protected final R repository` in
+    `BaseService<R, T, ID>`, `UserServiceCEImpl extends BaseService<UserRepository, User,
+    String>` -> UserRepository, resolved from UserServiceCEImpl's file). None when the name is a
+    parameter or local, or the lineage does not say."""
+    name = head[5:] if head.startswith("this.") else head
+    if not name.isidentifier():
+        return None
+    p = proc
+    for _ in range(16):                       # a lambda's names include those of the method it is in
+        if p is None:
+            break
+        if name in (getattr(p, "var_types", None) or {}) or \
+                any(str(x[0] if isinstance(x, tuple) else x) == name
+                    for x in (getattr(p, "params", None) or [])):
+            return None
+        parent = getattr(p, "parent", None)
+        p = (getattr(programs.get(key), "procedures", {}) or {}).get(parent) if parent else None
+    cls_name = (getattr(proc, "class_name", None) or "").rsplit(".", 1)[-1]
+    cur = index.resolve_java_type(key, cls_name) if cls_name else None
+    binding: Dict[str, Tuple[str, str]] = {}          # type parameter -> (file, type) it is bound to
+    for _ in range(8):
+        if cur is None or cur[0] not in programs:
+            return None
+        infos = getattr(programs[cur[0]], "class_info", None) or {}
+        info = next((v for k, v in infos.items() if str(k).rsplit(".", 1)[-1] == cur[1]), None)
+        if info is None:
+            return None
+        written = (getattr(info, "field_types", None) or {}).get(name)
+        if written:
+            simple = written.split("<", 1)[0].strip()
+            if simple in (getattr(info, "type_params", None) or []):
+                return binding.get(simple)
+            return (cur[0], written)
+        mod = index.modules.get(cur[0])
+        bases = [b for b in (mod.bases.get(cur[1], []) if mod is not None else [])]
+        nxt, base = None, ""
+        for b in bases:                             # the project class it extends
+            base = b.split("<", 1)[0].strip()
+            found = index.resolve_java_type(cur[0], base)
+            if found is None or found[0] not in programs:
+                continue
+            binfo = next((v for k, v in (getattr(programs[found[0]], "class_info", None) or {}).items()
+                          if str(k).rsplit(".", 1)[-1] == found[1]), None)
+            if binfo is not None and getattr(binfo, "kind", "") != "interface":
+                nxt = found
+                break
+        if nxt is None:
+            return None
+        args = (getattr(info, "base_type_args", None) or {}).get(base.rsplit(".", 1)[-1]) or []
+        nxt_infos = getattr(programs[nxt[0]], "class_info", None) or {}
+        params = next((getattr(v, "type_params", None) or [] for k, v in nxt_infos.items()
+                       if str(k).rsplit(".", 1)[-1] == nxt[1]), [])
+        binding = {tp: binding.get(a, (cur[0], a)) for tp, a in zip(params, args)}
+        cur = nxt
+    return None
+
+
 def _link_java_library_bases(programs: Dict[str, Any], index: "ProjectIndex", key: str, program) -> None:
     """Java: a call on a value of a project type is named after the library type the method comes
     from when no project type on the way declares it: `repo.save(c)` with `interface
@@ -1594,9 +1656,15 @@ def _link_java_library_bases(programs: Dict[str, Any], index: "ProjectIndex", ke
                 typ = getattr(i, "receiver_type", None) or ""
                 func = str(getattr(i.func, "value", i.func))
                 head, dot, method = func.rpartition(".")
-                if not typ or not dot or not method.isidentifier():
+                if not dot or not method.isidentifier():
                     continue
-                lib = _project_library_base(programs, index, key, typ, method, language="java")
+                where = key
+                if not typ:
+                    found = _java_inherited_field_type(programs, index, key, proc, head)
+                    if found is None:
+                        continue
+                    where, typ = found
+                lib = _project_library_base(programs, index, where, typ, method, language="java")
                 if lib:
                     i.canonical = f"{lib}.{method}"
                     program.origins_moved = True
