@@ -87,7 +87,7 @@ _TOP_KEYS = {"pack", "wrapper", "auth_gate", "identity", "operation_dispatch", "
              "lambda_handler", "fluent", "registration", "deferred_call", "annotated_query",
              "required_flag", "disabled_protection", "handler_return", "injected_field", "same_origin_check", "service_registration",
              "request_attribute", "middleware", "returned_response", "option_call", "content_type_call", "tool_registration", "request_type", "callback_param",
-             "policy", "define", "provided_action", "concurrency", "rate_limit"}
+             "policy", "define", "provided_action", "concurrency", "rate_limit", "invariant"}
 POLICY_SEVERITIES = ("critical", "high", "medium", "low", "info")
 # Route rule syntaxes whose variables an entry point can read (`route_syntax`): Werkzeug's
 # `<converter(args):name>` (Flask, Quart): a rule must start with "/".
@@ -515,6 +515,10 @@ class Pack:
     # `attempt_limit` check): {"call": [ids], "name": [last name parts], "kind": decorator |
     # middleware | call | global | exempt | attribute | state}
     rate_limits: List[Dict[str, Any]] = field(default_factory=list)
+    # Rules of the application checked on every scan (frame/sil/invariants.py): {"id", "kind":
+    # bound | guarded, "field", "model", "min", "max", "value", "call", "guarded_by", "function",
+    # "cwe", "severity", "description"}
+    invariants: List[Dict[str, Any]] = field(default_factory=list)
     identity_proxies: List[str] = field(default_factory=list)      # Python: module-level authenticated callers
     # Python: an OpenAPI operation dispatched to the function its operationId names (connexion):
     # (controller extension keys, the id the handler is registered as)
@@ -1285,6 +1289,88 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
                 raise _fail(origin, where, "when_arg.value must be a boolean, number or string")
             entry["when_arg"] = {"position": pos, "name": wname, "value": w["value"]}
         pack.rate_limits.append(entry)
+
+    # A rule of the application the engine checks on every scan (frame/sil/invariants.py; a hunt
+    # writes these with --save-invariants): `bound` holds a stored field within `min` / `max`
+    # wherever a client-chosen value is written to it, `guarded` requires every path to a write
+    # of `field` (only of the literal `value`, when given) or a call matching `call` to pass a
+    # condition matching `guarded_by`. `model` limits it to that class's field, `function` to
+    # those functions.
+    seen_invariants: set = set()
+    for i, t in enumerate(data.get("invariant", [])):
+        where = f"[[invariant]] #{i + 1}"
+        _check_keys(origin, where, t, {"id", "kind", "field", "model", "min", "max", "value", "call",
+                                       "guarded_by", "function", "cwe", "severity", "description",
+                                       "references"})
+        from frame.sil.invariants import DEFAULT_CWE, KINDS, LANGUAGES as INVARIANT_LANGUAGES
+        if language not in INVARIANT_LANGUAGES:
+            raise _fail(origin, where, f"invariants are checked for {', '.join(INVARIANT_LANGUAGES)} packs")
+        iid = t.get("id")
+        if not isinstance(iid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", iid):
+            raise _fail(origin, where, "id must be a name (letters, digits, '.', '_', '-')")
+        if iid in seen_invariants:
+            raise _fail(origin, where, f"id {iid!r} is used twice")
+        seen_invariants.add(iid)
+        kind = t.get("kind")
+        if kind not in KINDS:
+            raise _fail(origin, where, "kind must be bound or guarded")
+        entry: Dict[str, Any] = {"id": iid, "kind": kind}
+        for key in ("field", "model", "guarded_by", "description"):
+            if key in t:
+                if not isinstance(t[key], str) or not t[key].strip():
+                    raise _fail(origin, where, f"{key} must be a non-empty string")
+                entry[key] = t[key].strip()
+        for key in ("field", "model"):
+            if key in entry and not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", entry[key]):
+                raise _fail(origin, where, f"{key} must be a name as the code writes it")
+        if "guarded_by" in entry:
+            try:
+                re.compile(entry["guarded_by"])
+            except re.error as exc:
+                raise _fail(origin, where, f"guarded_by is not a valid pattern: {exc}")
+        entry["call"] = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=True)
+        entry["function"] = _strings(origin, f"{where}.function", t.get("function", []), allow_empty=True)
+        for key in ("min", "max"):
+            if key in t:
+                v = t[key]
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    raise _fail(origin, where, f"{key} must be a number")
+                entry[key] = v
+        if "value" in t:
+            if not isinstance(t["value"], (str, int, bool)) or isinstance(t["value"], float):
+                raise _fail(origin, where, "value must be a string, integer or boolean literal")
+            entry["value"] = t["value"]
+        if kind == "bound":
+            if "field" not in entry:
+                raise _fail(origin, where, "a bound needs `field`")
+            if "min" not in entry and "max" not in entry:
+                raise _fail(origin, where, "a bound needs `min` or `max`")
+            if "min" in entry and "max" in entry and entry["min"] > entry["max"]:
+                raise _fail(origin, where, "min is above max")
+            for key in ("guarded_by", "value"):
+                if key in entry:
+                    raise _fail(origin, where, f"{key} is for guarded invariants")
+            if entry["call"]:
+                raise _fail(origin, where, "call is for guarded invariants")
+        else:
+            if "guarded_by" not in entry:
+                raise _fail(origin, where, "a guarded invariant needs `guarded_by`")
+            if bool(entry.get("field")) == bool(entry["call"]):
+                raise _fail(origin, where, "a guarded invariant names `field` or `call` (one of them)")
+            if "value" in entry and not entry.get("field"):
+                raise _fail(origin, where, "value goes with field")
+            for key in ("min", "max"):
+                if key in entry:
+                    raise _fail(origin, where, f"{key} is for bound invariants")
+        cwe = t.get("cwe", DEFAULT_CWE[kind])
+        if not isinstance(cwe, str) or not re.fullmatch(r"CWE-\d+", cwe):
+            raise _fail(origin, where, "cwe must look like CWE-1284")
+        entry["cwe"] = cwe
+        sev = t.get("severity", "medium")
+        if sev not in POLICY_SEVERITIES:
+            raise _fail(origin, where, f"severity must be one of {', '.join(POLICY_SEVERITIES)}")
+        entry["severity"] = sev
+        pack.invariants.append(entry)
 
     for i, t in enumerate(data.get("auth_gate", [])):
         where = f"[[auth_gate]] #{i + 1}"

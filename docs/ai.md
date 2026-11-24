@@ -119,6 +119,33 @@ A value the client sends without conversion is a number to the engine only when 
 
 The bound check is also a plain engine query, with no model: `frame query . check --name add_item --line 11 --kind lower_bound --var order.quantity --bound 1` ([usage.md](usage.md#frame-query-dir-tool)).
 
+### Invariants as data (`--save-invariants`)
+
+What an agent learns once can be checked on every later scan with no model. `frame scan . --hunt limits --save-invariants .frame/packs/invariants.toml` writes the rule behind each engine-backed finding as an `[[invariant]]` pack entry. An entry is written only when the refuted check names a write the engine can find again: the field the checked value is stored in, or the write a guard was missing from. Before it is saved, it is checked again and must be refuted on the same code. Entries already in the file are kept. From then on every scan that loads the pack checks the rule without a model, and the scan fails in CI like any other finding:
+
+```toml
+[[invariant]]
+id = "add-item-quantity-missing-limit"
+kind = "bound"              # a bound on a stored field: min and/or max
+model = "Order"             # optional: only that class's field
+field = "quantity"
+min = 1
+function = ["add_item"]     # where the agent established it; drop it to hold everywhere
+cwe = "CWE-1284"
+description = "an order holds at least one item"
+
+[[invariant]]
+id = "ship-after-payment"
+kind = "guarded"            # a state a write requires
+field = "status"
+value = "shipped"           # optional: only writes of this literal
+guarded_by = "paid"         # a condition every path to the write passes (as `check guarded_by`)
+```
+
+A field is written by an assignment (`order.quantity = q`), a keyword or named argument (`Order.objects.create(quantity=q)`), a setter (`order.setQuantity(q)`, `set_quantity`), or a JavaScript object literal that holds only that key (`Order.create({ quantity: q })`). With several keys the lowering keeps no value per key. `model` holds when the object is of that class by evidence: a declared type, the class of `self` / `this`, the call that produced it, or the call's own name. A `guarded` entry can name `call` globs (`*.refund`) instead of a field.
+
+The verdicts are the hunt's own checks. A client-chosen value outside the bound, or a feasible path to the write that skips the guard, is a `business_logic_flaw` with the entry's CWE (default CWE-1284 for a bound, CWE-841 for a guard), at `solver-verified`. A write the engine cannot decide, such as a value computed or read from storage, is a warning. A full scan in which an entry meets no write warns that it checks nothing (a renamed function or field) and lists it under `invariants.stale` in the JSON. Invariants are checked for Python, JavaScript/TypeScript, Java and C#. [examples/business-logic](../examples/business-logic) has a pack and its output.
+
 ## Proof-carrying findings (`--confirm-proofs`)
 
 When the symbolic engine proves a finding reachable it also computes the concrete inputs that reach it. `frame scan --confirm-proofs` turns those inputs into a test, runs it, and raises the finding to the `exploit-confirmed` evidence level only when the fault is actually observed. A finding with a reproduced test is a true positive by construction. This step runs compiled code, so it is opt-in; it uses no model and no network, and never contacts a live target.

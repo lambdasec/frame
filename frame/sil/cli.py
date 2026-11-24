@@ -31,7 +31,7 @@ import sys
 import json
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from frame.sil.scanner import FrameScanner, ScanResult, Severity
 from frame.sil.llm_client import LLMUnavailableError
@@ -290,6 +290,15 @@ def create_parser() -> argparse.ArgumentParser:
              "logic (every business-logic class) or all. Default from [hunt] classes. Needs an LLM "
              "endpoint."
     )
+    scan_parser.add_argument(
+        "--save-invariants",
+        dest="save_invariants",
+        default=None,
+        metavar="PATH",
+        help="After a business-logic hunt, write the invariants its engine-backed findings state as "
+             "a pack of [[invariant]] entries (put it in .frame/packs/ and every later scan checks "
+             "them with no model). Entries already in the file are kept."
+    )
 
     return parser
 
@@ -451,7 +460,8 @@ def hunt_summary(status: Optional[dict]) -> Optional[dict]:
             "units": sum(1 for u in units if u.get("stop") != "deferred"),
             "deferred_units": int(status.get("deferred_units") or 0),
             "coverage_units": int(cov.get("units") or 0),
-            "unresolved": list(status.get("unresolved") or [])}
+            "unresolved": list(status.get("unresolved") or []),
+            "invariants": list(status.get("invariants") or [])}
 
 
 def format_hunt_text(hunt: dict) -> str:
@@ -466,7 +476,46 @@ def format_hunt_text(hunt: dict) -> str:
         for u in hunt["unresolved"]:
             rows.append(f"  {u.get('file')}:{u.get('line')} {u.get('handler')}: {u.get('suspicion')}")
             rows.append(f"    needs: {u.get('needs')}")
+    if hunt.get("invariants"):
+        rows.append(f"{len(hunt['invariants'])} invariants learned (--save-invariants writes them as a pack):")
+        for e in hunt["invariants"]:
+            rows.append(f"  {e.get('id')} ({e.get('kind')} {e.get('field') or ''}) in {e.get('file')}")
     return "\n".join(rows) + "\n"
+
+
+def save_invariants(path: str, rows: List[dict]) -> List[str]:
+    """Write the hunt's learned `[[invariant]]` entries as a pack per language (`PATH`, or
+    `<stem>-<language>.toml` beside it when the hunt learned them in several languages), keeping
+    the entries a pack already at that path holds (an id already there is not replaced)."""
+    from frame.sil.invariants import to_toml
+    try:
+        import tomllib
+    except ModuleNotFoundError:             # pragma: no cover - 3.10
+        import tomli as tomllib             # type: ignore[no-redef]
+    by_lang: Dict[str, List[dict]] = {}
+    for e in rows or []:
+        lang = str(e.get("language") or "")
+        lang = "javascript" if lang == "typescript" else lang
+        by_lang.setdefault(lang, []).append({k: v for k, v in e.items() if k not in ("language", "file")})
+    written = []
+    base = Path(path)
+    for lang, entries in sorted(by_lang.items()):
+        target = base if len(by_lang) == 1 else base.with_name(f"{base.stem}-{lang}{base.suffix or '.toml'}")
+        kept: List[dict] = []
+        if target.exists():
+            data = tomllib.loads(target.read_text(encoding="utf-8"))
+            if (data.get("pack") or {}).get("language") not in (lang, None):
+                raise ValueError(f"{target} is a {data['pack']['language']} pack, not {lang}")
+            other = sorted(set(data) - {"pack", "invariant"})
+            if other:
+                raise ValueError(f"{target} holds more than invariants ({', '.join(other)}); "
+                                 "save them to a pack of their own")
+            kept = list(data.get("invariant") or [])
+        have = {e.get("id") for e in kept}
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(to_toml(kept + [e for e in entries if e["id"] not in have], lang), encoding="utf-8")
+        written.append(str(target))
+    return written
 
 
 def format_markdown_result(results: List[ScanResult], min_severity: Severity) -> str:
@@ -887,9 +936,24 @@ def cmd_scan(args) -> int:
             print(f"Warning: {scope['reason']}", file=sys.stderr)
         if scope.get("partitioned"):
             print(f"Warning: {scope['partitioned']}", file=sys.stderr)
+    declared = set(getattr(scanner, "invariants_declared", None) or ())
+    if declared:
+        partial = bool(getattr(args, "changed", None) or getattr(args, "files", None))
+        stale = sorted(declared - set(getattr(scanner, "invariants_met", None) or ()))
+        extra["invariants"] = {"checked": len(declared), "stale": [] if partial else stale}
+        if stale and not partial:
+            print(f"Warning: {len(stale)} invariant(s) met no write in the scanned code (renamed "
+                  f"function or field?), so they check nothing: {', '.join(stale)}", file=sys.stderr)
     hunt = hunt_summary(getattr(scanner, "last_hunt_status", None))
     if hunt is not None:
         extra["hunt"] = hunt
+        if getattr(args, "save_invariants", None) and hunt.get("invariants"):
+            try:
+                for p in save_invariants(args.save_invariants, hunt["invariants"]):
+                    print(f"Invariants written: {p}", file=sys.stderr)
+            except (OSError, ValueError) as e:
+                print(f"Error: cannot write invariants: {e}", file=sys.stderr)
+                return 2
         if hunt["stop"] not in ("finished", "no_targets"):
             print(f"Warning: the hunt did not finish ({hunt['stop']}); its "
                   f"absence of findings is not a clean result", file=sys.stderr)

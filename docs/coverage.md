@@ -300,6 +300,8 @@ Integer overflow in C and C++ (CWE-190) is decided by the solver, not by a patte
 
 AI applications (category `ai`): prompt injection, model output reaching a sink, unsafe MCP tools, indirect prompt injection, and hidden instructions in MCP tool metadata, mapped to the OWASP LLM Top 10. Full details are in [LLM and MCP application security](llm-security.md).
 
+An application's own rules are pack data too: `[[invariant]]` entries (a bound on a stored field, a check a write requires) are checked by the engine on every scan, and a hunt can write them ([ai.md](ai.md#invariants-as-data---save-invariants)).
+
 Protection-off switches (Flask `debug=True`, insecure cookie flags, Django `DEBUG`) are reported separately as `hardening`. They are `[[setting]]` entries in packs, so a pack can add its own; only an explicit off switch is reported, never a missing option.
 
 C and C++ memory safety (use-after-free, double free, leaks, null dereference, uninitialised reads, out-of-bounds indexing) is decided structurally by the [separation logic engine](engine.md): ownership and heap state are tracked in separation logic, and the solver decides whether the bad state is reachable.

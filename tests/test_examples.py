@@ -532,6 +532,15 @@ def test_business_logic_bounds_walkthrough(tmp_path):
         for want in lines:
             assert want in out, (name, want, out[-2000:])
             assert want in readme, f"README does not show {want!r}"
+    out = frame(work, env, "scan", ".", "--pack", "invariants.toml", "--root", ".")
+    for want in ["1. [MEDIUM] 🟡 business_logic_flaw", "   Location: shop.py:12:0", "   Function: add_item",
+                 "   Description: invariant order-quantity-positive (Order.quantity >= 1 and Order.quantity "
+                 "<= 100): an order holds 1 to 100 items. Broken in add_item: order.quantity = qty: a "
+                 "feasible path reaches line 12 with order.quantity = 0 (no condition on it on that path)",
+                 "   CWE: CWE-1284"]:
+        assert want in out, (want, out[-2000:])
+        assert want in readme, f"README does not show {want!r}"
+    assert "set_item" not in out
 
 
 def test_engine_query_walkthrough(tmp_path):

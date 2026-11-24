@@ -287,6 +287,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--repo-scale` | one LLM session for the whole repository (with `--ai` or `--llm-detect`) |
 | `--hunt-authz` | agentic hunt for authorization and business-logic flaws, with a verdict on every handler (a finding, safe, or unresolved); adds a `hunt` section to the output ([ai.md](ai.md#hunting-authorization-flaws---hunt-authz)) |
 | `--hunt CLASSES` | the hunt for the named flaw classes, comma-separated: `authz`, `limits`, `race`, `workflow`, `replay`, `bruteforce`, `logic` or `all` (default: `hunt.classes`); with `--hunt-authz`, authorization is added ([ai.md](ai.md#hunting-business-logic-flaws---hunt)) |
+| `--save-invariants PATH` | after a business-logic hunt, write the invariant behind each engine-backed finding as an `[[invariant]]` pack (entries already in the file are kept); put it in `.frame/packs/` and every scan checks it with no model ([ai.md](ai.md#invariants-as-data---save-invariants)) |
 
 ### `frame verify <findings.json>`
 

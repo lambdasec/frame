@@ -1116,6 +1116,10 @@ class FrameScanner:
         # Keep each file's translated program after a directory scan without running the hunt
         # (`frame query`, frame/sil/engine_query.py reads them through `_hunt_programs`).
         self.collect_programs = False
+        # `[[invariant]]` ids the scanned files' packs declare, and those that met a write: an
+        # entry that met none on a full scan is stale (its function or field was renamed)
+        self.invariants_declared: set = set()
+        self.invariants_met: set = set()
         self.last_hunt_status: Optional[Dict[str, Any]] = None  # how the last hunt ended (_apply_hunt_authz)
         self._llm_client = None
         self.library_mode = library_mode
@@ -1311,8 +1315,10 @@ class FrameScanner:
                 translator = SILTranslator(program, verbose=self.verbose)
             # The business-logic value facts (logic_facts.py) are kept only for a hunt or
             # `frame query`, which read the program afterwards; a plain scan never pays for them.
+            invariants_here = self._invariants_apply()
             translator.record_value_facts = bool(
-                (self.hunt_authz or self.collect_programs) and self._collecting_hunt_programs)
+                (self.hunt_authz or self.collect_programs) and self._collecting_hunt_programs) \
+                or invariants_here
             checks = translator.translate_program()
             # Retain the translated program (it carries the per-handler authorization
             # facts) for a repo-scale authorization hunt. Works in every mode -- project
@@ -1338,6 +1344,12 @@ class FrameScanner:
             result.vulnerabilities.extend(literal_vulns)
             if self.verbose:
                 print(f"[Scanner] Literal scan found {len(literal_vulns)} vulnerabilities")
+
+            # Step 3b': the application's own rules saved as `[[invariant]]` pack entries.
+            if invariants_here:
+                found, notes = self._check_invariants(program, filename)
+                result.vulnerabilities.extend(found)
+                result.warnings.extend(notes)
 
             # Step 3c: hardening -- explicit off switches (debug mode, insecure cookie flags).
             hardening_vulns = self._scan_hardening(source_code, filename, program)
@@ -2566,6 +2578,45 @@ class FrameScanner:
         vals = [x for x in re.split(r'[-_.]', v.lower()) if x]
         return (any(x in grams for x in vals)
                 and all(x in grams or x in cls._STRUCTURAL_WORDS for x in vals))
+
+    def _invariants_apply(self) -> bool:
+        """Whether a pack of this scan's language holds `[[invariant]]` entries (then the
+        translator keeps the value facts they are checked against)."""
+        from frame.sil import invariants
+        lang = self.language or ""
+        if lang not in invariants.LANGUAGES:
+            return False
+        try:
+            return invariants.has_entries(self.pack_set.for_language(lang), lang)
+        except Exception:
+            return False
+
+    def _check_invariants(self, program: Program, filename: str) -> Tuple[List[Vulnerability], List[str]]:
+        """`[[invariant]]` entries against this file's writes (frame/sil/invariants.py): a broken
+        one is a finding, an undecided one a warning."""
+        from frame.sil import invariants
+        try:
+            declared = invariants.entries(program)
+            results, met = invariants.check_program(program, declared)
+            self.invariants_declared.update(e["id"] for e in declared)
+            self.invariants_met.update(met)
+        except Exception as exc:
+            return [], [f"invariants could not be checked in {filename}: {type(exc).__name__}"]
+        out: List[Vulnerability] = []
+        notes: List[str] = []
+        for r in results:
+            text = invariants.describe(r)
+            if r.verdict != "refuted":
+                notes.append(f"{filename}:{r.line}: {text}")
+                continue
+            w = r.witness[0] if r.witness and isinstance(r.witness[0], dict) else {}
+            out.append(Vulnerability(
+                type=VulnType.BUSINESS_LOGIC_FLAW, severity=Severity(r.entry.get("severity", "medium")),
+                location=filename, line=r.line, column=0, description=text, procedure=r.procedure,
+                source_var=str(w.get("from") or ""), sink_type="invariant:" + r.entry["id"],
+                witness=(f"{w.get('value')} = {w.get('equals')}" if "equals" in w else None),
+                confidence=0.95, cwe_id=r.entry.get("cwe"), evidence="solver-verified"))
+        return out, notes
 
     def _scan_hardening(self, source_code: str, filename: str, program: Program) -> List[Vulnerability]:
         """Explicit off switches (debug mode, insecure cookie flags): the `[[setting]]` entries

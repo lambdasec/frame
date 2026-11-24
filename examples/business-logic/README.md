@@ -46,6 +46,32 @@ $ frame query . check --name pay --line 33 --kind lower_bound --var amount --bou
 
 `float("nan") <= 0` is false, so `pay` charges NaN. Writing the guard the other way round, `if not amount > 0: abort(400)`, turns NaN away too: it accepts only what passes the comparison.
 
+## 4. Keeping the rule in CI
+
+The answer to section 1 can live in a pack, so it does not depend on someone asking again. `invariants.toml` states the shop's rule as an `[[invariant]]` entry. Every scan that loads it checks each write of `Order.quantity` against the bound, with no model:
+
+```toml
+[[invariant]]
+id = "order-quantity-positive"
+kind = "bound"
+model = "Order"
+field = "quantity"
+min = 1
+max = 100
+description = "an order holds 1 to 100 items"
+```
+
+```console
+$ frame scan . --pack invariants.toml --root .
+1. [MEDIUM] 🟡 business_logic_flaw
+   Location: shop.py:12:0
+   Function: add_item
+   Description: invariant order-quantity-positive (Order.quantity >= 1 and Order.quantity <= 100): an order holds 1 to 100 items. Broken in add_item: order.quantity = qty: a feasible path reaches line 12 with order.quantity = 0 (no condition on it on that path)
+   CWE: CWE-1284
+```
+
+`set_item` writes the same field after checking both ends, so the engine proves the rule there and reports nothing. Put the file in `.frame/packs/` and every scan loads it without `--pack`.
+
 ## With a model
 
-`frame scan . --hunt limits` gives each handler unit an agent with these questions as a tool. A finding is `llm-verified` only when the engine refuted the bound in that function. The engine's witness is in the description, for example `engine: order.quantity = 0 reaches line 12 on a feasible path`. See [docs/ai.md](../../docs/ai.md#hunting-business-logic-flaws---hunt).
+`frame scan . --hunt limits` gives each handler unit an agent with these questions as a tool. A finding is `llm-verified` only when the engine refuted the bound in that function. The engine's witness is in the description, for example `engine: order.quantity = 0 reaches line 12 on a feasible path`. `--save-invariants FILE` writes the rule behind each such finding as an entry like the one in section 4. See [docs/ai.md](../../docs/ai.md#hunting-business-logic-flaws---hunt).

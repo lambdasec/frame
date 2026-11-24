@@ -587,6 +587,44 @@ def _merge_layers(findings: list, ctx) -> list:
     return [f for f in findings if id(f) not in dropped]
 
 
+def _learned_invariants(ctx, findings: list) -> List[Dict[str, Any]]:
+    """The `[[invariant]]` entries the business-logic findings state (frame/sil/invariants.py):
+    one per finding backed by a refuted engine check that names a write the entry finds again,
+    re-checked here so a saved entry is one the engine refutes on this code. `--save-invariants`
+    writes them as a pack."""
+    from frame.sil.hunt_classes import CLASSES
+    from frame.sil.hunt_tools import ENGINE_LOCK
+    from frame.sil.invariants import check_program, learn
+    out: List[Dict[str, Any]] = []
+    ids: set = set()
+    for f in findings or []:
+        fact = f.get("engine_fact") if isinstance(f, dict) else None
+        cls_name = str(f.get("hunt_class") or "authz") if isinstance(f, dict) else "authz"
+        if not isinstance(fact, dict) or cls_name == "authz":
+            continue
+        try:
+            loc = ctx.locate(str(fact.get("name") or f.get("handler") or ""), f.get("file"), fact.get("line"))
+            if loc is None:
+                continue
+            mech = CLASSES[cls_name].mechanisms.get(str(f.get("mechanism") or "")) if cls_name in CLASSES else None
+            with ENGINE_LOCK:
+                entry = learn(loc["program"], loc["proc"], fact, {**f, "cwe": mech[1] if mech else ""})
+                if entry is None:
+                    continue
+                results, _ = check_program(loc["program"], [entry])
+            if not any(r.verdict == "refuted" for r in results):
+                continue
+        except Exception:
+            continue
+        base, n = entry["id"], 2
+        while entry["id"] in ids:
+            entry["id"], n = f"{base}-{n}", n + 1
+        ids.add(entry["id"])
+        out.append({**entry, "language": getattr(loc["program"], "language", "") or ctx.language or "",
+                    "file": loc.get("file") or str(f.get("file") or "")})
+    return out
+
+
 def _findings_to_vulns(findings: list, index: EngineIndex) -> list:
     out = []
     emitted: set = set()
@@ -1620,6 +1658,7 @@ def _hunt_units(index: EngineIndex, programs, symbolic_findings, repo_root: str,
 
     findings = _merge_layers([f for r in runs for f in r.collected], ctx)
     vulns = _findings_to_vulns(findings, ctx.index)
+    status["invariants"] = _learned_invariants(ctx, findings)
     rows = [{"id": r.unit.id, "kind": r.unit.kind, "class": r.unit.hunt_class, "files": r.unit.files,
              "handlers": r.unit.names(),
              "investigated": r.investigated, "reused": r.reused, "stop": r.stop, "steps": r.steps,

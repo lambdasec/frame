@@ -372,6 +372,15 @@ def create_parser() -> argparse.ArgumentParser:
              "logic (every business-logic class) or all. Default from [hunt] classes. Needs an LLM "
              "endpoint."
     )
+    scan_parser.add_argument(
+        "--save-invariants",
+        dest="save_invariants",
+        default=None,
+        metavar="PATH",
+        help="After a business-logic hunt, write the invariants its engine-backed findings state as "
+             "a pack of [[invariant]] entries (put it in .frame/packs/ and every later scan checks "
+             "them with no model). Entries already in the file are kept."
+    )
 
     # === EXPLOIT command ===
     exploit_parser = subparsers.add_parser(
