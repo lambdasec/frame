@@ -161,10 +161,16 @@ def _string_constants(exp, depth: int = 0) -> Iterable[str]:
 
 
 def _calls(proc) -> Iterable[Any]:
+    for ins in _instrs(proc):
+        if type(ins).__name__ == "Call":
+            yield ins
+
+
+def _instrs(proc) -> Iterable[Any]:
+    """Every instruction: calls, and those whose expressions hold calls (a branch condition,
+    `if (bucket.tryConsume(1))`; an assigned value)."""
     for node in (getattr(proc, "nodes", {}) or {}).values():
-        for ins in getattr(node, "instrs", []) or []:
-            if type(ins).__name__ == "Call":
-                yield ins
+        yield from getattr(node, "instrs", []) or []
 
 
 def _line(ins) -> int:
@@ -189,12 +195,19 @@ def _typed_names(program, proc, names: Iterable[str]) -> List[str]:
     """`names` and, for a call on a name the function or its class declares with a library type
     (Java / C# `_users.CheckPasswordAsync` with `UserManager<AppUser> _users`), the type's id plus
     the method: calls written inside an expression carry no receiver type of their own."""
-    from frame.sil.concurrency import _receiver_types
+    from frame.sil.concurrency import _receiver_types, _type_ids, _type_name
     out = [n for n in names if n]
     for n in list(out):
         head, _, rest = n.removeprefix("this.").partition(".")
-        if rest and "(" not in rest:
-            out += [f"{t}.{rest}" for t in _receiver_types(program, proc, head)]
+        if not rest or "(" in rest:
+            continue
+        typed = _receiver_types(program, proc, head)
+        cls = _class_of(program, getattr(proc, "name", "") or "")
+        written = (getattr(cls, "field_types", None) or {}).get(head) if cls is not None and not typed else None
+        name = _type_name(written) if written else ""
+        if name and name not in (getattr(program, "class_info", None) or {}):
+            typed = _type_ids(program, name)          # a field of the class (Java `Bucket bucket`)
+        out += [f"{t}.{rest}" for t in typed]
     return out
 
 
@@ -396,11 +409,12 @@ def _spends_attempt(ctx, program, file: str, proc_name: str, table, kinds=("call
             proc = (getattr(prog, "procedures", {}) or {}).get(name)
             if proc is None:
                 continue
-            for ins in _calls(proc):
+            for ins in _instrs(proc):
                 from frame.sil.hunt_tools import _nested_call_names
                 nested = _typed_names(prog, proc, _nested_call_names(ins))
-                for e, call, what in ((_match(prog, name, _call_names(prog, ins), table, kinds), ins,
-                                       (_call_names(prog, ins) or ["?"])[-1]),
+                is_call = type(ins).__name__ == "Call"
+                for e, call, what in ((_match(prog, name, _call_names(prog, ins), table, kinds) if is_call else None,
+                                       ins, (_call_names(prog, ins) or ["?"])[-1] if is_call else ""),
                                       (_match(prog, name, nested, table, kinds) if nested else None, None,
                                        nested[0] if nested else "")):
                     if e is None:
@@ -510,8 +524,9 @@ def _credential_line(ctx, program, file: str, proc_name: str) -> Optional[Tuple[
         return None
     ids = credential_checks().get(_lang(program)) or ()
     from frame.sil.hunt_tools import _nested_call_names
-    for ins in _calls(proc):
-        for n in _call_names(program, ins) + _typed_names(program, proc, _nested_call_names(ins)):
+    for ins in _instrs(proc):
+        own = _call_names(program, ins) if type(ins).__name__ == "Call" else []
+        for n in own + _typed_names(program, proc, _nested_call_names(ins)):
             if any(n == i or n.endswith("." + i) for i in ids):
                 return _line(ins), "call"
     if hasattr(ctx, "graph"):

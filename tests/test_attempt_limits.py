@@ -521,3 +521,50 @@ def test_when_arg_is_validated():
     pack = parse_pack({**head, "rate_limit": [{"name": ["M"], "kind": "call",
                                                "when_arg": {"name": "lock", "value": True}}]})
     assert pack.rate_limits[0]["when_arg"] == {"position": None, "name": "lock", "value": True}
+
+
+BUCKET = """\
+package com.acme;
+
+import io.github.bucket4j.Bucket;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class LoginController {
+    private final Bucket bucket;
+    private final PasswordEncoder encoder;
+
+    public LoginController(Bucket bucket, PasswordEncoder encoder) {
+        this.bucket = bucket;
+        this.encoder = encoder;
+    }
+
+    @PostMapping("/login")
+    public boolean login(String password, String hash) {
+        if (bucket.tryConsume(1)) {
+            return encoder.matches(password, hash);
+        }
+        return false;
+    }
+
+    @PostMapping("/pin")
+    public String pin(String password, String hash) {
+        if (encoder.matches(password, hash)) {
+            return "ok";
+        }
+        return "no";
+    }
+}
+"""
+
+
+def test_a_limiter_and_a_credential_check_written_in_a_condition(tmp_path):
+    ctx = _ctx(tmp_path, {"LoginController.java": BUCKET})
+    login = _verdict(ctx, "LoginController.login")
+    assert login["verdict"] == "proved", login              # a field typed Bucket, in the `if`
+    assert "tryConsume" in login["reason"]
+    pin = _verdict(ctx, "LoginController.pin")
+    assert pin["verdict"] == "refuted", pin                 # the check is the condition itself
+    assert pin["witness"][0]["line"] == 28
