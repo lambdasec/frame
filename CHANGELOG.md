@@ -4,6 +4,24 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-24
+
+### Added
+
+- **Invariants as data.** `[[invariant]]` pack entries (Python, JavaScript/TypeScript, Java, C#) state an application rule the engine checks on every scan with no model: `bound` (a model field stays within `min`/`max`) and `guarded` (a write, or a call, only happens behind a check matching `guarded_by`), optionally scoped to a function. A refuted entry is a `business_logic_flaw` finding at `solver-verified`, an undecided one a scan warning, and a full scan warns about entries that met no write (`invariants.stale` in the JSON). `frame scan --hunt ... --save-invariants PATH` writes the entries a hunt's engine-backed findings state, so what an agent found once is enforced in CI. A scan with no invariant pack pays nothing for it. See `examples/business-logic`.
+- **Reproductions for every Java and C# sink.** `frame exploit --deps` could only spy a sink the project takes as an injected interface. A sink the project calls directly (`Runtime.exec`, `Process.Start`, a constructor, a concrete library class such as SnakeYAML's `Yaml`) is now spied at its call site: in the runner's temporary copy, each argument of the flagged call is wrapped in a function that returns it unchanged, records the marker and stops before the sink runs. Nothing is instrumented at run time and nothing is downloaded, so it works on any JDK or .NET SDK. New exemplars `java-taint-cmdi`, `java-sca-yaml-load` and `csharp-taint-process-start`.
+- **Race protections the engine understands** (`check atomic_write`, corroborating `race`): protections written as data (MongoDB update operators, Prisma's atomic number operations) or SQL text (`UPDATE ... SET n = n - 1`, a WHERE that re-checks the column, `SELECT ... FOR UPDATE`, `ON CONFLICT DO NOTHING`); SQLAlchemy, Sequelize, pymongo and Mongoose entries; version columns (JPA `@Version`, EF Core concurrency tokens configured by attribute or in code, Mongoose `optimisticConcurrency`); compare-and-set writes and claims (a conditional write the code branches on, which only one request wins); check-then-act through the project's own functions, generated Prisma clients, typed service fields, reactive lambdas, entities tracked until `SaveChanges()` / `commit()`, and a project's fluent query builders.
+- **Attempt limits the engine understands** (`check attempt_limit`, corroborating `bruteforce`): `[[rate_limit]]` pack entries for Python, JavaScript/TypeScript, Java and C# (decorators, route middleware, attempt-spending calls, application-wide limiters, exemptions), ASP.NET Identity's lockout (`lockoutOnFailure: true`, `AccessFailedAsync`), limiters and credential checks written in a branch condition (`if (bucket.tryConsume(1))`), and lockouts the application keeps in stored data (a failure counter every path to the credential check is refused on).
+
+### Changed
+
+- **A language family over the cross-file limit is analysed in groups.** A scan with more files of one family than `--cross-file-limit` (default 2,000) used to analyse each file alone. It now analyses groups of files that import one another, each group as a full scan would, with a warning naming the groups (`scope.partitioned`, `scope.groups`). Imports between groups do not resolve.
+
+### Fixed
+
+- **A fix is proved only by a run that ran.** `frame exploit --deps --check-fixed` reported a fixed copy that did not compile, or a driver that could not import or call the entry point, as a verified fix. The fixed code must now run under the driver and no longer reach the sink.
+- **Java and C# findings name their sink call.** A sink from a spec (SnakeYAML's `Yaml.load`) left `sink_call` empty in the JSON, so a reproduction could not be built from the scan; it now names the call.
+
 ## [1.1.12] - 2026-11-22
 
 ### Fixed
@@ -170,7 +188,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.1.12...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/lambdasec/frame/compare/v1.1.12...v1.2.0
 [1.1.12]: https://github.com/lambdasec/frame/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/lambdasec/frame/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/lambdasec/frame/compare/v1.1.9...v1.1.10
