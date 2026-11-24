@@ -118,3 +118,19 @@ def test_driver_errors_that_mean_the_code_was_not_reached():
     assert not _driver_ran("driver error: Error: Cannot find module './routes'")
     assert not _driver_ran("driver error: TypeError: handler is not a function")
     assert not _driver_ran("patch failed: AttributeError: x")
+
+
+def test_a_scanned_java_sink_names_its_call_for_reproduction(tmp_path):
+    # Java spec sinks are a marker after the call; the finding still names that call, so
+    # `frame exploit --deps` can build a reproduction straight from a scan's JSON.
+    import shutil
+    from pathlib import Path
+    from frame.sil.proof_deps import taint_repro_spec
+    from frame.sil.scanner import FrameScanner
+    case = Path(__file__).resolve().parent.parent / "benchmarks/exemplars/reproductions/java-sca-yaml-load"
+    shutil.copytree(case, tmp_path / "case")
+    results = FrameScanner(language="java").scan_directory(str(tmp_path / "case"), "**/*.java")
+    found = [v.to_dict() for r in results for v in r.vulnerabilities if v.type.value == "deserialization"]
+    assert [f.get("sink_call") for f in found] == ["org.yaml.snakeyaml.Yaml.load"]
+    spec = taint_repro_spec(found[0])
+    assert spec is not None and sink_of(spec.vuln_function) == Sink("Yaml", "load")

@@ -969,14 +969,21 @@ class ProcedureSummary:
 # SIL Translator
 # =============================================================================
 
-def _note_sink_call(checks: List["VulnerabilityCheck"], instr: Instr) -> None:
+def _note_sink_call(checks: List["VulnerabilityCheck"], instr: Instr,
+                    last_call: Optional[Instr] = None) -> None:
     """Record the call each check's sink is (for frame/sca: an advisory is reached only through
-    its own function), where the code that made the check did not already say."""
+    its own function), where the code that made the check did not already say. A sink marker
+    that does not name its call (Java and C# emit one after the call it came from) takes the
+    call just before it on the same line."""
     if isinstance(instr, Call):
         name = instr.canonical or str(getattr(instr.func, "value", instr.func)).strip('"')
     elif isinstance(instr, TaintSink):
         name = instr.call.strip('"')
+        if not name and isinstance(last_call, Call) and last_call.loc.line == instr.loc.line:
+            name = last_call.canonical or str(getattr(last_call.func, "value", last_call.func)).strip('"')
     else:
+        return
+    if not name:
         return
     for c in checks:
         if not c.sink_call:
@@ -1658,6 +1665,7 @@ class SILTranslator:
             current_state = state.copy()
             returned = False
             self._branch_node_clean = self._branch_edge_formula(node) is not None
+            last_call = None
             for instr_idx, instr in enumerate(node.instrs):
                 self._cur_pos = (node_id, instr_idx)
                 if pg is not None:
@@ -1669,7 +1677,9 @@ class SILTranslator:
                     instr, current_state, proc.name
                 )
                 if node_checks:
-                    _note_sink_call(node_checks, instr)
+                    _note_sink_call(node_checks, instr, last_call)
+                if isinstance(instr, Call):
+                    last_call = instr
                 # Record the path's feasibility constraints on each new finding, so
                 # a finding on a provably-infeasible path can be dropped later. This
                 # is post-hoc bookkeeping; it never prunes execution.
