@@ -76,6 +76,26 @@ Apps using OpenAI, Anthropic, LangChain and MCP, in Python and TypeScript, each 
 Network security groups and VPC firewall rules decided in each cloud's own rule order, plus storage and database settings, on an Azure and a Google Cloud configuration.
 *Runs offline.*
 
+### [malicious-packages](malicious-packages/README.md): advisories with no fix to take
+
+A malicious PyPI release, an unmaintained crate, and the Python start-up hooks inside an image. Shows the advice changing with the advisory's kind (remove or pin away, and rotate credentials) and every `.pth` line and `sitecustomize` that runs at interpreter start, with the package that installed it.
+*Runs offline.*
+
+### [container-runtimes](container-runtimes/README.md): the JDK an image installs from a tarball
+
+JDK `release` files from three official images, which no package database lists. The two HotSpot builds are matched against OpenJDK's own advisories; the OpenJ9 one is reported, not matched, since those advisories describe HotSpot.
+*Runs offline.*
+
+### [business-logic](business-logic/README.md): is the number the caller sends bounded?
+
+A Flask shop where a quantity is stored as sent, a second route checks it, and a third guard lets NaN through. The engine decides each bound with Z3 and names the value that gets through, then an `[[invariant]]` entry keeps the rule checked on every scan, with no model.
+*Runs offline.*
+
+### [engine-query](engine-query/README.md): asking the engine with `frame query`
+
+The questions an agent asks while reviewing a three-route app (who calls a function, where its data comes from, a handler's siblings, whether an admin check guards a line), answered by the engine with no model, plus `--serve` to keep the index warm between edits.
+*Runs offline.*
+
 ### [configs](configs/README.md): configuration files
 
 A minimal config, an AI one, a dependencies one and an unattended authorization hunt, with what a scan does under each: the precedence order, a misspelt key named as an error, and a retired variable warned about.

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**What to work on next:** `docs/roadmap.md` holds the long-term plan and the remaining work, phase by phase (Phase 0 lists every open SAST gap by test id). When asked to pick something up, take the earliest unfinished item there, and update the file when an item is done.
+**What to work on next:** `docs/roadmap.md` holds what is built, what is next and the approximations kept. When asked to pick something up, take the earliest unfinished item under "What's next" and update the file when it is done; when nothing is planned there, ask what to take up instead of inventing work.
 
 ## Project Overview
 

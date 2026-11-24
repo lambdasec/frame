@@ -6,7 +6,7 @@ Frame finds vulnerabilities by following attacker data through your code and pro
 
 | Guide | What it covers |
 |---|---|
-| [Usage](usage.md) | Scanning, output formats, CI (the GitHub Action, pre-commit hook, baselines, `--changed`, `verify`, `diff`), suppressions, configuration, the knowledge base, every command, flag, setting and environment variable, and the Python API |
+| [Usage](usage.md) | Scanning, output formats, CI (the GitHub Action, pre-commit hook, baselines, `--changed`, `verify`, `diff`), engine queries for agents (`frame query`), suppressions, configuration, the knowledge base, every command, flag, setting and environment variable, and the Python API |
 | [Coverage](coverage.md) | Cross-file resolution per language, the frameworks supported out of the box, writing a pack for your own stack, and every vulnerability class Frame detects |
 | [Dependencies](dependencies.md) | Lockfiles of every supported ecosystem, offline advisories, reachability, upgrade plans Frame applies and verifies, code and configuration mitigations, licences, SBOM, VEX, container images |
 | [Secrets](secrets.md) | Credentials by name and by provider key format, git-history scanning, and live verification with each provider |
@@ -17,9 +17,9 @@ Frame finds vulnerabilities by following attacker data through your code and pro
 
 | Guide | What it covers |
 |---|---|
-| [AI layer](ai.md) | Optional model-assisted detection, triage, the authorization hunt, exploitation, fixing, and proof-carrying reproductions, with any OpenAI-compatible model, including a local one |
+| [AI layer](ai.md) | Optional model-assisted detection, triage, the authorization and business-logic hunts (with invariants every later scan checks), exploitation, fixing, and proof-carrying reproductions, with any OpenAI-compatible model, including a local one |
 | [Separation logic engine](engine.md) | The prover under the scanner: entailment, frame inference, bi-abduction, countermodels, its CLI and Python API, and SL-COMP results |
-| [Roadmap](roadmap.md) | What is built and what comes next |
+| [Roadmap](roadmap.md) | What is built, the approximations kept, and what comes next |
 
 ## Elsewhere in the repository
 
