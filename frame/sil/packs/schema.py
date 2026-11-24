@@ -1253,10 +1253,13 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     # (`attribute`: DRF's `throttle_classes`, read by name only). `call` matches callee ids, `name`
     # the last part of a call as written (C# extension methods, whose receiver has no type).
     # `state` names stores that keep data across requests outside the database (a cache, Redis),
-    # where an application may count attempts itself.
+    # where an application may count attempts itself. A `call` entry may hold only for one
+    # argument's literal value (`when_arg = {position = 3, name = "lockoutOnFailure", value = true}`:
+    # ASP.NET Identity's sign-in counts a failure only when asked); `position` counts the
+    # positional arguments from 0, `name` is the named / keyword argument.
     for i, t in enumerate(data.get("rate_limit", [])):
         where = f"[[rate_limit]] #{i + 1}"
-        _check_keys(origin, where, t, {"call", "name", "kind", "description", "references"})
+        _check_keys(origin, where, t, {"call", "name", "kind", "when_arg", "description", "references"})
         calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=True)
         names = _strings(origin, f"{where}.name", t.get("name", []), allow_empty=True)
         if not calls and not names:
@@ -1265,7 +1268,23 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
         if kind not in ("decorator", "middleware", "call", "global", "exempt", "attribute", "state"):
             raise _fail(origin, where, "kind must be decorator, middleware, call, global, exempt, attribute "
                                        "or state")
-        pack.rate_limits.append({"call": calls, "name": names, "kind": kind})
+        entry = {"call": calls, "name": names, "kind": kind}
+        if "when_arg" in t:
+            w = t["when_arg"]
+            if kind != "call" or not isinstance(w, dict):
+                raise _fail(origin, where, "when_arg must be a table, on a call entry")
+            _check_keys(origin, f"{where}.when_arg", w, {"position", "name", "value"})
+            pos, wname = w.get("position"), w.get("name")
+            if pos is not None and (not isinstance(pos, int) or isinstance(pos, bool) or pos < 0):
+                raise _fail(origin, where, "when_arg.position must be a non-negative integer")
+            if wname is not None and not (isinstance(wname, str) and wname):
+                raise _fail(origin, where, "when_arg.name must be a string")
+            if pos is None and wname is None:
+                raise _fail(origin, where, "when_arg needs `position` or `name`")
+            if not isinstance(w.get("value"), (bool, int, str)):
+                raise _fail(origin, where, "when_arg.value must be a boolean, number or string")
+            entry["when_arg"] = {"position": pos, "name": wname, "value": w["value"]}
+        pack.rate_limits.append(entry)
 
     for i, t in enumerate(data.get("auth_gate", [])):
         where = f"[[auth_gate]] #{i + 1}"

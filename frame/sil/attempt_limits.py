@@ -185,6 +185,19 @@ def _call_names(program, ins) -> List[str]:
     return out
 
 
+def _typed_names(program, proc, names: Iterable[str]) -> List[str]:
+    """`names` and, for a call on a name the function or its class declares with a library type
+    (Java / C# `_users.CheckPasswordAsync` with `UserManager<AppUser> _users`), the type's id plus
+    the method: calls written inside an expression carry no receiver type of their own."""
+    from frame.sil.concurrency import _receiver_types
+    out = [n for n in names if n]
+    for n in list(out):
+        head, _, rest = n.removeprefix("this.").partition(".")
+        if rest and "(" not in rest:
+            out += [f"{t}.{rest}" for t in _receiver_types(program, proc, head)]
+    return out
+
+
 def _annotation_names(ann) -> List[str]:
     return [n for n in (getattr(ann, "canonical", None), getattr(ann, "name", None)) if n]
 
@@ -244,7 +257,7 @@ def _own_protection(ctx, program, file: str, proc_name: str, table) -> Dict[str,
     """What covers the function itself: {"protected": what or None, "exempt": bool,
     "attribute": name or None}."""
     proc = (getattr(program, "procedures", {}) or {}).get(proc_name)
-    out: Dict[str, Any] = {"protected": None, "exempt": False, "attribute": None}
+    out: Dict[str, Any] = {"protected": None, "exempt": False, "attribute": None, "undecided": []}
     if proc is None:
         return out
     here = _annotation_protection(ctx, program, proc_name, list(getattr(proc, "annotations", None) or []), table)
@@ -269,9 +282,11 @@ def _own_protection(ctx, program, file: str, proc_name: str, table) -> Dict[str,
     if route:
         out["protected"] = route
         return out
-    spent = _spends_attempt(ctx, program, file, proc_name, table)
+    undecided: List[str] = []
+    spent = _spends_attempt(ctx, program, file, proc_name, table, undecided=undecided)
     if spent:
         out["protected"] = spent
+    out["undecided"] = undecided
     return out
 
 
@@ -329,9 +344,50 @@ def _route_protection(ctx, program, file: str, proc_name: str, table) -> Optiona
     return None
 
 
-def _spends_attempt(ctx, program, file: str, proc_name: str, table, kinds=("call",)) -> Optional[str]:
+def _arg_value(ins, position: Optional[int], name: Optional[str]):
+    """The argument of a call at a named / keyword `name`, else at positional `position` (C# lists a
+    named argument's label before its value: the label is not an argument), or None."""
+    args = [a[0] if isinstance(a, tuple) else a for a in getattr(ins, "args", None) or []]
+    names = list(getattr(ins, "kwarg_names", None) or [])
+    plain = []
+    for i, a in enumerate(args):
+        kw = names[i] if i < len(names) else None
+        if kw:
+            if name and kw == name:
+                return a
+            continue
+        nxt = names[i + 1] if i + 1 < len(names) else None
+        if nxt and type(a).__name__ == "ExpVar" and str(getattr(a.var, "name", a.var)) == nxt:
+            continue                                   # `lockoutOnFailure:` itself
+        plain.append(a)
+    if position is not None and position < len(plain):
+        return plain[position]
+    return None
+
+
+def _when_arg_holds(ins, cond: Dict[str, Any]) -> Optional[bool]:
+    """Does the call pass `cond`'s literal value? None when the argument is not a literal (or the
+    call is written inside an expression, whose arguments are not read here)."""
+    if ins is None:
+        return None
+    a = _arg_value(ins, cond.get("position"), cond.get("name"))
+    if a is None or type(a).__name__ != "ExpConst":
+        return None
+    v, want = getattr(a, "value", None), cond["value"]
+    if isinstance(want, bool):
+        if isinstance(v, bool):
+            return v is want
+        text = str(v).strip('"').lower()             # a frontend that keeps `true` as its text
+        return text == str(want).lower() if text in ("true", "false") else None
+    return str(v).strip('"') == str(want)
+
+
+def _spends_attempt(ctx, program, file: str, proc_name: str, table, kinds=("call",),
+                    undecided: Optional[List[str]] = None) -> Optional[str]:
     """A call of one of `kinds` (`call`: spends an attempt) in the function or a project function
-    it calls (CALLEE_DEPTH deep)."""
+    it calls (CALLEE_DEPTH deep). A call that spends one only for an argument's value
+    (`when_arg`) counts when it passes that literal; one passing a value the engine does not know
+    is added to `undecided`."""
     seen = {(file, proc_name)}
     frontier = [(program, file, proc_name)]
     for _ in range(CALLEE_DEPTH + 1):
@@ -341,12 +397,25 @@ def _spends_attempt(ctx, program, file: str, proc_name: str, table, kinds=("call
             if proc is None:
                 continue
             for ins in _calls(proc):
-                if _match(prog, name, _call_names(prog, ins), table, kinds):
-                    return f"{_call_names(prog, ins)[-1]} at line {_line(ins)} of {name}"
                 from frame.sil.hunt_tools import _nested_call_names
-                nested = _nested_call_names(ins)
-                if nested and _match(prog, name, nested, table, kinds):
-                    return f"{nested[0]} at line {_line(ins)} of {name}"
+                nested = _typed_names(prog, proc, _nested_call_names(ins))
+                for e, call, what in ((_match(prog, name, _call_names(prog, ins), table, kinds), ins,
+                                       (_call_names(prog, ins) or ["?"])[-1]),
+                                      (_match(prog, name, nested, table, kinds) if nested else None, None,
+                                       nested[0] if nested else "")):
+                    if e is None:
+                        continue
+                    cond = e.get("when_arg")
+                    holds = True if not cond else _when_arg_holds(call, cond)
+                    if holds and not cond:
+                        return f"{what} at line {_line(ins)} of {name}"
+                    arg = cond.get("name") or f"argument {cond['position']}"
+                    if holds:
+                        shown = str(cond["value"]).lower() if isinstance(cond["value"], bool) else cond["value"]
+                        return f"{what} with {arg} = {shown} at line {_line(ins)} of {name}"
+                    if holds is None and undecided is not None:
+                        undecided.append(f"{what} at line {_line(ins)} of {name} passes {arg} "
+                                         "as a value the engine does not know")
             if not hasattr(ctx, "graph"):
                 continue
             try:
@@ -440,8 +509,9 @@ def _credential_line(ctx, program, file: str, proc_name: str) -> Optional[Tuple[
     if proc is None:
         return None
     ids = credential_checks().get(_lang(program)) or ()
+    from frame.sil.hunt_tools import _nested_call_names
     for ins in _calls(proc):
-        for n in _call_names(program, ins):
+        for n in _call_names(program, ins) + _typed_names(program, proc, _nested_call_names(ins)):
             if any(n == i or n.endswith("." + i) for i in ids):
                 return _line(ins), "call"
     if hasattr(ctx, "graph"):
@@ -575,6 +645,9 @@ def check_attempt_limit(ctx, program, proc_name: str, file: str) -> Dict[str, An
         if kept:
             return {**unknown, "reason": f"{kept} keeps data across requests outside the database: it "
                     "may count failed attempts (a throttle the application keeps itself); read it"}
+    if own.get("undecided"):
+        return {**unknown, "reason": f"{own['undecided'][0]}: whether the call counts the failure "
+                "depends on it; read where it comes from"}
     if _writes_stored_data(ctx, program, file, proc_name):
         return {**unknown, "reason": f"{proc_name} writes stored data: it may count failed attempts "
                 "itself (a lockout); read it"}

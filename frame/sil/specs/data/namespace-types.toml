@@ -53,6 +53,7 @@
 "Microsoft.AspNetCore.Mvc" = ["Controller", "ControllerBase", "IUrlHelper", "RedirectResult", "LocalRedirectResult",
                               "ContentResult"]
 "Microsoft.AspNetCore.Mvc.RazorPages" = ["PageModel"]
+"Microsoft.AspNetCore.Identity" = ["SignInManager", "UserManager", "PasswordHasher", "IPasswordHasher"]
 "Microsoft.AspNetCore.Cors.Infrastructure" = ["CorsPolicyBuilder", "CorsOptions", "CorsPolicy"]
 "Microsoft.Extensions.DependencyInjection" = ["IServiceCollection"]
 "Microsoft.AspNetCore.Builder" = ["IApplicationBuilder", "WebApplication", "WebApplicationBuilder", "RouteHandlerBuilder"]

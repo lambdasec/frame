@@ -28,3 +28,25 @@ kind = "global"
 [[rate_limit]]
 name = ["UseIpRateLimiting", "UseClientRateLimiting"]
 kind = "global"
+
+# ASP.NET Identity: a sign-in counts a failed password towards the account's lockout only when
+# `lockoutOnFailure` is true (PasswordSignInAsync(user | userName, password, isPersistent,
+# lockoutOnFailure), CheckPasswordSignInAsync(user, password, lockoutOnFailure)); an application
+# that checks with UserManager counts a failure itself with AccessFailedAsync. The lockout then
+# applies with IdentityOptions.Lockout (enabled for new users, 5 failures, by default).
+# https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.identity.signinmanager-1.passwordsigninasync
+# https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.identity.signinmanager-1.checkpasswordsigninasync
+# https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.identity.usermanager-1.accessfailedasync
+[[rate_limit]]
+call = ["Microsoft.AspNetCore.Identity.SignInManager.PasswordSignInAsync"]
+kind = "call"
+when_arg = { position = 3, name = "lockoutOnFailure", value = true }
+
+[[rate_limit]]
+call = ["Microsoft.AspNetCore.Identity.SignInManager.CheckPasswordSignInAsync"]
+kind = "call"
+when_arg = { position = 2, name = "lockoutOnFailure", value = true }
+
+[[rate_limit]]
+call = ["Microsoft.AspNetCore.Identity.UserManager.AccessFailedAsync"]
+kind = "call"

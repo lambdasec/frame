@@ -435,3 +435,89 @@ def test_a_check_known_only_from_a_library_base_is_not_refuted(tmp_path):
     r = _verdict(ctx, "SiteLogin.dispatch")
     assert r["verdict"] == "unknown", r
     assert "library class" in r["reason"]
+
+
+IDENTITY = """\
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+
+public class AppUser : IdentityUser { }
+
+public class AccountController : Controller {
+  private readonly SignInManager<AppUser> _signInManager;
+  private readonly UserManager<AppUser> _users;
+  public AccountController(SignInManager<AppUser> signInManager, UserManager<AppUser> users) {
+    _signInManager = signInManager;
+    _users = users;
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> Login(string email, string password, bool remember) {
+    var result = await _signInManager.PasswordSignInAsync(email, password, remember, lockoutOnFailure: true);
+    return Ok(result.Succeeded);
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> LoginNoLock(string email, string password, bool remember) {
+    var result = await _signInManager.PasswordSignInAsync(email, password, remember, false);
+    return Ok(result.Succeeded);
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> LoginFlag(string email, string password, bool remember, bool lockIt) {
+    var result = await _signInManager.PasswordSignInAsync(email, password, remember, lockoutOnFailure: lockIt);
+    return Ok(result.Succeeded);
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> Check(AppUser user, string password) {
+    var result = await _signInManager.CheckPasswordSignInAsync(user, password, true);
+    return Ok(result.Succeeded);
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> Verify(AppUser user, string password) {
+    var ok = await _users.CheckPasswordAsync(user, password);
+    if (!ok) { await _users.AccessFailedAsync(user); }
+    return Ok(ok);
+  }
+
+  [HttpPost]
+  public async Task<IActionResult> VerifyOnly(AppUser user, string password) {
+    return Ok(await _users.CheckPasswordAsync(user, password));
+  }
+}
+"""
+
+
+def test_aspnet_identity_lockout_on_failure(tmp_path):
+    ctx = _ctx(tmp_path, {"AccountController.cs": IDENTITY})
+    login = _verdict(ctx, "AccountController.Login")
+    assert login["verdict"] == "proved", login
+    assert "lockoutOnFailure = true" in login["reason"]
+    assert _verdict(ctx, "AccountController.Check")["verdict"] == "proved"       # positional `true`
+    assert _verdict(ctx, "AccountController.LoginNoLock")["verdict"] == "refuted"
+    flag = _verdict(ctx, "AccountController.LoginFlag")
+    assert flag["verdict"] == "unknown", flag
+    assert "lockoutOnFailure" in flag["reason"]
+    # UserManager: the application counts the failure itself
+    assert _verdict(ctx, "AccountController.Verify")["verdict"] == "proved"
+    assert _verdict(ctx, "AccountController.VerifyOnly")["verdict"] == "refuted"
+
+
+def test_when_arg_is_validated():
+    import pytest
+    from frame.sil.packs.schema import PackError, parse_pack
+    head = {"pack": {"name": "x", "language": "csharp"}}
+    with pytest.raises(PackError, match="on a call entry"):
+        parse_pack({**head, "rate_limit": [{"name": ["M"], "kind": "global",
+                                            "when_arg": {"position": 0, "value": True}}]})
+    with pytest.raises(PackError, match="needs `position` or `name`"):
+        parse_pack({**head, "rate_limit": [{"name": ["M"], "kind": "call", "when_arg": {"value": True}}]})
+    with pytest.raises(PackError, match="unknown|not allowed|Unknown"):
+        parse_pack({**head, "rate_limit": [{"name": ["M"], "kind": "call",
+                                            "when_arg": {"position": 0, "value": True, "default": 1}}]})
+    pack = parse_pack({**head, "rate_limit": [{"name": ["M"], "kind": "call",
+                                               "when_arg": {"name": "lock", "value": True}}]})
+    assert pack.rate_limits[0]["when_arg"] == {"position": None, "name": "lock", "value": True}
