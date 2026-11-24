@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from frame.sil.proof_hooks import (
+    CSHARP_SPY, JAVA_NOT_REACHED, JAVA_SPY, csharp_hook_test, hook_call_site, java_hook_main, sink_of,
+)
+
 
 @dataclass
 class DepsReproSpec:
@@ -198,10 +202,30 @@ with open({result!r}, "w") as _f:
 
 @dataclass
 class DepsRun:
-    """Outcome of running a reproduction driver under the spy."""
+    """Outcome of running a reproduction driver under the spy. ``ran`` says the driver
+    actually ran against the project with the spy in place (it compiled, it imported, it
+    called the entry point); a fix is proved only by a run that ran and did not reach the
+    sink, never by one that could not run at all."""
     reproduced: bool
     detail: str = ""
     result: Dict = field(default_factory=dict)
+    ran: bool = False
+
+
+# A driver that fails with one of these never reached the project's logic: the code it
+# names is missing or no longer has that shape (Python exception types; JS error names
+# and Node's module-resolution message).
+_DID_NOT_RUN = ("ImportError", "ModuleNotFoundError", "SyntaxError", "NameError",
+                "AttributeError", "TypeError", "ReferenceError", "Cannot find module")
+
+
+def _driver_ran(error: str) -> bool:
+    """True when a Python/JS runner's recorded error leaves the driver's run meaningful."""
+    if not error:
+        return True
+    if not error.startswith("driver error:"):
+        return False                                # the spy could not be installed
+    return not any(token in error for token in _DID_NOT_RUN)
 
 
 # Languages, kept here so the dispatcher and callers agree on one spelling.
@@ -251,9 +275,11 @@ def fix_proof(driver_src: str, spec: "DepsReproSpec", vulnerable_root: str,
         detail = f"no proof to begin with: the driver did not reproduce against the vulnerable code ({before.detail})"
     elif after.reproduced:
         detail = "the fix did NOT remove the flow: attacker data still reaches the sink via the project"
+    elif not after.ran:
+        detail = f"no proof of the fix: the driver could not run against the fixed code ({after.detail})"
     else:
         detail = "fix verified: the reproduction no longer reaches the sink via the project"
-    return FixProof(proved=bool(before.reproduced and not after.reproduced),
+    return FixProof(proved=bool(before.reproduced and after.ran and not after.reproduced),
                     before=before, after=after, detail=detail)
 
 
@@ -293,7 +319,7 @@ def run_deps_repro(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
               and not res.get("error"))
     detail = ("marker reached the vulnerable function via the project" if ok
               else res.get("error") or "the marker did not reach the vulnerable function via the project")
-    return DepsRun(ok, detail, res)
+    return DepsRun(ok, detail, res, ran=_driver_ran(res.get("error") or ""))
 
 
 def python_deps_test_with_driver(spec: "DepsReproSpec", driver: str,
@@ -408,7 +434,7 @@ if (!RESULT.error) {
     (function (require) {
 @@DRIVER@@
     })(projectRequire);
-  } catch (e) { RESULT.error = 'driver error: ' + e.message; }
+  } catch (e) { RESULT.error = 'driver error: ' + ((e && e.name) ? e.name + ': ' : '') + (e && e.message); }
 }
 fs.writeFileSync(@@RESULT@@, JSON.stringify(RESULT));
 '''
@@ -454,7 +480,7 @@ def run_deps_repro_js(driver_src: str, spec: "DepsReproSpec", project_root: str,
               and not res.get("error"))
     detail = ("marker reached the sink via the project" if ok
               else res.get("error") or "the marker did not reach the sink via the project")
-    return DepsRun(ok, detail, res)
+    return DepsRun(ok, detail, res, ran=_driver_ran(res.get("error") or ""))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -536,10 +562,41 @@ def java_repro_main(spec: "DepsReproSpec", driver: str,
         "                return defaultReturn(method.getReturnType());\n"
         "            });\n"
         f"        try {{ {body} }} catch (Throwable _t) {{ /* the sink is spied; faults are irrelevant */ }}\n"
-        "        System.exit(seenMarker && seenVia ? 0 : 1);\n"
+        f"        System.exit(seenMarker && seenVia ? 0 : {JAVA_NOT_REACHED});\n"
         "    }\n"
         "}\n"
     )
+
+
+def _callsite_class(spec: "DepsReproSpec") -> str:
+    """The class the call site's file declares, by the file's name (Api.java -> Api)."""
+    return Path(spec.module_path).name.rsplit(".", 1)[0]
+
+
+def _hooked_call_site(spec: "DepsReproSpec", project_root: str, language: str):
+    """The call-site file with the sink call's arguments hooked (`proof_hooks`), or a
+    DepsRun saying why the sink cannot be spied this way."""
+    sink = sink_of(spec.vuln_function or spec.call_text)
+    if sink is None:
+        return DepsRun(False, f"no spy for this sink: {spec.vuln_function or spec.call_text!r} "
+                              "names no type and method")
+    path = Path(project_root) / spec.module_path
+    if not spec.module_path or not path.is_file():
+        return DepsRun(False, f"the call-site file {spec.module_path!r} is not in the project")
+    try:
+        line = int(spec.call_site.rpartition(":")[2])
+    except ValueError:
+        line = 0
+    hooked = hook_call_site(path.read_text(errors="replace"), language, line, sink)
+    if hooked is None:
+        what = f"new {sink.type_name}" if not sink.method else sink.method
+        return DepsRun(False, f"the call-site file has no call to {what}: the flow to the sink is gone",
+                       {"hook": {"calls": 0}}, ran=True)
+    return hooked
+
+
+def _hook_note(hook) -> Dict:
+    return {"calls": hook.calls, "on_line": hook.on_line}
 
 
 def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: str, *,
@@ -553,8 +610,12 @@ def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: st
     import os
     import shutil as _shutil
     main_src = java_repro_main(spec, driver_src, marker)
+    hook = None
     if main_src is None:
-        return DepsRun(False, "no Proxy template for this Java sink (needs an injected interface sink)")
+        hook = _hooked_call_site(spec, project_root, "java")
+        if isinstance(hook, DepsRun):
+            return hook
+        main_src = java_hook_main(driver_src, _callsite_class(spec), marker)
     java_home = jdk or os.environ.get("JAVA_HOME")
 
     def _bin(name: str) -> Optional[str]:
@@ -575,6 +636,10 @@ def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: st
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(jf.read_text(errors="replace"))
         (proj / "Main.java").write_text(main_src)
+        if hook is not None:
+            (proj / spec.module_path).write_text(hook.source)
+            (proj / "frameproof").mkdir(exist_ok=True)
+            (proj / "frameproof" / "Spy.java").write_text(JAVA_SPY)
         out = proj / "out"
         out.mkdir()
         sources = [str(p) for p in proj.rglob("*.java")]
@@ -594,10 +659,14 @@ def run_deps_repro_java(driver_src: str, spec: "DepsReproSpec", project_root: st
         except (subprocess.TimeoutExpired, OSError) as exc:
             return DepsRun(False, f"run error: {exc}")
         out_txt = ((r.stdout or "") + (r.stderr or ""))[-1500:]
+        result = {"stdout": out_txt}
+        if hook is not None:
+            result["hook"] = _hook_note(hook)
         if r.returncode == 0:
-            return DepsRun(True, "marker reached the sink via the project", {"stdout": out_txt})
-        return DepsRun(False, "the marker did not reach the sink via the project",
-                       {"stdout": out_txt})
+            return DepsRun(True, "marker reached the sink via the project", result, ran=True)
+        if r.returncode == JAVA_NOT_REACHED:
+            return DepsRun(False, "the marker did not reach the sink via the project", result, ran=True)
+        return DepsRun(False, f"the driver did not run (exit {r.returncode})", result)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -678,8 +747,12 @@ def run_deps_repro_csharp(driver_src: str, spec: "DepsReproSpec", project_root: 
     import os
     import shutil as _shutil
     test_src = csharp_repro_test(spec, driver_src, marker)
+    hook = None
     if test_src is None:
-        return DepsRun(False, "no Moq template for this C# sink (needs an injected interface sink)")
+        hook = _hooked_call_site(spec, project_root, "csharp")
+        if isinstance(hook, DepsRun):
+            return hook
+        test_src = csharp_hook_test(driver_src, _callsite_class(spec), marker)
     dn = dotnet or _shutil.which("dotnet")
     if not dn:
         return DepsRun(False, "the .NET SDK is not available")
@@ -689,6 +762,9 @@ def run_deps_repro_csharp(driver_src: str, spec: "DepsReproSpec", project_root: 
         for cs in src.rglob("*.cs"):
             (proj / cs.name).write_text(cs.read_text(errors="replace"))
         (proj / "ReproTest.cs").write_text(test_src)
+        if hook is not None:
+            (proj / Path(spec.module_path).name).write_text(hook.source)
+            (proj / "FrameProofSpy.cs").write_text(CSHARP_SPY)
         (proj / "repro.csproj").write_text(_CSHARP_CSPROJ)
         env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1",
                    DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", DOTNET_NOLOGO="1")
@@ -699,9 +775,13 @@ def run_deps_repro_csharp(driver_src: str, spec: "DepsReproSpec", project_root: 
         except (subprocess.TimeoutExpired, OSError) as exc:
             return DepsRun(False, f"run error: {exc}")
         out = (r.stdout or "") + (r.stderr or "")
+        result = {"stdout": out[-1500:]}
+        if hook is not None:
+            result["hook"] = _hook_note(hook)
         if r.returncode == 0:
-            return DepsRun(True, "marker reached the sink via the project", {"stdout": out[-1500:]})
-        if "error CS" in out and "Reproduces" not in out:
-            return DepsRun(False, "the project did not compile standalone", {"stdout": out[-1500:]})
-        return DepsRun(False, "the marker did not reach the sink via the project",
-                       {"stdout": out[-1500:]})
+            return DepsRun(True, "marker reached the sink via the project", result, ran=True)
+        if re.search(r"error (CS|MSB|NU)\d+", out):
+            return DepsRun(False, "the project did not compile standalone", result)
+        if re.search(r"Failed!\s*-\s*Failed:\s*1\b", out):      # the test ran, its assertion failed
+            return DepsRun(False, "the marker did not reach the sink via the project", result, ran=True)
+        return DepsRun(False, "the test did not run", result)

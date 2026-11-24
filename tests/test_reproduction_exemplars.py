@@ -53,6 +53,17 @@ def _skip_if_unavailable(meta: dict, language: str):
             pytest.skip(f"real library {mod!r} not installed for this exemplar")
 
 
+def _vulnerable_root(case: Path, language: str, tmp_path: Path) -> Path:
+    """The vulnerable tree of a case. The Java and C# runners compile every source under the
+    root, so a case carrying a `fixed/` copy is run from a copy without it (a second
+    `app.Api` would not compile); the Python and JS runners import by module path."""
+    if language not in (_JAVA | _CSHARP) or not (case / "fixed").is_dir():
+        return case
+    dest = tmp_path / case.name
+    shutil.copytree(case, dest, ignore=lambda d, names: ["fixed"] if Path(d) == case else [])
+    return dest
+
+
 def _run_case(language: str, driver: str, spec, case):
     if language in _JS:
         return run_deps_repro_js(driver, spec, str(case))
@@ -78,11 +89,11 @@ def _spec(meta: dict) -> DepsReproSpec:
 
 @pytest.mark.skipif(not CASES, reason="no reproduction exemplars found")
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
-def test_exemplar_reproduces(case):
+def test_exemplar_reproduces(case, tmp_path):
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
     _skip_if_unavailable(meta, language)
-    run = _run_case(language, meta["driver"], _spec(meta), case)
+    run = _run_case(language, meta["driver"], _spec(meta), _vulnerable_root(case, language, tmp_path))
     assert run.reproduced, f"{case.name}: {run.detail} ({run.result})"
 
 
@@ -97,11 +108,12 @@ FIX_CASES = [c for c in CASES if (c / "fixed").is_dir()]
 
 @pytest.mark.skipif(not FIX_CASES, reason="no reproduction exemplars carry a fixed/ variant")
 @pytest.mark.parametrize("case", FIX_CASES, ids=[c.name for c in FIX_CASES])
-def test_fix_stops_the_reproduction(case):
+def test_fix_stops_the_reproduction(case, tmp_path):
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
     _skip_if_unavailable(meta, language)
-    proof = fix_proof(meta["driver"], _spec(meta), str(case), str(case / "fixed"),
+    vulnerable = _vulnerable_root(case, language, tmp_path)
+    proof = fix_proof(meta["driver"], _spec(meta), str(vulnerable), str(case / "fixed"),
                       language=language)
     assert proof.before.reproduced, \
         f"{case.name}: the driver did not reproduce against the vulnerable code ({proof.before.detail})"
@@ -112,12 +124,12 @@ def test_fix_stops_the_reproduction(case):
 
 @pytest.mark.skipif(not CASES, reason="no reproduction exemplars found")
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
-def test_exemplar_rejects_a_driver_that_does_not_drive_the_sink(case):
+def test_exemplar_rejects_a_driver_that_does_not_drive_the_sink(case, tmp_path):
     # Soundness guard: a driver that never drives the project to the sink must NOT
     # count as a reproduction (the spy is never reached with the marker).
     meta = json.loads((case / "case.json").read_text())
     language = meta["language"].lower()
     _skip_if_unavailable(meta, language)
     noop = ";" if language in (_JS | _JAVA | _CSHARP) else "pass"
-    run = _run_case(language, noop, _spec(meta), case)
+    run = _run_case(language, noop, _spec(meta), _vulnerable_root(case, language, tmp_path))
     assert not run.reproduced

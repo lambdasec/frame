@@ -20,6 +20,9 @@ the vulnerable call and a spy observed attacker-marked data arrive there.
 | `js-sca-yaml-load` | JavaScript | deserialization (CWE-502) | `js-yaml.load` | vendored dep |
 | `java-sca-deserialization` | Java | deserialization (CWE-502) | an injected store interface | real (JDK) |
 | `csharp-taint-cmdi` | C# | command injection (CWE-78) | an injected shell interface | real (.NET SDK) |
+| `java-taint-cmdi` | Java | command injection (CWE-78) | `Runtime.exec` | real (JDK) |
+| `java-sca-yaml-load` | Java | deserialization (CWE-502) | SnakeYAML's `Yaml.load` (a concrete class) | stand-in |
+| `csharp-taint-process-start` | C# | command injection (CWE-78) | `Process.Start` | real (.NET) |
 
 Most cases drive a genuine library sink (`pickle.loads`, real PyYAML `yaml.load`,
 `os.system`, `subprocess.call`, `child_process.exec`); the stand-in cases use a small
@@ -28,7 +31,18 @@ injected sink interface), so they stay self-contained. A case that needs a real 
 declares it in `requires`, and the test skips when it is absent. The Java case needs a JDK
 (a `java.lang.reflect.Proxy` spies the injected sink interface, no Maven or Mockito); the
 C# case needs the .NET SDK (xUnit + Moq spy the interface); each test skips where its
-toolchain is absent. A non-interface or JDK-bootstrap sink is left for the agent-based runner.
+toolchain is absent.
+
+`java-taint-cmdi`, `java-sca-yaml-load` and `csharp-taint-process-start` have no interface to
+proxy: the project calls `Runtime.exec`, `new Yaml().load` or `Process.Start` directly. The
+runner wraps each argument of the call at the call site, in its temporary copy of the source,
+in an identity function (`frameproof.Spy.arg`, `FrameProof.Spy.Arg`). The function records the
+hit when an argument carries the marker and stops before the sink runs, so no command is
+started. These three cases are written as Spring and ASP.NET Core handlers, and `frame scan`
+reports each flow. Small stand-ins for the framework annotations (`lib/`) let them build with
+`javac` or a plain test project. A Java or C# case with a `fixed/` copy is run without that copy,
+because the runner compiles every source under the root. Each `fixed/` tree is a complete
+project, because a fixed copy that does not build proves nothing about the fix.
 
 `case.json` fields: `language`, `cwe`, `advisory`, `vuln_function` (the sink's
 canonical id), `call_site` (`file:line` where the project calls it), `source_var`

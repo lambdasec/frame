@@ -66,8 +66,8 @@ jobs:
   reproduction:
     # Cross-language proof-carrying reproduction exemplars: compile and run each case's
     # confirmed driver so a marker reaches the sink THROUGH the project (a direct call is
-    # rejected). These need real toolchains -- a JDK for the Java reflective-Proxy spy, the
-    # .NET SDK for the C# Moq spy, Node for JS -- which the lean Python matrix does not carry,
+    # rejected). These need real toolchains -- a JDK for the Java Proxy spy and call-site hooks,
+    # the .NET SDK for the C# Moq spy and call-site hooks, Node for JS -- which the lean Python matrix does not carry,
     # so they run here. The job ASSERTS the Java and C# cases actually ran (PASSED, not
     # SKIPPED): a silent skip must not look like a pass.
     runs-on: ubuntu-latest
@@ -94,7 +94,9 @@ jobs:
     - name: Toolchains present
       run: javac -version && java -version && dotnet --version && node --version
     - name: Reproduction exemplars (all languages)
-      run: python -m pytest tests/test_reproduction_exemplars.py -v -rs | tee /tmp/repro.out
+      run: |
+        set -o pipefail
+        python -m pytest tests/test_reproduction_exemplars.py -v -rs | tee /tmp/repro.out
     - name: The compiled-language and fix-loop cases must have run, not skipped
       run: |
         grep -qE "java-sca-deserialization\] PASSED" /tmp/repro.out \
@@ -110,6 +112,15 @@ jobs:
           || { echo "Python fix-loop proof did not run"; exit 1; }
         grep -qE "test_fix_stops_the_reproduction\[js-sca-yaml-load\] PASSED" /tmp/repro.out \
           || { echo "JS fix-loop proof did not run"; exit 1; }
+        # sinks with no interface to proxy, spied through call-site argument hooks
+        for c in java-taint-cmdi java-sca-yaml-load csharp-taint-process-start; do
+          grep -qE "test_exemplar_reproduces\[$c\] PASSED" /tmp/repro.out \
+            || { echo "hooked reproduction $c did not run"; exit 1; }
+        done
+        for c in java-taint-cmdi csharp-taint-process-start; do
+          grep -qE "test_fix_stops_the_reproduction\[$c\] PASSED" /tmp/repro.out \
+            || { echo "hooked fix-loop proof $c did not run"; exit 1; }
+        done
 
   self-scan:
     # Frame's own SCA on this repository: resolve its Python dependencies (pyproject with

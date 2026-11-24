@@ -38,11 +38,14 @@ def _lang_note(language: str) -> str:
                 "MARKER is already defined.")
     if language in _JAVA_LANGS:
         return ("Write the driver as Java statements that call the entry point, e.g. "
-                "`new app.Api().ping(MARKER);`. MARKER is a String already in scope.")
+                "`new app.Api().ping(MARKER);`. MARKER is a String already in scope. When the "
+                "sink is an injected interface (an `I`-prefixed type the project takes as a "
+                "parameter), pass `spy` in its place: `new app.Api(spy).handle(MARKER);`.")
     if language in _CSHARP_LANGS:
-        return ("Write the driver as C# statements that call the entry point, injecting the "
-                "mocked sink: `new app.Api(mock.Object).Ping(MARKER);`. `mock` and MARKER are "
-                "already in scope.")
+        return ("Write the driver as C# statements that call the entry point, e.g. "
+                "`new app.Api().Ping(MARKER);`. MARKER is already in scope. When the sink is an "
+                "injected interface (an `I`-prefixed type the project takes as a parameter), "
+                "pass the mocked sink in its place: `new app.Api(mock.Object).Ping(MARKER);`.")
     return ("Write the driver in Python. MARKER is already defined, e.g. "
             "`from routes import handler; handler(MARKER)`.")
 
